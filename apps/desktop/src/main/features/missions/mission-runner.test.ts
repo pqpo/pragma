@@ -1,4 +1,5 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import { STORE_REVISION_EXPERT_REF, createPragmaManagementTools } from "@pragma/built-in-agents";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import {
   createStaticRuntimeResolver,
   createNoopLoggerProvider,
   defineExpert,
+  ExecutionWorkHistoryReader,
   fingerprintExpertExecutionDefinition,
   InMemoryContextStore,
   PragmaPaths,
@@ -47,6 +49,7 @@ import {
   createMissionRunner as createMissionRunnerImplementation,
   isRootMissionRuntimeOutput,
   missionKnowledgeNamespace,
+  activeMissionKnowledgeDraftNamespace,
   toDesktopHumanRequest,
   type MissionRunner,
   type LiveMissionChat,
@@ -54,6 +57,7 @@ import {
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -70,7 +74,7 @@ const missionRunnerMethods = new Set([
   "startLocalHostRun",
   "assertLocalHostRunAllowed",
   "updateOptions",
-  "updateContextStores",
+  "updateContextMounts",
   "sendMessage",
   "steerQueuedMessage",
   "removeQueuedMessage",
@@ -262,6 +266,38 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         streaming: false,
       }),
     ]);
+  });
+
+  it("stops emitting visible patches after a streaming message reaches its content cap", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const output = (delta: string, sequence: number): ExecutionOutputItem => ({
+      sourceEventId: `event-${sequence}`,
+      executionId: chat.executionId,
+      invocationId: "invocation-a",
+      executorId: "expert-a",
+      contextId: "context:invocation-a",
+      runId: "run:invocation-a",
+      source: { kind: "runtime", runId: "run:invocation-a", path: [] },
+      channel: "message",
+      delta,
+      occurredAt: "2026-08-29T00:00:00.000Z",
+    });
+
+    consumeLiveChatOutput(chat, output("a".repeat(200_000), 1));
+    expect(consumeLiveChatOutput(chat, output("x", 2))).toEqual([
+      expect.objectContaining({ type: "entry.upsert" }),
+    ]);
+    expect(consumeLiveChatOutput(chat, output("y", 3))).toEqual([]);
+    expect(chat.entries[0]).toMatchObject({
+      kind: "assistant",
+      content: `${"a".repeat(199_999)}…`,
+    });
   });
 
   it("projects context compaction only from the root coordinator Runtime", () => {
@@ -813,7 +849,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       executor: missionExecutorSnapshot(
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
-      contextStoreIds: [firstStore.id],
+      contextMounts: [{ kind: "context-store", storeId: firstStore.id }],
     });
     const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
@@ -886,7 +922,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     }));
     await expect(
-      runner.updateContextStores({ id: mission.id, contextStoreIds: [secondStore.id] }),
+      runner.updateContextMounts({
+        id: mission.id,
+        contextMounts: [{ kind: "context-store", storeId: secondStore.id }],
+      }),
     ).rejects.toThrow("Remove or finish queued Mission messages");
     await expect(expertSessions.listPrompts(sessionId)).resolves.toEqual(
       expect.arrayContaining([
@@ -903,7 +942,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
       prompts: prompts.filter((prompt) => prompt.requestId !== queuedRequestId),
     }));
-    await runner.updateContextStores({ id: mission.id, contextStoreIds: [secondStore.id] });
+    await runner.updateContextMounts({
+      id: mission.id,
+      contextMounts: [{ kind: "context-store", storeId: secondStore.id }],
+    });
     await runner.sendMessage({
       id: mission.id,
       content: "Use Project B",
@@ -933,6 +975,328 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
     await expect(contextStores.getContent(secondStore.id, "blocked.md")).rejects.toMatchObject({
       code: "content_not_found",
+    });
+  });
+
+  it("creates a successor Session when persisted Mission Knowledge mounts changed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-knowledge-fingerprint-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const firstStore = await contextStores.create({
+      mode: "blank",
+      name: "Project A",
+      description: "Project A knowledge",
+    });
+    const secondStore = await contextStores.create({
+      mode: "blank",
+      name: "Project B",
+      description: "Project B knowledge",
+    });
+    await contextStores.createFile(firstStore.id, "project.md", "Project A context");
+    await contextStores.createFile(secondStore.id, "project.md", "Project B context");
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read Mission Knowledge",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+      contextMounts: [{ kind: "context-store", storeId: firstStore.id }],
+    });
+    let createSessionCount = 0;
+    const restoreSession = vi.fn((context: RuntimeDriverSessionContext) => ({ context }));
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => {
+        createSessionCount += 1;
+        return { context };
+      },
+      restoreSession,
+      readSession: () => ({ runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        const read = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "read_expert_context");
+        if (read === undefined) throw new Error("read_expert_context is missing.");
+        const storeId = turn.rawQuery === mission.goal ? firstStore.id : secondStore.id;
+        const result = await read.call(
+          { namespace: missionKnowledgeNamespace(storeId), id: "project.md" },
+          turn.signal,
+          { execution: session.context.request.executionContext },
+        );
+        return { outputText: result.text, runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect((await missions.get(mission.id)).execution?.contextMountsFingerprint).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+
+    await missions.updateContextMounts(mission.id, [
+      { kind: "context-store", storeId: secondStore.id },
+    ]);
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Use Project B",
+      requestId: "00000000-0000-4000-8000-000000000098",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          content: expect.stringContaining("Project B context"),
+        }),
+      ]),
+    );
+    expect(createSessionCount).toBe(2);
+    expect(restoreSession).not.toHaveBeenCalled();
+  });
+
+  it("edits multiple drafts in one turn and transfers one to a later Mission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-live-knowledge-draft-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture()],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const firstStore = await contextStores.create({
+      mode: "blank",
+      name: "Live knowledge A",
+      description: "First knowledge base revised without a successor turn.",
+    });
+    const secondStore = await contextStores.create({
+      mode: "blank",
+      name: "Live knowledge B",
+      description: "Second knowledge base revised without a successor turn.",
+    });
+    const revisions = createContextStoreRevisionService({
+      statePath: join(root, "context-store-revisions"),
+      draftsPath: join(root, "context-store-drafts"),
+      contextStores,
+      generator: { generate: async () => undefined },
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Revise knowledge now",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: {
+        kind: "expert",
+        ref: STORE_REVISION_EXPERT_REF,
+        name: "Store Revision Agent",
+      },
+      contextMounts: [
+        { kind: "context-store", storeId: firstStore.id },
+        { kind: "context-store", storeId: secondStore.id },
+      ],
+    });
+    const createdDraftIds = new Map<string, string>();
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        const managedTools = session.context.agent.tools ?? [];
+        const listTargets = managedTools.find(
+          (tool) => tool.name === "knowledge_revision_list_targets",
+        );
+        const start = managedTools.find((tool) => tool.name === "knowledge_revision_start");
+        const add = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "add_expert_context");
+        if (listTargets === undefined || start === undefined || add === undefined) {
+          throw new Error("Knowledge revision tools are unavailable.");
+        }
+        const listed = await listTargets.call({}, turn.signal, {
+          runContext: session.context.runContext,
+          toolCallId: "list-revision-targets",
+        });
+        const targets = listed.details as { readonly targetRef: string; readonly name: string }[];
+        const continuing = turn.rawQuery === "Continue the first knowledge draft";
+        const targetStores = continuing ? [firstStore] : [firstStore, secondStore];
+        let outputText = "";
+        for (const [index, targetStore] of targetStores.entries()) {
+          const target = targets.find((candidate) => candidate.name === targetStore.name);
+          if (target === undefined) throw new Error("Knowledge revision target is unavailable.");
+          const existingDraftId = continuing ? createdDraftIds.get(targetStore.id) : undefined;
+          const started = await start.call(
+            {
+              targetRef: target.targetRef,
+              prompt: continuing
+                ? "Continue the existing draft"
+                : `Record same-turn editing ${index + 1}`,
+              ...(existingDraftId === undefined ? {} : { draftId: existingDraftId }),
+            },
+            turn.signal,
+            {
+              runContext: session.context.runContext,
+              toolCallId: `start-revision-${index + 1}`,
+            },
+          );
+          const details = started.details as {
+            readonly draftId: string;
+            readonly writableNamespace: string;
+          };
+          createdDraftIds.set(targetStore.id, details.draftId);
+          expect(details.writableNamespace).toBe(
+            activeMissionKnowledgeDraftNamespace(targetStore.id),
+          );
+          const added = await add.call(
+            {
+              namespace: details.writableNamespace,
+              id: continuing
+                ? "items/continued-in-new-mission.md"
+                : `items/same-turn-${index + 1}.md`,
+              content: continuing ? "# Continued\n" : `# Same turn ${index + 1}\n`,
+            },
+            turn.signal,
+            { execution: session.context.request.executionContext },
+          );
+          outputText = added.text;
+        }
+        return { outputText, runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      contextStoreRevisions: revisions,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      assertStorageWriteAllowed: async () => undefined,
+      compileSystemExecutor: async ({ mission: current, knowledgeRevisions }) => {
+        if (knowledgeRevisions === undefined)
+          throw new Error("Knowledge revisions are unavailable.");
+        const expert = await defineExpert({
+          id: "0000000000st0rev",
+          name: "Store Revision Agent",
+          description: "Edits knowledge",
+          tags: [],
+          scope: "system-store-revision",
+          workspace: current.workspace.path,
+          pragmaHome,
+          defaultRuntimeId: "fake",
+          tools: createPragmaManagementTools({ knowledgeRevisions }),
+        });
+        return {
+          ref: current.executor.ref,
+          value: expert,
+          fingerprint: "a".repeat(64),
+          projectFingerprint: "b".repeat(64),
+          environmentFingerprint: {
+            environmentId: "desktop",
+            projectFingerprint: "b".repeat(64),
+            value: "c".repeat(64),
+            resources: [],
+            plugins: [],
+          },
+          rootRuntimeId: "fake",
+          dependencies: [],
+        };
+      },
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    for (const [index, targetStore] of [firstStore, secondStore].entries()) {
+      const draftId = createdDraftIds.get(targetStore.id);
+      if (draftId === undefined) throw new Error(`Expected a draft for ${targetStore.name}.`);
+      const draftStore = await revisions.resolveDraft(draftId);
+      await expect(
+        draftStore.store.readContext({ id: `items/same-turn-${index + 1}.md` }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: { content: `# Same turn ${index + 1}\n` },
+      });
+    }
+    const firstMissionAfterEditing = await missions.get(mission.id);
+    await expect(
+      runner.updateContextMounts({
+        id: mission.id,
+        contextMounts: [
+          ...firstMissionAfterEditing.contextMounts,
+          {
+            kind: "context-store-draft",
+            draftId: "20000000-0000-4000-8000-000000000099",
+          },
+        ],
+      }),
+    ).rejects.toThrow("can only be changed by revision tools");
+
+    const continuedMission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Continue the first knowledge draft",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: {
+        kind: "expert",
+        ref: STORE_REVISION_EXPERT_REF,
+        name: "Store Revision Agent",
+      },
+      contextMounts: [{ kind: "context-store", storeId: firstStore.id }],
+    });
+    await runner.run(continuedMission.id);
+    await vi.waitFor(
+      async () =>
+        expect((await missions.get(continuedMission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    const firstDraftId = createdDraftIds.get(firstStore.id);
+    if (firstDraftId === undefined) throw new Error("Expected the continued draft.");
+    const continuedDraftStore = await revisions.resolveDraft(firstDraftId);
+    await expect(
+      continuedDraftStore.store.readContext({ id: "items/continued-in-new-mission.md" }),
+    ).resolves.toMatchObject({ ok: true, value: { content: "# Continued\n" } });
+    await expect(missions.get(mission.id)).resolves.toMatchObject({
+      contextMounts: expect.arrayContaining([{ kind: "context-store", storeId: firstStore.id }]),
+    });
+    await expect(missions.get(continuedMission.id)).resolves.toMatchObject({
+      contextMounts: [
+        expect.objectContaining({ kind: "context-store-draft", draftId: firstDraftId }),
+      ],
     });
   });
 
@@ -1768,7 +2132,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(session, turn) {
         const tools = session.context.agent.tools ?? [];
-        const spawn = tools.find((tool) => tool.name === "delegate_expert");
+        const spawn = tools.find((tool) => tool.name === "spawn_expert");
         const wait = tools.find((tool) => tool.name === "wait_experts");
         const callReviewer = tools.find((tool) => tool.name === "call_reviewer");
         let output = `${session.context.agent.id}:${turn.rawQuery}`;
@@ -1892,6 +2256,152 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ]),
     );
     unsubscribe();
+  });
+
+  it("keeps materialized Expert work in one Runtime Context conversation across prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-materialized-work-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const writer = expertFixtureWithReviewerTool();
+    const reviewer = reviewerFixture();
+    const team = expertTeamFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), writer, reviewer, team],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Review the first draft",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(team),
+    });
+    let reviewerContextId: string | undefined;
+    const reviewerAgentIds: string[] = [];
+    const runtime = defineRuntimeTestDriver<
+      never,
+      { context: RuntimeDriverSessionContext; id: string }
+    >({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context, id: `runtime:${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        if (session.context.agent.id === reviewer.metadata.id) {
+          return {
+            outputText: `reviewer:${turn.rawQuery}`,
+            runtimeSessionId: session.id,
+          };
+        }
+        const tools = session.context.agent.tools ?? [];
+        const wait = tools.find((tool) => tool.name === "wait_experts");
+        if (wait === undefined) throw new Error("Missing collaboration tool: wait_experts");
+        const execution = { execution: session.context.request.executionContext };
+        let invocationId: string;
+        if (reviewerContextId === undefined) {
+          const spawn = tools.find((tool) => tool.name === "spawn_expert");
+          if (spawn === undefined) throw new Error("Missing collaboration tool: spawn_expert");
+          const spawned = await spawn.call(
+            { expertId: reviewer.metadata.id, task: "Review the first draft" },
+            turn.signal,
+            execution,
+          );
+          const details = spawned.details as {
+            agentId: string;
+            contextId: string;
+            invocationId: string;
+          };
+          reviewerContextId = details.contextId;
+          reviewerAgentIds.push(details.agentId);
+          invocationId = details.invocationId;
+        } else {
+          const continueExpert = tools.find((tool) => tool.name === "continue_expert");
+          if (continueExpert === undefined) {
+            throw new Error("Missing collaboration tool: continue_expert");
+          }
+          const continued = await continueExpert.call(
+            { contextId: reviewerContextId, task: "Review the revised draft" },
+            turn.signal,
+            execution,
+          );
+          const details = continued.details as {
+            agentDisposition: string;
+            agentId: string;
+            invocationId: string;
+          };
+          expect(details.agentDisposition).toBe("materialized");
+          reviewerAgentIds.push(details.agentId);
+          invocationId = details.invocationId;
+        }
+        await wait.call({ invocationIds: [invocationId] }, turn.signal, execution);
+        return { outputText: "writer:reviewed", runtimeSessionId: session.id };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Review the revised draft",
+      requestId: "00000000-0000-4000-8000-000000000205",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect(new Set(reviewerAgentIds).size).toBe(2);
+    const workProjection = vi.spyOn(ExecutionWorkHistoryReader.prototype, "readProjection");
+    const work = await runner.getWork(mission.id);
+    const reviewerRecords = work.records.filter(
+      (record) => record.kind === "agent" && record.executorId === reviewer.metadata.id,
+    );
+    expect(reviewerRecords).toHaveLength(1);
+    expect(reviewerRecords[0]).toMatchObject({
+      recordId: `agent-context:${reviewerContextId}`,
+      sessionId: reviewerContextId,
+      title: reviewer.metadata.name,
+      status: "succeeded",
+      summary: "reviewer:Review the revised draft",
+      tasks: [
+        expect.objectContaining({ inputSummary: "Review the first draft" }),
+        expect.objectContaining({ inputSummary: "Review the revised draft" }),
+      ],
+    });
+    const conversation = await runner.getWorkConversation({
+      id: mission.id,
+      recordId: reviewerRecords[0]!.recordId,
+      limit: 100,
+    });
+    expect(
+      conversation.entries
+        .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+        .map((entry) => [entry.kind, entry.content]),
+    ).toEqual([
+      ["user", "Review the first draft"],
+      ["assistant", "reviewer:Review the first draft"],
+      ["user", "Review the revised draft"],
+      ["assistant", "reviewer:Review the revised draft"],
+    ]);
+    await runner.getWorkConversation({
+      id: mission.id,
+      recordId: reviewerRecords[0]!.recordId,
+      limit: 1,
+    });
+    expect(workProjection).toHaveBeenCalledTimes(1);
   });
 
   it("keeps Work available with ID fallbacks when executor names cannot be read", async () => {
@@ -3910,9 +4420,18 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
+    let branchStartupContext = "";
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
+      createSession: (context) => {
+        const startupContext = context.agentContext.startupMessages
+          .map((message) => message.content)
+          .join("\n");
+        if (startupContext.includes("# Mission branch")) {
+          branchStartupContext = startupContext;
+        }
+        return { id: "runtime" };
+      },
       restoreSession: () => ({ id: "runtime" }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
       startTurn: (_session, turn) => ({
@@ -3980,6 +4499,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const settledBranch = await missions.get(branch.id);
     expect(settledBranch.execution?.sessionId).toBeDefined();
     expect(settledBranch.execution?.sessionId).not.toBe(settledSource.execution.sessionId);
+    expect(branchStartupContext).toContain("# Recent inherited conversation");
+    expect(branchStartupContext).toContain(finalReply.content);
+    expect(branchStartupContext).not.toContain("Mission goal");
     expect((await runner.getChat({ id: branch.id, limit: 50 })).entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4147,7 +4669,6 @@ function expertTeamFixture(): PragmaExpertTeamResource {
         },
         maxConcurrency: 2,
         maxDepth: 2,
-        context: "context-policy:pragma.fresh@v1",
         runtimes: {},
       },
     },

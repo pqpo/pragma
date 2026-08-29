@@ -12,6 +12,10 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  PRAGMA_MANAGEMENT_CAPABILITY_REF,
+  pragmaManagementCapabilityResource,
+} from "@pragma/built-in-agents";
 
 import {
   PragmaPaths,
@@ -100,6 +104,10 @@ const InstallationCatalogSchema = z
   .strict();
 
 type DesktopProjectSnapshot = Awaited<ReturnType<PragmaProjectStore["get"]>>;
+
+function isPragmaManagementCapability(resource: PragmaResource): boolean {
+  return canonicalPragmaResourceRef(resource) === PRAGMA_MANAGEMENT_CAPABILITY_REF;
+}
 
 const DesktopContextPayloadDescriptorSchema = z
   .object({
@@ -802,7 +810,10 @@ export function createPragmaBundleService(options: {
     async inspect(sourcePath, rootRef) {
       const archive = await readDesktopBundle(sourcePath, rootRef);
       const current = await options.project.get();
-      const conflicts = findBundleConflicts(archive.resources, current.resources);
+      const conflicts = findBundleConflicts(
+        archive.resources.filter((resource) => !isPragmaManagementCapability(resource)),
+        current.resources,
+      );
       const [capabilities, contextStores, plugins, runtimes] = await Promise.all([
         options.capabilities.list(),
         options.contextStores.list(),
@@ -818,6 +829,7 @@ export function createPragmaBundleService(options: {
       );
       const requirements: PragmaBundleImportInspection["requirements"] = [];
       for (const dependency of archive.manifest.dependencies.capabilities) {
+        if (dependency.resourceRef === PRAGMA_MANAGEMENT_CAPABILITY_REF) continue;
         const exact =
           dependency.definitionFingerprint === undefined
             ? undefined
@@ -1080,7 +1092,7 @@ export function createPragmaBundleService(options: {
             "Knowledge-base requirement",
           );
           const identityResolution = resolveBundleIdentities(
-            archive.resources,
+            archive.resources.filter((resource) => !isPragmaManagementCapability(resource)),
             current.resources,
             input.conflicts,
           );
@@ -1124,7 +1136,11 @@ export function createPragmaBundleService(options: {
           });
           await addInstallation(initial);
           try {
-            let resources = [...localized.resources];
+            let resources = localized.resources.map((resource) =>
+              isPragmaManagementCapability(resource)
+                ? pragmaManagementCapabilityResource()
+                : resource,
+            );
             const sourceToTarget = localized.resourceMappings;
             const importedRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
@@ -1270,6 +1286,7 @@ export function createPragmaBundleService(options: {
                 (candidate) => canonicalPragmaResourceRef(candidate) === targetRef,
               );
               if (resource?.kind !== "Capability") continue;
+              if (dependency.resourceRef === PRAGMA_MANAGEMENT_CAPABILITY_REF) continue;
               let capability =
                 dependency.logicalId === undefined
                   ? undefined

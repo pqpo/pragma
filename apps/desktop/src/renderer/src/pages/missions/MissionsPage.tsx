@@ -56,6 +56,7 @@ import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx"
 import {
   type Mission,
   type ContextStore,
+  type MissionContextMount,
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
@@ -88,7 +89,7 @@ import {
   MissionImagePreviewDialog,
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
-import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { MarkdownContent, StreamingMarkdownContent } from "../../components/MarkdownContent.tsx";
 import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
 import {
   ContextStoreBrowser,
@@ -120,6 +121,7 @@ import {
   writePinnedMissionIds,
   writeLastOpenedMissionId,
 } from "../../lib/mission-preference.ts";
+import { MissionLiveEntryStore, useMissionLiveEntry } from "./mission-live-entry-store.ts";
 
 export interface MissionsPageMemoryState {
   readonly missions: readonly MissionSummary[];
@@ -184,6 +186,7 @@ export function MissionsPage(props: {
   readonly onMemoryStateChange?: ((state: MissionsPageMemoryState) => void) | undefined;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
+  readonly onOpenKnowledgeRevision?: ((storeId: string) => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
@@ -566,6 +569,7 @@ export function MissionsPage(props: {
             }
             onConfigureModels={props.onConfigureModels}
             onOpenKnowledgeBases={props.onOpenKnowledgeBases}
+            onOpenKnowledgeRevision={props.onOpenKnowledgeRevision}
             onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
@@ -629,14 +633,14 @@ export function MissionsPage(props: {
                 throw optionsError;
               }
             }}
-            onContextStoresChange={async (contextStoreIds) => {
+            onContextStoresChange={async (contextMounts) => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
                 replaceMission(
-                  await api.updateMissionContextStores({
+                  await api.updateMissionContextMounts({
                     id: selectedMission.id,
-                    contextStoreIds: [...contextStoreIds],
+                    contextMounts: [...contextMounts],
                   }),
                 );
                 setError(null);
@@ -1460,6 +1464,7 @@ export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
 export const MISSION_CHAT_PAGE_SIZE = 200;
 export const MISSION_WORK_CONVERSATION_PAGE_SIZE = 50;
 export const MISSION_WORK_RECORD_PAGE_SIZE = 20;
+export const MISSION_CHAT_STREAM_FLUSH_INTERVAL_MS = 50;
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
@@ -1482,11 +1487,12 @@ export function MissionDetailFragment(props: {
       }) => void | Promise<void>)
     | undefined;
   readonly onContextStoresChange?:
-    ((contextStoreIds: readonly string[]) => void | Promise<void>) | undefined;
+    ((contextMounts: readonly MissionContextMount[]) => void | Promise<void>) | undefined;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
+  readonly onOpenKnowledgeRevision?: ((storeId: string) => void) | undefined;
   readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
   readonly onBranchCreated?: ((mission: Mission) => void) | undefined;
   readonly memoryEnabled?: boolean | undefined;
@@ -1563,7 +1569,9 @@ export function MissionDetailFragment(props: {
   );
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [contextStoreIds, setContextStoreIds] = useState<readonly string[]>(
-    props.mission.contextStoreIds,
+    props.mission.contextMounts.flatMap((mount) =>
+      mount.kind === "context-store" ? [mount.storeId] : [],
+    ),
   );
   const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
   const [contextStoresSaving, setContextStoresSaving] = useState(false);
@@ -1587,7 +1595,11 @@ export function MissionDetailFragment(props: {
   >({});
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
+  const liveEntryStore = useMemo(() => new MissionLiveEntryStore(), [props.mission.id]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
+  const chatBottomRef = useRef<HTMLSpanElement | null>(null);
+  const followLatestFrameRef = useRef<number | undefined>(undefined);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const draftMissionIdRef = useRef<string | null>(props.mission.id);
   const chatRef = useRef<MissionChatSnapshot | null>(null);
@@ -1615,17 +1627,24 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     if (!contextStorePickerOpen && !contextStoresSaving) {
-      setContextStoreIds(props.mission.contextStoreIds);
+      setContextStoreIds(
+        props.mission.contextMounts.flatMap((mount) =>
+          mount.kind === "context-store" ? [mount.storeId] : [],
+        ),
+      );
     }
-  }, [contextStorePickerOpen, contextStoresSaving, props.mission.contextStoreIds]);
+  }, [contextStorePickerOpen, contextStoresSaving, props.mission.contextMounts]);
 
   useEffect(() => {
     let cancelled = false;
-    const listContextStores = desktopApi()?.listContextStores;
-    if (typeof listContextStores !== "function") return;
-    void listContextStores()
+    const api = desktopApi();
+    if (api === undefined) return;
+    void api
+      .listContextStores()
       .then((stores) => {
-        if (!cancelled) setContextStores(stores);
+        if (!cancelled) {
+          setContextStores(stores);
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setOptionsError(missionError(loadError));
@@ -1700,13 +1719,60 @@ export function MissionDetailFragment(props: {
     (update: SetStateAction<MissionChatSnapshot | null>) => {
       const next = typeof update === "function" ? update(chatRef.current) : update;
       chatRef.current = next;
+      if (next === null) liveEntryStore.clear();
+      else liveEntryStore.reset(next.entries);
       if (next !== null && next.missionId === props.mission.id) {
         props.chatCache?.set(props.mission.id, next);
       }
       setChat(next);
     },
-    [props.chatCache, props.mission.id],
+    [liveEntryStore, props.chatCache, props.mission.id],
   );
+  const advanceLiveChat = useCallback(
+    (next: MissionChatSnapshot, changedEntryIds: ReadonlySet<string>) => {
+      chatRef.current = next;
+      props.chatCache?.set(props.mission.id, next);
+      if (changedEntryIds.size === 0) return;
+      const changedEntries = new Map(
+        next.entries
+          .filter((entry) => changedEntryIds.has(entry.id))
+          .map((entry) => [entry.id, entry] as const),
+      );
+      for (const entryId of changedEntryIds) {
+        const entry = changedEntries.get(entryId);
+        if (entry !== undefined) liveEntryStore.publish(entry);
+      }
+    },
+    [liveEntryStore, props.chatCache, props.mission.id],
+  );
+  const scheduleFollowLatest = useCallback(() => {
+    if (followLatestFrameRef.current !== undefined) return;
+    followLatestFrameRef.current = requestAnimationFrame(() => {
+      followLatestFrameRef.current = undefined;
+      if (!followLatestRef.current) return;
+      chatBottomRef.current?.scrollIntoView({ block: "end" });
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (followLatestFrameRef.current !== undefined) {
+        cancelAnimationFrame(followLatestFrameRef.current);
+        followLatestFrameRef.current = undefined;
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const list = chatListRef.current;
+    if (activeTab !== "chat" || list === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (prependScrollHeightRef.current === null) scheduleFollowLatest();
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [activeTab, props.mission.id, scheduleFollowLatest]);
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
@@ -1891,7 +1957,10 @@ export function MissionDetailFragment(props: {
     let refreshing = false;
     let refreshQueued = false;
     let frame: number | undefined;
+    let visibleTimer: ReturnType<typeof setTimeout> | undefined;
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastVisibleFlushAt = 0;
+    let lastPerformanceLogAt = 0;
     let pending: MissionChatUpdate[] = [];
     receivedFirstTokensRef.current.clear();
     paintedFirstTokensRef.current.clear();
@@ -1903,45 +1972,101 @@ export function MissionDetailFragment(props: {
 
     const drainPending = (
       base: MissionChatSnapshot,
-    ): { readonly snapshot: MissionChatSnapshot; readonly needsRefresh: boolean } => {
+    ): {
+      readonly snapshot: MissionChatSnapshot;
+      readonly needsRefresh: boolean;
+      readonly requiresRender: boolean;
+      readonly changedEntryIds: ReadonlySet<string>;
+    } => {
       const updates = pending.toSorted((left, right) => left.revision - right.revision);
       pending = [];
       let snapshot = base;
+      let requiresRender = false;
+      const changedEntryIds = new Set<string>();
       for (let index = 0; index < updates.length; index += 1) {
         const update = updates[index]!;
         if (update.revision <= snapshot.revision) continue;
         if (update.revision !== snapshot.revision + 1 || update.kind === "invalidate") {
           pending.push(...updates.slice(index));
-          return { snapshot, needsRefresh: true };
+          return { snapshot, needsRefresh: true, requiresRender, changedEntryIds };
         }
         const next = applyMissionChatPatches(snapshot, update.patches, update.revision);
         if (next === null) {
           pending.push(...updates.slice(index));
-          return { snapshot, needsRefresh: true };
+          return { snapshot, needsRefresh: true, requiresRender, changedEntryIds };
+        }
+        for (const patch of update.patches) {
+          if (patch.type === "entry.append") changedEntryIds.add(patch.entryId);
+          else if (patch.type === "entry.upsert") changedEntryIds.add(patch.entry.id);
+          if (missionChatPatchesRequireRender([patch])) requiresRender = true;
         }
         snapshot = next;
       }
-      return { snapshot, needsRefresh: false };
+      return { snapshot, needsRefresh: false, requiresRender, changedEntryIds };
     };
 
     const flush = (): void => {
       frame = undefined;
+      if (visibleTimer !== undefined) {
+        clearTimeout(visibleTimer);
+        visibleTimer = undefined;
+      }
       if (hiddenTimer !== undefined) {
         clearTimeout(hiddenTimer);
         hiddenTimer = undefined;
       }
       if (cancelled || chatRef.current === null || pending.length === 0) return;
+      if (document.visibilityState !== "hidden") lastVisibleFlushAt = performance.now();
+      const flushStartedAt = performance.now();
       const drained = drainPending(chatRef.current);
-      updateChat(drained.snapshot);
+      if (drained.requiresRender) updateChat(drained.snapshot);
+      else advanceLiveChat(drained.snapshot, drained.changedEntryIds);
+      const flushedAt = performance.now();
+      if (flushedAt - lastPerformanceLogAt >= 5_000) {
+        lastPerformanceLogAt = flushedAt;
+        const activeContentLength = drained.snapshot.entries.reduce(
+          (longest, entry) =>
+            drained.changedEntryIds.has(entry.id) &&
+            (entry.kind === "assistant" || entry.kind === "thinking")
+              ? Math.max(longest, entry.content.length)
+              : longest,
+          0,
+        );
+        api.reportRendererLog({
+          level: "info",
+          event: "mission.stream_flush",
+          message: `Mission stream flush updated ${drained.changedEntryIds.size} entries (${drained.snapshot.entries.length} loaded, ${activeContentLength} active characters)`,
+          missionId: props.mission.id,
+          executionId: drained.snapshot.execution?.id,
+          elapsedMs: Math.round((flushedAt - flushStartedAt) * 100) / 100,
+        });
+      }
       if (drained.needsRefresh) void refresh();
     };
 
     const scheduleFlush = (): void => {
-      if (frame !== undefined || hiddenTimer !== undefined || cancelled) return;
+      if (
+        frame !== undefined ||
+        visibleTimer !== undefined ||
+        hiddenTimer !== undefined ||
+        cancelled
+      )
+        return;
       if (document.visibilityState === "hidden") {
         hiddenTimer = setTimeout(flush, 100);
       } else {
-        frame = requestAnimationFrame(flush);
+        const remaining = Math.max(
+          0,
+          MISSION_CHAT_STREAM_FLUSH_INTERVAL_MS - (performance.now() - lastVisibleFlushAt),
+        );
+        if (remaining === 0) {
+          frame = requestAnimationFrame(flush);
+        } else {
+          visibleTimer = setTimeout(() => {
+            visibleTimer = undefined;
+            frame = requestAnimationFrame(flush);
+          }, remaining);
+        }
       }
     };
 
@@ -1949,6 +2074,10 @@ export function MissionDetailFragment(props: {
       if (frame !== undefined) {
         cancelAnimationFrame(frame);
         frame = undefined;
+      }
+      if (visibleTimer !== undefined) {
+        clearTimeout(visibleTimer);
+        visibleTimer = undefined;
       }
       if (hiddenTimer !== undefined) {
         clearTimeout(hiddenTimer);
@@ -2017,6 +2146,7 @@ export function MissionDetailFragment(props: {
     return () => {
       cancelled = true;
       if (frame !== undefined) cancelAnimationFrame(frame);
+      if (visibleTimer !== undefined) clearTimeout(visibleTimer);
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       pendingFirstTokenPaintsRef.current.clear();
       for (const frames of firstTokenPaintFramesRef.current.values()) {
@@ -2025,41 +2155,31 @@ export function MissionDetailFragment(props: {
       firstTokenPaintFramesRef.current.clear();
       unsubscribe();
     };
-  }, [chatRefreshRevision, props.chatCache, props.mission.id, t, updateChat]);
+  }, [advanceLiveChat, chatRefreshRevision, props.chatCache, props.mission.id, t, updateChat]);
 
-  useLayoutEffect(() => {
-    const api = desktopApi();
-    const container = scrollRef.current;
-    if (api === undefined || container === null || document.visibilityState === "hidden") return;
-    const renderedExecutions = new Set(
-      [...container.querySelectorAll<HTMLElement>("[data-mission-execution-id]")]
-        .map((element) => element.dataset.missionExecutionId)
-        .filter((executionId): executionId is string => executionId !== undefined),
-    );
-    for (const [executionId, pendingPaint] of pendingFirstTokenPaintsRef.current) {
+  const observeFirstTokenPaint = useCallback(
+    (executionId: string | undefined, element: HTMLElement | null): void => {
+      if (executionId === undefined || element === null) return;
+      const pendingPaint = pendingFirstTokenPaintsRef.current.get(executionId);
       if (
+        pendingPaint === undefined ||
         paintedFirstTokensRef.current.has(executionId) ||
         firstTokenPaintFramesRef.current.has(executionId) ||
-        !renderedExecutions.has(executionId)
+        document.visibilityState === "hidden"
       ) {
-        continue;
+        return;
       }
       const frames: number[] = [];
       const paintFrame = requestAnimationFrame(() => {
         const confirmationFrame = requestAnimationFrame(() => {
-          if (
-            document.visibilityState === "hidden" ||
-            ![...container.querySelectorAll<HTMLElement>("[data-mission-execution-id]")].some(
-              (element) => element.dataset.missionExecutionId === executionId,
-            )
-          ) {
+          if (document.visibilityState === "hidden" || !element.isConnected) {
             firstTokenPaintFramesRef.current.delete(executionId);
             return;
           }
           paintedFirstTokensRef.current.add(executionId);
           pendingFirstTokenPaintsRef.current.delete(executionId);
           firstTokenPaintFramesRef.current.delete(executionId);
-          api.reportRendererLog({
+          desktopApi()?.reportRendererLog({
             level: "info",
             event: "mission.first_ui_token_painted",
             message: "Renderer painted the first UI-visible Mission token",
@@ -2072,8 +2192,9 @@ export function MissionDetailFragment(props: {
       });
       frames.push(paintFrame);
       firstTokenPaintFramesRef.current.set(executionId, frames);
-    }
-  }, [chat?.revision, props.mission.id]);
+    },
+    [props.mission.id],
+  );
 
   useEffect(() => {
     const api = desktopApi();
@@ -2779,7 +2900,7 @@ export function MissionDetailFragment(props: {
       return;
     }
     if (followLatestRef.current) {
-      element.scrollTop = element.scrollHeight;
+      scheduleFollowLatest();
       setShowJumpToLatest(false);
     } else {
       setShowJumpToLatest(true);
@@ -2791,6 +2912,7 @@ export function MissionDetailFragment(props: {
     lastEntryFingerprint,
     lastContextOperationFingerprint,
     interactions.length,
+    scheduleFollowLatest,
   ]);
 
   useLayoutEffect(() => {
@@ -2812,7 +2934,15 @@ export function MissionDetailFragment(props: {
     }
     setTab(nextTab);
   };
+  const selectBranchCandidate = useCallback(
+    (entry: Extract<MissionChatEntry, { kind: "assistant" }>) => setBranchCandidate(entry),
+    [],
+  );
 
+  const revisionStoreId =
+    props.mission.origin.type === "system-store-revision"
+      ? props.mission.origin.storeId
+      : undefined;
   const missionStatusBar = (
     <div className="mission-detail-status-bar" aria-label={props.mission.title}>
       <p>
@@ -2844,6 +2974,18 @@ export function MissionDetailFragment(props: {
             {runtimeDisplayName(t, runtimeIdentity)}
           </>
         )}
+        {revisionStoreId !== undefined && props.onOpenKnowledgeRevision !== undefined ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <button
+              className="mission-lifecycle-status-action"
+              type="button"
+              onClick={() => props.onOpenKnowledgeRevision?.(revisionStoreId)}
+            >
+              {t("openKnowledgeRevision", { ns: "missions" })}
+            </button>
+          </>
+        ) : null}
         <span aria-hidden="true">·</span>
         <button
           className="mission-lifecycle-status-action"
@@ -2961,7 +3103,7 @@ export function MissionDetailFragment(props: {
                 if (nearBottom) setShowJumpToLatest(false);
               }}
             >
-              <div className="mission-chat-list">
+              <div className="mission-chat-list" ref={chatListRef}>
                 {chatInitialLoading && !showThinkingPlaceholder ? (
                   <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
                 ) : null}
@@ -3022,7 +3164,9 @@ export function MissionDetailFragment(props: {
                     <MissionChatEntryView
                       entry={block.item.entry}
                       key={block.item.entry.id}
+                      liveEntryStore={liveEntryStore}
                       missionId={props.mission.id}
+                      onVisibleContent={observeFirstTokenPaint}
                       paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
                       showExecutorLabel
                       showCopy={finalReplyIds.has(block.item.entry.id)}
@@ -3035,22 +3179,26 @@ export function MissionDetailFragment(props: {
                         (chat?.queue?.pendingCount ?? 0) === 0 &&
                         (chat?.pendingInteractions.length ?? 0) === 0
                       }
-                      onBranch={(entry) => setBranchCandidate(entry)}
+                      onBranch={selectBranchCandidate}
                     />
                   );
                 })}
                 {showThinkingPlaceholder ? (
                   <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
                 ) : null}
+                <span
+                  aria-hidden="true"
+                  className="mission-chat-bottom-anchor"
+                  ref={chatBottomRef}
+                />
               </div>
               {showJumpToLatest ? (
                 <button
                   className="mission-jump-latest"
                   type="button"
                   onClick={() => {
-                    const element = scrollRef.current;
-                    if (element !== null) element.scrollTop = element.scrollHeight;
                     followLatestRef.current = true;
+                    scheduleFollowLatest();
                     setShowJumpToLatest(false);
                   }}
                 >
@@ -3376,15 +3524,15 @@ export function MissionDetailFragment(props: {
                                   ? t("optionsAvailableNextTurn", { ns: "missions" })
                                   : t("missionKnowledgeSelected", {
                                       ns: "missions",
-                                      count: contextStoreIds.length,
+                                      count: props.mission.contextMounts.length,
                                     })
                             }
                             onClick={() => setContextStorePickerOpen(true)}
                           >
                             <FolderOpen size={17} aria-hidden="true" />
                             <span>{t("missionKnowledge", { ns: "missions" })}</span>
-                            {contextStoreIds.length === 0 ? null : (
-                              <strong>{contextStoreIds.length}</strong>
+                            {props.mission.contextMounts.length === 0 ? null : (
+                              <strong>{props.mission.contextMounts.length}</strong>
                             )}
                           </button>
                           <ToolPermissionSelect
@@ -3566,17 +3714,26 @@ export function MissionDetailFragment(props: {
           onSelectedStoreIdsChange={setContextStoreIds}
           onGoToKnowledgeBases={props.onOpenKnowledgeBases}
           onClose={() => {
-            const nextIds = [...contextStoreIds];
+            const nextMounts: readonly MissionContextMount[] = [
+              ...contextStoreIds.map((storeId) => ({
+                kind: "context-store" as const,
+                storeId,
+              })),
+              ...props.mission.contextMounts.filter(
+                (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+                  mount.kind === "context-store-draft",
+              ),
+            ];
             setContextStorePickerOpen(false);
-            if (
-              nextIds.length === props.mission.contextStoreIds.length &&
-              nextIds.every((storeId, index) => storeId === props.mission.contextStoreIds[index])
-            )
-              return;
+            if (JSON.stringify(nextMounts) === JSON.stringify(props.mission.contextMounts)) return;
             setContextStoresSaving(true);
-            void Promise.resolve(props.onContextStoresChange?.(nextIds))
+            void Promise.resolve(props.onContextStoresChange?.(nextMounts))
               .catch((saveError: unknown) => {
-                setContextStoreIds(props.mission.contextStoreIds);
+                setContextStoreIds(
+                  props.mission.contextMounts.flatMap((mount) =>
+                    mount.kind === "context-store" ? [mount.storeId] : [],
+                  ),
+                );
                 setOptionsError(missionError(saveError));
               })
               .finally(() => setContextStoresSaving(false));
@@ -4460,9 +4617,12 @@ function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
 
 export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
+  readonly liveEntryStore?: MissionLiveEntryStore | undefined;
   readonly missionId?: string | undefined;
   readonly userLabel?: string | undefined;
   readonly paintExecutionId?: string | undefined;
+  readonly onVisibleContent?:
+    ((executionId: string | undefined, element: HTMLElement | null) => void) | undefined;
   readonly showExecutorLabel?: boolean | undefined;
   readonly showCopy?: boolean | undefined;
   readonly showBranch?: boolean | undefined;
@@ -4470,8 +4630,18 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
     ((entry: Extract<MissionChatEntry, { kind: "assistant" }>) => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
+  const entry = useMissionLiveEntry(props.liveEntryStore, props.entry);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const copyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const assistantElementRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (entry.kind !== "assistant" || entry.content.length === 0) return;
+    props.onVisibleContent?.(
+      props.paintExecutionId ?? entry.executionId,
+      assistantElementRef.current,
+    );
+  }, [entry, props.onVisibleContent, props.paintExecutionId]);
 
   useEffect(
     () => () => {
@@ -4489,8 +4659,8 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
     }, 2_000);
   };
 
-  if (props.entry.kind === "user") {
-    if (props.entry.delivery?.removed === true || props.entry.delivery?.status === "queued") {
+  if (entry.kind === "user") {
+    if (entry.delivery?.removed === true || entry.delivery?.status === "queued") {
       return null;
     }
     return (
@@ -4500,37 +4670,45 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
             <small className="mission-message-sender">{props.userLabel}</small>
           )}
           <MissionMessageAttachments
-            attachments={props.entry.attachments ?? []}
+            attachments={entry.attachments ?? []}
             missionId={props.missionId}
           />
-          <MissionMessageContent source={props.entry.content} />
+          <MissionMessageContent source={entry.content} />
         </div>
       </div>
     );
   }
-  if (props.entry.kind === "thinking") {
+  if (entry.kind === "thinking") {
     return (
       <MissionThinkingEntry
-        entry={props.entry}
+        entry={entry}
+        onVisibleContent={props.onVisibleContent}
         paintExecutionId={props.paintExecutionId}
         showExecutorLabel={props.showExecutorLabel}
       />
     );
   }
-  if (props.entry.kind === "tool") {
-    return <MissionToolCallEntry entry={props.entry} />;
+  if (entry.kind === "tool") {
+    return <MissionToolCallEntry entry={entry} />;
   }
-  if (props.entry.kind === "agent_activity") {
-    return <MissionAgentActivityEntry entry={props.entry} />;
+  if (entry.kind === "agent_activity") {
+    return <MissionAgentActivityEntry entry={entry} />;
   }
-  if (props.entry.kind === "context_operation") {
-    return <MissionContextOperationEntry operation={props.entry} retryDisabled={false} />;
+  if (entry.kind === "context_operation") {
+    return <MissionContextOperationEntry operation={entry} retryDisabled={false} />;
   }
-  const assistantEntry = props.entry;
+  const assistantEntry = entry;
   return (
-    <div className="mission-assistant-message" data-mission-execution-id={props.paintExecutionId}>
+    <div
+      className="mission-assistant-message"
+      data-mission-execution-id={props.paintExecutionId}
+      ref={assistantElementRef}
+    >
       {props.showExecutorLabel ? <MissionExecutorLabel entry={assistantEntry} /> : null}
-      <MissionMessageContent source={assistantEntry.content} />
+      <MissionMessageContent
+        source={assistantEntry.content}
+        streaming={assistantEntry.streaming === true}
+      />
       {props.showCopy || props.showBranch ? (
         <div className="mission-message-actions">
           {props.showCopy ? (
@@ -4687,13 +4865,21 @@ function MissionAgentActivityEntry(props: {
 export function MissionThinkingEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "thinking" }>;
   readonly paintExecutionId?: string | undefined;
+  readonly onVisibleContent?:
+    ((executionId: string | undefined, element: HTMLElement | null) => void) | undefined;
   readonly showExecutorLabel?: boolean | undefined;
 }) {
   const { t } = useTranslation("missions");
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
+  const elementRef = useRef<HTMLDivElement | null>(null);
   const streaming = props.entry.streaming === true;
   const showsFullContent = streaming || expanded;
+
+  useLayoutEffect(() => {
+    if (props.entry.content.length === 0) return;
+    props.onVisibleContent?.(props.paintExecutionId ?? props.entry.executionId, elementRef.current);
+  }, [props.entry, props.onVisibleContent, props.paintExecutionId]);
 
   return (
     <div
@@ -4702,6 +4888,7 @@ export function MissionThinkingEntry(props: {
       }`}
       data-mission-execution-id={props.paintExecutionId ?? props.entry.executionId}
       aria-live={streaming ? "polite" : undefined}
+      ref={elementRef}
     >
       {props.showExecutorLabel ? <MissionExecutorLabel entry={props.entry} /> : null}
       <p id={contentId}>{props.entry.content}</p>
@@ -4721,7 +4908,7 @@ export function MissionThinkingEntry(props: {
   );
 }
 
-export function MissionToolCallBlock(props: {
+export const MissionToolCallBlock = memo(function MissionToolCallBlock(props: {
   readonly collapsed: boolean;
   readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
 }) {
@@ -4753,6 +4940,23 @@ export function MissionToolCallBlock(props: {
         ))}
       </div>
     </details>
+  );
+}, sameMissionToolCallBlockProps);
+
+function sameMissionToolCallBlockProps(
+  previous: {
+    readonly collapsed: boolean;
+    readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+  },
+  next: {
+    readonly collapsed: boolean;
+    readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+  },
+): boolean {
+  return (
+    previous.collapsed === next.collapsed &&
+    previous.entries.length === next.entries.length &&
+    previous.entries.every((entry, index) => entry === next.entries[index])
   );
 }
 
@@ -4984,10 +5188,15 @@ export function MissionWorkDrawer(props: {
 
 const MissionMessageContent = memo(function MissionMessageContent(props: {
   readonly source: string;
+  readonly streaming?: boolean | undefined;
 }) {
   return (
     <div className="mission-markdown">
-      <MarkdownContent source={props.source} codeBlockControls />
+      {props.streaming === true ? (
+        <StreamingMarkdownContent source={props.source} codeBlockControls />
+      ) : (
+        <MarkdownContent source={props.source} codeBlockControls />
+      )}
     </div>
   );
 });
@@ -5443,6 +5652,7 @@ export function applyMissionChatPatches(
   revision: number,
 ): MissionChatSnapshot | null {
   const entries = [...snapshot.entries];
+  const entryIndexById = new Map(entries.map((entry, index) => [entry.id, index] as const));
   for (const patch of patches) {
     if (patch.type === "context-window.update") {
       if (snapshot.contextWindow === undefined) return null;
@@ -5453,9 +5663,11 @@ export function applyMissionChatPatches(
       continue;
     }
     if (patch.type === "entry.upsert") {
-      const existingIndex = entries.findIndex((entry) => entry.id === patch.entry.id);
-      if (existingIndex === -1) entries.push({ ...patch.entry });
-      else {
+      const existingIndex = entryIndexById.get(patch.entry.id);
+      if (existingIndex === undefined) {
+        entryIndexById.set(patch.entry.id, entries.length);
+        entries.push({ ...patch.entry });
+      } else {
         const existing = entries[existingIndex]!;
         entries[existingIndex] = {
           ...patch.entry,
@@ -5472,8 +5684,8 @@ export function applyMissionChatPatches(
       }
       continue;
     }
-    const index = entries.findIndex((entry) => entry.id === patch.entryId);
-    if (index === -1) return null;
+    const index = entryIndexById.get(patch.entryId);
+    if (index === undefined) return null;
     const entry = entries[index]!;
     if (patch.type === "entry.streaming") {
       if (entry.kind !== "assistant" && entry.kind !== "thinking") return null;
@@ -5495,6 +5707,10 @@ export function applyMissionChatPatches(
     };
   }
   return { ...snapshot, revision, entries };
+}
+
+export function missionChatPatchesRequireRender(patches: readonly MissionChatPatch[]): boolean {
+  return patches.some((patch) => patch.type !== "entry.append" || patch.field !== "content");
 }
 
 function firstVisiblePatchExecutionId(
@@ -5771,18 +5987,27 @@ export function missionStatusLabel(mission: Mission | MissionSummary, preparing 
 }
 
 function missionListSourceForMission(mission: Mission): MissionListSource {
-  return mission.origin.type === "automation" ? "automation" : "task";
+  return ["automation", "system-store-revision"].includes(mission.origin.type)
+    ? "automation"
+    : "task";
 }
 
 export function missionListSourceForSummary(mission: MissionSummary): MissionListSource {
-  return mission.source.type === "automation" ? "automation" : "task";
+  return mission.source.type === "task" ? "task" : "automation";
 }
 
 function missionToSummary(
   mission: Mission,
   source: MissionSummary["source"] = mission.origin.type === "automation"
     ? { type: "automation", automationRef: mission.origin.automationRef }
-    : { type: "task" },
+    : mission.origin.type === "system-store-revision"
+      ? {
+          type: "managed-automation",
+          kind: "knowledge-revision",
+          jobId: mission.origin.jobId,
+          storeId: mission.origin.storeId,
+        }
+      : { type: "task" },
 ): MissionSummary {
   return {
     id: mission.id,

@@ -138,9 +138,13 @@ export function createLocalHostProjectCatalog(options: {
         runtimes: options.runtimes,
         loggerProvider: options.loggerProvider,
       });
-      if (compiled.projectFingerprint !== location.projectFingerprint) {
+      const expectedCompiledFingerprint =
+        location.derivedProjectFingerprint ?? location.projectFingerprint;
+      if (compiled.projectFingerprint !== expectedCompiledFingerprint) {
         throw new Error(
-          `Compiled project fingerprint does not match the published revision: ${location.projectId}@${location.revision}.`,
+          `Compiled project fingerprint does not match the ${
+            location.derivedProjectFingerprint === undefined ? "published" : "derived compiler view"
+          } revision: ${location.projectId}@${location.revision}.`,
         );
       }
       return {
@@ -148,7 +152,10 @@ export function createLocalHostProjectCatalog(options: {
           resource,
           projectId: location.projectId,
           revision: location.revision,
-          fingerprint: compiled.projectFingerprint,
+          // The descriptor is the stable Mission/Revision pin. A migrated
+          // compiler view may have a different derived fingerprint, but that
+          // value must never replace the historical source fingerprint.
+          fingerprint: location.projectFingerprint,
         }),
         definition: compiled.value,
       };

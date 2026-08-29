@@ -609,14 +609,24 @@ function validateExpectedRevision(
       id: input.id,
       expectedRevision: input.expectedRevision,
       actualRevision: existing.revision,
+      currentRevision: existing.revision,
+      ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
+      ...(existing.etag === undefined
+        ? {}
+        : { actualEtag: existing.etag, currentEtag: existing.etag }),
     });
   }
 
   if (input.expectedEtag !== undefined && existing.etag !== input.expectedEtag) {
     return error("context_conflict", `Context etag conflict: ${input.id}`, {
       id: input.id,
+      ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+      ...(existing.revision === undefined
+        ? {}
+        : { actualRevision: existing.revision, currentRevision: existing.revision }),
       expectedEtag: input.expectedEtag,
       actualEtag: existing.etag,
+      currentEtag: existing.etag,
     });
   }
 

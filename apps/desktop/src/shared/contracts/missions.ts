@@ -141,6 +141,10 @@ const MissionBaseSchema = z.object({
       sessionId: z.string().uuid().optional(),
       status: MissionExecutionStatusSchema,
       waitReason: z.enum(["experts", "human_input"]).optional(),
+      contextMountsFingerprint: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().optional(),
       error: z.string().max(10_000).optional(),
@@ -257,6 +261,41 @@ const MissionContextStoreIdsSchema = z
     }
   });
 
+export const MissionContextMountSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("context-store"),
+      storeId: ContextStoreIdSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("context-store-draft"),
+      draftId: z.string().uuid(),
+      revisionJobId: z.string().uuid().optional(),
+    })
+    .strict(),
+]);
+
+export const MissionContextMountsSchema = z
+  .array(MissionContextMountSchema)
+  .max(200)
+  .superRefine((mounts, context) => {
+    const seen = new Set<string>();
+    for (const [index, mount] of mounts.entries()) {
+      const identity =
+        mount.kind === "context-store" ? `store:${mount.storeId}` : `draft:${mount.draftId}`;
+      if (seen.has(identity)) {
+        context.addIssue({
+          code: "custom",
+          message: "Mission Context mounts must be unique.",
+          path: [index],
+        });
+      }
+      seen.add(identity);
+    }
+  });
+
 export const MissionV8Schema = MissionBaseSchema.extend({
   schemaVersion: z.literal("pragma.mission/v8"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
@@ -287,11 +326,41 @@ export const MissionBranchSourceSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
-export const MissionSchema = MissionBaseSchema.extend({
+export const MissionV9Schema = MissionBaseSchema.extend({
   schemaVersion: z.literal("pragma.mission/v9"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
   origin: MissionOriginSchema.default({ type: "user" }),
   contextStoreIds: MissionContextStoreIdsSchema,
+  branch: MissionBranchSourceSchema.optional(),
+}).superRefine((mission, context) => {
+  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions require flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only Flow missions may store flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.branch !== undefined && mission.executor.kind === "flow") {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions cannot be conversation branches.",
+      path: ["branch"],
+    });
+  }
+});
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v10"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+  origin: MissionOriginSchema.default({ type: "user" }),
+  contextMounts: MissionContextMountsSchema,
   branch: MissionBranchSourceSchema.optional(),
 }).superRefine((mission, context) => {
   if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
@@ -337,6 +406,12 @@ export const MissionSummarySchema = z.object({
       type: z.literal("automation"),
       automationRef: PragmaAutomationRefSchema,
     }),
+    z.object({
+      type: z.literal("managed-automation"),
+      kind: z.literal("knowledge-revision"),
+      jobId: z.string().uuid(),
+      storeId: z.string().uuid(),
+    }),
   ]),
   lifecycleStatus: MissionLifecycleStatusSchema,
   updatedAt: z.string().datetime(),
@@ -355,12 +430,22 @@ export const MissionUpdateSchema = z.discriminatedUnion("kind", [
 ]);
 
 export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSchema>): boolean {
-  return origin.type === "user" || origin.type === "automation";
+  return (
+    origin.type === "user" ||
+    origin.type === "automation" ||
+    origin.type === "system-store-revision"
+  );
 }
 
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),
-  contextStoreIds: MissionContextStoreIdsSchema.default([]),
+  contextMounts: MissionContextMountsSchema.refine(
+    (mounts) =>
+      mounts.every(
+        (mount) => mount.kind !== "context-store-draft" || mount.revisionJobId === undefined,
+      ),
+    "Managed revision draft claims are Host-owned.",
+  ).default([]),
   executor: z.object({
     ref: MissionExecutorRefSchema,
   }),
@@ -439,9 +524,9 @@ export const UpdateMissionOptionsSchema = z.object({
   modelOverride: MissionModelOverrideSchema.nullable(),
 });
 
-export const UpdateMissionContextStoresSchema = z.object({
+export const UpdateMissionContextMountsSchema = z.object({
   id: MissionIdSchema,
-  contextStoreIds: MissionContextStoreIdsSchema,
+  contextMounts: MissionContextMountsSchema,
 });
 
 export function isMissionExecutorResource(

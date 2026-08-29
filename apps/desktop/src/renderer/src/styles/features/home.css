@@ -6,7 +6,7 @@
   padding: 54px 72px 42px;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 22%, rgb(151 189 87 / 9%), transparent 30%), var(--background);
+    radial-gradient(circle at 50% 22%, rgb(145 163 151 / 6%), transparent 30%), var(--background);
 }
 
 .mission-create {
@@ -539,6 +539,11 @@
   outline: 0;
   color: var(--green-dark);
   box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-executor-option-actions > button:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .mission-executor-empty {

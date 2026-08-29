@@ -594,6 +594,7 @@ export function ExpertEditorFragment(props: {
                   resourceTools={draft.resourceTools}
                   contextStoreMounts={draft.contextStoreMounts}
                   capabilityReferences={draft.capabilities}
+                  fixedCapabilities={draft.persisted?.opaqueCapabilities}
                   toolApprovals={draft.toolApprovals}
                   allowResourceTools={!isBuiltIn}
                   onResourceToolsChange={(resourceTools) =>

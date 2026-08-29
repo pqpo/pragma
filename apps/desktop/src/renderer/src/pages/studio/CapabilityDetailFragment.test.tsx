@@ -70,6 +70,41 @@ describe("CapabilityDetailFragment", () => {
     );
   });
 
+  it("marks a system capability as built-in, keeps testing, and hides refresh", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDetailFragment
+        capability={{
+          ...capability,
+          managedBy: "system",
+          manifest: { ...capability.manifest, kind: "mcp_server" },
+          definition: {
+            kind: "mcp_server",
+            name: "Pragma management tools",
+            description: "Built-in Host tools.",
+            connection: { transport: "streamable-http", url: "http://pragma.invalid/builtin" },
+            timeoutMs: 30_000,
+            tools: [
+              {
+                name: "knowledge_revision_list_targets",
+                description: "List targets.",
+                schemaHash: "sha256:test",
+                inputSchema: {},
+              },
+            ],
+          },
+        }}
+        onBack={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Built-in");
+    expect(html).toContain('class="capability-detail-name-row"');
+    expect(html).toContain('class="capability-built-in-chip">Built-in');
+    expect(html).toContain("Run test");
+    expect(html).not.toContain("Refresh tools");
+  });
+
   it.each([
     {
       name: "MCP",

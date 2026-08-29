@@ -19,6 +19,7 @@ import {
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
+  MissionContextMountsSchema,
   MissionModelOptionsSchema,
   MissionSchema,
   MissionUpdateSchema,
@@ -218,8 +219,8 @@ describe("runtime settings contracts", () => {
         status: "ready",
       },
       interpreter: {
-        writeVersion: "pragma.dsl/v8",
-        directReadVersions: ["pragma.dsl/v8"],
+        writeVersion: "pragma.dsl/v9",
+        directReadVersions: ["pragma.dsl/v9"],
         upgradeFromVersions: [
           "pragma.dsl/v2",
           "pragma.dsl/v3",
@@ -271,8 +272,8 @@ describe("runtime settings contracts", () => {
       DesktopBridgeSnapshotSchema.safeParse({
         ...snapshot,
         interpreter: {
-          writeVersion: "pragma.dsl/v8",
-          directReadVersions: ["pragma.dsl/v8"],
+          writeVersion: "pragma.dsl/v9",
+          directReadVersions: ["pragma.dsl/v9"],
           upgradeFromVersions: [],
         },
       }).success,
@@ -909,14 +910,43 @@ describe("mission contracts", () => {
     expect(CreateMissionSchema.safeParse(input).success).toBe(true);
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
     expect(
-      CreateMissionSchema.parse({ ...input, contextStoreIds: [contextStoreId] }).contextStoreIds,
-    ).toEqual([contextStoreId]);
+      CreateMissionSchema.parse({
+        ...input,
+        contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+      }).contextMounts,
+    ).toEqual([{ kind: "context-store", storeId: contextStoreId }]);
     expect(
       CreateMissionSchema.safeParse({
         ...input,
-        contextStoreIds: [contextStoreId, contextStoreId],
+        contextMounts: [
+          { kind: "context-store", storeId: contextStoreId },
+          { kind: "context-store", storeId: contextStoreId },
+        ],
       }).success,
     ).toBe(false);
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    expect(
+      CreateMissionSchema.parse({
+        ...input,
+        contextMounts: [{ kind: "context-store-draft", draftId }],
+      }).contextMounts,
+    ).toEqual([{ kind: "context-store-draft", draftId }]);
+    expect(
+      CreateMissionSchema.safeParse({
+        ...input,
+        contextMounts: [{ kind: "context-store-draft", draftId, revisionJobId: draftId }],
+      }).success,
+    ).toBe(false);
+    expect(
+      MissionContextMountsSchema.safeParse([
+        { kind: "context-store-draft", draftId, revisionJobId: draftId },
+        {
+          kind: "context-store-draft",
+          draftId: "20000000-0000-4000-8000-000000000003",
+          revisionJobId: "30000000-0000-4000-8000-000000000003",
+        },
+      ]).success,
+    ).toBe(true);
     expect(
       CreateMissionSchema.parse({ ...input, toolPermissionMode: "full-access" }).toolPermissionMode,
     ).toBe("full-access");
@@ -949,7 +979,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v9",
+        schemaVersion: "pragma.mission/v10",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -961,7 +991,7 @@ describe("mission contracts", () => {
           ref: "team:gmpsevbrb8danedb",
           name: "Delivery Team",
         },
-        contextStoreIds: [],
+        contextMounts: [],
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",
         updatedAt: "2026-07-11T00:00:00.000Z",
@@ -971,7 +1001,7 @@ describe("mission contracts", () => {
 
   it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v9",
+      schemaVersion: "pragma.mission/v10",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",
@@ -983,7 +1013,7 @@ describe("mission contracts", () => {
         ref: "expert:1xddvess309a6gme",
         name: "Writer",
       },
-      contextStoreIds: [],
+      contextMounts: [],
       execution: {
         id: "00000000-0000-4000-8000-000000000002",
         inputMessageId: "00000000-0000-4000-8000-000000000001",

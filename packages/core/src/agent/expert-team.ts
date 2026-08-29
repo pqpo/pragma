@@ -1,10 +1,6 @@
 import type { Expert } from "./expert-agent.ts";
 import type { ExpertAgentContextStore } from "../context-system/context-system.ts";
 import { normalizeRuntimeByExpert, type RuntimeByExpert } from "./agent-launcher.ts";
-import {
-  freshContextIdResolver,
-  type ContextIdResolver,
-} from "../execution/context-id-resolver.ts";
 
 export type ExpertDefinition = Expert | ExpertTeam;
 
@@ -17,7 +13,6 @@ export interface ExpertTeamDelegationOptions {
     | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
-  readonly contextId?: ContextIdResolver | undefined;
   readonly runtimeByExpert?: RuntimeByExpert | undefined;
 }
 
@@ -61,7 +56,6 @@ export interface ExpertTeam {
     };
     readonly maxConcurrency: number;
     readonly maxDepth: number;
-    readonly contextId: ContextIdResolver;
     readonly runtimeByExpert: ReadonlyMap<string, string>;
   };
 }
@@ -168,7 +162,6 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
       permissions: Object.freeze({ spawn, interact }),
       maxConcurrency,
       maxDepth,
-      contextId: options.delegation.contextId ?? freshContextIdResolver,
       runtimeByExpert,
     }),
   });

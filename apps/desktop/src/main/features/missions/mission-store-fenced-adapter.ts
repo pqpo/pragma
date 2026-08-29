@@ -45,9 +45,9 @@ export function createFencedMissionStore(
         );
         return;
       case "mission.context-stores.update":
-        await store.updateContextStores(
+        await store.updateContextMounts(
           String(operation.input.id),
-          operation.input.contextStoreIds as Parameters<MissionStore["updateContextStores"]>[1],
+          operation.input.contextMounts as Parameters<MissionStore["updateContextMounts"]>[1],
         );
         return;
       case "mission.execution.update":
@@ -119,12 +119,12 @@ export function createFencedMissionStore(
         named("mission.options.update", { id, input }),
         async () => await store.updateOptions(id, input),
       ),
-    updateContextStores: async (id, contextStoreIds) =>
+    updateContextMounts: async (id, contextMounts) =>
       await write(
         id,
         "mission.context-stores.updated",
-        named("mission.context-stores.update", { id, contextStoreIds: [...contextStoreIds] }),
-        async () => await store.updateContextStores(id, contextStoreIds),
+        named("mission.context-stores.update", { id, contextMounts: [...contextMounts] }),
+        async () => await store.updateContextMounts(id, contextMounts),
       ),
     updateExecution: async (id, execution, guard) =>
       await write(

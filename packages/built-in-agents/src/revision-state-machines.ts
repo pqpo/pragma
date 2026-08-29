@@ -12,16 +12,16 @@ import {
 } from "./revision-contracts.ts";
 
 export type ContextStoreRevisionEvent =
-  | { readonly type: "generation_started" }
-  | { readonly type: "generation_recovered" }
-  | { readonly type: "generation_succeeded"; readonly changeSet: ContextStoreChangeSet }
-  | { readonly type: "generation_failed"; readonly code: string; readonly message: string }
+  | { readonly type: "editing_started" }
+  | { readonly type: "execution_started" }
+  | { readonly type: "submitted" }
+  | { readonly type: "execution_failed"; readonly code: string; readonly message: string }
   | { readonly type: "approved" }
   | { readonly type: "rejected" }
   | { readonly type: "retried" }
-  | { readonly type: "apply_succeeded" }
-  | { readonly type: "apply_failed"; readonly code: string; readonly message: string }
-  | { readonly type: "superseded"; readonly replacementId: string };
+  | { readonly type: "merge_succeeded" }
+  | { readonly type: "merge_failed"; readonly code: string; readonly message: string }
+  | { readonly type: "rebase_required" };
 
 export function transitionContextStoreRevisionJob(
   current: ContextStoreRevisionJob,
@@ -30,42 +30,36 @@ export function transitionContextStoreRevisionJob(
 ): ContextStoreRevisionJob {
   const next = (() => {
     switch (event.type) {
-      case "generation_started":
-        requireState(current.state, ["pending"]);
+      case "editing_started":
+        requireState(current.state, ["rejected", "needs_attention", "needs_rebase"]);
+        return { ...current, state: "editing" as const, error: undefined };
+      case "execution_started":
+        requireState(current.state, ["editing"]);
         return { ...current, state: "running" as const };
-      case "generation_recovered":
-        requireState(current.state, ["running"]);
-        return { ...current, state: "pending" as const, changeSet: undefined, error: undefined };
-      case "generation_succeeded":
-        requireState(current.state, ["running"]);
-        return {
-          ...current,
-          state: "pending_review" as const,
-          changeSet: ContextStoreChangeSetSchema.parse(event.changeSet),
-          error: undefined,
-        };
-      case "generation_failed":
+      case "submitted":
+        requireState(current.state, ["editing", "running"]);
+        return { ...current, state: "pending_review" as const, error: undefined };
+      case "execution_failed":
         requireState(current.state, ["running"]);
         return { ...current, state: "needs_attention" as const, error: errorOf(event) };
       case "approved":
         requireState(current.state, ["pending_review"]);
-        if (current.changeSet === undefined) throw new Error("revision_changeset_missing");
-        return { ...current, state: "applying" as const };
+        return { ...current, state: "merging" as const };
       case "rejected":
         requireState(current.state, ["pending_review"]);
         return { ...current, state: "rejected" as const };
       case "retried":
-        requireState(current.state, ["needs_attention", "rejected"]);
-        return { ...current, state: "pending" as const, changeSet: undefined, error: undefined };
-      case "apply_succeeded":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "completed" as const, error: undefined };
-      case "apply_failed":
-        requireState(current.state, ["applying"]);
+        requireState(current.state, ["needs_attention", "rejected", "needs_rebase"]);
+        return { ...current, state: "editing" as const, error: undefined };
+      case "merge_succeeded":
+        requireState(current.state, ["merging"]);
+        return { ...current, state: "merged" as const, error: undefined };
+      case "merge_failed":
+        requireState(current.state, ["merging"]);
         return { ...current, state: "needs_attention" as const, error: errorOf(event) };
-      case "superseded":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "superseded" as const, supersededBy: event.replacementId };
+      case "rebase_required":
+        requireState(current.state, ["pending_review", "merging"]);
+        return { ...current, state: "needs_rebase" as const };
     }
   })();
   return ContextStoreRevisionJobSchema.parse({
@@ -201,7 +195,102 @@ export function assertProgressiveKnowledgeStructure(
       });
     }
   }
-  ProgressiveKnowledgeStoreFilesSchema.parse([...projected.values()]);
+  const files = [...projected.values()];
+  const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
+  const structure = ProgressiveKnowledgeStoreFilesSchema.safeParse(files);
+  if (!structure.success) {
+    diagnostics.push(
+      ...structure.error.issues.map((issue) => ({
+        id: diagnosticFileId(issue.path, issue.message, files),
+        reason: issue.message,
+      })),
+    );
+  }
+  diagnostics.push(...validateNavigationLinks(files));
+  if (diagnostics.length > 0) throw new KnowledgeDraftValidationError(diagnostics);
+}
+
+export interface KnowledgeDraftValidationDiagnostic {
+  readonly id: string;
+  readonly reason: string;
+}
+
+export class KnowledgeDraftValidationError extends Error {
+  readonly code = "knowledge_draft_validation_failed" as const;
+
+  constructor(readonly diagnostics: readonly KnowledgeDraftValidationDiagnostic[]) {
+    super(
+      [
+        "Knowledge draft validation failed:",
+        ...diagnostics.map((diagnostic) => `- ${diagnostic.id}: ${diagnostic.reason}`),
+      ].join("\n"),
+    );
+    this.name = "KnowledgeDraftValidationError";
+  }
+}
+
+function diagnosticFileId(
+  path: readonly PropertyKey[],
+  message: string,
+  files: ReadonlyArray<ContextStoreRevisionSnapshot["files"][number]>,
+): string {
+  const index = path.find((segment): segment is number => typeof segment === "number");
+  if (index !== undefined && files[index] !== undefined) return files[index].id;
+  const mentioned = message.match(/(?:guide|overview|index)\.md|indexes\/[\w./-]+\.md/u)?.[0];
+  return mentioned ?? "store";
+}
+
+function validateNavigationLinks(
+  files: ReadonlyArray<ContextStoreRevisionSnapshot["files"][number]>,
+): readonly KnowledgeDraftValidationDiagnostic[] {
+  const ids = new Set(files.map((file) => file.id));
+  const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
+  for (const file of files.filter(
+    (candidate) =>
+      candidate.id === "overview.md" ||
+      candidate.id === "index.md" ||
+      candidate.id.startsWith("indexes/"),
+  )) {
+    const content = file.content.replace(
+      /(?:^|\n)(?:```|~~~)[\s\S]*?(?:\n(?:```|~~~)(?=\n|$)|$)/gu,
+      "\n",
+    );
+    const missing = new Set<string>();
+    for (const match of content.matchAll(
+      /!?\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)/gu,
+    )) {
+      const rawTarget = (match[1] ?? match[2] ?? "").trim();
+      if (
+        rawTarget.length === 0 ||
+        rawTarget.startsWith("#") ||
+        /^[a-z][a-z0-9+.-]*:/iu.test(rawTarget)
+      ) {
+        continue;
+      }
+      const target = rawTarget.split(/[?#]/u, 1)[0] ?? "";
+      const direct = normalizeKnowledgePath(target);
+      const parent = file.id.includes("/") ? file.id.slice(0, file.id.lastIndexOf("/")) : "";
+      const relative = normalizeKnowledgePath(parent.length === 0 ? target : `${parent}/${target}`);
+      if (direct.length > 0 && !ids.has(direct) && !ids.has(relative)) missing.add(rawTarget);
+    }
+    for (const target of missing) {
+      diagnostics.push({
+        id: file.id,
+        reason: `Internal Markdown link target does not exist: ${target}`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+function normalizeKnowledgePath(value: string): string {
+  const segments: string[] = [];
+  for (const segment of value.replace(/^\/+|\.\//gu, "").split("/")) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  return segments.join("/");
 }
 
 function requireState(current: string, allowed: readonly string[]): void {

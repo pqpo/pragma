@@ -29,6 +29,13 @@ import {
   createLocalHostProjectCatalogFromHome,
   LOCAL_HOST_DEFAULT_PROJECT_ID,
 } from "../src/index.ts";
+import {
+  HISTORICAL_V8_FLOW_ID,
+  HISTORICAL_V8_PROJECT_FINGERPRINT,
+  HISTORICAL_V8_PROJECT_ID,
+  HISTORICAL_V8_TEAM_ID,
+  writeHistoricalV8PublishedProjectFixture,
+} from "./fixtures/published-project-v8.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -103,6 +110,38 @@ describe("Local Host project catalog", { timeout: 10_000 }, () => {
         }),
       ]),
     });
+  });
+
+  it("compiles the real M7 v8 Expert, Team, and Flow through a derived v9 view", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-host-project-v8-"));
+    temporaryRoots.push(home);
+    await writeHistoricalV8PublishedProjectFixture(home);
+    const catalog = createLocalHostProjectCatalogFromHome({
+      pragmaHome: home,
+      runtimes: createTestRuntimeResolver(),
+    });
+    const workspace = createWorkspace(home);
+
+    await expect(catalog.listProjects()).resolves.toEqual([
+      {
+        id: HISTORICAL_V8_PROJECT_ID,
+        revision: 1,
+        fingerprint: HISTORICAL_V8_PROJECT_FINGERPRINT,
+      },
+    ]);
+    for (const ref of [
+      { kind: "expert" as const, id: "mrvsehytqfmb814x" },
+      { kind: "team" as const, id: HISTORICAL_V8_TEAM_ID },
+      { kind: "flow" as const, id: HISTORICAL_V8_FLOW_ID },
+    ]) {
+      const resolved = await catalog.resolve({ ref, workspace });
+      expect(resolved?.descriptor.project).toEqual({
+        projectId: HISTORICAL_V8_PROJECT_ID,
+        revision: 1,
+        fingerprint: HISTORICAL_V8_PROJECT_FINGERPRINT,
+      });
+      expect(resolved?.definition).toMatchObject({ id: ref.id });
+    }
   });
 });
 
@@ -190,7 +229,6 @@ async function writePublishedProject(home: string): Promise<{
           permissions: { interact: {} },
           maxConcurrency: 2,
           maxDepth: 2,
-          context: "context-policy:pragma.fresh@v1",
           runtimes: {},
         },
       },

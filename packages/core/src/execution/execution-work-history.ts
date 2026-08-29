@@ -43,6 +43,25 @@ export interface ExecutionWorkRecord {
   readonly updatedAt: string;
 }
 
+export interface ExecutionWorkMessageInput {
+  readonly id: string;
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly content: string;
+  readonly createdAt: string;
+}
+
+export interface ExecutionWorkConversationProjection {
+  readonly output: ReadonlyMap<string, readonly AgentMessageRecord[]>;
+  readonly messageInputs: ReadonlyMap<string, readonly ExecutionWorkMessageInput[]>;
+  readonly supersededTaskIds: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+export interface ExecutionWorkProjection {
+  readonly records: readonly ExecutionWorkRecord[];
+  readonly conversations: ExecutionWorkConversationProjection;
+}
+
 interface MutableWorkRecord {
   recordId: string;
   kind: ExecutionWorkRecordKind;
@@ -137,11 +156,11 @@ export class ExecutionWorkHistoryReader {
       }
 
       for (const agent of agents) {
-        const recordId = `agent:${executionId}:${agent.agentId}`;
+        const recordId = `agent-context:${agent.contextId}`;
         const record = ensureRecord(records, {
           recordId,
           kind: "agent",
-          sessionId: agent.agentId,
+          sessionId: agent.contextId,
           executorId: agent.definition.id,
           contextId: agent.contextId,
           origin: "core",
@@ -383,6 +402,195 @@ export class ExecutionWorkHistoryReader {
     );
     return { records, output };
   }
+
+  /**
+   * Builds the complete Work projection in one storage pass. Mission-style UIs first request the
+   * record map and then open several individual conversations; retaining this compact projection
+   * avoids rereading and reparsing every Execution event log for each opened record.
+   */
+  async readProjection(input: {
+    readonly executionIds: readonly string[];
+    readonly rootSessionId?: string | undefined;
+  }): Promise<ExecutionWorkProjection> {
+    const preloadedData = new Map<
+      string,
+      {
+        readonly events: readonly import("@pragma/shared").ExecutionEvent[];
+        readonly invocations: readonly Invocation[];
+      }
+    >();
+    const records = await this.listRecords(input, preloadedData);
+    const coreRecordByInvocationId = new Map<string, string>();
+    const runtimeRecordBySessionId = new Map<string, string>();
+    for (const record of records) {
+      if (record.origin === "runtime") {
+        runtimeRecordBySessionId.set(record.sessionId, record.recordId);
+        continue;
+      }
+      for (const task of record.tasks) {
+        coreRecordByInvocationId.set(task.invocationId, record.recordId);
+      }
+    }
+
+    const output = new Map<string, AgentMessageRecord[]>();
+    const messageInputs = new Map<string, ExecutionWorkMessageInput[]>();
+    const supersededTaskIds = new Map<string, Set<string>>();
+    const appendOutput = (recordId: string, record: AgentMessageRecord): void => {
+      const current = output.get(recordId) ?? [];
+      current.push(record);
+      output.set(recordId, current);
+    };
+    const appendInput = (recordId: string, inputMessage: ExecutionWorkMessageInput): void => {
+      const current = messageInputs.get(recordId) ?? [];
+      if (!current.some((candidate) => candidate.id === inputMessage.id)) {
+        current.push(inputMessage);
+        messageInputs.set(recordId, current);
+      }
+    };
+
+    for (const executionId of input.executionIds) {
+      const preloaded = preloadedData.get(executionId);
+      if (preloaded === undefined) continue;
+      const invocationMap = new Map(
+        preloaded.invocations.map((invocation) => [invocation.invocationId, invocation]),
+      );
+      const queuedCommandsBySessionId = new Map<
+        string,
+        Array<{ readonly commandId: string; readonly action: "spawn" | "send" }>
+      >();
+      const queuedCommandIdsBySessionId = new Map<string, Set<string>>();
+
+      for (const event of preloaded.events) {
+        if (event.type === "invocation.message.appended") {
+          const parsed = InvocationMessageAppendedEventSchema.safeParse(event);
+          if (!parsed.success) continue;
+          const invocation = invocationMap.get(event.invocationId);
+          if (invocation === undefined) continue;
+          const source = parsed.data.data.source;
+          const recordId =
+            source?.sessionId === undefined
+              ? source?.parentSessionId === undefined
+                ? coreRecordByInvocationId.get(event.invocationId)
+                : undefined
+              : (runtimeRecordBySessionId.get(source.sessionId) ??
+                (source.parentSessionId === undefined
+                  ? coreRecordByInvocationId.get(event.invocationId)
+                  : undefined));
+          if (recordId === undefined) continue;
+          appendOutput(recordId, messageEventToRecord(executionId, invocation, parsed.data));
+          continue;
+        }
+
+        if (event.type === "agent.steer.applied") {
+          const recordId = coreRecordByInvocationId.get(event.invocationId);
+          if (recordId === undefined) continue;
+          const data = event.data;
+          if (typeof data !== "object" || data === null) continue;
+          const requestId = "requestId" in data ? data.requestId : undefined;
+          const content = "content" in data ? data.content : undefined;
+          if (typeof requestId !== "string" || typeof content !== "string" || content === "") {
+            continue;
+          }
+          appendInput(recordId, {
+            id: `work-steer:${executionId}:${requestId}`,
+            executionId,
+            invocationId: event.invocationId,
+            content,
+            createdAt: event.occurredAt,
+          });
+          continue;
+        }
+
+        if (event.type !== "runtime.event") continue;
+        const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
+        if (!parsed.success) continue;
+        const streamEvent = parsed.data;
+        if (streamEvent.type === "run.started" && streamEvent.source.sessionId !== undefined) {
+          const sessionId = streamEvent.source.sessionId;
+          const recordId = runtimeRecordBySessionId.get(sessionId);
+          const command = queuedCommandsBySessionId.get(sessionId)?.shift();
+          if (recordId !== undefined && command?.action === "send") {
+            const superseded = supersededTaskIds.get(recordId) ?? new Set<string>();
+            superseded.add(`${executionId}:${streamEvent.runId}`);
+            supersededTaskIds.set(recordId, superseded);
+          }
+          continue;
+        }
+        if (
+          streamEvent.type !== "agent.command" ||
+          (streamEvent.payload.action !== "spawn" && streamEvent.payload.action !== "send") ||
+          streamEvent.payload.prompt === undefined ||
+          streamEvent.payload.prompt === ""
+        ) {
+          continue;
+        }
+        for (const sessionId of streamEvent.payload.targetSessionIds) {
+          const recordId = runtimeRecordBySessionId.get(sessionId);
+          if (recordId === undefined) continue;
+          const queuedIds = queuedCommandIdsBySessionId.get(sessionId) ?? new Set<string>();
+          if (
+            !queuedIds.has(streamEvent.payload.commandId) &&
+            streamEvent.payload.delivery !== "steer"
+          ) {
+            queuedIds.add(streamEvent.payload.commandId);
+            queuedCommandIdsBySessionId.set(sessionId, queuedIds);
+            const commands = queuedCommandsBySessionId.get(sessionId) ?? [];
+            commands.push({
+              commandId: streamEvent.payload.commandId,
+              action: streamEvent.payload.action,
+            });
+            queuedCommandsBySessionId.set(sessionId, commands);
+          }
+          if (streamEvent.payload.action !== "send") continue;
+          appendInput(recordId, {
+            id: `work-send:${executionId}:${streamEvent.payload.commandId}:${sessionId}`,
+            executionId,
+            invocationId: event.invocationId,
+            content: streamEvent.payload.prompt,
+            createdAt: streamEvent.emittedAt,
+          });
+        }
+      }
+    }
+
+    for (const records of output.values()) {
+      records.sort((left, right) => {
+        const time = left.message.timestamp - right.message.timestamp;
+        return time === 0
+          ? `${left.executionId}:${left.sequence}`.localeCompare(
+              `${right.executionId}:${right.sequence}`,
+            )
+          : time;
+      });
+    }
+    for (const inputs of messageInputs.values()) {
+      inputs.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    }
+    return { records, conversations: { output, messageInputs, supersededTaskIds } };
+  }
+}
+
+function messageEventToRecord(
+  executionId: string,
+  invocation: Invocation,
+  event: ReturnType<typeof InvocationMessageAppendedEventSchema.parse>,
+): AgentMessageRecord {
+  const source = event.data.source;
+  return {
+    sequence: event.cursor.sequence,
+    sessionId: executionId,
+    executionId,
+    invocationId: event.invocationId,
+    ...(invocation.parentInvocationId === undefined
+      ? {}
+      : { parentInvocationId: invocation.parentInvocationId }),
+    ...(invocation.executorId === undefined ? {} : { executorId: invocation.executorId }),
+    contextId: invocation.contextId,
+    ...(event.data.runId === undefined ? {} : { runId: event.data.runId }),
+    ...(event.data.parentRunId === undefined ? {} : { parentRunId: event.data.parentRunId }),
+    ...(source === undefined ? {} : { source }),
+    message: event.data.message,
+  };
 }
 
 function ensureRecord(
@@ -573,10 +781,17 @@ function readRuntimeAgentStatus(value: unknown): ExecutionStatus | undefined {
 
 function finalizeRecord(record: MutableWorkRecord): ExecutionWorkRecord {
   const tasks = [...record.tasks.values()].toSorted((left, right) => {
-    if (left.sequence !== undefined || right.sequence !== undefined) {
-      return (left.sequence ?? 0) - (right.sequence ?? 0);
+    if (
+      left.executionId === right.executionId &&
+      (left.sequence !== undefined || right.sequence !== undefined)
+    ) {
+      const sequence =
+        (left.sequence ?? Number.MAX_SAFE_INTEGER) - (right.sequence ?? Number.MAX_SAFE_INTEGER);
+      if (sequence !== 0) return sequence;
     }
-    return left.createdAt.localeCompare(right.createdAt);
+    const createdAt = left.createdAt.localeCompare(right.createdAt);
+    if (createdAt !== 0) return createdAt;
+    return left.executionId === right.executionId ? left.taskId.localeCompare(right.taskId) : 0;
   });
   const status =
     record.origin === "runtime" &&

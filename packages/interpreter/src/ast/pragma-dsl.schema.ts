@@ -295,10 +295,6 @@ export const PragmaToolBindingSchema = z
       .object({
         maxConcurrency: z.number().int().positive().default(4),
         maxDepth: z.number().int().positive().default(3),
-        context: versionedExtensionRefSchema(
-          ["context-policy"],
-          "context-policy:pragma.fresh@v1",
-        ).default("context-policy:pragma.fresh@v1"),
         runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
       })
       .strict()
@@ -444,10 +440,6 @@ export const PragmaExpertTeamResourceSchema = z
               .default({ interact: {} }),
             maxConcurrency: z.number().int().positive().default(4),
             maxDepth: z.number().int().positive().default(3),
-            context: versionedExtensionRefSchema(
-              ["context-policy"],
-              "context-policy:pragma.fresh@v1",
-            ).default("context-policy:pragma.fresh@v1"),
             runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
           })
           .strict(),

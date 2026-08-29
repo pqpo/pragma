@@ -6,7 +6,6 @@ import {
   ClockCounterClockwise,
   FileText,
   FunnelSimple,
-  PencilSimple,
   Plus,
   Trash,
   X,
@@ -14,13 +13,29 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ContextStore, ContextStoreRevisionJob } from "../../../../shared/contracts/index.ts";
+import type {
+  ContextStore,
+  ContextStoreContent,
+  ContextStoreDraft,
+  ContextStoreRevisionJob,
+} from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { errorMessage } from "../../lib/errors.ts";
+import { localizedContextStoreRevisionError } from "../../lib/context-store-revision-errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
-type RevisionOperation = NonNullable<ContextStoreRevisionJob["changeSet"]>["operations"][number];
+type RevisionOperation =
+  | {
+      readonly operation: "upsert";
+      readonly id: string;
+      readonly content: string;
+      readonly previousContent?: string | undefined;
+    }
+  | {
+      readonly operation: "delete";
+      readonly id: string;
+      readonly previousContent?: string | undefined;
+    };
 type RevisionDiffSelection =
   | { readonly kind: "request" }
   | { readonly kind: "summary" }
@@ -87,11 +102,15 @@ export function ContextStoreRevisionFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly initialStoreId?: string | undefined;
   readonly onCountChanged?: ((count: number) => void) | undefined;
+  readonly onOpenMission?: ((missionId: string) => void) | undefined;
   readonly onBack: () => void;
 }) {
   const { t, i18n } = useTranslation("studio");
+  const translateRevisionError = (key: string, options?: Record<string, unknown>) =>
+    options === undefined ? t(key) : t(key, options);
   const [storeId, setStoreId] = useState(props.initialStoreId ?? "");
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
+  const [drafts, setDrafts] = useState<readonly ContextStoreDraft[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -100,19 +119,19 @@ export function ContextStoreRevisionFragment(props: {
     const api = desktopApi();
     if (api === undefined) return;
     try {
-      const [next, allJobs] = await Promise.all([
+      const [next, allJobs, nextDrafts] = await Promise.all([
         api.listContextStoreRevisions(storeId === "" ? {} : { storeId }),
         storeId === "" ? undefined : api.listContextStoreRevisions(),
+        api.listContextStoreDrafts(storeId === "" ? {} : { storeId }),
       ]);
       setJobs(next);
+      setDrafts(nextDrafts);
       props.onCountChanged?.(
-        (allJobs ?? next).filter(
-          (job) => !["completed", "rejected", "superseded"].includes(job.state),
-        ).length,
+        (allJobs ?? next).filter((job) => !["merged", "rejected"].includes(job.state)).length,
       );
       setError(null);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
     }
   };
 
@@ -141,17 +160,19 @@ export function ContextStoreRevisionFragment(props: {
       if (action === "delete") setSelectedJobId(null);
       await load();
     } catch (caught) {
-      setError(errorMessage(caught));
+      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
     } finally {
       setBusy(null);
     }
   };
 
   const selectedJob = jobs.find((job) => job.id === selectedJobId);
-  if (selectedJob !== undefined && selectedJob.changeSet !== undefined) {
+  const selectedDraft = drafts.find((draft) => draft.id === selectedJob?.draftId);
+  if (selectedJob !== undefined && selectedDraft !== undefined) {
     return (
       <ContextStoreRevisionDiffFragment
-        job={{ ...selectedJob, changeSet: selectedJob.changeSet }}
+        job={selectedJob}
+        draft={selectedDraft}
         store={props.stores.find((store) => store.id === selectedJob.request.storeId)}
         busy={busy === selectedJob.id}
         error={error}
@@ -159,6 +180,8 @@ export function ContextStoreRevisionFragment(props: {
         onApprove={() => void act(selectedJob, "approve")}
         onReject={() => void act(selectedJob, "reject")}
         onRetry={() => void act(selectedJob, "retry")}
+        onDraftChanged={load}
+        onOpenMission={props.onOpenMission}
       />
     );
   }
@@ -219,7 +242,8 @@ export function ContextStoreRevisionFragment(props: {
                 const store = props.stores.find(
                   (candidate) => candidate.id === job.request.storeId,
                 );
-                const hasChanges = job.changeSet !== undefined;
+                const draft = drafts.find((candidate) => candidate.id === job.draftId);
+                const hasChanges = draft !== undefined && draftOverlayOperations(draft).length > 0;
                 return (
                   <article className="revision-task-row" role="listitem" key={job.id}>
                     <button
@@ -232,7 +256,8 @@ export function ContextStoreRevisionFragment(props: {
                       <span className="revision-task-summary">
                         <strong title={job.request.prompt}>{job.request.prompt}</strong>
                         <small title={store?.name ?? job.request.storeId}>
-                          {store?.name ?? job.request.storeId}
+                          {store?.name ?? job.request.storeId} ·{" "}
+                          {t(`revisionSource.${job.request.source}`)}
                         </small>
                       </span>
                       <span className="revision-task-result">
@@ -243,8 +268,15 @@ export function ContextStoreRevisionFragment(props: {
                           {t(`revisionState.${job.state}`)}
                         </span>
                         {job.error !== undefined ? (
-                          <span className="form-error" role="alert" title={job.error.message}>
-                            {job.error.message}
+                          <span
+                            className="form-error"
+                            role="alert"
+                            title={localizedContextStoreRevisionError(
+                              job.error,
+                              translateRevisionError,
+                            )}
+                          >
+                            {localizedContextStoreRevisionError(job.error, translateRevisionError)}
                           </span>
                         ) : null}
                       </span>
@@ -277,7 +309,7 @@ export function ContextStoreRevisionFragment(props: {
                           <ArrowClockwise size={15} /> {t("retryRevision")}
                         </button>
                       ) : null}
-                      {["completed", "rejected", "superseded"].includes(job.state) ? (
+                      {["merged", "rejected"].includes(job.state) ? (
                         <button
                           className="revision-task-delete"
                           type="button"
@@ -303,9 +335,8 @@ export function ContextStoreRevisionFragment(props: {
 }
 
 export function ContextStoreRevisionDiffFragment(props: {
-  readonly job: ContextStoreRevisionJob & {
-    readonly changeSet: NonNullable<ContextStoreRevisionJob["changeSet"]>;
-  };
+  readonly job: ContextStoreRevisionJob;
+  readonly draft: ContextStoreDraft;
   readonly store?: ContextStore | undefined;
   readonly busy: boolean;
   readonly error: string | null;
@@ -313,13 +344,17 @@ export function ContextStoreRevisionDiffFragment(props: {
   readonly onApprove: () => void;
   readonly onReject: () => void;
   readonly onRetry: () => void;
+  readonly onDraftChanged: () => Promise<void>;
+  readonly onOpenMission?: ((missionId: string) => void) | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [selection, setSelection] = useState<RevisionDiffSelection>({ kind: "summary" });
+  const [draftFile, setDraftFile] = useState<ContextStoreContent | null>(null);
+  const [draftContent, setDraftContent] = useState("");
+  const [draftSaving, setDraftSaving] = useState(false);
+  const operations = useMemo(() => draftOverlayOperations(props.draft), [props.draft]);
   const operation =
-    selection.kind === "operation"
-      ? (props.job.changeSet.operations[selection.index] ?? props.job.changeSet.operations[0])
-      : undefined;
+    selection.kind === "operation" ? (operations[selection.index] ?? operations[0]) : undefined;
   const diff = useMemo(
     () => (operation === undefined ? [] : operationDiff(operation)),
     [operation],
@@ -329,9 +364,48 @@ export function ContextStoreRevisionDiffFragment(props: {
   const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${t(
     "baseRevision",
     {
-      count: props.job.changeSet.baseRevision,
+      count: props.draft.baseRevision,
     },
   )} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
+
+  useEffect(() => {
+    if (operation?.operation !== "upsert") {
+      setDraftFile(null);
+      setDraftContent("");
+      return;
+    }
+    let cancelled = false;
+    void desktopApi()
+      ?.getContextStoreDraftFile({ draftId: props.draft.id, id: operation.id })
+      .then((file) => {
+        if (cancelled) return;
+        setDraftFile(file);
+        setDraftContent(file.content);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [operation?.id, operation?.operation, props.draft.id, props.draft.revision]);
+
+  const saveDraftFile = async () => {
+    if (draftFile?.revision === undefined) return;
+    const api = desktopApi();
+    if (api === undefined) return;
+    setDraftSaving(true);
+    try {
+      await api.updateContextStoreDraftFile({
+        draftId: props.draft.id,
+        expectedRevision: props.draft.revision,
+        id: draftFile.id,
+        content: draftContent,
+        metadata: draftFile.metadata,
+        expectedFileRevision: draftFile.revision,
+      });
+      await props.onDraftChanged();
+    } finally {
+      setDraftSaving(false);
+    }
+  };
 
   return (
     <StudioScreenFrame
@@ -347,6 +421,20 @@ export function ContextStoreRevisionDiffFragment(props: {
             <div>
               <h1 id="context-store-revision-detail-title">{t("revisionResult")}</h1>
               <p>{revisionMetadata}</p>
+              {props.job.request.provenance === undefined ? null : (
+                <p>
+                  {props.job.request.provenance.teamId === undefined
+                    ? t("revisionExpertProvenance", {
+                        expertId: props.job.request.provenance.expertId,
+                        executionId: props.job.request.provenance.executionId,
+                      })
+                    : t("revisionReflectionProvenance", {
+                        teamId: props.job.request.provenance.teamId,
+                        expertId: props.job.request.provenance.expertId,
+                        executionId: props.job.request.provenance.executionId,
+                      })}
+                </p>
+              )}
             </div>
             <div className="revision-diff-actions">
               <span className={`revision-task-state is-${props.job.state}`}>
@@ -385,6 +473,15 @@ export function ContextStoreRevisionDiffFragment(props: {
                   {t("retryRevision")}
                 </button>
               ) : null}
+              {props.job.missionId !== undefined && props.onOpenMission !== undefined ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => props.onOpenMission?.(props.job.missionId!)}
+                >
+                  {t("openRevisionMission")}
+                </button>
+              ) : null}
             </div>
           </div>
         </header>
@@ -420,9 +517,9 @@ export function ContextStoreRevisionDiffFragment(props: {
                 </span>
               </button>
               <div className="revision-diff-file-group-label">
-                {t("filesChanged", { count: props.job.changeSet.operations.length })}
+                {t("filesChanged", { count: operations.length })}
               </div>
-              {props.job.changeSet.operations.map((candidate, index) => (
+              {operations.map((candidate, index) => (
                 <button
                   className={
                     selection.kind === "operation" && selection.index === index
@@ -463,7 +560,7 @@ export function ContextStoreRevisionDiffFragment(props: {
                   ) : null}
                 </span>
               </div>
-              {operation === undefined || operation.operation === "rename" ? null : (
+              {operation === undefined ? null : (
                 <span className="revision-diff-stats">
                   <b>+{additions}</b>
                   <i>−{deletions}</i>
@@ -477,15 +574,34 @@ export function ContextStoreRevisionDiffFragment(props: {
                 </article>
               ) : selection.kind === "summary" ? (
                 <article className="revision-review-document">
-                  <p>{props.job.changeSet.summary}</p>
+                  <p>{props.draft.summary ?? props.draft.name}</p>
                 </article>
-              ) : operation === undefined ? null : operation.operation === "rename" ? (
-                <div className="revision-rename-preview">
-                  <span>{operation.id}</span>
-                  <ArrowRight size={18} aria-hidden="true" />
-                  <strong>{operation.nextId}</strong>
+              ) : operation?.operation === "upsert" && draftFile !== null ? (
+                <div className="revision-draft-editor">
+                  <textarea
+                    aria-label={t("revisionDraftContent")}
+                    value={draftContent}
+                    disabled={props.draft.state === "merged" || draftSaving}
+                    onChange={(event) => setDraftContent(event.target.value)}
+                  />
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={
+                      props.draft.state === "merged" ||
+                      draftSaving ||
+                      draftContent === draftFile.content
+                    }
+                    onClick={() => void saveDraftFile()}
+                  >
+                    {t("saveRevisionDraftFile")}
+                  </button>
+                  {props.draft.state === "pending_review" ? (
+                    <small>{t("revisionDraftEditInvalidatesReview")}</small>
+                  ) : null}
                 </div>
-              ) : operation.operation === "delete" && operation.previousContent === undefined ? (
+              ) : operation === undefined ? null : operation.operation === "delete" &&
+                operation.previousContent === undefined ? (
                 <div className="revision-diff-unavailable">
                   <p>{t("revisionDiffUnavailable")}</p>
                 </div>
@@ -517,7 +633,6 @@ export function ContextStoreRevisionDiffFragment(props: {
 }
 
 function operationDiff(operation: RevisionOperation): readonly RevisionDiffLine[] {
-  if (operation.operation === "rename") return [];
   if (operation.operation === "delete") {
     return buildRevisionLineDiff(operation.previousContent ?? "", "");
   }
@@ -525,14 +640,24 @@ function operationDiff(operation: RevisionOperation): readonly RevisionDiffLine[
 }
 
 function operationPath(operation: RevisionOperation): string {
-  return operation.operation === "rename" ? operation.nextId : operation.id;
+  return operation.id;
 }
 
 function operationIcon(operation: RevisionOperation) {
   if (operation.operation === "delete") return <Trash size={15} aria-hidden="true" />;
-  if (operation.operation === "rename") return <PencilSimple size={15} aria-hidden="true" />;
   if (operation.previousContent === undefined) return <Plus size={15} aria-hidden="true" />;
   return <FileText size={15} aria-hidden="true" />;
+}
+
+function draftOverlayOperations(draft: ContextStoreDraft): readonly RevisionOperation[] {
+  return [
+    ...draft.overlay.files.map((file) => ({
+      operation: "upsert" as const,
+      id: file.id,
+      content: file.content,
+    })),
+    ...draft.overlay.deletedFiles.map((id) => ({ operation: "delete" as const, id })),
+  ];
 }
 
 function splitLines(value: string): readonly string[] {

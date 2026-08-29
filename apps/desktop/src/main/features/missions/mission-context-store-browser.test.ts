@@ -38,14 +38,13 @@ const team: PragmaExpertTeamResource = {
       },
       maxConcurrency: 2,
       maxDepth: 2,
-      context: "context-policy:pragma.fresh@v1",
       runtimes: {},
     },
   },
 };
 
 const mission = MissionSchema.parse({
-  schemaVersion: "pragma.mission/v9",
+  schemaVersion: "pragma.mission/v10",
   id: "00000000-0000-4000-8000-000000000000",
   title: "Editorial mission",
   goal: "Write and review",
@@ -53,7 +52,7 @@ const mission = MissionSchema.parse({
   toolPermissionMode: "request-approval",
   workspace: { path: "/tmp/work", basename: "work" },
   project: { id: "pragma", revision: 7 },
-  contextStoreIds: [],
+  contextMounts: [],
   executor: { kind: "team", ref: "team:vyv9pwwzaksth2dd", name: "Editorial Team" },
   lifecycleStatus: "active",
   origin: { type: "user" },

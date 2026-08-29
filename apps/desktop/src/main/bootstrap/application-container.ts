@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
@@ -18,10 +18,10 @@ import {
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
-  STORE_REVISION_TARGET_CONTEXT_REF,
   compileBuiltInAgent,
   builtInAgentFingerprint,
   createPragmaAgentTools,
+  pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
@@ -70,6 +70,7 @@ import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
 } from "../features/context-stores/store-revision-agent.ts";
+import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
 import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
 import { createDesktopPragmaAgentTaskPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
@@ -82,7 +83,10 @@ import {
 import { createEvaluationService } from "../features/evaluations/evaluation-service.ts";
 import { createEvaluationStore } from "../features/evaluations/evaluation-store.ts";
 import { createExpertDefinitionStore } from "../features/experts/expert-definition-store.ts";
-import { createDesktopSystemExpertRegistry } from "../features/experts/system-expert-registry.ts";
+import {
+  createDesktopSystemExpertRegistry,
+  type DesktopSystemExpertRegistry,
+} from "../features/experts/system-expert-registry.ts";
 import {
   resolveSystemExpertRuntimeDefaults,
   withRuntimeDefaults,
@@ -98,7 +102,7 @@ import {
   createDesktopAdapterHost,
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
-import { createMissionStore } from "../features/missions/mission-store.ts";
+import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
 import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
@@ -158,6 +162,58 @@ import { createDesktopTrashMaintenance } from "../platform/storage/trash-mainten
 export interface DesktopApplicationContainer {
   readonly startBackgroundTasks: () => void;
   readonly dispose: () => void;
+}
+
+async function migrateLegacyStoreRevisionProfile(options: {
+  readonly stateRoot: string;
+  readonly revisions: ContextStoreRevisionService;
+  readonly systemExperts: DesktopSystemExpertRegistry;
+}): Promise<void> {
+  const profile = await options.revisions.getProfile();
+  if (profile.mode !== "pinned") return;
+  const current = options.systemExperts.get(STORE_REVISION_EXPERT_REF);
+  if (current === undefined) throw new Error("The Store Revision Agent definition is missing.");
+  const journalPath = join(options.stateRoot, "migrations", "store-revision-profile-split.json");
+  if (current.customized) {
+    await rm(journalPath, { force: true });
+    return;
+  }
+  const backupPath = join(
+    options.stateRoot,
+    "migration-backups",
+    "context-store-revision-profile-v1.json",
+  );
+  await writeBootstrapJson(backupPath, profile);
+  await writeBootstrapJson(journalPath, {
+    schemaVersion: "pragma.store-revision-profile-split/v1",
+    sourceProfile: backupPath,
+    targets: [STORE_REVISION_EXPERT_REF, "skill-revision-profile"],
+  });
+  await options.systemExperts.update(STORE_REVISION_EXPERT_REF, {
+    ...(current.avatarId === undefined ? {} : { avatarId: current.avatarId }),
+    name: current.name,
+    description: current.description,
+    tags: current.tags,
+    additionalInstructions: current.additionalInstructions,
+    model: profile.model,
+    capabilities: current.capabilities,
+    toolApprovals: current.toolApprovals,
+    plugins: current.plugins,
+    contextStoreMounts: current.contextStoreMounts,
+  });
+  await rm(journalPath, { force: true });
+}
+
+async function writeBootstrapJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export interface DesktopApplicationContainerOptions {
@@ -245,6 +301,13 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) => mainLogger.warn("desktop.system_expert_warning", message, { error }),
   });
   await systemExperts.initialize();
+  const systemExpertKnowledgeRevisionMountResources = () => {
+    const resource = systemExperts.getResource(BUILT_IN_PRAGMA_REF);
+    return [
+      ...(resource === undefined ? [] : [resource]),
+      ...systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
+    ];
+  };
   const blueprintCache = createDesktopPragmaBlueprintCacheStore(pragmaPaths);
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath,
@@ -260,8 +323,8 @@ export async function createDesktopApplicationContainer(
       SKILL_REVISION_EXPERT_REF,
       SKILL_EVALUATION_EXPERT_REF,
       EVALUATION_JUDGE_EXPERT_REF,
-      STORE_REVISION_TARGET_CONTEXT_REF,
     ]),
+    fixedResources: [pragmaManagementCapabilityResource()],
   });
   const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
   installWorkflowLayoutHandlers(workflowLayouts);
@@ -463,7 +526,6 @@ export async function createDesktopApplicationContainer(
   capabilityStore.setRevisionPublisher(capabilityRevisionCoordinator);
   const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
   const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
-  installCapabilityHandlers(capabilityStore, options.getWindow);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
@@ -495,12 +557,43 @@ export async function createDesktopApplicationContainer(
   };
   const storeRevisions = createContextStoreRevisionService({
     statePath: join(pragmaPaths.stateRoot(), "context-store-revisions"),
+    draftsPath: join(pragmaPaths.dataRoot(), "context-store-drafts"),
+    draftsTrashPath: join(pragmaPaths.trashRoot(), "context-store-drafts"),
     contextStores,
     generator: revisionGenerator,
+    onRevisionDetached: async ({ missionId, jobId, draftId, storeId }) => {
+      try {
+        await missionStore.restoreManagedRevisionStore({
+          id: missionId,
+          storeId,
+          draftId,
+          revisionJobId: jobId,
+        });
+        await missionRunnerRef.current?.invalidateContextBindings(missionId);
+      } catch (error) {
+        if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found")
+          throw error;
+      }
+    },
     warn: (message, error) =>
       mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
   });
+  await migrateLegacyStoreRevisionProfile({
+    stateRoot: pragmaPaths.stateRoot(),
+    revisions: storeRevisions,
+    systemExperts,
+  });
   storeRevisionsRef.current = storeRevisions;
+  installCapabilityHandlers(
+    capabilityStore,
+    options.getWindow,
+    createDesktopKnowledgeRevisionSubmissionPort({
+      project: pragmaProjectStore,
+      contextStores,
+      revisions: storeRevisions,
+      additionalMountResources: systemExpertKnowledgeRevisionMountResources,
+    }),
+  );
   const skillAgentsRef: { current?: DesktopSkillAgents } = {};
   const skillEvaluationProfiles = createSkillEvaluationProfileStore(
     join(pragmaPaths.stateRoot(), "skill-evaluation", "profile.json"),
@@ -710,6 +803,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     executors: missionExecutors,
     contextStores,
+    contextStoreRevisions: storeRevisions,
     getDefaultToolPermissionMode: getToolPermissionMode,
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "create_mission"),
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
@@ -745,6 +839,8 @@ export async function createDesktopApplicationContainer(
     pragmaHome: pragmaPaths.root,
     executionStore: memoryPlane.executionStore,
     contextStores,
+    contextStoreRevisions: storeRevisions,
+    knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
     hostContextStores: async () => {
       const globalPolicy = await memoryPlane.policies.getGlobal();
       return globalPolicy.policy.enabled === "enabled"
@@ -792,7 +888,7 @@ export async function createDesktopApplicationContainer(
       mission.executor.ref === MEMORY_CURATOR_REF
         ? await memoryCuratorRef.current?.fingerprint()
         : mission.executor.ref === STORE_REVISION_EXPERT_REF
-          ? await storeRevisionAgentRef.current?.fingerprint(await storeRevisions.getProfile())
+          ? systemExperts.fingerprint(STORE_REVISION_EXPERT_REF)
           : mission.executor.ref === SKILL_REVISION_EXPERT_REF
             ? await skillAgentsRef.current?.fingerprint("revision")
             : mission.executor.ref === SKILL_EVALUATION_EXPERT_REF
@@ -801,7 +897,7 @@ export async function createDesktopApplicationContainer(
                 ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
                 : systemExperts.fingerprint(mission.executor.ref),
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "run_mission"),
-    compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
+    compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes, knowledgeRevisions }) => {
       if (mission.executor.ref === MEMORY_CURATOR_REF) {
         if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
           throw new Error("The Memory Curator has not been initialized.");
@@ -815,16 +911,46 @@ export async function createDesktopApplicationContainer(
         });
       }
       if (mission.executor.ref === STORE_REVISION_EXPERT_REF) {
-        if (
-          storeRevisionAgentRef.current === undefined ||
-          mission.origin.type !== "system-store-revision"
-        ) {
-          throw new Error("The Store Revision Agent mission is invalid or unavailable.");
+        if (storeRevisionAgentRef.current === undefined) {
+          throw new Error("The Store Revision Agent is unavailable.");
         }
+        const storeRevisionDefinition = systemExperts.get(STORE_REVISION_EXPERT_REF);
+        if (storeRevisionDefinition === undefined) {
+          throw new Error("The Store Revision Agent definition is missing.");
+        }
+        const managementHost = createDesktopAdapterHost(
+          {
+            capabilityStore,
+            capabilityCredentials,
+            capabilitiesPath,
+            mcpToolRegistryPool,
+            contextStores,
+            ...(knowledgeRevisions === undefined
+              ? {}
+              : { pragmaManagement: { knowledgeRevisions } }),
+          },
+          mission.workspace.path,
+        );
         return await storeRevisionAgentRef.current.compile({
-          storeId: mission.origin.storeId,
-          profile: await storeRevisions.getProfile(),
+          profile:
+            storeRevisionDefinition.executionProfile.mode === "pinned"
+              ? {
+                  schemaVersion: "pragma.context-store-revision-profile/v1",
+                  revision: storeRevisionDefinition.revision,
+                  mode: "pinned",
+                  model: storeRevisionDefinition.executionProfile.model,
+                  updatedAt: storeRevisionDefinition.updatedAt,
+                }
+              : {
+                  schemaVersion: "pragma.context-store-revision-profile/v1",
+                  revision: storeRevisionDefinition.revision,
+                  mode: "inherit-default",
+                  updatedAt: storeRevisionDefinition.updatedAt,
+                },
           runtimes: scopedRuntimes,
+          adapterHost: managementHost,
+          expertResource: systemExperts.getResource(STORE_REVISION_EXPERT_REF),
+          additionalResources: systemExperts.getAdditionalResources(STORE_REVISION_EXPERT_REF),
         });
       }
       if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
@@ -924,6 +1050,14 @@ export async function createDesktopApplicationContainer(
             capabilitiesPath,
             mcpToolRegistryPool,
             contextStores,
+            pragmaManagement: {
+              knowledgeRevisions: createDesktopKnowledgeRevisionSubmissionPort({
+                project: pragmaProjectStore,
+                contextStores,
+                revisions: storeRevisions,
+                additionalMountResources: systemExpertKnowledgeRevisionMountResources,
+              }),
+            },
           },
           mission.workspace.path,
         ),
@@ -993,14 +1127,17 @@ export async function createDesktopApplicationContainer(
   });
   memoryCuratorRef.current = memoryCurator;
   storeRevisionAgentRef.current = createDesktopStoreRevisionAgent({
-    profiles: storeRevisions,
-    contextStores,
+    revisions: storeRevisions,
     missions: missionStore,
     runner: missionRunner,
     project: pragmaProjectStore,
     runtimes,
     pragmaHome: pragmaPaths.root,
     loggerProvider,
+    onMissionCreated: async ({ jobId, missionId }) => {
+      await storeRevisions.attachMission(jobId, missionId);
+    },
+    isDraftSubmitted: async (jobId) => (await storeRevisions.get(jobId)).state === "pending_review",
   });
   skillAgentsRef.current = createDesktopSkillAgents({
     revisionProfiles: storeRevisions,

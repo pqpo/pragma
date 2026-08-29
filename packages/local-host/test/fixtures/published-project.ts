@@ -59,7 +59,7 @@ export async function writePublishedProjectFixture(home: string): Promise<{
   return { fingerprint: lock.projectFingerprint };
 }
 
-function createResources(): readonly PragmaResource[] {
+export function createPublishedProjectResources(): readonly PragmaResource[] {
   const coordinatorId = "mrvsehytqfmb814x";
   const memberId = "3sfd30h5017wd17d";
   const runtime = PragmaRuntimeProfileResourceSchema.parse({
@@ -116,7 +116,6 @@ function createResources(): readonly PragmaResource[] {
         permissions: { interact: {} },
         maxConcurrency: 2,
         maxDepth: 2,
-        context: "context-policy:pragma.fresh@v1",
         runtimes: {},
       },
     },

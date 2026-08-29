@@ -402,6 +402,12 @@
   margin-top: 22px;
 }
 
+.mission-chat-list > .mission-chat-bottom-anchor {
+  display: block;
+  height: 1px;
+  margin-top: 0;
+}
+
 .mission-chat-list > .mission-tool-entry,
 .mission-chat-list > .mission-tool-run,
 .mission-chat-list > .mission-tool-run + *,
@@ -504,6 +510,7 @@
 
 .mission-chat-composer-meta > .mission-usage-hint {
   flex: 0 0 auto;
+  margin-inline-start: auto;
   white-space: nowrap;
 }
 

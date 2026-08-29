@@ -1976,17 +1976,17 @@ class RuntimeExecutionBindings {
       get invokeResource() {
         return current().executionContext?.invokeResource;
       },
-      get delegateExpert() {
-        return current().executionContext?.delegateExpert;
+      get spawnExpert() {
+        return current().executionContext?.spawnExpert;
+      },
+      get continueExpert() {
+        return current().executionContext?.continueExpert;
       },
       get waitExperts() {
         return current().executionContext?.waitExperts;
       },
       get listAgents() {
         return current().executionContext?.listAgents;
-      },
-      get messageExpert() {
-        return current().executionContext?.messageExpert;
       },
       get steerExpert() {
         return current().executionContext?.steerExpert;

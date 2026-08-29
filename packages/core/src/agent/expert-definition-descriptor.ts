@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 
-import { describeContextIdResolver } from "../execution/context-id-resolver.ts";
 import { readAgentDelegationDefinition } from "./agent-launcher.ts";
 import type { Expert } from "./expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition } from "./expert-team.ts";
@@ -47,7 +46,6 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
         },
         maxConcurrency: definition.delegation.maxConcurrency,
         maxDepth: definition.delegation.maxDepth,
-        contextId: describeContextIdResolver(definition.delegation.contextId),
         runtimeByExpert: [...definition.delegation.runtimeByExpert.entries()].sort(
           ([left], [right]) => left.localeCompare(right),
         ),
@@ -95,7 +93,6 @@ function describeLauncher(definition: Expert, ancestors: Set<string>): unknown {
     isCoordinator: launcher.isCoordinator,
     maxConcurrency: launcher.maxConcurrency,
     maxDepth: launcher.maxDepth,
-    contextId: describeContextIdResolver(launcher.contextId),
     runtimeByExpert: [...launcher.runtimeByExpert.entries()].sort(([left], [right]) =>
       left.localeCompare(right),
     ),

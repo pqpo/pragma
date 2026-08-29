@@ -33,10 +33,19 @@ export function migratePragmaV4ResourceToCurrent(resource: unknown) {
             Object.entries(legacyAllow).filter(([source]) => source !== coordinator),
           );
     delete delegation["allow"];
+    delete delegation["context"];
     delegation["permissions"] = {
       ...(spawn === undefined || Object.keys(spawn).length === 0 ? {} : { spawn }),
       interact: {},
     };
+  }
+  if (copy["kind"] === "Expert") {
+    const spec = copy["spec"] as Record<string, unknown>;
+    const tools = spec["tools"] as Array<Record<string, unknown>>;
+    for (const tool of tools) {
+      const policy = tool["policy"] as Record<string, unknown> | undefined;
+      if (policy !== undefined) delete policy["context"];
+    }
   }
   const parsed = PragmaResourceSchema.safeParse(copy);
   if (!parsed.success) {

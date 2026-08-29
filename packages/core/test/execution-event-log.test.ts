@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFileExecutionStore,
@@ -354,6 +354,205 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
     );
   });
 
+  it("aggregates materialized AgentInstances by Runtime Context across executions", async () => {
+    const { store } = await fixture();
+    const contextId = "shared-review-context";
+    const sessionId = "expert-session";
+    const runtime = {
+      runtimeId: "fake",
+      revision: 1,
+      fingerprint: "a".repeat(64),
+    };
+    const timestamps = [
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:01:00.000Z",
+      "2026-01-01T00:02:00.000Z",
+      "2026-01-01T00:03:00.000Z",
+    ] as const;
+
+    const createTurn = async (input: {
+      executionId: string;
+      rootInvocationId: string;
+      rootContextId: string;
+      agentId: string;
+      invocationId: string;
+      prompt: string;
+      output: string;
+      createdAt: string;
+      messageTimestamp: number;
+    }) => {
+      const rootDefinition = { id: "coordinator", kind: "expert" as const };
+      await store.create(
+        {
+          schemaVersion: "pragma.execution/v10",
+          executionId: input.executionId,
+          version: 0,
+          kind: "expert-turn",
+          definition: rootDefinition,
+          rootInvocationId: input.rootInvocationId,
+          status: "running",
+          input: null,
+          state: {},
+          lastAppliedSequence: 0,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        },
+        {
+          invocationId: input.rootInvocationId,
+          rootInvocationId: input.rootInvocationId,
+          definition: rootDefinition,
+          executorId: rootDefinition.id,
+          contextId: input.rootContextId,
+          status: "running",
+          pendingExpertMessages: [],
+          input: null,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        },
+      );
+      await store.commit({
+        commitId: `finish:${input.executionId}`,
+        executionId: input.executionId,
+        executionPatch: { status: "succeeded" },
+        invocationPatches: [
+          { invocationId: input.rootInvocationId, patch: { status: "succeeded" } },
+        ],
+        contextPuts: [
+          {
+            schemaVersion: "pragma.runtime-context/v5",
+            contextId,
+            owner: { type: "expert-session", ownerId: sessionId },
+            origin: { type: "invocation", invocationId: "review-1" },
+            expert: { id: "reviewer" },
+            runtime,
+            lifecycle: "open",
+            createdAt: timestamps[0],
+            updatedAt: input.createdAt,
+          },
+        ],
+        agentPuts: [
+          {
+            schemaVersion: "pragma.agent-instance/v2",
+            agentId: input.agentId,
+            executionId: input.executionId,
+            ownerContextId: input.rootContextId,
+            createdByInvocationId: input.rootInvocationId,
+            definition: { id: "reviewer", kind: "expert" },
+            contextId,
+            lifecycle: "open",
+            nextTaskSequence: 1,
+            createdAt: input.createdAt,
+            updatedAt: input.createdAt,
+          },
+        ],
+        invocationPuts: [
+          {
+            invocationId: input.invocationId,
+            rootInvocationId: input.rootInvocationId,
+            parentInvocationId: input.rootInvocationId,
+            definition: { id: "reviewer", kind: "expert" },
+            executorId: "reviewer",
+            agentId: input.agentId,
+            agentTaskSequence: 0,
+            contextId,
+            status: "succeeded",
+            pendingExpertMessages: [],
+            input: input.prompt,
+            output: input.output,
+            createdAt: input.createdAt,
+            updatedAt: input.createdAt,
+          },
+        ],
+        events: [
+          {
+            eventId: `message:${input.executionId}`,
+            invocationId: input.invocationId,
+            type: "invocation.message.appended",
+            data: {
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: input.output }],
+                api: "test",
+                provider: "test",
+                model: "test",
+                usage: {
+                  measurement: "reported",
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 0,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                },
+                stopReason: "stop",
+                timestamp: input.messageTimestamp,
+              },
+            },
+          },
+        ],
+      });
+    };
+
+    await createTurn({
+      executionId: "turn-1",
+      rootInvocationId: "root-1",
+      rootContextId: "root-context",
+      agentId: "agent-1",
+      invocationId: "review-1",
+      prompt: "Review the first draft",
+      output: "First review",
+      createdAt: timestamps[1],
+      messageTimestamp: Date.parse(timestamps[1]),
+    });
+    await createTurn({
+      executionId: "turn-2",
+      rootInvocationId: "root-2",
+      rootContextId: "root-context",
+      agentId: "agent-2",
+      invocationId: "review-2",
+      prompt: "Review the revised draft",
+      output: "Second review",
+      createdAt: timestamps[3],
+      messageTimestamp: Date.parse(timestamps[3]),
+    });
+
+    const reader = new ExecutionWorkHistoryReader(store);
+    const records = await reader.listRecords({
+      executionIds: ["turn-1", "turn-2"],
+      rootSessionId: sessionId,
+    });
+    const agents = records.filter((record) => record.kind === "agent");
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      recordId: `agent-context:${contextId}`,
+      sessionId: contextId,
+      contextId,
+      executorId: "reviewer",
+      parentRecordId: `root:${sessionId}`,
+      status: "succeeded",
+      tasks: [
+        expect.objectContaining({
+          executionId: "turn-1",
+          invocationId: "review-1",
+          input: "Review the first draft",
+          output: "First review",
+        }),
+        expect.objectContaining({
+          executionId: "turn-2",
+          invocationId: "review-2",
+          input: "Review the revised draft",
+          output: "Second review",
+        }),
+      ],
+    });
+    await expect(
+      reader.readOutput({ executionIds: ["turn-1", "turn-2"], record: agents[0]! }),
+    ).resolves.toMatchObject([
+      { executionId: "turn-1", message: { content: [{ text: "First review" }] } },
+      { executionId: "turn-2", message: { content: [{ text: "Second review" }] } },
+    ]);
+  });
+
   it("groups runtime subagent turns by native session and isolates their output", async () => {
     const { store } = await fixture();
     const emittedAt = new Date().toISOString();
@@ -464,6 +663,17 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
     await expect(
       reader.readOutput({ executionIds: ["execution"], record: childA! }),
     ).resolves.toMatchObject([{ message: { content: [{ text: "output-a" }] } }]);
+
+    const readEvents = vi.spyOn(store, "readEvents");
+    const projection = await reader.readProjection({ executionIds: ["execution"] });
+    expect(readEvents).toHaveBeenCalledTimes(1);
+    expect(projection.records).toHaveLength(records.length);
+    expect(projection.conversations.output.get("runtime-agent:child-a")).toMatchObject([
+      { message: { content: [{ text: "output-a" }] } },
+    ]);
+    expect(projection.conversations.output.get("runtime-agent:child-b")).toMatchObject([
+      { message: { content: [{ text: "output-b" }] } },
+    ]);
   });
 
   it("projects only real subagent runs and carries dispatch prompts across interruption", async () => {

@@ -74,6 +74,19 @@ describe("MissionCreator", () => {
     expect(resolvedSnapshots).toHaveLength(1);
     expect(validatedSnapshots[0]).toBe(resolvedSnapshots[0]);
     await expect(project.openRevision(mission.project.revision)).resolves.toBeDefined();
+    await expect(
+      creator.create({
+        workspace,
+        missionInput: { kind: "prompt", value: "Mount a draft directly" },
+        executorRef: executor.ref,
+        contextMounts: [
+          {
+            kind: "context-store-draft",
+            draftId: "20000000-0000-4000-8000-000000000001",
+          },
+        ],
+      }),
+    ).rejects.toThrow("only be mounted by the knowledge revision tools");
   });
 
   it("lets the default Agent submit a task against the initial project revision", async () => {

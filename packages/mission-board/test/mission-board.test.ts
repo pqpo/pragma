@@ -70,6 +70,37 @@ describe("Mission Board", () => {
     });
     expect(added.ok).toBe(true);
     expect(privateStores.has("context-a")).toBe(true);
+    if (!added.ok) throw new Error(added.error.message);
+    const updated = await system.edit({
+      namespace: MISSION_BOARD_PRIVATE_NAMESPACE,
+      id: "todos.md",
+      mode: "replace",
+      content: "updated private",
+      expectedRevision: added.value.revision,
+      expectedEtag: added.value.etag,
+      context,
+    });
+    if (!updated.ok) throw new Error(updated.error.message);
+    await expect(
+      system.edit({
+        namespace: MISSION_BOARD_PRIVATE_NAMESPACE,
+        id: "todos.md",
+        mode: "replace",
+        content: "stale private",
+        expectedRevision: added.value.revision,
+        expectedEtag: added.value.etag,
+        context,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "context_conflict",
+        details: {
+          currentRevision: updated.value.revision,
+          currentEtag: updated.value.etag,
+        },
+      },
+    });
     const denied = await system.read({
       namespace: MISSION_BOARD_PRIVATE_NAMESPACE,
       id: "todos.md",
@@ -89,6 +120,13 @@ describe("Mission Board", () => {
         scope: "private",
         contextId: "context-a",
         operation: "add",
+        id: "todos.md",
+      },
+      {
+        ownerId: "mission-1",
+        scope: "private",
+        contextId: "context-a",
+        operation: "edit",
         id: "todos.md",
       },
     ]);

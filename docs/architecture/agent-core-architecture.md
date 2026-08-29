@@ -8,22 +8,22 @@ Core 分为声明、执行、Runtime 和存储四个边界：
 3. ExpertTurn 与 FlowExecution 共享 ExecutionStore、InvocationTree 和单一 Canonical Event Log。
 4. Runtime driver 明确拆分 create、restore、start turn、steer、cancel turn 和 close session。
 
-Expert 不包装成单节点 Flow。普通 Expert 与 ExpertTeam 共用异步编排机制：`delegate_expert`
-按 `expertId` 创建 Execution-scoped AgentInstance，或按 `agentId` 在相同 Agent Context 上追加
-FIFO Invocation；`wait_experts` 按 Invocation ID 汇合结果。`message_expert` 向明确的 active
-Invocation Inbox 投递安全边界消息，`steer_expert` 尝试立即影响 Runtime turn。`list_agents` 和 `interrupt_expert`
-只管理当前调用者直接创建的 Agent。
+Expert 不包装成单节点 Flow。普通 Expert 与 ExpertTeam 共用异步编排机制：`spawn_expert` 按
+`expertId` 创建全新 Runtime Context、Execution-scoped AgentInstance 和 Invocation；
+`continue_expert` 按当前 Team Session 的 `contextId` 追加 FIFO Invocation。本轮复用 Agent，跨轮恢复
+snapshot 并物化新 Agent。`wait_experts` 只汇合调用者直接创建的 Invocation；`steer_expert` 按
+`invocationId` 选择在当前 Runtime turn 的下一个 steering boundary 注入，或等该 turn 完成后排队启动
+continuation；`interrupt_expert` 精确停止一个 active 或 queued Invocation。
 
 两种声明方式只负责提供不同治理配置：
 
 - standalone Expert 的 launcher 显式列出可调用的子专家；
-- ExpertTeam 根据当前调用者和成员权限策略动态生成工具；coordinator 在当前 Team Execution 内拥有
+- ExpertTeam 根据当前调用者和成员权限策略动态生成工具；coordinator 在当前 Team Session 内拥有
   系统继承的全量管理权限。团队工具覆盖成员自己的 standalone launcher。
 
-根 launcher 的 `maxConcurrency` 和 `maxDepth` 是整个委派树的执行预算。Flow step、standalone launcher
-和 ExpertTeam delegation 都通过同一个 `ContextIdResolver` 选择 Context。默认 resolver 每次返回
-Core 提供的新 ID；返回既有 ID 时复用 Context，并把 dispatch 归并到该 Context 对应的 Agent FIFO。
-等待子孙时释放并发 permit，避免嵌套死锁。
+根 launcher 的 `maxConcurrency` 和 `maxDepth` 是整个委派树的执行预算。Flow step 继续通过
+`ContextIdResolver` 选择 Context；delegation 不接受 Context policy：spawn 固定 fresh，continue 固定
+复用显式 `contextId`。等待任务或人工输入时释放并发 permit，避免嵌套死锁。
 
 ExpertSession 根 Expert 不属于 delegation：Session 创建时同步建立唯一根 Runtime Context，所有根 prompt
 始终引用该 Context；需要 fresh root 时创建新的 ExpertSession。`createSession({ runtime })` 只负责在创建
@@ -34,12 +34,11 @@ ExpertSession 根 Expert 不属于 delegation：Session 创建时同步建立唯
 `InvocationService` 统一承担 Invocation 的可靠创建、状态迁移和 Canonical Event 原子提交。
 Flow Scheduler 保留静态图遍历、按 `nodeId + visit` 幂等的循环访问、reduce 和 transition；同一节点
 被条件回边再次访问时创建新的 Invocation，恢复时按访问序号重放既有 Invocation。
-`ExpertOrchestrator` 保留 Agent ownership、FIFO、并发、深度、wait、message、steer、interrupt 和终结屏障策略。
+`ExpertOrchestrator` 保留 Agent ownership、FIFO、并发、深度、wait、steer、interrupt 和终结屏障策略。
 
-Flow 回边后会为新的 Invocation 再次调用 step resolver：返回旧 `contextId` 就沿用 coordinator 的
-Runtime Session，返回新 ID 就隔离。Team 成员由 delegation resolver 独立决定，因此可以实现
-“coordinator 复用、成员新建”或“coordinator 与各成员都复用”。流程必要数据（修订要求、历史产物）
-仍通过 state/input 显式传递；Context 复用只负责 Runtime 对话连续性。
+Flow 回边后会为新的 Invocation 再次调用 step resolver：返回旧 `contextId` 就沿用 Runtime Session，
+返回新 ID 就隔离。Team 成员是否连续由 Agent 显式选择 spawn 或 continue。流程必要数据（修订要求、
+历史产物）仍通过 state/input 显式传递；Context 复用只负责 Runtime 对话连续性。
 
 ```text
 Flow Scheduler / ExpertOrchestrator
@@ -62,7 +61,9 @@ Runtime Context 使用显式 origin：根 Context 由 ExpertSession 创建，Flo
 Invocation 创建。Snapshot 只保存 `systemSessionId` 与 `RuntimeSessionRef`，不复制 Expert 或 Runtime identity。
 
 父 Runtime turn 返回后，若仍存在未 join 的直属 Invocation，父 Invocation 进入 `waiting`，释放 permit，
-等待全部结果并记录 `expert.children.completed`，然后在原 Context 中启动框架续跑。失败、取消和中断的
+最多等待 10 分钟。全部终结时记录 `expert.children.completed`；超时时记录
+`expert.children.wait-timed-out` 并携带 pending 状态恢复原 Context，让 Agent 决定再次 wait、steer 或
+interrupt。失败、取消和中断的
 子 Invocation 都是可收集终态，不会自动使父 Invocation 失败。只有全部直属任务被 join 后父 Invocation
 才能成功，因此不会依赖模型记住调用 wait。
 

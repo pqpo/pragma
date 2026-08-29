@@ -35,7 +35,6 @@ spec:
         6h7j8k9m0n1p2q3r: [7h8j9k0m1n2p3q4r]
     maxConcurrency: 2
     maxDepth: 2
-    context: context-policy:pragma.fresh@v1
     runtimes: {}
 ```
 
@@ -52,10 +51,10 @@ spec:
   Expert IDs and `whitelist` includes only the listed IDs. Lists may reference only the coordinator
   or members, and every store must remain visible to at least one participant. Team visibility does
   not revoke an Expert's independent mount of the same ContextStore.
-- Permission keys and values use Expert IDs, not canonical refs. `spawn` creates AgentInstances;
-  `interact` discovers, follows up, and steers existing instances without granting spawn or interrupt.
-- The coordinator has system-inherited authority within each Team Execution: it can spawn every
-  member, discover every open AgentInstance, inspect who assigned it, and follow up, steer, wait for,
-  or interrupt it. Coordinator entries in `permissions` are forbidden; the maps govern
-  member-to-member permissions only.
+- Permission keys and values use Expert IDs, not canonical refs. `spawn` creates fresh Runtime
+  Contexts; `interact` continues or steers existing Contexts without granting spawn or interrupt.
+- The coordinator has system-inherited authority within the Team Session: it can spawn every member,
+  discover current and historical member Contexts, continue or steer them, and interrupt work.
+  Coordinator entries in `permissions` are forbidden; the maps govern member-to-member permissions
+  only.
 - Keep concurrency and depth bounded. Do not use a Team when a deterministic Flow is sufficient.

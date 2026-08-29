@@ -32,7 +32,7 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
-  UpdateMissionContextStoresSchema,
+  UpdateMissionContextMountsSchema,
   PickMissionAttachmentsResultSchema,
   PickMissionAttachmentsSchema,
   StageMissionClipboardImageSchema,
@@ -142,11 +142,11 @@ export const missionsApi = {
     MissionSchema.parse(
       await invokeMutation("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
     ),
-  updateMissionContextStores: async (input) =>
+  updateMissionContextMounts: async (input) =>
     MissionSchema.parse(
       await invokeMutation(
-        "missions:context-stores:update",
-        UpdateMissionContextStoresSchema.parse(input),
+        "missions:context-mounts:update",
+        UpdateMissionContextMountsSchema.parse(input),
       ),
     ),
   runMission: async (id) =>
@@ -247,7 +247,7 @@ export const missionsApi = {
   | "stageMissionClipboardImage"
   | "discardMissionAttachmentDrafts"
   | "updateMissionOptions"
-  | "updateMissionContextStores"
+  | "updateMissionContextMounts"
   | "runMission"
   | "sendMissionMessage"
   | "steerQueuedMissionMessage"

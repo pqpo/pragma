@@ -1,5 +1,11 @@
 import { derivePragmaResourceId } from "@pragma/core";
 import {
+  PRAGMA_MANAGEMENT_BINDING_REF,
+  PRAGMA_MANAGEMENT_CAPABILITY_REF,
+  PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+  pragmaManagementCapabilityResource,
+} from "@pragma/built-in-agents";
+import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
@@ -67,6 +73,13 @@ export function classifyDesktopCapabilityResource(
   resource: PragmaResource | undefined,
 ): DesktopCapabilityBindingIdentity | undefined {
   if (
+    resource?.kind === "Capability" &&
+    canonicalPragmaResourceRef(resource) === PRAGMA_MANAGEMENT_CAPABILITY_REF &&
+    resource.spec.binding === PRAGMA_MANAGEMENT_BINDING_REF
+  ) {
+    return { id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID, revision: 1 };
+  }
+  if (
     resource?.kind !== "Capability" ||
     resource.spec.adapter !== "pragma.capability.host@v1" ||
     !resource.metadata.tags.includes("desktop-managed")
@@ -96,6 +109,11 @@ export function createDesktopCapabilityResource(input: {
   readonly name?: string | undefined;
   readonly description?: string | undefined;
 }): PragmaCapabilityResource {
+  if (input.capabilityId === PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID) {
+    if (input.revision !== 1)
+      throw new Error("Built-in Pragma management Capability is revision 1.");
+    return PragmaCapabilityResourceSchema.parse(pragmaManagementCapabilityResource());
+  }
   const option = input.owner === "default-agent-option";
   const system = input.owner === "system-expert-customization";
   return PragmaCapabilityResourceSchema.parse({

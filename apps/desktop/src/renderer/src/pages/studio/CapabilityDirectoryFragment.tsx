@@ -638,8 +638,10 @@ function CapabilityRow(props: {
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const { capability } = props;
-  const source =
-    capability.definition.kind === "skill"
+  const isBuiltIn = capability.managedBy === "system";
+  const source = isBuiltIn
+    ? t("builtIn")
+    : capability.definition.kind === "skill"
       ? t("uploadedPackage")
       : capability.definition.kind === "http_service"
         ? `${capability.definition.baseUrl} · ${t("localMcpWrapper")}`
@@ -703,7 +705,10 @@ function CapabilityRow(props: {
         className="capability-row"
         role="listitem"
         onClick={(event) => {
-          if (event.target instanceof Element && event.target.closest("[data-capability-row-action]")) {
+          if (
+            event.target instanceof Element &&
+            event.target.closest("[data-capability-row-action]")
+          ) {
             return;
           }
           props.onOpen();
@@ -717,7 +722,10 @@ function CapabilityRow(props: {
             <Icon size={22} />
           </span>
           <span>
-            <strong>{capability.manifest.name}</strong>
+            <span className="capability-name-title-row">
+              <strong title={capability.manifest.name}>{capability.manifest.name}</strong>
+              {isBuiltIn ? <span className="capability-built-in-chip">{t("builtIn")}</span> : null}
+            </span>
             <small>{capability.definition.description}</small>
             {error ? (
               <em role="alert" title={error}>
@@ -741,51 +749,55 @@ function CapabilityRow(props: {
             if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
           }}
         >
-          {capability.health.status === "needs_attention" ? (
-            <button type="button" disabled={busy} onClick={() => void retry()}>
-              {t("common:actions.retry")}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            disabled={busy}
-            aria-label={t("moreActions", { name: capability.manifest.name })}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            <DotsThree size={20} />
-          </button>
-          {menuOpen ? (
-            <div className="capability-row-menu" role="menu">
-              {props.onEdit ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setError(null);
-                    props.onEdit?.();
-                  }}
-                >
-                  <PencilSimple size={16} />
-                  {capability.definition.kind === "skill" ? t("updateSkill") : t("edit")}
+          {isBuiltIn ? null : (
+            <>
+              {capability.health.status === "needs_attention" ? (
+                <button type="button" disabled={busy} onClick={() => void retry()}>
+                  {t("common:actions.retry")}
                 </button>
               ) : null}
               <button
-                className="is-danger"
                 type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setConfirmOpen(true);
-                  setError(null);
-                }}
+                disabled={busy}
+                aria-label={t("moreActions", { name: capability.manifest.name })}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((open) => !open)}
               >
-                <Trash size={16} /> {t("delete")}
+                <DotsThree size={20} />
               </button>
-            </div>
-          ) : null}
+              {menuOpen ? (
+                <div className="capability-row-menu" role="menu">
+                  {props.onEdit ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setError(null);
+                        props.onEdit?.();
+                      }}
+                    >
+                      <PencilSimple size={16} />
+                      {capability.definition.kind === "skill" ? t("updateSkill") : t("edit")}
+                    </button>
+                  ) : null}
+                  <button
+                    className="is-danger"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setConfirmOpen(true);
+                      setError(null);
+                    }}
+                  >
+                    <Trash size={16} /> {t("delete")}
+                  </button>
+                </div>
+              ) : null}
+            </>
+          )}
         </span>
       </div>
       {confirmOpen ? (

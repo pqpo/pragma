@@ -95,11 +95,20 @@ import {
   UpdateContextStoreFileSchema,
 } from "./context-stores.ts";
 import {
+  ContextStoreDraftRebaseInspectionSchema,
+  ContextStoreDraftRefSchema,
+  ContextStoreDraftSchema,
   ContextStoreRevisionJobRefSchema,
   ContextStoreRevisionJobSchema,
   ContextStoreRevisionProfileSchema,
   ContextStoreRevisionRequestSchema,
+  CreateContextStoreDraftSchema,
+  GetContextStoreDraftFileSchema,
   ListContextStoreRevisionJobsSchema,
+  ListContextStoreDraftsSchema,
+  RebaseContextStoreDraftSchema,
+  SubmitContextStoreDraftSchema,
+  UpdateContextStoreDraftFileSchema,
   UpdateContextStoreRevisionProfileSchema,
 } from "./context-store-revisions.ts";
 import {
@@ -149,6 +158,7 @@ import {
   MissionQueuePromptActionSchema,
   MissionChatUpdateSchema,
   MissionContextCompactionResultSchema,
+  MissionContextMountSchema,
   MissionContextWindowStateSchema,
   MissionHumanInteractionSchema,
   MissionLifecycleStatusSchema,
@@ -172,7 +182,7 @@ import {
   StageMissionClipboardImageSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
-  UpdateMissionContextStoresSchema,
+  UpdateMissionContextMountsSchema,
   UpdateMissionOptionsSchema,
 } from "./missions.ts";
 import {
@@ -402,6 +412,17 @@ export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
+export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
+export type CreateContextStoreDraft = z.infer<typeof CreateContextStoreDraftSchema>;
+export type GetContextStoreDraftFile = z.infer<typeof GetContextStoreDraftFileSchema>;
+export type ListContextStoreDrafts = z.infer<typeof ListContextStoreDraftsSchema>;
+export type ContextStoreDraftRef = z.infer<typeof ContextStoreDraftRefSchema>;
+export type ContextStoreDraftRebaseInspection = z.infer<
+  typeof ContextStoreDraftRebaseInspectionSchema
+>;
+export type RebaseContextStoreDraft = z.infer<typeof RebaseContextStoreDraftSchema>;
+export type SubmitContextStoreDraft = z.infer<typeof SubmitContextStoreDraftSchema>;
+export type UpdateContextStoreDraftFile = z.infer<typeof UpdateContextStoreDraftFileSchema>;
 export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
 export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
 export type ContextStoreRevisionJobRef = z.infer<typeof ContextStoreRevisionJobRefSchema>;
@@ -498,6 +519,7 @@ export type WorkflowLayout = z.infer<typeof WorkflowLayoutSchema>;
 export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
 export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
+export type MissionContextMount = z.infer<typeof MissionContextMountSchema>;
 export type MissionBranchSource = z.infer<typeof MissionBranchSourceSchema>;
 export type MissionBranchHistory = z.infer<typeof MissionBranchHistorySchema>;
 export type MissionSummary = z.infer<typeof MissionSummarySchema>;
@@ -528,7 +550,7 @@ export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type CreateMissionBranch = z.infer<typeof CreateMissionBranchSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;
-export type UpdateMissionContextStores = z.infer<typeof UpdateMissionContextStoresSchema>;
+export type UpdateMissionContextMounts = z.infer<typeof UpdateMissionContextMountsSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
 export type MissionTimelineRecord = z.infer<typeof MissionTimelineRecordSchema>;
 export type MissionWorkTask = z.infer<typeof MissionWorkTaskSchema>;

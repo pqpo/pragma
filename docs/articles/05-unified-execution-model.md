@@ -17,10 +17,10 @@ Expert 定义角色范围、指令、Runtime、模型、Capability、ContextStor
 普通 Expert 还可以通过显式注入的生命周期工具调用已授权的其他 Expert：
 
 ```text
-delegate_expert
-wait_experts
+spawn_expert
+continue_expert
 list_agents
-message_expert
+wait_experts
 steer_expert
 interrupt_expert
 ```
@@ -29,7 +29,7 @@ interrupt_expert
 
 ### ExpertTeam：带治理边界的动态协作
 
-ExpertTeam 由 coordinator 接收外部任务。coordinator 在当前 Team Execution 内拥有系统继承的全量管理权限，成员之间则按 `spawn` / `interact` 权限协作。它和普通 Expert launcher 使用同一套生命周期工具，但 Team 运行时会覆盖成员自己的 standalone launcher，防止成员绕过团队边界调用未授权对象。
+ExpertTeam 由 coordinator 接收外部任务。coordinator 在当前 Team Session 内拥有系统继承的全量管理权限，成员之间则按 `spawn` / `interact` 权限协作。它和普通 Expert launcher 使用同一套生命周期工具，但 Team 运行时会覆盖成员自己的 standalone launcher，防止成员绕过团队边界调用未授权对象。
 
 Team 可以提供只在本次团队执行中生效的关键指令，所有参与者都能读取，但不会修改可复用 Expert 定义，也不会泄漏到使用同一 Expert 的其他 Team。
 

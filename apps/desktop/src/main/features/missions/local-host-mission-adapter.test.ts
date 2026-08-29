@@ -25,7 +25,7 @@ function mission(input: {
   readonly flowInput?: Record<string, unknown>;
 }) {
   return MissionSchema.parse({
-    schemaVersion: "pragma.mission/v9",
+    schemaVersion: "pragma.mission/v10",
     id: "00000000-0000-4000-8000-000000000901",
     title: "M9 adapter test",
     goal: "Run through the Local Host port.",
@@ -40,7 +40,7 @@ function mission(input: {
     },
     ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
     origin: { type: "user" },
-    contextStoreIds: [],
+    contextMounts: [],
     lifecycleStatus: "active",
     createdAt: "2026-08-27T00:00:00.000Z",
     updatedAt: "2026-08-27T00:00:00.000Z",

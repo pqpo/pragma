@@ -31,7 +31,7 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
-  UpdateMissionContextStoresSchema,
+  UpdateMissionContextMountsSchema,
   UpdateHomeExecutorPreferenceSchema,
   isUserFacingMissionOrigin,
   latestMissionBranchableReply,
@@ -129,6 +129,14 @@ export function installMissionHandlers(options: {
   const sourceForMission = (mission: Mission): MissionSummary["source"] => {
     if (mission.origin.type === "automation") {
       return { type: "automation", automationRef: mission.origin.automationRef };
+    }
+    if (mission.origin.type === "system-store-revision") {
+      return {
+        type: "managed-automation",
+        kind: "knowledge-revision",
+        jobId: mission.origin.jobId,
+        storeId: mission.origin.storeId,
+      };
     }
     const automationRef = legacyAutomationMissionSources.get(mission.id);
     return automationRef === undefined ? { type: "task" } : { type: "automation", automationRef };
@@ -293,7 +301,7 @@ export function installMissionHandlers(options: {
           ? { attachments: parsed.input.attachments }
           : {}),
         executorRef: parsed.executor.ref,
-        contextStoreIds: parsed.contextStoreIds,
+        contextMounts: parsed.contextMounts,
         ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
         ...(parsed.toolPermissionMode === undefined
           ? {}
@@ -410,11 +418,11 @@ export function installMissionHandlers(options: {
       return mission;
     }),
   );
-  ipcMain.handle("missions:context-stores:update", (_event, input: unknown) =>
+  ipcMain.handle("missions:context-mounts:update", (_event, input: unknown) =>
     runDesktopMutation(async () => {
-      const parsed = UpdateMissionContextStoresSchema.parse(input);
+      const parsed = UpdateMissionContextMountsSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const mission = await options.runner.updateContextStores(parsed);
+      const mission = await options.runner.updateContextMounts(parsed);
       await publishMission(mission);
       return mission;
     }),

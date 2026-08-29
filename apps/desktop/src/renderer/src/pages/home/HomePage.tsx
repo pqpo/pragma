@@ -183,11 +183,12 @@ export function HomePage(props: {
 
   useEffect(() => {
     let cancelled = false;
-    const listContextStores = window.pragmaDesktop.listContextStores;
-    if (typeof listContextStores !== "function") return;
-    void listContextStores()
+    void window.pragmaDesktop
+      .listContextStores()
       .then((stores) => {
-        if (!cancelled) setContextStores(stores);
+        if (!cancelled) {
+          setContextStores(stores);
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -620,7 +621,12 @@ export function HomePage(props: {
     try {
       const mission = await window.pragmaDesktop.createMission({
         workspace: workspace.path,
-        contextStoreIds: [...contextStoreIds],
+        contextMounts: [
+          ...contextStoreIds.map((storeId) => ({
+            kind: "context-store" as const,
+            storeId,
+          })),
+        ],
         executor: { ref: executorRef },
         input:
           selectedExecutor.kind === "flow"
@@ -777,7 +783,9 @@ export function HomePage(props: {
                 type="button"
                 disabled={saving}
                 aria-label={t("missionKnowledge")}
-                title={t("missionKnowledgeSelected", { count: contextStoreIds.length })}
+                title={t("missionKnowledgeSelected", {
+                  count: contextStoreIds.length,
+                })}
                 onClick={() => setContextStorePickerOpen(true)}
               >
                 <FolderOpen size={17} aria-hidden="true" />
@@ -1709,30 +1717,29 @@ function MissionExecutorPicker(props: {
                         }
                         onChooseWorkspace={() => props.onChooseFavoriteWorkspace(executor.ref)}
                       />
-                      {!executor.alwaysVisible ? (
-                        <button
-                          type="button"
-                          aria-label={
-                            executor.preference.hidden
-                              ? t("restoreNamed", { name: copy.name })
-                              : t("hideNamed", { name: copy.name })
-                          }
-                          title={
-                            executor.preference.hidden ? t("restoreExecutor") : t("hideExecutor")
-                          }
-                          onClick={() =>
-                            void props.onPreferenceChange(executor.ref, {
-                              hidden: !executor.preference.hidden,
-                            })
-                          }
-                        >
-                          {executor.preference.hidden ? (
-                            <Eye size={16} aria-hidden="true" />
-                          ) : (
-                            <EyeSlash size={16} aria-hidden="true" />
-                          )}
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        aria-label={
+                          executor.preference.hidden
+                            ? t("restoreNamed", { name: copy.name })
+                            : t("hideNamed", { name: copy.name })
+                        }
+                        title={
+                          executor.preference.hidden ? t("restoreExecutor") : t("hideExecutor")
+                        }
+                        disabled={executor.alwaysVisible}
+                        onClick={() =>
+                          void props.onPreferenceChange(executor.ref, {
+                            hidden: !executor.preference.hidden,
+                          })
+                        }
+                      >
+                        {executor.preference.hidden ? (
+                          <Eye size={16} aria-hidden="true" />
+                        ) : (
+                          <EyeSlash size={16} aria-hidden="true" />
+                        )}
+                      </button>
                     </span>
                   </div>
                 );

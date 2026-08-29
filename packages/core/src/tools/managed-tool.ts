@@ -20,12 +20,11 @@ export interface ExpertToolExecutionContext {
         readonly signal?: AbortSignal | undefined;
       }) => Promise<unknown>)
     | undefined;
-  readonly delegateExpert?:
-    | ((
-        request:
-          | { readonly expertId: string; readonly task: string }
-          | { readonly agentId: string; readonly task: string },
-      ) => Promise<unknown>)
+  readonly spawnExpert?:
+    | ((request: { readonly expertId: string; readonly task: string }) => Promise<unknown>)
+    | undefined;
+  readonly continueExpert?:
+    | ((request: { readonly contextId: string; readonly task: string }) => Promise<unknown>)
     | undefined;
   readonly waitExperts?:
     | ((request: {
@@ -38,28 +37,21 @@ export interface ExpertToolExecutionContext {
   readonly listAgents?:
     | ((request: {
         readonly expertId?: string;
+        readonly status?: "running" | "waiting" | "queued" | "idle" | "resumable" | undefined;
         readonly cursor?: string;
         readonly limit?: number;
       }) => Promise<unknown>)
     | undefined;
-  readonly messageExpert?:
-    | ((request: {
-        readonly agentId: string;
-        readonly invocationId: string;
-        readonly message: string;
-      }) => Promise<unknown>)
-    | undefined;
   readonly steerExpert?:
     | ((request: {
-        readonly agentId: string;
         readonly invocationId: string;
-        readonly message: string;
+        readonly instruction: string;
+        readonly delivery: "next_boundary" | "after_current";
       }) => Promise<unknown>)
     | undefined;
   readonly interruptExpert?:
     | ((request: {
-        readonly agentId: string;
-        readonly invocationId?: string | undefined;
+        readonly invocationId: string;
         readonly reason?: string | undefined;
       }) => Promise<unknown>)
     | undefined;

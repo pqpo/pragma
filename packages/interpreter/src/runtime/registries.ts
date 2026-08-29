@@ -188,8 +188,7 @@ export interface PragmaCompileHost {
   readonly plugins?: PragmaPluginResolver | undefined;
   readonly adapterHost?: PragmaAdapterHost | undefined;
   readonly resolveExternalInvocable?:
-    | ((ref: PragmaResourceRef) => Promise<InvocableResource | undefined>)
-    | undefined;
+    ((ref: PragmaResourceRef) => Promise<InvocableResource | undefined>) | undefined;
   readonly pragmaHome?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
 }
@@ -229,7 +228,7 @@ export class DefinitionSerializerRegistry {
 const delegateToolAdapter: ResourceToolAdapter = {
   id: "pragma.tool.delegate",
   version: "v1",
-  createTools({ binding, targets, contextPolicies, runtimeByExpert }) {
+  createTools({ binding, targets, runtimeByExpert }) {
     const values = targets.map((target) => target.value);
     const experts = values.filter((target): target is Expert => !("kind" in target));
     if (experts.length !== values.length) {
@@ -240,7 +239,6 @@ const delegateToolAdapter: ResourceToolAdapter = {
       experts,
       maxConcurrency: policy?.maxConcurrency,
       maxDepth: policy?.maxDepth,
-      contextId: contextPolicies.resolve(policy?.context ?? "context-policy:pragma.fresh@v1"),
       runtimeByExpert,
     }).tools;
   },

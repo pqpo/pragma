@@ -16,8 +16,8 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BUILT_IN_PRAGMA_REF,
-  STORE_REVISION_TARGET_CONTEXT_REF,
   builtInAgentResource,
+  pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
 import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
 
@@ -34,17 +34,15 @@ const directories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    directories
-      .splice(0)
-      .map(
-        async (directory) =>
-          await rm(directory, {
-            recursive: true,
-            force: true,
-            maxRetries: 5,
-            retryDelay: 50,
-          }),
-      ),
+    directories.splice(0).map(
+      async (directory) =>
+        await rm(directory, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        }),
+    ),
   );
 });
 
@@ -53,7 +51,7 @@ async function stores() {
   directories.push(directory);
   const project = createPragmaProjectStore({
     projectsPath: directory,
-    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF, STORE_REVISION_TARGET_CONTEXT_REF]),
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   return {
     directory,
@@ -81,6 +79,27 @@ async function projectRevisionFile(
 }
 
 describe("PragmaProjectStore", { timeout: 30_000 }, () => {
+  it("allows the canonical fixed resource but rejects modified copies", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-fixed-resource-"));
+    directories.push(directory);
+    const fixed = pragmaManagementCapabilityResource();
+    if (fixed.kind !== "Capability") throw new Error("Expected the fixed Capability resource.");
+    const project = createPragmaProjectStore({
+      projectsPath: directory,
+      fixedResources: [fixed],
+    });
+    const published = await project.publish({ expectedRevision: 0, resources: [fixed] });
+
+    await expect(
+      project.upsert({
+        baseRevision: published.revision,
+        resource: {
+          ...fixed,
+          metadata: { ...fixed.metadata, name: "Modified system resource" },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "built_in_readonly" });
+  });
   it("publishes the initial empty project before it is pinned by a Mission", async () => {
     const { directory, project } = await stores();
 
@@ -350,7 +369,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     expect(compilerViews).toHaveLength(1);
     await expect(
       readFile(join(directory, ".cache", "views", compilerViews[0]!, "pragma.lock.yaml"), "utf8"),
-    ).resolves.toContain("compilerVersion: pragma.dsl/v8");
+    ).resolves.toContain("compilerVersion: pragma.dsl/v9");
     expect((await readdir(directory)).some((name) => name.startsWith("studio.v4-backup-"))).toBe(
       false,
     );
@@ -432,7 +451,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     expect(migrated).toMatchObject({ revision: 1 });
     expect(await readFile(projectManifestPath, "utf8")).toContain("pragma.desktop-project/v4");
     expect(await projectRevisionFile(directory, 1, "pragma.lock.yaml")).toContain(
-      "compilerVersion: pragma.dsl/v8",
+      "compilerVersion: pragma.dsl/v9",
     );
   });
 
@@ -837,7 +856,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     });
     expect(created.id).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/);
     expect(created.avatarId).toBe("pragma.avatar.expert.writer");
-    expect(await experts.list()).toHaveLength(2);
+    expect(await experts.list()).toHaveLength(3);
     const opened = await projectRevisionFile(directory, 1, `experts/${created.id}.pragma.yaml`);
     expect(opened).toContain("scope: Release communication");
     expect(opened).toContain("avatarId: pragma.avatar.expert.writer");
@@ -897,29 +916,6 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
       code: "built_in_readonly",
     });
     expect((await project.get()).revision).toBe(1);
-  });
-
-  it("reserves the Store Revision Agent target Context identity", async () => {
-    const { project } = await stores();
-    const resource: PragmaContextStoreResource = {
-      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
-      kind: "ContextStore",
-      metadata: {
-        id: "0000000000st0ctx",
-        name: "Conflicting store",
-        description: "A project resource that collides with the system target.",
-        tags: [],
-      },
-      spec: {
-        adapter: "pragma.context.host@v1",
-        binding: "binding:pragma.store-revision-target",
-        config: { key: "conflict" },
-      },
-    };
-
-    await expect(project.upsert({ baseRevision: 0, resource })).rejects.toMatchObject({
-      code: "built_in_readonly",
-    });
   });
 
   it("blocks deletion of Teams and Flows referenced by another Flow", async () => {
@@ -1625,7 +1621,6 @@ function exampleTeam(id = "reviewers"): PragmaExpertTeamResource {
         permissions: { interact: {} },
         maxConcurrency: 2,
         maxDepth: 2,
-        context: "context-policy:pragma.fresh@v1",
         runtimes: {},
       },
     },

@@ -51,6 +51,11 @@ priority: normal
 `read_expert_context(namespace, id, start, offset)` 按需读取。`sha256` 是正文 UTF-8 字节的 SHA-256；
 `revision` 则是 Store 提供的版本/并发控制标识，可能包含 metadata 或采用其他生成策略，二者不能互相替代。
 
+`edit_expert_context(mode="replace")` 只替换调用中明确提供的 `content` 或 metadata 字段；省略的
+`content`、`description`、`trigger` 和 `priority` 均保留现值。并发编辑时，从最近一次
+`list_expert_context`、`read_expert_context` 或写入回执中复制 `revision` 到 `expectedRevision`，或复制
+`etag` 到 `expectedEtag`。两者同时提供时必须同时匹配；冲突后应重新读取并基于最新 token 重试。
+
 > **兼容性说明**：此前 `add_expert_context` 的 `details.context` 返回完整正文；自本版本起仅返回回执。
 > 依赖旧格式的客户端应改用 `read_expert_context(namespace, id)` 获取正文。
 

@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BUILT_IN_AGENT_REFS, BUILT_IN_PRAGMA_REF } from "@pragma/built-in-agents";
+import {
+  BUILT_IN_AGENT_REFS,
+  BUILT_IN_PRAGMA_REF,
+  STORE_REVISION_EXPERT_REF,
+} from "@pragma/built-in-agents";
 
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 
@@ -48,11 +52,22 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("reserves the five managed Agent identities without exposing customization surfaces", async () => {
+  it("exposes Store Revision while keeping the other managed identities internal", async () => {
     const registry = createDesktopSystemExpertRegistry();
-    const managedRefs = BUILT_IN_AGENT_REFS.filter((ref) => ref !== BUILT_IN_PRAGMA_REF);
+    expect(registry.get(STORE_REVISION_EXPERT_REF)).toMatchObject({
+      ref: STORE_REVISION_EXPERT_REF,
+      name: "Store Revision Agent",
+      opaqueCapabilities: [expect.objectContaining({ ref: "capability:0000000000manage" })],
+    });
+    expect(registry.getExecutor(STORE_REVISION_EXPERT_REF)).toMatchObject({
+      ref: STORE_REVISION_EXPERT_REF,
+      kind: "expert",
+    });
+    const managedRefs = BUILT_IN_AGENT_REFS.filter(
+      (ref) => ref !== BUILT_IN_PRAGMA_REF && ref !== STORE_REVISION_EXPERT_REF,
+    );
 
-    expect(managedRefs).toHaveLength(5);
+    expect(managedRefs).toHaveLength(4);
     for (const ref of managedRefs) {
       expect(registry.isReservedRef(ref)).toBe(true);
       expect(registry.isReservedId(ref.slice("expert:".length))).toBe(true);
@@ -162,6 +177,30 @@ describe("DesktopSystemExpertRegistry", () => {
     });
   });
 
+  it("customizes and resets Store Revision without removing its required tools", async () => {
+    const registry = createDesktopSystemExpertRegistry();
+    const original = registry.get(STORE_REVISION_EXPERT_REF)!;
+    const customized = await registry.update(STORE_REVISION_EXPERT_REF, {
+      name: "Knowledge Editor",
+      description: "Customized sparse-draft editor.",
+      tags: ["builtin", "revision"],
+      additionalInstructions: "Prefer short topic files.",
+      capabilities: [],
+      toolApprovals: {},
+      plugins: [],
+      contextStoreMounts: [],
+    });
+    expect(customized).toMatchObject({ name: "Knowledge Editor", customized: true });
+    expect(customized.opaqueCapabilities).toEqual(original.opaqueCapabilities);
+    expect(registry.getResource(STORE_REVISION_EXPERT_REF)?.spec.capabilities).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ref: "capability:0000000000manage" })]),
+    );
+    await expect(registry.reset(STORE_REVISION_EXPERT_REF)).resolves.toMatchObject({
+      name: "Store Revision Agent",
+      customized: false,
+    });
+  });
+
   it("migrates a v3 customization from the versioned built-in Expert ref", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v3-"));
     directories.push(directory);
@@ -195,8 +234,19 @@ describe("DesktopSystemExpertRegistry", () => {
       customized: true,
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       customizations: [{ ref: BUILT_IN_PRAGMA_REF }],
     });
+    await expect(readFile(`${configPath}.v3.backup.json`, "utf8")).resolves.toContain(
+      "expert:pragma@1.0.0",
+    );
+  });
+
+  it("fails closed on future customization schemas", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-future-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 99, customizations: [] }));
+    await expect(createDesktopSystemExpertRegistry({ configPath }).initialize()).rejects.toThrow();
   });
 });

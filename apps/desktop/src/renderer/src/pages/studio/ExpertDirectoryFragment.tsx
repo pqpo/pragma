@@ -39,10 +39,20 @@ import { errorMessage } from "../../lib/errors.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import {
   BUILT_IN_PRAGMA_EXPERT_REF,
+  BUILT_IN_STORE_REVISION_EXPERT_REF,
   localizeSystemExpertCopy,
 } from "../../lib/system-expert-copy.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
+const PINNED_EXPERT_REFS = [
+  BUILT_IN_PRAGMA_EXPERT_REF,
+  BUILT_IN_STORE_REVISION_EXPERT_REF,
+] as const;
+
+function expertDirectoryRank(ref: string | undefined): number {
+  const rank = PINNED_EXPERT_REFS.findIndex((candidate) => candidate === ref);
+  return rank === -1 ? PINNED_EXPERT_REFS.length : rank;
+}
 
 function truncateText(value: string, maximumLength: number): string {
   const normalized = value.trim();
@@ -72,9 +82,7 @@ export function ExpertDirectoryFragment(props: {
         .includes(query.trim().toLowerCase()),
     )
     .toSorted(
-      (left, right) =>
-        Number(right.expert.ref === BUILT_IN_PRAGMA_EXPERT_REF) -
-        Number(left.expert.ref === BUILT_IN_PRAGMA_EXPERT_REF),
+      (left, right) => expertDirectoryRank(left.expert.ref) - expertDirectoryRank(right.expert.ref),
     );
 
   return (
@@ -258,7 +266,14 @@ export function ExpertDetailFragment(props: {
     (reference): reference is Extract<ExpertRecord["capabilities"][number], { kind: "tools" }> =>
       reference.kind === "tools",
   );
-  const selectedTools = selectedToolReferences.flatMap((reference) => reference.toolNames);
+  const selectedTools = [
+    ...(props.expert.persisted?.opaqueCapabilities ?? []).flatMap((capability) =>
+      capability.kind === "tools"
+        ? (capability.tools ?? []).map((name) => `${name} · ${t("fixedSystemTool")}`)
+        : [],
+    ),
+    ...selectedToolReferences.flatMap((reference) => reference.toolNames),
+  ];
   const selectedPlugins = props.expert.plugins.map(
     (reference) =>
       props.plugins.find((plugin) => plugin.ref === reference.ref)?.manifest.name ?? reference.ref,

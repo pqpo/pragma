@@ -46,6 +46,7 @@ import { isRuntimeFeatureEnabled } from "../runtime/features.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_CURRENT_TEAM_ID_ATTR,
   EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
@@ -90,6 +91,8 @@ import { ContextOutputService, unwrapInvocationOutput } from "./context-output-s
 import { formatExpertPromptWithAttachments } from "./expert-prompt.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
+
+const AUTOMATIC_EXPERT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 
 interface ActiveSubmission {
   readonly invocationId: string;
@@ -677,11 +680,11 @@ export class ExecutionController {
     request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
   ): Promise<void> {
     if (
-      this.orchestrators.get(contextId)?.wakeWait(contextId, {
+      (await this.orchestrators.get(contextId)?.wakeWait(contextId, {
         kind: "steer",
         requestId: request.requestId,
         content: request.content,
-      }) === true
+      })) === true
     ) {
       return;
     }
@@ -696,11 +699,11 @@ export class ExecutionController {
     readonly content: string;
   }): Promise<"steered" | "waiting_continuation" | "not_active" | "unsupported"> {
     if (
-      this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, {
+      (await this.orchestrators.get(request.contextId)?.wakeWait(request.contextId, {
         kind: "steer",
         requestId: request.requestId,
         content: request.content,
-      }) === true
+      })) === true
     ) {
       return "waiting_continuation";
     }
@@ -964,6 +967,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     ownerContextId: options.context.contextId,
     callerInvocationId: options.invocationId,
     ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+    callerDepth: options.depth ?? 0,
+    spawnExpertIds: delegation?.spawnExpertIds ?? new Set<string>(),
     interactExpertIds: delegation?.interactExpertIds ?? new Set<string>(),
     isCoordinator: delegation?.isCoordinator ?? false,
   };
@@ -1057,7 +1062,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     try {
       return await options.controller.requestHumanInteraction(options.invocationId, request);
     } finally {
-      await resumeDelegation?.();
+      await resumeDelegation?.({ allowOvercommit: true });
     }
   };
   const invocationLoggerProvider = options.loggerProvider?.withScope({
@@ -1088,6 +1093,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           [EXECUTION_ID_ATTR]: options.executionId,
           [INVOCATION_ID_ATTR]: options.invocationId,
           [EXECUTION_CURRENT_EXPERT_ID_ATTR]: nativeExpert.id,
+          ...(team === undefined ? {} : { [EXECUTION_CURRENT_TEAM_ID_ATTR]: team.id }),
           [EXECUTION_CONTEXT_ID_ATTR]: options.context.contextId,
         },
       },
@@ -1185,31 +1191,39 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         (await orchestrator.hasOwnedUnjoined(options.invocationId))
       ) {
         await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, undefined);
-        await options.store.commit({
-          commitId: randomUUID(),
-          executionId: options.executionId,
-          invocationPatches: [
-            {
-              invocationId: options.invocationId,
-              patch: {
-                status: "waiting",
-                waitReason: "experts",
-                ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
-              },
-            },
-          ],
-          events: [
-            { invocationId: options.invocationId, type: "expert.children.waiting", data: {} },
-          ],
-        });
         const waitResult = await orchestrator.waitForOwnedUnjoined(
           options.invocationId,
           interactionAccess,
           options.controller.signalForInvocation(options.invocationId),
           options.delegationPermit,
+          AUTOMATIC_EXPERT_WAIT_TIMEOUT_MS,
+          async () => {
+            await options.store.commit({
+              commitId: randomUUID(),
+              executionId: options.executionId,
+              invocationPatches: [
+                {
+                  invocationId: options.invocationId,
+                  patch: {
+                    status: "waiting",
+                    waitReason: "experts",
+                    ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+                  },
+                },
+              ],
+              events: [
+                {
+                  invocationId: options.invocationId,
+                  type: "expert.children.waiting",
+                  data: {},
+                },
+              ],
+            });
+          },
         );
         const result = {
           completed: waitResult.completed,
+          pending: waitResult.pending,
           discovery: await orchestrator.list(interactionAccess),
         };
         const waitMessages =
@@ -1228,12 +1242,19 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
                   `User guidance: ${waitResult.steer.content}`,
                   JSON.stringify(result, null, 2),
                 ].join("\n")
-              : [
-                  "[Pragma orchestration continuation]",
-                  "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
-                  "Do not spawn replacement tasks for work that is already complete.",
-                  JSON.stringify(result, null, 2),
-                ].join("\n");
+              : waitResult.timedOut
+                ? [
+                    "[Pragma orchestration wait timeout]",
+                    "The bounded wait ended, but the listed Expert tasks are still running.",
+                    "Review the pending state now. Call wait_experts again, steer_expert, or interrupt_expert as appropriate. Do not spawn duplicate work.",
+                    JSON.stringify(result, null, 2),
+                  ].join("\n")
+                : [
+                    "[Pragma orchestration continuation]",
+                    "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
+                    "Do not spawn replacement tasks for work that is already complete.",
+                    JSON.stringify(result, null, 2),
+                  ].join("\n");
         continuation += 1;
         await options.store.commit({
           commitId: randomUUID(),
@@ -1252,7 +1273,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
                   ? "expert.children.message-received"
                   : waitResult.wakeReason === "steer"
                     ? "expert.children.wait-steered"
-                    : "expert.children.completed",
+                    : waitResult.timedOut
+                      ? "expert.children.wait-timed-out"
+                      : "expert.children.completed",
               data: result,
             },
           ],
@@ -1501,25 +1524,18 @@ function createExecutionContext(
     }) => await invokeResourceFromExpert(options, nativeExpert, depth, parentRuntimeId, request),
   };
   if (delegation === undefined || orchestrator === undefined) return base;
+  const interactionAccess = {
+    ownerContextId: options.context.contextId,
+    callerInvocationId: options.invocationId,
+    ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+    callerDepth: depth,
+    spawnExpertIds: delegation.spawnExpertIds,
+    interactExpertIds: delegation.interactExpertIds,
+    isCoordinator: delegation.isCoordinator,
+  };
   return {
     ...base,
-    delegateExpert: async (
-      request:
-        | { readonly expertId: string; readonly task: string }
-        | { readonly agentId: string; readonly task: string },
-    ) => {
-      if ("agentId" in request) {
-        return await orchestrator.delegateExisting(
-          {
-            ownerContextId: options.context.contextId,
-            callerInvocationId: options.invocationId,
-            ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
-            interactExpertIds: delegation.interactExpertIds,
-            isCoordinator: delegation.isCoordinator,
-          },
-          request,
-        );
-      }
+    spawnExpert: async (request: { readonly expertId: string; readonly task: string }) => {
       const expert = delegation.experts.find(
         (candidate) =>
           delegation.spawnExpertIds.has(candidate.id) && candidate.id === request.expertId,
@@ -1528,7 +1544,7 @@ function createExecutionContext(
         throw new Error(`Expert ${nativeExpert.id} may not delegate to ${request.expertId}.`);
       }
       const childRuntime = await bindDelegatedRuntime(options, delegation, expert, parentRuntimeId);
-      return await orchestrator.spawn({
+      const result = await orchestrator.spawn({
         ownerContextId: options.context.contextId,
         createdByInvocationId: options.invocationId,
         parentAgentId: options.agentId,
@@ -1538,7 +1554,7 @@ function createExecutionContext(
         runtime: childRuntime,
         modelSelection: expert.models?.default,
         owner: options.owner,
-        resolver: delegation.contextId,
+        resolver: freshContextIdResolver,
         source:
           team === undefined
             ? {
@@ -1553,84 +1569,37 @@ function createExecutionContext(
                 ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
               },
       });
+      return {
+        expertId: result.expertId,
+        contextId: result.contextId,
+        agentId: result.agentId,
+        invocationId: result.invocationId,
+        status: result.status,
+      };
     },
+    continueExpert: async (request: { readonly contextId: string; readonly task: string }) =>
+      await orchestrator.continueContext(interactionAccess, request),
     waitExperts: async (request: {
       readonly invocationIds: readonly string[];
       readonly returnWhen?: "all" | "any" | undefined;
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
-    }) =>
-      await orchestrator.wait(
-        {
-          ownerContextId: options.context.contextId,
-          callerInvocationId: options.invocationId,
-          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
-          interactExpertIds: delegation.interactExpertIds,
-          isCoordinator: delegation.isCoordinator,
-        },
-        request,
-        options.delegationPermit,
-      ),
+    }) => await orchestrator.wait(interactionAccess, request, options.delegationPermit),
     listAgents: async (request: {
-      readonly expertId?: string;
-      readonly cursor?: string;
-      readonly limit?: number;
-    }) =>
-      await orchestrator.list(
-        {
-          ownerContextId: options.context.contextId,
-          callerInvocationId: options.invocationId,
-          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
-          interactExpertIds: delegation.interactExpertIds,
-          isCoordinator: delegation.isCoordinator,
-        },
-        request,
-      ),
-    messageExpert: async (request: {
-      readonly agentId: string;
-      readonly invocationId: string;
-      readonly message: string;
-    }) =>
-      await orchestrator.message(
-        {
-          ownerContextId: options.context.contextId,
-          callerInvocationId: options.invocationId,
-          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
-          interactExpertIds: delegation.interactExpertIds,
-          isCoordinator: delegation.isCoordinator,
-        },
-        request,
-      ),
+      readonly expertId?: string | undefined;
+      readonly status?: "running" | "waiting" | "queued" | "idle" | "resumable" | undefined;
+      readonly cursor?: string | undefined;
+      readonly limit?: number | undefined;
+    }) => await orchestrator.list(interactionAccess, request),
     steerExpert: async (request: {
-      readonly agentId: string;
       readonly invocationId: string;
-      readonly message: string;
-    }) =>
-      await orchestrator.steer(
-        {
-          ownerContextId: options.context.contextId,
-          callerInvocationId: options.invocationId,
-          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
-          interactExpertIds: delegation.interactExpertIds,
-          isCoordinator: delegation.isCoordinator,
-        },
-        request,
-      ),
+      readonly instruction: string;
+      readonly delivery: "next_boundary" | "after_current";
+    }) => await orchestrator.steer(interactionAccess, request),
     interruptExpert: async (request: {
-      readonly agentId: string;
-      readonly invocationId?: string | undefined;
+      readonly invocationId: string;
       readonly reason?: string | undefined;
-    }) =>
-      await orchestrator.interrupt(
-        {
-          ownerContextId: options.context.contextId,
-          callerInvocationId: options.invocationId,
-          ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
-          interactExpertIds: delegation.interactExpertIds,
-          isCoordinator: delegation.isCoordinator,
-        },
-        request,
-      ),
+    }) => await orchestrator.interrupt(interactionAccess, request),
   };
 }
 

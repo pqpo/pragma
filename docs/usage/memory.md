@@ -4,7 +4,8 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)，分阶段范围见
 [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)。
 
-> [ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md) 已调整并落实 Knowledge 最终边界：
+> [ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md) 与
+> [ADR 044](../adr/044-sparse-context-store-revision-drafts.md) 已调整并落实 Knowledge 最终边界：
 > 用户批准升级后，Knowledge 进入“工作室 → 知识库”的托管 Context Store，并与 Memory/Evidence 解耦。
 
 ## 当前已经可用的能力
@@ -41,7 +42,8 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
   Memory Knowledge Store，ExpertTeam/Flow 按实际 producer Expert 路由；
 - 首次 Candidate 在 Memory 页面预览和编辑；确认后原子创建普通 Studio Context Store rev1 并自动挂载；
 - Store 已存在时，Memory 只能提交修订提示词。修订任务只在“工作室 → 知识库 → 修订任务”显示，由独立
-  Store Revision Agent 生成 change set；用户批准前不改 Store，批准时以 revision/hash CAS 原子激活；
+  Store Revision Agent 直接编辑稀疏草稿 Context Store；用户批准前不改正式 Store，批准时将 overlay
+  转为最小 change set，并以 revision/hash CAS 原子激活；
 - Store 使用 `guide → overview → index/indexes → items` 渐进披露，不保存 Evidence、sourceRefs 或提炼提示词；
 - 分享与导入只使用普通 Context Store Bundle 路径。旧 Published Knowledge API/UI 与
   `pragma.memory.knowledge@v1` extension 已删除，旧目录不迁移、不读取。
@@ -217,7 +219,8 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 ~/.pragma/data/memory/modules/<knowledge-learning>/knowledge.sqlite # Knowledge learning jobs；无 published authority
 ~/.pragma/data/memory/modules/<skill-learning>/skill-learning.sqlite # Skill learning jobs；无 published authority
 ~/.pragma/data/context-stores/<storeId>/                 # promoted Knowledge 内容与 revision history
-~/.pragma/state/context-store-revisions/                 # 修订任务、Agent profile 与隐藏 Mission registry
+~/.pragma/data/context-store-drafts/<draftId>/            # 稀疏草稿 overlay 与固定基线
+~/.pragma/state/context-store-revisions/                  # v2 修订任务与持久 Mission registry
 ~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
 ~/.pragma/state/memory-skill-promotion/                  # Skill Candidate、content-free Expert binding 与 promotion journal
 ~/.pragma/state/skill-revisions/                         # Skill 修订任务与 change set

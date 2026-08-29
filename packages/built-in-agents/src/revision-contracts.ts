@@ -57,26 +57,45 @@ export const ContextStoreRevisionRequestSchema = z
     schemaVersion: z.literal("pragma.context-store-revision-request/v1"),
     storeId: z.string().uuid(),
     prompt: z.string().trim().min(1).max(50_000),
-    source: z.enum(["user", "memory-learning"]),
+    source: z.enum(["user", "memory-learning", "expert-reflection"]),
     sourceDigest: z
       .string()
       .regex(/^[a-f0-9]{64}$/u)
       .optional(),
+    provenance: z
+      .object({
+        executionId: z.string().min(1).max(200),
+        invocationId: z.string().min(1).max(200),
+        expertId: z.string().min(1).max(200),
+        teamId: z.string().min(1).max(200).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((request, context) => {
-    if (request.source === "memory-learning" && request.sourceDigest === undefined) {
+    if (request.source !== "user" && request.sourceDigest === undefined) {
       context.addIssue({
         code: "custom",
         path: ["sourceDigest"],
-        message: "Memory learning revisions require a source digest.",
+        message: "Machine-submitted revisions require a source digest.",
       });
     }
-    if (request.source === "user" && request.sourceDigest !== undefined) {
+    if (
+      request.source === "user" &&
+      (request.sourceDigest !== undefined || request.provenance !== undefined)
+    ) {
       context.addIssue({
         code: "custom",
         path: ["sourceDigest"],
-        message: "User revision requests cannot attach a Memory source digest.",
+        message: "User revision requests cannot attach machine provenance.",
+      });
+    }
+    if ((request.source === "expert-reflection") !== (request.provenance !== undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["provenance"],
+        message: "Only expert reflection revisions require execution provenance.",
       });
     }
   });
@@ -237,26 +256,203 @@ export const ContextStoreChangeSetSchema = z.object({
   operations: z.array(ContextStoreChangeOperationSchema).min(1).max(1_000),
 });
 
+export const ContextStoreDraftStateSchema = z.enum([
+  "editing",
+  "pending_review",
+  "merging",
+  "needs_rebase",
+  "needs_attention",
+  "merged",
+]);
+
+export const ContextStoreDraftOverlaySchema = z
+  .object({
+    files: z.array(
+      z
+        .object({
+          id: StoredMarkdownPathSchema,
+          content: z.string().max(1_000_000),
+          metadata: ContextStoreContentMetadataSchema,
+        })
+        .strict(),
+    ),
+    deletedFiles: z.array(StoredMarkdownPathSchema),
+    directories: z.array(StoredDirectoryPathSchema),
+    deletedDirectories: z.array(StoredDirectoryPathSchema),
+  })
+  .strict()
+  .superRefine((overlay, context) => {
+    for (const [field, values] of [
+      ["files", overlay.files.map((file) => file.id)],
+      ["deletedFiles", overlay.deletedFiles],
+      ["directories", overlay.directories],
+      ["deletedDirectories", overlay.deletedDirectories],
+    ] as const) {
+      const seen = new Set<string>();
+      for (const [index, value] of values.entries()) {
+        if (seen.has(value)) {
+          context.addIssue({
+            code: "custom",
+            path: [field, index],
+            message: `Duplicate draft overlay entry: ${value}`,
+          });
+        }
+        seen.add(value);
+      }
+    }
+    const deletedFiles = new Set(overlay.deletedFiles);
+    for (const [index, file] of overlay.files.entries()) {
+      if (deletedFiles.has(file.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["files", index, "id"],
+          message: "A draft file cannot also be deleted.",
+        });
+      }
+    }
+  });
+
+export const ContextStoreDraftSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-draft/v1"),
+    id: z.string().uuid(),
+    revision: z.number().int().positive(),
+    name: z.string().trim().min(1).max(120),
+    storeId: z.string().uuid(),
+    baseRevision: z.number().int().positive(),
+    baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    state: ContextStoreDraftStateSchema,
+    overlay: ContextStoreDraftOverlaySchema,
+    activeMissionId: z.string().uuid().optional(),
+    submittedRevision: z.number().int().positive().optional(),
+    summary: z.string().trim().min(1).max(2_000).optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((draft, context) => {
+    if (
+      (draft.state === "pending_review" || draft.state === "merging") &&
+      draft.submittedRevision !== draft.revision
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["submittedRevision"],
+        message: "A pending review must pin the current draft revision.",
+      });
+    }
+    if (
+      draft.state !== "pending_review" &&
+      draft.state !== "merging" &&
+      draft.submittedRevision !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["submittedRevision"],
+        message: "Only a pending review may pin a submitted revision.",
+      });
+    }
+  });
+
+export const CreateContextStoreDraftSchema = z
+  .object({
+    storeId: z.string().uuid(),
+    name: ContextStoreDraftSchema.shape.name,
+  })
+  .strict();
+
+export const ContextStoreDraftRefSchema = z
+  .object({
+    draftId: z.string().uuid(),
+    expectedRevision: z.number().int().positive(),
+  })
+  .strict();
+
+export const SubmitContextStoreDraftSchema = ContextStoreDraftRefSchema.extend({
+  summary: z.string().trim().min(1).max(2_000),
+}).strict();
+
+export const UpdateContextStoreDraftFileSchema = ContextStoreDraftRefSchema.extend({
+  id: ManagedMarkdownPathSchema,
+  content: z.string().max(1_000_000),
+  metadata: ContextStoreContentMetadataSchema,
+  expectedFileRevision: z.string().trim().min(1).max(500),
+}).strict();
+
+export const GetContextStoreDraftFileSchema = z
+  .object({ draftId: z.string().uuid(), id: ManagedMarkdownPathSchema })
+  .strict();
+
+export const ListContextStoreDraftsSchema = z
+  .object({
+    storeId: z.string().uuid().optional(),
+    state: ContextStoreDraftStateSchema.optional(),
+  })
+  .strict();
+
+export const ContextStoreDraftRebaseResolutionSchema = z.discriminatedUnion("resolution", [
+  z.object({ id: StoredDirectoryPathSchema, resolution: z.literal("keep_draft") }).strict(),
+  z.object({ id: StoredDirectoryPathSchema, resolution: z.literal("keep_current") }).strict(),
+  z
+    .object({
+      id: StoredMarkdownPathSchema,
+      resolution: z.literal("replace"),
+      content: z.string().max(1_000_000),
+      metadata: ContextStoreContentMetadataSchema,
+    })
+    .strict(),
+]);
+
+export const ContextStoreDraftRebaseConflictSchema = z
+  .object({
+    id: StoredDirectoryPathSchema,
+    kind: z.enum([
+      "modified",
+      "draft_deleted",
+      "current_deleted",
+      "added_collision",
+      "directory_ancestor",
+    ]),
+    baseContent: z.string().max(1_000_000).optional(),
+    currentContent: z.string().max(1_000_000).optional(),
+    draftContent: z.string().max(1_000_000).optional(),
+  })
+  .strict();
+
+export const ContextStoreDraftRebaseInspectionSchema = z
+  .object({
+    draftId: z.string().uuid(),
+    draftRevision: z.number().int().positive(),
+    currentStoreRevision: z.number().int().positive(),
+    currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    conflicts: z.array(ContextStoreDraftRebaseConflictSchema),
+  })
+  .strict();
+
+export const RebaseContextStoreDraftSchema = ContextStoreDraftRefSchema.extend({
+  resolutions: z.array(ContextStoreDraftRebaseResolutionSchema).default([]),
+}).strict();
+
 export const ContextStoreRevisionJobStateSchema = z.enum([
-  "pending",
+  "editing",
   "running",
   "pending_review",
-  "applying",
-  "completed",
+  "merging",
+  "merged",
   "rejected",
+  "needs_rebase",
   "needs_attention",
-  "superseded",
 ]);
 
 export const ContextStoreRevisionJobSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-revision-job/v1"),
+    schemaVersion: z.literal("pragma.context-store-revision-job/v2"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
+    draftId: z.string().uuid(),
+    missionId: z.string().uuid().optional(),
     request: ContextStoreRevisionRequestSchema,
     state: ContextStoreRevisionJobStateSchema,
-    changeSet: ContextStoreChangeSetSchema.optional(),
-    supersededBy: z.string().uuid().optional(),
     error: z
       .object({ code: z.string().min(1).max(100), message: z.string().min(1).max(2_000) })
       .strict()
@@ -450,6 +646,22 @@ export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionReq
 export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
 export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
 export type ContextStoreRevisionSnapshot = z.infer<typeof ContextStoreRevisionSnapshotSchema>;
+export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
+export type ContextStoreDraftOverlay = z.infer<typeof ContextStoreDraftOverlaySchema>;
+export type ContextStoreDraftState = z.infer<typeof ContextStoreDraftStateSchema>;
+export type CreateContextStoreDraft = z.infer<typeof CreateContextStoreDraftSchema>;
+export type ContextStoreDraftRef = z.infer<typeof ContextStoreDraftRefSchema>;
+export type SubmitContextStoreDraft = z.infer<typeof SubmitContextStoreDraftSchema>;
+export type UpdateContextStoreDraftFile = z.infer<typeof UpdateContextStoreDraftFileSchema>;
+export type GetContextStoreDraftFile = z.infer<typeof GetContextStoreDraftFileSchema>;
+export type ListContextStoreDrafts = z.infer<typeof ListContextStoreDraftsSchema>;
+export type ContextStoreDraftRebaseInspection = z.infer<
+  typeof ContextStoreDraftRebaseInspectionSchema
+>;
+export type ContextStoreDraftRebaseResolution = z.infer<
+  typeof ContextStoreDraftRebaseResolutionSchema
+>;
+export type RebaseContextStoreDraft = z.infer<typeof RebaseContextStoreDraftSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
 export type UpdateContextStoreRevisionProfile = z.infer<

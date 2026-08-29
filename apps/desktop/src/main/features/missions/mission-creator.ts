@@ -7,12 +7,14 @@ import { z } from "zod";
 import type {
   DesktopToolPermissionMode,
   Mission,
+  MissionContextMount,
   MissionModelOverride,
   MissionChatEntry,
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionStore } from "./mission-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 
@@ -29,7 +31,7 @@ export interface MissionCreator {
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
     readonly origin?: Mission["origin"] | undefined;
-    readonly contextStoreIds?: readonly string[] | undefined;
+    readonly contextMounts?: readonly MissionContextMount[] | undefined;
   }): Promise<Mission>;
   createBranch(input: {
     readonly source: Mission;
@@ -44,6 +46,7 @@ export function createMissionCreator(options: {
   readonly project: PragmaProjectStore;
   readonly executors: MissionExecutorCatalog;
   readonly contextStores?: ContextStoreStore | undefined;
+  readonly contextStoreRevisions?: Pick<ContextStoreRevisionService, "resolveDraft"> | undefined;
   readonly getDefaultToolPermissionMode: () =>
     DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
@@ -86,12 +89,10 @@ export function createMissionCreator(options: {
       if (input.modelOverride !== undefined) {
         await options.executors.validateModelOverride(executor.ref, input.modelOverride, project);
       }
-      for (const storeId of input.contextStoreIds ?? []) {
-        if (options.contextStores === undefined) {
-          throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
-        }
-        await options.contextStores.resolve(storeId);
+      if ((input.contextMounts ?? []).some((mount) => mount.kind === "context-store-draft")) {
+        throw new Error("Knowledge drafts can only be mounted by the knowledge revision tools.");
       }
+      await Promise.all((input.contextMounts ?? []).map(resolveContextMount));
 
       const validatedFlowInput =
         executor.kind === "flow" && missionInput.kind === "flow"
@@ -115,7 +116,7 @@ export function createMissionCreator(options: {
         ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         ...(input.origin === undefined ? {} : { origin: input.origin }),
-        contextStoreIds: input.contextStoreIds ?? [],
+        contextMounts: input.contextMounts ?? [],
         toolPermissionMode:
           input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
       });
@@ -146,12 +147,15 @@ export function createMissionCreator(options: {
           project,
         );
       }
-      for (const storeId of input.source.contextStoreIds) {
-        if (options.contextStores === undefined) {
-          throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
-        }
-        await options.contextStores.resolve(storeId);
-      }
+      await Promise.all(
+        input.source.contextMounts.map((mount) =>
+          resolveContextMount(
+            mount.kind === "context-store-draft"
+              ? { kind: "context-store-draft", draftId: mount.draftId }
+              : mount,
+          ),
+        ),
+      );
       return await options.missions.createBranch({
         sourceMissionId: input.source.id,
         expectedSourceUpdatedAt: input.source.updatedAt,
@@ -163,6 +167,23 @@ export function createMissionCreator(options: {
       });
     },
   };
+
+  async function resolveContextMount(mount: MissionContextMount): Promise<void> {
+    if (mount.kind === "context-store") {
+      if (options.contextStores === undefined) {
+        throw new Error(`Mission Knowledge Store is unavailable: ${mount.storeId}`);
+      }
+      await options.contextStores.resolve(mount.storeId);
+      return;
+    }
+    if (mount.revisionJobId !== undefined) {
+      throw new Error("Editable Mission draft mounts can only be created by the revision service.");
+    }
+    if (options.contextStoreRevisions === undefined) {
+      throw new Error(`Mission Knowledge Draft is unavailable: ${mount.draftId}`);
+    }
+    await options.contextStoreRevisions.resolveDraft(mount.draftId);
+  }
 }
 
 function validateFlowInput(

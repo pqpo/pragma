@@ -1,0 +1,23 @@
+id: 90000000-0000-4000-8000-000000000009
+title: Historical Mission v9
+goal: Verify the historical Mission v9 manifest upgrade path.
+initialMessageId: 91000000-0000-4000-8000-000000000009
+toolPermissionMode: request-approval
+workspace:
+  path: /historical/workspace
+  basename: workspace
+project:
+  id: studio
+  revision: 3
+executor:
+  ref: expert:v2vt1v01vzz6j24q
+  name: Product Designer
+  kind: expert
+lifecycleStatus: active
+createdAt: 2026-08-20T04:05:06.000Z
+updatedAt: 2026-08-20T04:05:06.000Z
+schemaVersion: pragma.mission/v9
+origin:
+  type: user
+contextStoreIds:
+  - 10000000-0000-4000-8000-000000000001

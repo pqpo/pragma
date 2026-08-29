@@ -78,9 +78,11 @@ export function StudioPage(props: {
   readonly initialExpertRef?: string | undefined;
   readonly initialExpertStep?: ExpertEditorStep | undefined;
   readonly initialResourceRef?: string | undefined;
+  readonly initialRevisionStoreId?: string | undefined;
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onTryExpert: (expert: ExpertRecord) => void;
+  readonly onOpenMission?: ((missionId: string) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -99,7 +101,7 @@ export function StudioPage(props: {
     | "resource-detail"
     | "resource-edit"
     | "create"
-  >("directory");
+  >(props.initialRevisionStoreId === undefined ? "directory" : "context-store-revisions");
   const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
@@ -119,9 +121,12 @@ export function StudioPage(props: {
   const [contextStoreDetailReturn, setContextStoreDetailReturn] = useState<
     "expert-detail" | "team-detail" | null
   >(null);
-  const [revisionStoreFilter, setRevisionStoreFilter] = useState<string | undefined>();
+  const [revisionStoreFilter, setRevisionStoreFilter] = useState<string | undefined>(
+    props.initialRevisionStoreId,
+  );
   const [revisionTaskCount, setRevisionTaskCount] = useState(0);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
+  const userCapabilities = capabilities.filter((capability) => capability.managedBy !== "system");
   const [plugins, setPlugins] = useState<readonly DesktopPlugin[]>([]);
   const [selectedPluginRef, setSelectedPluginRef] = useState<string | null>(null);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
@@ -827,6 +832,7 @@ export function StudioPage(props: {
             stores={contextStores}
             initialStoreId={revisionStoreFilter}
             onCountChanged={setRevisionTaskCount}
+            onOpenMission={props.onOpenMission}
             onBack={() => {
               setRevisionStoreFilter(undefined);
               setScreen("directory");
@@ -1101,7 +1107,7 @@ export function StudioPage(props: {
         <PragmaBundleDialog
           mode={bundleMode}
           project={project}
-          capabilities={capabilities}
+          capabilities={userCapabilities}
           contextStores={contextStores}
           runtimes={runtimes}
           onRefreshRuntimes={refreshRuntimeAvailability}

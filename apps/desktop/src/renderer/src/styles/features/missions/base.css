@@ -1189,14 +1189,14 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--faint);
   cursor: pointer;
 }
 
 .mission-message-actions > button:hover,
 .mission-message-actions > button:focus-visible {
   background: var(--surface-muted);
-  color: var(--text);
+  color: var(--text-muted);
 }
 
 .mission-message-action-status {
@@ -1220,6 +1220,16 @@
 
 .mission-markdown > :last-child {
   margin-bottom: 0;
+}
+
+.mission-streaming-markdown-tail {
+  display: block;
+  margin: 0.72em 0 0;
+  white-space: pre-wrap;
+}
+
+.mission-streaming-markdown-tail:first-child {
+  margin-top: 0;
 }
 
 .mission-markdown h1,

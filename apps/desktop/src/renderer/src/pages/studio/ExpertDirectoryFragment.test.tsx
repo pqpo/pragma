@@ -410,11 +410,20 @@ describe("ExpertDirectoryFragment", () => {
     expect(html).toContain("Built-in");
   });
 
-  it("keeps the built-in Pragma expert first", () => {
+  it("keeps Pragma first and Store Revision second", () => {
     const html = renderToStaticMarkup(
       <ExpertDirectoryFragment
         experts={[
           expert,
+          {
+            ...expert,
+            ref: "expert:0000000000st0rev",
+            id: "0000000000st0rev",
+            name: "Store Revision Agent",
+            origin: "built-in",
+            readOnly: true,
+            model: null,
+          },
           {
             ...expert,
             ref: "expert:0000000000pragma",
@@ -431,6 +440,9 @@ describe("ExpertDirectoryFragment", () => {
     );
 
     expect(html.indexOf("expert:0000000000pragma")).toBeLessThan(
+      html.indexOf("expert:0000000000st0rev"),
+    );
+    expect(html.indexOf("expert:0000000000st0rev")).toBeLessThan(
       html.indexOf("expert:test_expert"),
     );
   });

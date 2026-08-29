@@ -33,6 +33,15 @@ import type {
   RenameContextStoreEntry,
   DeleteContextStoreEntry,
   ContextStoreRevisionRequest,
+  ContextStoreDraft,
+  CreateContextStoreDraft,
+  GetContextStoreDraftFile,
+  ListContextStoreDrafts,
+  ContextStoreDraftRef,
+  ContextStoreDraftRebaseInspection,
+  RebaseContextStoreDraft,
+  SubmitContextStoreDraft,
+  UpdateContextStoreDraftFile,
   ContextStoreRevisionJob,
   ListContextStoreRevisionJobs,
   ContextStoreRevisionJobRef,
@@ -86,7 +95,7 @@ import type {
   DiscardMissionAttachmentDrafts,
   StageMissionClipboardImage,
   UpdateMissionOptions,
-  UpdateMissionContextStores,
+  UpdateMissionContextMounts,
   MissionWorkSnapshot,
   GetMissionWorkConversation,
   MissionWorkConversationSnapshot,
@@ -376,6 +385,15 @@ export interface PragmaDesktopAPI {
     input: ContextStoreRevisionJobRef,
   ) => Promise<ContextStoreRevisionJob>;
   deleteContextStoreRevision: (input: ContextStoreRevisionJobRef) => Promise<void>;
+  createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraft>;
+  listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraft[]>;
+  getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraft>;
+  getContextStoreDraftFile: (input: GetContextStoreDraftFile) => Promise<ContextStoreContent>;
+  submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraft>;
+  updateContextStoreDraftFile: (input: UpdateContextStoreDraftFile) => Promise<ContextStoreDraft>;
+  discardContextStoreDraft: (input: ContextStoreDraftRef) => Promise<void>;
+  inspectContextStoreDraftRebase: (draftId: string) => Promise<ContextStoreDraftRebaseInspection>;
+  rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraft>;
   getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
   updateContextStoreRevisionProfile: (
     input: UpdateContextStoreRevisionProfile,
@@ -476,7 +494,7 @@ export interface PragmaDesktopAPI {
   ) => Promise<PickMissionAttachmentsResult>;
   discardMissionAttachmentDrafts: (input: DiscardMissionAttachmentDrafts) => Promise<void>;
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
-  updateMissionContextStores: (input: UpdateMissionContextStores) => Promise<Mission>;
+  updateMissionContextMounts: (input: UpdateMissionContextMounts) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<MissionMessageAcceptance>;
   steerQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;

@@ -1,9 +1,5 @@
 import type { Expert } from "./expert-agent.ts";
 import type { ExpertTeam } from "./expert-team.ts";
-import {
-  freshContextIdResolver,
-  type ContextIdResolver,
-} from "../execution/context-id-resolver.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
 export type RuntimeByExpert = Readonly<Record<string, string>>;
@@ -12,15 +8,14 @@ export interface CreateAgentLauncherOptions {
   readonly experts: readonly Expert[];
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
-  readonly contextId?: ContextIdResolver | undefined;
   readonly runtimeByExpert?: RuntimeByExpert | undefined;
 }
 
 export type ExpertLifecycleToolName =
-  | "delegate_expert"
+  | "spawn_expert"
+  | "continue_expert"
   | "wait_experts"
   | "list_agents"
-  | "message_expert"
   | "steer_expert"
   | "interrupt_expert";
 
@@ -38,7 +33,6 @@ export interface AgentDelegationDefinition {
   readonly isCoordinator: boolean;
   readonly maxConcurrency: number;
   readonly maxDepth: number;
-  readonly contextId: ContextIdResolver;
   readonly runtimeByExpert: ReadonlyMap<string, string>;
 }
 
@@ -66,7 +60,6 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
       isCoordinator: false,
       maxConcurrency: readPositiveInteger(options.maxConcurrency ?? 4, "maxConcurrency"),
       maxDepth: readPositiveInteger(options.maxDepth ?? 3, "maxDepth"),
-      contextId: options.contextId ?? freshContextIdResolver,
       runtimeByExpert: normalizeRuntimeByExpert(options.runtimeByExpert, experts, "AgentLauncher"),
     }),
   });
@@ -83,10 +76,7 @@ export function createTeamDelegationTools(
   const interactExpertIds = isCoordinator
     ? new Set([team.coordinator, ...team.members].map((expert) => expert.id))
     : (team.delegation.permissions.interact.get(sourceExpertId) ?? new Set<string>());
-  const accessible = new Set([...spawnExpertIds, ...interactExpertIds]);
-  const experts = [team.coordinator, ...team.members].filter(
-    (expert) => expert.id !== sourceExpertId && accessible.has(expert.id),
-  );
+  const experts = [team.coordinator, ...team.members];
   return createLifecycleTools({
     experts,
     spawnExpertIds,
@@ -94,7 +84,6 @@ export function createTeamDelegationTools(
     isCoordinator,
     maxConcurrency: team.delegation.maxConcurrency,
     maxDepth: team.delegation.maxDepth,
-    contextId: team.delegation.contextId,
     runtimeByExpert: new Map(
       [...team.delegation.runtimeByExpert].filter(([expertId]) => spawnExpertIds.has(expertId)),
     ),
@@ -123,11 +112,10 @@ function createLifecycleTools(
     isCoordinator: definition.isCoordinator,
     maxConcurrency: definition.maxConcurrency,
     maxDepth: definition.maxDepth,
-    contextId: definition.contextId,
     runtimeByExpert: new Map(definition.runtimeByExpert),
   });
-  const delegatable = [
-    "Delegatable Experts:",
+  const spawnable = [
+    "Experts available for a fresh Context:",
     ...frozen.experts
       .filter((expert) => frozen.spawnExpertIds.has(expert.id))
       .map((expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`),
@@ -137,26 +125,20 @@ function createLifecycleTools(
   ): AgentLifecycleTool => ({ ...value, [agentDelegationDefinition]: frozen });
 
   const tools: AgentLifecycleTool[] = [];
-  if (frozen.spawnExpertIds.size > 0 || frozen.interactExpertIds.size > 0) {
+  if (frozen.spawnExpertIds.size > 0) {
     tools.push(
       tool({
-        name: "delegate_expert",
-        description: `Delegate a trackable task to either a new Expert or an existing Agent and return its agent and invocation ids immediately. Provide exactly one of expertId or agentId.\n${delegatable}`,
+        name: "spawn_expert",
+        description: `Create a new Expert task in a fresh, isolated Runtime Context and return its context, agent, and invocation ids immediately. Use continue_expert instead for related follow-up work, retries, or interrupted work that should retain prior context.\n${spawnable}`,
         inputSchema: objectSchema(
           {
             expertId: { type: "string" },
-            agentId: { type: "string" },
             task: { type: "string" },
           },
-          ["task"],
+          ["expertId", "task"],
         ),
         call: async (args, signal, context) =>
-          await invoke(
-            "delegate_expert",
-            signal,
-            context?.execution?.delegateExpert,
-            readDelegate(args),
-          ),
+          await invoke("spawn_expert", signal, context?.execution?.spawnExpert, readSpawn(args)),
       }),
     );
   }
@@ -165,11 +147,14 @@ function createLifecycleTools(
       tool({
         name: "wait_experts",
         description:
-          "Wait for exact Expert invocations. Defaults to waiting for all targets with a 10-minute timeout.",
+          "Wait for exact Expert invocations created directly by this task. A timeout ends only this wait and never cancels pending work; call wait_experts again with pending invocation ids. Failed, cancelled, or interrupted work can be retried with continue_expert using its contextId. Defaults to all targets and a 10-minute timeout.",
         inputSchema: objectSchema(
           {
             invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
-            returnWhen: { type: "string", enum: ["all", "any"] },
+            returnWhen: optionalEnumSchema(
+              ["all", "any"],
+              "Optional completion condition. Omit or leave empty to wait for all.",
+            ),
             timeoutMs: {
               type: "integer",
               minimum: MIN_WAIT_EXPERTS_TIMEOUT_MS,
@@ -192,11 +177,23 @@ function createLifecycleTools(
   tools.push(
     tool({
       name: "list_agents",
-      description: "List accessible live Agent instances in this collaboration scope.",
+      description:
+        "List the complete Expert directory and current or resumable Runtime Contexts in this Team Session. Visibility does not grant action permission; use each returned permission flag to choose spawn_expert, continue_expert, steer_expert, or interrupt_expert.",
       inputSchema: objectSchema(
         {
-          expertId: { type: "string" },
-          cursor: { type: "string" },
+          expertId: {
+            type: "string",
+            description: "Optional Expert id filter. Omit or leave empty to include all Experts.",
+          },
+          status: optionalEnumSchema(
+            ["running", "waiting", "queued", "idle", "resumable"],
+            "Optional status filter. Omit or leave empty to include every status.",
+          ),
+          cursor: {
+            type: "string",
+            description:
+              "Pagination cursor returned by a previous response. Omit or leave empty for the first page.",
+          },
           limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
         },
         [],
@@ -208,23 +205,22 @@ function createLifecycleTools(
   if (frozen.spawnExpertIds.size > 0 || frozen.interactExpertIds.size > 0) {
     tools.push(
       tool({
-        name: "message_expert",
+        name: "continue_expert",
         description:
-          "Queue a message for an existing Agent's exact active Invocation. The message is consumed at the next safe boundary and never spills into a later Invocation.",
+          "Create a new trackable task that reuses one exact Runtime Context in this Team Session. Use it for related follow-up work or retries after success, failure, cancellation, or interruption. If the Context is busy, the new Invocation runs later in the same FIFO. Use steer_expert instead to correct the currently active Invocation.",
         inputSchema: objectSchema(
           {
-            agentId: { type: "string" },
-            invocationId: { type: "string" },
-            message: { type: "string" },
+            contextId: { type: "string" },
+            task: { type: "string" },
           },
-          ["agentId", "invocationId", "message"],
+          ["contextId", "task"],
         ),
         call: async (args, signal, context) =>
           await invoke(
-            "message_expert",
+            "continue_expert",
             signal,
-            context?.execution?.messageExpert,
-            readMessage(args),
+            context?.execution?.continueExpert,
+            readContinue(args),
           ),
       }),
     );
@@ -232,14 +228,19 @@ function createLifecycleTools(
       tool({
         name: "steer_expert",
         description:
-          "Guide an existing Agent's exact active Invocation at the Runtime's next steering boundary without intentionally interrupting its current tool call. Unsupported steering is rejected and no follow-up Invocation is created.",
+          "Correct one exact active Expert Invocation without creating a new task. next_boundary requests native Runtime steering into the active turn at its next supported boundary and fails with runtime_unsupported when unavailable. after_current queues a continuation that starts only after the current Runtime turn finishes. Guidance stays in the targeted Invocation and never spills into a later one.",
         inputSchema: objectSchema(
           {
-            agentId: { type: "string" },
             invocationId: { type: "string" },
-            message: { type: "string" },
+            instruction: { type: "string" },
+            delivery: {
+              type: "string",
+              enum: ["next_boundary", "after_current"],
+              description:
+                "next_boundary steers the active Runtime turn at its next supported boundary; after_current waits for that turn to finish, then starts a queued continuation in the same Invocation.",
+            },
           },
-          ["agentId", "invocationId", "message"],
+          ["invocationId", "instruction", "delivery"],
         ),
         call: async (args, signal, context) =>
           await invoke("steer_expert", signal, context?.execution?.steerExpert, readSteer(args)),
@@ -250,14 +251,14 @@ function createLifecycleTools(
     tools.push(
       tool({
         name: "interrupt_expert",
-        description: "Interrupt only the current task of an Expert while preserving queued tasks.",
+        description:
+          "Stop one exact active or queued Expert Invocation without closing its Runtime Context. Active work becomes interrupted, queued work becomes cancelled, terminal work returns already_terminal, and other FIFO tasks are preserved.",
         inputSchema: objectSchema(
           {
-            agentId: { type: "string" },
             invocationId: { type: "string" },
             reason: { type: "string" },
           },
-          ["agentId"],
+          ["invocationId"],
         ),
         call: async (args, signal, context) =>
           await invoke(
@@ -269,7 +270,17 @@ function createLifecycleTools(
       }),
     );
   }
-  return Object.freeze(tools);
+  const order: readonly ExpertLifecycleToolName[] = [
+    "spawn_expert",
+    "continue_expert",
+    "list_agents",
+    "wait_experts",
+    "steer_expert",
+    "interrupt_expert",
+  ];
+  return Object.freeze(
+    tools.toSorted((left, right) => order.indexOf(left.name) - order.indexOf(right.name)),
+  );
 }
 
 async function invoke<TInput>(
@@ -293,42 +304,72 @@ function objectSchema(properties: Record<string, unknown>, required: readonly st
   return { type: "object", properties, required, additionalProperties: false };
 }
 
-function readDelegate(
-  value: unknown,
-): { expertId: string; task: string } | { agentId: string; task: string } {
-  const record = readRecord(value);
-  const expertId = record["expertId"];
-  const agentId = record["agentId"];
-  if ((expertId === undefined) === (agentId === undefined)) {
-    throw new Error("Exactly one of expertId or agentId is required.");
-  }
-  const task = readString(record["task"], "task");
-  return expertId === undefined
-    ? { agentId: readString(agentId, "agentId"), task }
-    : { expertId: readString(expertId, "expertId"), task };
+function optionalEnumSchema(values: readonly string[], description: string): unknown {
+  return {
+    anyOf: [
+      { type: "string", enum: values },
+      { type: "string", pattern: "^\\s*$" },
+    ],
+    description,
+  };
 }
 
-function readList(value: unknown): { expertId?: string; cursor?: string; limit?: number } {
+function readSpawn(value: unknown): { expertId: string; task: string } {
   const record = readRecord(value);
   return {
-    ...(record["expertId"] === undefined
-      ? {}
-      : { expertId: readString(record["expertId"], "expertId") }),
-    ...(record["cursor"] === undefined ? {} : { cursor: readString(record["cursor"], "cursor") }),
+    expertId: readString(record["expertId"], "expertId"),
+    task: readString(record["task"], "task"),
+  };
+}
+
+function readList(value: unknown): {
+  expertId?: string;
+  status?: "running" | "waiting" | "queued" | "idle" | "resumable";
+  cursor?: string;
+  limit?: number;
+} {
+  const record = readRecord(value);
+  const status = readOptionalToken(record, "status");
+  if (
+    status !== undefined &&
+    status !== "running" &&
+    status !== "waiting" &&
+    status !== "queued" &&
+    status !== "idle" &&
+    status !== "resumable"
+  ) {
+    throw new Error("status is invalid.");
+  }
+  return {
+    ...readOptionalListString(record, "expertId"),
+    ...(status === undefined ? {} : { status }),
+    ...readOptionalListString(record, "cursor"),
     ...(record["limit"] === undefined ? {} : { limit: readInteger(record["limit"], "limit") }),
   };
 }
 
+function readOptionalListString(
+  record: Record<string, unknown>,
+  name: "expertId" | "cursor",
+): Partial<Record<"expertId" | "cursor", string>> {
+  const value = readOptionalToken(record, name);
+  return value === undefined ? {} : { [name]: value };
+}
+
 function readSteer(value: unknown): {
-  agentId: string;
   invocationId: string;
-  message: string;
+  instruction: string;
+  delivery: "next_boundary" | "after_current";
 } {
   const record = readRecord(value);
+  const delivery = record["delivery"];
+  if (delivery !== "next_boundary" && delivery !== "after_current") {
+    throw new Error('delivery must be "next_boundary" or "after_current".');
+  }
   return {
-    agentId: readString(record["agentId"], "agentId"),
     invocationId: readString(record["invocationId"], "invocationId"),
-    message: readString(record["message"], "message"),
+    instruction: readString(record["instruction"], "instruction"),
+    delivery,
   };
 }
 
@@ -344,7 +385,7 @@ function readWait(value: unknown): {
   if (new Set(invocationIds).size !== invocationIds.length) {
     throw new Error("invocationIds must not contain duplicates.");
   }
-  const returnWhen = record["returnWhen"];
+  const returnWhen = readOptionalToken(record, "returnWhen");
   if (returnWhen !== undefined && returnWhen !== "all" && returnWhen !== "any") {
     throw new Error('returnWhen must be "all" or "any".');
   }
@@ -365,28 +406,24 @@ function readWait(value: unknown): {
   };
 }
 
-function readMessage(value: unknown): {
-  agentId: string;
-  invocationId: string;
-  message: string;
+function readContinue(value: unknown): {
+  contextId: string;
+  task: string;
 } {
   const record = readRecord(value);
   return {
-    agentId: readString(record["agentId"], "agentId"),
-    invocationId: readString(record["invocationId"], "invocationId"),
-    message: readString(record["message"], "message"),
+    contextId: readString(record["contextId"], "contextId"),
+    task: readString(record["task"], "task"),
   };
 }
 
 function readInterrupt(value: unknown): {
-  agentId: string;
-  invocationId?: string;
+  invocationId: string;
   reason?: string;
 } {
   const record = readRecord(value);
   return {
-    agentId: readString(record["agentId"], "agentId"),
-    ...readOptionalString(record, "invocationId"),
+    invocationId: readString(record["invocationId"], "invocationId"),
     ...readOptionalString(record, "reason"),
   };
 }
@@ -411,8 +448,14 @@ function readInteger(value: unknown, name: string): number {
 }
 
 function readOptionalString(record: Record<string, unknown>, name: string): Record<string, string> {
+  const value = readOptionalToken(record, name);
+  return value === undefined ? {} : { [name]: value };
+}
+
+function readOptionalToken(record: Record<string, unknown>, name: string): string | undefined {
   const value = record[name];
-  return value === undefined ? {} : { [name]: readString(value, name) };
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) return undefined;
+  return readString(value, name);
 }
 
 function readUniqueExperts(experts: readonly Expert[], owner: string): readonly Expert[] {
@@ -448,5 +491,11 @@ function readPositiveInteger(value: number, field: string): number {
 }
 
 function failure(code: string, text: string): ExpertAgentToolCallResult {
-  return { text, isError: true, details: { code } };
+  const payload = {
+    ok: false as const,
+    committed: false as const,
+    code,
+    error: { code, message: text },
+  };
+  return { text: JSON.stringify(payload), isError: true, details: payload };
 }

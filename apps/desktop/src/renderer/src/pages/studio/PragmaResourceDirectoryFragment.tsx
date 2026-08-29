@@ -673,7 +673,7 @@ function TeamDetail(props: {
       >
         <header>
           <div>
-            <h2 id="team-context-heading">{t("context")}</h2>
+            <h2 id="team-context-heading">{t("teamKnowledgeBases")}</h2>
             <p>{t("teamContextDescription")}</p>
           </div>
         </header>
@@ -1164,7 +1164,6 @@ export function TeamEditor(props: {
           delegation: {
             maxConcurrency,
             maxDepth,
-            context: props.initial?.spec.delegation.context ?? "context:pragma.context.fresh@v1",
             runtimes: props.initial?.spec.delegation.runtimes ?? {},
             permissions: {
               spawn: pruneTeamPermissions(spawnPermissions, coordinator, members, false),

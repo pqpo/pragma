@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { withFileLock } from "@pragma/core";
@@ -11,6 +11,7 @@ import {
 import {
   BUILT_IN_AGENT_REFS,
   BUILT_IN_PRAGMA_REF,
+  STORE_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
   builtInAgentResource,
 } from "@pragma/built-in-agents";
@@ -36,11 +37,11 @@ import {
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-const CONFIG_SCHEMA_VERSION = 4;
+const CONFIG_SCHEMA_VERSION = 5;
 const LEGACY_BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0";
 
 const SystemExpertCustomizationSchema = UpdateBuiltInExpertDefinitionSchema.extend({
-  ref: z.literal(BUILT_IN_PRAGMA_REF),
+  ref: z.enum([BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF]),
   revision: z.number().int().min(2),
   updatedAt: z.string().datetime(),
 });
@@ -56,6 +57,19 @@ const LegacySystemExpertCustomizationConfigSchema = z.object({
     .array(
       UpdateBuiltInExpertDefinitionSchema.extend({
         ref: z.literal(LEGACY_BUILT_IN_PRAGMA_REF),
+        revision: z.number().int().min(2),
+        updatedAt: z.string().datetime(),
+      }),
+    )
+    .max(100),
+});
+
+const PreviousSystemExpertCustomizationConfigSchema = z.object({
+  schemaVersion: z.literal(4),
+  customizations: z
+    .array(
+      UpdateBuiltInExpertDefinitionSchema.extend({
+        ref: z.literal(BUILT_IN_PRAGMA_REF),
         revision: z.number().int().min(2),
         updatedAt: z.string().datetime(),
       }),
@@ -85,17 +99,22 @@ export function createDesktopSystemExpertRegistry(options?: {
   readonly configPath?: string | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): DesktopSystemExpertRegistry {
-  const defaultResource = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+  const editableRefs = [BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF] as const;
+  const defaultResources = new Map<string, PragmaExpertResource>(
+    editableRefs.map((ref) => [ref, builtInAgentResource(ref)] as const),
+  );
   const reservedRefs = new Set<string>(BUILT_IN_AGENT_REFS);
   const reservedIds = new Set(BUILT_IN_AGENT_REFS.map((ref) => ref.slice("expert:".length)));
   let customizations = new Map<string, SystemExpertCustomization>();
 
   const requireBuiltInRef = (ref: string): void => {
-    if (ref !== BUILT_IN_PRAGMA_REF) throw new Error(`Built-in Expert not found: ${ref}`);
+    if (!defaultResources.has(ref)) throw new Error(`Built-in Expert not found: ${ref}`);
   };
 
-  const effectiveResource = (): PragmaExpertResource => {
-    const customization = customizations.get(BUILT_IN_PRAGMA_REF);
+  const effectiveResource = (ref: string): PragmaExpertResource => {
+    const defaultResource = defaultResources.get(ref);
+    if (defaultResource === undefined) throw new Error(`Built-in Expert not found: ${ref}`);
+    const customization = customizations.get(ref);
     if (customization === undefined) return defaultResource;
     return {
       ...defaultResource,
@@ -138,12 +157,14 @@ export function createDesktopSystemExpertRegistry(options?: {
     };
   };
 
-  const definition = (): ExpertDefinition => {
-    const resource = effectiveResource();
-    const customization = customizations.get(BUILT_IN_PRAGMA_REF);
+  const definition = (ref: string): ExpertDefinition => {
+    const defaultResource = defaultResources.get(ref);
+    if (defaultResource === undefined) throw new Error(`Built-in Expert not found: ${ref}`);
+    const resource = effectiveResource(ref);
+    const customization = customizations.get(ref);
     return ExpertDefinitionSchema.parse({
       schemaVersion: "pragma.desktop-expert-view/v1",
-      ref: BUILT_IN_PRAGMA_REF,
+      ref,
       id: resource.metadata.id,
       avatarId: resource.metadata.avatarId,
       name: resource.metadata.name,
@@ -177,9 +198,31 @@ export function createDesktopSystemExpertRegistry(options?: {
       const raw = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
       const current = SystemExpertCustomizationConfigSchema.safeParse(raw);
       if (current.success) {
+        if (options.configPath !== undefined) {
+          await Promise.all(
+            ([3, 4] as const).map(
+              async (sourceVersion) =>
+                await rm(
+                  `${options.configPath}.migration-v${sourceVersion}-to-v${CONFIG_SCHEMA_VERSION}.json`,
+                  { force: true },
+                ),
+            ),
+          );
+        }
         return new Map(
           current.data.customizations.map((customization) => [customization.ref, customization]),
         );
+      }
+      const previous = PreviousSystemExpertCustomizationConfigSchema.safeParse(raw);
+      if (previous.success) {
+        const migrated = new Map<string, SystemExpertCustomization>(
+          previous.data.customizations.map((customization) => {
+            const parsed = SystemExpertCustomizationSchema.parse(customization);
+            return [parsed.ref, parsed];
+          }),
+        );
+        await migrateConfig(raw, 4, migrated);
+        return migrated;
       }
       const legacy = LegacySystemExpertCustomizationConfigSchema.parse(raw);
       const migrated = new Map<string, SystemExpertCustomization>(
@@ -191,12 +234,12 @@ export function createDesktopSystemExpertRegistry(options?: {
           return [parsed.ref, parsed];
         }),
       );
-      await writeConfig(migrated);
+      await migrateConfig(raw, 3, migrated);
       return migrated;
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return new Map();
-      options.warn?.("System Expert customizations could not be read; using defaults.", error);
-      return new Map();
+      options.warn?.("System Expert customizations could not be read.", error);
+      throw error;
     }
   };
 
@@ -216,6 +259,25 @@ export function createDesktopSystemExpertRegistry(options?: {
     await chmod(options.configPath, 0o600).catch(() => undefined);
   };
 
+  const migrateConfig = async (
+    source: unknown,
+    sourceVersion: 3 | 4,
+    migrated: ReadonlyMap<string, SystemExpertCustomization>,
+  ): Promise<void> => {
+    if (options?.configPath === undefined) return;
+    const journalPath = `${options.configPath}.migration-v${sourceVersion}-to-v${CONFIG_SCHEMA_VERSION}.json`;
+    const backupPath = `${options.configPath}.v${sourceVersion}.backup.json`;
+    await writePrivateJson(journalPath, {
+      schemaVersion: "pragma.system-expert-customization-migration/v1",
+      sourceVersion,
+      targetVersion: CONFIG_SCHEMA_VERSION,
+      backupPath,
+    });
+    await writePrivateJson(backupPath, source);
+    await writeConfig(migrated);
+    await rm(journalPath, { force: true });
+  };
+
   const mutate = async (operation: () => Promise<void>): Promise<void> => {
     if (options?.configPath === undefined) {
       await operation();
@@ -230,14 +292,14 @@ export function createDesktopSystemExpertRegistry(options?: {
         customizations = await readConfig();
       });
     },
-    list: () => [ExpertSummarySchema.parse(definition())],
-    get: (ref) => (ref === BUILT_IN_PRAGMA_REF ? definition() : undefined),
-    getResource: (ref) => (ref === BUILT_IN_PRAGMA_REF ? effectiveResource() : undefined),
+    list: () => editableRefs.map((ref) => ExpertSummarySchema.parse(definition(ref))),
+    get: (ref) => (defaultResources.has(ref) ? definition(ref) : undefined),
+    getResource: (ref) => (defaultResources.has(ref) ? effectiveResource(ref) : undefined),
     getAdditionalResources: (ref) =>
-      ref === BUILT_IN_PRAGMA_REF ? customizationResources(customizations.get(ref)) : [],
+      defaultResources.has(ref) ? customizationResources(customizations.get(ref)) : [],
     getExecutor: (ref) => {
-      if (ref !== BUILT_IN_PRAGMA_REF) return undefined;
-      const current = definition();
+      if (!defaultResources.has(ref)) return undefined;
+      const current = definition(ref);
       return MissionExecutorSchema.parse({
         kind: "expert",
         ref: current.ref,
@@ -246,9 +308,9 @@ export function createDesktopSystemExpertRegistry(options?: {
       });
     },
     listExecutors: () => {
-      const current = definition();
-      return [
-        MissionExecutorOptionSchema.parse({
+      return editableRefs.map((ref) => {
+        const current = definition(ref);
+        return MissionExecutorOptionSchema.parse({
           kind: "expert",
           ref: current.ref,
           name: current.name,
@@ -257,17 +319,17 @@ export function createDesktopSystemExpertRegistry(options?: {
           origin: current.origin,
           readOnly: current.readOnly,
           customized: current.customized,
-        }),
-      ];
+        });
+      });
     },
-    fingerprint: (ref) =>
-      ref === BUILT_IN_PRAGMA_REF
-        ? builtInAgentFingerprint(
-            BUILT_IN_PRAGMA_REF,
-            customizations.has(BUILT_IN_PRAGMA_REF) ? effectiveResource() : undefined,
-            customizationResources(customizations.get(BUILT_IN_PRAGMA_REF)),
-          )
-        : undefined,
+    fingerprint: (ref) => {
+      if (!defaultResources.has(ref)) return undefined;
+      return builtInAgentFingerprint(
+        ref as (typeof editableRefs)[number],
+        customizations.has(ref) ? effectiveResource(ref) : undefined,
+        customizationResources(customizations.get(ref)),
+      );
+    },
     isReservedRef: (ref) => reservedRefs.has(ref),
     isReservedId: (id) => reservedIds.has(id),
     async update(ref, input) {
@@ -288,7 +350,7 @@ export function createDesktopSystemExpertRegistry(options?: {
         await writeConfig(latest);
         customizations = latest;
       });
-      return definition();
+      return definition(ref);
     },
     async upgradeCapabilityRevision(capabilityId, revision) {
       let changed = false;
@@ -329,13 +391,26 @@ export function createDesktopSystemExpertRegistry(options?: {
         await writeConfig(latest);
         customizations = latest;
       });
-      return definition();
+      return definition(ref);
     },
   };
 }
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function writePrivateJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporaryPath, path);
+    await chmod(path, 0o600).catch(() => undefined);
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function appendAdditionalInstructions(base: string, additional: string): string {

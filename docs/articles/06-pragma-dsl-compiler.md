@@ -156,14 +156,14 @@ Pragma 明确区分：
 
 ```text
 DSL apiVersion          语言格式版本，当前为 pragma/v5
-compilerVersion         编译语义版本，当前写入 pragma.dsl/v8
+compilerVersion         编译语义版本，当前写入 pragma.dsl/v9
 Project revision        不可变项目内容序号
 Host schemaVersion      Execution、Session、IPC 等持久协议版本
 ```
 
 修改 DSL 语法，不等于修改 Execution 存储；同一 DSL 也可能因为编译语义变化产生新的 Compiler 版本；用户编辑一个 Expert 只会产生新的 Project Revision，不应该升级语言版本。
 
-当前 Compiler 只直接读取自己写出的 `pragma.dsl/v8`，并为 `v2` 到 `v7` 提供静态、相邻、前向升级链。DSL 自身提供 `pragma/v2 → v3 → v4 → v5` 的独立迁移。
+当前 Compiler 只直接读取自己写出的 `pragma.dsl/v9`，并为 `v2` 到 `v8` 提供静态、相邻、前向升级链。DSL 自身提供 `pragma/v2 → v3 → v4 → v5` 的独立迁移。
 
 普通 parser 和业务编译器只处理当前 Schema，历史 Schema 与字段转换留在迁移模块。Host 在目标 Revision 首次访问时执行必要升级，并把结果保存为可重建缓存；不会在应用启动时扫描和改写全部项目历史，也不会改变权威 Revision number。
 

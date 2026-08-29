@@ -680,16 +680,16 @@ RuntimeAdapter
 Expert API 设计要求：
 
 - `defineExpert()` 是单专家唯一创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
-- `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `delegate_expert`、`wait_experts`、
-  `list_agents`、`message_expert`、`steer_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
+- `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `spawn_expert`、`continue_expert`、
+  `list_agents`、`wait_experts`、`steer_expert`、`interrupt_expert` 工具集；子 Invocation 的执行、Context、
   并发、深度、事件和 Usage 机制必须与 ExpertTeam 共用，不另建隐藏 Session 路径。
 - `defineExpertTeam()` 声明由 coordinator 统一接收外部 prompt 的特殊 Expert。
 - ExpertTeam 运行时按成员权限策略生成相同的生命周期工具集；coordinator 在当前 Team Execution 内
   拥有系统继承的全量管理权限。团队工具覆盖参与者自己的 standalone launcher，
   防止成员绕过团队治理边界。
 - `defineFlow()` 声明 Flow；Task 和 HumanTask 只能通过 FlowSpec 内联创建。
-- Flow Expert step、普通 Expert launcher 与 ExpertTeam delegation 必须统一使用具名、带版本的
-  `ContextIdResolver`；是否复用只由最终 `contextId` 决定，不引入 `fresh/reuse` policy。
+- Flow Expert step 继续使用具名、带版本的 `ContextIdResolver`。Expert delegation 不接受 Context policy：
+  `spawn_expert` 固定创建新 Context，`continue_expert` 固定复用调用方显式提交的 `contextId`。
 - Runtime Context 的 identity、snapshot 和 lifecycle 只存放在 `RuntimeContextRecord`；Invocation 与
   AgentInstance 只引用 `contextId`，不得复制 Runtime snapshot。
 - ExpertSession 创建时必须同时创建唯一根 Runtime Context；同一 Session 的所有根 prompt 始终复用该

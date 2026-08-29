@@ -46,9 +46,10 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v1",
+          schemaVersion: "pragma.context-store-revision-job/v2",
           id: "10000000-0000-4000-8000-000000000001",
           revision: 3,
+          draftId: "20000000-0000-4000-8000-000000000001",
           request: {
             schemaVersion: "pragma.context-store-revision-request/v1",
             storeId: "00000000-0000-4000-8000-000000000001",
@@ -56,21 +57,31 @@ describe("ContextStoreRevisionFragment", () => {
             source: "user",
           },
           state: "pending_review",
-          changeSet: {
-            schemaVersion: "pragma.context-store-change-set/v1",
-            storeId: "00000000-0000-4000-8000-000000000001",
-            baseRevision: 4,
-            baseSnapshotHash: "0".repeat(64),
-            summary: "更新审批规范",
-            operations: [
+          createdAt: "2026-08-05T07:24:00.000Z",
+          updatedAt: "2026-08-05T07:29:00.000Z",
+        }}
+        draft={{
+          schemaVersion: "pragma.context-store-draft/v1",
+          id: "20000000-0000-4000-8000-000000000001",
+          revision: 2,
+          name: "审批流程修订",
+          storeId: "00000000-0000-4000-8000-000000000001",
+          baseRevision: 4,
+          baseSnapshotHash: "0".repeat(64),
+          state: "pending_review",
+          submittedRevision: 2,
+          summary: "更新审批规范",
+          overlay: {
+            files: [
               {
-                operation: "upsert",
                 id: "guide.md",
-                previousContent: "# 审批\n旧流程\n",
                 content: "# 审批\n新流程\n",
                 metadata: { description: "审批", trigger: "manual", priority: "normal" },
               },
             ],
+            deletedFiles: [],
+            directories: [],
+            deletedDirectories: [],
           },
           createdAt: "2026-08-05T07:24:00.000Z",
           updatedAt: "2026-08-05T07:29:00.000Z",
@@ -81,6 +92,7 @@ describe("ContextStoreRevisionFragment", () => {
         onApprove={() => undefined}
         onReject={() => undefined}
         onRetry={() => undefined}
+        onDraftChanged={async () => undefined}
       />,
     );
 

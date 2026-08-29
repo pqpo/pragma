@@ -3,6 +3,13 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  PRAGMA_MANAGEMENT_BINDING_REF,
+  STORE_REVISION_EXPERT_REF,
+  createPragmaManagementTools,
+  type PragmaManagementToolPorts,
+  type KnowledgeRevisionSubmissionPort,
+} from "@pragma/built-in-agents";
+import {
   createPragma,
   createPragmaLogger,
   createFileExecutionStore,
@@ -11,7 +18,6 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
-  formatExpertPromptWithAttachments,
   isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
@@ -20,6 +26,8 @@ import {
   readRuntimeSessionRecord,
   ReadOnlyContextStore,
   StaticContextStore,
+  error,
+  ok,
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
@@ -57,6 +65,7 @@ import type {
   CompiledResource,
   PragmaAdapterHost,
   PragmaBindingRecord,
+  PragmaResource,
 } from "@pragma/interpreter";
 import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
 import type {
@@ -83,6 +92,7 @@ import {
 import {
   isUserFacingMissionOrigin,
   type Mission,
+  type MissionContextMount,
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
@@ -100,12 +110,15 @@ import {
   type GetMissionWorkConversation,
   type DesktopToolPermissionMode,
   type UpdateMissionOptions,
-  type UpdateMissionContextStores,
+  type UpdateMissionContextMounts,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { resolveExpertCapabilities } from "../experts/desktop-expert-factory.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
+import { DynamicContextStore } from "../context-stores/dynamic-context-store.ts";
+import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
 import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
@@ -132,6 +145,7 @@ import {
   type MissionOwnerScope,
   type ResolvedRunExecutor,
 } from "@pragma/local-host";
+import { createMissionBranchContext } from "./mission-branch-context.ts";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -218,7 +232,8 @@ export interface MissionRunner {
     }) => Promise<string | undefined>;
   };
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
-  updateContextStores(input: UpdateMissionContextStores): Promise<Mission>;
+  updateContextMounts(input: UpdateMissionContextMounts): Promise<Mission>;
+  invalidateContextBindings(id: string): Promise<void>;
   sendMessage(input: {
     readonly id: string;
     readonly content: string;
@@ -355,37 +370,12 @@ export function missionKnowledgeNamespace(storeId: string): string {
   return `mission-knowledge:${storeId}`;
 }
 
-function formatBranchTranscript(entries: readonly MissionChatEntry[]): string {
-  const sections = entries.flatMap((entry): string[] => {
-    switch (entry.kind) {
-      case "user":
-        return [
-          `## User\n\n${formatExpertPromptWithAttachments(entry.content, entry.attachments ?? [])}`,
-        ];
-      case "assistant":
-        return [`## ${entry.executorName ?? "Assistant"}\n\n${entry.content}`];
-      case "thinking":
-        return [];
-      case "tool":
-        return [
-          [
-            `## Tool: ${entry.toolName}`,
-            "",
-            `Status: ${entry.status}`,
-            ...(entry.inputPreview === undefined ? [] : ["", "Input:", entry.inputPreview]),
-            ...(entry.outputPreview === undefined ? [] : ["", "Output:", entry.outputPreview]),
-            ...(entry.error === undefined ? [] : ["", "Error:", entry.error]),
-          ].join("\n"),
-        ];
-      case "agent_activity":
-        return entry.label === undefined
-          ? []
-          : [`## Agent activity\n\n${entry.action} ${entry.phase}: ${entry.label}`];
-      case "context_operation":
-        return [];
-    }
-  });
-  return ["# Inherited Mission transcript", "", ...sections].join("\n\n");
+export function missionKnowledgeDraftNamespace(draftId: string): string {
+  return `mission-knowledge-draft:${draftId}`;
+}
+
+export function activeMissionKnowledgeDraftNamespace(storeId: string): string {
+  return `mission-knowledge-draft:${storeId}`;
 }
 
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
@@ -400,6 +390,8 @@ export function createMissionRunner(options: {
   readonly pragmaHome: string;
   readonly executionStore?: FileExecutionStore | undefined;
   readonly contextStores?: ContextStoreStore | undefined;
+  readonly contextStoreRevisions?: ContextStoreRevisionService | undefined;
+  readonly knowledgeRevisionMountResources?: (() => readonly PragmaResource[]) | undefined;
   readonly hostContextStores?:
     readonly ExpertAgentContextStoreRegistrationInput[] | HostContextBindingsResolver | undefined;
   readonly plugins?: PluginStore | undefined;
@@ -416,6 +408,7 @@ export function createMissionRunner(options: {
     | ((input: {
         readonly mission: Mission;
         readonly runtimes: RuntimeResolver;
+        readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
   readonly getSystemExecutorFingerprint?:
@@ -505,6 +498,21 @@ export function createMissionRunner(options: {
     options.automaticHumanInteractionHandler;
   const executionContexts = new Map<string, Promise<MissionExecutionContext>>();
   const missionsRequiringSuccessorSession = new Set<string>();
+  const missionsChangingContextBindings = new Set<string>();
+  const invalidateContextBindings = async (id: string): Promise<void> => {
+    executionContexts.delete(id);
+    sessionCompilationIdentities.delete(id);
+    sessionDefinitionFingerprints.delete(id);
+    missionsRequiringSuccessorSession.add(id);
+    const session = sessions.get(id);
+    if (session === undefined || active.has(id)) return;
+    const hasQueuedPrompts = (await session.getPromptQueue()).some(
+      (prompt) => prompt.status === "queued" || prompt.status === "running",
+    );
+    if (hasQueuedPrompts) return;
+    await session.close("Mission context bindings changed.");
+    sessions.delete(id);
+  };
   const executionContext = async (mission: Mission): Promise<MissionExecutionContext> => {
     const existing = executionContexts.get(mission.id);
     if (existing !== undefined) return await existing;
@@ -586,22 +594,118 @@ export function createMissionRunner(options: {
               required: false,
             },
           ];
-    const missionKnowledgeBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+    const missionKnowledgeBindings: readonly ExpertAgentContextStoreRegistrationInput[] = (
       await Promise.all(
-        mission.contextStoreIds.map(async (storeId) => {
-          if (options.contextStores === undefined) {
-            throw new Error(`Mission Knowledge Store is unavailable: ${storeId}`);
+        mission.contextMounts.map(async (mount) => {
+          if (mount.kind === "context-store") {
+            if (options.contextStores === undefined) {
+              throw new Error(`Mission Knowledge Store is unavailable: ${mount.storeId}`);
+            }
+            const resolved = await options.contextStores.resolve(mount.storeId);
+            return {
+              namespace: missionKnowledgeNamespace(mount.storeId),
+              storeName: resolved.name,
+              store: new ReadOnlyContextStore(resolved.store),
+              required: true,
+              mutationApproval: "none" as const,
+            };
           }
-          const resolved = await options.contextStores.resolve(storeId);
+          if (options.contextStoreRevisions === undefined) {
+            throw new Error(`Mission Knowledge Draft is unavailable: ${mount.draftId}`);
+          }
+          if (
+            mount.revisionJobId !== undefined &&
+            mission.executor.ref === STORE_REVISION_EXPERT_REF
+          ) {
+            return undefined;
+          }
+          const resolved = await options.contextStoreRevisions.resolveDraft(mount.draftId);
           return {
-            namespace: missionKnowledgeNamespace(storeId),
+            namespace: missionKnowledgeDraftNamespace(mount.draftId),
             storeName: resolved.name,
             store: new ReadOnlyContextStore(resolved.store),
             required: true,
             mutationApproval: "none" as const,
           };
         }),
-      );
+      )
+    ).filter((binding): binding is NonNullable<typeof binding> => binding !== undefined);
+    const revisionTargetStoreIds =
+      mission.executor.ref !== STORE_REVISION_EXPERT_REF ||
+      options.contextStoreRevisions === undefined
+        ? []
+        : [
+            ...new Set(
+              await Promise.all(
+                mission.contextMounts.map(async (mount) =>
+                  mount.kind === "context-store"
+                    ? mount.storeId
+                    : (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+                ),
+              ),
+            ),
+          ];
+    const activeKnowledgeRevisionBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
+      revisionTargetStoreIds.map((storeId) => ({
+        namespace: activeMissionKnowledgeDraftNamespace(storeId),
+        storeName: "Active Mission Knowledge draft",
+        store: new DynamicContextStore(async (operation) => {
+          const currentMission = await options.missions.get(mission.id);
+          const claimedMounts = currentMission.contextMounts.filter(
+            (
+              mount,
+            ): mount is Extract<
+              Mission["contextMounts"][number],
+              { kind: "context-store-draft" }
+            > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
+          );
+          const activeMounts = (
+            await Promise.all(
+              claimedMounts.map(async (mount) => ({
+                mount,
+                storeId: (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+              })),
+            )
+          ).filter((candidate) => candidate.storeId === storeId);
+          if (activeMounts.length === 0 && (operation === "list" || operation === "search")) {
+            return ok(new StaticContextStore([]));
+          }
+          if (activeMounts.length !== 1) {
+            return error(
+              "store_unavailable",
+              activeMounts.length === 0
+                ? "Start a knowledge revision for this knowledge base before using its draft namespace."
+                : "The Mission has more than one active draft for the same knowledge base.",
+            );
+          }
+          const mount = activeMounts[0]!.mount;
+          const [job, draft, resolved] = await Promise.all([
+            options.contextStoreRevisions!.get(mount.revisionJobId!),
+            options.contextStoreRevisions!.getDraft(mount.draftId),
+            options.contextStoreRevisions!.resolveDraft(mount.draftId),
+          ]);
+          if (
+            job.state !== "running" ||
+            job.draftId !== mount.draftId ||
+            job.missionId !== mission.id ||
+            draft.activeMissionId !== mission.id
+          ) {
+            return error(
+              "permission_denied",
+              "The active knowledge revision draft is not owned by this Mission.",
+            );
+          }
+          if (["add", "edit", "delete"].includes(operation) && draft.state !== "editing") {
+            return error(
+              "permission_denied",
+              `The active knowledge revision draft cannot be edited while it is ${draft.state}.`,
+            );
+          }
+          return ok(resolved.store);
+        }),
+        required: false,
+        mutationApproval: "none" as const,
+      }));
     const branchHistory = await options.missions.readBranchHistory(mission.id);
     const branchHistoryBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
       branchHistory === undefined
@@ -610,35 +714,7 @@ export function createMissionRunner(options: {
             {
               namespace: "branch-history",
               storeName: "Inherited Mission history",
-              store: new StaticContextStore([
-                {
-                  id: "BRANCH.md",
-                  content: [
-                    "# Mission branch",
-                    "",
-                    `This Mission continues from ${branchHistory.source.sourceMissionId} at reply ${branchHistory.source.cutoffMessageId}.`,
-                    "Read transcript.md when prior conversation details are relevant. The current Mission uses a fresh Runtime Session and its pinned current executor definition.",
-                  ].join("\n"),
-                  metadata: {
-                    description: "Required continuity instructions for this Mission branch.",
-                    trigger: "always_on",
-                    priority: "critical",
-                    trustLevel: "system",
-                    sensitivity: "internal",
-                  },
-                },
-                {
-                  id: "transcript.md",
-                  content: formatBranchTranscript(branchHistory.entries),
-                  metadata: {
-                    description: "Read-only inherited conversation before this branch was created.",
-                    trigger: "manual",
-                    priority: "normal",
-                    trustLevel: "user",
-                    sensitivity: "internal",
-                  },
-                },
-              ]),
+              store: new StaticContextStore(createMissionBranchContext(branchHistory)),
               required: true,
               mutationApproval: "none" as const,
             },
@@ -657,6 +733,7 @@ export function createMissionRunner(options: {
       ...branchHistoryBindings,
       ...board.bindings,
       ...missionKnowledgeBindings,
+      ...activeKnowledgeRevisionBindings,
     ];
     const hostContextBindings = await resolveHostContextBindings();
     const seenNamespaces = new Set<string>();
@@ -755,6 +832,30 @@ export function createMissionRunner(options: {
   const workListeners = new Set<(notification: MissionWorkNotification) => void>();
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
+  const workProjectionCache = new Map<
+    string,
+    {
+      readonly revision: number;
+      readonly executionSignature: string;
+      readonly executionCount: number;
+      readonly snapshot: MissionWorkSnapshot;
+      readonly entriesByRecordId: ReadonlyMap<string, readonly MissionChatEntry[]>;
+    }
+  >();
+  const workProjectionLoads = new Map<
+    string,
+    {
+      readonly revision: number;
+      readonly executionSignature: string;
+      readonly promise: Promise<{
+        readonly revision: number;
+        readonly executionSignature: string;
+        readonly executionCount: number;
+        readonly snapshot: MissionWorkSnapshot;
+        readonly entriesByRecordId: ReadonlyMap<string, readonly MissionChatEntry[]>;
+      }>;
+    }
+  >();
   const executorMetadataCache = new Map<string, ExecutorMetadata>();
 
   const refreshMemoryContextBindings = async (): Promise<void> => {
@@ -877,6 +978,7 @@ export function createMissionRunner(options: {
   const invalidateWork = (id: string, audience: MissionSurfaceAudience): void => {
     const revision = (workRevisions.get(id) ?? 0) + 1;
     workRevisions.set(id, revision);
+    workProjectionCache.delete(id);
     const update: MissionWorkUpdate = { missionId: id, revision };
     for (const listener of workListeners) {
       try {
@@ -898,6 +1000,10 @@ export function createMissionRunner(options: {
   ): Promise<void> {
     const session = sessions.get(id);
     if (session === undefined) return;
+    if (missionsRequiringSuccessorSession.has(id)) {
+      invalidateChat(id, audience);
+      return;
+    }
     while (true) {
       const [mission, state, queue] = await Promise.all([
         options.missions.get(id),
@@ -981,8 +1087,186 @@ export function createMissionRunner(options: {
     mission: Mission,
     runtimes: RuntimeResolver,
   ): Promise<CompiledResource<InvocableResource>> => {
-    const system = await options.compileSystemExecutor?.({ mission, runtimes });
+    const mountedStoreIds =
+      options.contextStoreRevisions === undefined
+        ? new Set(
+            mission.contextMounts.flatMap((mount) =>
+              mount.kind === "context-store" ? [mount.storeId] : [],
+            ),
+          )
+        : new Set(
+            await Promise.all(
+              mission.contextMounts.map(async (mount) =>
+                mount.kind === "context-store"
+                  ? mount.storeId
+                  : (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+              ),
+            ),
+          );
+    const knowledgeRevisions =
+      options.contextStores === undefined || options.contextStoreRevisions === undefined
+        ? undefined
+        : createDesktopKnowledgeRevisionSubmissionPort({
+            project: options.project,
+            contextStores: options.contextStores,
+            revisions: options.contextStoreRevisions,
+            additionalMountResources: options.knowledgeRevisionMountResources,
+            ...(mission.executor.ref !== STORE_REVISION_EXPERT_REF
+              ? {}
+              : {
+                  inlineMission: {
+                    id: mission.id,
+                    allowedStoreIds: mountedStoreIds,
+                    activeRevisionJobIdForStore: async (storeId) => {
+                      const currentMission = await options.missions.get(mission.id);
+                      const matches = (
+                        await Promise.all(
+                          currentMission.contextMounts.map(async (mount) => {
+                            if (
+                              mount.kind !== "context-store-draft" ||
+                              mount.revisionJobId === undefined
+                            ) {
+                              return undefined;
+                            }
+                            const draft = await options.contextStoreRevisions!.getDraft(
+                              mount.draftId,
+                            );
+                            return draft.storeId === storeId ? mount.revisionJobId : undefined;
+                          }),
+                        )
+                      ).filter((jobId): jobId is string => jobId !== undefined);
+                      if (matches.length > 1) {
+                        throw new Error("knowledge_revision_multiple_active_drafts");
+                      }
+                      return matches[0];
+                    },
+                    writableNamespaceForStore: activeMissionKnowledgeDraftNamespace,
+                    mountDraft: async ({ storeId, draftId, revisionJobId, previousMissionId }) => {
+                      missionsChangingContextBindings.add(mission.id);
+                      if (previousMissionId !== undefined) {
+                        missionsChangingContextBindings.add(previousMissionId);
+                      }
+                      let previousRestored = false;
+                      try {
+                        const session = sessions.get(mission.id);
+                        const queued = (await session?.getPromptQueue())?.some(
+                          (prompt) => prompt.status === "queued",
+                        );
+                        if (queued === true) {
+                          throw new Error(
+                            "Remove or finish queued Mission messages before starting a knowledge revision.",
+                          );
+                        }
+                        if (previousMissionId !== undefined) {
+                          const previousMission = await options.missions.get(previousMissionId);
+                          const previousSession = sessions.get(previousMissionId);
+                          const previousHasQueuedPrompts = (
+                            (await previousSession?.getPromptQueue()) ?? []
+                          ).some(
+                            (prompt) => prompt.status === "queued" || prompt.status === "running",
+                          );
+                          if (
+                            active.has(previousMissionId) ||
+                            previousHasQueuedPrompts ||
+                            (previousMission.execution !== undefined &&
+                              ["queued", "running", "waiting"].includes(
+                                previousMission.execution.status,
+                              ))
+                          ) {
+                            throw new Error("knowledge_revision_previous_mission_active");
+                          }
+                          const previousOwnsDraft = previousMission.contextMounts.some(
+                            (mount) =>
+                              mount.kind === "context-store-draft" &&
+                              mount.draftId === draftId &&
+                              mount.revisionJobId === revisionJobId,
+                          );
+                          if (
+                            previousMission.executor.ref !== STORE_REVISION_EXPERT_REF ||
+                            !previousOwnsDraft
+                          ) {
+                            throw new Error("knowledge_revision_previous_claim_invalid");
+                          }
+
+                          await options.missions.restoreManagedRevisionStore({
+                            id: previousMissionId,
+                            storeId,
+                            draftId,
+                            revisionJobId,
+                          });
+                          previousRestored = true;
+                          await options.contextStoreRevisions!.detachMission(
+                            revisionJobId,
+                            previousMissionId,
+                          );
+                          await options.contextStoreRevisions!.attachMission(
+                            revisionJobId,
+                            mission.id,
+                          );
+                        }
+                        await options.missions.mountManagedRevisionDraft({
+                          id: mission.id,
+                          expectedExecutorRef: STORE_REVISION_EXPERT_REF,
+                          storeId,
+                          draftId,
+                          revisionJobId,
+                        });
+                        await invalidateContextBindings(mission.id);
+                        if (previousMissionId !== undefined) {
+                          await invalidateContextBindings(previousMissionId);
+                        }
+                        return {
+                          writableNamespace: activeMissionKnowledgeDraftNamespace(storeId),
+                        };
+                      } catch (error) {
+                        if (previousMissionId !== undefined && previousRestored) {
+                          let current = await options.contextStoreRevisions!.get(revisionJobId);
+                          if (current.missionId === mission.id) {
+                            await options.contextStoreRevisions!.detachMission(
+                              revisionJobId,
+                              mission.id,
+                            );
+                            current = await options.contextStoreRevisions!.get(revisionJobId);
+                          }
+                          if (current.missionId === undefined) {
+                            await options.contextStoreRevisions!.attachMission(
+                              revisionJobId,
+                              previousMissionId,
+                            );
+                            current = await options.contextStoreRevisions!.get(revisionJobId);
+                          }
+                          if (current.missionId === previousMissionId) {
+                            await options.missions.mountManagedRevisionDraft({
+                              id: previousMissionId,
+                              expectedExecutorRef: STORE_REVISION_EXPERT_REF,
+                              storeId,
+                              draftId,
+                              revisionJobId,
+                            });
+                          }
+                        }
+                        throw error;
+                      } finally {
+                        missionsChangingContextBindings.delete(mission.id);
+                        if (previousMissionId !== undefined) {
+                          missionsChangingContextBindings.delete(previousMissionId);
+                        }
+                      }
+                    },
+                  },
+                }),
+          });
+    const system = await options.compileSystemExecutor?.({ mission, runtimes, knowledgeRevisions });
     if (system !== undefined) return system;
+    const desktopAdapterHost = createDesktopAdapterHost(
+      {
+        ...options,
+        ...(knowledgeRevisions === undefined
+          ? {}
+          : { pragmaManagement: { knowledgeRevisions } satisfies PragmaManagementToolPorts }),
+      },
+      mission.workspace.path,
+    );
     const compiled = await options.project.compile<InvocableResource>({
       projectId: mission.project.id,
       revision: mission.project.revision,
@@ -991,10 +1275,7 @@ export function createMissionRunner(options: {
       pragmaHome: options.pragmaHome,
       environmentId: "desktop",
       adapterHost:
-        options.adapterHostForMission?.(
-          mission,
-          createDesktopAdapterHost(options, mission.workspace.path),
-        ) ?? createDesktopAdapterHost(options, mission.workspace.path),
+        options.adapterHostForMission?.(mission, desktopAdapterHost) ?? desktopAdapterHost,
       runtimes,
       resolveExternalInvocable: async (ref) => {
         const compiled = await options.compileSystemExecutor?.({
@@ -1003,6 +1284,7 @@ export function createMissionRunner(options: {
             executor: { kind: "expert", ref, name: ref },
           },
           runtimes,
+          knowledgeRevisions,
         });
         return compiled?.value;
       },
@@ -1039,6 +1321,7 @@ export function createMissionRunner(options: {
         JSON.stringify({
           project: mission.project,
           executor: mission.executor,
+          contextMounts: missionContextMountsFingerprint(mission),
           systemExecutorFingerprint:
             (await options.getSystemExecutorFingerprint?.(mission)) ?? null,
           toolPermissionMode: mission.toolPermissionMode,
@@ -1363,6 +1646,16 @@ export function createMissionRunner(options: {
     }
     if (active.has(mission.id)) return mission;
     if (mission.lifecycleStatus === "active") await notifyMissionActivity(mission);
+    const contextMountsFingerprint = missionContextMountsFingerprint(mission);
+    const recoverableMissionExecution =
+      mission.execution !== undefined &&
+      ["queued", "running", "waiting"].includes(mission.execution.status);
+    if (
+      missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) &&
+      !recoverableMissionExecution
+    ) {
+      await invalidateContextBindings(mission.id);
+    }
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
@@ -1439,6 +1732,7 @@ export function createMissionRunner(options: {
         id: handle.executionId,
         inputMessageId,
         status: recoveredWaiting ? "waiting" : "running",
+        contextMountsFingerprint,
         startedAt: executionStartedAt,
       });
       trackExecution({
@@ -1539,6 +1833,7 @@ export function createMissionRunner(options: {
       inputMessageId,
       sessionId: session.sessionId,
       status: recoveredTurn === undefined ? "running" : "waiting",
+      ...(recoverable ? {} : { contextMountsFingerprint }),
       startedAt: executionStartedAt,
     });
     trackExecution({
@@ -1572,6 +1867,32 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(input.id);
+    const contextMountsFingerprint = missionContextMountsFingerprint(mission);
+    if (missionContextMountsNeedSuccessor(mission, contextMountsFingerprint)) {
+      executionContexts.delete(mission.id);
+      sessionCompilationIdentities.delete(mission.id);
+      sessionDefinitionFingerprints.delete(mission.id);
+      missionsRequiringSuccessorSession.add(mission.id);
+    }
+    if (missionsChangingContextBindings.has(mission.id)) {
+      throw new Error("Wait for the Mission Knowledge change to finish before sending a message.");
+    }
+    if (missionsRequiringSuccessorSession.has(mission.id)) {
+      if (active.has(mission.id)) {
+        throw new Error(
+          "Wait for the current execution to finish before sending a message with the new Mission Knowledge.",
+        );
+      }
+      const currentSession = sessions.get(mission.id);
+      const hasQueuedPrompts = (await currentSession?.getPromptQueue())?.some(
+        (prompt) => prompt.status === "queued" || prompt.status === "running",
+      );
+      if (hasQueuedPrompts === true) {
+        throw new Error(
+          "Remove or finish queued Mission messages before continuing with the new Mission Knowledge.",
+        );
+      }
+    }
     await options.assertExecutorReady?.(mission.executor.ref);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions accept input through workflow steps, not chat messages.");
@@ -1639,6 +1960,7 @@ export function createMissionRunner(options: {
     const memoryBindingsChanged = memoryContextBindingsChanged.has(mission.id);
     const contextStoresChanged =
       missionsRequiringSuccessorSession.delete(mission.id) ||
+      missionContextMountsNeedSuccessor(mission, contextMountsFingerprint) ||
       (memoryBindingsChanged && !active.has(mission.id));
     if (memoryBindingsChanged && !active.has(mission.id)) {
       memoryContextBindingsChanged.delete(mission.id);
@@ -1748,6 +2070,7 @@ export function createMissionRunner(options: {
             inputMessageId: input.requestId,
             sessionId: session.sessionId,
             status: "running",
+            contextMountsFingerprint,
             startedAt,
           });
     if (!hasCurrent && !queuePaused) {
@@ -1806,10 +2129,31 @@ export function createMissionRunner(options: {
     return updated;
   };
 
-  const updateMissionContextStores = async (
-    input: UpdateMissionContextStores,
+  const updateMissionContextMounts = async (
+    input: UpdateMissionContextMounts,
   ): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
+    const existingDraftMounts = mission.contextMounts.filter(
+      (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+        mount.kind === "context-store-draft",
+    );
+    const requestedDraftMounts = input.contextMounts.filter(
+      (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
+        mount.kind === "context-store-draft",
+    );
+    if (
+      requestedDraftMounts.length !== existingDraftMounts.length ||
+      requestedDraftMounts.some(
+        (requested) =>
+          !existingDraftMounts.some(
+            (existing) =>
+              existing.draftId === requested.draftId &&
+              existing.revisionJobId === requested.revisionJobId,
+          ),
+      )
+    ) {
+      throw new Error("Mission Knowledge Drafts can only be changed by revision tools.");
+    }
     if (
       active.has(mission.id) ||
       (mission.execution !== undefined &&
@@ -1817,11 +2161,31 @@ export function createMissionRunner(options: {
     ) {
       throw new Error("Wait for the current execution before changing Mission Knowledge Stores.");
     }
-    if (input.contextStoreIds.length > 0 && options.contextStores === undefined) {
-      throw new Error("Mission Knowledge Stores are unavailable.");
-    }
     await Promise.all(
-      input.contextStoreIds.map(async (storeId) => await options.contextStores!.resolve(storeId)),
+      input.contextMounts.map(async (mount) => {
+        if (mount.kind === "context-store-draft" && mount.revisionJobId !== undefined) {
+          const existing = mission.contextMounts.find(
+            (candidate) =>
+              candidate.kind === "context-store-draft" &&
+              candidate.draftId === mount.draftId &&
+              candidate.revisionJobId === mount.revisionJobId,
+          );
+          if (existing === undefined) {
+            throw new Error("Managed Mission Knowledge Drafts cannot be changed manually.");
+          }
+        }
+        if (mount.kind === "context-store") {
+          if (options.contextStores === undefined) {
+            throw new Error("Mission Knowledge Stores are unavailable.");
+          }
+          await options.contextStores.resolve(mount.storeId);
+          return;
+        }
+        if (options.contextStoreRevisions === undefined) {
+          throw new Error("Mission Knowledge Drafts are unavailable.");
+        }
+        await options.contextStoreRevisions.resolveDraft(mount.draftId);
+      }),
     );
     const sessionId = sessions.get(mission.id)?.sessionId ?? mission.execution?.sessionId;
     if (sessionId !== undefined) {
@@ -1835,16 +2199,8 @@ export function createMissionRunner(options: {
         );
       }
     }
-    const updated = await options.missions.updateContextStores(mission.id, input.contextStoreIds);
-    const session = sessions.get(mission.id);
-    if (session !== undefined) {
-      await session.close("Mission Knowledge Stores changed.");
-      sessions.delete(mission.id);
-      missionsRequiringSuccessorSession.add(mission.id);
-    }
-    sessionCompilationIdentities.delete(mission.id);
-    sessionDefinitionFingerprints.delete(mission.id);
-    executionContexts.delete(mission.id);
+    const updated = await options.missions.updateContextMounts(mission.id, input.contextMounts);
+    await invalidateContextBindings(mission.id);
     return updated;
   };
 
@@ -1913,6 +2269,20 @@ export function createMissionRunner(options: {
     });
     if (options.missions.storagePath === undefined) await options.missions.remove(id);
     else options.missions.forget?.(id);
+    if (options.contextStoreRevisions !== undefined) {
+      for (const mount of mission.contextMounts) {
+        if (mount.kind !== "context-store-draft" || mount.revisionJobId === undefined) continue;
+        try {
+          await options.contextStoreRevisions.detachMission(mount.revisionJobId, mission.id);
+        } catch (error) {
+          logger.warn(
+            "mission.revision_claim_detach_failed",
+            "Mission deletion completed, but its knowledge revision claim will require startup recovery.",
+            { missionId: mission.id, revisionJobId: mount.revisionJobId, error },
+          );
+        }
+      }
+    }
     options.usage?.markSubjectDeleted("mission", id);
     executionContexts.delete(id);
     options.onStorageTrashed?.();
@@ -2779,34 +3149,42 @@ export function createMissionRunner(options: {
     return [...new Set(executionIds)].toSorted();
   };
 
-  const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
-    const t0 = performance.now();
-    const mission = await options.missions.get(id);
+  const loadWorkProjection = async (mission: Mission) => {
+    const revision = workRevisions.get(mission.id) ?? 0;
     const executionIds = await readMissionExecutionIds(mission);
-    const records = await workHistory.listRecords({
-      executionIds,
-      ...(mission.execution?.sessionId === undefined
-        ? {}
-        : { rootSessionId: mission.execution.sessionId }),
-    });
-    const t1 = performance.now();
-    logger.info(
-      "mission.get_work_snapshot",
-      `Loaded Mission work snapshot for ${id} in ${(t1 - t0).toFixed(1)}ms.`,
-      {
-        missionId: id,
-        executionCount: executionIds.length,
-        recordCount: records.length,
-        elapsedMs: t1 - t0,
-      },
-    );
-    const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
-    const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
-    const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(records, avatarIds.values());
-    return {
-      missionId: mission.id,
-      revision: workRevisions.get(mission.id) ?? 0,
-      records: records.map((record): MissionWorkRecord => {
+    const executionSignature = (
+      await Promise.all(
+        executionIds.map(async (executionId) => {
+          const execution = await executionStore.get(executionId);
+          return `${executionId}:${execution?.version ?? "missing"}:${execution?.lastAppliedSequence ?? "missing"}`;
+        }),
+      )
+    ).join("|");
+    const cached = workProjectionCache.get(mission.id);
+    if (cached?.revision === revision && cached.executionSignature === executionSignature) {
+      workProjectionCache.delete(mission.id);
+      workProjectionCache.set(mission.id, cached);
+      return { projection: cached, cacheHit: true } as const;
+    }
+    const activeLoad = workProjectionLoads.get(mission.id);
+    if (activeLoad?.revision === revision && activeLoad.executionSignature === executionSignature) {
+      return { projection: await activeLoad.promise, cacheHit: true } as const;
+    }
+
+    const promise = (async () => {
+      const projection = await workHistory.readProjection({
+        executionIds,
+        ...(mission.execution?.sessionId === undefined
+          ? {}
+          : { rootSessionId: mission.execution.sessionId }),
+      });
+      const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
+      const runtimeAgentOrdinals = createRuntimeAgentOrdinals(projection.records);
+      const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(
+        projection.records,
+        avatarIds.values(),
+      );
+      const records = projection.records.map((record): MissionWorkRecord => {
         const tasks = record.tasks.map((task) => {
           const outputSummary = missionWorkOutputSummary(task.output, 1_000);
           return {
@@ -2858,8 +3236,84 @@ export function createMissionRunner(options: {
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
         };
-      }),
-    };
+      });
+      const entriesByRecordId = new Map<string, readonly MissionChatEntry[]>();
+      for (const record of projection.records) {
+        const supersededTaskIds =
+          projection.conversations.supersededTaskIds.get(record.recordId) ?? new Set<string>();
+        const taskInputEntries = workTaskInputEntries({
+          ...record,
+          tasks: record.tasks.filter((task) => !supersededTaskIds.has(task.taskId)),
+        });
+        const messageInputEntries = (
+          projection.conversations.messageInputs.get(record.recordId) ?? []
+        ).map((entry): MissionChatEntry => ({
+          id: entry.id,
+          executionId: entry.executionId,
+          invocationId: entry.invocationId,
+          kind: "user",
+          content: truncate(entry.content, 200_000),
+          createdAt: entry.createdAt,
+        }));
+        const durableEntries = messageRecordsToChatEntries(
+          projection.conversations.output.get(record.recordId) ?? [],
+        );
+        entriesByRecordId.set(
+          record.recordId,
+          uniqueMissionChatEntries([
+            ...taskInputEntries,
+            ...messageInputEntries,
+            ...durableEntries,
+          ]).toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+        );
+      }
+      return {
+        revision,
+        executionSignature,
+        executionCount: executionIds.length,
+        snapshot: { missionId: mission.id, revision, records },
+        entriesByRecordId,
+      };
+    })();
+    workProjectionLoads.set(mission.id, { revision, executionSignature, promise });
+    try {
+      const projection = await promise;
+      if (
+        (workRevisions.get(mission.id) ?? 0) === revision &&
+        projection.executionSignature === executionSignature
+      ) {
+        workProjectionCache.delete(mission.id);
+        workProjectionCache.set(mission.id, projection);
+        while (workProjectionCache.size > 5) {
+          const oldest = workProjectionCache.keys().next();
+          if (!oldest.done) workProjectionCache.delete(oldest.value);
+        }
+      }
+      return { projection, cacheHit: false } as const;
+    } finally {
+      if (workProjectionLoads.get(mission.id)?.promise === promise) {
+        workProjectionLoads.delete(mission.id);
+      }
+    }
+  };
+
+  const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
+    const t0 = performance.now();
+    const mission = await options.missions.get(id);
+    const { projection, cacheHit } = await loadWorkProjection(mission);
+    const t1 = performance.now();
+    logger.info(
+      "mission.get_work_snapshot",
+      `Loaded Mission work snapshot for ${id} in ${(t1 - t0).toFixed(1)}ms.`,
+      {
+        missionId: id,
+        executionCount: projection.executionCount,
+        recordCount: projection.snapshot.records.length,
+        cacheHit,
+        elapsedMs: t1 - t0,
+      },
+    );
+    return projection.snapshot;
   };
 
   const getWorkConversation = async (
@@ -2867,40 +3321,20 @@ export function createMissionRunner(options: {
   ): Promise<MissionWorkConversationSnapshot> => {
     const t0 = performance.now();
     const mission = await options.missions.get(input.id);
-    const executionIds = await readMissionExecutionIds(mission);
-    const { records, output: rawOutput } = await workHistory.readRecordsAndOutput({
-      executionIds,
-      ...(mission.execution?.sessionId === undefined
-        ? {}
-        : { rootSessionId: mission.execution.sessionId }),
-      targetRecordId: input.recordId,
-    });
-    const t1 = performance.now();
-    logger.info(
-      "mission.get_work_conversation",
-      `Loaded Mission work conversation for ${input.id}:${input.recordId} in ${(t1 - t0).toFixed(1)}ms.`,
-      {
-        missionId: input.id,
-        recordId: input.recordId,
-        executionCount: executionIds.length,
-        outputRecordCount: rawOutput.length,
-        elapsedMs: t1 - t0,
-      },
-    );
-    const record = records.find((candidate) => candidate.recordId === input.recordId);
-    if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
-    const messageInputs = await readWorkMessageInputs(executionIds, record, executionStore);
-    const taskInputEntries = workTaskInputEntries(record).filter(
-      (entry) => !messageInputs.supersededTaskInputEntryIds.has(entry.id),
-    );
-    const durableEntries = messageRecordsToChatEntries(rawOutput);
-    const liveEntries = liveWorkOutputs.get(mission.id)?.get(record.recordId)?.entries ?? [];
+    const { projection, cacheHit } = await loadWorkProjection(mission);
+    const durableEntries = projection.entriesByRecordId.get(input.recordId);
+    if (durableEntries === undefined) {
+      throw new Error(`Mission work record not found: ${input.recordId}`);
+    }
+    const liveEntries = liveWorkOutputs.get(mission.id)?.get(input.recordId)?.entries ?? [];
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();
-    for (const entry of taskInputEntries) byId.set(entry.id, entry);
-    for (const entry of messageInputs.entries) byId.set(entry.id, entry);
     for (const entry of durableEntries) {
-      if (entry.executionId === undefined || !liveExecutionIds.has(entry.executionId)) {
+      if (
+        entry.kind === "user" ||
+        entry.executionId === undefined ||
+        !liveExecutionIds.has(entry.executionId)
+      ) {
         byId.set(entry.id, { ...entry });
       }
     }
@@ -2914,9 +3348,22 @@ export function createMissionRunner(options: {
       ? Math.max(0, Math.min(entries.length, requestedEnd))
       : entries.length;
     const start = Math.max(0, end - input.limit);
+    const t1 = performance.now();
+    logger.info(
+      "mission.get_work_conversation",
+      `Loaded Mission work conversation for ${input.id}:${input.recordId} in ${(t1 - t0).toFixed(1)}ms.`,
+      {
+        missionId: input.id,
+        recordId: input.recordId,
+        executionCount: projection.executionCount,
+        outputRecordCount: entries.length,
+        cacheHit,
+        elapsedMs: t1 - t0,
+      },
+    );
     return {
       missionId: mission.id,
-      recordId: record.recordId,
+      recordId: input.recordId,
       revision: workRevisions.get(mission.id) ?? 0,
       entries: entries.slice(start, end),
       ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
@@ -3017,11 +3464,14 @@ export function createMissionRunner(options: {
     async updateOptions(input) {
       return await withMissionController(input.id, async () => await updateMissionOptions(input));
     },
-    async updateContextStores(input) {
+    async updateContextMounts(input) {
       return await withMissionController(
         input.id,
-        async () => await updateMissionContextStores(input),
+        async () => await updateMissionContextMounts(input),
       );
+    },
+    async invalidateContextBindings(id) {
+      await invalidateContextBindings(id);
     },
     async sendMessage(input) {
       return await withMissionController(input.id, async () => await sendMissionMessage(input));
@@ -3195,6 +3645,8 @@ export function createMissionRunner(options: {
       chatRevisions.delete(id);
       degradedChatSync.delete(id);
       workRevisions.delete(id);
+      workProjectionCache.delete(id);
+      workProjectionLoads.delete(id);
       liveWorkOutputs.delete(id);
       liveContextWindows.delete(id);
     },
@@ -3311,6 +3763,7 @@ export function createDesktopAdapterHost(
     readonly capabilitiesPath: string;
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
+    readonly pragmaManagement?: PragmaManagementToolPorts | undefined;
   },
   projectRoot: string,
 ): PragmaAdapterHost {
@@ -3318,6 +3771,23 @@ export function createDesktopAdapterHost(
     environmentId: "desktop",
     projectRoot,
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
+      if (ref === PRAGMA_MANAGEMENT_BINDING_REF) {
+        if (options.pragmaManagement === undefined) return undefined;
+        const tools = createPragmaManagementTools(options.pragmaManagement);
+        const fingerprint = createHash("sha256")
+          .update(
+            JSON.stringify(
+              tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema })),
+            ),
+          )
+          .digest("hex");
+        return {
+          ref,
+          revision: "1",
+          fingerprint,
+          value: { contribution: { tools } },
+        };
+      }
       const capabilityRef = parseDesktopCapabilityBindingRef(ref);
       if (capabilityRef !== undefined) {
         const capabilityId = capabilityRef.id;
@@ -3395,6 +3865,32 @@ function toRuntimeModelSelection(
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
       };
+}
+
+function missionContextMountsFingerprint(mission: Mission): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        mission.contextMounts
+          .map((mount) =>
+            mount.kind === "context-store"
+              ? { kind: mount.kind, storeId: mount.storeId }
+              : {
+                  kind: mount.kind,
+                  draftId: mount.draftId,
+                  revisionJobId: mount.revisionJobId ?? null,
+                },
+          )
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      ),
+    )
+    .digest("hex");
+}
+
+function missionContextMountsNeedSuccessor(mission: Mission, fingerprint: string): boolean {
+  if (mission.execution?.sessionId === undefined) return false;
+  if (mission.execution.contextMountsFingerprint === undefined) return false;
+  return mission.execution.contextMountsFingerprint !== fingerprint;
 }
 
 function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): string {
@@ -4231,89 +4727,6 @@ function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEntry[] {
   });
 }
 
-async function readWorkMessageInputs(
-  executionIds: readonly string[],
-  record: ExecutionWorkRecord,
-  store: Pick<FileExecutionStore, "readEvents">,
-): Promise<{
-  readonly entries: readonly MissionChatEntry[];
-  readonly supersededTaskInputEntryIds: ReadonlySet<string>;
-}> {
-  const invocationIds = new Set(record.tasks.map((task) => task.invocationId));
-  const byId = new Map<string, MissionChatEntry>();
-  const supersededTaskInputEntryIds = new Set<string>();
-  for (const executionId of executionIds) {
-    const queuedRuntimeCommands: Array<{
-      readonly commandId: string;
-      readonly action: "spawn" | "send";
-    }> = [];
-    const queuedRuntimeCommandIds = new Set<string>();
-    for (const event of await store.readEvents(executionId)) {
-      if (record.origin === "core" && event.type === "agent.steer.applied") {
-        if (!invocationIds.has(event.invocationId)) continue;
-        const data = event.data;
-        if (typeof data !== "object" || data === null) continue;
-        const requestId = "requestId" in data ? data.requestId : undefined;
-        const content = "content" in data ? data.content : undefined;
-        if (typeof requestId !== "string" || typeof content !== "string" || content === "") {
-          continue;
-        }
-        byId.set(`work-steer:${executionId}:${requestId}`, {
-          id: `work-steer:${executionId}:${requestId}`,
-          executionId,
-          invocationId: event.invocationId,
-          kind: "user",
-          content: truncate(content, 200_000),
-          createdAt: event.occurredAt,
-        });
-        continue;
-      }
-      if (record.origin !== "runtime" || event.type !== "runtime.event") continue;
-      const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
-      if (!parsed.success) continue;
-      const streamEvent = parsed.data;
-      if (streamEvent.type === "run.started" && streamEvent.source.sessionId === record.sessionId) {
-        const command = queuedRuntimeCommands.shift();
-        if (command?.action === "send") {
-          supersededTaskInputEntryIds.add(`work-input:${executionId}:${streamEvent.runId}`);
-        }
-        continue;
-      }
-      if (
-        streamEvent.type !== "agent.command" ||
-        (streamEvent.payload.action !== "spawn" && streamEvent.payload.action !== "send") ||
-        !streamEvent.payload.targetSessionIds.includes(record.sessionId) ||
-        streamEvent.payload.prompt === undefined ||
-        streamEvent.payload.prompt === ""
-      ) {
-        continue;
-      }
-      if (
-        !queuedRuntimeCommandIds.has(streamEvent.payload.commandId) &&
-        streamEvent.payload.delivery !== "steer"
-      ) {
-        queuedRuntimeCommandIds.add(streamEvent.payload.commandId);
-        queuedRuntimeCommands.push({
-          commandId: streamEvent.payload.commandId,
-          action: streamEvent.payload.action,
-        });
-      }
-      if (streamEvent.payload.action !== "send") continue;
-      const id = `work-send:${executionId}:${streamEvent.payload.commandId}:${record.sessionId}`;
-      if (byId.has(id)) continue;
-      byId.set(id, {
-        id,
-        executionId,
-        invocationId: event.invocationId,
-        kind: "user",
-        content: truncate(streamEvent.payload.prompt, 200_000),
-        createdAt: streamEvent.emittedAt,
-      });
-    }
-  }
-  return { entries: [...byId.values()], supersededTaskInputEntryIds };
-}
-
 function workTaskInputContent(input: unknown): string {
   if (typeof input === "string") return truncate(input.trim(), 200_000);
   if (
@@ -4325,6 +4738,12 @@ function workTaskInputContent(input: unknown): string {
     return truncate(input.prompt.trim(), 200_000);
   }
   return formatValue(input, 200_000).trim();
+}
+
+function uniqueMissionChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
+  const byId = new Map<string, MissionChatEntry>();
+  for (const entry of entries) byId.set(entry.id, entry);
+  return [...byId.values()];
 }
 
 function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): MissionChatEntry[] {
@@ -4741,7 +5160,9 @@ export function consumeLiveChatOutput(
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "thinking");
     if (current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
-      current.content = truncate(current.content + content, 200_000);
+      const nextContent = truncate(current.content + content, 200_000);
+      if (nextContent === current.content) return [];
+      current.content = nextContent;
       const patches: MissionChatPatch[] = canAppend
         ? [{ type: "entry.append", entryId: current.id, field: "content", delta: content }]
         : [{ type: "entry.upsert", entry: { ...current } }];
@@ -4770,8 +5191,10 @@ export function consumeLiveChatOutput(
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "assistant");
     if (item.delta !== undefined && current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
-      current.content = truncate(current.content + content, 200_000);
-      if (content !== "") {
+      const nextContent = truncate(current.content + content, 200_000);
+      const contentChanged = nextContent !== current.content;
+      current.content = nextContent;
+      if (content !== "" && contentChanged) {
         patches.push(
           canAppend
             ? { type: "entry.append", entryId: current.id, field: "content", delta: content }

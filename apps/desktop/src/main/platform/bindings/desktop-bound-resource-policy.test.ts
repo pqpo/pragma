@@ -1,4 +1,5 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +13,7 @@ import {
   bindExistingDesktopCapabilityResource,
   bindExistingDesktopContextResource,
   createDesktopCapabilityResource,
+  classifyDesktopCapabilityResource,
   resolveDesktopCapabilityResource,
   resolveDesktopContextResource,
   resolveDesktopRuntimeResource,
@@ -21,6 +23,20 @@ import { desktopCapabilityBindingRef, desktopContextBindingRef } from "./desktop
 const CAPABILITY_ID = "751a410b-4f80-4d0f-9db4-0efbe86afea7";
 
 describe("desktop bound resource policy", () => {
+  it("uses the fixed built-in resource for Pragma management tools", () => {
+    const resource = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+      revision: 1,
+    });
+
+    expect(canonicalPragmaResourceRef(resource)).toBe("capability:0000000000manage");
+    expect(classifyDesktopCapabilityResource(resource)).toEqual({
+      id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+      revision: 1,
+    });
+  });
+
   it("keeps the exact resource already referenced by an Expert", () => {
     const migrated = capability("nv27faxmxpqnxwqr", ["desktop-managed"], 3);
     const option = createDesktopCapabilityResource({

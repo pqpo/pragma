@@ -1,5 +1,9 @@
 # ADR 039: Promoted Knowledge Stores and Agent-driven Store Revision
 
+> Superseded in part by [ADR 044](./044-sparse-context-store-revision-drafts.md): Agent revisions now
+> edit sparse draft Context Stores with native Context tools instead of returning complete JSON
+> change sets from a read-only published Store.
+
 - Status: Accepted
 - Date: 2026-08-05
 - Supersedes in part: [ADR 031](./031-extensible-memory-plane.md)、

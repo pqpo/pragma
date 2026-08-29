@@ -92,16 +92,18 @@ export function createContextTools(
       name: "list_expert_context",
       label: "List expert context",
       description:
-        "List Expert context with Store metadata, revisions, descriptions, and triggers. Optionally restrict the listing to one context namespace. Continue with nextCursor using the same namespace when the result is paginated.",
+        "List Expert context with Store metadata, revision and etag concurrency tokens, descriptions, and triggers. Optionally restrict the listing to one context namespace. Omit or leave cursor empty for the first page; continue with nextCursor using the same namespace when the result is paginated.",
       inputSchema: objectSchema({
         namespace: stringSchema(
           "Optional context namespace to list. Omit to list every namespace.",
         ),
-        cursor: stringSchema("Opaque cursor returned by a previous list_expert_context call."),
+        cursor: stringSchema(
+          "Opaque cursor returned by a previous list_expert_context call. Omit or leave empty for the first page.",
+        ),
         limit: integerSchema("Maximum items to return. Defaults to 20 and is capped at 50."),
       }),
       call: async (args, _signal, context) => {
-        const namespace = readOptionalStringParam(args, "namespace");
+        const namespace = readOptionalBlankStringParam(args, "namespace");
         const result = await contextOperations.listContext({
           ...(namespace === undefined ? {} : { namespace }),
           context: readRunContext(options, context),
@@ -113,7 +115,7 @@ export function createContextTools(
 
         const page = paginateContextIndex(
           result.value,
-          readOptionalStringParam(args, "cursor"),
+          readOptionalBlankStringParam(args, "cursor"),
           normalizeListLimit(readOptionalNumberParam(args, "limit")),
           normalizeResultByteBudget(options),
           namespace,
@@ -144,19 +146,19 @@ export function createContextTools(
       description: "Read an Expert context by context id, optionally as a byte range.",
       inputSchema: objectSchema(
         {
-          id: stringSchema("Context id."),
-          namespace: stringSchema("Context namespace."),
+          id: nonBlankStringSchema("Context id."),
+          namespace: nonBlankStringSchema("Context namespace."),
           start: integerSchema("Zero-based UTF-8 byte offset to start reading from."),
           offset: integerSchema("Maximum UTF-8 bytes to read from start."),
         },
         ["namespace", "id"],
       ),
       call: async (args, _signal, context) => {
-        const id = readStringParam(args, "id");
+        const id = readRequiredTokenParam(args, "id");
         const requestedOffset = readOptionalNumberParam(args, "offset");
         const offset = normalizeToolReadOffset(requestedOffset, options);
         const result = await contextOperations.readContext({
-          namespace: readStringParam(args, "namespace"),
+          namespace: readRequiredTokenParam(args, "namespace"),
           id,
           start: readOptionalNumberParam(args, "start"),
           offset,
@@ -168,10 +170,12 @@ export function createContextTools(
         }
 
         const bounded = boundReadContext(result.value, offset);
+        const continuation = createReadContinuation(bounded);
         return {
           text: formatContext(bounded),
           details: {
             context: bounded,
+            ...(continuation === undefined ? {} : { continuation }),
           },
         };
       },
@@ -183,12 +187,11 @@ export function createContextTools(
       inputSchema: objectSchema(
         {
           namespace: stringSchema("Optional context namespace. Omit to search every namespace."),
-          query: stringSchema("Literal text to search for."),
-          scope: {
-            type: "string",
-            enum: ["path", "content", "hybrid"],
-            description: "Search mode. Defaults to hybrid.",
-          },
+          query: nonBlankStringSchema("Literal text to search for."),
+          scope: optionalEnumStringSchema(
+            ["path", "content", "hybrid"],
+            "Search mode. Defaults to hybrid. Omit or leave empty to use the default.",
+          ),
           maxResults: integerSchema("Maximum number of matches to return. Defaults to 20."),
           contextLines: integerSchema("Number of context lines around each match. Defaults to 0."),
           caseSensitive: booleanSchema(
@@ -199,8 +202,8 @@ export function createContextTools(
       ),
       call: async (args, _signal, context) => {
         const result = await contextOperations.searchContext({
-          namespace: readOptionalStringParam(args, "namespace"),
-          query: readStringParam(args, "query"),
+          namespace: readOptionalBlankStringParam(args, "namespace"),
+          query: readRequiredTokenParam(args, "query"),
           scope: readOptionalScopeParam(args),
           maxResults: readOptionalNumberParam(args, "maxResults"),
           contextLines: readOptionalNumberParam(args, "contextLines"),
@@ -233,8 +236,8 @@ export function createContextTools(
       },
       inputSchema: objectSchema(
         {
-          namespace: stringSchema("Context namespace."),
-          id: stringSchema("Context id."),
+          namespace: nonBlankStringSchema("Context namespace."),
+          id: nonBlankStringSchema("Context id."),
           content: stringSchema("Context content."),
           description: stringSchema("Optional context description."),
           trigger: triggerSchema(),
@@ -243,8 +246,8 @@ export function createContextTools(
         ["namespace", "id", "content"],
       ),
       call: async (args, _signal, context) => {
-        const namespace = readStringParam(args, "namespace");
-        const id = readStringParam(args, "id");
+        const namespace = readRequiredTokenParam(args, "namespace");
+        const id = readRequiredTokenParam(args, "id");
         const content = readStringParam(args, "content");
         const result = await contextOperations.addContext({
           namespace,
@@ -258,11 +261,15 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
-        const receipt = createContextWriteReceipt(result.value, namespace);
+        const receipt = createContextWriteReceipt(result.value, namespace, "created");
         return {
-          text: `Added context: ${receipt.namespace}/${receipt.id}; sizeBytes=${receipt.sizeBytes}`,
+          text: JSON.stringify(receipt),
           details: {
             context: receipt,
+            committed: receipt.committed,
+            status: receipt.status,
+            namespace: receipt.namespace,
+            id: receipt.id,
           },
         };
       },
@@ -271,7 +278,7 @@ export function createContextTools(
       name: "edit_expert_context",
       label: "Edit expert context",
       description:
-        'Edit an Expert context item. Use mode="replace" for full content or metadata replacement, mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, or mode="prepend" to add content before it. Append and prepend require an explicit separator.',
+        'Edit an Expert context item. Use mode="replace" to replace the provided content or metadata fields; every omitted content or metadata field preserves its current value. Use mode="search_replace" for exact text search/replace, mode="append" to add content after the existing content, or mode="prepend" to add content before it. Append and prepend require an explicit separator.',
       approval: {
         mode: "required",
         reason: "Writing Expert context requires explicit approval.",
@@ -279,13 +286,12 @@ export function createContextTools(
       },
       inputSchema: objectSchema(
         {
-          namespace: stringSchema("Context namespace."),
-          id: stringSchema("Context id."),
-          mode: {
-            type: "string",
-            enum: ["replace", "search_replace", "append", "prepend"],
-            description: "Edit mode. Defaults to search_replace.",
-          },
+          namespace: nonBlankStringSchema("Context namespace."),
+          id: nonBlankStringSchema("Context id."),
+          mode: optionalEnumStringSchema(
+            ["replace", "search_replace", "append", "prepend"],
+            "Edit mode. Defaults to search_replace. Omit or leave empty to use the default.",
+          ),
           content: stringSchema(
             'Replacement context content for mode="replace", or content to add for mode="append" or mode="prepend".',
           ),
@@ -295,16 +301,22 @@ export function createContextTools(
             description:
               'Required for mode="append" and mode="prepend". Inserts no separator, one newline, or one blank line between the existing and added content.',
           },
-          description: stringSchema('Replacement context description for mode="replace".'),
-          trigger: triggerSchema(),
-          priority: prioritySchema(),
-          search: stringSchema('The exact text to search for in mode="search_replace".'),
+          description: stringSchema(
+            'Replacement context description for mode="replace". Omit to preserve the current description.',
+          ),
+          trigger: editTriggerSchema(),
+          priority: editPrioritySchema(),
+          search: nonBlankStringSchema('The exact text to search for in mode="search_replace".'),
           replace: stringSchema('Replacement text for mode="search_replace".'),
           replaceAll: booleanSchema(
             'Whether to replace every match in mode="search_replace". Defaults to false.',
           ),
-          expectedRevision: stringSchema("Optional expected context revision."),
-          expectedEtag: stringSchema("Optional expected context etag."),
+          expectedRevision: stringSchema(
+            "Optional concurrency token copied from the latest revision returned for this same namespace and item by list_expert_context, read_expert_context, or a write receipt. Tokens are namespace-scoped and must never be reused across namespaces. When both expectedRevision and expectedEtag are provided, both must match.",
+          ),
+          expectedEtag: stringSchema(
+            "Optional concurrency token copied from the latest etag returned for this same namespace and item by list_expert_context, read_expert_context, or a write receipt. Tokens are namespace-scoped and must never be reused across namespaces. When both expectedRevision and expectedEtag are provided, both must match.",
+          ),
         },
         ["namespace", "id"],
       ),
@@ -313,35 +325,35 @@ export function createContextTools(
         const input =
           mode === "replace"
             ? {
-                namespace: readStringParam(args, "namespace"),
-                id: readStringParam(args, "id"),
+                namespace: readRequiredTokenParam(args, "namespace"),
+                id: readRequiredTokenParam(args, "id"),
                 mode,
                 content: readOptionalStringParam(args, "content"),
                 metadata: readMetadataParams(args),
-                expectedRevision: readOptionalStringParam(args, "expectedRevision"),
-                expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                expectedRevision: readOptionalBlankStringParam(args, "expectedRevision"),
+                expectedEtag: readOptionalBlankStringParam(args, "expectedEtag"),
                 context: readRunContext(options, context),
               }
             : mode === "append" || mode === "prepend"
               ? {
-                  namespace: readStringParam(args, "namespace"),
-                  id: readStringParam(args, "id"),
+                  namespace: readRequiredTokenParam(args, "namespace"),
+                  id: readRequiredTokenParam(args, "id"),
                   mode,
                   content: readStringParam(args, "content"),
                   separator: readBoundarySeparatorParam(args),
-                  expectedRevision: readOptionalStringParam(args, "expectedRevision"),
-                  expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                  expectedRevision: readOptionalBlankStringParam(args, "expectedRevision"),
+                  expectedEtag: readOptionalBlankStringParam(args, "expectedEtag"),
                   context: readRunContext(options, context),
                 }
               : {
-                  namespace: readStringParam(args, "namespace"),
-                  id: readStringParam(args, "id"),
+                  namespace: readRequiredTokenParam(args, "namespace"),
+                  id: readRequiredTokenParam(args, "id"),
                   mode: "search_replace" as const,
-                  search: readStringParam(args, "search"),
+                  search: readRequiredTokenParam(args, "search"),
                   replace: readStringParam(args, "replace"),
                   replaceAll: readOptionalBooleanParam(args, "replaceAll"),
-                  expectedRevision: readOptionalStringParam(args, "expectedRevision"),
-                  expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                  expectedRevision: readOptionalBlankStringParam(args, "expectedRevision"),
+                  expectedEtag: readOptionalBlankStringParam(args, "expectedEtag"),
                   context: readRunContext(options, context),
                 };
         const result = await contextOperations.editContext(input);
@@ -350,13 +362,18 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
+        const receipt = createContextWriteReceipt(result.value, input.namespace, "updated", {
+          mode: result.value.mode,
+          ...(result.value.replacementCount === undefined
+            ? {}
+            : { replacementCount: result.value.replacementCount }),
+        });
         return {
-          text:
-            result.value.mode === "search_replace"
-              ? `Edited context: ${result.value.namespace}/${result.value.id}; mode=${result.value.mode}; replacements=${result.value.replacementCount}`
-              : `Edited context: ${result.value.namespace}/${result.value.id}; mode=${result.value.mode}`,
+          text: JSON.stringify(receipt),
           details: {
-            context: result.value,
+            context: receipt,
+            committed: receipt.committed,
+            status: receipt.status,
             mode: result.value.mode,
             replacementCount: result.value.replacementCount,
           },
@@ -366,7 +383,8 @@ export function createContextTools(
     {
       name: "delete_expert_context",
       label: "Delete expert context",
-      description: "Delete an Expert context by context id.",
+      description:
+        "Delete an Expert context by context id. The receipt may distinguish a persisted deletion from removal of a draft-only change that restores the source baseline.",
       approval: {
         mode: "required",
         reason: "Deleting Expert context requires explicit approval.",
@@ -374,14 +392,14 @@ export function createContextTools(
       },
       inputSchema: objectSchema(
         {
-          namespace: stringSchema("Context namespace."),
-          id: stringSchema("Context id."),
+          namespace: nonBlankStringSchema("Context namespace."),
+          id: nonBlankStringSchema("Context id."),
         },
         ["namespace", "id"],
       ),
       call: async (args, _signal, context) => {
-        const namespace = readStringParam(args, "namespace");
-        const id = readStringParam(args, "id");
+        const namespace = readRequiredTokenParam(args, "namespace");
+        const id = readRequiredTokenParam(args, "id");
         const result = await contextOperations.deleteContext({
           namespace,
           id,
@@ -392,11 +410,24 @@ export function createContextTools(
           return errorResult(result.error);
         }
 
+        const receipt: ContextDeleteReceipt = {
+          committed: true,
+          status: "deleted",
+          namespace: result.value.namespace ?? namespace,
+          id: result.value.id,
+          ...(result.value.effect === undefined ? {} : { effect: result.value.effect }),
+          ...(result.value.message === undefined ? {} : { message: result.value.message }),
+        };
         return {
-          text: `Deleted context: ${namespace}/${id}`,
+          text: JSON.stringify(receipt),
           details: {
-            namespace,
-            id,
+            context: receipt,
+            committed: receipt.committed,
+            status: receipt.status,
+            namespace: receipt.namespace,
+            id: receipt.id,
+            ...(receipt.effect === undefined ? {} : { effect: receipt.effect }),
+            ...(receipt.message === undefined ? {} : { message: receipt.message }),
           },
         };
       },
@@ -405,18 +436,32 @@ export function createContextTools(
 }
 
 interface ContextWriteReceipt {
-  readonly status: "created";
+  readonly committed: true;
+  readonly status: "created" | "updated";
   readonly namespace: string;
   readonly id: string;
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
   readonly sizeBytes: number;
   readonly sha256: string;
+  readonly mode?: ExpertAgentContextItemEditResult["mode"] | undefined;
+  readonly replacementCount?: number | undefined;
+}
+
+interface ContextDeleteReceipt {
+  readonly committed: true;
+  readonly status: "deleted";
+  readonly namespace: string;
+  readonly id: string;
+  readonly effect?: ExpertAgentContextItemDeleteResult["effect"] | undefined;
+  readonly message?: string | undefined;
 }
 
 function createContextWriteReceipt(
   context: ExpertAgentContextItem,
   requestedNamespace: string,
+  status: ContextWriteReceipt["status"],
+  extra: Pick<ContextWriteReceipt, "mode" | "replacementCount"> = {},
 ): ContextWriteReceipt {
   const content = context.content;
   if (typeof content !== "string") {
@@ -424,13 +469,15 @@ function createContextWriteReceipt(
   }
 
   return {
-    status: "created",
+    committed: true,
+    status,
     namespace: context.namespace ?? requestedNamespace,
     id: context.id,
     ...(context.revision === undefined ? {} : { revision: context.revision }),
     ...(context.etag === undefined ? {} : { etag: context.etag }),
     sizeBytes: Buffer.byteLength(content, "utf8"),
     sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+    ...extra,
   };
 }
 
@@ -629,6 +676,24 @@ function stringSchema(description: string): unknown {
   };
 }
 
+function nonBlankStringSchema(description: string): unknown {
+  return {
+    type: "string",
+    pattern: "\\S",
+    description,
+  };
+}
+
+function optionalEnumStringSchema(values: readonly string[], description: string): unknown {
+  return {
+    anyOf: [
+      { type: "string", enum: values },
+      { type: "string", pattern: "^\\s*$" },
+    ],
+    description,
+  };
+}
+
 function integerSchema(description: string): unknown {
   return {
     type: "integer",
@@ -644,20 +709,31 @@ function booleanSchema(description: string): unknown {
 }
 
 function triggerSchema(): unknown {
-  return {
-    type: "string",
-    enum: ["always_on", "model_decision", "manual"],
-    description:
-      "Context trigger. Defaults to manual when omitted. always_on preloads the complete body into every applicable Expert context; model_decision exposes only its id and description for optional loading.",
-  };
+  return optionalEnumStringSchema(
+    ["always_on", "model_decision", "manual"],
+    "Context trigger. Defaults to manual when omitted or empty. always_on preloads the complete body into every applicable Expert context; model_decision exposes only its id and description for optional loading.",
+  );
 }
 
 function prioritySchema(): unknown {
-  return {
-    type: "string",
-    enum: ["critical", "high", "normal", "low"],
-    description: "Context assembly priority. Defaults to normal when omitted.",
-  };
+  return optionalEnumStringSchema(
+    ["critical", "high", "normal", "low"],
+    "Context assembly priority. Defaults to normal when omitted or empty.",
+  );
+}
+
+function editTriggerSchema(): unknown {
+  return optionalEnumStringSchema(
+    ["always_on", "model_decision", "manual"],
+    'Replacement context trigger for mode="replace". Omit or leave empty to preserve the current trigger.',
+  );
+}
+
+function editPrioritySchema(): unknown {
+  return optionalEnumStringSchema(
+    ["critical", "high", "normal", "low"],
+    'Replacement context assembly priority for mode="replace". Omit or leave empty to preserve the current priority.',
+  );
 }
 
 function readStringParam(params: unknown, key: string): string {
@@ -668,6 +744,14 @@ function readStringParam(params: unknown, key: string): string {
   }
 
   throw new Error(`Context tool requires string parameter "${key}".`);
+}
+
+function readRequiredTokenParam(params: unknown, key: string): string {
+  const value = readStringParam(params, key);
+  if (value.trim() === "") {
+    throw new Error(`Context tool parameter "${key}" must be a non-empty string.`);
+  }
+  return value;
 }
 
 function readOptionalStringParam(params: unknown, key: string): string | undefined {
@@ -682,6 +766,11 @@ function readOptionalStringParam(params: unknown, key: string): string | undefin
   }
 
   throw new Error(`Context tool parameter "${key}" must be a string when provided.`);
+}
+
+function readOptionalBlankStringParam(params: unknown, key: string): string | undefined {
+  const value = readOptionalStringParam(params, key);
+  return value === undefined || value.trim() === "" ? undefined : value;
 }
 
 function readOptionalNumberParam(params: unknown, key: string): number | undefined {
@@ -748,7 +837,7 @@ function readMetadataParams(params: unknown): Partial<ExpertAgentContextItemMeta
 function readOptionalPriorityParam(params: unknown): ContextPriority | undefined {
   const value = readParam(params, "priority");
 
-  if (value === undefined) {
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) {
     return undefined;
   }
 
@@ -762,7 +851,7 @@ function readOptionalPriorityParam(params: unknown): ContextPriority | undefined
 function readOptionalTriggerParam(params: unknown): ContextTrigger | undefined {
   const value = readParam(params, "trigger");
 
-  if (value === undefined) {
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) {
     return undefined;
   }
 
@@ -778,7 +867,7 @@ function readOptionalEditModeParam(
 ): "replace" | "search_replace" | "append" | "prepend" {
   const value = readParam(params, "mode");
 
-  if (value === undefined) {
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) {
     return "search_replace";
   }
 
@@ -811,7 +900,7 @@ function readBoundarySeparatorParam(params: unknown): "none" | "newline" | "blan
 function readOptionalScopeParam(params: unknown): "path" | "content" | "hybrid" | undefined {
   const value = readParam(params, "scope");
 
-  if (value === undefined) {
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) {
     return undefined;
   }
 
@@ -1078,6 +1167,7 @@ function boundContextSummary(
     id: item.id,
     metadata,
     ...(item.revision === undefined ? {} : { revision: item.revision }),
+    ...(item.etag === undefined ? {} : { etag: item.etag }),
   };
   if (description === undefined) return withoutDescription;
   const withDescription = {
@@ -1107,6 +1197,7 @@ function formatContextSummary(context: ExpertAgentContextItemSummary): string {
     `  trigger: ${context.metadata.trigger}`,
     `  priority: ${context.metadata.priority}`,
     context.revision === undefined ? undefined : `  revision: ${context.revision}`,
+    context.etag === undefined ? undefined : `  etag: ${context.etag}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");
@@ -1179,15 +1270,40 @@ function formatContentRange(context: ExpertAgentContextItem): readonly string[] 
     return lines;
   }
 
-  const maxBytes =
-    context.contentRange.maxBytes === undefined
-      ? "the configured read budget"
-      : `${context.contentRange.maxBytes} bytes`;
+  const continuation = createReadContinuation(context);
+  if (continuation === undefined) return lines;
 
   return [
     ...lines,
-    `  truncationNotice: This context output is truncated. Continue with start=${context.contentRange.nextStartOffset} and offset<=${maxBytes}.`,
+    "  truncationNotice: This context output is truncated.",
+    `  continuation: ${JSON.stringify(continuation)}`,
   ];
+}
+
+interface ContextReadContinuation {
+  readonly tool: "read_expert_context";
+  readonly arguments: {
+    readonly namespace: string;
+    readonly id: string;
+    readonly start: number;
+    readonly offset: number;
+  };
+}
+
+function createReadContinuation(
+  context: ExpertAgentContextItem,
+): ContextReadContinuation | undefined {
+  const range = context.contentRange;
+  if (range?.truncated !== true || context.namespace === undefined) return undefined;
+  return {
+    tool: "read_expert_context",
+    arguments: {
+      namespace: context.namespace,
+      id: context.id,
+      start: range.nextStartOffset,
+      offset: range.maxBytes ?? Math.max(1, range.endOffset - range.startOffset),
+    },
+  };
 }
 
 function boundReadContext(
@@ -1391,11 +1507,32 @@ function formatSearchContextLine(lineNumber: number, line: string, marker: strin
 }
 
 function errorResult(error: ExpertAgentContextError): ExpertAgentDefaultToolCallResult {
-  return {
-    text: `Context operation failed: ${error.message}`,
-    isError: true,
-    details: {
-      error,
+  const recovery = contextErrorRecovery(error);
+  const payload = {
+    ok: false as const,
+    committed: false as const,
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.details === undefined ? {} : { details: error.details }),
     },
+    ...(recovery === undefined ? {} : { recovery }),
+  };
+  return {
+    text: JSON.stringify(payload),
+    isError: true,
+    details: payload,
+  };
+}
+
+function contextErrorRecovery(error: ExpertAgentContextError): unknown {
+  if (error.code !== "context_conflict" || !isRecord(error.details)) return undefined;
+  const currentRevision = error.details["currentRevision"] ?? error.details["actualRevision"];
+  const currentEtag = error.details["currentEtag"] ?? error.details["actualEtag"];
+  if (typeof currentRevision !== "string" && typeof currentEtag !== "string") return undefined;
+  return {
+    action: "retry_with_current_version",
+    ...(typeof currentRevision === "string" ? { currentRevision } : {}),
+    ...(typeof currentEtag === "string" ? { currentEtag } : {}),
   };
 }

@@ -43,6 +43,7 @@ describe.sequential("Expert tools MCP Gateway", () => {
     ]);
 
     expect(alphaTools.tools.map((tool) => tool.name)).toContain("read_alpha");
+    expect(alphaTools.tools.map((tool) => tool.name)).toContain("list_expert_context");
     expect(alphaTools.tools.map((tool) => tool.name)).not.toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).not.toContain("read_alpha");
@@ -56,6 +57,18 @@ describe.sequential("Expert tools MCP Gateway", () => {
     await expect(
       alphaClient.callTool({ name: "read_alpha", arguments: {} }),
     ).resolves.toMatchObject({ content: [{ type: "text", text: "alpha" }] });
+    await expect(
+      alphaClient.callTool({
+        name: "list_expert_context",
+        arguments: { namespace: " ", cursor: "  " },
+      }),
+    ).resolves.not.toMatchObject({ isError: true });
+    await expect(
+      alphaClient.callTool({
+        name: "read_expert_context",
+        arguments: { namespace: "alpha", id: "   " },
+      }),
+    ).resolves.toMatchObject({ isError: true });
     await expect(betaClient.callTool({ name: "read_beta", arguments: {} })).resolves.toMatchObject({
       content: [{ type: "text", text: "beta" }],
     });
@@ -65,6 +78,14 @@ describe.sequential("Expert tools MCP Gateway", () => {
       content: [{ type: "text", text: "alpha failed" }],
     });
     expect(failedResult).not.toHaveProperty("structuredContent");
+    const thrownResult = await alphaClient.callTool({ name: "throw_alpha", arguments: {} });
+    expect(thrownResult).toMatchObject({ isError: true });
+    expect(thrownResult).not.toHaveProperty("structuredContent");
+    expect(JSON.parse((thrownResult.content[0] as { text: string }).text)).toEqual({
+      ok: false,
+      committed: false,
+      error: { code: "tool_execution_failed", message: "alpha exploded" },
+    });
 
     const unknownTokenUrl = new URL(`/sessions/${"A".repeat(43)}/mcp`, alphaUrl.origin);
     await expect(fetch(unknownTokenUrl)).resolves.toMatchObject({ status: 404 });
@@ -272,6 +293,18 @@ async function registerTestSession(
             isError: true,
             details: { code: "expected_failure" },
           };
+        },
+      },
+      {
+        name: `throw_${label}`,
+        description: `Throw ${label}`,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        async call() {
+          throw new Error(`${label} exploded`);
         },
       },
     ],

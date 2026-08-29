@@ -221,6 +221,7 @@ export const missions = {
   markComplete: "Mark complete",
   markCompleteNamed: "Mark {{title}} complete",
   reopen: "Reopen",
+  openKnowledgeRevision: "Open knowledge revision",
   work: "Work",
   missionBoard: "Board",
   memory: "Memory",

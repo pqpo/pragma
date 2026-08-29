@@ -24,6 +24,7 @@ import {
   hideInterruptedExecutionFallbackEntries,
   mergeMissionHumanAnswers,
   mergeLatestChatPage,
+  missionChatPatchesRequireRender,
   MissionContextOperationEntry,
   MissionChatEntryView,
   MissionChatSkeleton,
@@ -363,10 +364,21 @@ describe("MissionsPage", () => {
       },
       updatedAt: "2026-07-11T00:00:01.000Z",
     });
+    const revision = missionSummaryFixture({
+      id: "revision-mission",
+      title: "Knowledge revision",
+      source: {
+        type: "managed-automation",
+        kind: "knowledge-revision",
+        jobId: "00000000-0000-4000-8000-000000000101",
+        storeId: "00000000-0000-4000-8000-000000000102",
+      },
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
     const taskHtml = renderToStaticMarkup(
       <MissionsPage
         initialMemoryState={{
-          missions: [task, automation],
+          missions: [task, automation, revision],
           selectedMission: null,
           selectedMissionId: null,
           activeSource: "task",
@@ -377,7 +389,7 @@ describe("MissionsPage", () => {
     const automationHtml = renderToStaticMarkup(
       <MissionsPage
         initialMemoryState={{
-          missions: [task, automation],
+          missions: [task, automation, revision],
           selectedMission: null,
           selectedMissionId: null,
           activeSource: "automation",
@@ -388,7 +400,9 @@ describe("MissionsPage", () => {
 
     expect(taskHtml).toContain("Manual review");
     expect(taskHtml).not.toContain("Scheduled review");
+    expect(taskHtml).not.toContain("Knowledge revision");
     expect(automationHtml).toContain("Scheduled review");
+    expect(automationHtml).toContain("Knowledge revision");
     expect(automationHtml).not.toContain("Manual review");
     expect(automationHtml).toContain("mission-source-tabs is-automation");
   });
@@ -720,7 +734,10 @@ describe("MissionDetailFragment", () => {
     const contextStoreId = "10000000-0000-4000-8000-000000000001";
     const html = renderToStaticMarkup(
       <MissionDetailFragment
-        mission={{ ...missionFixture("expert"), contextStoreIds: [contextStoreId] }}
+        mission={{
+          ...missionFixture("expert"),
+          contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+        }}
       />,
     );
 
@@ -1729,6 +1746,24 @@ describe("Mission chat patches", () => {
     ).toBeNull();
   });
 
+  it("keeps content-only appends off the Mission detail render path", () => {
+    expect(
+      missionChatPatchesRequireRender([
+        { type: "entry.append", entryId: "answer", field: "content", delta: "next" },
+      ]),
+    ).toBe(false);
+    expect(
+      missionChatPatchesRequireRender([
+        { type: "entry.streaming", entryId: "answer", streaming: false },
+      ]),
+    ).toBe(true);
+    expect(
+      missionChatPatchesRequireRender([
+        { type: "entry.append", entryId: "tool", field: "outputPreview", delta: "next" },
+      ]),
+    ).toBe(true);
+  });
+
   it("keeps executor presentation metadata when a live upsert omits it", () => {
     const snapshot: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
@@ -2497,7 +2532,7 @@ describe("Mission human answers", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v9",
+    schemaVersion: "pragma.mission/v10",
     origin: { type: "user" },
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
@@ -2506,7 +2541,7 @@ function missionFixture(kind: "expert" | "team"): Mission {
     toolPermissionMode: "request-approval",
     workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
     project: { id: "studio", revision: 1 },
-    contextStoreIds: [],
+    contextMounts: [],
     executor: {
       kind,
       ref: kind === "expert" ? "expert:v2vt1v01vzz6j24q" : "team:gmpsevbrb8danedb",

@@ -37,8 +37,12 @@ Memory type；经批准的 Knowledge 升级为“工作室 → 知识库”的�
   也不增加专用 recall tool。
 - 不建立长期 dual-write、旧字段兼容分支或第二套 Skill authority；Studio 托管 Context Store 是 promoted
   Knowledge 的唯一 authority。
-- Memory 只能向通用 Store Revision 能力提交修订提示词，不能直接改写知识库；内置 Store Revision Agent
-  必须先产生可审阅 change set，用户批准后才能激活新 Store revision。
+- Memory 只能通过通用 Store Revision 能力启动稀疏草稿，不能直接改写正式知识库；内置 Store Revision
+  Agent 必须使用原生 Context 工具编辑草稿并提交审核，用户批准后才能激活新 Store revision。
+- 普通 Expert 可显式挂载内置“Pragma 管理工具”Host Capability。该 Capability 是 Pragma 管理操作的长期
+  工具容器，当前只提供知识库修订工具；后续任务创建、查询和管理能力继续加入同一容器。知识库工具可以
+  列出全部知识库、草稿及其 Expert/ExpertTeam 挂载关系，并向任意知识库启动修订 Mission；启动 Mission
+  默认需要用户审批，草稿写入和提交审核不发布正式内容。
 - 阶段 9 的 CodeGraph 是可选扩展验收，不是 Memory 重构完成或旧插件切换的前置条件；没有明确产品需求时
   可以不实现。
 
@@ -451,9 +455,14 @@ Context binding + generic Store Revision Agent
 - Runtime: 稳定隐藏 Expert `expert:0000000000st0rev` 只读目标 Store，使用独立模型配置；系统 Mission 无
   Board、Memory、Host Context、工作区工具、网络或 secrets 权限，并从所有用户 Mission 入口排除；
 - Product: 初始化 Candidate 留在 Memory 页面审阅；普通修订请求、内容预览、批准、拒绝、重试、删除与
-  Agent 配置位于“工作室 → 知识库 → 修订任务”，不进入 Mission List；
+  Agent 配置位于“工作室 → 知识库 → 修订任务”，不进入 Mission List；专家编辑器可挂载内置“Pragma
+  管理工具”Capability，并通过当前的 `knowledge_revision_list_targets`、`knowledge_revision_start`
+  查看全部知识库及其当前 Expert/ExpertTeam 挂载关系，并为任意知识库创建同一审核队列任务；提交工具
+  默认要求用户审批，Mission 使用完全访问模式时由 Host 自动批准；
 - Authority: 每个 Expert 最多一个 Memory Knowledge Store。首次批准创建并挂载普通 Store；后续 Memory
-  只能提交修订提示词，只有 Store Revision Agent 能产生自动 change set，用户批准后才激活；
+  或反思 Expert 只能提交修订提示词，只有 Store Revision Agent 能产生自动 change set，用户批准后
+  才激活；反思提交按 Execution、Invocation、Expert 与目标 Store 记录 provenance 并幂等去重，Team
+  Execution 额外记录 Team；
 - Disclosure: `guide.md` ≤ 2 KiB、`overview.md` ≤ 6 KiB、`index.md` 与每个 `indexes/**` ≤ 8 KiB，详情放入
   `items/**`；Store 不保存 Evidence、sourceRefs 或提炼 prompt；
 - Migration: Context Store v3→v4 与 Mission v6→v7 都在 owner 首次读取时升级并保留 backup/journal；旧

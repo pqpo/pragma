@@ -25,6 +25,7 @@ import {
   defineFlow,
   defineRuntimeDriver,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_CURRENT_TEAM_ID_ATTR,
   EXECUTION_CONTEXT_ID_ATTR,
   EXECUTION_ID_ATTR,
   INVOCATION_ID_ATTR,
@@ -151,6 +152,7 @@ interface FakeRuntimeOptions {
   readonly runtimeId?: string;
   readonly stats?: FakeRuntimeStats;
   readonly usage?: AgentMessageUsage;
+  readonly continueExisting?: boolean;
 }
 
 function createFakeRuntime(options: FakeRuntimeOptions = {}) {
@@ -195,7 +197,11 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         if (options.usage !== undefined) turn.stream.writeNative(options.usage);
         throw new Error("fake turn failed");
       }
-      const spawn = session.context.agent.tools?.find((tool) => tool.name === "delegate_expert");
+      const spawn = session.context.agent.tools?.find((tool) => tool.name === "spawn_expert");
+      const continueTool = session.context.agent.tools?.find(
+        (tool) => tool.name === "continue_expert",
+      );
+      const list = session.context.agent.tools?.find((tool) => tool.name === "list_agents");
       const wait = session.context.agent.tools?.find((tool) => tool.name === "wait_experts");
       const delegationTarget =
         options.delegationTargets?.[session.context.agent.id] ??
@@ -222,14 +228,25 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         delegationTarget !== undefined &&
         !turn.rawQuery.startsWith("[Pragma orchestration")
       ) {
-        const spawned = await spawn.call(
-          {
-            expertId: delegationTarget,
-            task: "subtask",
-          },
-          turn.signal,
-          { execution: session.context.request.executionContext },
-        );
+        const listed =
+          options.continueExisting === true && continueTool !== undefined && list !== undefined
+            ? await list.call({ expertId: delegationTarget }, turn.signal, {
+                execution: session.context.request.executionContext,
+              })
+            : undefined;
+        const resumableContextId = (
+          listed?.details as { contexts?: Array<{ contextId: string; status: string }> } | undefined
+        )?.contexts?.find((context) => context.status === "resumable")?.contextId;
+        const spawned =
+          resumableContextId === undefined
+            ? await spawn.call({ expertId: delegationTarget, task: "subtask" }, turn.signal, {
+                execution: session.context.request.executionContext,
+              })
+            : await continueTool!.call(
+                { contextId: resumableContextId, task: "subtask" },
+                turn.signal,
+                { execution: session.context.request.executionContext },
+              );
         const invocationId = (spawned.details as { invocationId: string }).invocationId;
         const waiting = wait.call({ invocationIds: [invocationId] }, turn.signal, {
           execution: session.context.request.executionContext,
@@ -282,6 +299,8 @@ type OrchestrationScenario =
   | "followup-older"
   | "reuse-spawn"
   | "interrupt"
+  | "invalid-wait-steer-race"
+  | "wait-steer-race"
   | "parent-failure";
 
 interface OrchestrationRuntimeStats {
@@ -290,17 +309,30 @@ interface OrchestrationRuntimeStats {
   memberTurns: number;
 }
 
+interface OrchestrationRuntimeHooks {
+  readonly onNativeSteer?: (() => void) | undefined;
+  readonly onWaitPending?: (() => Promise<void>) | undefined;
+}
+
+interface OrchestrationNativeEvent {
+  readonly stage: string;
+  readonly message?: string | undefined;
+}
+
 function createOrchestrationRuntime(
   scenario: OrchestrationScenario,
   stats: OrchestrationRuntimeStats = { active: 0, maxActive: 0, memberTurns: 0 },
+  hooks: OrchestrationRuntimeHooks = {},
 ) {
   const firstChildWave = createBarrier(2, 5_000);
   let signalChildSessionOpening!: () => void;
   const childSessionOpening = new Promise<void>((resolve) => {
     signalChildSessionOpening = resolve;
   });
-  return defineRuntimeDriver<never, FakeSession>({
-    features: createRuntimeTestFeatures({ enabled: ["close"] }),
+  return defineRuntimeDriver<OrchestrationNativeEvent, FakeSession>({
+    features: createRuntimeTestFeatures({
+      enabled: ["close", ...(hooks.onNativeSteer === undefined ? [] : (["steering"] as const))],
+    }),
     descriptor: { id: `orchestration-${scenario}`, kind: "fake", displayName: "Orchestration" },
     createSession: async (context) => {
       if (scenario === "parent-failure" && context.agent.id !== "lead") {
@@ -318,13 +350,23 @@ function createOrchestrationRuntime(
         const expertId = session.context.agent.id;
         if (expertId !== "lead") {
           stats.memberTurns += 1;
+          turn.stream.writeNative({
+            stage: "researching",
+            message: `${expertId} is processing its task.`,
+          });
           if (scenario === "parallel" || scenario === "concurrency") {
             await firstChildWave.arriveAndWait();
           } else {
             await new Promise<void>((resolve) =>
               setTimeout(
                 resolve,
-                scenario === "followup" ? 25 : scenario === "interrupt" ? 5_000 : 200,
+                scenario === "followup"
+                  ? 25
+                  : scenario === "interrupt"
+                    ? 5_000
+                    : scenario === "wait-steer-race"
+                      ? 500
+                      : 200,
               ),
             );
           }
@@ -353,9 +395,35 @@ function createOrchestrationRuntime(
           return result.details as Record<string, unknown>;
         };
         const spawn = async (expertId: string, task: string) =>
-          await call("delegate_expert", { expertId, task });
+          await call("spawn_expert", { expertId, task });
         const wait = async (ids: readonly string[]) =>
           await call("wait_experts", { invocationIds: ids });
+
+        if (scenario === "invalid-wait-steer-race") {
+          const invalidWait = wait(["missing-invocation"]).then(
+            () => "unexpected-success",
+            (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          );
+          await hooks.onWaitPending?.();
+          return {
+            outputText: `lead:${await invalidWait}`,
+            runtimeSessionId: session.id,
+          };
+        }
+
+        if (scenario === "wait-steer-race") {
+          const first = await spawn("member-a", "a");
+          const second = await spawn("member-b", "b");
+          const ids = [first["invocationId"] as string, second["invocationId"] as string];
+          const firstWait = wait(ids);
+          await hooks.onWaitPending?.();
+          const interruptedWait = await firstWait;
+          const completedWait = await wait(ids);
+          return {
+            outputText: `lead:${JSON.stringify({ interruptedWait, completedWait })}`,
+            runtimeSessionId: session.id,
+          };
+        }
 
         if (scenario === "parallel" || scenario === "concurrency") {
           const first = await spawn("member-a", "a");
@@ -367,7 +435,7 @@ function createOrchestrationRuntime(
             ...(third === undefined ? [] : [third["invocationId"] as string]),
           ]);
           return {
-            outputText: `lead:${JSON.stringify(result["completed"])}`,
+            outputText: `lead:${JSON.stringify(result)}`,
             runtimeSessionId: session.id,
           };
         }
@@ -391,8 +459,8 @@ function createOrchestrationRuntime(
           const first = await spawn("member", "first");
           const second = await spawn("member", "second");
           await wait([first["invocationId"] as string, second["invocationId"] as string]);
-          const followup = await call("delegate_expert", {
-            agentId: first["agentId"],
+          const followup = await call("continue_expert", {
+            contextId: first["contextId"],
             task: "followup-first",
           });
           const result = await wait([followup["invocationId"] as string]);
@@ -415,10 +483,12 @@ function createOrchestrationRuntime(
           };
         }
         const firstInvocationId = first["invocationId"] as string;
-        const agentId = first["agentId"] as string;
         if (scenario === "followup") {
           await wait([firstInvocationId]);
-          const second = await call("delegate_expert", { agentId, task: "second" });
+          const second = await call("continue_expert", {
+            contextId: first["contextId"],
+            task: "second",
+          });
           const result = await wait([second["invocationId"] as string]);
           return {
             outputText: `lead:${JSON.stringify(result["completed"])}`,
@@ -426,9 +496,11 @@ function createOrchestrationRuntime(
           };
         }
 
-        const second = await call("delegate_expert", { agentId, task: "second" });
+        const second = await call("continue_expert", {
+          contextId: first["contextId"],
+          task: "second",
+        });
         await call("interrupt_expert", {
-          agentId,
           invocationId: firstInvocationId,
           reason: "test",
         });
@@ -441,7 +513,10 @@ function createOrchestrationRuntime(
         stats.active -= 1;
       }
     },
-    mapEvent: () => ({ events: [] }),
+    mapEvent: (event, context) => ({
+      events: [context.events.progress(event.stage, undefined, event.message)],
+    }),
+    ...(hooks.onNativeSteer === undefined ? {} : { steerTurn: () => hooks.onNativeSteer?.() }),
     closeSession: () => undefined,
   });
 }
@@ -919,7 +994,11 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
   it("reuses a Team member Context across ExpertSession restart and persists its snapshot", async () => {
     const home = await createTemporaryHome("pragma-team-session-context-");
     const stats = createFakeRuntimeStats();
-    const runtime = createFakeRuntime({ stats, closeError: "simulated process cleanup failure" });
+    const runtime = createFakeRuntime({
+      stats,
+      closeError: "simulated process cleanup failure",
+      continueExisting: true,
+    });
     const app = createPragma({
       pragmaHome: home,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
@@ -946,13 +1025,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       id: "persistent-team",
       coordinator,
       members: [member],
-      delegation: {
-        contextId: defineContextIdResolver({
-          id: "test.persistent-team-member",
-          version: "1.0.0",
-          resolve: ({ ownerContextId, target }) => `${ownerContextId ?? "root"}:${target.expertId}`,
-        }),
-      },
+      delegation: {},
     });
     const session = await app.experts.createSession(team);
     const first = await session.prompt("first", { requestId: "first" });
@@ -968,13 +1041,18 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
         (context) => context.request.context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR],
       ),
     ).toEqual(["lead", "member"]);
+    expect(
+      stats.sessionContexts.map(
+        (context) => context.request.context?.attributes?.[EXECUTION_CURRENT_TEAM_ID_ATTR],
+      ),
+    ).toEqual(["persistent-team", "persistent-team"]);
 
     await expect(session.close()).rejects.toThrow("Runtime Session pool cleanup failed");
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
       pragmaHome: home,
       runtimes: createStaticRuntimeResolver({
-        runtimes: [createFakeRuntime({ stats: recoveredStats })],
+        runtimes: [createFakeRuntime({ stats: recoveredStats, continueExisting: true })],
         defaultRuntimeId: "fake",
       }),
     });
@@ -1210,7 +1288,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await sessions.releaseLease("leased-session", "owner-b");
   });
 
-  it("rejects resume when its Team resolver descriptor changes", async () => {
+  it("rejects resume when its Team execution descriptor changes", async () => {
     const home = await createTemporaryHome("pragma-session-fingerprint-");
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
@@ -1237,20 +1315,14 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       scope: "test",
       workspace: home,
     });
-    const team = (resolverVersion: string) =>
+    const team = (maxDepth: number) =>
       defineExpertTeam({
         id: "fingerprint-team",
         coordinator: lead,
         members: [member],
-        delegation: {
-          contextId: defineContextIdResolver({
-            id: "test.team-context",
-            version: resolverVersion,
-            resolve: ({ freshContextId }) => freshContextId,
-          }),
-        },
+        delegation: { maxDepth },
       });
-    const original = team("1.0.0");
+    const original = team(3);
     const now = new Date().toISOString();
     await sessions.create({
       schemaVersion: "pragma.expert-session/v5",
@@ -1269,7 +1341,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     });
 
     await expect(
-      app.experts.resumeSession(team("2.0.0"), {
+      app.experts.resumeSession(team(4), {
         sessionId: "fingerprint-session",
       }),
     ).rejects.toThrow("definition mismatch");
@@ -3639,16 +3711,6 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
       experts: members,
       maxConcurrency: 2,
       maxDepth: 2,
-      ...(scenario === "reuse-spawn"
-        ? {
-            contextId: defineContextIdResolver({
-              id: "test.reused-sub-agent",
-              version: "1.0.0",
-              resolve: ({ ownerContextId, target }) =>
-                `${ownerContextId ?? "root"}:${target.expertId}`,
-            }),
-          }
-        : {}),
     });
     const lead = await defineExpert({
       id: "lead",
@@ -3669,7 +3731,180 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     return { output, tree, events: events.items, stats };
   }
 
-  it("rejects unsupported steer and accepts a safe-boundary message", async () => {
+  it("captures steer before async wait validation and rejoins the original children", async () => {
+    const home = await createTemporaryHome("pragma-wait-steer-race-");
+    const stats = { active: 0, maxActive: 0, memberTurns: 0 };
+    let markWaitPending!: () => void;
+    const waitPending = new Promise<void>((resolve) => {
+      markWaitPending = resolve;
+    });
+    let releaseWaitHook!: () => void;
+    const waitHookReleased = new Promise<void>((resolve) => {
+      releaseWaitHook = resolve;
+    });
+    let nativeSteers = 0;
+    const runtime = createOrchestrationRuntime("wait-steer-race", stats, {
+      onNativeSteer: () => {
+        nativeSteers += 1;
+      },
+      onWaitPending: async () => {
+        markWaitPending();
+        await waitHookReleased;
+      },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const members = await Promise.all(
+      ["member-a", "member-b"].map(
+        async (id) =>
+          await defineExpert({
+            id,
+            name: id,
+            description: id,
+            tags: [],
+            scope: "test",
+            workspace: home,
+            pragmaHome: home,
+          }),
+      ),
+    );
+    const launcher = createAgentLauncher({ experts: members, maxConcurrency: 2, maxDepth: 2 });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const active = await session.prompt("coordinate", { requestId: "wait-steer-race" });
+    await waitPending;
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    const steered = await session.prompt("change priorities", {
+      requestId: "wait-steer-race-guidance",
+      mode: "steer",
+    });
+    releaseWaitHook();
+
+    expect(steered).toMatchObject({ requestedMode: "steer", effectiveMode: "steer" });
+    const output = await active.result;
+    if (typeof output !== "string") throw new Error("Expected textual wait result.");
+    await expect(steered.result).resolves.toBe(output);
+    expect(nativeSteers).toBe(0);
+    expect(output).toContain('"wakeReason":"steer"');
+    expect(output).toContain('"pending"');
+    expect(output).toContain('"completed"');
+    const waitResults = JSON.parse(output.slice("lead:".length)) as {
+      readonly interruptedWait: {
+        readonly waitedMs: number;
+        readonly pending: ReadonlyArray<{
+          readonly latestActivity?: {
+            readonly kind: string;
+            readonly stage?: string;
+            readonly message?: string;
+          };
+        }>;
+      };
+    };
+    expect(waitResults.interruptedWait.waitedMs).toBeGreaterThanOrEqual(0);
+    expect(
+      waitResults.interruptedWait.pending.some(
+        (item) =>
+          item.latestActivity?.kind === "progress" &&
+          item.latestActivity.stage === "researching" &&
+          item.latestActivity.message?.includes("processing") === true,
+      ),
+    ).toBe(true);
+    const tree = await active.getTree();
+    expect(tree.invocation.status).toBe("succeeded");
+    expect(tree.children).toHaveLength(2);
+    expect(tree.children.every((child) => child.invocation.status === "succeeded")).toBe(true);
+    expect(
+      tree.children.every(
+        (child) =>
+          typeof child.invocation.error !== "string" ||
+          !child.invocation.error.includes("Owner Invocation failed"),
+      ),
+    ).toBe(true);
+    await session.close();
+  }, 15_000);
+
+  it("falls back to Runtime steer when wait validation rejects the registration", async () => {
+    const home = await createTemporaryHome("pragma-invalid-wait-steer-race-");
+    let markWaitPending!: () => void;
+    const waitPending = new Promise<void>((resolve) => {
+      markWaitPending = resolve;
+    });
+    let releaseWaitHook!: () => void;
+    const waitHookReleased = new Promise<void>((resolve) => {
+      releaseWaitHook = resolve;
+    });
+    let nativeSteers = 0;
+    const runtime = createOrchestrationRuntime("invalid-wait-steer-race", undefined, {
+      onNativeSteer: () => {
+        nativeSteers += 1;
+      },
+      onWaitPending: async () => {
+        markWaitPending();
+        await waitHookReleased;
+      },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const launcher = createAgentLauncher({ experts: [member], maxConcurrency: 2, maxDepth: 2 });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const active = await session.prompt("coordinate", {
+      requestId: "invalid-wait-steer-race",
+    });
+    await waitPending;
+    const steered = session.prompt("change priorities", {
+      requestId: "invalid-wait-steer-race-guidance",
+      mode: "steer",
+    });
+    releaseWaitHook();
+
+    await expect(steered).resolves.toMatchObject({
+      requestedMode: "steer",
+      effectiveMode: "steer",
+    });
+    await expect(active.result).resolves.toContain("Invocation not found: missing-invocation");
+    expect(nativeSteers).toBe(1);
+    await session.close();
+  }, 15_000);
+
+  it("rejects unsupported next-boundary steer and queues an after-current continuation", async () => {
     const home = await createTemporaryHome("pragma-peer-collaboration-");
     const backendQueries: string[] = [];
     let markBackendStarted!: () => void;
@@ -3704,69 +3939,86 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           return { outputText: `backend:${turn.rawQuery}`, runtimeSessionId: session.id };
         }
         if (expertId === "frontend") {
-          const backend = await call("delegate_expert", {
+          const backend = await call("spawn_expert", {
             expertId: "backend",
             task: "backend-work",
           });
           await backendStarted;
           const discovery = await call("list_agents", { expertId: "backend" });
-          const agents = discovery["agents"] as Array<{
-            agentId: string;
-            activeInvocation: { invocationId: string };
-            permissions: { canMessage: boolean; canSteer: boolean };
+          const contexts = discovery["contexts"] as Array<{
+            currentInvocation: { invocationId: string };
+            canSteerNextBoundary: boolean;
+            canQueueAfterCurrent: boolean;
           }>;
-          expect(agents).toHaveLength(1);
-          expect(agents[0]!.permissions).toMatchObject({
-            canMessage: true,
-            canSteer: true,
+          expect(contexts).toHaveLength(1);
+          expect(contexts[0]).toMatchObject({
+            canSteerNextBoundary: true,
+            canQueueAfterCurrent: true,
           });
           await expect(
             call("steer_expert", {
-              agentId: agents[0]!.agentId,
-              invocationId: agents[0]!.activeInvocation.invocationId,
-              message: "apply-peer-guidance-immediately",
+              invocationId: contexts[0]!.currentInvocation.invocationId,
+              instruction: "apply-peer-guidance-at-next-boundary",
+              delivery: "next_boundary",
             }),
           ).rejects.toThrow("runtime_unsupported");
-          const message = await call("message_expert", {
-            agentId: agents[0]!.agentId,
-            invocationId: agents[0]!.activeInvocation.invocationId,
-            message: "first-safe-boundary-guidance",
+          const message = await call("steer_expert", {
+            invocationId: contexts[0]!.currentInvocation.invocationId,
+            instruction: "first-after-current-guidance",
+            delivery: "after_current",
           });
-          expect(message["status"]).toBe("accepted");
-          await call("message_expert", {
-            agentId: agents[0]!.agentId,
-            invocationId: agents[0]!.activeInvocation.invocationId,
-            message: "second-safe-boundary-guidance",
+          expect(message["outcome"]).toBe("accepted");
+          await call("steer_expert", {
+            invocationId: contexts[0]!.currentInvocation.invocationId,
+            instruction: "second-after-current-guidance",
+            delivery: "after_current",
           });
           releaseBackend();
           const waited = await call("wait_experts", {
             invocationIds: [backend["invocationId"]],
           });
+          expect(waited).toMatchObject({
+            completed: [
+              {
+                invocationId: backend["invocationId"],
+                contextId: backend["contextId"],
+                agentId: backend["agentId"],
+                status: "succeeded",
+              },
+            ],
+            pending: [],
+          });
           return { outputText: `frontend:${JSON.stringify(waited)}`, runtimeSessionId: session.id };
         }
-        const frontend = await call("delegate_expert", {
+        const frontend = await call("spawn_expert", {
           expertId: "frontend",
           task: "frontend-work",
         });
         await call("wait_experts", { invocationIds: [frontend["invocationId"]] });
         const discovery = await call("list_agents", {});
-        const agents = discovery["agents"] as Array<{
-          agentId: string;
+        const availableExperts = discovery["availableExperts"] as Array<{
           expertId: string;
-          assignedBy: { invocationId: string; expertId: string; agentId?: string };
-          permissions: { canInterrupt: boolean; canMessage: boolean; canSteer: boolean };
+          canSpawn: boolean;
         }>;
-        const frontendAgent = agents.find((agent) => agent.expertId === "frontend")!;
-        const backendAgent = agents.find((agent) => agent.expertId === "backend")!;
-        expect(backendAgent.assignedBy).toMatchObject({
-          expertId: "frontend",
-          agentId: frontendAgent.agentId,
-        });
-        expect(agents.every((agent) => agent.permissions.canInterrupt)).toBe(true);
+        expect(availableExperts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ expertId: "lead", canSpawn: false }),
+            expect.objectContaining({ expertId: "frontend", canSpawn: true }),
+            expect.objectContaining({ expertId: "backend", canSpawn: true }),
+          ]),
+        );
+        const contexts = discovery["contexts"] as Array<{
+          expertId: string;
+          canInterrupt: boolean;
+          canSteerNextBoundary: boolean;
+          canQueueAfterCurrent: boolean;
+        }>;
+        expect(contexts.map((context) => context.expertId).sort()).toEqual(["backend", "frontend"]);
+        expect(contexts.every((context) => context.canInterrupt === false)).toBe(true);
         expect(
-          agents.every(
-            (agent) =>
-              agent.permissions.canMessage === false && agent.permissions.canSteer === false,
+          contexts.every(
+            (context) =>
+              context.canSteerNextBoundary === false && context.canQueueAfterCurrent === false,
           ),
         ).toBe(true);
         return { outputText: "lead:done", runtimeSessionId: session.id };
@@ -3821,8 +4073,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
       query.startsWith("[Pragma expert message continuation]"),
     );
     if (continuationQuery === undefined) throw new Error("Missing message continuation turn");
-    expect(continuationQuery.indexOf("first-safe-boundary-guidance")).toBeLessThan(
-      continuationQuery.indexOf("second-safe-boundary-guidance"),
+    expect(continuationQuery.indexOf("first-after-current-guidance")).toBeLessThan(
+      continuationQuery.indexOf("second-after-current-guidance"),
     );
     expect(events.items.filter((event) => event.type === "expert.message.accepted")).toHaveLength(
       2,
@@ -3831,7 +4083,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     expect((consumed?.data as { messageIds?: string[] } | undefined)?.messageIds).toHaveLength(2);
     const backendResult = await turn.getTree();
     expect(JSON.stringify(backendResult.children[0]?.children[0]?.invocation.output)).toContain(
-      "second-safe-boundary-guidance",
+      "second-after-current-guidance",
     );
     await session.close();
   });
@@ -3873,7 +4125,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
         if (expertId === "worker") {
           workerQueries.push(turn.rawQuery);
           if (turn.rawQuery === "worker-work") {
-            const child = await call("delegate_expert", { expertId: "child", task: "child-work" });
+            const child = await call("spawn_expert", { expertId: "child", task: "child-work" });
             markChildDelegated();
             await messageSent;
             await call("wait_experts", { invocationIds: [child["invocationId"]] });
@@ -3886,24 +4138,23 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           await childDelegated;
           const discovery = await call("list_agents", { expertId: "worker" });
           const worker = (
-            discovery["agents"] as Array<{
-              agentId: string;
-              activeInvocation: { invocationId: string };
+            discovery["contexts"] as Array<{
+              currentInvocation: { invocationId: string };
             }>
           )[0]!;
-          await call("message_expert", {
-            agentId: worker.agentId,
-            invocationId: worker.activeInvocation.invocationId,
-            message: "message-arrived-before-wait-registration",
+          await call("steer_expert", {
+            invocationId: worker.currentInvocation.invocationId,
+            instruction: "message-arrived-before-wait-registration",
+            delivery: "after_current",
           });
           markMessageSent();
           return { outputText: "messenger:done", runtimeSessionId: session.id };
         }
-        const worker = await call("delegate_expert", {
+        const worker = await call("spawn_expert", {
           expertId: "worker",
           task: "worker-work",
         });
-        const messenger = await call("delegate_expert", {
+        const messenger = await call("spawn_expert", {
           expertId: "messenger",
           task: "messenger-work",
         });
@@ -3991,19 +4242,18 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           if (result.isError === true) throw new Error(result.text);
           return result.details as Record<string, unknown>;
         };
-        await call("delegate_expert", { expertId: "worker", task: "worker-work" });
+        await call("spawn_expert", { expertId: "worker", task: "worker-work" });
         await workerStarted;
         const discovery = await call("list_agents", { expertId: "worker" });
         const worker = (
-          discovery["agents"] as Array<{
-            agentId: string;
-            activeInvocation: { invocationId: string };
+          discovery["contexts"] as Array<{
+            currentInvocation: { invocationId: string };
           }>
         )[0]!;
-        await call("message_expert", {
-          agentId: worker.agentId,
-          invocationId: worker.activeInvocation.invocationId,
-          message: "must-be-cleared-on-cancel",
+        await call("steer_expert", {
+          invocationId: worker.currentInvocation.invocationId,
+          instruction: "must-be-cleared-on-cancel",
+          delivery: "after_current",
         });
         markMessageAccepted();
         return await waitForAbort(turn.signal);
@@ -4070,11 +4320,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     const backendReleased = new Promise<void>((resolve) => {
       releaseBackend = resolve;
     });
-    let markSecondBackendStarted!: () => void;
     let releaseSecondBackend!: () => void;
-    const secondBackendStarted = new Promise<void>((resolve) => {
-      markSecondBackendStarted = resolve;
-    });
     const secondBackendReleased = new Promise<void>((resolve) => {
       releaseSecondBackend = resolve;
     });
@@ -4099,7 +4345,6 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
             markBackendStarted();
             await backendReleased;
           } else if (turn.rawQuery === "verify-peer-guidance") {
-            markSecondBackendStarted();
             await secondBackendReleased;
           }
           return { outputText: `backend:${turn.rawQuery}`, runtimeSessionId: session.id };
@@ -4107,53 +4352,45 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
         if (expertId === "frontend") {
           const discovery = await call("list_agents", { expertId: "backend" });
           const backend = (
-            discovery["agents"] as Array<{
-              agentId: string;
-              activeInvocation: { invocationId: string };
+            discovery["contexts"] as Array<{
+              contextId: string;
+              currentInvocation: { invocationId: string };
             }>
           )[0]!;
-          const steer = await call("steer_expert", {
-            agentId: backend.agentId,
-            invocationId: backend.activeInvocation.invocationId,
-            message: "apply-peer-guidance",
-          });
-          expect(steer).toMatchObject({ outcome: "steered", mode: "runtime" });
-          const followup = await call("delegate_expert", {
-            agentId: backend.agentId,
-            task: "verify-peer-guidance",
-          });
-          releaseBackend();
-          await call("wait_experts", {
-            invocationIds: [backend.activeInvocation.invocationId],
-          });
-          await secondBackendStarted;
-          const messageTool = session.context.agent.tools?.find(
-            (candidate) => candidate.name === "message_expert",
+          const waitTool = session.context.agent.tools?.find(
+            (candidate) => candidate.name === "wait_experts",
           );
-          if (messageTool === undefined) throw new Error("Missing message_expert tool");
-          const stale = await messageTool.call(
-            {
-              agentId: backend.agentId,
-              invocationId: backend.activeInvocation.invocationId,
-              message: "must-not-enter-the-next-invocation",
-            },
+          if (waitTool === undefined) throw new Error("Missing collaboration tool: wait_experts");
+          const deniedPeerWait = await waitTool.call(
+            { invocationIds: [backend.currentInvocation.invocationId] },
             turn.signal,
             { execution },
           );
-          expect(stale.isError).toBe(true);
-          expect(stale.text).toContain("stale_invocation");
+          expect(deniedPeerWait.isError).toBe(true);
+          expect(deniedPeerWait.text).toContain("not accessible");
+          const steer = await call("steer_expert", {
+            invocationId: backend.currentInvocation.invocationId,
+            instruction: "apply-peer-guidance",
+            delivery: "next_boundary",
+          });
+          expect(steer).toMatchObject({ outcome: "steered", mode: "runtime" });
+          const followup = await call("continue_expert", {
+            contextId: backend.contextId,
+            task: "verify-peer-guidance",
+          });
           releaseSecondBackend();
+          releaseBackend();
           const waited = await call("wait_experts", {
             invocationIds: [followup["invocationId"]],
           });
           return { outputText: `frontend:${JSON.stringify(waited)}`, runtimeSessionId: session.id };
         }
-        const backend = await call("delegate_expert", {
+        const backend = await call("spawn_expert", {
           expertId: "backend",
           task: "backend-work",
         });
         await backendStarted;
-        const frontend = await call("delegate_expert", {
+        const frontend = await call("spawn_expert", {
           expertId: "frontend",
           task: "frontend-work",
         });
@@ -4203,7 +4440,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     expect(steers).toEqual(["apply-peer-guidance"]);
     const events = await turn.listEvents({ scope: { kind: "all" }, limit: 1_000 });
     expect(events.items.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["agent.steer.requested", "agent.steer.applied", "agent.delegated"]),
+      expect.arrayContaining(["agent.steer.requested", "agent.steer.applied", "agent.reused"]),
     );
     expect(events.items.find((event) => event.type === "agent.steer.applied")?.data).toMatchObject({
       content: "apply-peer-guidance",
@@ -4236,16 +4473,16 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           return result.details as Record<string, unknown>;
         };
         if (expertId === "lead") {
-          const delegated = await call("delegate_expert", { expertId: "member-a", task: "a" });
+          const delegated = await call("spawn_expert", { expertId: "member-a", task: "a" });
           await call("wait_experts", { invocationIds: [delegated["invocationId"]] });
         } else if (expertId === "member-a") {
-          const delegated = await call("delegate_expert", { expertId: "member-b", task: "b" });
+          const delegated = await call("spawn_expert", { expertId: "member-b", task: "b" });
           await call("wait_experts", { invocationIds: [delegated["invocationId"]] });
         } else {
           const discovery = await call("list_agents", { expertId: "member-a" });
-          const target = (discovery["agents"] as Array<{ agentId: string }>)[0]!;
-          const result = await tool("delegate_expert").call(
-            { agentId: target.agentId, task: "cycle" },
+          const target = (discovery["contexts"] as Array<{ contextId: string }>)[0]!;
+          const result = await tool("continue_expert").call(
+            { contextId: target.contextId, task: "cycle" },
             turn.signal,
             { execution },
           );
@@ -4324,8 +4561,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           return result.details as Record<string, unknown>;
         };
         if (expertId === "lead") {
-          const first = await call("delegate_expert", { expertId: "member-a", task: "cross" });
-          const second = await call("delegate_expert", { expertId: "member-b", task: "cross" });
+          const first = await call("spawn_expert", { expertId: "member-a", task: "cross" });
+          const second = await call("spawn_expert", { expertId: "member-b", task: "cross" });
           await call("wait_experts", {
             invocationIds: [first["invocationId"], second["invocationId"]],
           });
@@ -4335,9 +4572,9 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           await crossDelegationBarrier.arriveAndWait();
           const targetExpertId = expertId === "member-a" ? "member-b" : "member-a";
           const discovery = await call("list_agents", { expertId: targetExpertId });
-          const target = (discovery["agents"] as Array<{ agentId: string }>)[0]!;
-          const result = await tool("delegate_expert").call(
-            { agentId: target.agentId, task: `queued-by-${expertId}` },
+          const target = (discovery["contexts"] as Array<{ contextId: string }>)[0]!;
+          const result = await tool("continue_expert").call(
+            { contextId: target.contextId, task: `queued-by-${expertId}` },
             turn.signal,
             { execution },
           );
@@ -4396,12 +4633,41 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
 
   it("starts independent spawned Experts concurrently", async () => {
     const result = await runScenario("parallel", ["member-a", "member-b"]);
+    if (typeof result.output !== "string")
+      throw new Error("Expected textual orchestration output.");
+    const waited = JSON.parse(result.output.slice("lead:".length)) as {
+      readonly waitedMs: number;
+      readonly timedOut: boolean;
+      readonly completed: ReadonlyArray<{
+        readonly createdAt: string;
+        readonly updatedAt: string;
+        readonly latestActivity?: {
+          readonly kind: string;
+          readonly phase?: string;
+          readonly occurredAt: string;
+          readonly ageMs: number;
+        };
+      }>;
+    };
     expect(result.tree.children).toHaveLength(2);
     expect(result.tree.children.map((child) => child.invocation.status)).toEqual([
       "succeeded",
       "succeeded",
     ]);
     expect(result.stats.maxActive).toBeGreaterThanOrEqual(3);
+    expect(waited).toMatchObject({ timedOut: false, completed: [{}, {}] });
+    expect(waited.waitedMs).toBeGreaterThanOrEqual(0);
+    expect(waited.completed.every((item) => Date.parse(item.createdAt) > 0)).toBe(true);
+    expect(waited.completed.every((item) => Date.parse(item.updatedAt) > 0)).toBe(true);
+    expect(
+      waited.completed.every(
+        (item) =>
+          item.latestActivity?.kind === "run" &&
+          item.latestActivity.phase === "completed" &&
+          Date.parse(item.latestActivity.occurredAt) > 0 &&
+          item.latestActivity.ageMs >= 0,
+      ),
+    ).toBe(true);
   });
 
   it("releases a delegated concurrency permit while an Expert waits for human input", async () => {
@@ -4450,8 +4716,8 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
           if (result.isError === true) throw new Error(result.text);
           return result.details as Record<string, unknown>;
         };
-        const first = await call("delegate_expert", { expertId: "member-a", task: "first" });
-        const second = await call("delegate_expert", { expertId: "member-b", task: "second" });
+        const first = await call("spawn_expert", { expertId: "member-a", task: "first" });
+        const second = await call("spawn_expert", { expertId: "member-b", task: "second" });
         await call("wait_experts", {
           invocationIds: [first["invocationId"], second["invocationId"]],
         });
@@ -4603,17 +4869,17 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     expect(second?.contextId).not.toBe(first?.contextId);
   });
 
-  it("atomically folds concurrent dispatches for one Context into one Agent FIFO", async () => {
+  it("creates isolated Contexts for concurrent spawn requests", async () => {
     const result = await runScenario("reuse-spawn");
     expect(result.tree.children).toHaveLength(2);
     const [first, second] = result.tree.children
       .map((child) => child.invocation)
       .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
-    expect(first?.agentId).toBe(second?.agentId);
-    expect(first?.contextId).toBe(second?.contextId);
-    expect([first?.agentTaskSequence, second?.agentTaskSequence]).toEqual([0, 1]);
-    expect(result.events.some((event) => event.type === "agent.reused")).toBe(true);
-    expect(result.stats.maxActive).toBe(2);
+    expect(first?.agentId).not.toBe(second?.agentId);
+    expect(first?.contextId).not.toBe(second?.contextId);
+    expect([first?.agentTaskSequence, second?.agentTaskSequence]).toEqual([0, 0]);
+    expect(result.events.filter((event) => event.type === "agent.spawned")).toHaveLength(2);
+    expect(result.stats.maxActive).toBeGreaterThanOrEqual(2);
   });
 
   it("interrupts only the current task and preserves queued follow-ups", async () => {
@@ -4627,7 +4893,7 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
 });
 
 describe("Expert delegation declarations", { timeout: 30_000 }, () => {
-  it("uses the same ContextIdResolver abstraction for launcher, team, and Flow", async () => {
+  it("keeps ContextIdResolver policy on Flow while spawn and continue have fixed semantics", async () => {
     const { home, expert: lead } = await fixture();
     const member = await defineExpert({
       id: "shared-resolver-member",
@@ -4642,19 +4908,19 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
       version: "1.0.0",
       resolve: ({ freshContextId }) => freshContextId,
     });
-    const launcher = createAgentLauncher({ experts: [member], contextId: resolver });
+    const launcher = createAgentLauncher({ experts: [member] });
     const team = defineExpertTeam({
       id: "shared-resolver-team",
       coordinator: lead,
       members: [member],
-      delegation: { contextId: resolver },
+      delegation: {},
     });
     const flow = defineFlow({ id: "shared-resolver-flow" });
     const review = flow.use("review", team, { contextId: resolver });
     flow.compose(({ start, end }) => start(review).next(end()));
 
-    expect(readAgentDelegationDefinition(launcher.tools[0]!)?.contextId).toBe(resolver);
-    expect(team.delegation.contextId).toBe(resolver);
+    expect(readAgentDelegationDefinition(launcher.tools[0]!)).not.toHaveProperty("contextId");
+    expect(team.delegation).not.toHaveProperty("contextId");
     expect((flow.compile().steps.get("review")?.options as { contextId?: unknown }).contextId).toBe(
       resolver,
     );
@@ -4674,13 +4940,20 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
       runtimeByExpert: { [expert.id]: "fake" },
     });
     expect(launcher.tools.map((tool) => tool.name)).toEqual([
-      "delegate_expert",
-      "wait_experts",
+      "spawn_expert",
+      "continue_expert",
       "list_agents",
-      "message_expert",
+      "wait_experts",
       "steer_expert",
       "interrupt_expert",
     ]);
+    const steer = launcher.tools.find((tool) => tool.name === "steer_expert");
+    expect(steer?.inputSchema).toMatchObject({
+      required: ["invocationId", "instruction", "delivery"],
+      properties: {
+        delivery: { enum: ["next_boundary", "after_current"] },
+      },
+    });
     expect(readAgentDelegationDefinition({ ...launcher.tools[0]! })?.experts).toEqual([expert]);
     expect(readAgentDelegationDefinition(launcher.tools[0]!)?.runtimeByExpert).toEqual(
       new Map([[expert.id, "fake"]]),
@@ -4694,6 +4967,43 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
     expect(launcher.tools[0]?.description).toContain(
       `- ${expert.id}: ${expert.name}. ${expert.description}`,
     );
+  });
+
+  it("lists the initial Agent page without optional filters or cursors", async () => {
+    const { expert } = await fixture();
+    const list = createAgentLauncher({ experts: [expert] }).tools.find(
+      (tool) => tool.name === "list_agents",
+    );
+    if (list === undefined) throw new Error("list_agents tool is missing.");
+
+    const requests: unknown[] = [];
+    const context = {
+      execution: {
+        executionId: "list-initial-page-execution",
+        invocationId: "list-initial-page-invocation",
+        depth: 0,
+        listAgents: async (request: unknown) => {
+          requests.push(request);
+          return { availableExperts: [], contexts: [] };
+        },
+      },
+    };
+
+    await expect(list.call({}, undefined, context)).resolves.not.toMatchObject({ isError: true });
+    await expect(
+      list.call({ expertId: "", cursor: "" }, undefined, context),
+    ).resolves.not.toMatchObject({ isError: true });
+    await expect(
+      list.call({ expertId: "  ", cursor: "  " }, undefined, context),
+    ).resolves.not.toMatchObject({ isError: true });
+    await expect(list.call({ status: "" }, undefined, context)).resolves.not.toMatchObject({
+      isError: true,
+    });
+    await expect(list.call({ status: "  " }, undefined, context)).resolves.not.toMatchObject({
+      isError: true,
+    });
+
+    expect(requests).toEqual([{}, {}, {}, {}, {}]);
   });
 
   it("bounds Expert waits and applies the 10-minute default", async () => {
@@ -4711,27 +5021,35 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
       default: 600_000,
     });
 
-    let receivedTimeoutMs: number | undefined;
+    let receivedRequest:
+      | { readonly timeoutMs?: number | undefined; readonly returnWhen?: string | undefined }
+      | undefined;
     const context = {
       execution: {
         executionId: "wait-timeout-test",
         invocationId: "wait-timeout-root",
         depth: 0,
-        waitExperts: async (request: { readonly timeoutMs?: number | undefined }) => {
-          receivedTimeoutMs = request.timeoutMs;
+        waitExperts: async (request: {
+          readonly timeoutMs?: number | undefined;
+          readonly returnWhen?: string | undefined;
+        }) => {
+          receivedRequest = request;
           return {};
         },
       },
     };
 
     await wait.call({ invocationIds: ["child"] }, undefined, context);
-    expect(receivedTimeoutMs).toBe(600_000);
+    expect(receivedRequest).toMatchObject({ timeoutMs: 600_000 });
 
     await wait.call({ invocationIds: ["child"], timeoutMs: 30_000 }, undefined, context);
-    expect(receivedTimeoutMs).toBe(30_000);
+    expect(receivedRequest).toMatchObject({ timeoutMs: 30_000 });
 
     await wait.call({ invocationIds: ["child"], timeoutMs: 3_600_000 }, undefined, context);
-    expect(receivedTimeoutMs).toBe(3_600_000);
+    expect(receivedRequest).toMatchObject({ timeoutMs: 3_600_000 });
+
+    await wait.call({ invocationIds: ["child"], returnWhen: " " }, undefined, context);
+    expect(receivedRequest).not.toHaveProperty("returnWhen");
 
     await expect(
       wait.call({ invocationIds: ["child"], timeoutMs: 29_999 }, undefined, context),
@@ -4765,13 +5083,13 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
     const leadTool = leadTools[0];
     const memberTool = memberTools[0];
 
-    expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([member]);
+    expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([lead, member]);
     expect(readAgentDelegationDefinition(leadTool!)?.isCoordinator).toBe(true);
     expect(readAgentDelegationDefinition(leadTool!)?.spawnExpertIds).toEqual(new Set(["member"]));
     expect(readAgentDelegationDefinition(leadTool!)?.interactExpertIds).toEqual(
       new Set(["solo", "member"]),
     );
-    expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead]);
+    expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead, member]);
     expect(readAgentDelegationDefinition(memberTool!)?.isCoordinator).toBe(false);
     expect(readAgentDelegationDefinition(leadTool!)?.runtimeByExpert).toEqual(
       new Map([["member", "fake-member"]]),
@@ -4806,7 +5124,7 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
 
     expect(
       readAgentDelegationDefinition(createTeamDelegationTools(team, "solo")[0]!)?.experts,
-    ).toEqual([member]);
+    ).toEqual([lead, member]);
     expect(createTeamDelegationTools(team, "member").map((tool) => tool.name)).toEqual([
       "list_agents",
     ]);
