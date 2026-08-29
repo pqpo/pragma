@@ -1,6 +1,6 @@
 {
   "name": "@pragma/desktop",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "private": true,
   "type": "module",
   "productName": "Pragma",
@@ -25,6 +25,7 @@
     "dist:win:x64": "pnpm run build && electron-builder --win --x64 --publish never",
     "release:desktop": "node ./scripts/release-desktop.mjs",
     "lint": "eslint .",
+    "pretypecheck": "pnpm --filter \"@pragma/desktop^...\" build",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
