@@ -43,6 +43,7 @@
     "eslint": "latest",
     "globals": "latest",
     "prettier": "3.9.6",
+    "tsx": "latest",
     "turbo": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest",
