@@ -24,7 +24,7 @@ export default defineConfig({
       rollupOptions: {
         // ws treats these native accelerators as optional and catches a missing
         // require at runtime. Keep that fallback intact when Vite bundles ws.
-        external: ["bufferutil", "utf-8-validate"],
+        external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
         input: {
           index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
           "code-service-worker": fileURLToPath(

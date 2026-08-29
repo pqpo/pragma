@@ -272,6 +272,10 @@ export class PragmaPaths {
     return join(this.dataRoot(), "credentials");
   }
 
+  secretStoreRoot(): string {
+    return join(this.credentialsRoot(), "secret-store");
+  }
+
   expertSessionsRoot(): string {
     return join(this.stateRoot(), "expert-sessions");
   }

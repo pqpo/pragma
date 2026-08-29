@@ -38,15 +38,20 @@ import { resolveBundleIdentities } from "./pragma-bundle-resources.ts";
 
 const directories: string[] = [];
 
+const removeTemporaryDirectory = async (directory: string): Promise<void> => {
+  await rm(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  });
+};
+
 afterEach(async () => {
-  await Promise.all(
-    directories
-      .splice(0)
-      .map(async (directory) => await rm(directory, { recursive: true, force: true })),
-  );
+  await Promise.all(directories.splice(0).map(removeTemporaryDirectory));
 });
 
-describe("PragmaBundleService", () => {
+describe("PragmaBundleService", { timeout: 30_000 }, () => {
   it("recognizes the built-in Pragma management Capability without an installed payload", async () => {
     await expect(
       inspectBundleReadiness([pragmaManagementCapabilityResource()], {
@@ -95,7 +100,6 @@ describe("PragmaBundleService", () => {
       ]),
     );
   });
-
   it("preserves requirement ids for multiple pending plugins owned by one Expert", () => {
     const previous: PragmaBundleInstallation["pending"] = [
       {

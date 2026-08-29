@@ -35,10 +35,12 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "@lobehub/icons-static-svg": "1.94.0",
+    "@napi-rs/keyring": "1.3.0",
     "@phosphor-icons/react": "latest",
     "@pragma/core": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",
+    "@pragma/local-host": "workspace:*",
     "@pragma/memory": "workspace:*",
     "@pragma/mission-board": "workspace:*",
     "@pragma/runtime-antigravity": "workspace:*",

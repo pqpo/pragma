@@ -1,0 +1,204 @@
+name: CLI package verification
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "apps/cli/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/cli-package.yml"
+  pull_request:
+    paths:
+      - "apps/cli/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/cli-package.yml"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Source ref used by the reusable publish gate.
+        required: false
+        type: string
+
+concurrency:
+  group: cli-package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build canonical CLI tarball
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint CLI
+        run: pnpm --filter @pqpo/pragma lint
+
+      - name: Typecheck CLI
+        run: pnpm --filter @pqpo/pragma typecheck
+
+      - name: Test CLI
+        env:
+          CI: "true"
+          PRAGMA_LOG_LEVEL: error
+        run: pnpm --filter @pqpo/pragma test
+
+      - name: Build, pack, and audit canonical tarball
+        run: pnpm --filter @pqpo/pragma package:pack
+
+      - name: Generate digest, SBOM, and license reports
+        run: pnpm --filter @pqpo/pragma release:reports
+
+      - name: Verify canonical artifact files
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="apps/cli/.release/ci-artifact"
+          test -s "${artifact_dir}/pragma-cli.tgz"
+          test -s "${artifact_dir}/sbom.cdx.json"
+          test -s "${artifact_dir}/license-report.txt"
+          test -s "${artifact_dir}/artifact-manifest.json"
+          (cd "${artifact_dir}" && sha256sum --check --strict SHA256SUMS.txt)
+
+      - name: Upload canonical tarball and reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: pragma-cli-canonical
+          path: apps/cli/.release/ci-artifact
+          if-no-files-found: error
+          retention-days: 14
+
+  supported-platform-smoke:
+    name: Smoke ${{ matrix.os }} / Node ${{ matrix.node }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-15-intel
+          - windows-2025
+        node:
+          - "22.x"
+          - "24.x"
+        include:
+          - os: macos-15
+            architecture: arm64
+          - os: macos-15-intel
+            architecture: x64
+          - os: windows-2025
+            architecture: x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Verify runner architecture
+        env:
+          EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+        run: node -e "if (process.arch !== process.env.EXPECTED_ARCHITECTURE) { throw new Error('Expected ' + process.env.EXPECTED_ARCHITECTURE + ', got ' + process.arch); }"
+
+      - name: Download canonical tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: pragma-cli-canonical
+          path: apps/cli/.release/ci-artifact
+
+      - name: Verify artifact digest and run isolated smoke
+        run: node apps/cli/scripts/smoke-package.mjs --mode positive --artifact-dir apps/cli/.release/ci-artifact
+
+  node20-negative:
+    name: Reject Node 20 on ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - windows-2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+
+      - name: Download canonical tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: pragma-cli-canonical
+          path: apps/cli/.release/ci-artifact
+
+      - name: Verify Node 20 engine warning and bootstrap rejection
+        run: node apps/cli/scripts/smoke-package.mjs --mode node20 --artifact-dir apps/cli/.release/ci-artifact
+
+  linux-negative:
+    name: Reject Linux installation
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+
+      - name: Download canonical tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: pragma-cli-canonical
+          path: apps/cli/.release/ci-artifact
+
+      - name: Verify npm OS rejection without executing CLI
+        run: node apps/cli/scripts/smoke-package.mjs --mode linux --artifact-dir apps/cli/.release/ci-artifact

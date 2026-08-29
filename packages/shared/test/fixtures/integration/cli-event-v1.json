@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "pragma.cli-event/v1",
+  "requestId": "00000000-0000-4000-8000-000000000001",
+  "eventId": "00000000-0000-4000-8000-000000000003",
+  "sequence": 1,
+  "emittedAt": "2026-08-19T00:00:00.000Z",
+  "missionId": "00000000-0000-4000-8000-000000000002",
+  "replayable": true,
+  "cursor": "event-cursor-v1",
+  "type": "stream.end",
+  "data": { "status": "completed", "exitCode": 0 }
+}

@@ -11,6 +11,7 @@ import {
   type PragmaLogger,
   type PragmaLoggerProvider,
 } from "@pragma/core";
+import type { ExpertPromptAttachment } from "@pragma/shared";
 import {
   BUILT_IN_PRAGMA_REF,
   EVALUATION_JUDGE_EXPERT_REF,
@@ -23,6 +24,17 @@ import {
   pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
+import {
+  createControllerRunMissionPort,
+  createLocalHostApplication,
+  createLocalHostRunApplication,
+  createMissionControllerStore,
+  createMissionControlApplication,
+  createMissionOwnerScope,
+  createMissionWatchApplication,
+  createNativeOsKeychain,
+  createSecretStore,
+} from "@pragma/local-host";
 import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
@@ -91,6 +103,8 @@ import {
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
 import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
+import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
+import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
 import {
   createDesktopMemoryCurator,
@@ -139,7 +153,9 @@ import {
   createUnavailableDesktopUsageStore,
 } from "../features/usage/usage-store.ts";
 import { validateWorkspace } from "../features/workspaces/workspace-scope.ts";
+import { createWorkspaceFilesystemPort } from "../features/workspaces/workspace-filesystem-port.ts";
 import type { CredentialEncryption } from "../platform/security/credential-encryption.ts";
+import { createElectronSafeStorageLegacyDecryptor } from "../platform/security/electron-safe-storage-legacy-decryptor.ts";
 import { initializeDesktopStorage } from "../platform/storage/storage-bootstrap.ts";
 import { createDesktopTrashMaintenance } from "../platform/storage/trash-maintenance.ts";
 
@@ -251,6 +267,14 @@ export async function createDesktopApplicationContainer(
     pragmaPaths.credentialsRoot(),
     "capability-credentials.json",
   );
+  // Electron safeStorage is deliberately scoped to migration input. All normal
+  // credential reads and writes below use the host-neutral keychain-backed store.
+  const secretStore = createSecretStore({
+    root: pragmaPaths.secretStoreRoot(),
+    dataRoot: pragmaPaths.dataRoot(),
+    keychain: createNativeOsKeychain(),
+  });
+  const legacyCredentialDecryptor = createElectronSafeStorageLegacyDecryptor(encryption);
   const capabilitiesPath = join(pragmaPaths.dataRoot(), "capabilities");
   const contextStoresPath = join(pragmaPaths.dataRoot(), "context-stores");
   const desktopSettings = createDesktopSettingsStore({
@@ -306,7 +330,8 @@ export async function createDesktopApplicationContainer(
   installWorkflowLayoutHandlers(workflowLayouts);
   const pluginCredentials = createPluginCredentialStore({
     configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
-    encryption,
+    secretStore,
+    legacyDecryptor: legacyCredentialDecryptor,
   });
   const missionStore = createMissionStore({
     missionsPath,
@@ -316,6 +341,40 @@ export async function createDesktopApplicationContainer(
         "A Mission could not be listed safely. Other readable Missions remain available.",
         { missionId, errorCode: error.code, error },
       ),
+  });
+  // Local Host owns aggregate lease persistence; Desktop Main composes it with
+  // the existing MissionStore without moving Electron or Runtime concerns into
+  // @pragma/local-host.
+  const missionControllerStore = createMissionControllerStore({ missionsPath });
+  const missionWatch = createMissionWatchApplication({ controller: missionControllerStore });
+  const missionRunnerRef: {
+    current?: ReturnType<typeof createMissionRunner>;
+  } = {};
+  const semanticWriteReplayRef: {
+    current?: Parameters<typeof missionControllerStore.recoverSemanticWrite>[0]["replay"];
+  } = {};
+  const ownerScope = createMissionOwnerScope({
+    controller: missionControllerStore,
+    onLeaseLost: async (missionId) => {
+      await missionRunnerRef.current?.stopLocalController(missionId);
+      mainLogger.warn(
+        "mission.controller_lease_lost",
+        "Mission controller lease was lost; local execution was stopped and subsequent semantic writes are fenced.",
+        { missionId },
+      );
+    },
+    recoverSemanticWrite: async ({ missionId, guard }) => {
+      const replay = semanticWriteReplayRef.current;
+      if (replay === undefined) return;
+      await missionControllerStore.recoverSemanticWrite({ missionId, guard, replay });
+    },
+  });
+  const guardedMissionStore = createFencedMissionStore(missionStore, {
+    controller: missionControllerStore,
+    ownerScope,
+    setSemanticWriteReplay: (replay) => {
+      semanticWriteReplayRef.current = replay;
+    },
   });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
@@ -346,7 +405,8 @@ export async function createDesktopApplicationContainer(
   );
   const modelProviderStore = createModelProviderStore({
     configPath: modelProvidersPath,
-    encryption,
+    secretStore,
+    legacyDecryptor: legacyCredentialDecryptor,
   });
   const runtimeEnvironments = createRuntimeEnvironmentStore({
     pragmaHome: pragmaPaths.root,
@@ -435,7 +495,8 @@ export async function createDesktopApplicationContainer(
   installPluginHandlers(pluginStore, options.getWindow);
   const capabilityCredentials = createCapabilityCredentialStore({
     configPath: capabilityCredentialsPath,
-    encryption,
+    secretStore,
+    legacyDecryptor: legacyCredentialDecryptor,
   });
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
@@ -494,7 +555,6 @@ export async function createDesktopApplicationContainer(
       return await storeRevisionAgentRef.current.generator.generate(input);
     },
   };
-  const missionRunnerRef: { current?: ReturnType<typeof createMissionRunner> } = {};
   const storeRevisions = createContextStoreRevisionService({
     statePath: join(pragmaPaths.stateRoot(), "context-store-revisions"),
     draftsPath: join(pragmaPaths.dataRoot(), "context-store-drafts"),
@@ -770,7 +830,7 @@ export async function createDesktopApplicationContainer(
   const pragmaAgentToolsRef: { current?: ReturnType<typeof createPragmaAgentTools> } = {};
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
-    missions: missionStore,
+    missions: guardedMissionStore,
     project: pragmaProjectStore,
     capabilityStore,
     capabilityCredentials,
@@ -796,6 +856,7 @@ export async function createDesktopApplicationContainer(
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
+    ownerScope,
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onOwnerDeleting: async ({ executionIds }) => {
@@ -1018,6 +1079,42 @@ export async function createDesktopApplicationContainer(
     },
   });
   missionRunnerRef.current = missionRunner;
+  const pendingPromptAttachments = new Map<string, readonly ExpertPromptAttachment[]>();
+  const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter({
+    resolvePromptAttachments: (requestId) => pendingPromptAttachments.get(requestId) ?? [],
+    onCommandOutcome: (requestId) => {
+      pendingPromptAttachments.delete(requestId);
+    },
+  });
+  const localHostMissionControl = createMissionControlApplication({
+    controller: missionControllerStore,
+    ownerScope,
+    consumer: localHostMissionControlAdapter.consumer,
+    assertMission: async (missionId) => {
+      await missionStore.get(missionId);
+    },
+    assertAcquisitionAllowed: localHostMissionControlAdapter.assertAcquisitionAllowed,
+    resolveStrictTarget: localHostMissionControlAdapter.resolveStrictTarget,
+    resolveExecutionTarget: localHostMissionControlAdapter.resolveExecutionTarget,
+    client: {
+      surface: "desktop",
+      version: "desktop",
+      instanceId: randomUUID(),
+    },
+  });
+  const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
+    executors: missionExecutors,
+    project: pragmaProjectStore,
+  });
+  const localHostRun = createLocalHostRunApplication({
+    executors: {
+      resolve: localHostRunExecutorResolver,
+      assertStartAllowed: async (input) => await missionRunner.assertLocalHostRunAllowed(input),
+      start: async (input) => await missionRunner.startLocalHostRun(input),
+    },
+    mission: createControllerRunMissionPort(missionControllerStore, { ownerScope }),
+    commandConsumer: localHostMissionControlAdapter.consumer,
+  });
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,
@@ -1108,7 +1205,81 @@ export async function createDesktopApplicationContainer(
       stateRoot: defaultAgentStateRoot,
     }),
   });
+  const missionContextStoreBrowser = createMissionContextStoreBrowserService({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    systemExperts,
+    memory: memoryPlane,
+    runner: missionRunner,
+  });
+  const localHost = createLocalHostApplication({
+    integrationCapability: async () => ({
+      schemaVersion: "pragma.integration-capability/v1",
+      protocol: "pragma.integration/v1",
+      readableVersions: ["pragma.integration/v1"],
+      migratableFromVersions: [],
+      features: [
+        "catalog.query",
+        "mission.query",
+        "mission.watch",
+        "mission.queue.read",
+        "mission.queue.list",
+        "mission.send",
+        "mission.steer",
+        "mission.respond",
+        "mission.interrupt",
+        "mission.queue.remove",
+        "mission.queue.resume",
+        "mission.queue.steer",
+        "workspace.resolve",
+        "board.shared.read",
+      ],
+    }),
+    catalog: {
+      listProjects: async () => [{ id: pragmaProjectStore.projectId }],
+      getProjectRevision: async (projectId, revision) =>
+        projectId === pragmaProjectStore.projectId
+          ? await pragmaProjectStore.openRevision(revision)
+          : undefined,
+      listExecutors: async () => await missionExecutors.list(),
+    },
+    missions: {
+      get: async (missionId) => await missionStore.get(missionId),
+      list: async () => await missionStore.list(),
+    },
+    workspace: createWorkspaceFilesystemPort(),
+    board: {
+      list: async (input) => await missionContextStoreBrowser.list(input),
+      read: async (input) => await missionContextStoreBrowser.read(input),
+      search: async (input) =>
+        await missionContextStoreBrowser.search({
+          ...input,
+          caseSensitive: input.caseSensitive ?? false,
+        }),
+    },
+    queue: {
+      list: async (missionId) => {
+        if (missionRunner.listPromptQueue === undefined) {
+          throw new Error("Desktop ExpertSession prompt queue projection is unavailable.");
+        }
+        return await missionRunner.listPromptQueue(missionId);
+      },
+    },
+    watch: missionWatch,
+    missionControl: { commands: localHostMissionControl },
+    runtime: { resolver: runtimes },
+    run: localHostRun,
+  });
+  if (localHost.missionControl === undefined || localHost.run === undefined) {
+    throw new Error("Desktop Local Host control and run ports were not composed.");
+  }
+  const desktopLocalHost = {
+    ...localHost,
+    missionControl: localHost.missionControl,
+    run: localHost.run,
+  };
   installMissionHandlers({
+    localHost: desktopLocalHost,
     missions: missionStore,
     creator: missionCreator,
     executors: missionExecutors,
@@ -1116,6 +1287,7 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     getWindow: options.getWindow,
     runner: missionRunner,
+    pendingPromptAttachments,
     getAutomationMissionSources: () => automationService.listMissionSources(),
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
@@ -1138,15 +1310,7 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.setMemoryConversationState({ missionId, state });
     },
   });
-  installMissionContextStoreBrowserHandlers(
-    createMissionContextStoreBrowserService({
-      missions: missionStore,
-      project: pragmaProjectStore,
-      systemExperts,
-      memory: memoryPlane,
-      runner: missionRunner,
-    }),
-  );
+  installMissionContextStoreBrowserHandlers(missionContextStoreBrowser);
   installDesktopSettingsHandlers({
     store: desktopSettings,
     validateDefaultWorkspace: async (path) => {
@@ -1193,6 +1357,22 @@ export async function createDesktopApplicationContainer(
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
       runtimeProcessEnvironment.warmUp();
+      // This starts only after the first window is available.  The three fixed
+      // credential aggregates are targeted explicitly; it never scans Projects,
+      // Missions, workspaces, or arbitrary data-home entries on startup.
+      for (const [family, migrate] of [
+        ["model_provider", () => modelProviderStore.migrateLegacy?.()],
+        ["capability", () => capabilityCredentials.migrateLegacy?.()],
+        ["plugin", () => pluginCredentials.migrateLegacy?.()],
+      ] as const) {
+        void Promise.resolve(migrate()).catch((error: unknown) => {
+          mainLogger.warn(
+            "desktop.credential_migration_degraded",
+            "A credential migration needs attention; unrelated subsystems remain available.",
+            { family, error },
+          );
+        });
+      }
       void runtimeEnvironments.initialize().catch((error: unknown) => {
         mainLogger.warn(
           "desktop.runtime_environment_warmup_failed",

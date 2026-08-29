@@ -26,3 +26,4 @@ export * from "./execution/invocation-output.schema.ts";
 export * from "./execution/expert-session.schema.ts";
 export * from "./execution/human-interaction.schema.ts";
 export * from "./expert-prompt.schema.ts";
+export * from "./integration/index.ts";

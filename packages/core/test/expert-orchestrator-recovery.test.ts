@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,14 +12,55 @@ const temporaryRoots: string[] = [];
 const now = "2026-08-22T08:00:00.000Z";
 
 afterEach(async () => {
+  await waitForTemporaryRootsToQuiesce();
   await Promise.all(
     temporaryRoots.splice(0).map(async (root) => {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }),
   );
 });
 
-describe("ExpertOrchestrator recovery", () => {
+async function waitForTemporaryRootsToQuiesce(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  let quietSince: number | undefined;
+  while (Date.now() < deadline) {
+    let hasExecutionLock = false;
+    for (const root of temporaryRoots) {
+      try {
+        const executions = await readdir(join(root, "state", "executions"), {
+          withFileTypes: true,
+        });
+        for (const execution of executions) {
+          if (!execution.isDirectory()) continue;
+          const entries = await readdir(join(root, "state", "executions", execution.name), {
+            withFileTypes: true,
+          });
+          if (
+            entries.some(
+              (entry) => entry.name === ".lock" || entry.name.startsWith(".lock.staging-"),
+            )
+          ) {
+            hasExecutionLock = true;
+            break;
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (hasExecutionLock) break;
+    }
+    if (!hasExecutionLock) {
+      quietSince ??= Date.now();
+      if (Date.now() - quietSince >= 100) return;
+    } else {
+      quietSince = undefined;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Timed out waiting for orchestrator recovery test resources to quiesce.");
+}
+
+describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
   it("lets a timed-out waiter regain control without corrupting the concurrency queue", async () => {
     const semaphore = new DelegationSemaphore(1);
     const parent = await semaphore.acquire();
@@ -45,7 +86,6 @@ describe("ExpertOrchestrator recovery", () => {
     expect(queuedAcquired).toBe(true);
     queued.release();
   });
-
   it("retains accepted messages until the delivered batch is acknowledged", async () => {
     const home = await temporaryRoot("pragma-message-handoff-");
     const store = createFileExecutionStore({ pragmaHome: home });

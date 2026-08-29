@@ -1,3 +1,5 @@
+import type { HumanInteractionRequest } from "@pragma/shared";
+import { HumanInteractionRequestSchema } from "@pragma/shared";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { z } from "zod";
 
@@ -81,6 +83,7 @@ export interface ExpertAgentUserQuestion {
   readonly options: readonly {
     readonly label: string;
     readonly description: string;
+    readonly value?: string | undefined;
   }[];
 }
 
@@ -90,6 +93,8 @@ export interface ExpertAgentUserQuestionRequest {
   readonly toolCallId?: string | undefined;
   readonly questions: readonly ExpertAgentUserQuestion[];
   readonly semantics?: { readonly kind: "approval"; readonly approveOption: string } | undefined;
+  /** Original Host presentation, retained for Flow/Host round-trips. */
+  readonly presentation?: HumanInteractionRequest | undefined;
 }
 
 export interface ExpertAgentUserQuestionResponse {
@@ -122,6 +127,7 @@ export const ExpertAgentUserQuestionSchema = z.object({
     z.object({
       label: z.string(),
       description: z.string(),
+      value: z.string().min(1).optional(),
     }),
   ),
 }) satisfies z.ZodType<ExpertAgentUserQuestion>;
@@ -132,6 +138,7 @@ export const ExpertAgentUserQuestionRequestSchema = z.object({
   toolCallId: z.string().min(1).optional(),
   questions: z.array(ExpertAgentUserQuestionSchema),
   semantics: z.object({ kind: z.literal("approval"), approveOption: z.string().min(1) }).optional(),
+  presentation: HumanInteractionRequestSchema.optional(),
 }) satisfies z.ZodType<ExpertAgentUserQuestionRequest>;
 
 export const ExpertAgentHumanRequestSchema = z.discriminatedUnion("kind", [

@@ -34,9 +34,15 @@ const directories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    directories
-      .splice(0)
-      .map(async (directory) => await rm(directory, { recursive: true, force: true })),
+    directories.splice(0).map(
+      async (directory) =>
+        await rm(directory, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        }),
+    ),
   );
 });
 
@@ -72,7 +78,7 @@ async function projectRevisionFile(
   );
 }
 
-describe("PragmaProjectStore", () => {
+describe("PragmaProjectStore", { timeout: 30_000 }, () => {
   it("allows the canonical fixed resource but rejects modified copies", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-project-fixed-resource-"));
     directories.push(directory);
@@ -94,7 +100,6 @@ describe("PragmaProjectStore", () => {
       }),
     ).rejects.toMatchObject({ code: "built_in_readonly" });
   });
-
   it("publishes the initial empty project before it is pinned by a Mission", async () => {
     const { directory, project } = await stores();
 

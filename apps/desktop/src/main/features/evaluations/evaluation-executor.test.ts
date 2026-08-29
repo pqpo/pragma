@@ -16,7 +16,15 @@ import { createMissionAgentEvaluationExecutor } from "./evaluation-executor.ts";
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
+    roots.splice(0).map(
+      async (root) =>
+        await rm(root, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        }),
+    ),
   );
 });
 

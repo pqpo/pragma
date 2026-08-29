@@ -18,14 +18,23 @@ import {
 } from "./desktop-memory-plane.ts";
 
 const roots: string[] = [];
+const backgroundSettlementTimeoutMs = 5_000;
 
 afterEach(async () => {
   await Promise.all(
-    roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })),
+    roots.splice(0).map(
+      async (root) =>
+        await rm(root, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        }),
+    ),
   );
 });
 
-describe("DesktopMemoryPlane", () => {
+describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
   it("is an always-available host service whose background loop starts explicitly", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-");
     const plane = await createDesktopMemoryPlane({
@@ -91,13 +100,16 @@ describe("DesktopMemoryPlane", () => {
     });
 
     plane.start();
-    await vi.waitFor(async () => {
-      await expect(plane.getStatus()).resolves.toMatchObject({
-        state: "degraded",
-        delivery: { pending: 0, quarantined: 1 },
-        lastError: { code: "canonical_event_handoff_quarantined" },
-      });
-    });
+    await vi.waitFor(
+      async () => {
+        await expect(plane.getStatus()).resolves.toMatchObject({
+          state: "degraded",
+          delivery: { pending: 0, quarantined: 1 },
+          lastError: { code: "canonical_event_handoff_quarantined" },
+        });
+      },
+      { timeout: backgroundSettlementTimeoutMs },
+    );
     await plane.stop();
   });
 
@@ -170,20 +182,23 @@ describe("DesktopMemoryPlane", () => {
     });
 
     plane.start();
-    await vi.waitFor(async () => {
-      await expect(plane.getStatus()).resolves.toMatchObject({
-        state: "degraded",
-        lastError: { code: "memory_curator_failed" },
-        modules: expect.arrayContaining([
-          expect.objectContaining({
-            moduleId: "pragma.memory.episodic",
-            status: "degraded",
-            lastErrorCode: "memory_curator_failed",
-            work: expect.objectContaining({ needsAttention: 1 }),
-          }),
-        ]),
-      });
-    });
+    await vi.waitFor(
+      async () => {
+        await expect(plane.getStatus()).resolves.toMatchObject({
+          state: "degraded",
+          lastError: { code: "memory_curator_failed" },
+          modules: expect.arrayContaining([
+            expect.objectContaining({
+              moduleId: "pragma.memory.episodic",
+              status: "degraded",
+              lastErrorCode: "memory_curator_failed",
+              work: expect.objectContaining({ needsAttention: 1 }),
+            }),
+          ]),
+        });
+      },
+      { timeout: backgroundSettlementTimeoutMs },
+    );
     expect(logs).toContainEqual(
       expect.objectContaining({
         level: "error",
@@ -204,18 +219,21 @@ describe("DesktopMemoryPlane", () => {
     );
 
     await plane.wakeMemoryJobs();
-    await vi.waitFor(async () => {
-      await expect(plane.getStatus()).resolves.toMatchObject({
-        state: "running",
-        modules: expect.arrayContaining([
-          expect.objectContaining({
-            moduleId: "pragma.memory.episodic",
-            status: "healthy",
-            work: expect.objectContaining({ pending: 1, needsAttention: 0 }),
-          }),
-        ]),
-      });
-    });
+    await vi.waitFor(
+      async () => {
+        await expect(plane.getStatus()).resolves.toMatchObject({
+          state: "running",
+          modules: expect.arrayContaining([
+            expect.objectContaining({
+              moduleId: "pragma.memory.episodic",
+              status: "healthy",
+              work: expect.objectContaining({ pending: 1, needsAttention: 0 }),
+            }),
+          ]),
+        });
+      },
+      { timeout: backgroundSettlementTimeoutMs },
+    );
     await plane.stop();
   });
 

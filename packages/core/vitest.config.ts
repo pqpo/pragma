@@ -13,14 +13,16 @@ const oxcOptions: OxcTsconfigOptions = {
   tsconfig: {
     compilerOptions: {
       target: "ES2022",
-      verbatimModuleSyntax: true
-    }
-  }
+      verbatimModuleSyntax: true,
+    },
+  },
 };
 
 export default defineConfig({
   oxc: oxcOptions as never,
   test: {
-    environment: "node"
-  }
+    environment: "node",
+    // Core storage and runtime tests share file-system and child-process resources.
+    maxWorkers: 4,
+  },
 });

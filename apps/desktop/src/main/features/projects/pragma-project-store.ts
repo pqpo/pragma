@@ -54,34 +54,16 @@ import {
 } from "@pragma/core";
 
 import {
+  LocalHostProjectManifestSchema as ProjectManifestSchema,
+  LocalHostProjectRevisionManifestSchema as ProjectRevisionManifestSchema,
+} from "@pragma/local-host";
+import {
   PragmaProjectSnapshotSchema,
   type DesktopMutationReferencedResource,
   type PragmaProjectSnapshot,
   type PragmaYamlValidationResult,
 } from "../../../shared/contracts/index.ts";
 import { referencingPragmaResources } from "./pragma-resource-references.ts";
-
-const ProjectManifestSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.desktop-project/v5"),
-    projectId: z.string().min(1),
-    headRevision: z.number().int().positive(),
-    updatedAt: z.string().datetime(),
-  })
-  .strict();
-
-const ProjectRevisionManifestSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.project-revision/v5"),
-    projectId: z.string().min(1),
-    revision: z.number().int().positive(),
-    parentRevision: z.number().int().positive().optional(),
-    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
-    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    compilerVersion: z.string().min(1),
-    createdAt: z.string().datetime(),
-  })
-  .strict();
 
 const ProjectIdentityMigrationManifestSchema = z
   .object({
@@ -109,6 +91,8 @@ const ProjectIdentityMigrationManifestSchema = z
 
 export interface PragmaProjectStore {
   get(): Promise<PragmaProjectSnapshot>;
+  /** Read one exact immutable revision without consulting the project head. */
+  getRevision(revision: number): Promise<PragmaProjectSnapshot>;
   ensurePublished(): Promise<PragmaProjectSnapshot>;
   publish(input: {
     readonly expectedRevision: number;
@@ -447,6 +431,10 @@ export function createPragmaProjectStore(options: {
   return {
     projectId,
     get,
+    async getRevision(revision) {
+      await ensureMigrated();
+      return PragmaProjectSnapshotSchema.parse(await service.get(projectId, revision));
+    },
     ensurePublished,
     publish,
     async upsert(input) {

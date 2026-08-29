@@ -24,6 +24,7 @@ import type {
 } from "../tools/managed-tool.ts";
 import {
   ExecutionController,
+  isHumanInteractionCheckpointError,
   listPendingHumanInteractionIds,
   runExpertInvocation,
 } from "../execution/expert-runner.ts";
@@ -80,6 +81,8 @@ export interface StartFlowRequest<TInput = unknown> {
 
 export interface FlowExecution extends MutableExecution {
   readonly result: Promise<unknown>;
+  /** Checkpoint this execution only when a HumanTask is durably waiting. */
+  readonly checkpointWaitingHuman: () => Promise<void>;
 }
 
 export type FlowExecutionView = ExecutionView;
@@ -263,7 +266,7 @@ export class FlowExecutionManager {
       );
     }, 10_000);
     renewal.unref();
-    void this.execute(flow, executionId, controller, runtime).finally(() => {
+    void this.execute(flow, executionId, controller, runtime, claimId).finally(() => {
       clearInterval(renewal);
       this.active.delete(executionId);
     });
@@ -275,6 +278,7 @@ export class FlowExecutionManager {
     executionId: string,
     controller: ExecutionController,
     runtime?: string,
+    claimId?: string,
   ): Promise<void> {
     const hostContextBindings =
       this.resolveHostContextBindings === undefined
@@ -347,6 +351,11 @@ export class FlowExecutionManager {
         ],
       });
     } catch (error) {
+      if (isHumanInteractionCheckpointError(error)) {
+        if (claimId === undefined) throw error;
+        await this.executions.releaseWaitingHumanRecovery(executionId, claimId);
+        return;
+      }
       const status = controller.isCancelled() ? "cancelled" : "failed";
       const terminalError =
         status === "cancelled" ? (controller.getCancellationReason() ?? error) : error;
@@ -406,6 +415,7 @@ export class FlowExecutionManager {
     return Object.assign(view, {
       result: waitForResult(this.executions, executionId),
       cancel: async (reason?: string) => await controller.cancel(reason),
+      checkpointWaitingHuman: async () => await controller.checkpointWaitingHuman(),
       respondToHumanInteraction: async (
         interactionId: string,
         response: unknown,
@@ -656,6 +666,7 @@ async function runStep(
     });
     return unwrapInvocationOutput(InvocationOutputSchema.parse(invocationOutput));
   } catch (error) {
+    if (isHumanInteractionCheckpointError(error)) throw error;
     const latest = await options.store.getInvocation(options.executionId, invocation.invocationId);
     if (latest !== undefined && !isFinal(latest.status)) {
       await putStatus(
@@ -737,6 +748,7 @@ function toExpertHumanRequest(request: HumanInteractionRequest): ExpertAgentHuma
     kind: "user_question",
     toolName: "askUserQuestion",
     questions,
+    presentation: request,
     ...(request.kind === "approval"
       ? {
           semantics: {
@@ -1439,7 +1451,16 @@ async function mutateFlowState<T>(
         commitId: randomUUID(),
         executionId: options.executionId,
         expectedVersion: record.version,
-        executionPatch: { state: mutation.state },
+        executionPatch: {
+          state:
+            record.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY] === undefined
+              ? mutation.state
+              : {
+                  ...mutation.state,
+                  [EXECUTION_RECOVERY_CLAIM_STATE_KEY]:
+                    record.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY],
+                },
+        },
         ...(mutation.events === undefined ? {} : { events: mutation.events }),
       });
       return mutation.value;

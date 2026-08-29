@@ -49,6 +49,7 @@ import {
 } from "./canonical-event-handoff.ts";
 
 export const EXECUTION_RECOVERY_CLAIM_STATE_KEY = "__recoveryClaim";
+const MAX_WAITING_HUMAN_RECOVERY_RELEASE_ATTEMPTS = 8;
 
 export interface NewExecutionEvent {
   readonly eventId?: string | undefined;
@@ -123,6 +124,8 @@ export interface ExecutionStore {
   update(executionId: string, patch: Partial<ExecutionRecord>): Promise<ExecutionRecord>;
   commit(request: ExecutionCommitRequest): Promise<ExecutionCommitResult>;
   claimRecovery(executionId: string, claimId: string, leaseMs: number): Promise<boolean>;
+  /** Release only a recovery claim whose execution is durably waiting for human input. */
+  releaseWaitingHumanRecovery(executionId: string, claimId: string): Promise<void>;
   getInvocation(executionId: string, invocationId: string): Promise<Invocation | undefined>;
   listInvocations(executionId: string): Promise<readonly Invocation[]>;
   getAgent(executionId: string, agentId: string): Promise<AgentInstance | undefined>;
@@ -486,6 +489,43 @@ export function createFileExecutionStore(
         await writeJsonAtomic(paths.executionState(executionId), updated);
         return true;
       });
+    },
+
+    async releaseWaitingHumanRecovery(executionId, claimId) {
+      for (let attempt = 0; attempt < MAX_WAITING_HUMAN_RECOVERY_RELEASE_ATTEMPTS; attempt += 1) {
+        const current = await this.get(executionId);
+        if (current === undefined) throw new Error(`Execution not found: ${executionId}`);
+        if (!hasActiveRecoveryClaim(current, claimId)) {
+          throw new Error(`Execution recovery claim is not owned: ${executionId}`);
+        }
+        if (current.status !== "waiting") {
+          throw new Error(`Execution is not waiting for human input: ${executionId}`);
+        }
+        const waitingHuman = (await this.listInvocations(executionId)).some(
+          (invocation) =>
+            invocation.status === "waiting" && invocation.waitReason === "human_input",
+        );
+        if (!waitingHuman) {
+          throw new Error(`Execution has no pending human interaction: ${executionId}`);
+        }
+        const state = { ...current.state };
+        delete state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
+        try {
+          await this.commit({
+            commitId: `release-waiting-human-recovery:${claimId}`,
+            executionId,
+            expectedVersion: current.version,
+            executionPatch: { state },
+          });
+          return;
+        } catch (error) {
+          if (!(error instanceof ExecutionVersionConflictError)) throw error;
+          if (attempt + 1 === MAX_WAITING_HUMAN_RECOVERY_RELEASE_ATTEMPTS) throw error;
+        }
+      }
+      throw new Error(
+        `Execution recovery release contention exceeded the retry limit: ${executionId}`,
+      );
     },
 
     async getInvocation(executionId, invocationId) {

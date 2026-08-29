@@ -34,6 +34,7 @@ apps/
   server/    Fastify HTTP API 应用
   worker/    Node Worker 应用
   desktop/   未来 Desktop App，本地 Agent 桥接入口
+  cli/       用户手动安装的 Node CLI，argv/TTY/presenter 与 Host composition 入口
 
 packages/
   shared/         跨进程、跨端协议、领域模型和值对象、跨端纯函数工具
@@ -43,6 +44,7 @@ packages/
   memory/         Host 内置 Memory Plane、Evidence adapter、Module registry 与联邦 Context
   mission-board/  Host 可复用的 Mission 白板 Context bindings 与使用 Guide
   context-filesystem/ Host 侧文件系统 Context adapter 出口
+  local-host/      Node-only 本机 Host application layer，由 Desktop Main 与 CLI 共享
   interpreter/    Pragma YAML DSL 的 AST、解析、校验、编译、扩展 registry 与 dump
   eslint-config/ 共享 ESLint 配置出口
   tsconfig/      共享 TypeScript 配置
@@ -82,7 +84,7 @@ tsconfig.base.json
 
 ## Package 命名
 
-统一使用 `@pragma/*` scope。
+内部 workspace package 统一使用 `@pragma/*` scope；公共 CLI 发布包使用 D41 定稿的 `@pqpo/pragma`。
 
 当前 package：
 
@@ -101,6 +103,8 @@ tsconfig.base.json
 @pragma/runtime-qodercli
 @pragma/runtime-antigravity
 @pragma/desktop
+@pragma/local-host
+@pqpo/pragma
 @pragma/examples
 @pragma/eslint-config
 @pragma/tsconfig
@@ -116,7 +120,7 @@ helpers
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`built-in-agents`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`built-in-agents`、`local-host`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -137,11 +141,14 @@ lib
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
 - `apps/desktop` 是未来本地 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。
+- `local-host` 是 Node-only 本机 Host application layer，供 Desktop Main 与 CLI 复用；只依赖允许的领域包和 Node/运行时中立第三方库，不依赖 Electron、任意 app、具体 runtime、client 或 server。
+- `apps/cli` 是用户主动调用的本机集成入口，负责 argv、TTY 与 presenter；它不监听云端、不启动 daemon、不替代 Desktop 本地桥接。
 
 ```text
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
+apps/cli    -> local-host -> shared/core/interpreter/evaluation/built-in-agents/memory/mission-board/context-filesystem
 apps/desktop    -> built-in-agents -> interpreter -> core -> shared
 apps/desktop    -> interpreter -> evaluation -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
@@ -152,23 +159,25 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 更具体地说：
 
-| 来源                       | 允许依赖                                                                                                                                             |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`                 | `@pragma/shared`、`@pragma/client`                                                                                                                   |
-| `apps/server`              | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                                                   |
-| `apps/worker`              | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                                         |
-| `apps/desktop`             | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*` |
-| `plugins/*`                | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                          |
-| `examples`                 | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                                    |
-| `packages/shared`          | 无内部 package 依赖；只允许运行时中立依赖                                                                                                            |
-| `packages/client`          | `@pragma/shared`                                                                                                                                     |
-| `packages/server`          | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                                    |
-| `packages/core`            | `@pragma/shared`                                                                                                                                     |
-| `packages/memory`          | `@pragma/shared`、`@pragma/core`；不得依赖 app、server、client、interpreter 或具体 runtime                                                           |
-| `packages/interpreter`     | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                                     |
-| `packages/evaluation`      | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                                            |
-| `packages/built-in-agents` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/memory`；`/contracts` 保持浏览器安全                         |
-| `packages/runtime/*`       | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                                              |
+| 来源                       | 允许依赖                                                                                                                                                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`                 | `@pragma/shared`、`@pragma/client`                                                                                                                                                                               |
+| `apps/server`              | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                                                                                                                               |
+| `apps/worker`              | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                                                                                                                                     |
+| `apps/cli`                 | `@pragma/local-host`、`@pragma/shared/integration`、composition root 所需的具体 `@pragma/runtime-*`                                                                                                              |
+| `apps/desktop`             | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*`                                                             |
+| `packages/local-host`      | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/built-in-agents`、`@pragma/memory`、`@pragma/mission-board`、`@pragma/context-filesystem`；Node 内置与运行时中立第三方库 |
+| `plugins/*`                | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                                                                                                                      |
+| `examples`                 | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                                                                                                                                |
+| `packages/shared`          | 无内部 package 依赖；只允许运行时中立依赖                                                                                                                                                                        |
+| `packages/client`          | `@pragma/shared`                                                                                                                                                                                                 |
+| `packages/server`          | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                                                                                                                                |
+| `packages/core`            | `@pragma/shared`                                                                                                                                                                                                 |
+| `packages/memory`          | `@pragma/shared`、`@pragma/core`；不得依赖 app、server、client、interpreter 或具体 runtime                                                                                                                       |
+| `packages/interpreter`     | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                                                                                                                                 |
+| `packages/evaluation`      | `@pragma/core`；`/ast` 保持浏览器安全且不依赖 Interpreter                                                                                                                                                        |
+| `packages/built-in-agents` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/memory`；`/contracts` 保持浏览器安全                                                                                     |
+| `packages/runtime/*`       | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                                                                                                                          |
 
 明确禁止：
 
@@ -207,6 +216,37 @@ runtime-pi -> runtime-antigravity
 runtime-codex -> runtime-antigravity
 runtime-claude-code -> runtime-antigravity
 runtime-qodercli -> runtime-antigravity
+local-host -> runtime-*
+local-host -> client
+local-host -> server
+local-host -> apps/*
+local-host -> electron
+cli -> electron
+cli -> client
+cli -> server
+shared -> local-host
+shared -> cli
+core -> local-host
+core -> cli
+evaluation -> local-host
+evaluation -> cli
+interpreter -> local-host
+interpreter -> cli
+built-in-agents -> local-host
+built-in-agents -> cli
+memory -> local-host
+memory -> cli
+mission-board -> local-host
+mission-board -> cli
+context-filesystem -> local-host
+context-filesystem -> cli
+runtime-* -> local-host
+runtime-* -> cli
+plugins/* -> local-host
+plugins/* -> cli
+server -> cli
+client -> cli
+examples -> cli
 server -> client
 server -> web
 core -> web

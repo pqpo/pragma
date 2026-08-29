@@ -3,6 +3,13 @@ import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
+import type { ExpertPromptAttachment } from "@pragma/shared";
+import type {
+  LocalHostApplicationPort,
+  LocalHostRunApplication,
+  MissionControlApplication,
+} from "@pragma/local-host";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 import {
   CreateMissionSchema,
@@ -41,7 +48,6 @@ import type { MissionCreator } from "./mission-creator.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 import { publishMissionUpdate } from "./mission-update-publisher.ts";
 import { availableRecentWorkspaces } from "../workspaces/workspace-history-store.ts";
-import { validateWorkspace } from "../workspaces/workspace-scope.ts";
 import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
 import { createMissionImageDraftStore } from "./mission-image-drafts.ts";
@@ -49,14 +55,31 @@ import {
   forwardMissionChatNotification,
   forwardMissionWorkNotification,
 } from "./mission-renderer-update-forwarder.ts";
+import { toLocalHostRunRequest } from "./local-host-mission-adapter.ts";
+
+type DesktopLocalHostApplication = Pick<
+  LocalHostApplicationPort<
+    MissionSummary,
+    Mission,
+    Awaited<ReturnType<MissionExecutorCatalog["list"]>>[number],
+    unknown,
+    unknown
+  >,
+  "getMission" | "listMissions" | "listExecutors" | "resolveWorkspace"
+> & {
+  readonly missionControl: MissionControlApplication;
+  readonly run: LocalHostRunApplication;
+};
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
+  readonly localHost: DesktopLocalHostApplication;
   readonly creator: MissionCreator;
   readonly executors: MissionExecutorCatalog;
   readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
   readonly runner: MissionRunner;
+  readonly pendingPromptAttachments: Map<string, readonly ExpertPromptAttachment[]>;
   readonly getAutomationMissionSources: () => Promise<ReadonlyMap<string, string>>;
   readonly getWindow: () => BrowserWindow | null;
   readonly getDefaultToolPermissionMode: () =>
@@ -78,15 +101,18 @@ export function installMissionHandlers(options: {
   const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
   installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
-    const workspace = await options.getDefaultWorkspace();
+    const workspace = await options.localHost.resolveWorkspace(await options.getDefaultWorkspace());
     const recentWorkspaces = await availableRecentWorkspaces(
       await options.getRecentWorkspaces(),
-      workspace,
-      async (path) => (await validateWorkspace(path)).ok,
+      workspace.identityHash,
+      async (path) => await options.localHost.resolveWorkspace(path),
     );
     return MissionCreationDefaultsSchema.parse({
-      workspace: { path: workspace, basename: basename(workspace) },
-      recentWorkspaces: recentWorkspaces.map((path) => ({ path, basename: basename(path) })),
+      workspace: { path: workspace.canonicalPath, basename: workspace.displayName },
+      recentWorkspaces: recentWorkspaces.map((recent) => ({
+        path: recent.canonicalPath,
+        basename: recent.displayName,
+      })),
       executorRef: options.defaultExecutorRef,
       toolPermissionMode: await options.getDefaultToolPermissionMode(),
     });
@@ -133,7 +159,7 @@ export function installMissionHandlers(options: {
   };
   const getManagedMission = async (id: string) => {
     await ensureLegacyAutomationMissionSources();
-    const mission = await options.missions.get(id);
+    const mission = await options.localHost.getMission(id);
     if (!isUserFacingMissionOrigin(mission.origin)) {
       throw new MissionStoreError("mission_not_found", "Mission was not found.");
     }
@@ -143,9 +169,30 @@ export function installMissionHandlers(options: {
     await getManagedMission(id);
     return id;
   };
+  const waitForLocalHostCommand = async (input: {
+    readonly missionId: string;
+    readonly requestId: string;
+  }): Promise<void> => {
+    const operation = await options.localHost.missionControl.wait(input);
+    if (operation.state === "applied") return;
+    if (operation.error !== undefined) throw operation.error;
+    throw createIntegrationError({
+      code: "COMMAND_REJECTED",
+      category: "conflict",
+      message: `Mission command ${input.requestId} did not apply.`,
+      details: { missionId: input.missionId, requestId: input.requestId },
+    });
+  };
+  const runLocalHostCommand = async (input: Parameters<MissionControlApplication["submit"]>[0]) => {
+    await options.localHost.missionControl.submit(input);
+    await waitForLocalHostCommand({
+      missionId: input.missionId,
+      requestId: input.requestId,
+    });
+  };
   ipcMain.handle("missions:list", async () => {
     await ensureLegacyAutomationMissionSources();
-    return (await options.missions.list()).map((mission) => {
+    return (await options.localHost.listMissions()).map((mission) => {
       if (mission.source.type === "automation") return mission;
       const automationRef = legacyAutomationMissionSources.get(mission.id);
       return automationRef === undefined
@@ -157,7 +204,7 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => await getManagedMission(MissionIdSchema.parse(id))),
   );
   ipcMain.handle("missions:executors:list", async () =>
-    MissionExecutorOptionSchema.array().parse(await options.executors.list()),
+    MissionExecutorOptionSchema.array().parse(await options.localHost.listExecutors()),
   );
   ipcMain.handle("missions:home-executors:get", async () =>
     HomeMissionExecutorCatalogSchema.parse({
@@ -335,11 +382,31 @@ export function installMissionHandlers(options: {
   );
   ipcMain.handle("missions:run", (_event, input: unknown) =>
     runDesktopMutation(async () => {
-      const mission = await options.runner.run(
-        await assertManagedMission(MissionActionSchema.parse(input).id),
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const mission = await options.localHost.getMission(missionId);
+      if (mission.branch !== undefined && mission.execution === undefined) {
+        throw new Error("Continue a branched Mission by sending a new message.");
+      }
+      const executor = (await options.localHost.listExecutors()).find(
+        (candidate) => candidate.ref === mission.executor.ref,
       );
-      await publishMission(mission);
-      return mission;
+      if (executor === undefined) {
+        throw new Error(`Mission executor is unavailable: ${mission.executor.ref}.`);
+      }
+      const workspace = await options.localHost.resolveWorkspace(mission.workspace.path);
+      const request = toLocalHostRunRequest({
+        mission,
+        workspace,
+        executorSource: executor.origin === "project" ? "project" : "built_in",
+      });
+      const handle = await options.localHost.run.startAttached({
+        missionId,
+        request,
+      });
+      await handle.outcome;
+      const refreshed = await getManagedMission(missionId);
+      await publishMission(refreshed);
+      return refreshed;
     }),
   );
   ipcMain.handle("missions:options:update", (_event, input: unknown) =>
@@ -364,17 +431,46 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = SendMissionMessageSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const acceptance = await options.runner.sendMessage(parsed);
+      const kind = parsed.mode === "steer" ? ("steer" as const) : ("send" as const);
+      if (parsed.attachments.length > 0) {
+        options.pendingPromptAttachments.set(parsed.requestId, parsed.attachments);
+      }
+      try {
+        await runLocalHostCommand({
+          missionId: parsed.id,
+          requestId: parsed.requestId,
+          kind,
+          payload: {
+            kind,
+            input: { prompt: parsed.content },
+          },
+        });
+      } finally {
+        options.pendingPromptAttachments.delete(parsed.requestId);
+      }
       await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
-      await publishMission(acceptance.mission);
-      return acceptance;
+      const mission = await getManagedMission(parsed.id);
+      await publishMission(mission);
+      return {
+        mission,
+        requestId: parsed.requestId,
+        requestedMode: parsed.mode,
+        effectiveMode: parsed.mode,
+      };
     }),
   );
   ipcMain.handle("missions:queue:steer", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = MissionQueuePromptActionSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const mission = await options.runner.steerQueuedMessage(parsed);
+      await runLocalHostCommand({
+        missionId: parsed.id,
+        requestId: parsed.requestId,
+        kind: "queue.steer",
+        payload: { kind: "queue.steer", requestId: parsed.requestId },
+        target: { queueItemId: parsed.requestId },
+      });
+      const mission = await getManagedMission(parsed.id);
       await publishMission(mission);
       return mission;
     }),
@@ -383,7 +479,14 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = MissionQueuePromptActionSchema.parse(input);
       await assertManagedMission(parsed.id);
-      const mission = await options.runner.removeQueuedMessage(parsed);
+      await runLocalHostCommand({
+        missionId: parsed.id,
+        requestId: parsed.requestId,
+        kind: "queue.remove",
+        payload: { kind: "queue.remove", requestId: parsed.requestId },
+        target: { queueItemId: parsed.requestId },
+      });
+      const mission = await getManagedMission(parsed.id);
       await publishMission(mission);
       return mission;
     }),
@@ -403,18 +506,30 @@ export function installMissionHandlers(options: {
   );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
     runDesktopMutation(async () => {
-      const mission = await options.runner.interrupt(
-        await assertManagedMission(MissionActionSchema.parse(input).id),
-      );
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const requestId = randomUUID();
+      await runLocalHostCommand({
+        missionId,
+        requestId,
+        kind: "interrupt",
+        payload: { kind: "interrupt" },
+      });
+      const mission = await getManagedMission(missionId);
       await publishMission(mission);
       return mission;
     }),
   );
   ipcMain.handle("missions:queue:resume", (_event, input: unknown) =>
     runDesktopMutation(async () => {
-      const mission = await options.runner.resumeQueue(
-        await assertManagedMission(MissionActionSchema.parse(input).id),
-      );
+      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const requestId = randomUUID();
+      await runLocalHostCommand({
+        missionId,
+        requestId,
+        kind: "queue.resume",
+        payload: { kind: "queue.resume" },
+      });
+      const mission = await getManagedMission(missionId);
       await publishMission(mission);
       return mission;
     }),
@@ -440,7 +555,13 @@ export function installMissionHandlers(options: {
     return await runDesktopMutation(async () => {
       const parsed = RespondMissionHumanInteractionSchema.parse(input);
       await assertManagedMission(parsed.missionId);
-      return await options.runner.respondToHumanInteraction(parsed);
+      await runLocalHostCommand({
+        missionId: parsed.missionId,
+        requestId: parsed.requestId,
+        kind: "respond",
+        payload: { kind: "respond", response: parsed.response },
+        target: { interactionId: parsed.interactionId },
+      });
     });
   });
   ipcMain.handle("missions:complete", (_event, input: unknown) =>

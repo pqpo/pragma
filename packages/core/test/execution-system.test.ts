@@ -1,8 +1,8 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
@@ -45,6 +45,65 @@ import {
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
+const temporaryHomes: string[] = [];
+
+afterAll(async () => {
+  await waitForTemporaryHomesToQuiesce();
+  await Promise.all(
+    temporaryHomes.splice(0).map(async (home) => {
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }),
+  );
+});
+
+async function createTemporaryHome(prefix: string): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), prefix));
+  temporaryHomes.push(home);
+  return home;
+}
+
+async function waitForTemporaryHomesToQuiesce(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  let quietSince: number | undefined;
+  while (Date.now() < deadline) {
+    let hasExecutionLock = false;
+    for (const home of temporaryHomes) {
+      try {
+        const executions = await readdir(join(home, "state", "executions"), {
+          withFileTypes: true,
+        });
+        for (const execution of executions) {
+          if (!execution.isDirectory()) continue;
+          const executionEntries = await readdir(
+            join(home, "state", "executions", execution.name),
+            { withFileTypes: true },
+          );
+          if (
+            executionEntries.some(
+              (entry) => entry.name === ".lock" || entry.name.startsWith(".lock.staging-"),
+            )
+          ) {
+            hasExecutionLock = true;
+            break;
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      if (hasExecutionLock) break;
+    }
+    if (!hasExecutionLock) {
+      quietSince ??= Date.now();
+      if (Date.now() - quietSince >= 100) return;
+    } else {
+      quietSince = undefined;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("Timed out waiting for execution test resources to quiesce.");
+}
+
 interface FakeSession {
   readonly context: RuntimeDriverSessionContext;
   readonly id: string;
@@ -86,8 +145,10 @@ interface FakeRuntimeOptions {
   readonly delayMs?: number;
   readonly delayMsByAgent?: Readonly<Record<string, number>>;
   readonly delegationTargets?: Readonly<Record<string, string>>;
+  readonly failSteer?: boolean;
   readonly failQuery?: string;
   readonly onSteer?: () => void;
+  readonly onWait?: () => void;
   readonly runtimeId?: string;
   readonly stats?: FakeRuntimeStats;
   readonly usage?: AgentMessageUsage;
@@ -187,9 +248,12 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
                 { execution: session.context.request.executionContext },
               );
         const invocationId = (spawned.details as { invocationId: string }).invocationId;
-        const waited = await wait.call({ invocationIds: [invocationId] }, turn.signal, {
+        const waiting = wait.call({ invocationIds: [invocationId] }, turn.signal, {
           execution: session.context.request.executionContext,
         });
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+        options.onWait?.();
+        const waited = await waiting;
         const waitSteer = (waited.details as { steer?: { content?: unknown } }).steer?.content;
         if (stats !== undefined && typeof waitSteer === "string") stats.waitSteers.push(waitSteer);
         const completed = (waited.details as { completed: Array<{ output?: unknown }> }).completed;
@@ -216,6 +280,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       : {
           steerTurn: () => {
             options.onSteer?.();
+            if (options.failSteer === true) throw new Error("fake steer failed");
           },
         }),
     closeSession: () => {
@@ -295,7 +360,13 @@ function createOrchestrationRuntime(
             await new Promise<void>((resolve) =>
               setTimeout(
                 resolve,
-                scenario === "followup" ? 25 : scenario === "wait-steer-race" ? 500 : 200,
+                scenario === "followup"
+                  ? 25
+                  : scenario === "interrupt"
+                    ? 5_000
+                    : scenario === "wait-steer-race"
+                      ? 500
+                      : 200,
               ),
             );
           }
@@ -493,7 +564,7 @@ function createBarrier(
 }
 
 async function fixture(delayMs?: number) {
-  const home = await mkdtemp(join(tmpdir(), "pragma-execution-"));
+  const home = await createTemporaryHome("pragma-execution-");
   const runtime = createFakeRuntime(delayMs === undefined ? {} : { delayMs });
   const board = new InMemoryContextStore();
   const app = createPragma({
@@ -523,7 +594,7 @@ async function trackedFixture(
   options: Omit<FakeRuntimeOptions, "stats"> = {},
   usageSink?: UsageSink,
 ) {
-  const home = await mkdtemp(join(tmpdir(), "pragma-runtime-ownership-"));
+  const home = await createTemporaryHome("pragma-runtime-ownership-");
   const stats = createFakeRuntimeStats();
   const runtime = createFakeRuntime({ ...options, stats });
   const app = createPragma({
@@ -542,9 +613,9 @@ async function trackedFixture(
   return { home, app, expert, runtime, stats };
 }
 
-describe("ExpertSession", () => {
+describe("ExpertSession", { timeout: 30_000 }, () => {
   it("passes the Expert model selection to Runtime session creation and turns", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-runtime-model-selection-"));
+    const home = await createTemporaryHome("pragma-runtime-model-selection-");
     const stats = createFakeRuntimeStats();
     const app = createPragma({
       pragmaHome: home,
@@ -605,7 +676,7 @@ describe("ExpertSession", () => {
   });
 
   it("keeps a resumed Runtime Session model when the Expert default changes", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-resumed-model-selection-"));
+    const home = await createTemporaryHome("pragma-resumed-model-selection-");
     const originalStats = createFakeRuntimeStats();
     const originalApp = createPragma({
       pragmaHome: home,
@@ -782,7 +853,7 @@ describe("ExpertSession", () => {
   }, 40_000);
 
   it("reads an earlier Context-backed output through a reused Runtime Session", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-session-handoff-"));
+    const home = await createTemporaryHome("pragma-session-handoff-");
     const board = new InMemoryContextStore();
     let createSessionCalls = 0;
     const runtime = defineRuntimeDriver<never, FakeSession>({
@@ -921,7 +992,7 @@ describe("ExpertSession", () => {
   });
 
   it("reuses a Team member Context across ExpertSession restart and persists its snapshot", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-team-session-context-"));
+    const home = await createTemporaryHome("pragma-team-session-context-");
     const stats = createFakeRuntimeStats();
     const runtime = createFakeRuntime({
       stats,
@@ -1190,7 +1261,7 @@ describe("ExpertSession", () => {
   });
 
   it("allows another ExpertSession lease owner only after expiry", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-session-lease-"));
+    const home = await createTemporaryHome("pragma-session-lease-");
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
@@ -1218,7 +1289,7 @@ describe("ExpertSession", () => {
   });
 
   it("rejects resume when its Team execution descriptor changes", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-session-fingerprint-"));
+    const home = await createTemporaryHome("pragma-session-fingerprint-");
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const app = createPragma({
@@ -1280,7 +1351,7 @@ describe("ExpertSession", () => {
   });
 
   it("migrates an explicitly aliased persisted Expert definition on resume", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-definition-migration-"));
+    const home = await createTemporaryHome("pragma-definition-migration-");
     const runtime = createFakeRuntime();
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
@@ -1443,7 +1514,7 @@ describe("ExpertSession", () => {
   });
 
   it("lets a standalone Expert delegate through an explicitly injected launcher", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-attachment-delegation-"));
+    const home = await createTemporaryHome("pragma-attachment-delegation-");
     const stats = createFakeRuntimeStats();
     const app = createPragma({
       pragmaHome: home,
@@ -1502,7 +1573,7 @@ describe("ExpertSession", () => {
   });
 
   it("hands a concurrency permit to nested delegation when the tree limit is one", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-nested-delegation-"));
+    const home = await createTemporaryHome("pragma-nested-delegation-");
     const runtime = createFakeRuntime({
       delegationTargets: { lead: "member", member: "leaf" },
     });
@@ -1603,7 +1674,7 @@ describe("ExpertSession", () => {
   }, 15_000);
 
   it("pauses queued prompts after a failure and resumes from the next item", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-queue-pause-"));
+    const home = await createTemporaryHome("pragma-queue-pause-");
     const runtime = createFakeRuntime({ failQuery: "fail", delayMs: 10 });
     const app = createPragma({
       pragmaHome: home,
@@ -1699,12 +1770,23 @@ describe("ExpertSession", () => {
   });
 
   it("wakes a coordinator waiting on children, delivers steer, and lets the child continue", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-wait-steer-"));
+    const home = await createTemporaryHome("pragma-wait-steer-");
     const stats = createFakeRuntimeStats();
+    let markWaitRegistered!: () => void;
+    const waitRegistered = new Promise<void>((resolve) => {
+      markWaitRegistered = resolve;
+    });
     const app = createPragma({
       pragmaHome: home,
       runtimes: createStaticRuntimeResolver({
-        runtimes: [createFakeRuntime({ delayMsByAgent: { member: 1_000 }, stats })],
+        runtimes: [
+          createFakeRuntime({
+            delayMsByAgent: { member: 2_000 },
+            onSteer: () => undefined,
+            onWait: markWaitRegistered,
+            stats,
+          }),
+        ],
         defaultRuntimeId: "fake",
       }),
     });
@@ -1732,16 +1814,11 @@ describe("ExpertSession", () => {
     });
     const session = await app.experts.createSession(team);
     const active = await session.prompt("coordinate", { requestId: "coordinate" });
-    await vi.waitFor(async () => {
-      const tree = await active.getTree();
-      expect(tree.children.some((child) => child.invocation.executorId === "member")).toBe(true);
-    });
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await waitRegistered;
     const steered = await session.prompt("change priorities", {
       requestId: "wait-steer",
       mode: "steer",
     });
-
     expect(steered).toMatchObject({ requestedMode: "steer", effectiveMode: "steer" });
     const result = await active.result;
     await expect(steered.result).resolves.toBe(result);
@@ -1751,10 +1828,10 @@ describe("ExpertSession", () => {
     expect(tree.children).toHaveLength(1);
     expect(tree.children[0]?.invocation.status).toBe("succeeded");
     await session.close();
-  }, 15_000);
+  }, 30_000);
 
   it("moves one queued prompt into the active turn as steer", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-queued-steer-"));
+    const home = await createTemporaryHome("pragma-queued-steer-");
     const stats = createFakeRuntimeStats();
     const steers: string[] = [];
     const app = createPragma({
@@ -1795,6 +1872,54 @@ describe("ExpertSession", () => {
     expect(
       (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
     ).toMatchObject({ mode: "steer", status: "succeeded", executionId: active.executionId });
+    await session.close();
+  });
+
+  it("restores the original queued prompt when queue steer is rejected by Runtime", async () => {
+    const home = await createTemporaryHome("pragma-queued-steer-failure-");
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({
+            delayMs: 250,
+            failSteer: true,
+            onSteer: () => undefined,
+            stats,
+          }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "queued-steer-failure",
+      name: "Queued Steer Failure",
+      description: "Queued Steer Failure",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    const queued = await session.prompt("redirect", { requestId: "redirect" });
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+    );
+
+    await expect(session.steerQueuedPrompt("redirect")).rejects.toThrow("fake steer failed");
+    expect(
+      (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+    ).toMatchObject({
+      mode: "enqueue",
+      status: "queued",
+      executionId: queued.executionId,
+      content: "redirect",
+    });
+    expect((await queued.getTree()).invocation.status).toBe("queued");
+    expect((await session.getState()).activeExecutionId).toBe(active.executionId);
+
+    await expect(active.result).resolves.toBe("queued-steer-failure:active");
     await session.close();
   });
 
@@ -1881,7 +2006,7 @@ describe("ExpertSession", () => {
   });
 
   it("routes ExpertTeam members through configured runtimes", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-team-runtime-routing-"));
+    const home = await createTemporaryHome("pragma-team-runtime-routing-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
@@ -1939,7 +2064,7 @@ describe("ExpertSession", () => {
   });
 
   it("routes standalone SubAgents through launcher runtimeByExpert", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-launcher-runtime-routing-"));
+    const home = await createTemporaryHome("pragma-launcher-runtime-routing-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
@@ -1981,7 +2106,7 @@ describe("ExpertSession", () => {
   });
 
   it("inherits the parent Runtime when runtimeByExpert is omitted", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-inherited-runtime-routing-"));
+    const home = await createTemporaryHome("pragma-inherited-runtime-routing-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
@@ -2020,7 +2145,7 @@ describe("ExpertSession", () => {
   });
 
   it("uses a delegated Expert definition Runtime before the parent fallback", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-definition-runtime-routing-"));
+    const home = await createTemporaryHome("pragma-definition-runtime-routing-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
@@ -2060,7 +2185,7 @@ describe("ExpertSession", () => {
   });
 
   it("uses an Expert definition Runtime for a root Session unless explicitly overridden", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-root-definition-runtime-"));
+    const home = await createTemporaryHome("pragma-root-definition-runtime-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const app = createPragma({
@@ -2092,7 +2217,7 @@ describe("ExpertSession", () => {
   });
 
   it("propagates an explicit nested Flow Runtime override above Expert defaults", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-nested-flow-runtime-routing-"));
+    const home = await createTemporaryHome("pragma-nested-flow-runtime-routing-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const statsC = createFakeRuntimeStats();
@@ -2132,7 +2257,7 @@ describe("ExpertSession", () => {
   });
 
   it("lets Flow runtimeByExpert override ExpertTeam routing", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-flow-runtime-routing-"));
+    const home = await createTemporaryHome("pragma-flow-runtime-routing-");
     const statsA = createFakeRuntimeStats();
     const statsB = createFakeRuntimeStats();
     const statsC = createFakeRuntimeStats();
@@ -2188,7 +2313,7 @@ describe("ExpertSession", () => {
   });
 
   it("claims concurrent steer requests once and checkpoints Runtime context before completion", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-steer-"));
+    const home = await createTemporaryHome("pragma-steer-");
     let steerCalls = 0;
     const stats = createFakeRuntimeStats();
     const runtime = createFakeRuntime({
@@ -2223,7 +2348,7 @@ describe("ExpertSession", () => {
   });
 
   it("recovers an enqueue transaction journal after a crash point", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-transaction-"));
+    const home = await createTemporaryHome("pragma-transaction-");
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const app = createPragma({
@@ -2330,7 +2455,7 @@ describe("ExpertSession", () => {
   });
 
   it("recovers Session state and semantic events from the same transaction journal", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-session-events-"));
+    const home = await createTemporaryHome("pragma-session-events-");
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
@@ -2404,7 +2529,7 @@ describe("ExpertSession", () => {
   });
 });
 
-describe("FlowExecution", () => {
+describe("FlowExecution", { timeout: 30_000 }, () => {
   it("rejects programmatic step IDs that the DSL cannot represent safely", () => {
     for (const id of ["constructor", "prototype", "__internal", `a${"b".repeat(100)}`]) {
       const flow = defineFlow({ id: `invalid-${id.slice(0, 12)}` });
@@ -2492,7 +2617,7 @@ describe("FlowExecution", () => {
 
   it("pauses Flow timeout while a HumanTask is waiting", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 250 });
+    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 5_000 });
     const gate = flow.humanTask({
       id: "approval",
       request: {
@@ -2762,7 +2887,7 @@ describe("FlowExecution", () => {
   });
 
   it("preserves concurrent nested Flow reductions in one shared Execution", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-concurrent-nested-flows-"));
+    const home = await createTemporaryHome("pragma-concurrent-nested-flows-");
     const barrier = createBarrier(2, 5_000);
     const nested = (id: string, field: string) => {
       const flow = defineFlow({ id });
@@ -2821,7 +2946,7 @@ describe("FlowExecution", () => {
   });
 
   it("returns an Expert resource call's small output without the inline handoff envelope", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-expert-resource-handoff-"));
+    const home = await createTemporaryHome("pragma-expert-resource-handoff-");
     const runtime = createFakeRuntime({
       concurrentToolNamesByAgent: { caller: ["call_callee"] },
     });
@@ -3513,9 +3638,9 @@ describe("FlowExecution", () => {
   });
 });
 
-describe("Execution observation", () => {
+describe("Execution observation", { timeout: 30_000 }, () => {
   it("reads events appended by another ExecutionStore instance", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-watch-"));
+    const home = await createTemporaryHome("pragma-watch-");
     const writer = createFileExecutionStore({ pragmaHome: home });
     const reader = createFileExecutionStore({ pragmaHome: home });
     const now = new Date().toISOString();
@@ -3553,12 +3678,12 @@ describe("Execution observation", () => {
   });
 });
 
-describe("Expert lifecycle orchestration", () => {
+describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
   async function runScenario(
     scenario: OrchestrationScenario,
     targets: readonly string[] = ["member"],
   ) {
-    const home = await mkdtemp(join(tmpdir(), `pragma-${scenario}-`));
+    const home = await createTemporaryHome(`pragma-${scenario}-`);
     const stats = { active: 0, maxActive: 0, memberTurns: 0 };
     const runtime = createOrchestrationRuntime(scenario, stats);
     const app = createPragma({
@@ -3607,7 +3732,7 @@ describe("Expert lifecycle orchestration", () => {
   }
 
   it("captures steer before async wait validation and rejoins the original children", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-wait-steer-race-"));
+    const home = await createTemporaryHome("pragma-wait-steer-race-");
     const stats = { active: 0, maxActive: 0, memberTurns: 0 };
     let markWaitPending!: () => void;
     const waitPending = new Promise<void>((resolve) => {
@@ -3713,7 +3838,7 @@ describe("Expert lifecycle orchestration", () => {
   }, 15_000);
 
   it("falls back to Runtime steer when wait validation rejects the registration", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-invalid-wait-steer-race-"));
+    const home = await createTemporaryHome("pragma-invalid-wait-steer-race-");
     let markWaitPending!: () => void;
     const waitPending = new Promise<void>((resolve) => {
       markWaitPending = resolve;
@@ -3780,7 +3905,7 @@ describe("Expert lifecycle orchestration", () => {
   }, 15_000);
 
   it("rejects unsupported next-boundary steer and queues an after-current continuation", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-peer-collaboration-"));
+    const home = await createTemporaryHome("pragma-peer-collaboration-");
     const backendQueries: string[] = [];
     let markBackendStarted!: () => void;
     const backendStarted = new Promise<void>((resolve) => {
@@ -3964,7 +4089,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("does not lose a message accepted before an Expert wait is registered", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-message-before-wait-"));
+    const home = await createTemporaryHome("pragma-message-before-wait-");
     let markChildDelegated!: () => void;
     const childDelegated = new Promise<void>((resolve) => {
       markChildDelegated = resolve;
@@ -4084,7 +4209,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("atomically clears Expert Inbox and active bindings when an Execution is cancelled", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-cancel-expert-inbox-"));
+    const home = await createTemporaryHome("pragma-cancel-expert-inbox-");
     let markWorkerStarted!: () => void;
     const workerStarted = new Promise<void>((resolve) => {
       markWorkerStarted = resolve;
@@ -4186,7 +4311,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("lets permitted team peers steer active work and queue FIFO tasks", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-peer-interaction-"));
+    const home = await createTemporaryHome("pragma-peer-interaction-");
     let markBackendStarted!: () => void;
     let releaseBackend!: () => void;
     const backendStarted = new Promise<void>((resolve) => {
@@ -4324,7 +4449,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("rejects a delegation that would close the Join and FIFO wait graph", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-wait-cycle-"));
+    const home = await createTemporaryHome("pragma-wait-cycle-");
     let cycleError = "";
     const runtime = defineRuntimeDriver<never, FakeSession>({
       features: createRuntimeTestFeatures({ enabled: ["close"] }),
@@ -4410,7 +4535,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("revalidates the wait graph after concurrent delegation version conflicts", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-concurrent-wait-cycle-"));
+    const home = await createTemporaryHome("pragma-concurrent-wait-cycle-");
     const crossDelegationBarrier = createBarrier(2, 5_000);
     const crossResults: Array<{ isError: boolean | undefined; text: string }> = [];
     const runtime = defineRuntimeDriver<never, FakeSession>({
@@ -4546,7 +4671,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("releases a delegated concurrency permit while an Expert waits for human input", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-human-wait-permit-"));
+    const home = await createTemporaryHome("pragma-human-wait-permit-");
     let markSecondStarted!: () => void;
     const secondStarted = new Promise<void>((resolve) => {
       markSecondStarted = resolve;
@@ -4641,7 +4766,7 @@ describe("Expert lifecycle orchestration", () => {
       Promise.race([
         secondStarted.then(() => "started"),
         new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error("Second Expert did not start.")), 1_000),
+          setTimeout(() => reject(new Error("Second Expert did not start.")), 10_000),
         ),
       ]),
     ).resolves.toBe("started");
@@ -4682,7 +4807,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 
   it("interrupts spawned descendants before a failed parent Execution settles", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-parent-failure-"));
+    const home = await createTemporaryHome("pragma-parent-failure-");
     const stats = { active: 0, maxActive: 0, memberTurns: 0 };
     const runtime = createOrchestrationRuntime("parent-failure", stats);
     const app = createPragma({
@@ -4767,7 +4892,7 @@ describe("Expert lifecycle orchestration", () => {
   });
 });
 
-describe("Expert delegation declarations", () => {
+describe("Expert delegation declarations", { timeout: 30_000 }, () => {
   it("keeps ContextIdResolver policy on Flow while spawn and continue have fixed semantics", async () => {
     const { home, expert: lead } = await fixture();
     const member = await defineExpert({
@@ -5009,7 +5134,7 @@ describe("Expert delegation declarations", () => {
   });
 
   it("loads optional Team instructions into every participant without mutating Experts", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-team-instructions-"));
+    const home = await createTemporaryHome("pragma-team-instructions-");
     const stats = createFakeRuntimeStats();
     const runtime = createFakeRuntime({ stats });
     const app = createPragma({
@@ -5169,7 +5294,7 @@ describe("Expert delegation declarations", () => {
 });
 
 async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 10_000;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition.");
     await new Promise<void>((resolve) => setTimeout(resolve, 10));

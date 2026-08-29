@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { withFileLock } from "@pragma/core";
+import type { WorkspaceSelection } from "@pragma/shared/integration";
 import { z } from "zod";
 
 const RECENT_WORKSPACE_LIMIT = 10;
@@ -21,12 +22,20 @@ export interface WorkspaceHistoryStore {
 
 export async function availableRecentWorkspaces(
   paths: readonly string[],
-  excludedPath: string,
-  validate: (path: string) => boolean | Promise<boolean>,
-): Promise<readonly string[]> {
-  const candidates = paths.filter((path) => path !== excludedPath).slice(0, RECENT_WORKSPACE_LIMIT);
-  const availability = await Promise.all(candidates.map(async (path) => await validate(path)));
-  return candidates.filter((_path, index) => availability[index]);
+  excludedIdentityHash: string,
+  resolve: (path: string) => Promise<WorkspaceSelection>,
+): Promise<readonly WorkspaceSelection[]> {
+  const resolved = await Promise.allSettled(
+    paths.slice(0, RECENT_WORKSPACE_LIMIT).map(async (path) => await resolve(path)),
+  );
+  const identities = new Set([excludedIdentityHash]);
+  const workspaces: WorkspaceSelection[] = [];
+  for (const result of resolved) {
+    if (result.status !== "fulfilled" || identities.has(result.value.identityHash)) continue;
+    identities.add(result.value.identityHash);
+    workspaces.push(result.value);
+  }
+  return workspaces;
 }
 
 export function createWorkspaceHistoryStore(options: {

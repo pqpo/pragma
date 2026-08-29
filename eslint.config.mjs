@@ -13,9 +13,21 @@ const commonRestrictedPatterns = [
 ];
 
 const desktopBrowserSafePragmaRestriction = {
-  regex: "^@pragma/(?!shared$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$).+",
+  regex:
+    "^(?:@pqpo/pragma(?:/.*)?|@pragma/(?!shared(?:/integration)?$|interpreter/ast$|evaluation/ast$|built-in-agents/contracts$).+)",
   message:
     "Desktop preload, renderer, and shared code may only import browser-safe @pragma/shared, @pragma/interpreter/ast, @pragma/evaluation/ast, or @pragma/built-in-agents/contracts.",
+};
+
+const localHostReverseImportRestriction = {
+  group: ["@pragma/local-host", "@pragma/local-host/*", "@pqpo/pragma", "@pqpo/pragma/*"],
+  message:
+    "Lower layers and adapters must not depend on the Local Host application layer or CLI surface.",
+};
+
+const desktopMainCliImportRestriction = {
+  group: ["@pqpo/pragma", "@pqpo/pragma/*"],
+  message: "Desktop Main must compose Local Host directly instead of importing the CLI surface.",
 };
 
 const config = tseslint.config(
@@ -82,9 +94,72 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
+            desktopMainCliImportRestriction,
             {
               group: ["@pragma/server-*", "next", "next/*"],
               message: "Desktop local bridge must not depend on server internals or Web UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/cli/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2023,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "electron",
+            "@pragma/client",
+            "@pragma/server",
+            "@pragma/desktop",
+            "react",
+            "next",
+          ],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: [
+                "../desktop",
+                "../desktop/**",
+                "../../apps/desktop/**",
+                "@pragma/server-*",
+                "next/*",
+              ],
+              message: "CLI must not depend on Desktop internals, Electron, Server, or Web UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/local-host/**/*.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2023,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["electron", "@pragma/client", "@pragma/server", "@pqpo/pragma", "react", "next"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@pragma/runtime-*", "@pragma/server-*", "apps/*", "next/*"],
+              message:
+                "Local Host is a Node application layer and must not depend on apps, Electron, client/server, or concrete Runtime adapters.",
             },
           ],
         },
@@ -225,6 +300,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "@prisma/client", "react", "next"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: ["@pragma/runtime-*", "@pragma/server-*", "apps/*", "next/*"],
               message:
@@ -257,6 +333,7 @@ const config = tseslint.config(
           ],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: ["@pragma/runtime-*", "@pragma/server-*", "node:*", "next/*"],
               message: "Built-in Agent contracts must remain browser-safe.",
@@ -294,6 +371,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "react", "fastify", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/core",
@@ -327,6 +405,7 @@ const config = tseslint.config(
           paths: ["@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/core",
@@ -352,6 +431,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "react"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: ["@pragma/ui-*", "@pragma/playbook-canvas", "next", "next/*"],
               message: "Server packages must not depend on client UI.",
@@ -376,6 +456,7 @@ const config = tseslint.config(
           ],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/runtime-*",
@@ -403,6 +484,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: ["@pragma/runtime-*", "@pragma/server-*", "@pragma/ui-*", "next", "next/*"],
               message:
@@ -422,6 +504,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: ["@pragma/runtime-*", "@pragma/server-*", "@pragma/ui-*", "next", "next/*"],
               message:
@@ -447,6 +530,7 @@ const config = tseslint.config(
           ],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/server-*",
@@ -478,6 +562,7 @@ const config = tseslint.config(
           ],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/server-*",
@@ -509,6 +594,7 @@ const config = tseslint.config(
           ],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/server-*",
@@ -534,6 +620,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/runtime-*",
@@ -560,6 +647,7 @@ const config = tseslint.config(
           paths: ["@pragma/client", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
+            localHostReverseImportRestriction,
             {
               group: [
                 "@pragma/runtime-*",
@@ -573,6 +661,25 @@ const config = tseslint.config(
                 "Plugins must depend on core plugin APIs, not app, server, client, or runtime layers.",
             },
           ],
+        },
+      ],
+    },
+  },
+  {
+    files: [
+      "packages/memory/**/*.{ts,tsx}",
+      "packages/mission-board/**/*.{ts,tsx}",
+      "packages/context-filesystem/**/*.{ts,tsx}",
+      "packages/runtime/qodercli/**/*.{ts,tsx}",
+      "apps/server/**/*.{ts,tsx}",
+      "apps/worker/**/*.{ts,tsx}",
+      "examples/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [...commonRestrictedPatterns, localHostReverseImportRestriction],
         },
       ],
     },

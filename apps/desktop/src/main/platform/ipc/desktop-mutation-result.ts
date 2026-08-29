@@ -5,8 +5,8 @@ import {
   DesktopMutationResultSchema,
   type DesktopMutationErrorData,
 } from "../../../shared/contracts/index.ts";
+import { IntegrationErrorSchema } from "@pragma/shared/integration";
 import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
-import { MissionOperationError } from "../../features/missions/mission-operation-error.ts";
 import { MissionStoreError } from "../../features/missions/mission-store.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { CapabilityStoreError } from "../../features/capabilities/capability-store.ts";
@@ -29,6 +29,14 @@ export async function runDesktopMutation<T>(
 }
 
 function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData {
+  const integrationError = IntegrationErrorSchema.safeParse(error);
+  if (integrationError.success) {
+    return DesktopMutationErrorSchema.parse({
+      code: integrationError.data.code,
+      message: integrationError.data.message,
+      diagnostics: [],
+    });
+  }
   if (error instanceof BundleSetupRequiredError) {
     return DesktopMutationErrorSchema.parse({
       code: error.code,
@@ -78,13 +86,6 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
     });
   }
   if (error instanceof ExpertDefinitionStoreError) {
-    return DesktopMutationErrorSchema.parse({
-      code: error.code,
-      message: error.message,
-      diagnostics: [],
-    });
-  }
-  if (error instanceof MissionOperationError) {
     return DesktopMutationErrorSchema.parse({
       code: error.code,
       message: error.message,

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createModelProviderStore, ModelProviderStoreError } from "./model-provider-store.ts";
+import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 
 const directories: string[] = [];
 
@@ -15,15 +16,12 @@ afterEach(async () => {
 async function createStore() {
   const directory = await mkdtemp(join(tmpdir(), "pragma-model-providers-"));
   directories.push(directory);
+  const { secretStore } = createTestSecretStore(join(directory, "secret-store"));
   return {
     configPath: join(directory, "model-providers.json"),
     store: createModelProviderStore({
       configPath: join(directory, "model-providers.json"),
-      encryption: {
-        isAvailable: () => true,
-        encrypt: (plainText) => Buffer.from(`encrypted:${plainText}`),
-        decrypt: (encrypted) => encrypted.toString().replace("encrypted:", ""),
-      },
+      secretStore,
     }),
   };
 }
@@ -80,7 +78,7 @@ describe("model provider store", () => {
 
     const rawConfig = await readFile(configPath, "utf8");
     expect(rawConfig).not.toContain("sk-top-secret");
-    expect(rawConfig).toContain(Buffer.from("encrypted:sk-top-secret").toString("base64"));
+    expect(rawConfig).toContain("apiKeySecretRef");
   });
 
   it("retains the encrypted API key when updating provider metadata", async () => {
@@ -144,7 +142,7 @@ describe("model provider store", () => {
     expect(runtimeModel).not.toHaveProperty("inputOverride");
   });
 
-  it("rejects duplicate model IDs and plaintext fallback when encryption is unavailable", async () => {
+  it("rejects duplicate model IDs and unavailable keychain writes", async () => {
     const { configPath, store } = await createStore();
 
     await expect(
@@ -159,14 +157,9 @@ describe("model provider store", () => {
       }),
     ).rejects.toMatchObject({ code: "config_invalid" } satisfies Partial<ModelProviderStoreError>);
 
-    const unavailableStore = createModelProviderStore({
-      configPath,
-      encryption: {
-        isAvailable: () => false,
-        encrypt: () => Buffer.alloc(0),
-        decrypt: () => "",
-      },
-    });
+    const unavailable = createTestSecretStore(join(configPath, "unavailable"));
+    unavailable.keychain.health = { status: "unavailable", backend: "macos-keychain" };
+    const unavailableStore = createModelProviderStore({ configPath, secretStore: unavailable.secretStore });
     await expect(
       unavailableStore.create({
         presetId: "openai",
@@ -177,9 +170,7 @@ describe("model provider store", () => {
         requiresApiKey: true,
         models: [model("gpt-4.1")],
       }),
-    ).rejects.toMatchObject({
-      code: "encryption_unavailable",
-    } satisfies Partial<ModelProviderStoreError>);
+    ).rejects.toMatchObject({ code: "KEYCHAIN_UNAVAILABLE" });
   });
 
   it("archives unsupported configuration instead of attempting an implicit migration", async () => {
@@ -203,7 +194,7 @@ describe("model provider store", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 4,
+        schemaVersion: 5,
         providers: [
           {
             id: "00000000-0000-4000-8000-000000000001",
@@ -212,7 +203,6 @@ describe("model provider store", () => {
             protocol: "openai-responses",
             baseUrl: "https://api.openai.com/v1",
             models: [{ id: "missing-required-model-fields" }],
-            encryptedApiKey: "",
             requiresApiKey: true,
             verification: { status: "unverified" },
             revision: 1,

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 interface LocalLockWaiter {
   cancelled: boolean;
@@ -28,7 +28,19 @@ export interface FileLockOptions {
   readonly timeoutMs?: number | undefined;
   readonly staleMs?: number | undefined;
   readonly operation?: string | undefined;
+  /** Test-only hook for deterministic lock lifecycle crash coverage. */
+  readonly onPhase?: ((phase: FileLockPhase) => Promise<void> | void) | undefined;
 }
+
+export type FileLockPhase =
+  | "staging-created"
+  | "staged"
+  | "published"
+  | "release-before-retire"
+  | "release-after-retire"
+  | "reclaim-before-retire"
+  | "reclaim-after-retire"
+  | "retired-cleanup";
 
 export class FileLockTimeoutError extends Error {
   readonly code = "pragma_file_lock_timeout";
@@ -68,6 +80,8 @@ type LockGeneration =
 
 const OWNER_FILE_NAME = "owner.json";
 const RECLAIM_DIRECTORY_NAME = ".reclaim";
+const STAGING_DIRECTORY_MARKER = ".staging-";
+const RETIRED_DIRECTORY_MARKERS = [".retired-", ".reclaim-"] as const;
 const CURRENT_PROCESS_STARTED_AT = Date.now() - Math.floor(process.uptime() * 1_000);
 const localLocks = new Map<string, LocalLockState>();
 
@@ -101,52 +115,50 @@ async function withCrossProcessFileLock<TValue>(
     `creating the Pragma lock parent: ${lockDir}`,
   );
 
-  let latestContention: LockContention = {
-    kind: "possibly-orphaned",
-    reason: "missing-owner-metadata",
-  };
+  await reclaimRetiredDirectories(lockDir);
+  await reclaimStagingDirectories(lockDir, staleMs);
   while (true) {
     try {
-      await mkdir(lockDir);
-      break;
+      await stat(lockDir);
     } catch (error) {
-      if (!isRetryableLockContention(error)) throw error;
-      if (isAlreadyExists(error)) {
-        const assessment = await assessLock(lockDir, staleMs);
-        latestContention = assessment.contention;
-        if (
-          assessment.reclaimGeneration !== undefined &&
-          (await reclaimLock(lockDir, assessment.reclaimGeneration))
-        ) {
-          continue;
-        }
+      if (!isNotFound(error)) throw error;
+      try {
+        await publishLock(lockDir, options);
+        break;
+      } catch (publishError) {
+        if (!isRetryableLockContention(publishError)) throw publishError;
+        await reclaimStagingDirectories(lockDir, staleMs);
       }
-      if (Date.now() - startedAt >= timeoutMs) {
-        throw lockTimeout(lockDir, latestContention, error);
-      }
-      await delay(10);
     }
+    const assessment = await assessLock(lockDir, staleMs);
+    if (
+      assessment.reclaimGeneration !== undefined &&
+      (await reclaimLock(lockDir, assessment.reclaimGeneration, options))
+    ) {
+      continue;
+    }
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw lockTimeout(lockDir, assessment.contention, new Error("lock contention"));
+    }
+    await delay(10);
   }
 
-  const owner: FileLockOwner = {
-    version: 1,
-    ownerToken: randomUUID(),
-    processId: process.pid,
-    processStartedAt: CURRENT_PROCESS_STARTED_AT,
-    acquiredAt: Date.now(),
-    ...(options.operation === undefined ? {} : { operation: options.operation }),
-  };
   const ownerPath = join(lockDir, OWNER_FILE_NAME);
   let ownerFile: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    ownerFile = await open(ownerPath, "wx", 0o600);
-    await ownerFile.writeFile(`${JSON.stringify(owner)}\n`, "utf8");
+    ownerFile = await open(ownerPath, "r+");
   } catch (error) {
-    await ownerFile?.close().catch(() => undefined);
-    await rm(lockDir, { recursive: true, force: true });
+    await retireUnusableLock(lockDir, timeoutMs);
     throw error;
   }
   if (ownerFile === undefined) throw new Error(`Failed to initialize Pragma file lock: ${lockDir}`);
+
+  const owner = await readLockOwner(ownerPath);
+  if (owner === undefined) {
+    await ownerFile.close().catch(() => undefined);
+    await retireUnusableLock(lockDir, timeoutMs);
+    throw new Error(`Failed to validate Pragma file lock owner: ${lockDir}`);
+  }
 
   const refreshIntervalMs = Math.max(10, Math.min(1_000, Math.floor(staleMs / 3)));
   const leaseTimer = setInterval(() => {
@@ -163,15 +175,192 @@ async function withCrossProcessFileLock<TValue>(
       await ownerFile.close();
     } finally {
       if ((await readLockOwner(ownerPath))?.ownerToken === owner.ownerToken) {
-        await retryTransientFsOperation(
-          () => rm(lockDir, { recursive: true, force: true }),
-          Date.now(),
+        const retiredDir = await retireLock(
+          lockDir,
+          { ownerToken: owner.ownerToken },
+          "release",
+          options.onPhase,
           timeoutMs,
-          `releasing the Pragma file lock: ${lockDir}`,
         );
+        if (retiredDir !== undefined) {
+          await cleanupRetiredDirectory(retiredDir, options.onPhase);
+        }
       }
     }
   }
+}
+
+async function publishLock(lockDir: string, options: FileLockOptions): Promise<void> {
+  const owner: FileLockOwner = {
+    version: 1,
+    ownerToken: randomUUID(),
+    processId: process.pid,
+    processStartedAt: CURRENT_PROCESS_STARTED_AT,
+    acquiredAt: Date.now(),
+    ...(options.operation === undefined ? {} : { operation: options.operation }),
+  };
+  const stagingDir = `${lockDir}${STAGING_DIRECTORY_MARKER}${owner.ownerToken}`;
+  const stagingOwnerPath = join(stagingDir, OWNER_FILE_NAME);
+  let ownerFile: Awaited<ReturnType<typeof open>> | undefined;
+  let published = false;
+  try {
+    await mkdir(stagingDir, { mode: 0o700 });
+    await options.onPhase?.("staging-created");
+    ownerFile = await open(stagingOwnerPath, "wx", 0o600);
+    await ownerFile.writeFile(`${JSON.stringify(owner)}\n`, "utf8");
+    await ownerFile.sync();
+    await ownerFile.close();
+    ownerFile = undefined;
+    await options.onPhase?.("staged");
+
+    try {
+      await stat(lockDir);
+      throw lockTargetAppeared(lockDir);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+    await rename(stagingDir, lockDir);
+    published = true;
+    await options.onPhase?.("published");
+  } catch (error) {
+    await ownerFile?.close().catch(() => undefined);
+    if (published) {
+      await retireLock(
+        lockDir,
+        { ownerToken: owner.ownerToken },
+        "reclaim",
+        undefined,
+        options.timeoutMs ?? 10_000,
+      )
+        .then(async (retiredDir) => {
+          if (retiredDir !== undefined) await cleanupRetiredDirectory(retiredDir);
+        })
+        .catch(() => undefined);
+    } else {
+      await rm(stagingDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      }).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
+async function reclaimStagingDirectories(lockDir: string, staleMs: number): Promise<void> {
+  const parent = dirname(lockDir);
+  const prefix = `${basename(lockDir)}${STAGING_DIRECTORY_MARKER}`;
+  let entries: string[];
+  try {
+    entries = await readdir(parent);
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  await Promise.all(
+    entries
+      .filter((entry) => entry.startsWith(prefix))
+      .map(async (entry) => {
+        const stagingDir = join(parent, entry);
+        const owner = await readLockOwner(join(stagingDir, OWNER_FILE_NAME));
+        if (owner !== undefined && processStatus(owner) !== "dead") return;
+        if (owner === undefined && (await pathStaleness(stagingDir, staleMs)) !== "stale") return;
+        await rm(stagingDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 50,
+        });
+      }),
+  );
+}
+
+async function reclaimRetiredDirectories(lockDir: string): Promise<void> {
+  const parent = dirname(lockDir);
+  const prefix = basename(lockDir);
+  let entries: string[];
+  try {
+    entries = await readdir(parent);
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  await Promise.all(
+    entries
+      .filter((entry) =>
+        RETIRED_DIRECTORY_MARKERS.some((marker) => entry.startsWith(`${prefix}${marker}`)),
+      )
+      .map(async (entry) => {
+        await cleanupRetiredDirectory(join(parent, entry));
+      }),
+  );
+}
+
+async function cleanupRetiredDirectory(
+  retiredDir: string,
+  onPhase?: FileLockOptions["onPhase"],
+): Promise<void> {
+  await onPhase?.("retired-cleanup");
+  try {
+    await rm(retiredDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    });
+  } catch (error) {
+    // A retired directory is already outside the lock name. Leave it for the
+    // next bounded, directed cleanup pass if the platform temporarily keeps
+    // a handle open; never recreate the final lock name from this path.
+    if (isNotFound(error) || isRetryableLockContention(error)) return;
+    throw error;
+  }
+}
+
+async function retireUnusableLock(lockDir: string, timeoutMs: number): Promise<void> {
+  const generation = await readDirectoryGeneration(lockDir);
+  if (generation === undefined) return;
+  const retiredDir = await retireLock(lockDir, generation, "reclaim", undefined, timeoutMs);
+  if (retiredDir !== undefined) await cleanupRetiredDirectory(retiredDir);
+}
+
+async function retireLock(
+  lockDir: string,
+  expected: LockGeneration,
+  kind: "release" | "reclaim",
+  options: FileLockOptions["onPhase"] | undefined,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  if (!(await lockGenerationMatches(lockDir, expected))) return undefined;
+
+  if (kind === "release") await options?.("release-before-retire");
+  const retiredDir = `${lockDir}${kind === "release" ? ".retired-" : ".reclaim-"}${retirementIdentity(expected)}-${randomUUID()}`;
+  try {
+    await retryTransientFsOperation(
+      () => rename(lockDir, retiredDir),
+      Date.now(),
+      timeoutMs,
+      `retiring the Pragma file lock: ${lockDir}`,
+    );
+  } catch (error) {
+    if (isNotFound(error)) return undefined;
+    throw error;
+  }
+  if (kind === "release") await options?.("release-after-retire");
+  return retiredDir;
+}
+
+function retirementIdentity(expected: LockGeneration): string {
+  return expected.ownerToken ?? `${expected.device}-${expected.inode}`;
+}
+
+function lockTargetAppeared(lockDir: string): Error & { readonly code: "EEXIST" } {
+  const error = new Error(`Pragma file lock appeared while publishing: ${lockDir}`) as Error & {
+    readonly code: "EEXIST";
+  };
+  Object.defineProperty(error, "code", { value: "EEXIST", enumerable: true });
+  return error;
 }
 
 async function acquireLocalLock(
@@ -275,29 +464,105 @@ async function assessLock(
   };
 }
 
-async function reclaimLock(lockDir: string, expected: LockGeneration): Promise<boolean> {
-  const reclaimDir = join(lockDir, RECLAIM_DIRECTORY_NAME);
+async function reclaimLock(
+  lockDir: string,
+  expected: LockGeneration,
+  options: FileLockOptions,
+): Promise<boolean> {
+  await options.onPhase?.("reclaim-before-retire");
+  if (!(await claimReclaimMarker(lockDir, staleMsFor(options)))) return false;
+
+  if (!(await lockGenerationMatches(lockDir, expected))) {
+    await removeReclaimMarker(lockDir);
+    return false;
+  }
+
+  const retiredDir = `${lockDir}.reclaim-${retirementIdentity(expected)}-${randomUUID()}`;
   try {
-    await mkdir(reclaimDir);
+    await retryTransientFsOperation(
+      () => rename(lockDir, retiredDir),
+      Date.now(),
+      options.timeoutMs ?? 10_000,
+      `reclaiming the Pragma file lock: ${lockDir}`,
+    );
   } catch (error) {
-    if (isAlreadyExists(error) || isNotFound(error) || isRetryableLockContention(error)) {
+    if (isNotFound(error)) {
+      await removeReclaimMarker(lockDir);
       return false;
     }
     throw error;
   }
 
-  if (!(await lockGenerationMatches(lockDir, expected))) {
-    await rm(reclaimDir, { recursive: true, force: true });
-    return false;
-  }
+  await options.onPhase?.("reclaim-after-retire");
+  await cleanupRetiredDirectory(retiredDir, options.onPhase);
+  return true;
+}
+
+function staleMsFor(options: FileLockOptions): number {
+  return options.staleMs ?? 30_000;
+}
+
+async function claimReclaimMarker(lockDir: string, staleMs: number): Promise<boolean> {
+  const reclaimDir = join(lockDir, RECLAIM_DIRECTORY_NAME);
   try {
-    await rm(lockDir, { recursive: true, force: true });
-    return true;
+    await mkdir(reclaimDir, { mode: 0o700 });
   } catch (error) {
-    await rm(reclaimDir, { recursive: true, force: true }).catch(() => undefined);
-    if (isNotFound(error) || isRetryableLockContention(error)) return false;
+    if (isNotFound(error) || isRetryableLockContention(error)) {
+      if (!isAlreadyExists(error)) return false;
+      const marker = await readLockOwner(join(reclaimDir, OWNER_FILE_NAME));
+      if (marker !== undefined && processStatus(marker) !== "dead") return false;
+      if (marker === undefined && (await pathStaleness(reclaimDir, staleMs)) !== "stale") {
+        return false;
+      }
+      await rm(reclaimDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+      return false;
+    }
     throw error;
   }
+
+  const marker: FileLockOwner = {
+    version: 1,
+    ownerToken: randomUUID(),
+    processId: process.pid,
+    processStartedAt: CURRENT_PROCESS_STARTED_AT,
+    acquiredAt: Date.now(),
+    operation: "file-lock.reclaim",
+  };
+  const markerPath = join(reclaimDir, OWNER_FILE_NAME);
+  let markerFile: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    markerFile = await open(markerPath, "wx", 0o600);
+    await markerFile.writeFile(`${JSON.stringify(marker)}\n`, "utf8");
+    await markerFile.sync();
+    await markerFile.close();
+    return true;
+  } catch (error) {
+    await markerFile?.close().catch(() => undefined);
+    await rm(reclaimDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function removeReclaimMarker(lockDir: string): Promise<void> {
+  await rm(join(lockDir, RECLAIM_DIRECTORY_NAME), {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  }).catch((error: unknown) => {
+    if (isNotFound(error) || isRetryableLockContention(error)) return;
+    throw error;
+  });
 }
 
 async function lockGenerationMatches(lockDir: string, expected: LockGeneration): Promise<boolean> {

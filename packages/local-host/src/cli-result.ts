@@ -1,0 +1,30 @@
+/** Browser-safe CLI wire re-export. It deliberately avoids the native keychain barrel. */
+export {
+  BoardListResultSchema,
+  BoardReadResultSchema,
+  BoardSearchResultSchema,
+  CliEventSchema,
+  CliEventStreamSchema,
+  CliResultSchema,
+  CliEventV2Schema,
+  CliEventV2StreamSchema,
+  CliResultV2Schema,
+  CliStreamEndDataV2Schema,
+  createIntegrationError,
+  ExecutorDescriptorSchema,
+  IntegrationErrorCodeSchema,
+  IntegrationErrorRetryPolicies,
+  IntegrationErrorSchema,
+  integrationErrorExitCode,
+} from "@pragma/shared/integration";
+export type {
+  CliEventV2,
+  CliResultV2,
+  CliRunStatus,
+  IntegrationError,
+  IntegrationErrorCode,
+  HumanInteractionRequestEnvelope,
+  HumanInteractionResponseEnvelope,
+  JsonValue,
+  RunOutcome,
+} from "@pragma/shared/integration";

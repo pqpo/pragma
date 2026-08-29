@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createCapabilityCredentialStore } from "./capability-credential-store.ts";
+import { createTestSecretStore } from "../credentials/test-secret-store.ts";
 
 const directories: string[] = [];
 
@@ -17,13 +18,10 @@ describe("Capability Credential Store", () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-capability-secrets-"));
     directories.push(directory);
     const configPath = join(directory, "credentials.json");
+    const { secretStore } = createTestSecretStore(join(directory, "secret-store"));
     const store = createCapabilityCredentialStore({
       configPath,
-      encryption: {
-        isAvailable: () => true,
-        encrypt: (value) => Buffer.from(`encrypted:${value}`, "utf8"),
-        decrypt: (value) => value.toString("utf8").replace(/^encrypted:/, ""),
-      },
+      secretStore,
     });
 
     await store.setMany("capability-1", { token: "first-secret" });
