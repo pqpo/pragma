@@ -10,6 +10,7 @@ import {
   createStaticRuntimeResolver,
   createNoopLoggerProvider,
   defineExpert,
+  ExecutionWorkHistoryReader,
   fingerprintExpertExecutionDefinition,
   InMemoryContextStore,
   PragmaPaths,
@@ -174,6 +175,38 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         streaming: false,
       }),
     ]);
+  });
+
+  it("stops emitting visible patches after a streaming message reaches its content cap", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const output = (delta: string, sequence: number): ExecutionOutputItem => ({
+      sourceEventId: `event-${sequence}`,
+      executionId: chat.executionId,
+      invocationId: "invocation-a",
+      executorId: "expert-a",
+      contextId: "context:invocation-a",
+      runId: "run:invocation-a",
+      source: { kind: "runtime", runId: "run:invocation-a", path: [] },
+      channel: "message",
+      delta,
+      occurredAt: "2026-08-29T00:00:00.000Z",
+    });
+
+    consumeLiveChatOutput(chat, output("a".repeat(200_000), 1));
+    expect(consumeLiveChatOutput(chat, output("x", 2))).toEqual([
+      expect.objectContaining({ type: "entry.upsert" }),
+    ]);
+    expect(consumeLiveChatOutput(chat, output("y", 3))).toEqual([]);
+    expect(chat.entries[0]).toMatchObject({
+      kind: "assistant",
+      content: `${"a".repeat(199_999)}…`,
+    });
   });
 
   it("projects context compaction only from the root coordinator Runtime", () => {
@@ -2225,6 +2258,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
 
     expect(new Set(reviewerAgentIds).size).toBe(2);
+    const workProjection = vi.spyOn(ExecutionWorkHistoryReader.prototype, "readProjection");
     const work = await runner.getWork(mission.id);
     const reviewerRecords = work.records.filter(
       (record) => record.kind === "agent" && record.executorId === reviewer.metadata.id,
@@ -2256,6 +2290,12 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       ["user", "Review the revised draft"],
       ["assistant", "reviewer:Review the revised draft"],
     ]);
+    await runner.getWorkConversation({
+      id: mission.id,
+      recordId: reviewerRecords[0]!.recordId,
+      limit: 1,
+    });
+    expect(workProjection).toHaveBeenCalledTimes(1);
   });
 
   it("keeps Work available with ID fallbacks when executor names cannot be read", async () => {

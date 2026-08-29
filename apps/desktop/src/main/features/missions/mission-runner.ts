@@ -757,6 +757,30 @@ export function createMissionRunner(options: {
   const workListeners = new Set<(notification: MissionWorkNotification) => void>();
   const workRevisions = new Map<string, number>();
   const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
+  const workProjectionCache = new Map<
+    string,
+    {
+      readonly revision: number;
+      readonly executionSignature: string;
+      readonly executionCount: number;
+      readonly snapshot: MissionWorkSnapshot;
+      readonly entriesByRecordId: ReadonlyMap<string, readonly MissionChatEntry[]>;
+    }
+  >();
+  const workProjectionLoads = new Map<
+    string,
+    {
+      readonly revision: number;
+      readonly executionSignature: string;
+      readonly promise: Promise<{
+        readonly revision: number;
+        readonly executionSignature: string;
+        readonly executionCount: number;
+        readonly snapshot: MissionWorkSnapshot;
+        readonly entriesByRecordId: ReadonlyMap<string, readonly MissionChatEntry[]>;
+      }>;
+    }
+  >();
   const executorMetadataCache = new Map<string, ExecutorMetadata>();
 
   const refreshMemoryContextBindings = async (): Promise<void> => {
@@ -871,6 +895,7 @@ export function createMissionRunner(options: {
   const invalidateWork = (id: string, audience: MissionSurfaceAudience): void => {
     const revision = (workRevisions.get(id) ?? 0) + 1;
     workRevisions.set(id, revision);
+    workProjectionCache.delete(id);
     const update: MissionWorkUpdate = { missionId: id, revision };
     for (const listener of workListeners) {
       try {
@@ -2662,34 +2687,42 @@ export function createMissionRunner(options: {
     return [...new Set(executionIds)].toSorted();
   };
 
-  const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
-    const t0 = performance.now();
-    const mission = await options.missions.get(id);
+  const loadWorkProjection = async (mission: Mission) => {
+    const revision = workRevisions.get(mission.id) ?? 0;
     const executionIds = await readMissionExecutionIds(mission);
-    const records = await workHistory.listRecords({
-      executionIds,
-      ...(mission.execution?.sessionId === undefined
-        ? {}
-        : { rootSessionId: mission.execution.sessionId }),
-    });
-    const t1 = performance.now();
-    logger.info(
-      "mission.get_work_snapshot",
-      `Loaded Mission work snapshot for ${id} in ${(t1 - t0).toFixed(1)}ms.`,
-      {
-        missionId: id,
-        executionCount: executionIds.length,
-        recordCount: records.length,
-        elapsedMs: t1 - t0,
-      },
-    );
-    const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
-    const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
-    const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(records, avatarIds.values());
-    return {
-      missionId: mission.id,
-      revision: workRevisions.get(mission.id) ?? 0,
-      records: records.map((record): MissionWorkRecord => {
+    const executionSignature = (
+      await Promise.all(
+        executionIds.map(async (executionId) => {
+          const execution = await executionStore.get(executionId);
+          return `${executionId}:${execution?.version ?? "missing"}:${execution?.lastAppliedSequence ?? "missing"}`;
+        }),
+      )
+    ).join("|");
+    const cached = workProjectionCache.get(mission.id);
+    if (cached?.revision === revision && cached.executionSignature === executionSignature) {
+      workProjectionCache.delete(mission.id);
+      workProjectionCache.set(mission.id, cached);
+      return { projection: cached, cacheHit: true } as const;
+    }
+    const activeLoad = workProjectionLoads.get(mission.id);
+    if (activeLoad?.revision === revision && activeLoad.executionSignature === executionSignature) {
+      return { projection: await activeLoad.promise, cacheHit: true } as const;
+    }
+
+    const promise = (async () => {
+      const projection = await workHistory.readProjection({
+        executionIds,
+        ...(mission.execution?.sessionId === undefined
+          ? {}
+          : { rootSessionId: mission.execution.sessionId }),
+      });
+      const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
+      const runtimeAgentOrdinals = createRuntimeAgentOrdinals(projection.records);
+      const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(
+        projection.records,
+        avatarIds.values(),
+      );
+      const records = projection.records.map((record): MissionWorkRecord => {
         const tasks = record.tasks.map((task) => {
           const outputSummary = missionWorkOutputSummary(task.output, 1_000);
           return {
@@ -2741,8 +2774,84 @@ export function createMissionRunner(options: {
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
         };
-      }),
-    };
+      });
+      const entriesByRecordId = new Map<string, readonly MissionChatEntry[]>();
+      for (const record of projection.records) {
+        const supersededTaskIds =
+          projection.conversations.supersededTaskIds.get(record.recordId) ?? new Set<string>();
+        const taskInputEntries = workTaskInputEntries({
+          ...record,
+          tasks: record.tasks.filter((task) => !supersededTaskIds.has(task.taskId)),
+        });
+        const messageInputEntries = (
+          projection.conversations.messageInputs.get(record.recordId) ?? []
+        ).map((entry): MissionChatEntry => ({
+          id: entry.id,
+          executionId: entry.executionId,
+          invocationId: entry.invocationId,
+          kind: "user",
+          content: truncate(entry.content, 200_000),
+          createdAt: entry.createdAt,
+        }));
+        const durableEntries = messageRecordsToChatEntries(
+          projection.conversations.output.get(record.recordId) ?? [],
+        );
+        entriesByRecordId.set(
+          record.recordId,
+          uniqueMissionChatEntries([
+            ...taskInputEntries,
+            ...messageInputEntries,
+            ...durableEntries,
+          ]).toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+        );
+      }
+      return {
+        revision,
+        executionSignature,
+        executionCount: executionIds.length,
+        snapshot: { missionId: mission.id, revision, records },
+        entriesByRecordId,
+      };
+    })();
+    workProjectionLoads.set(mission.id, { revision, executionSignature, promise });
+    try {
+      const projection = await promise;
+      if (
+        (workRevisions.get(mission.id) ?? 0) === revision &&
+        projection.executionSignature === executionSignature
+      ) {
+        workProjectionCache.delete(mission.id);
+        workProjectionCache.set(mission.id, projection);
+        while (workProjectionCache.size > 5) {
+          const oldest = workProjectionCache.keys().next();
+          if (!oldest.done) workProjectionCache.delete(oldest.value);
+        }
+      }
+      return { projection, cacheHit: false } as const;
+    } finally {
+      if (workProjectionLoads.get(mission.id)?.promise === promise) {
+        workProjectionLoads.delete(mission.id);
+      }
+    }
+  };
+
+  const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
+    const t0 = performance.now();
+    const mission = await options.missions.get(id);
+    const { projection, cacheHit } = await loadWorkProjection(mission);
+    const t1 = performance.now();
+    logger.info(
+      "mission.get_work_snapshot",
+      `Loaded Mission work snapshot for ${id} in ${(t1 - t0).toFixed(1)}ms.`,
+      {
+        missionId: id,
+        executionCount: projection.executionCount,
+        recordCount: projection.snapshot.records.length,
+        cacheHit,
+        elapsedMs: t1 - t0,
+      },
+    );
+    return projection.snapshot;
   };
 
   const getWorkConversation = async (
@@ -2750,40 +2859,20 @@ export function createMissionRunner(options: {
   ): Promise<MissionWorkConversationSnapshot> => {
     const t0 = performance.now();
     const mission = await options.missions.get(input.id);
-    const executionIds = await readMissionExecutionIds(mission);
-    const { records, output: rawOutput } = await workHistory.readRecordsAndOutput({
-      executionIds,
-      ...(mission.execution?.sessionId === undefined
-        ? {}
-        : { rootSessionId: mission.execution.sessionId }),
-      targetRecordId: input.recordId,
-    });
-    const t1 = performance.now();
-    logger.info(
-      "mission.get_work_conversation",
-      `Loaded Mission work conversation for ${input.id}:${input.recordId} in ${(t1 - t0).toFixed(1)}ms.`,
-      {
-        missionId: input.id,
-        recordId: input.recordId,
-        executionCount: executionIds.length,
-        outputRecordCount: rawOutput.length,
-        elapsedMs: t1 - t0,
-      },
-    );
-    const record = records.find((candidate) => candidate.recordId === input.recordId);
-    if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
-    const messageInputs = await readWorkMessageInputs(executionIds, record, executionStore);
-    const taskInputEntries = workTaskInputEntries(record).filter(
-      (entry) => !messageInputs.supersededTaskInputEntryIds.has(entry.id),
-    );
-    const durableEntries = messageRecordsToChatEntries(rawOutput);
-    const liveEntries = liveWorkOutputs.get(mission.id)?.get(record.recordId)?.entries ?? [];
+    const { projection, cacheHit } = await loadWorkProjection(mission);
+    const durableEntries = projection.entriesByRecordId.get(input.recordId);
+    if (durableEntries === undefined) {
+      throw new Error(`Mission work record not found: ${input.recordId}`);
+    }
+    const liveEntries = liveWorkOutputs.get(mission.id)?.get(input.recordId)?.entries ?? [];
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();
-    for (const entry of taskInputEntries) byId.set(entry.id, entry);
-    for (const entry of messageInputs.entries) byId.set(entry.id, entry);
     for (const entry of durableEntries) {
-      if (entry.executionId === undefined || !liveExecutionIds.has(entry.executionId)) {
+      if (
+        entry.kind === "user" ||
+        entry.executionId === undefined ||
+        !liveExecutionIds.has(entry.executionId)
+      ) {
         byId.set(entry.id, { ...entry });
       }
     }
@@ -2797,9 +2886,22 @@ export function createMissionRunner(options: {
       ? Math.max(0, Math.min(entries.length, requestedEnd))
       : entries.length;
     const start = Math.max(0, end - input.limit);
+    const t1 = performance.now();
+    logger.info(
+      "mission.get_work_conversation",
+      `Loaded Mission work conversation for ${input.id}:${input.recordId} in ${(t1 - t0).toFixed(1)}ms.`,
+      {
+        missionId: input.id,
+        recordId: input.recordId,
+        executionCount: projection.executionCount,
+        outputRecordCount: entries.length,
+        cacheHit,
+        elapsedMs: t1 - t0,
+      },
+    );
     return {
       missionId: mission.id,
-      recordId: record.recordId,
+      recordId: input.recordId,
       revision: workRevisions.get(mission.id) ?? 0,
       entries: entries.slice(start, end),
       ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
@@ -3049,6 +3151,8 @@ export function createMissionRunner(options: {
       chatRevisions.delete(id);
       degradedChatSync.delete(id);
       workRevisions.delete(id);
+      workProjectionCache.delete(id);
+      workProjectionLoads.delete(id);
       liveWorkOutputs.delete(id);
       liveContextWindows.delete(id);
     },
@@ -4131,89 +4235,6 @@ function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEntry[] {
   });
 }
 
-async function readWorkMessageInputs(
-  executionIds: readonly string[],
-  record: ExecutionWorkRecord,
-  store: Pick<FileExecutionStore, "readEvents">,
-): Promise<{
-  readonly entries: readonly MissionChatEntry[];
-  readonly supersededTaskInputEntryIds: ReadonlySet<string>;
-}> {
-  const invocationIds = new Set(record.tasks.map((task) => task.invocationId));
-  const byId = new Map<string, MissionChatEntry>();
-  const supersededTaskInputEntryIds = new Set<string>();
-  for (const executionId of executionIds) {
-    const queuedRuntimeCommands: Array<{
-      readonly commandId: string;
-      readonly action: "spawn" | "send";
-    }> = [];
-    const queuedRuntimeCommandIds = new Set<string>();
-    for (const event of await store.readEvents(executionId)) {
-      if (record.origin === "core" && event.type === "agent.steer.applied") {
-        if (!invocationIds.has(event.invocationId)) continue;
-        const data = event.data;
-        if (typeof data !== "object" || data === null) continue;
-        const requestId = "requestId" in data ? data.requestId : undefined;
-        const content = "content" in data ? data.content : undefined;
-        if (typeof requestId !== "string" || typeof content !== "string" || content === "") {
-          continue;
-        }
-        byId.set(`work-steer:${executionId}:${requestId}`, {
-          id: `work-steer:${executionId}:${requestId}`,
-          executionId,
-          invocationId: event.invocationId,
-          kind: "user",
-          content: truncate(content, 200_000),
-          createdAt: event.occurredAt,
-        });
-        continue;
-      }
-      if (record.origin !== "runtime" || event.type !== "runtime.event") continue;
-      const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
-      if (!parsed.success) continue;
-      const streamEvent = parsed.data;
-      if (streamEvent.type === "run.started" && streamEvent.source.sessionId === record.sessionId) {
-        const command = queuedRuntimeCommands.shift();
-        if (command?.action === "send") {
-          supersededTaskInputEntryIds.add(`work-input:${executionId}:${streamEvent.runId}`);
-        }
-        continue;
-      }
-      if (
-        streamEvent.type !== "agent.command" ||
-        (streamEvent.payload.action !== "spawn" && streamEvent.payload.action !== "send") ||
-        !streamEvent.payload.targetSessionIds.includes(record.sessionId) ||
-        streamEvent.payload.prompt === undefined ||
-        streamEvent.payload.prompt === ""
-      ) {
-        continue;
-      }
-      if (
-        !queuedRuntimeCommandIds.has(streamEvent.payload.commandId) &&
-        streamEvent.payload.delivery !== "steer"
-      ) {
-        queuedRuntimeCommandIds.add(streamEvent.payload.commandId);
-        queuedRuntimeCommands.push({
-          commandId: streamEvent.payload.commandId,
-          action: streamEvent.payload.action,
-        });
-      }
-      if (streamEvent.payload.action !== "send") continue;
-      const id = `work-send:${executionId}:${streamEvent.payload.commandId}:${record.sessionId}`;
-      if (byId.has(id)) continue;
-      byId.set(id, {
-        id,
-        executionId,
-        invocationId: event.invocationId,
-        kind: "user",
-        content: truncate(streamEvent.payload.prompt, 200_000),
-        createdAt: streamEvent.emittedAt,
-      });
-    }
-  }
-  return { entries: [...byId.values()], supersededTaskInputEntryIds };
-}
-
 function workTaskInputContent(input: unknown): string {
   if (typeof input === "string") return truncate(input.trim(), 200_000);
   if (
@@ -4225,6 +4246,12 @@ function workTaskInputContent(input: unknown): string {
     return truncate(input.prompt.trim(), 200_000);
   }
   return formatValue(input, 200_000).trim();
+}
+
+function uniqueMissionChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
+  const byId = new Map<string, MissionChatEntry>();
+  for (const entry of entries) byId.set(entry.id, entry);
+  return [...byId.values()];
 }
 
 function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): MissionChatEntry[] {
@@ -4641,7 +4668,9 @@ export function consumeLiveChatOutput(
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "thinking");
     if (current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
-      current.content = truncate(current.content + content, 200_000);
+      const nextContent = truncate(current.content + content, 200_000);
+      if (nextContent === current.content) return [];
+      current.content = nextContent;
       const patches: MissionChatPatch[] = canAppend
         ? [{ type: "entry.append", entryId: current.id, field: "content", delta: content }]
         : [{ type: "entry.upsert", entry: { ...current } }];
@@ -4670,8 +4699,10 @@ export function consumeLiveChatOutput(
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "assistant");
     if (item.delta !== undefined && current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
-      current.content = truncate(current.content + content, 200_000);
-      if (content !== "") {
+      const nextContent = truncate(current.content + content, 200_000);
+      const contentChanged = nextContent !== current.content;
+      current.content = nextContent;
+      if (content !== "" && contentChanged) {
         patches.push(
           canAppend
             ? { type: "entry.append", entryId: current.id, field: "content", delta: content }

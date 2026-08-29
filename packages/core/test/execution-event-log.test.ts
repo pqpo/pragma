@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFileExecutionStore,
@@ -653,6 +653,17 @@ describe("Execution canonical event log", () => {
     await expect(
       reader.readOutput({ executionIds: ["execution"], record: childA! }),
     ).resolves.toMatchObject([{ message: { content: [{ text: "output-a" }] } }]);
+
+    const readEvents = vi.spyOn(store, "readEvents");
+    const projection = await reader.readProjection({ executionIds: ["execution"] });
+    expect(readEvents).toHaveBeenCalledTimes(1);
+    expect(projection.records).toHaveLength(records.length);
+    expect(projection.conversations.output.get("runtime-agent:child-a")).toMatchObject([
+      { message: { content: [{ text: "output-a" }] } },
+    ]);
+    expect(projection.conversations.output.get("runtime-agent:child-b")).toMatchObject([
+      { message: { content: [{ text: "output-b" }] } },
+    ]);
   });
 
   it("projects only real subagent runs and carries dispatch prompts across interruption", async () => {

@@ -24,6 +24,7 @@ import {
   hideInterruptedExecutionFallbackEntries,
   mergeMissionHumanAnswers,
   mergeLatestChatPage,
+  missionChatPatchesRequireRender,
   MissionContextOperationEntry,
   MissionChatEntryView,
   MissionChatSkeleton,
@@ -1743,6 +1744,24 @@ describe("Mission chat patches", () => {
         2,
       ),
     ).toBeNull();
+  });
+
+  it("keeps content-only appends off the Mission detail render path", () => {
+    expect(
+      missionChatPatchesRequireRender([
+        { type: "entry.append", entryId: "answer", field: "content", delta: "next" },
+      ]),
+    ).toBe(false);
+    expect(
+      missionChatPatchesRequireRender([
+        { type: "entry.streaming", entryId: "answer", streaming: false },
+      ]),
+    ).toBe(true);
+    expect(
+      missionChatPatchesRequireRender([
+        { type: "entry.append", entryId: "tool", field: "outputPreview", delta: "next" },
+      ]),
+    ).toBe(true);
   });
 
   it("keeps executor presentation metadata when a live upsert omits it", () => {

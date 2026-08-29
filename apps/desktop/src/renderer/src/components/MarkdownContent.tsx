@@ -1,6 +1,6 @@
 import { Check, Copy } from "@phosphor-icons/react";
 import { marked, type Token, type Tokens } from "marked";
-import { createElement, Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Key, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -14,6 +14,111 @@ export function MarkdownContent(props: {
     <>{renderMarkdownTokens(tokens, props.codeBlockControls === true, props.onInternalLink)}</>
   );
 }
+
+export interface StreamingMarkdownParts {
+  readonly stableBlocks: readonly string[];
+  readonly tail: string;
+}
+
+const STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT = 12;
+const STREAMING_MARKDOWN_CHUNK_TARGET = 8_192;
+
+/**
+ * Splits append-only Markdown at block boundaries that cannot be inside an open
+ * fenced code block. Stable blocks are memoized independently while the active
+ * tail remains cheap plain text until the stream completes.
+ */
+export function splitStreamingMarkdown(source: string): StreamingMarkdownParts {
+  const safeBlocks: string[] = [];
+  let leadingWhitespace = "";
+  let blockStart = 0;
+  let lineStart = 0;
+  let fence: { readonly character: "`" | "~"; readonly length: number } | undefined;
+
+  while (lineStart < source.length) {
+    const newlineIndex = source.indexOf("\n", lineStart);
+    const nextLineStart = newlineIndex === -1 ? source.length : newlineIndex + 1;
+    const rawLine = source.slice(lineStart, newlineIndex === -1 ? source.length : newlineIndex);
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+    if (fence === undefined) {
+      const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+      if (opening !== undefined) {
+        fence = {
+          character: opening[0] as "`" | "~",
+          length: opening.length,
+        };
+      } else if (line.trim() === "" && nextLineStart > blockStart) {
+        const block = source.slice(blockStart, nextLineStart);
+        if (block.trim() !== "") {
+          safeBlocks.push(leadingWhitespace + block);
+          leadingWhitespace = "";
+        } else if (safeBlocks.length === 0) {
+          leadingWhitespace += block;
+        } else {
+          safeBlocks[safeBlocks.length - 1] += block;
+        }
+        blockStart = nextLineStart;
+      }
+    } else {
+      const closing = /^ {0,3}(`{3,}|~{3,})[\t ]*$/.exec(line)?.[1];
+      if (
+        closing !== undefined &&
+        closing[0] === fence.character &&
+        closing.length >= fence.length
+      ) {
+        fence = undefined;
+      }
+    }
+
+    if (newlineIndex === -1) break;
+    lineStart = nextLineStart;
+  }
+
+  const stableBlocks = safeBlocks.slice(0, STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT);
+  let pendingChunk = "";
+  for (const block of safeBlocks.slice(STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT)) {
+    pendingChunk += block;
+    if (pendingChunk.length < STREAMING_MARKDOWN_CHUNK_TARGET) continue;
+    stableBlocks.push(pendingChunk);
+    pendingChunk = "";
+  }
+  return {
+    stableBlocks,
+    tail: pendingChunk + leadingWhitespace + source.slice(blockStart),
+  };
+}
+
+export function StreamingMarkdownContent(props: {
+  readonly source: string;
+  readonly codeBlockControls?: boolean | undefined;
+  readonly onInternalLink?: ((id: string) => void) | undefined;
+}) {
+  const parts = useMemo(() => splitStreamingMarkdown(props.source), [props.source]);
+  return (
+    <>
+      {parts.stableBlocks.map((source, index) => (
+        <StableMarkdownBlock
+          codeBlockControls={props.codeBlockControls}
+          key={index}
+          onInternalLink={props.onInternalLink}
+          source={source}
+        />
+      ))}
+      {parts.tail === "" ? null : (
+        <span className="mission-streaming-markdown-tail">{parts.tail}</span>
+      )}
+    </>
+  );
+}
+
+const StableMarkdownBlock = memo(function StableMarkdownBlock(props: {
+  readonly source: string;
+  readonly codeBlockControls?: boolean | undefined;
+  readonly onInternalLink?: ((id: string) => void) | undefined;
+}) {
+  return <MarkdownContent {...props} />;
+});
 
 function renderMarkdownTokens(
   tokens: readonly Token[],

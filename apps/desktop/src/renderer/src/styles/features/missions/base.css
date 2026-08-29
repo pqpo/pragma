@@ -1222,6 +1222,16 @@
   margin-bottom: 0;
 }
 
+.mission-streaming-markdown-tail {
+  display: block;
+  margin: 0.72em 0 0;
+  white-space: pre-wrap;
+}
+
+.mission-streaming-markdown-tail:first-child {
+  margin-top: 0;
+}
+
 .mission-markdown h1,
 .mission-markdown h2,
 .mission-markdown h3,
