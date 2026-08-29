@@ -1,6 +1,6 @@
 {
   "name": "@pragma/desktop",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "private": true,
   "type": "module",
   "productName": "Pragma",
@@ -11,7 +11,7 @@
     "prepare:plugins": "node ./scripts/package-built-in-plugins.mjs",
     "predev": "pnpm run prepare:electron && pnpm run prepare:plugins",
     "dev": "electron-vite dev --watch",
-    "prebuild": "pnpm run prepare:plugins",
+    "prebuild": "pnpm --filter \"@pragma/desktop^...\" build && pnpm run prepare:plugins",
     "build": "electron-vite build && pnpm run verify:styles && pnpm run verify:main && pnpm run verify:preload",
     "verify:main": "node ./scripts/verify-main-bundle.mjs",
     "verify:preload": "node ./scripts/verify-preload-bundle.mjs",
