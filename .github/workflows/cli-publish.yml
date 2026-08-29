@@ -204,7 +204,7 @@ jobs:
           max_attempts=12
           verified=false
           for attempt in $(seq 1 "${max_attempts}"); do
-            if npm view "@pqpo/pragma@${RELEASE_VERSION}" version dist-tags engines os bin dist --json \
+            if npm view "@pqpo/pragma@${RELEASE_VERSION}" name version dist-tags engines os bin dist --json \
               --registry=https://registry.npmjs.org/ > "${METADATA_PATH}"; then
               if EXPECTED_VERSION="${RELEASE_VERSION}" EXPECTED_DIST_TAG="${RELEASE_DIST_TAG}" \
                 METADATA_PATH="${METADATA_PATH}" node --input-type=module <<'NODE'
@@ -383,13 +383,9 @@ jobs:
           const packageVerification = verified.find(
             (entry) => entry?.name === "@pqpo/pragma" && entry?.version === expectedVersion,
           );
-          if (packageVerification?.attestations?.bundles?.length !== undefined) {
-            if (packageVerification.attestations.bundles.length === 0) {
-              console.error("@pqpo/pragma has no verified provenance attestation bundle.");
-              process.exit(1);
-            }
-          } else {
-            console.error("@pqpo/pragma is absent from verified provenance attestations.");
+          const provenance = packageVerification?.attestations?.provenance;
+          if (provenance?.predicateType !== "https://slsa.dev/provenance/v1") {
+            console.error("@pqpo/pragma is absent from verified SLSA provenance attestations.");
             process.exit(1);
           }
           console.log(
@@ -398,7 +394,7 @@ jobs:
                 ok: true,
                 package: "@pqpo/pragma",
                 version: expectedVersion,
-                attestationBundles: packageVerification.attestations.bundles.length,
+                provenancePredicateType: provenance.predicateType,
               },
               null,
               2,
