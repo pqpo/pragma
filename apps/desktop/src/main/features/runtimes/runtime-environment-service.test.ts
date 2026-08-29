@@ -204,6 +204,30 @@ describe("RuntimeEnvironmentService", () => {
       expect.objectContaining({ runtimeId: "pi", error: expect.any(Error) }),
     );
   });
+
+  it("rematerializes adapters when the process environment generation changes", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-environment-generation-"));
+    const store = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "Runtime")],
+    });
+    let environmentGeneration = 1;
+    const create = vi.fn(factory().create);
+    const service = createRuntimeEnvironmentService({
+      store,
+      factories: [{ ...factory(), create }],
+      getMaterializationCacheKey: () => `environment:${environmentGeneration}`,
+    });
+
+    const first = await service.bind();
+    const second = await service.bind();
+    environmentGeneration += 1;
+    const refreshed = await service.bind();
+
+    expect(second.adapter).toBe(first.adapter);
+    expect(refreshed.adapter).not.toBe(first.adapter);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Codex tool permission mapping", () => {

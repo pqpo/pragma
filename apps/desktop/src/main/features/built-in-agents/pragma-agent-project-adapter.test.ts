@@ -910,6 +910,7 @@ function adapterOptions(
 ) {
   const capabilities = { list: async () => values } as unknown as CapabilityStore;
   const runtimes = {
+    getMaterializationCacheKey: async () => "test-environment",
     getDefaultRuntimeId: async () => "test",
     list: async () => [
       {

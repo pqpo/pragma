@@ -2,6 +2,7 @@ import type { DesktopRendererLog } from "./logging.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
   DesktopRuntimeAvailability,
+  DesktopRuntimeProcessEnvironmentStatus,
   DesktopBridgeSnapshot,
   DesktopSettingsSnapshot,
   UpdateDesktopSettings,
@@ -535,4 +536,6 @@ export interface PragmaDesktopAPI {
   getRuntimeAvailability: (
     options?: GetDesktopRuntimeAvailabilityOptions,
   ) => Promise<DesktopRuntimeAvailability[]>;
+  getRuntimeProcessEnvironmentStatus: () => Promise<DesktopRuntimeProcessEnvironmentStatus>;
+  refreshRuntimeProcessEnvironment: () => Promise<DesktopRuntimeProcessEnvironmentStatus>;
 }

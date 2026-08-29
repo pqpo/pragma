@@ -7,15 +7,17 @@ import { basename, delimiter, isAbsolute, join } from "node:path";
 import type { PragmaLogger } from "@pragma/core";
 
 const SUPPORTED_LOGIN_SHELLS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
-const DEFAULT_SHELL_TIMEOUT_MS = 3_000;
+const DEFAULT_SHELL_TIMEOUT_MS = 10_000;
 const DEFAULT_FORCE_KILL_DELAY_MS = 2_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
+const DEFAULT_RETRY_DELAYS_MS = [5_000, 15_000, 30_000] as const;
 
 type RuntimeEnvironmentLogger = Pick<PragmaLogger, "info" | "warn">;
 
 export interface DesktopRuntimeProcessEnvironment {
   readonly getSnapshot: () => Promise<ShellEnvironmentSnapshot>;
   readonly get: () => Promise<NodeJS.ProcessEnv>;
+  readonly getCacheKey: () => Promise<string>;
   readonly refresh: () => Promise<ShellEnvironmentSnapshot>;
   readonly warmUp: () => void;
 }
@@ -28,6 +30,9 @@ export interface ShellEnvironmentSnapshot {
   readonly shell?: string | undefined;
   readonly env: Readonly<NodeJS.ProcessEnv>;
   readonly capturedAt: number;
+  readonly generation: number;
+  readonly source: RuntimeEnvironmentResolution["source"];
+  readonly failureKind?: ShellPathFailureKind | "unexpected-error" | undefined;
 }
 
 export interface CreateDesktopRuntimeProcessEnvironmentOptions {
@@ -38,7 +43,10 @@ export interface CreateDesktopRuntimeProcessEnvironmentOptions {
   readonly shellTimeoutMs?: number | undefined;
   readonly forceKillDelayMs?: number | undefined;
   readonly maxOutputBytes?: number | undefined;
+  readonly retryDelaysMs?: readonly number[] | undefined;
 }
+
+type ResolvedShellEnvironmentSnapshot = Omit<ShellEnvironmentSnapshot, "generation">;
 
 interface RuntimeEnvironmentResolution {
   readonly environment: NodeJS.ProcessEnv;
@@ -121,17 +129,62 @@ export function createDesktopRuntimeProcessEnvironment(
   const sourceEnvironment = { ...(options.env ?? process.env) };
   const platform = options.platform ?? process.platform;
   const homeDirectory = options.homeDirectory ?? sourceEnvironment["HOME"] ?? homedir();
+  const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
   let snapshotPromise: Promise<ShellEnvironmentSnapshot> | undefined;
+  let retryTimer: NodeJS.Timeout | undefined;
+  let retryIndex = 0;
+  let captureSequence = 0;
+  let generation = 0;
 
-  const createSnapshot = (): Promise<ShellEnvironmentSnapshot> =>
-    resolveRuntimeProcessEnvironmentWithFallback({
-      ...options,
-      env: sourceEnvironment,
-      platform,
-      homeDirectory,
-    });
+  const clearScheduledRetry = (): void => {
+    if (retryTimer === undefined) return;
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+  };
+  const startCapture = (resetRetrySchedule: boolean): Promise<ShellEnvironmentSnapshot> => {
+    clearScheduledRetry();
+    if (resetRetrySchedule) retryIndex = 0;
+    const sequence = ++captureSequence;
+    const nextPromise = (async (): Promise<ShellEnvironmentSnapshot> => {
+      const resolved = await resolveRuntimeProcessEnvironmentWithFallback({
+        ...options,
+        env: sourceEnvironment,
+        platform,
+        homeDirectory,
+      });
+      if (sequence !== captureSequence) return await snapshotPromise!;
+
+      const snapshot = Object.freeze({ ...resolved, generation: ++generation });
+      if (snapshot.failureKind === undefined) {
+        retryIndex = 0;
+      } else {
+        const delayMs = retryDelaysMs[retryIndex];
+        if (delayMs !== undefined) {
+          retryIndex += 1;
+          writeEnvironmentLog(options.logger, "info", {
+            event: "desktop.runtime_process_environment_retry_scheduled",
+            message: "Desktop Runtime process environment recovery will be retried.",
+            attributes: {
+              generation: snapshot.generation,
+              failureKind: snapshot.failureKind,
+              retryAttempt: retryIndex,
+              delayMs,
+            },
+          });
+          retryTimer = setTimeout(() => {
+            retryTimer = undefined;
+            void startCapture(false);
+          }, delayMs);
+          retryTimer.unref();
+        }
+      }
+      return snapshot;
+    })();
+    snapshotPromise = nextPromise;
+    return nextPromise;
+  };
   const getSnapshot = (): Promise<ShellEnvironmentSnapshot> => {
-    snapshotPromise ??= createSnapshot();
+    snapshotPromise ??= startCapture(false);
     return snapshotPromise;
   };
   const get = async (): Promise<NodeJS.ProcessEnv> => (await getSnapshot()).env;
@@ -139,11 +192,9 @@ export function createDesktopRuntimeProcessEnvironment(
   return {
     getSnapshot,
     get,
-    refresh: () => {
-      const nextSnapshot = createSnapshot();
-      snapshotPromise = nextSnapshot;
-      return nextSnapshot;
-    },
+    getCacheKey: async () =>
+      `desktop-runtime-process-environment:${(await getSnapshot()).generation}`,
+    refresh: () => startCapture(true),
     warmUp: () => {
       void getSnapshot();
     },
@@ -152,7 +203,7 @@ export function createDesktopRuntimeProcessEnvironment(
 
 async function resolveRuntimeProcessEnvironmentWithFallback(
   options: ResolvedDesktopRuntimeProcessEnvironmentOptions,
-): Promise<ShellEnvironmentSnapshot> {
+): Promise<ResolvedShellEnvironmentSnapshot> {
   const startedAt = performance.now();
   try {
     return await resolveRuntimeProcessEnvironment(options);
@@ -171,13 +222,19 @@ async function resolveRuntimeProcessEnvironmentWithFallback(
         failureKind: "unexpected-error",
       },
     });
-    return { shell: options.env["SHELL"], env: environment, capturedAt: Date.now() };
+    return {
+      shell: options.env["SHELL"],
+      env: environment,
+      capturedAt: Date.now(),
+      source: "original",
+      failureKind: "unexpected-error",
+    };
   }
 }
 
 async function resolveRuntimeProcessEnvironment(
   options: ResolvedDesktopRuntimeProcessEnvironmentOptions,
-): Promise<ShellEnvironmentSnapshot> {
+): Promise<ResolvedShellEnvironmentSnapshot> {
   const startedAt = performance.now();
   const originalEnvironment = options.env;
   let resolution: RuntimeEnvironmentResolution;
@@ -211,7 +268,13 @@ async function resolveRuntimeProcessEnvironment(
     });
   }
 
-  return { shell: options.env["SHELL"], env: environment, capturedAt: Date.now() };
+  return {
+    shell: options.env["SHELL"],
+    env: environment,
+    capturedAt: Date.now(),
+    source: resolution.source,
+    ...(resolution.failureKind === undefined ? {} : { failureKind: resolution.failureKind }),
+  };
 }
 
 async function resolvePosixRuntimeEnvironment(

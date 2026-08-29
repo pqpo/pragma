@@ -2,7 +2,10 @@ import { ArrowsClockwise, CircleNotch } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
+import type {
+  DesktopRuntimeAvailability,
+  DesktopRuntimeProcessEnvironmentStatus,
+} from "../../../../shared/contracts/index.ts";
 import { RuntimeLogo } from "../../components/RuntimeLogo.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { isBuiltInRuntime, runtimeDisplayName } from "../../lib/runtime-display.ts";
@@ -51,6 +54,30 @@ const INITIAL_RUNTIMES: readonly DesktopRuntimeAvailability[] = [
     origin: "built-in",
   },
 ];
+
+export function RuntimeProcessEnvironmentSummary(props: {
+  readonly status: DesktopRuntimeProcessEnvironmentStatus | undefined;
+}) {
+  const { t } = useTranslation("settings");
+  if (props.status === undefined) return null;
+  const source =
+    props.status.source === "login-shell"
+      ? t("runtimes.environmentSourceLoginShell")
+      : props.status.source === "fallback"
+        ? t("runtimes.environmentSourceFallback")
+        : t("runtimes.environmentSourceProcess");
+  const state =
+    props.status.status === "ready"
+      ? t("runtimes.environmentReady")
+      : t("runtimes.environmentDegraded", {
+          reason: props.status.failureKind ?? "unknown",
+        });
+  return (
+    <p className={props.status.status === "ready" ? "status-copy is-active" : "status-copy"}>
+      {state} · {source} · {new Date(props.status.capturedAt).toLocaleString()}
+    </p>
+  );
+}
 
 export function RuntimeCard(props: {
   readonly runtime: DesktopRuntimeAvailability;
@@ -160,6 +187,9 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
   );
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>();
   const [error, setError] = useState<string | null>(null);
+  const [environmentStatus, setEnvironmentStatus] =
+    useState<DesktopRuntimeProcessEnvironmentStatus>();
+  const [refreshingEnvironment, setRefreshingEnvironment] = useState(false);
 
   const loadRuntimes = async (targetId?: string, forceRefresh = false) => {
     setError(null);
@@ -202,10 +232,27 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
 
   useEffect(() => {
     void loadRuntimes(undefined, false);
+    void window.pragmaDesktop
+      .getRuntimeProcessEnvironmentStatus()
+      .then(setEnvironmentStatus)
+      .catch((statusError: unknown) => setError(errorMessage(statusError)));
   }, []);
 
+  const refreshEnvironmentAndRuntimes = async () => {
+    setError(null);
+    setRefreshingEnvironment(true);
+    try {
+      setEnvironmentStatus(await window.pragmaDesktop.refreshRuntimeProcessEnvironment());
+      await loadRuntimes(undefined, true);
+    } catch (refreshError) {
+      setError(errorMessage(refreshError));
+    } finally {
+      setRefreshingEnvironment(false);
+    }
+  };
+
   const selectedRuntime = runtimes.find((runtime) => runtime.id === selectedRuntimeId);
-  const isGlobalChecking = probingIds.size > 0;
+  const isGlobalChecking = probingIds.size > 0 || refreshingEnvironment;
 
   if (selectedRuntime !== undefined) {
     return (
@@ -229,16 +276,17 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
           <div>
             <h2 id="runtimes-panel-heading">{t("runtimes.title", { ns: "settings" })}</h2>
             <p>{t("runtimes.description", { ns: "settings" })}</p>
+            <RuntimeProcessEnvironmentSummary status={environmentStatus} />
           </div>
           <button
             className="secondary-button"
             type="button"
-            onClick={() => void loadRuntimes(undefined, true)}
+            onClick={() => void refreshEnvironmentAndRuntimes()}
             disabled={isGlobalChecking}
           >
             {isGlobalChecking
               ? t("actions.checking", { ns: "common" })
-              : t("actions.checkAgain", { ns: "common" })}
+              : t("runtimes.refreshEnvironment", { ns: "settings" })}
           </button>
         </header>
       }

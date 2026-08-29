@@ -110,6 +110,25 @@ export const GetDesktopRuntimeAvailabilityOptionsSchema = z.object({
   forceRefresh: z.boolean().optional(),
 });
 
+export const DesktopRuntimeProcessEnvironmentStatusSchema = z
+  .object({
+    generation: z.number().int().positive(),
+    status: z.enum(["ready", "degraded"]),
+    source: z.enum(["login-shell", "fallback", "original"]),
+    capturedAt: z.number().int().nonnegative(),
+    failureKind: z
+      .enum([
+        "invalid-output",
+        "output-limit",
+        "spawn-failed",
+        "timeout",
+        "unsupported-shell",
+        "unexpected-error",
+      ])
+      .optional(),
+  })
+  .strict();
+
 export type GetDesktopRuntimeAvailabilityOptions = z.infer<
   typeof GetDesktopRuntimeAvailabilityOptionsSchema
 >;

@@ -10,12 +10,26 @@ import type {
 import { BUILT_IN_RUNTIME_DISPLAY_NAME } from "./runtime-environment-store.ts";
 
 const PROBE_CONCURRENCY_LIMIT = 2;
-const cachedAvailabilityMap = new Map<string, DesktopRuntimeAvailability>();
+interface CachedRuntimeAvailability {
+  readonly materializationCacheKey: string;
+  readonly availability: DesktopRuntimeAvailability;
+}
+
+const availabilityCaches = new WeakMap<
+  RuntimeEnvironmentService,
+  Map<string, CachedRuntimeAvailability>
+>();
 
 export async function getRuntimeAvailability(
   runtimes: RuntimeEnvironmentService,
   options?: GetDesktopRuntimeAvailabilityOptions,
 ): Promise<DesktopRuntimeAvailability[]> {
+  let cachedAvailabilityMap = availabilityCaches.get(runtimes);
+  if (cachedAvailabilityMap === undefined) {
+    cachedAvailabilityMap = new Map();
+    availabilityCaches.set(runtimes, cachedAvailabilityMap);
+  }
+  const materializationCacheKey = await runtimes.getMaterializationCacheKey();
   const defaultRuntimeId = await runtimes.getDefaultRuntimeId();
   const allInspections = await runtimes.list();
   const forceRefresh = options?.forceRefresh ?? false;
@@ -31,7 +45,9 @@ export async function getRuntimeAvailability(
     if (forceRefresh) {
       return targetRuntimeId === undefined || runtimeId === targetRuntimeId;
     }
-    return !cachedAvailabilityMap.has(runtimeId);
+    return (
+      cachedAvailabilityMap.get(runtimeId)?.materializationCacheKey !== materializationCacheKey
+    );
   });
 
   if (inspectionsToProbe.length > 0) {
@@ -122,14 +138,14 @@ export async function getRuntimeAvailability(
     );
 
     for (const item of probedResults) {
-      cachedAvailabilityMap.set(item.id, item);
+      cachedAvailabilityMap.set(item.id, { materializationCacheKey, availability: item });
     }
   }
 
   return activeInspections.map((inspection) => {
     const runtimeId = inspection.head.entry.runtimeId;
     const cached = cachedAvailabilityMap.get(runtimeId);
-    if (cached !== undefined) return cached;
+    if (cached?.materializationCacheKey === materializationCacheKey) return cached.availability;
     const revision = inspection.head.revision;
     const definition = revision?.definition;
     return {

@@ -48,6 +48,7 @@ describe("DesktopRuntimeProcessEnvironment", () => {
     expect(snapshot.env).toBe(first);
     expect(snapshot.shell).toBe(shell);
     expect(snapshot.capturedAt).toEqual(expect.any(Number));
+    expect(snapshot).toMatchObject({ generation: 1, source: "login-shell" });
     const loginBinRealPath = await realpath(loginBin);
     expect(first["PATH"]?.split(delimiter)[0]).toBe(loginBinRealPath);
     expect(
@@ -88,7 +89,75 @@ describe("DesktopRuntimeProcessEnvironment", () => {
     const second = await service.refresh();
 
     expect(second).not.toBe(first);
+    expect(second.generation).toBe(first.generation + 1);
     await expect(readFile(invocations, "utf8")).resolves.toBe("xx");
+  });
+
+  it("retries a timed-out login shell and replaces the degraded snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-environment-retry-"));
+    const shell = join(root, "zsh");
+    const attempts = join(root, "attempts");
+    const recover = join(root, "recover");
+    const originalBin = join(root, "original-bin");
+    const recoveredBin = join(root, "recovered-bin");
+    await Promise.all([mkdir(originalBin), mkdir(recoveredBin)]);
+    await writeFile(
+      shell,
+      [
+        "#!/bin/sh",
+        `printf x >> '${attempts}'`,
+        `if [ ! -f '${recover}' ]; then`,
+        "  trap '' TERM",
+        "  while :; do /bin/sleep 1; done",
+        "fi",
+        `export PATH='${recoveredBin}'`,
+        'exec /bin/sh -c "$2"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const service = createDesktopRuntimeProcessEnvironment({
+      logger,
+      env: { HOME: root, PATH: originalBin, SHELL: shell },
+      homeDirectory: root,
+      platform: "linux",
+      shellTimeoutMs: 1_000,
+      forceKillDelayMs: 50,
+      retryDelaysMs: [200],
+    });
+
+    const degraded = await service.getSnapshot();
+    expect(degraded).toMatchObject({
+      generation: 1,
+      source: "fallback",
+      failureKind: "timeout",
+    });
+    await writeFile(recover, "ready");
+
+    let recovered = degraded;
+    await vi.waitFor(
+      async () => {
+        recovered = await service.getSnapshot();
+        expect(recovered).toEqual(
+          expect.objectContaining({
+            generation: 2,
+            source: "login-shell",
+          }),
+        );
+      },
+      { timeout: 3_000 },
+    );
+
+    expect(recovered).toMatchObject({ generation: 2, source: "login-shell" });
+    expect(recovered.failureKind).toBeUndefined();
+    expect(recovered.env["PATH"]?.split(delimiter)[0]).toBe(await realpath(recoveredBin));
+    expect(logger.info).toHaveBeenCalledWith(
+      "desktop.runtime_process_environment_retry_scheduled",
+      expect.any(String),
+      expect.objectContaining({ retryAttempt: 1, failureKind: "timeout" }),
+    );
+    await expect(readFile(attempts, "utf8")).resolves.toBe("xx");
   });
 
   it("falls back to common and original directories for an unsupported shell", async () => {
@@ -102,6 +171,7 @@ describe("DesktopRuntimeProcessEnvironment", () => {
       env: { HOME: root, PATH: `relative${delimiter}${originalBin}`, SHELL: "/bin/fish" },
       homeDirectory: root,
       platform: "linux",
+      retryDelaysMs: [],
     });
 
     const environment = await service.get();
@@ -168,6 +238,7 @@ describe("DesktopRuntimeProcessEnvironment", () => {
       platform: "linux",
       shellTimeoutMs: 20,
       forceKillDelayMs: 20,
+      retryDelaysMs: [],
     });
 
     await expect(service.get()).resolves.toMatchObject({ PATH: expect.any(String) });
@@ -191,6 +262,7 @@ describe("DesktopRuntimeProcessEnvironment", () => {
       platform: "linux",
       maxOutputBytes: 8,
       forceKillDelayMs: 20,
+      retryDelaysMs: [],
     });
 
     await service.get();

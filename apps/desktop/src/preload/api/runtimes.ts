@@ -3,6 +3,7 @@ import { ipcRenderer, type IpcRendererEvent } from "electron";
 import {
   DesktopRuntimeAvailabilitySchema,
   DesktopRuntimeIdSchema,
+  DesktopRuntimeProcessEnvironmentStatusSchema,
   GetDesktopRuntimeAvailabilityOptionsSchema,
 } from "../../shared/contracts/runtime.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
@@ -21,4 +22,18 @@ export const runtimesApi = {
       await ipcRenderer.invoke("runtimes:availability", parsedOptions),
     );
   },
-} satisfies Pick<PragmaDesktopAPI, "subscribeRuntimeModelCatalog" | "getRuntimeAvailability">;
+  getRuntimeProcessEnvironmentStatus: async () =>
+    DesktopRuntimeProcessEnvironmentStatusSchema.parse(
+      await ipcRenderer.invoke("runtimes:process-environment:status"),
+    ),
+  refreshRuntimeProcessEnvironment: async () =>
+    DesktopRuntimeProcessEnvironmentStatusSchema.parse(
+      await ipcRenderer.invoke("runtimes:process-environment:refresh"),
+    ),
+} satisfies Pick<
+  PragmaDesktopAPI,
+  | "subscribeRuntimeModelCatalog"
+  | "getRuntimeAvailability"
+  | "getRuntimeProcessEnvironmentStatus"
+  | "refreshRuntimeProcessEnvironment"
+>;

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
-import { RuntimeCard } from "./RuntimeEnvironmentsFragment.tsx";
+import { RuntimeCard, RuntimeProcessEnvironmentSummary } from "./RuntimeEnvironmentsFragment.tsx";
 
 const runtime: DesktopRuntimeAvailability = {
   id: "pragma.runtime.codex",
@@ -39,6 +39,24 @@ const runtime: DesktopRuntimeAvailability = {
 };
 
 describe("Runtime Environment settings", () => {
+  it("shows the captured shell environment state without exposing PATH contents", () => {
+    const html = renderToStaticMarkup(
+      <RuntimeProcessEnvironmentSummary
+        status={{
+          generation: 2,
+          status: "degraded",
+          source: "fallback",
+          capturedAt: 1_787_986_623_053,
+          failureKind: "timeout",
+        }}
+      />,
+    );
+
+    expect(html).toContain("Shell environment degraded (timeout)");
+    expect(html).toContain("Fallback paths");
+    expect(html).not.toContain("PATH");
+  });
+
   it("summarizes the model count in the Runtime directory card without listing models", () => {
     const html = renderToStaticMarkup(
       <RuntimeCard

@@ -51,6 +51,7 @@ export interface RuntimeEnvironmentInspection {
 export interface RuntimeEnvironmentService extends RuntimeResolver {
   list(): Promise<readonly RuntimeEnvironmentInspection[]>;
   forToolPermissionMode(mode: DesktopToolPermissionMode): RuntimeResolver;
+  getMaterializationCacheKey(): Promise<string>;
 }
 
 export function createRuntimeEnvironmentService(options: {
@@ -59,6 +60,7 @@ export function createRuntimeEnvironmentService(options: {
   readonly logger?: Pick<PragmaLogger, "info" | "warn"> | undefined;
   readonly getToolPermissionMode?:
     (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
+  readonly getMaterializationCacheKey?: (() => string | Promise<string>) | undefined;
 }): RuntimeEnvironmentService {
   const MATERIALIZED_ADAPTER_CACHE_LIMIT = 64;
   const factories = new Map<string, RuntimeEnvironmentAdapterFactory>();
@@ -68,6 +70,8 @@ export function createRuntimeEnvironmentService(options: {
     if (factories.has(ref)) throw new Error(`Duplicate Runtime adapter factory: ${ref}.`);
     factories.set(ref, factory);
   }
+  const getMaterializationCacheKey = async (): Promise<string> =>
+    (await options.getMaterializationCacheKey?.()) ?? "default";
 
   const materialize = async (
     revision: RuntimeEnvironmentRevision,
@@ -80,12 +84,14 @@ export function createRuntimeEnvironmentService(options: {
     const factory = factories.get(ref);
     if (factory === undefined)
       throw new Error(`Runtime adapter factory is not registered: ${ref}.`);
+    const materializationCacheKey = await getMaterializationCacheKey();
     const cacheKey = [
       revision.runtimeId,
       revision.revision,
       revision.fingerprint,
       ref,
       effectiveToolPermissionMode ?? "default",
+      materializationCacheKey,
     ].join("\0");
     let adapterPromise = materializedAdapters.get(cacheKey);
     const cacheHit = adapterPromise !== undefined;
@@ -110,6 +116,7 @@ export function createRuntimeEnvironmentService(options: {
                 revision: revision.revision,
                 fingerprint: revision.fingerprint,
                 toolPermissionMode: effectiveToolPermissionMode ?? "default",
+                materializationCacheKey,
                 durationMs: environmentElapsedMs(materializeStartedAt),
               },
             );
@@ -126,6 +133,7 @@ export function createRuntimeEnvironmentService(options: {
                 revision: revision.revision,
                 fingerprint: revision.fingerprint,
                 toolPermissionMode: effectiveToolPermissionMode ?? "default",
+                materializationCacheKey,
                 durationMs: environmentElapsedMs(materializeStartedAt),
                 error,
               },
@@ -153,6 +161,7 @@ export function createRuntimeEnvironmentService(options: {
           revision: revision.revision,
           fingerprint: revision.fingerprint,
           toolPermissionMode: effectiveToolPermissionMode ?? "default",
+          materializationCacheKey,
         },
       );
     }
@@ -243,6 +252,7 @@ export function createRuntimeEnvironmentService(options: {
 
   return {
     ...createResolver(),
+    getMaterializationCacheKey,
     forToolPermissionMode: (mode) => createResolver(mode),
     list: async () =>
       await Promise.all(

@@ -146,6 +146,47 @@ describe("getRuntimeAvailability", () => {
     expect(receivedOptions).toEqual([{ forceRefresh: true }, { forceRefresh: true }]);
   });
 
+  it("reprobes cached availability after the process environment generation changes", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-generation-"));
+    const store = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "Pi")],
+    });
+    let environmentGeneration = 1;
+    const runtimes = createRuntimeEnvironmentService({
+      store,
+      getMaterializationCacheKey: () => `environment:${environmentGeneration}`,
+      factories: [
+        {
+          id: "test.runtime",
+          version: "v1",
+          create: (environment) => {
+            const version = String(environmentGeneration);
+            return defineRuntimeTestDriver({
+              descriptor: {
+                id: environment.id,
+                kind: "test",
+                displayName: environment.displayName,
+              },
+              canUse: () => ({ usable: true, details: { version } }),
+              createSession: () => ({}),
+              startTurn: () => ({ outputText: "" }),
+              mapEvent: () => ({ events: [] }),
+            });
+          },
+        },
+      ],
+    });
+
+    await expect(getRuntimeAvailability(runtimes)).resolves.toEqual([
+      expect.objectContaining({ version: "1" }),
+    ]);
+    environmentGeneration += 1;
+    await expect(getRuntimeAvailability(runtimes)).resolves.toEqual([
+      expect.objectContaining({ version: "2" }),
+    ]);
+  });
+
   it("limits probe concurrency and respects forceRefresh options", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-availability-concurrency-"));
     const definitions = [

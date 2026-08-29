@@ -418,6 +418,7 @@ export async function createDesktopApplicationContainer(
     store: runtimeEnvironments,
     logger: mainLogger,
     getToolPermissionMode,
+    getMaterializationCacheKey: runtimeProcessEnvironment.getCacheKey,
     factories: createBuiltInRuntimeFactories({
       modelProviders: modelProviderStore,
       modelCatalogCacheRoot: pragmaPaths.cacheRoot(),
@@ -445,7 +446,7 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
-  installRuntimeHandlers(runtimes);
+  installRuntimeHandlers(runtimes, runtimeProcessEnvironment);
   const knowledgePromotionRef: { current?: MemoryKnowledgePromotionService } = {};
   const skillPromotionRef: { current?: MemorySkillPromotionService } = {};
   const expertStore = createExpertDefinitionStore({

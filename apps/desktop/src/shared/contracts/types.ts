@@ -210,6 +210,7 @@ import {
   DesktopBridgeSnapshotSchema,
   DesktopRuntimeAvailabilitySchema,
   DesktopRuntimeModelSchema,
+  DesktopRuntimeProcessEnvironmentStatusSchema,
   LocalRuntimeCapabilitySchema,
   RuntimeEnvironmentCatalogSchema,
   RuntimeEnvironmentCatalogEntrySchema,
@@ -311,6 +312,9 @@ export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;
 export type DesktopRuntimeModel = z.infer<typeof DesktopRuntimeModelSchema>;
+export type DesktopRuntimeProcessEnvironmentStatus = z.infer<
+  typeof DesktopRuntimeProcessEnvironmentStatusSchema
+>;
 export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefinitionSchema>;
 export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;
 export type RuntimeEnvironmentCatalogEntry = z.infer<typeof RuntimeEnvironmentCatalogEntrySchema>;
