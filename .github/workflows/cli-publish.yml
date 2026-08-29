@@ -165,7 +165,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm publish release-artifact/pragma-cli.tgz \
+          npm publish ./release-artifact/pragma-cli.tgz \
             --registry=https://registry.npmjs.org/ \
             --access public \
             --tag "${RELEASE_DIST_TAG}" \
