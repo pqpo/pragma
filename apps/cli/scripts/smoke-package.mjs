@@ -369,11 +369,12 @@ function runNpm(args, environment) {
 }
 
 function runCommand(command, args, { cwd, env }) {
+  const useShell = process.platform === "win32" && /\.cmd$/iu.test(command);
   return new Promise((resolvePromise) => {
-    const child = spawn(command, args, {
+    const child = spawn(command, useShell ? args.map(quoteWindowsShellArgument) : args, {
       cwd,
       env,
-      shell: process.platform === "win32" && /\.cmd$/iu.test(command),
+      shell: useShell,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -386,6 +387,11 @@ function runCommand(command, args, { cwd, env }) {
     });
     child.once("close", (code, signal) => resolvePromise({ code, signal, stdout, stderr }));
   });
+}
+
+function quoteWindowsShellArgument(argument) {
+  if (!/[\s"]/u.test(argument)) return argument;
+  return `"${argument.replaceAll('"', '\\"')}"`;
 }
 
 function assertExit(result, expected, label) {
