@@ -94,6 +94,129 @@ describe("M8 production composition", () => {
     }
   });
 
+  it("lists only Local Host Missions when Board and Desktop directories share the root", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-cli-mission-list-composition-"));
+    const previousHome = process.env["PRAGMA_HOME"];
+    const missionId = "370f4e66-c547-4db3-8a46-1af9f1fd4147";
+    const legacyMissionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const missionsPath = join(pragmaHome, "data", "missions");
+    process.env["PRAGMA_HOME"] = pragmaHome;
+    try {
+      const controller = createMissionControllerStore({ missionsPath });
+      const guard = await controller.claim({
+        missionId,
+        claimId: CLAIM_ID,
+        leaseMs: 10_000,
+      });
+      await controller.write({
+        missionId,
+        guard,
+        operation: async ({ appendEvent }) => {
+          await appendEvent("mission.created", {
+            executor: { kind: "expert", id: "expert-1" },
+            workspace: "/tmp/mission-list-workspace",
+          });
+          await appendEvent("run.started", {
+            executionId: EXECUTION_ID,
+          });
+          await appendEvent("run.succeeded", {
+            executionId: EXECUTION_ID,
+            result: { ok: true },
+          });
+        },
+      });
+      await controller.release({ missionId, guard });
+
+      const bindings = await createLocalHostMissionBoardBindings({ pragmaHome, missionId });
+      const shared = bindings.find((binding) => binding.namespace === "mission-board");
+      expect(shared).toBeDefined();
+      if (shared === undefined) throw new Error("Shared Mission Board binding is missing.");
+      await shared.store.addContext({
+        id: "plan.md",
+        content: "Board data must not become a Mission.",
+        metadata: { description: "Plan", trigger: "manual", priority: "high" },
+      });
+
+      await mkdir(join(missionsPath, legacyMissionId), { recursive: true });
+      await writeFile(
+        join(missionsPath, legacyMissionId, "mission.yaml"),
+        "legacy: true\n",
+        "utf8",
+      );
+      await mkdir(join(missionsPath, ".desktop-legacy"), { recursive: true });
+      await mkdir(join(missionsPath, ".locks"), { recursive: true });
+
+      const host = createProductionLocalHost();
+      const snapshots = await host.listMissions();
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]).toMatchObject({
+        id: missionId,
+        missionId,
+        status: "succeeded",
+        lifecycleStatus: "completed",
+      });
+
+      const io = createIo();
+      await expect(runCli(["mission", "list", "--json"], io, { localHost: host })).resolves.toBe(0);
+      expect(io.stderr).toEqual([]);
+      const result = CliResultV2Schema.parse(JSON.parse(io.stdout[0]!));
+      expect(result).toMatchObject({
+        status: "succeeded",
+        result: { items: [{ id: missionId }] },
+      });
+      const items = (result.result as { readonly items: readonly { readonly id: string }[] }).items;
+      expect(items).toHaveLength(1);
+      expect(items.map((item) => item.id)).toEqual([missionId]);
+      expect(JSON.stringify(result)).not.toContain(
+        Buffer.from(missionId, "utf8").toString("base64url"),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env["PRAGMA_HOME"];
+      else process.env["PRAGMA_HOME"] = previousHome;
+      await rm(pragmaHome, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed for a damaged Local Host aggregate after filtering foreign directories", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-cli-mission-list-corrupt-"));
+    const previousHome = process.env["PRAGMA_HOME"];
+    const missionId = "99999999-9999-4999-8999-999999999999";
+    const missionsPath = join(pragmaHome, "data", "missions");
+    process.env["PRAGMA_HOME"] = pragmaHome;
+    try {
+      const controller = createMissionControllerStore({ missionsPath });
+      const guard = await controller.claim({
+        missionId,
+        claimId: CLAIM_ID,
+        leaseMs: 10_000,
+      });
+      await controller.write({
+        missionId,
+        guard,
+        operation: async ({ appendEvent }) =>
+          await appendEvent("mission.created", {
+            executor: { kind: "expert", id: "expert-1" },
+            workspace: "/tmp/mission-list-corrupt-workspace",
+          }),
+      });
+      await controller.release({ missionId, guard });
+      await writeFile(join(missionsPath, missionId, "local-host", "aggregate.json"), "{\n", "utf8");
+
+      const host = createProductionLocalHost();
+      await expect(host.listMissions()).rejects.toMatchObject({
+        code: "STORAGE_CORRUPTED",
+        details: { missionId },
+      });
+      const io = createIo();
+      await expect(runCli(["mission", "list", "--json"], io, { localHost: host })).resolves.toBe(7);
+      expect(JSON.parse(io.stdout[0]!).error.code).toBe("STORAGE_CORRUPTED");
+    } finally {
+      if (previousHome === undefined) delete process.env["PRAGMA_HOME"];
+      else process.env["PRAGMA_HOME"] = previousHome;
+      await rm(pragmaHome, { recursive: true, force: true });
+    }
+  });
+
   it("submits a real respond mutation with one UUID client instance per Host", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-cli-mutation-composition-"));
     const previousHome = process.env["PRAGMA_HOME"];

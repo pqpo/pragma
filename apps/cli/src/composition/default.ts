@@ -36,8 +36,12 @@ import {
   type LocalHostMissionResumeRequest,
   type MissionControlExecutionOutcome,
 } from "@pragma/local-host";
-import { createIntegrationError, IntegrationErrorSchema } from "@pragma/local-host/wire";
-import { HumanInteractionRequestEnvelopeSchema } from "@pragma/shared/integration";
+import {
+  createIntegrationError,
+  IntegrationErrorSchema,
+  type IntegrationError,
+} from "@pragma/local-host/wire";
+import { HumanInteractionRequestEnvelopeSchema, MissionIdSchema } from "@pragma/shared/integration";
 
 import type { CliLocalHost } from "../commands/types.ts";
 import { CLI_VERSION } from "../version.ts";
@@ -686,37 +690,66 @@ async function listMissionSnapshots(
     if (isNodeError(error, "ENOENT")) return [];
     throw error;
   }
+  const missionIds: string[] = [];
+  for (const entry of directories) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (!MissionIdSchema.safeParse(entry.name).success) continue;
+
+    const localHostPath = join(missionsPath, entry.name, "local-host");
+    let localHostDirectory: Awaited<ReturnType<typeof stat>> | undefined;
+    try {
+      localHostDirectory = await stat(localHostPath);
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) continue;
+      throw localHostStorageError(entry.name);
+    }
+    if (!localHostDirectory.isDirectory()) throw localHostStorageError(entry.name);
+
+    let aggregate: Awaited<ReturnType<typeof stat>> | undefined;
+    try {
+      aggregate = await stat(join(localHostPath, "aggregate.json"));
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) throw localHostStorageError(entry.name);
+      throw localHostStorageError(entry.name);
+    }
+    if (!aggregate.isFile()) throw localHostStorageError(entry.name);
+    missionIds.push(entry.name);
+  }
   const snapshots: Array<Record<string, unknown> | undefined> = await Promise.all(
-    directories
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-      .map(async (entry) => {
-        const snapshot = await controller.readSnapshot({ missionId: entry.name });
-        const created = snapshot.events.find((event) => event.type === "mission.created");
-        if (created === undefined) return undefined;
-        const latest = snapshot.events.at(-1);
-        const status = missionStatus(snapshot.events.map((event) => event.type));
-        const executor = created.data["executor"];
-        return {
-          id: entry.name,
-          missionId: entry.name,
-          title: entry.name,
-          ...(executor === undefined ? {} : { executor }),
-          ...(created.data["workspace"] === undefined
-            ? {}
-            : { workspace: { canonicalPath: created.data["workspace"] } }),
-          status,
-          lifecycleStatus: ["succeeded", "failed", "cancelled"].includes(status)
-            ? "completed"
-            : status === "queued"
-              ? "queued"
-              : "active",
-          execution: executionSummary(snapshot.events),
-          createdAt: created.occurredAt,
-          updatedAt: latest?.occurredAt ?? created.occurredAt,
-          eventSequence: snapshot.snapshot.eventSequence,
-          cursor: snapshot.cursor,
-        };
-      }),
+    missionIds.map(async (missionId) => {
+      let snapshot;
+      try {
+        snapshot = await controller.readSnapshot({ missionId });
+      } catch (error) {
+        if (IntegrationErrorSchema.safeParse(error).success) throw error;
+        throw localHostStorageError(missionId);
+      }
+      const created = snapshot.events.find((event) => event.type === "mission.created");
+      if (created === undefined) return undefined;
+      const latest = snapshot.events.at(-1);
+      const status = missionStatus(snapshot.events.map((event) => event.type));
+      const executor = created.data["executor"];
+      return {
+        id: missionId,
+        missionId,
+        title: missionId,
+        ...(executor === undefined ? {} : { executor }),
+        ...(created.data["workspace"] === undefined
+          ? {}
+          : { workspace: { canonicalPath: created.data["workspace"] } }),
+        status,
+        lifecycleStatus: ["succeeded", "failed", "cancelled"].includes(status)
+          ? "completed"
+          : status === "queued"
+            ? "queued"
+            : "active",
+        execution: executionSummary(snapshot.events),
+        createdAt: created.occurredAt,
+        updatedAt: latest?.occurredAt ?? created.occurredAt,
+        eventSequence: snapshot.snapshot.eventSequence,
+        cursor: snapshot.cursor,
+      };
+    }),
   );
   const listed = snapshots.filter(
     (snapshot): snapshot is Record<string, unknown> => snapshot !== undefined,
@@ -724,6 +757,15 @@ async function listMissionSnapshots(
   return listed.toSorted((left, right) =>
     String(right["updatedAt"]).localeCompare(String(left["updatedAt"])),
   );
+}
+
+function localHostStorageError(missionId: string): IntegrationError {
+  return createIntegrationError({
+    code: "STORAGE_CORRUPTED",
+    category: "protocol",
+    message: "A Local Host Mission aggregate is corrupted.",
+    details: { missionId },
+  });
 }
 
 function missionStatus(
