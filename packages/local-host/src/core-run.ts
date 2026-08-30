@@ -579,7 +579,7 @@ export async function readPendingInteraction(
   return undefined;
 }
 
-function mapExecutionEvent(
+export function mapExecutionEvent(
   event: ExecutionEvent,
   missionId: string,
   executionId: string,

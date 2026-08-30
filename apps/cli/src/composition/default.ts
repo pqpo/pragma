@@ -130,6 +130,7 @@ export function createProductionLocalHost(): CliLocalHost {
       await createLocalHostMissionBoardBindings({ pragmaHome, missionId }),
     executors: resolveExecutor,
   });
+  const missionPort = createControllerRunMissionPort(missionController, { ownerScope });
   const coreControl = createLocalHostCoreMissionControlAdapter({
     pragmaHome,
     runtimes: runtimeResolver,
@@ -137,6 +138,7 @@ export function createProductionLocalHost(): CliLocalHost {
     loggerProvider,
     executions: executionStore,
     sessions: expertSessionStore,
+    mission: missionPort,
     createHostContextBindings: async ({ missionId }) =>
       await createLocalHostMissionBoardBindings({ pragmaHome, missionId }),
     executors: resolveExecutor,
@@ -181,7 +183,7 @@ export function createProductionLocalHost(): CliLocalHost {
   });
   const run = createLocalHostRunApplication({
     executors: executorPort,
-    mission: createControllerRunMissionPort(missionController, { ownerScope }),
+    mission: missionPort,
     commandConsumer: coreControl.consumer,
   });
   const application = createLocalHostApplication({
@@ -489,8 +491,13 @@ async function releaseRecoveredOwner(options: {
   readonly coreControl: ReturnType<typeof createLocalHostCoreMissionControlAdapter>;
   readonly ownerScope: ReturnType<typeof createMissionOwnerScope>;
 }): Promise<void> {
+  const guard = options.ownerScope.currentGuard(options.missionId);
+  if (guard === undefined) {
+    await options.coreControl.release(options.missionId);
+    return;
+  }
   try {
-    await options.coreControl.releaseAfterHumanCheckpoint(options.missionId);
+    await options.coreControl.releaseAfterHumanCheckpoint(options.missionId, guard);
   } catch (error) {
     // A recovered owner may have started a subsequent queued execution while
     // the requested execution was being observed. Keep that owner alive and

@@ -15,17 +15,27 @@ import {
   type RuntimeAdapter,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
-import type { ExecutorDescriptor, WorkspaceSelection } from "@pragma/shared/integration";
+import {
+  HumanInteractionRequestEnvelopeSchema,
+  type ExecutorDescriptor,
+  type WorkspaceSelection,
+} from "@pragma/shared/integration";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createControllerRunMissionPort,
   createCoreRunExecutorPort,
+  createLocalHostCoreMissionControlAdapter,
   createLocalHostMissionBoardBindings,
   createLocalHostRunApplication,
+  createMissionControlApplication,
   createMissionControllerStore,
+  createMissionOwnerScope,
+  createMissionWatchApplication,
+  findMissionPinnedBinding,
   type LocalHostCoreExecutorDefinition,
   type LocalHostRunRequest,
+  type MissionWatchEvent,
 } from "../src/index.ts";
 
 const tempDirectories: string[] = [];
@@ -138,6 +148,163 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
     expect(humanSnapshot.events.map((event) => event.type)).toContain("run.input_required");
     expect(humanSnapshot.snapshot.lease).toBeUndefined();
   });
+
+  it(
+    "projects recovered HumanTask completion into the Mission timeline",
+    { timeout: 30_000 },
+    async () => {
+      const { home, run, executions, sessions, controller, runtimes, executors } =
+        await createRunFixture();
+      const human = await run.start(createRequest(home, "flow", "d".repeat(16), undefined), {
+        onHumanInteraction: async () => ({ kind: "checkpoint" }),
+      });
+      await expect(human.outcome).resolves.toMatchObject({ status: "input_required" });
+
+      const pendingSnapshot = await controller.readSnapshot({ missionId: human.missionId });
+      const pendingEvent = pendingSnapshot.events.find(
+        (event) => event.type === "human.interaction.requested",
+      );
+      const pending = HumanInteractionRequestEnvelopeSchema.parse(pendingEvent?.data);
+      const watchEvents: MissionWatchEvent[] = [];
+      const watchPromise = createMissionWatchApplication({
+        controller,
+        pollIntervalMs: 10,
+      }).watch({
+        missionId: human.missionId,
+        after: pendingSnapshot.cursor,
+        until: "terminal",
+        onEvent: (event) => watchEvents.push(event),
+      });
+      await waitUntil(async () => watchEvents.some((event) => event.type === "watch.ready"));
+
+      const ownerScope = createMissionOwnerScope({ controller });
+      const mission = createControllerRunMissionPort(controller, { ownerScope });
+      const coreControl = createLocalHostCoreMissionControlAdapter({
+        pragmaHome: home,
+        runtimes,
+        executions,
+        sessions,
+        executors,
+        mission,
+        resolveMissionBinding: async (missionId) =>
+          findMissionPinnedBinding((await controller.readSnapshot({ missionId })).events),
+        hasPendingMissionCommands: async (missionId) =>
+          (await controller.listOperations({ missionId })).some(
+            (operation) => operation.state === "queued" || operation.state === "applying",
+          ),
+        releaseMissionOwner: async (missionId) => await ownerScope.release(missionId),
+      });
+      const control = createMissionControlApplication({
+        controller,
+        ownerScope,
+        consumer: coreControl.consumer,
+        assertAcquisitionAllowed: coreControl.assertAcquisitionAllowed,
+        waitExecution: coreControl.waitExecution,
+      });
+
+      const requestId = randomUUID();
+      const response = {
+        answers: { "Review this run.": "approved" },
+      };
+      const submission = await control.submit({
+        missionId: human.missionId,
+        requestId,
+        kind: "respond",
+        payload: { kind: "respond", response },
+        target: { interactionId: pending.interactionId },
+      });
+      expect(submission.owner).toBe("acquired");
+      await expect(
+        control.wait({ missionId: human.missionId, requestId, timeoutMs: 5_000 }),
+      ).resolves.toMatchObject({ state: "applied" });
+      await expect(
+        control.waitExecution!({
+          missionId: human.missionId,
+          executionId: human.missionId,
+          pollIntervalMs: 10,
+        }),
+      ).resolves.toMatchObject({
+        status: "succeeded",
+        result: { answers: { "Review this run.": "approved" } },
+      });
+
+      await waitUntil(async () => {
+        const snapshot = await controller.readSnapshot({ missionId: human.missionId });
+        return snapshot.events.some((event) => event.type === "run.succeeded");
+      });
+      await waitUntil(async () => {
+        const snapshot = await controller.readSnapshot({ missionId: human.missionId });
+        return snapshot.snapshot.lease === undefined;
+      });
+      const completedSnapshot = await controller.readSnapshot({ missionId: human.missionId });
+      const completedTypes = completedSnapshot.events.map((event) => event.type);
+      const resolvedIndex = completedTypes.lastIndexOf("human.interaction.resolved");
+      const resumedIndex = completedTypes.lastIndexOf("human.resumed");
+      const succeededIndex = completedTypes.lastIndexOf("run.succeeded");
+      expect(resolvedIndex).toBeGreaterThan(-1);
+      expect(resumedIndex).toBeGreaterThan(resolvedIndex);
+      expect(succeededIndex).toBeGreaterThan(resumedIndex);
+      expect(completedTypes).not.toContain("human.responded");
+      expect(
+        completedTypes.filter((type) =>
+          ["human.interaction.resolved", "human.resumed", "run.succeeded"].includes(type),
+        ),
+      ).toHaveLength(3);
+      const succeededEvent = completedSnapshot.events.find(
+        (event) => event.type === "run.succeeded",
+      );
+      expect(succeededEvent).toMatchObject({
+        eventId: expect.any(String),
+        data: {
+          executionId: human.missionId,
+          result: { answers: { "Review this run.": "approved" } },
+        },
+      });
+      expect((await executions.get(human.missionId))?.status).toBe("succeeded");
+      expect(completedSnapshot.snapshot.lease).toBeUndefined();
+      await expect(watchPromise).resolves.toMatchObject({
+        status: "completed",
+        until: "terminal",
+      });
+      const watchedRecoveryTypes = watchEvents
+        .filter((event) => event.replayable)
+        .map((event) => event.type)
+        .filter((type) =>
+          ["human.interaction.resolved", "human.resumed", "run.succeeded"].includes(type),
+        );
+      expect(watchedRecoveryTypes).toEqual([
+        "human.interaction.resolved",
+        "human.resumed",
+        "run.succeeded",
+      ]);
+
+      await expect(
+        control.submit({
+          missionId: human.missionId,
+          requestId,
+          kind: "respond",
+          payload: { kind: "respond", response },
+          target: { interactionId: pending.interactionId },
+        }),
+      ).resolves.toMatchObject({ operation: { state: "applied" } });
+      await expect(
+        control.submit({
+          missionId: human.missionId,
+          requestId,
+          kind: "respond",
+          payload: {
+            kind: "respond",
+            response: { answers: { "Review this run.": "different" } },
+          },
+          target: { interactionId: pending.interactionId },
+        }),
+      ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+      const retriedSnapshot = await controller.readSnapshot({ missionId: human.missionId });
+      expect(retriedSnapshot.events.filter((event) => event.type === "run.succeeded")).toEqual([
+        succeededEvent,
+      ]);
+    },
+  );
 });
 
 async function createRunFixture(): Promise<{
@@ -146,6 +313,8 @@ async function createRunFixture(): Promise<{
   readonly sessions: ReturnType<typeof createFileExpertSessionStore>;
   readonly controller: ReturnType<typeof createMissionControllerStore>;
   readonly runtimeState: FixtureRuntimeState;
+  readonly runtimes: ReturnType<typeof createStaticRuntimeResolver>;
+  readonly executors: readonly LocalHostCoreExecutorDefinition[];
   readonly run: ReturnType<typeof createLocalHostRunApplication>;
 }> {
   const home = await mkdtemp(join(tmpdir(), "pragma-core-run-"));
@@ -159,6 +328,7 @@ async function createRunFixture(): Promise<{
   const executions = createFileExecutionStore({ pragmaHome: home });
   const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
   const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+  const executors = await createExecutorDefinitions(home);
   const run = createLocalHostRunApplication({
     executors: createCoreRunExecutorPort({
       pragmaHome: home,
@@ -167,11 +337,11 @@ async function createRunFixture(): Promise<{
       sessions,
       createHostContextBindings: async ({ missionId }) =>
         await createLocalHostMissionBoardBindings({ pragmaHome: home, missionId }),
-      executors: await createExecutorDefinitions(home),
+      executors,
     }),
     mission: createControllerRunMissionPort(controller),
   });
-  return { home, executions, sessions, controller, runtimeState, run };
+  return { home, executions, sessions, controller, runtimeState, runtimes, executors, run };
 }
 
 async function createExecutorDefinitions(
@@ -318,4 +488,13 @@ function createFixtureRuntime(state: FixtureRuntimeState): RuntimeAdapter {
       state.closeCount += 1;
     },
   });
+}
+
+async function waitUntil(predicate: () => Promise<boolean>, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Condition was not met within ${timeoutMs}ms.`);
 }

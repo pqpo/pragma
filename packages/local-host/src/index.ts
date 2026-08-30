@@ -42,6 +42,7 @@ export * from "./missions/controller/mission-control.ts";
 export * from "./missions/controller/migrations/index.ts";
 export * from "./run-payload.ts";
 export * from "./run.ts";
+export * from "./mission-event-projector.ts";
 export * from "./core-run.ts";
 export * from "./core-control-adapter.ts";
 export * from "./built-in-executors.ts";

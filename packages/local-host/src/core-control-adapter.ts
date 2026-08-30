@@ -14,7 +14,12 @@ import type {
   RuntimeResolver,
   UsageSink,
 } from "@pragma/core";
-import { createFileExpertSessionStore, createFileExecutionStore, createPragma } from "@pragma/core";
+import {
+  createFileExpertSessionStore,
+  createFileExecutionStore,
+  createPragma,
+  unwrapInvocationOutput,
+} from "@pragma/core";
 import {
   HumanInteractionResponseSchema,
   JsonValueSchema,
@@ -27,6 +32,7 @@ import {
   IntegrationErrorSchema,
   type ExecutorDescriptor,
   type ExecutorReference,
+  type HumanInteractionRequestEnvelope,
   type MissionCommand,
 } from "@pragma/shared/integration";
 
@@ -40,11 +46,15 @@ import type {
 } from "./missions/controller/mission-controller-store.ts";
 import {
   readPendingInteraction,
+  mapExecutionEvent,
   toCoreResponse,
   type LocalHostCoreDefinition,
   type LocalHostCoreExecutorDefinition,
   type LocalHostCoreRunComposition,
 } from "./core-run.ts";
+import { createLocalHostMissionEventProjector } from "./mission-event-projector.ts";
+import { createRunRedactor, type RunRedactor } from "./redaction.ts";
+import type { LocalHostRunMissionPort, LocalHostRunTerminal } from "./run.ts";
 import type {
   MissionControlExecutionOutcome,
   MissionControlTargetResolution,
@@ -63,7 +73,10 @@ export interface LocalHostCoreMissionControlAdapter {
   }) => Promise<string | undefined>;
   readonly recoverMission: (missionId: string) => Promise<void>;
   readonly release: (missionId: string) => Promise<void>;
-  readonly releaseAfterHumanCheckpoint: (missionId: string) => Promise<void>;
+  readonly releaseAfterHumanCheckpoint: (
+    missionId: string,
+    guard: MissionControllerGuard,
+  ) => Promise<void>;
   readonly waitExecution: (input: {
     readonly missionId: string;
     readonly executionId: string;
@@ -94,6 +107,9 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly app?: PragmaApp | undefined;
   readonly executions?: ExecutionStore | undefined;
   readonly sessions?: ExpertSessionStore | undefined;
+  /** Mission event sink shared with the initial Local Host run path. */
+  readonly mission: Pick<LocalHostRunMissionPort, "controller" | "append">;
+  readonly redactor?: RunRedactor | undefined;
   readonly usageSink?: UsageSink | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
@@ -129,6 +145,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   // the foreground run releases its resources.
   const recoveredOwners = new Map<string, CoreMissionOwner>();
   const settlementTasks = new Map<string, Promise<void>>();
+  const redactor = options.redactor ?? createRunRedactor();
 
   const createApp = (hostContextBindings?: HostContextBindings): PragmaApp =>
     options.app ??
@@ -227,7 +244,10 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     await recover(missionId);
   };
 
-  const settleRecoveredOwner = async (missionId: string): Promise<void> => {
+  const settleRecoveredOwner = async (
+    missionId: string,
+    guard: MissionControllerGuard,
+  ): Promise<void> => {
     if (options.releaseMissionOwner === undefined) return;
     // Let ExpertSession/FlowExecution finish the microtask that starts the
     // newly accepted prompt before deciding that an acquired owner is idle.
@@ -252,6 +272,14 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           await unrefDelay(100);
           continue;
         }
+        await projectRecoveredOwner({
+          missionId,
+          guard,
+          executionIds: state.executionIds,
+          executions,
+          mission: options.mission,
+          redactor,
+        });
         const checkpointed =
           state.lastStatus === "waiting" || prompts.some((prompt) => prompt.status === "queued");
         if (checkpointed) await owner.session.releaseAfterHumanCheckpoint();
@@ -270,6 +298,14 @@ export function createLocalHostCoreMissionControlAdapter(options: {
             continue;
           }
         }
+        await projectRecoveredOwner({
+          missionId,
+          guard,
+          executionIds: [missionId],
+          executions,
+          mission: options.mission,
+          redactor,
+        });
       }
 
       // Lower-level release is complete. Remove the recovered handle before
@@ -281,10 +317,13 @@ export function createLocalHostCoreMissionControlAdapter(options: {
     }
   };
 
-  const scheduleRecoveredOwnerSettlement = (missionId: string): void => {
+  const scheduleRecoveredOwnerSettlement = (
+    missionId: string,
+    guard: MissionControllerGuard,
+  ): void => {
     if (options.releaseMissionOwner === undefined || !recoveredOwners.has(missionId)) return;
     if (settlementTasks.has(missionId)) return;
-    const task = settleRecoveredOwner(missionId).finally(() => {
+    const task = settleRecoveredOwner(missionId, guard).finally(() => {
       if (settlementTasks.get(missionId) === task) settlementTasks.delete(missionId);
     });
     settlementTasks.set(missionId, task);
@@ -452,9 +491,19 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       }
       recoveredOwners.delete(missionId);
     },
-    releaseAfterHumanCheckpoint: async (missionId) => {
+    releaseAfterHumanCheckpoint: async (missionId, guard) => {
       const owner = recoveredOwners.get(missionId);
       if (owner === undefined) return;
+      const executionIds =
+        owner.kind === "session" ? (await owner.session.getState()).executionIds : [missionId];
+      await projectRecoveredOwner({
+        missionId,
+        guard,
+        executionIds,
+        executions,
+        mission: options.mission,
+        redactor,
+      });
       if (owner.kind === "session") {
         await owner.session.releaseAfterHumanCheckpoint();
       }
@@ -471,9 +520,9 @@ export function createLocalHostCoreMissionControlAdapter(options: {
           result: await applyCoreMissionCommand({ command, executions, recover }),
         };
       },
-      afterOutcome({ command }) {
+      afterOutcome({ command, guard }) {
         if (recoveredOwners.has(command.missionId)) {
-          scheduleRecoveredOwnerSettlement(command.missionId);
+          scheduleRecoveredOwnerSettlement(command.missionId, guard);
         } else {
           scheduleUnbackedMissionOwnerSettlement(command.missionId);
         }
@@ -806,6 +855,108 @@ async function applyFlowResponse(
   return { missionId: command.missionId, executionId: execution.executionId, interactionId };
 }
 
+/**
+ * Rebuild the Mission projection from the Core execution before releasing a
+ * recovered owner. The initial run and this recovery path deliberately share
+ * the same event projector so a Core-only recovery cannot leave Mission watch
+ * behind at run.input_required.
+ */
+async function projectRecoveredOwner(options: {
+  readonly missionId: string;
+  readonly guard: MissionControllerGuard;
+  readonly executionIds: readonly string[];
+  readonly executions: ExecutionStore;
+  readonly mission: Pick<LocalHostRunMissionPort, "controller" | "append">;
+  readonly redactor: RunRedactor;
+}): Promise<void> {
+  const snapshot = await options.mission.controller.readSnapshot({
+    missionId: options.missionId,
+  });
+  const knownEventIds = new Set(snapshot.events.map((event) => event.eventId));
+  const projector = createLocalHostMissionEventProjector({
+    missionId: options.missionId,
+    guard: options.guard,
+    mission: options.mission,
+    redactor: options.redactor,
+    knownEventIds,
+  });
+
+  for (const executionId of new Set(options.executionIds)) {
+    const events = await options.executions.readEvents(executionId);
+    const pending = new Map<string, HumanInteractionRequestEnvelope>();
+    const mappedEvents = events.map((event) =>
+      mapExecutionEvent(event, options.missionId, executionId, pending),
+    );
+    let lastKnownIndex = -1;
+    events.forEach((event, index) => {
+      if (knownEventIds.has(event.eventId)) lastKnownIndex = index;
+    });
+    for (const event of mappedEvents.slice(lastKnownIndex + 1)) {
+      await projector.append(event);
+    }
+    const terminal = await terminalFromRecoveredExecution({
+      executions: options.executions,
+      executionId,
+      missionId: options.missionId,
+      pending,
+    });
+    if (terminal !== undefined) await projector.appendTerminal(terminal);
+  }
+  await projector.flush();
+}
+
+async function terminalFromRecoveredExecution(options: {
+  readonly executions: ExecutionStore;
+  readonly executionId: string;
+  readonly missionId: string;
+  readonly pending: Map<string, HumanInteractionRequestEnvelope>;
+}): Promise<LocalHostRunTerminal | undefined> {
+  const execution = await options.executions.get(options.executionId);
+  if (execution === undefined) return undefined;
+  if (execution.status === "waiting") {
+    const interaction = await readPendingInteraction(
+      options.executions,
+      options.executionId,
+      options.missionId,
+      options.pending,
+    );
+    return interaction === undefined
+      ? undefined
+      : {
+          status: "input_required",
+          executionId: options.executionId,
+          interaction,
+          ...(execution.usage === undefined ? {} : { usage: execution.usage }),
+        };
+  }
+  if (execution.status === "succeeded") {
+    return {
+      status: "succeeded",
+      executionId: options.executionId,
+      result: toJsonValue(
+        execution.output === undefined ? undefined : unwrapInvocationOutput(execution.output),
+      ),
+      ...(execution.usage === undefined ? {} : { usage: execution.usage }),
+    };
+  }
+  if (execution.status === "failed") {
+    return {
+      status: "failed",
+      executionId: options.executionId,
+      error: executionError(execution.error),
+      ...(execution.usage === undefined ? {} : { usage: execution.usage }),
+    };
+  }
+  if (execution.status === "cancelled" || execution.status === "interrupted") {
+    return {
+      status: "interrupted",
+      executionId: options.executionId,
+      ...(execution.usage === undefined ? {} : { usage: execution.usage }),
+    };
+  }
+  return undefined;
+}
+
 async function readActiveExpertTarget(
   sessions: ExpertSessionStore,
   missionId: string,
@@ -884,6 +1035,7 @@ async function waitForExecution(
           executionId: execution.executionId,
           status: execution.status,
           interaction: JsonValueSchema.parse(interaction),
+          ...(execution.usage === undefined ? {} : { usage: execution.usage }),
         };
       }
     }
@@ -892,7 +1044,10 @@ async function waitForExecution(
         return {
           executionId: execution.executionId,
           status: execution.status,
-          result: toJsonValue(execution.output),
+          result: toJsonValue(
+            execution.output === undefined ? undefined : unwrapInvocationOutput(execution.output),
+          ),
+          ...(execution.usage === undefined ? {} : { usage: execution.usage }),
         };
       }
       if (execution.status === "failed") {
@@ -900,9 +1055,14 @@ async function waitForExecution(
           executionId: execution.executionId,
           status: execution.status,
           error: executionError(execution.error),
+          ...(execution.usage === undefined ? {} : { usage: execution.usage }),
         };
       }
-      return { executionId: execution.executionId, status: execution.status };
+      return {
+        executionId: execution.executionId,
+        status: execution.status,
+        ...(execution.usage === undefined ? {} : { usage: execution.usage }),
+      };
     }
     await delay(pollIntervalMs);
   }
@@ -920,6 +1080,7 @@ function executionError(value: unknown) {
 }
 
 function toJsonValue(value: unknown) {
+  if (value === undefined) return null;
   const parsed = JsonValueSchema.safeParse(value);
   return parsed.success ? parsed.data : String(value);
 }

@@ -5,7 +5,7 @@ import {
   type IntegrationError,
   type MissionCommand,
 } from "@pragma/shared/integration";
-import type { JsonValue } from "@pragma/shared";
+import type { AgentMessageUsage, JsonValue } from "@pragma/shared";
 
 import {
   hashMissionCommandPayload,
@@ -60,6 +60,7 @@ export interface MissionControlExecutionOutcome {
     "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "interrupted";
   readonly result?: JsonValue | undefined;
   readonly interaction?: JsonValue | undefined;
+  readonly usage?: AgentMessageUsage | undefined;
   readonly error?: IntegrationError | undefined;
 }
 

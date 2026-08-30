@@ -36,6 +36,10 @@ import {
 import type { MissionCommandConsumer } from "./missions/controller/mission-controller-store.ts";
 import { hashCanonicalRunPayload, type CanonicalRunPayloadInput } from "./run-payload.ts";
 import { createRunRedactor, type RunRedactor } from "./redaction.ts";
+import {
+  createLocalHostMissionEventProjector,
+  redactInteraction,
+} from "./mission-event-projector.ts";
 
 export interface LocalHostRunRequest extends Omit<CanonicalRunPayloadInput, "project"> {
   readonly requestId: string;
@@ -367,37 +371,17 @@ export function createLocalHostRunApplication(options: {
     const pendingHumanEvents: HumanInteractionRequestEnvelope[] = [];
     let humanProcessing = Promise.resolve();
     let humanFailure: unknown;
-    let eventProjection = Promise.resolve();
-    let eventProjectionFailure: unknown;
     let missionStarted = existingEvents.some((event) => event.type === "run.started");
     const pendingProjectionEvents: LocalHostRunEvent[] = [];
-    const publishEvent = (event: LocalHostRunEvent): void => {
-      presentation.onEvent?.(redactEvent(event, redactor));
-    };
-    const projectEvent = (event: LocalHostRunEvent): void => {
-      if (typeof event.data !== "object" || event.data === null || Array.isArray(event.data)) {
-        publishEvent({ ...redactEvent(event, redactor), replayable: false, cursor: undefined });
-        return;
-      }
-      eventProjection = eventProjection
-        .then(async () => {
-          const committed = await options.mission.append(
-            reservation.missionId,
-            guard,
-            event.type,
-            redactEventData(event.data, redactor),
-            event.eventId,
-          );
-          publishEvent({
-            ...redactEvent(event, redactor),
-            replayable: true,
-            cursor: committed.cursor,
-          });
-        })
-        .catch((error: unknown) => {
-          eventProjectionFailure ??= error;
-        });
-    };
+    const eventProjector = createLocalHostMissionEventProjector({
+      missionId: reservation.missionId,
+      guard,
+      mission: options.mission,
+      redactor,
+      onEvent: presentation.onEvent,
+      knownEventIds: existingEvents.map((event) => event.eventId),
+    });
+    const projectEvent = (event: LocalHostRunEvent): void => eventProjector.enqueue(event);
     const processHumanInteraction = (interaction: HumanInteractionRequestEnvelope): void => {
       humanProcessing = humanProcessing
         .then(async () => {
@@ -523,20 +507,9 @@ export function createLocalHostRunApplication(options: {
     const outcome = handle.result.then(
       async (terminal) => {
         try {
-          await eventProjection;
-          if (eventProjectionFailure !== undefined) throw eventProjectionFailure;
           await humanProcessing;
           if (humanFailure !== undefined) throw humanFailure;
-          const safeTerminal = redactTerminal(terminal, redactor);
-          await options.mission.append(reservation.missionId, guard, `run.${safeTerminal.status}`, {
-            executionId: safeTerminal.executionId,
-            ...(safeTerminal.result === undefined ? {} : { result: safeTerminal.result }),
-            ...(safeTerminal.interaction === undefined
-              ? {}
-              : { interaction: safeTerminal.interaction }),
-            ...(safeTerminal.usage === undefined ? {} : { usage: safeTerminal.usage }),
-            ...(safeTerminal.error === undefined ? {} : { error: safeTerminal.error }),
-          });
+          const safeTerminal = await eventProjector.appendTerminal(terminal);
           return {
             ...safeTerminal,
             missionId: reservation.missionId,
@@ -606,62 +579,6 @@ export function createLocalHostRunApplication(options: {
       }
       await options.executors.respond(input);
     },
-  };
-}
-
-function redactEvent(
-  event: LocalHostRunEvent,
-  redactor: RunRedactor | undefined,
-): LocalHostRunEvent {
-  if (redactor === undefined) return event;
-  return { ...event, data: redactor.redactJson(event.data) };
-}
-
-function redactEventData(
-  value: JsonValue,
-  redactor: RunRedactor | undefined,
-): Record<string, unknown> {
-  const redacted = redactor?.redactJson(value) ?? value;
-  return redacted as Record<string, unknown>;
-}
-
-function redactTerminal(
-  terminal: LocalHostRunTerminal,
-  redactor: RunRedactor | undefined,
-): LocalHostRunTerminal {
-  if (redactor === undefined) return terminal;
-  return {
-    ...terminal,
-    ...(terminal.result === undefined ? {} : { result: redactor.redactJson(terminal.result) }),
-    ...(terminal.interaction === undefined
-      ? {}
-      : { interaction: redactInteraction(terminal.interaction, redactor) }),
-    ...(terminal.error === undefined
-      ? {}
-      : {
-          error: {
-            ...terminal.error,
-            message: redactor.redactText(terminal.error.message),
-            ...(terminal.error.details === undefined
-              ? {}
-              : {
-                  details: redactor.redactJson(terminal.error.details) as Record<string, JsonValue>,
-                }),
-          },
-        }),
-  };
-}
-
-function redactInteraction(
-  interaction: HumanInteractionRequestEnvelope,
-  redactor: RunRedactor | undefined,
-): HumanInteractionRequestEnvelope {
-  if (redactor === undefined) return interaction;
-  return {
-    ...interaction,
-    interaction: redactor.redactJson(
-      interaction.interaction as unknown as JsonValue,
-    ) as unknown as HumanInteractionRequestEnvelope["interaction"],
   };
 }
 
