@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -99,6 +99,15 @@ describe("pragma doctor executable", () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain(home);
   });
 
+  it("reports completed migration journals as ready", async () => {
+    const home = await completedJournalHome();
+    const result = await invokeDoctor(home);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("model-provider: ready\ncapability: ready\nplugin: ready\n");
+  });
+
   it.each([
     ["locked", 5, "SECRET_STORE_LOCKED"],
     ["unavailable", 5, "KEYCHAIN_UNAVAILABLE"],
@@ -155,6 +164,58 @@ async function journalPendingHome(): Promise<string> {
     }),
   );
   return home;
+}
+
+async function completedJournalHome(): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), "pragma-cli-doctor-completed-"));
+  roots.push(home);
+  const data = join(home, "data");
+  const credentials = join(data, "credentials");
+  await mkdir(credentials, { recursive: true });
+  const providerPath = join(data, "model-providers.json");
+  const capabilityPath = join(credentials, "capability-credentials.json");
+  await writeFile(providerPath, JSON.stringify({ schemaVersion: 5, providers: [] }));
+  await writeFile(capabilityPath, JSON.stringify({ schemaVersion: 2, credentials: {} }));
+  await writeCompletedJournal(providerPath, {
+    family: "pragma.model-providers",
+    sourceVersion: 4,
+    targetVersion: 5,
+    id: "31a1b2c3-d4e5-46f7-89a0-b1c2d3e4f5a6",
+  });
+  await writeCompletedJournal(capabilityPath, {
+    family: "pragma.capability-credentials",
+    sourceVersion: 1,
+    targetVersion: 2,
+    id: "41a1b2c3-d4e5-46f7-89a0-b1c2d3e4f5a6",
+  });
+  return home;
+}
+
+async function writeCompletedJournal(
+  file: string,
+  input: {
+    readonly family: string;
+    readonly sourceVersion: number;
+    readonly targetVersion: number;
+    readonly id: string;
+  },
+): Promise<void> {
+  const backupPath = join(dirname(file), "migrations", "backups", `${input.id}.legacy.json`);
+  await mkdir(dirname(backupPath), { recursive: true });
+  await writeFile(backupPath, "retained legacy backup");
+  await writeFile(
+    `${file}.migration-journal.json`,
+    JSON.stringify({
+      schemaVersion: "pragma.legacy-credential-migration/v1",
+      ...input,
+      stage: "legacy_backup_retained",
+      sourceHash: "a".repeat(64),
+      targetMetadata: { schemaVersion: input.targetVersion },
+      refs: [],
+      backupPath,
+      decision: "legacy_ciphertext_removed_after_verified_secretstore_migration",
+    }),
+  );
 }
 
 async function invokeDoctor(
