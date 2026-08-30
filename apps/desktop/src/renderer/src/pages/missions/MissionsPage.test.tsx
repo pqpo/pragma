@@ -54,6 +54,7 @@ import {
   resolveMissionSearchCollapsed,
   resolveMissionComposerAction,
   releaseMissionClientOperation,
+  readyPendingQueuedRequestIds,
   resolveMissionHumanResponseAttempt,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
@@ -220,6 +221,23 @@ describe("MissionsPage", () => {
     };
 
     expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([entry]);
+  });
+
+  it("makes a queued message actionable as soon as its queue item is persisted", () => {
+    const requestId = "00000000-0000-4000-8000-000000000012";
+    const ready = readyPendingQueuedRequestIds(
+      [
+        {
+          requestId,
+          content: "Adjust the implementation",
+          attachments: [],
+        },
+      ],
+      new Set([requestId]),
+      [],
+    );
+
+    expect([...ready]).toEqual([requestId]);
   });
 
   it("shows a shimmer skeleton only when no in-memory snapshot is available", () => {

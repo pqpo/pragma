@@ -564,10 +564,16 @@ export const CreateMissionBranchSchema = z.object({
   expectedExecutionId: z.string().uuid().nullable(),
   expectedMessageId: z.string().min(1),
 });
-export const MissionQueuePromptActionSchema = z.object({
-  id: MissionIdSchema,
-  requestId: z.string().uuid(),
-});
+export const MissionQueuePromptActionSchema = z
+  .object({
+    id: MissionIdSchema,
+    requestId: z.string().uuid(),
+    queueItemRequestId: z.string().uuid(),
+  })
+  .refine((input) => input.requestId !== input.queueItemRequestId, {
+    message: "Queue actions require a requestId distinct from the queue item requestId.",
+    path: ["requestId"],
+  });
 export const GetMissionChatSchema = z.object({
   id: MissionIdSchema,
   beforeCursor: z.string().min(1).max(2_048).optional(),
