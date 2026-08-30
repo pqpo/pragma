@@ -9,6 +9,7 @@ import type { HumanInteractionRequestEnvelope } from "@pragma/local-host/wire";
 
 import type { ParsedCommand } from "../parser/argv.ts";
 import { HELP_TEXT } from "../parser/argv.ts";
+import { detectInstalledDesktopVersion } from "../desktop-version.ts";
 import { toIntegrationError } from "./errors.ts";
 import { collectHumanInteraction } from "../terminal.ts";
 import type { CliCommandContext } from "./types.ts";
@@ -22,7 +23,7 @@ export async function executeReadOnlyCommand(
     case "help":
       return { help: HELP_TEXT };
     case "version":
-      return versionResult(context.cliVersion);
+      return await versionResult(context.cliVersion);
     case "completion":
       return { shell: command.shell, script: completionScript(command.shell) };
     case "doctor":
@@ -103,10 +104,14 @@ async function resumeMission(
   );
 }
 
-export function versionResult(cliVersion: string): JsonValue {
+export async function versionResult(
+  cliVersion: string,
+  detectDesktopVersion: () => Promise<string | undefined> = detectInstalledDesktopVersion,
+): Promise<JsonValue> {
+  const desktopBundleVersion = (await detectDesktopVersion()) ?? "unknown";
   return {
     cliVersion,
-    desktopBundleVersion: process.env["PRAGMA_DESKTOP_BUNDLE_VERSION"] ?? "unknown",
+    desktopBundleVersion,
     wireVersion: "pragma.integration/v2",
     storageMajor: 1,
     installSource: process.env["npm_config_global"] === "true" ? "npm-global" : "workspace",
