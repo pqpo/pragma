@@ -2467,7 +2467,19 @@ export function createMissionRunner(options: {
       syncIssues.push(missionChatSyncIssue("context_window"));
       return undefined;
     });
+    // Capture the revision and live entries in one synchronous turn. Keep using the live object
+    // retained at the beginning of the read: settlement may already have removed it from the map,
+    // but its final output still belongs in this snapshot.
     const revision = chatRevisions.get(mission.id) ?? 0;
+    const revisionLiveEntries =
+      input.beforeCursor === undefined
+        ? (capturedLive?.entries.map((entry) => ({
+            ...entry,
+            ...(entry.timelineSequence === undefined && history.newestSequence !== undefined
+              ? { timelineSequence: history.newestSequence }
+              : {}),
+          })) ?? [])
+        : [];
     const resolveExecutorName = createMissionExecutorNameResolver(mission, executorMetadata.names);
     const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
       executorMetadata.avatarIds,
@@ -2475,7 +2487,11 @@ export function createMissionRunner(options: {
     // Durable recovery entries are appended before the live projection. Keep the live value for
     // stable IDs so richer streaming fields (for example the full tool error) win without
     // duplicating the row.
-    const mergedEntries = [...new Map(entries.map((entry) => [entry.id, entry])).values()];
+    const mergedEntries = [
+      ...new Map(
+        [...entries, ...revisionLiveEntries].map((entry) => [entry.id, entry] as const),
+      ).values(),
+    ];
     const presentedEntries = mergedEntries.map((entry) => {
       if (entry.executorId === undefined) return entry;
       const executorAvatarId = entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);

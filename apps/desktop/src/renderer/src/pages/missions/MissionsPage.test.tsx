@@ -1649,6 +1649,52 @@ describe("Mission chat patches", () => {
     expect(merged.page.nextBeforeCursor).toBe("older-cursor");
   });
 
+  it("does not replace append-only live output with a shorter refreshed prefix", () => {
+    const missionId = "00000000-0000-4000-8000-000000000000";
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const current: MissionChatSnapshot = {
+      missionId,
+      revision: 4,
+      entries: [
+        {
+          id: "answer",
+          kind: "assistant",
+          content: "complete streamed answer",
+          streaming: true,
+          createdAt,
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+    };
+    const staleProjection: MissionChatSnapshot = {
+      missionId,
+      revision: 5,
+      entries: [
+        {
+          id: "answer",
+          kind: "assistant",
+          content: "complete",
+          streaming: false,
+          createdAt,
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+    };
+
+    expect(mergeLatestChatPage(current, staleProjection)).toMatchObject({
+      revision: 5,
+      entries: [
+        {
+          id: "answer",
+          content: "complete streamed answer",
+          streaming: false,
+        },
+      ],
+    });
+  });
+
   it("preserves known history and interaction state when a refresh is degraded", () => {
     const current: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
