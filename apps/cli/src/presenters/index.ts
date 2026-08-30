@@ -500,7 +500,7 @@ function renderExecutorList(
       : [];
     const description = [
       ...(blockingCodes.length === 0 ? [] : [`blocking: ${blockingCodes[0]}`]),
-      valueText(item, "description") ?? "",
+      collapseWhitespace(valueText(item, "description") ?? ""),
     ]
       .filter((value) => value !== "")
       .join("; ");
@@ -784,6 +784,10 @@ function workspaceText(value: unknown): string | undefined {
 
 function booleanText(value: unknown): string {
   return value === true ? "yes" : value === false ? "no" : "unknown";
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }
 
 function contentPreview(value: unknown): string {

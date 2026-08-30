@@ -9,6 +9,7 @@ import {
   createMissionQuery,
   makeMissionEventCursor,
   type MissionControllerStore,
+  type MissionQueryView,
 } from "../src/index.ts";
 import { MissionEventsSchema, MissionSummarySchema } from "@pragma/shared/integration";
 
@@ -272,6 +273,24 @@ describe("Mission query projections", () => {
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
       details: { view, supportedViews: ["summary", "result", "events"] },
+    });
+  });
+
+  it("fails loudly for an unknown runtime view", async () => {
+    const controller = await createController();
+    await appendEvents(controller, [
+      ["mission.created", { executor: { kind: "expert", id: "aaaaaaaaaaaaaaaa" } }],
+    ]);
+
+    await expect(
+      createMissionQuery({ controller }).queryMission({
+        missionId: MISSION_ID,
+        view: "future" as MissionQueryView,
+        limit: 50,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      details: { view: "future", supportedViews: ["summary", "result", "events"] },
     });
   });
 });

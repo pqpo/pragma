@@ -612,45 +612,42 @@ function completionBashScript(): string {
   return replaceShellDollar(
     String.raw`
 _pragma_complete() {
-  local cur prev candidates
+  local cur candidates
   cur="__PRAGMA_DOLLAR__{COMP_WORDS[COMP_CWORD]}"
-  prev="__PRAGMA_DOLLAR__{COMP_WORDS[COMP_CWORD-1]}"
-  candidates="version doctor completion team expert flow mission"
+  candidates="version doctor completion team expert flow mission --format --json --stream-json --color --interactive --help"
   case "__PRAGMA_DOLLAR__{COMP_WORDS[1]}" in
     team|expert|flow)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
-        discover) candidates="--project --query --status --limit --cursor --format --json --stream-json" ;;
-        run) candidates="--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json" ;;
-        describe) candidates="--revision --format --json --stream-json" ;;
-        *) candidates="discover describe run" ;;
+        discover) candidates="--project --query --status --limit --cursor --format --json --stream-json --color --interactive --help" ;;
+        run) candidates="--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help" ;;
+        describe) candidates="--revision --format --json --stream-json --color --interactive --help" ;;
+        *) candidates="discover describe run --format --json --stream-json --color --interactive --help" ;;
       esac
       ;;
     mission)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
-        list) candidates="--status --executor --limit --cursor --format --json --stream-json" ;;
-        get) candidates="--view --limit --cursor --format --json --stream-json" ;;
-        board) candidates="list read search" ;;
+        list) candidates="--status --executor --limit --cursor --format --json --stream-json --color --interactive --help" ;;
+        get) candidates="--view --limit --cursor --format --json --stream-json --color --interactive --help" ;;
+        board) candidates="list read search --format --json --stream-json --color --interactive --help" ;;
         queue)
           case "__PRAGMA_DOLLAR__{COMP_WORDS[3]}" in
-            list) candidates="--limit --cursor --format --json --stream-json" ;;
-            remove) candidates="--request --request-id --ack-timeout --format --json --stream-json" ;;
-            resume) candidates="--request-id --format --json --stream-json" ;;
-            steer) candidates="--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json" ;;
-            *) candidates="list remove resume steer" ;;
+            list) candidates="--limit --cursor --format --json --stream-json --color --interactive --help" ;;
+            remove) candidates="--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+            resume) candidates="--request-id --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+            steer) candidates="--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+            *) candidates="list remove resume steer --format --json --stream-json --color --interactive --help" ;;
           esac
           ;;
-        watch) candidates="--after --replay --until --format --stream-json" ;;
-        resume) candidates="--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json" ;;
-        send|steer) candidates="--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json" ;;
-        respond) candidates="--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json" ;;
-        interrupt) candidates="--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json" ;;
-        *) candidates="list get resume watch send steer respond interrupt board queue" ;;
+        watch) candidates="--after --replay --until --format --stream-json --color --interactive --help" ;;
+        resume) candidates="--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help" ;;
+        send) candidates="--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+        steer) candidates="--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+        respond) candidates="--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+        interrupt) candidates="--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+        *) candidates="list get resume watch send steer respond interrupt board queue --format --json --stream-json --color --interactive --help" ;;
       esac
       ;;
   esac
-  if [[ "__PRAGMA_DOLLAR__cur" == --* || "__PRAGMA_DOLLAR__prev" == --* ]]; then
-    candidates="--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --request --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor --query --status --executor --view"
-  fi
   COMPREPLY=( $(compgen -W "__PRAGMA_DOLLAR__candidates" -- "__PRAGMA_DOLLAR__cur") )
 }
 complete -F _pragma_complete pragma
@@ -675,9 +672,10 @@ _pragma() {
             _describe command 'discover describe run'
           else
             case __PRAGMA_DOLLAR__words[3] in
-              discover) _describe option '--project --query --status --limit --cursor --format --json --stream-json' ;;
-              describe) _describe option '--revision --format --json --stream-json' ;;
-              *) _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json' ;;
+              discover) _describe option '--project --query --status --limit --cursor --format --json --stream-json --color --interactive --help' ;;
+              describe) _describe option '--revision --format --json --stream-json --color --interactive --help' ;;
+              run) _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help' ;;
+              *) _describe option '--format --json --stream-json --color --interactive --help' ;;
             esac
           fi
           ;;
@@ -686,23 +684,26 @@ _pragma() {
             _describe command 'list get resume watch send steer respond interrupt board queue'
           else
             case __PRAGMA_DOLLAR__words[3] in
-              list) _describe option '--status --executor --limit --cursor --format --json --stream-json' ;;
-              get) _describe option '--view --limit --cursor --format --json --stream-json' ;;
+              list) _describe option '--status --executor --limit --cursor --format --json --stream-json --color --interactive --help' ;;
+              get) _describe option '--view --limit --cursor --format --json --stream-json --color --interactive --help' ;;
               board) _describe command 'list read search' ;;
               queue)
                 if (( CURRENT == 4 )); then _describe command 'list remove resume steer';
                 else
                   case __PRAGMA_DOLLAR__words[4] in
-                    list) _describe option '--limit --cursor --format --json --stream-json' ;;
-                    remove|steer) _describe option '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json' ;;
-                    resume) _describe option '--request-id --ack-timeout --format --json --stream-json' ;;
+                    list) _describe option '--limit --cursor --format --json --stream-json --color --interactive --help' ;;
+                    remove) _describe option '--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+                    resume) _describe option '--request-id --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+                    steer) _describe option '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
                   esac
                 fi
                 ;;
-              watch) _describe option '--after --replay --until --format --stream-json' ;;
-              resume) _describe option '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json' ;;
-              respond) _describe option '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json' ;;
-              *) _describe option '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json' ;;
+              watch) _describe option '--after --replay --until --format --stream-json --color --interactive --help' ;;
+              resume) _describe option '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help' ;;
+              respond) _describe option '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+              send) _describe option '--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+              steer) _describe option '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+              *) _describe option '--format --json --stream-json --color --interactive --help' ;;
             esac
           fi
           ;;
@@ -720,7 +721,12 @@ function completionFishScript(): string {
   return replaceShellDollar(
     String.raw`function __pragma_mission_queue
   set -l tokens (commandline -opc)
-  test "__PRAGMA_DOLLAR__tokens[2]" = mission; and test "__PRAGMA_DOLLAR__tokens[3]" = queue
+  if contains mission __PRAGMA_DOLLAR__tokens
+    if contains queue __PRAGMA_DOLLAR__tokens
+      return 0
+    end
+  end
+  return 1
 end
 
 function __pragma_discover
@@ -728,25 +734,132 @@ function __pragma_discover
   contains discover __PRAGMA_DOLLAR__tokens
 end
 
+function __pragma_describe
+  set -l tokens (commandline -opc)
+  contains describe __PRAGMA_DOLLAR__tokens
+end
+
+function __pragma_run
+  set -l tokens (commandline -opc)
+  contains run __PRAGMA_DOLLAR__tokens
+end
+
 function __pragma_mission_list
   set -l tokens (commandline -opc)
-  contains mission __PRAGMA_DOLLAR__tokens; and contains list __PRAGMA_DOLLAR__tokens
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains list __PRAGMA_DOLLAR__tokens
+    if contains queue __PRAGMA_DOLLAR__tokens; or contains board __PRAGMA_DOLLAR__tokens
+      return 1
+    end
+    return 0
+  end
+  return 1
 end
 
 function __pragma_mission_get
   set -l tokens (commandline -opc)
-  contains mission __PRAGMA_DOLLAR__tokens; and contains get __PRAGMA_DOLLAR__tokens
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains get __PRAGMA_DOLLAR__tokens
+    if contains queue __PRAGMA_DOLLAR__tokens; or contains board __PRAGMA_DOLLAR__tokens
+      return 1
+    end
+    return 0
+  end
+  return 1
+end
+
+function __pragma_mission_watch
+  set -l tokens (commandline -opc)
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains watch __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
+end
+
+function __pragma_global_options
+  if __pragma_mission_watch
+    return 1
+  end
+  return 0
+end
+
+function __pragma_mission_resume
+  set -l tokens (commandline -opc)
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains resume __PRAGMA_DOLLAR__tokens
+    if contains queue __PRAGMA_DOLLAR__tokens
+      return 1
+    end
+    return 0
+  end
+  return 1
+end
+
+function __pragma_mission_send
+  set -l tokens (commandline -opc)
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains send __PRAGMA_DOLLAR__tokens
+    if contains queue __PRAGMA_DOLLAR__tokens
+      return 1
+    end
+    return 0
+  end
+  return 1
+end
+
+function __pragma_mission_steer
+  set -l tokens (commandline -opc)
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains steer __PRAGMA_DOLLAR__tokens
+    if contains queue __PRAGMA_DOLLAR__tokens
+      return 1
+    end
+    return 0
+  end
+  return 1
+end
+
+function __pragma_mission_respond
+  set -l tokens (commandline -opc)
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains respond __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
+end
+
+function __pragma_mission_interrupt
+  set -l tokens (commandline -opc)
+  if contains mission __PRAGMA_DOLLAR__tokens; and contains interrupt __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
 end
 
 function __pragma_queue_list
   set -l tokens (commandline -opc)
-  contains queue __PRAGMA_DOLLAR__tokens; and contains list __PRAGMA_DOLLAR__tokens
+  if __pragma_mission_queue; and contains list __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
 end
 
-function __pragma_queue_mutation
+function __pragma_queue_remove
   set -l tokens (commandline -opc)
-  contains queue __PRAGMA_DOLLAR__tokens; and contains remove __PRAGMA_DOLLAR__tokens
-  or contains queue __PRAGMA_DOLLAR__tokens; and contains steer __PRAGMA_DOLLAR__tokens
+  if __pragma_mission_queue; and contains remove __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
+end
+
+function __pragma_queue_resume
+  set -l tokens (commandline -opc)
+  if __pragma_mission_queue; and contains resume __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
+end
+
+function __pragma_queue_steer
+  set -l tokens (commandline -opc)
+  if __pragma_mission_queue; and contains steer __PRAGMA_DOLLAR__tokens
+    return 0
+  end
+  return 1
 end
 
 complete -c pragma -f -n '__fish_use_subcommand' -a 'version doctor completion team expert flow mission'
@@ -754,13 +867,22 @@ complete -c pragma -f -n '__fish_seen_subcommand_from team expert flow' -a 'disc
 complete -c pragma -f -n '__fish_seen_subcommand_from mission' -a 'list get resume watch send steer respond interrupt board queue'
 complete -c pragma -f -n '__pragma_mission_queue' -a 'list remove resume steer'
 complete -c pragma -f -n '__fish_seen_subcommand_from board' -a 'list read search'
-complete -c pragma -f -n '__pragma_discover' -a '--project --query --status --limit --cursor --format --json --stream-json'
-complete -c pragma -f -n '__pragma_mission_list' -a '--status --executor --limit --cursor --format --json --stream-json'
-complete -c pragma -f -n '__pragma_mission_get' -a '--view --limit --cursor --format --json --stream-json'
-complete -c pragma -f -n '__pragma_queue_list' -a '--limit --cursor --format --json --stream-json'
-complete -c pragma -f -n '__pragma_queue_mutation' -a '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json'
-complete -c pragma -f -n '__fish_seen_subcommand_from watch' -a '--after --replay --until --format --stream-json'
-complete -c pragma -f -a '--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --request --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor --query --status --executor --view'
+complete -c pragma -f -n '__pragma_discover' -a '--project --query --status --limit --cursor --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_describe' -a '--revision --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_run' -a '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_list' -a '--status --executor --limit --cursor --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_get' -a '--view --limit --cursor --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_watch' -a '--after --replay --until --format --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_resume' -a '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_send' -a '--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_steer' -a '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_respond' -a '--interaction --answer --choice --answers-json --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_mission_interrupt' -a '--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_queue_list' -a '--limit --cursor --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_queue_remove' -a '--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_queue_resume' -a '--request-id --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_queue_steer' -a '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_global_options' -a '--format --json --stream-json --color --interactive --help'
 `,
     "\n",
   );
@@ -771,24 +893,49 @@ function completionPowerShellScript(): string {
     String.raw`Register-ArgumentCompleter -CommandName pragma -ScriptBlock {
   param(__PRAGMA_DOLLAR__wordToComplete, __PRAGMA_DOLLAR__commandAst, __PRAGMA_DOLLAR__cursorPosition)
   __PRAGMA_DOLLAR__tokens = @(__PRAGMA_DOLLAR__commandAst.CommandElements | ForEach-Object { __PRAGMA_DOLLAR___.ToString().Trim([char]39, [char]34) })
-  __PRAGMA_DOLLAR__candidates = @('version','doctor','completion','team','expert','flow','mission')
+  __PRAGMA_DOLLAR__globalOptions = @('--format','--json','--stream-json','--color','--interactive','--help')
+  __PRAGMA_DOLLAR__watchGlobalOptions = @('--format','--stream-json','--color','--interactive','--help')
+  __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('version','doctor','completion','team','expert','flow','mission')
   if (__PRAGMA_DOLLAR__tokens.Count -ge 2) {
     switch (__PRAGMA_DOLLAR__tokens[1]) {
-      'team' { __PRAGMA_DOLLAR__candidates = @('discover','describe','run') }
-      'expert' { __PRAGMA_DOLLAR__candidates = @('discover','describe','run') }
-      'flow' { __PRAGMA_DOLLAR__candidates = @('discover','describe','run') }
-      'mission' { __PRAGMA_DOLLAR__candidates = @('list','get','resume','watch','send','steer','respond','interrupt','board','queue') }
+      'team' {
+        if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--query','--status','--limit','--cursor') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'describe') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--revision') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('discover','describe','run') }
+      }
+      'expert' {
+        if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--query','--status','--limit','--cursor') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'describe') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--revision') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('discover','describe','run') }
+      }
+      'flow' {
+        if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--query','--status','--limit','--cursor') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'describe') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--revision') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'run') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--workspace','--prompt','--input','--input-json','--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('discover','describe','run') }
+      }
+      'mission' {
+        if (__PRAGMA_DOLLAR__tokens -contains 'queue') {
+          if (__PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--limit','--cursor') }
+          elseif (__PRAGMA_DOLLAR__tokens -contains 'remove') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--ack-timeout') }
+          elseif (__PRAGMA_DOLLAR__tokens -contains 'resume') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request-id','--ack-timeout') }
+          elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--expected-execution','--wait','--detach','--ack-timeout') }
+          else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','remove','resume','steer') }
+        }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--status','--executor','--limit','--cursor') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'get') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--view','--limit','--cursor') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'watch') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__watchGlobalOptions + @('--after','--replay','--until') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'resume') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--project','--revision','--expected-fingerprint','--request-id','--detach') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'send') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--prompt','--input','--request-id','--wait','--detach','--ack-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--prompt','--input','--expected-execution','--request-id','--wait','--detach','--ack-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'respond') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--interaction','--answer','--choice','--answers-json','--request-id','--wait','--detach','--ack-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'interrupt') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--expected-execution','--reason','--request-id','--wait','--detach','--ack-timeout') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'board') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','read','search') }
+        else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','get','resume','watch','send','steer','respond','interrupt','board','queue') }
+      }
     }
-  }
-  if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = @('--project','--query','--status','--limit','--cursor','--format','--json','--stream-json') }
-  if (__PRAGMA_DOLLAR__tokens -contains 'mission' -and __PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = @('--status','--executor','--limit','--cursor','--format','--json','--stream-json') }
-  if (__PRAGMA_DOLLAR__tokens -contains 'mission' -and __PRAGMA_DOLLAR__tokens -contains 'get') { __PRAGMA_DOLLAR__candidates = @('--view','--limit','--cursor','--format','--json','--stream-json') }
-  if (__PRAGMA_DOLLAR__tokens -contains 'queue') { __PRAGMA_DOLLAR__candidates = @('list','remove','resume','steer') }
-  if (__PRAGMA_DOLLAR__tokens -contains 'queue' -and __PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = @('--limit','--cursor','--format','--json','--stream-json') }
-  if (__PRAGMA_DOLLAR__tokens -contains 'queue' -and (__PRAGMA_DOLLAR__tokens -contains 'remove' -or __PRAGMA_DOLLAR__tokens -contains 'steer')) { __PRAGMA_DOLLAR__candidates = @('--request','--request-id','--expected-execution','--wait','--detach','--ack-timeout','--format','--json','--stream-json') }
-  if (__PRAGMA_DOLLAR__tokens -contains 'board') { __PRAGMA_DOLLAR__candidates = @('list','read','search') }
-  if (__PRAGMA_DOLLAR__wordToComplete -like '--*') {
-    __PRAGMA_DOLLAR__candidates = @('--format','--json','--stream-json','--color','--interactive','--help','--after','--replay','--until','--project','--revision','--expected-fingerprint','--prompt','--input','--input-json','--expected-execution','--request-id','--request','--wait','--detach','--ack-timeout','--interaction','--answer','--choice','--answers-json','--reason','--limit','--cursor','--query','--status','--executor','--view')
   }
   __PRAGMA_DOLLAR__candidates | Where-Object { __PRAGMA_DOLLAR___.ToString() -like "__PRAGMA_DOLLAR__wordToComplete*" } | ForEach-Object {
     [System.Management.Automation.CompletionResult]::new(__PRAGMA_DOLLAR___.ToString(), __PRAGMA_DOLLAR___.ToString(), 'ParameterValue', __PRAGMA_DOLLAR___.ToString())

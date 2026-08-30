@@ -89,6 +89,8 @@ export function createMissionQuery(options: {
             events: snapshot.events,
             limit: input.limit,
           });
+        default:
+          return unreachableMissionQueryView(input.view);
       }
     },
   };
@@ -381,6 +383,18 @@ export function unsupportedMissionView(view: "chat" | "work") {
     message: `Mission view ${view} is not available yet; use --view events or mission watch.`,
     details: {
       view,
+      supportedViews: [...SUPPORTED_MISSION_QUERY_VIEWS],
+    },
+  });
+}
+
+function unreachableMissionQueryView(view: never): never {
+  throw createIntegrationError({
+    code: "INVALID_ARGUMENT",
+    category: "usage",
+    message: `Mission view ${String(view)} is invalid; use summary, result, or events.`,
+    details: {
+      view: String(view),
       supportedViews: [...SUPPORTED_MISSION_QUERY_VIEWS],
     },
   });

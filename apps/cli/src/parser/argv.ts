@@ -361,7 +361,16 @@ Example: pragma mission queue steer MISSION_ID --request QUEUE_REQUEST_ID --deta
 
 Queue mutations are durable and idempotent by request ID plus payload hash. --wait waits for execution; --detach waits only for acceptance.`;
     }
-    if (["send", "steer", "respond", "interrupt", "resume"].includes(subcommand ?? "")) {
+    if (subcommand === "resume") {
+      return `Usage: pragma mission resume MISSION_ID [options]
+
+Resumes a historical Mission after its executor binding is proven. Use --project PROJECT_ID and --revision N together for the one-time historical pin backfill; --expected-fingerprint optionally verifies that revision.
+--detach returns after the resume command is accepted. The command is durable and idempotent by request ID plus payload hash. Use --format=json for scripts and inspect the exit code.
+Options: --project PROJECT_ID --revision N --expected-fingerprint SHA256 --request-id REQUEST_ID --detach
+
+Example: pragma mission resume MISSION_ID --project PROJECT_ID --revision N --detach`;
+    }
+    if (["send", "steer", "respond", "interrupt"].includes(subcommand ?? "")) {
       const example =
         subcommand === "send"
           ? `pragma mission send MISSION_ID --prompt "Continue" --wait`
@@ -369,9 +378,7 @@ Queue mutations are durable and idempotent by request ID plus payload hash. --wa
             ? `pragma mission steer MISSION_ID --prompt "Change direction" --wait`
             : subcommand === "respond"
               ? `pragma mission respond MISSION_ID --interaction INTERACTION_ID --answer "yes" --wait`
-              : subcommand === "interrupt"
-                ? `pragma mission interrupt MISSION_ID --wait`
-                : `pragma mission resume MISSION_ID --project PROJECT_ID --revision N`;
+              : `pragma mission interrupt MISSION_ID --wait`;
       return `Usage: pragma mission ${subcommand} MISSION_ID [options]
 
 The command is durable and idempotent by request ID plus payload hash. --wait waits for execution;

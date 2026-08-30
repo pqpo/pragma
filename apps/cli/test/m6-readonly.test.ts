@@ -139,6 +139,16 @@ function jsonOutput(io: ReturnType<typeof createIo>): Record<string, unknown> {
   return JSON.parse(io.stdout[0]!);
 }
 
+function completionContextLine(script: string, marker: string): string {
+  const line = script.split("\n").find((candidate) => candidate.includes(marker));
+  if (line === undefined) throw new Error(`Missing completion context: ${marker}`);
+  return line;
+}
+
+function completionLineHasOption(line: string, option: string): boolean {
+  return line.split(/[\s,'"]+/u).includes(option);
+}
+
 describe("M6 parser and read-only command surface", () => {
   it("keeps the frozen parser shape for Unicode, Windows-like quoting, ranges, and aliases", () => {
     expect(
@@ -218,6 +228,52 @@ describe("M6 parser and read-only command surface", () => {
     ).toThrow("requires --project and --revision");
   });
 
+  it("keeps Mission resume help options aligned with the parser", async () => {
+    const helpIo = createIo();
+    await expect(
+      runCli(["mission", "resume", "--help", "--format=json"], helpIo, {
+        localHost: createHost(),
+      }),
+    ).resolves.toBe(0);
+    const help = jsonOutput(helpIo).result as { readonly help: string };
+    expect(help.help).not.toContain("--wait");
+    for (const option of [
+      "--project",
+      "--revision",
+      "--expected-fingerprint",
+      "--request-id",
+      "--detach",
+    ]) {
+      expect(help.help).toContain(option);
+    }
+
+    const parsed = parseCliArgv([
+      "mission",
+      "resume",
+      MISSION_ID,
+      "--project",
+      "studio",
+      "--revision",
+      "7",
+      "--expected-fingerprint",
+      "a".repeat(64),
+      "--request-id",
+      MISSION_ID,
+      "--detach",
+      "--format=json",
+    ]);
+    expect(parsed.options.format).toBe("json");
+    expect(parsed.command).toMatchObject({
+      kind: "mission-resume",
+      missionId: MISSION_ID,
+      project: "studio",
+      revision: 7,
+      expectedFingerprint: "a".repeat(64),
+      requestId: MISSION_ID,
+      detach: true,
+    });
+  });
+
   it.each(["team", "expert", "flow"] as const)(
     "accepts and filters unavailable %s executors",
     async (executorKind) => {
@@ -275,6 +331,34 @@ describe("M6 parser and read-only command surface", () => {
     );
     expect(textIo.stdout.join("")).toContain("REF\tNAME\tSTATUS\tSOURCE");
     expect(textIo.stdout.join("")).toContain(`${EXECUTOR_REF}\tResearch Expert\tready\tbuilt_in`);
+  });
+
+  it("folds executor description whitespace only in the text table", async () => {
+    const host = createHost();
+    const executor = (await host.listExecutors())[0]!;
+    const rawDescription = " first\nsecond\r\nthird\tfourth ";
+    const describedHost: CliLocalHost = {
+      ...host,
+      listExecutors: async () => [{ ...executor, description: rawDescription }],
+    };
+
+    const textIo = createIo();
+    await expect(
+      runCli(["expert", "discover"], textIo, { localHost: describedHost }),
+    ).resolves.toBe(0);
+    const textLines = textIo.stdout.join("").trimEnd().split("\n");
+    expect(textLines).toHaveLength(2);
+    expect(textLines[1]!.split("\t")).toHaveLength(6);
+    expect(textLines[1]).toContain("first second third fourth");
+
+    const jsonIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "--format=json"], jsonIo, { localHost: describedHost }),
+    ).resolves.toBe(0);
+    const machineResult = jsonOutput(jsonIo).result as {
+      readonly items: readonly { readonly description: string }[];
+    };
+    expect(machineResult.items[0]?.description).toBe(rawDescription);
   });
 
   it("returns every executor matching a selector substring", async () => {
@@ -771,6 +855,259 @@ describe("M6 parser and read-only command surface", () => {
     ).resolves.toBe(0);
     expect(queried).toBe(false);
     expect(jsonOutput(io).result.shell).toBe("powershell");
+  });
+
+  it("keeps shell completion option candidates aligned with the parser", async () => {
+    const scripts = new Map<"bash" | "zsh" | "fish" | "powershell", string>();
+    for (const shell of ["bash", "zsh", "fish", "powershell"] as const) {
+      const io = createIo();
+      await expect(
+        runCli(["completion", shell, "--format=json"], io, { localHost: createHost() }),
+      ).resolves.toBe(0);
+      scripts.set(shell, (jsonOutput(io).result as { readonly script: string }).script);
+    }
+
+    const globalOptions = [
+      "--format",
+      "--json",
+      "--stream-json",
+      "--color",
+      "--interactive",
+      "--help",
+    ];
+    for (const script of scripts.values()) {
+      for (const option of globalOptions) {
+        expect(completionLineHasOption(script, option)).toBe(true);
+      }
+    }
+
+    const cases = [
+      {
+        shell: "bash",
+        marker: "        send) candidates=\"--prompt",
+        allowed: ["--prompt", "--input", "--request-id", "--wait", "--detach", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--request"],
+      },
+      {
+        shell: "zsh",
+        marker: "              send) _describe option '--prompt",
+        allowed: ["--prompt", "--input", "--request-id", "--wait", "--detach", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--request"],
+      },
+      {
+        shell: "fish",
+        marker: "__pragma_mission_send' -a",
+        allowed: ["--prompt", "--input", "--request-id", "--wait", "--detach", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--request"],
+      },
+      {
+        shell: "powershell",
+        marker: "$candidates = $globalOptions + @('--prompt','--input','--request-id'",
+        allowed: ["--prompt", "--input", "--request-id", "--wait", "--detach", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--request"],
+      },
+      {
+        shell: "bash",
+        marker: "        steer) candidates=\"--prompt",
+        allowed: [
+          "--prompt",
+          "--input",
+          "--expected-execution",
+          "--request-id",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--request"],
+      },
+      {
+        shell: "zsh",
+        marker: "              steer) _describe option '--prompt",
+        allowed: [
+          "--prompt",
+          "--input",
+          "--expected-execution",
+          "--request-id",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--request"],
+      },
+      {
+        shell: "fish",
+        marker: "__pragma_mission_steer' -a",
+        allowed: [
+          "--prompt",
+          "--input",
+          "--expected-execution",
+          "--request-id",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--request"],
+      },
+      {
+        shell: "powershell",
+        marker: "$candidates = $globalOptions + @('--prompt','--input','--expected-execution'",
+        allowed: [
+          "--prompt",
+          "--input",
+          "--expected-execution",
+          "--request-id",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--request"],
+      },
+      {
+        shell: "bash",
+        marker: "            remove) candidates=\"--request",
+        allowed: ["--request", "--request-id", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--wait", "--detach", "--prompt", "--input"],
+      },
+      {
+        shell: "zsh",
+        marker: "                    remove) _describe option '--request",
+        allowed: ["--request", "--request-id", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--wait", "--detach", "--prompt", "--input"],
+      },
+      {
+        shell: "fish",
+        marker: "__pragma_queue_remove' -a",
+        allowed: ["--request", "--request-id", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--wait", "--detach", "--prompt", "--input"],
+      },
+      {
+        shell: "powershell",
+        marker: "$candidates = $globalOptions + @('--request','--request-id','--ack-timeout'",
+        allowed: ["--request", "--request-id", "--ack-timeout"],
+        forbidden: ["--expected-execution", "--wait", "--detach", "--prompt", "--input"],
+      },
+      {
+        shell: "bash",
+        marker: "            resume) candidates=\"--request-id",
+        allowed: ["--request-id", "--ack-timeout"],
+        forbidden: [
+          "--request",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--prompt",
+          "--input",
+        ],
+      },
+      {
+        shell: "zsh",
+        marker: "                    resume) _describe option '--request-id --ack-timeout",
+        allowed: ["--request-id", "--ack-timeout"],
+        forbidden: [
+          "--request",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--prompt",
+          "--input",
+        ],
+      },
+      {
+        shell: "fish",
+        marker: "__pragma_queue_resume' -a",
+        allowed: ["--request-id", "--ack-timeout"],
+        forbidden: [
+          "--request",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--prompt",
+          "--input",
+        ],
+      },
+      {
+        shell: "powershell",
+        marker: "$candidates = $globalOptions + @('--request-id','--ack-timeout'",
+        allowed: ["--request-id", "--ack-timeout"],
+        forbidden: [
+          "--request",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--prompt",
+          "--input",
+        ],
+      },
+      {
+        shell: "bash",
+        marker: "            steer) candidates=\"--request",
+        allowed: [
+          "--request",
+          "--request-id",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--prompt", "--input"],
+      },
+      {
+        shell: "zsh",
+        marker: "                    steer) _describe option '--request --request-id",
+        allowed: [
+          "--request",
+          "--request-id",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--prompt", "--input"],
+      },
+      {
+        shell: "fish",
+        marker: "__pragma_queue_steer' -a",
+        allowed: [
+          "--request",
+          "--request-id",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--prompt", "--input"],
+      },
+      {
+        shell: "powershell",
+        marker:
+          "$candidates = $globalOptions + @('--request','--request-id','--expected-execution'",
+        allowed: [
+          "--request",
+          "--request-id",
+          "--expected-execution",
+          "--wait",
+          "--detach",
+          "--ack-timeout",
+        ],
+        forbidden: ["--prompt", "--input"],
+      },
+    ] as const;
+
+    for (const completionCase of cases) {
+      const line = completionContextLine(scripts.get(completionCase.shell)!, completionCase.marker);
+      for (const option of completionCase.allowed) {
+        expect(
+          completionLineHasOption(line, option),
+          `${completionCase.shell} ${completionCase.marker} missing ${option}: ${line}`,
+        ).toBe(true);
+      }
+      for (const option of completionCase.forbidden) {
+        expect(
+          completionLineHasOption(line, option),
+          `${completionCase.shell} ${completionCase.marker} contains ${option}: ${line}`,
+        ).toBe(false);
+      }
+    }
   });
 
   it("provides command-specific help and preserves list filters in text continuation", async () => {
