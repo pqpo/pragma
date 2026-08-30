@@ -56,6 +56,7 @@ import {
   forwardMissionWorkNotification,
 } from "./mission-renderer-update-forwarder.ts";
 import { toLocalHostRunRequest } from "./local-host-mission-adapter.ts";
+import { toMissionQueueCommand } from "./mission-queue-command.ts";
 
 type DesktopLocalHostApplication = Pick<
   LocalHostApplicationPort<
@@ -463,13 +464,7 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = MissionQueuePromptActionSchema.parse(input);
       await assertManagedMission(parsed.id);
-      await runLocalHostCommand({
-        missionId: parsed.id,
-        requestId: parsed.requestId,
-        kind: "queue.steer",
-        payload: { kind: "queue.steer", requestId: parsed.requestId },
-        target: { queueItemId: parsed.requestId },
-      });
+      await runLocalHostCommand(toMissionQueueCommand(parsed, "queue.steer"));
       const mission = await getManagedMission(parsed.id);
       await publishMission(mission);
       return mission;
@@ -479,13 +474,7 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const parsed = MissionQueuePromptActionSchema.parse(input);
       await assertManagedMission(parsed.id);
-      await runLocalHostCommand({
-        missionId: parsed.id,
-        requestId: parsed.requestId,
-        kind: "queue.remove",
-        payload: { kind: "queue.remove", requestId: parsed.requestId },
-        target: { queueItemId: parsed.requestId },
-      });
+      await runLocalHostCommand(toMissionQueueCommand(parsed, "queue.remove"));
       const mission = await getManagedMission(parsed.id);
       await publishMission(mission);
       return mission;

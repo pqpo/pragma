@@ -1311,7 +1311,6 @@ interface PendingMissionQueuedMessage {
   readonly requestId: string;
   readonly content: string;
   readonly attachments: readonly ExpertPromptAttachment[];
-  readonly accepted: boolean;
 }
 
 export interface MissionHumanResponseAttempt {
@@ -1340,6 +1339,28 @@ export function hidePreparingQueuedChatEntries(
       ? entry.delivery.status !== "queued"
       : false;
   });
+}
+
+export function readyPendingQueuedRequestIds(
+  pendingMessages: readonly PendingMissionQueuedMessage[],
+  persistedQueuedRequestIds: ReadonlySet<string>,
+  entries: readonly MissionChatEntry[],
+): ReadonlySet<string> {
+  const ready = new Set(
+    pendingMessages
+      .filter((message) => persistedQueuedRequestIds.has(message.requestId))
+      .map((message) => message.requestId),
+  );
+  for (const entry of entries) {
+    if (
+      entry.kind === "user" &&
+      entry.delivery?.status !== undefined &&
+      entry.delivery.status !== "queued"
+    ) {
+      ready.add(entry.id);
+    }
+  }
+  return ready;
 }
 
 export function hideInterruptedExecutionFallbackEntries(
@@ -1550,6 +1571,9 @@ export function MissionDetailFragment(props: {
   const [clientOperation, setClientOperation] = useState<MissionClientOperationState>({
     kind: "idle",
   });
+  const [queuedMessageActions, setQueuedMessageActions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
   const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeDisplayIdentity>();
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -1608,6 +1632,7 @@ export function MissionDetailFragment(props: {
   const pendingFirstTokenPaintsRef = useRef(new Map<string, { readonly receivedAt: number }>());
   const firstTokenPaintFramesRef = useRef(new Map<string, number[]>());
   const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
+  const queuedMessageActionsRef = useRef<Set<string>>(new Set());
   const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
@@ -1834,6 +1859,8 @@ export function MissionDetailFragment(props: {
     setOptionsError(null);
     clientOperationRef.current = { kind: "idle" };
     setClientOperation(clientOperationRef.current);
+    queuedMessageActionsRef.current = new Set();
+    setQueuedMessageActions(queuedMessageActionsRef.current);
     setSelectedWorkKey(null);
     setWorkRecords([]);
     setWorkConversation(null);
@@ -2341,6 +2368,22 @@ export function MissionDetailFragment(props: {
     setClientOperation(released);
   };
 
+  const beginQueuedMessageAction = (queueItemRequestId: string): boolean => {
+    if (queuedMessageActionsRef.current.has(queueItemRequestId)) return false;
+    const next = new Set(queuedMessageActionsRef.current).add(queueItemRequestId);
+    queuedMessageActionsRef.current = next;
+    setQueuedMessageActions(next);
+    return true;
+  };
+
+  const finishQueuedMessageAction = (queueItemRequestId: string): void => {
+    if (!queuedMessageActionsRef.current.has(queueItemRequestId)) return;
+    const next = new Set(queuedMessageActionsRef.current);
+    next.delete(queueItemRequestId);
+    queuedMessageActionsRef.current = next;
+    setQueuedMessageActions(next);
+  };
+
   const send = async () => {
     const content = draft.trim();
     if (content === "" || isFlow) return;
@@ -2365,7 +2408,7 @@ export function MissionDetailFragment(props: {
     if (shouldPrepareQueuedMessage) {
       setPendingQueuedMessages((current) => [
         ...current,
-        { requestId, content, attachments: optimistic.attachments, accepted: false },
+        { requestId, content, attachments: optimistic.attachments },
       ]);
     } else {
       setOptimisticMessages((current) => [...current, optimistic]);
@@ -2386,11 +2429,6 @@ export function MissionDetailFragment(props: {
       );
       discardSentDrafts = true;
       if (shouldPrepareQueuedMessage) {
-        setPendingQueuedMessages((current) =>
-          current.map((message) =>
-            message.requestId === requestId ? { ...message, accepted: true } : message,
-          ),
-        );
         const api = desktopApi();
         const snapshot =
           api === undefined
@@ -2533,35 +2571,42 @@ export function MissionDetailFragment(props: {
     updateChat((current) => mergeLatestChatPage(current, snapshot));
   };
 
-  const steerQueuedMessage = async (requestId: string): Promise<void> => {
+  const steerQueuedMessage = async (queueItemRequestId: string): Promise<void> => {
     const api = desktopApi();
-    if (api === undefined || clientOperationBusy) return;
-    const token = beginClientOperation("sending");
-    if (token === undefined) return;
+    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId)) return;
     try {
-      await api.steerQueuedMissionMessage({ id: props.mission.id, requestId });
+      await api.steerQueuedMissionMessage({
+        id: props.mission.id,
+        requestId: crypto.randomUUID(),
+        queueItemRequestId,
+      });
       await refreshLatestChat();
     } catch (steerError) {
       setOptionsError(missionError(steerError));
     } finally {
-      finishClientOperation(token);
+      finishQueuedMessageAction(queueItemRequestId);
     }
   };
 
-  const removeQueuedMessage = async (requestId: string, content: string): Promise<void> => {
+  const removeQueuedMessage = async (
+    queueItemRequestId: string,
+    content: string,
+  ): Promise<void> => {
     const api = desktopApi();
-    if (api === undefined || clientOperationBusy) return;
-    const token = beginClientOperation("sending");
-    if (token === undefined) return;
+    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId)) return;
     try {
-      await api.removeQueuedMissionMessage({ id: props.mission.id, requestId });
+      await api.removeQueuedMissionMessage({
+        id: props.mission.id,
+        requestId: crypto.randomUUID(),
+        queueItemRequestId,
+      });
       setDraft(content);
       await refreshLatestChat();
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (removeError) {
       setOptionsError(missionError(removeError));
     } finally {
-      finishClientOperation(token);
+      finishQueuedMessageAction(queueItemRequestId);
     }
   };
 
@@ -2752,10 +2797,10 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     if (pendingQueuedMessages.length === 0 || chat === null) return;
-    const readyOrStartedRequestIds = new Set(
-      pendingQueuedMessages
-        .filter((message) => message.accepted && persistedQueuedRequestIds.has(message.requestId))
-        .map((message) => message.requestId),
+    const readyOrStartedRequestIds = readyPendingQueuedRequestIds(
+      pendingQueuedMessages,
+      persistedQueuedRequestIds,
+      chat.entries,
     );
     const startedRequestIds = new Set<string>();
     for (const entry of chat.entries) {
@@ -2764,7 +2809,6 @@ export function MissionDetailFragment(props: {
         entry.delivery?.status !== undefined &&
         entry.delivery.status !== "queued"
       ) {
-        readyOrStartedRequestIds.add(entry.id);
         startedRequestIds.add(entry.id);
       }
     }
@@ -3366,7 +3410,7 @@ export function MissionDetailFragment(props: {
                                   <button
                                     className="mission-queue-steer"
                                     type="button"
-                                    disabled={clientOperationBusy}
+                                    disabled={queuedMessageActions.has(item.requestId)}
                                     onClick={() => void steerQueuedMessage(item.requestId)}
                                   >
                                     <ArrowBendUpLeft size={16} aria-hidden="true" />
@@ -3378,7 +3422,7 @@ export function MissionDetailFragment(props: {
                                   type="button"
                                   aria-label={t("removeQueuedMessage", { ns: "missions" })}
                                   title={t("removeQueuedMessage", { ns: "missions" })}
-                                  disabled={clientOperationBusy || preparing}
+                                  disabled={queuedMessageActions.has(item.requestId) || preparing}
                                   onClick={() =>
                                     void removeQueuedMessage(item.requestId, item.content)
                                   }

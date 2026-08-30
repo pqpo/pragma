@@ -21,6 +21,7 @@ import {
   MissionCreationDefaultsSchema,
   MissionContextMountsSchema,
   MissionModelOptionsSchema,
+  MissionQueuePromptActionSchema,
   MissionSchema,
   MissionUpdateSchema,
   SendMissionMessageSchema,
@@ -897,6 +898,22 @@ describe("mission contracts", () => {
         content: "Review this file.",
         requestId: "00000000-0000-4000-8000-000000000003",
         attachments: [{ ...attachment, kind: "file", mimeType: undefined }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps queue action and queue item request IDs distinct", () => {
+    const input = {
+      id: "00000000-0000-4000-8000-000000000001",
+      requestId: "00000000-0000-4000-8000-000000000002",
+      queueItemRequestId: "00000000-0000-4000-8000-000000000003",
+    };
+
+    expect(MissionQueuePromptActionSchema.parse(input)).toEqual(input);
+    expect(
+      MissionQueuePromptActionSchema.safeParse({
+        ...input,
+        requestId: input.queueItemRequestId,
       }).success,
     ).toBe(false);
   });
