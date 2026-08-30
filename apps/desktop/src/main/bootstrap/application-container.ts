@@ -31,6 +31,7 @@ import {
   createMissionControllerStore,
   createMissionControlApplication,
   createMissionOwnerScope,
+  createMissionQuery,
   createMissionWatchApplication,
   createNativeOsKeychain,
   createSecretStore,
@@ -346,6 +347,7 @@ export async function createDesktopApplicationContainer(
   // the existing MissionStore without moving Electron or Runtime concerns into
   // @pragma/local-host.
   const missionControllerStore = createMissionControllerStore({ missionsPath });
+  const missionQuery = createMissionQuery({ controller: missionControllerStore });
   const missionWatch = createMissionWatchApplication({ controller: missionControllerStore });
   const missionRunnerRef: {
     current?: ReturnType<typeof createMissionRunner>;
@@ -1247,6 +1249,7 @@ export async function createDesktopApplicationContainer(
     missions: {
       get: async (missionId) => await missionStore.get(missionId),
       list: async () => await missionStore.list(),
+      query: missionQuery.queryMission,
     },
     workspace: createWorkspaceFilesystemPort(),
     board: {

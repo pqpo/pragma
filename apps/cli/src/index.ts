@@ -137,6 +137,13 @@ export async function runCli(
         },
       );
       try {
+        if (parsed.options.format === "text") {
+          const requestIdNote =
+            parsed.command.requestId === undefined
+              ? " (generated; reuse with --request-id for an exact retry)"
+              : " (provided)";
+          io.writeStderr(`Request ID: ${requestId}${requestIdNote}\n`);
+        }
         const handle = await startExecutorRun(parsed.command, context, {
           readStdin: dependencies.readStdin ?? readProcessStdin,
           onHumanInteraction: useTerminalInteraction
@@ -163,6 +170,11 @@ export async function runCli(
           },
         });
         activeHandle = handle;
+        if (parsed.options.format === "text") {
+          io.writeStderr(
+            `Mission ID: ${handle.missionId}\nExecution ID: ${handle.executionId ?? "unknown"}\n`,
+          );
+        }
         if (interrupting) void handle.cancel("SIGINT");
         const rawOutcome = await handle.outcome;
         terminalCommitted = true;
@@ -202,6 +214,7 @@ export async function runCli(
       command,
       cliVersion: CLI_VERSION,
       startedAt,
+      continuationCommand: (cursor: string) => continuationCommandFor(parsed.command, cursor),
     } as const;
     if (parsed.command.kind === "mission-watch") {
       if (context.localHost.watchMission === undefined) {
@@ -482,6 +495,81 @@ function commandName(command: ParsedCommand): string {
     case "queue-list":
       return "mission.queue.list";
   }
+}
+
+function continuationCommandFor(command: ParsedCommand, cursor: string): string {
+  const encodedCursor = shellArgument(cursor);
+  switch (command.kind) {
+    case "executor-discover":
+      return [
+        "pragma",
+        command.executorKind,
+        "discover",
+        ...(command.selector === undefined ? [] : [shellArgument(command.selector)]),
+        ...(command.query === undefined ? [] : ["--query", shellArgument(command.query)]),
+        ...(command.project === undefined ? [] : ["--project", shellArgument(command.project)]),
+        ...(command.status === undefined ? [] : ["--status", command.status]),
+        "--limit",
+        String(command.limit),
+        "--cursor",
+        encodedCursor,
+      ].join(" ");
+    case "mission-list":
+      return [
+        "pragma",
+        "mission",
+        "list",
+        ...(command.status === undefined ? [] : ["--status", command.status]),
+        ...(command.executor === undefined ? [] : ["--executor", shellArgument(command.executor)]),
+        "--limit",
+        String(command.limit),
+        "--cursor",
+        encodedCursor,
+      ].join(" ");
+    case "mission-get":
+      return [
+        "pragma",
+        "mission",
+        "get",
+        shellArgument(command.missionId),
+        "--view",
+        command.view,
+        "--limit",
+        String(command.limit),
+        "--cursor",
+        encodedCursor,
+      ].join(" ");
+    case "queue-list":
+      return [
+        "pragma",
+        "mission",
+        "queue",
+        "list",
+        shellArgument(command.missionId),
+        "--limit",
+        String(command.limit),
+        "--cursor",
+        encodedCursor,
+      ].join(" ");
+    case "board-list":
+      return [
+        "pragma",
+        "mission",
+        "board",
+        "list",
+        shellArgument(command.missionId),
+        "--limit",
+        String(command.limit),
+        "--cursor",
+        encodedCursor,
+      ].join(" ");
+    default:
+      return `pragma ${commandName(command).replaceAll(".", " ")} --cursor ${encodedCursor}`;
+  }
+}
+
+function shellArgument(value: string): string {
+  return /^[A-Za-z0-9_./:@=-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function isMutationCommand(command: ParsedCommand): command is Extract<

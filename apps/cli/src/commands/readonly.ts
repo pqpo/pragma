@@ -5,6 +5,7 @@ import {
   ExecutorDescriptorSchema,
   type JsonValue,
 } from "@pragma/local-host/wire";
+import { unsupportedMissionView } from "@pragma/local-host";
 import type { HumanInteractionRequestEnvelope } from "@pragma/local-host/wire";
 
 import type { ParsedCommand } from "../parser/argv.ts";
@@ -21,7 +22,7 @@ export async function executeReadOnlyCommand(
 ): Promise<JsonValue> {
   switch (command.kind) {
     case "help":
-      return { help: HELP_TEXT };
+      return { help: command.text ?? HELP_TEXT };
     case "version":
       return await versionResult(context.cliVersion);
     case "completion":
@@ -128,6 +129,12 @@ async function discoverExecutors(
   const descriptors = page.items
     .map((item) => normalizeExecutor(item, command.executorKind))
     .filter((item) => matchesExecutor(item, command));
+  if (command.selector !== undefined && descriptors.length === 0) {
+    throw toIntegrationError({
+      code: "EXECUTOR_NOT_FOUND",
+      message: `Executor not found: ${command.selector}.`,
+    });
+  }
   const result = paginateOrHost(
     descriptors,
     page.hostPaged,
@@ -190,12 +197,17 @@ async function getMission(
   command: Extract<ParsedCommand, { readonly kind: "mission-get" }>,
   context: CliCommandContext,
 ): Promise<JsonValue> {
-  const mission = await context.localHost.getMission(command.missionId);
-  if (command.view === "summary") return asJsonValue(mission);
-  if (isRecord(mission) && mission[command.view] !== undefined) {
-    return asJsonValue(mission[command.view]);
+  if (command.view === "chat" || command.view === "work") {
+    throw unsupportedMissionView(command.view);
   }
-  return asJsonValue(mission);
+  return asJsonValue(
+    await context.localHost.queryMission({
+      missionId: command.missionId,
+      view: command.view,
+      limit: command.limit,
+      ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+    }),
+  );
 }
 
 async function listBoard(
@@ -405,6 +417,14 @@ function matchesExecutor(
   const ref = referenceText(value["ref"]);
   const kind = ref?.split(":", 1)[0] ?? value["kind"];
   if (kind !== command.executorKind) return false;
+  if (command.selector !== undefined) {
+    if (isCanonicalExecutorRef(command.selector)) return ref === command.selector;
+    const haystack = [stringField(value, "name"), stringField(value, "description")]
+      .filter((item): item is string => item !== undefined)
+      .join(" ")
+      .toLocaleLowerCase();
+    if (!haystack.includes(command.selector.toLocaleLowerCase())) return false;
+  }
   if (command.query !== undefined) {
     const haystack = [ref, stringField(value, "name"), stringField(value, "description")]
       .filter((item): item is string => item !== undefined)
@@ -432,7 +452,6 @@ function matchesMission(
   command: Extract<ParsedCommand, { readonly kind: "mission-list" }>,
 ): boolean {
   if (!isRecord(value)) return false;
-  const executor = recordField(value, "executor");
   const execution = recordField(value, "execution");
   const status = stringField(value, "status") ?? stringField(execution, "status");
   const lifecycleStatus = stringField(value, "lifecycleStatus");
@@ -444,10 +463,17 @@ function matchesMission(
     return false;
   }
   if (command.executor !== undefined) {
-    const ref = stringField(executor, "ref") ?? referenceText(executor?.["ref"]);
+    const executorValue = value["executor"];
+    const ref =
+      referenceText(isRecord(executorValue) ? executorValue["ref"] : undefined) ??
+      referenceText(executorValue);
     if (ref !== command.executor) return false;
   }
   return true;
+}
+
+function isCanonicalExecutorRef(value: string): boolean {
+  return /^(team|expert|flow):[0-9a-hjkmnp-tv-z]{16}$/u.test(value);
 }
 
 function mapBoardItem(value: unknown, content = ""): Record<string, unknown> {
@@ -593,6 +619,7 @@ _pragma_complete() {
   case "__PRAGMA_DOLLAR__{COMP_WORDS[1]}" in
     team|expert|flow)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
+        discover) candidates="--project --query --status --limit --cursor --format --json --stream-json" ;;
         run) candidates="--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json" ;;
         describe) candidates="--revision --format --json --stream-json" ;;
         *) candidates="discover describe run" ;;
@@ -600,13 +627,15 @@ _pragma_complete() {
       ;;
     mission)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
+        list) candidates="--status --executor --limit --cursor --format --json --stream-json" ;;
+        get) candidates="--view --limit --cursor --format --json --stream-json" ;;
         board) candidates="list read search" ;;
         queue)
           case "__PRAGMA_DOLLAR__{COMP_WORDS[3]}" in
             list) candidates="--limit --cursor --format --json --stream-json" ;;
-            remove) candidates="--request-id --format --json --stream-json" ;;
+            remove) candidates="--request --request-id --ack-timeout --format --json --stream-json" ;;
             resume) candidates="--request-id --format --json --stream-json" ;;
-            steer) candidates="--request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json" ;;
+            steer) candidates="--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json" ;;
             *) candidates="list remove resume steer" ;;
           esac
           ;;
@@ -620,7 +649,7 @@ _pragma_complete() {
       ;;
   esac
   if [[ "__PRAGMA_DOLLAR__cur" == --* || "__PRAGMA_DOLLAR__prev" == --* ]]; then
-    candidates="--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor"
+    candidates="--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --request --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor --query --status --executor --view"
   fi
   COMPREPLY=( $(compgen -W "__PRAGMA_DOLLAR__candidates" -- "__PRAGMA_DOLLAR__cur") )
 }
@@ -645,7 +674,11 @@ _pragma() {
           if (( CURRENT == 3 )); then
             _describe command 'discover describe run'
           else
-            _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --wait --detach --ack-timeout --format --json --stream-json'
+            case __PRAGMA_DOLLAR__words[3] in
+              discover) _describe option '--project --query --status --limit --cursor --format --json --stream-json' ;;
+              describe) _describe option '--revision --format --json --stream-json' ;;
+              *) _describe option '--workspace --prompt --input --input-json --project --revision --expected-fingerprint --request-id --detach --format --json --stream-json' ;;
+            esac
           fi
           ;;
         mission)
@@ -653,10 +686,18 @@ _pragma() {
             _describe command 'list get resume watch send steer respond interrupt board queue'
           else
             case __PRAGMA_DOLLAR__words[3] in
+              list) _describe option '--status --executor --limit --cursor --format --json --stream-json' ;;
+              get) _describe option '--view --limit --cursor --format --json --stream-json' ;;
               board) _describe command 'list read search' ;;
               queue)
                 if (( CURRENT == 4 )); then _describe command 'list remove resume steer';
-                else _describe option '--request-id --expected-execution --wait --detach --ack-timeout --limit --cursor --format --json --stream-json'; fi
+                else
+                  case __PRAGMA_DOLLAR__words[4] in
+                    list) _describe option '--limit --cursor --format --json --stream-json' ;;
+                    remove|steer) _describe option '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json' ;;
+                    resume) _describe option '--request-id --ack-timeout --format --json --stream-json' ;;
+                  esac
+                fi
                 ;;
               watch) _describe option '--after --replay --until --format --stream-json' ;;
               resume) _describe option '--project --revision --expected-fingerprint --request-id --detach --format --json --stream-json' ;;
@@ -682,13 +723,44 @@ function completionFishScript(): string {
   test "__PRAGMA_DOLLAR__tokens[2]" = mission; and test "__PRAGMA_DOLLAR__tokens[3]" = queue
 end
 
+function __pragma_discover
+  set -l tokens (commandline -opc)
+  contains discover __PRAGMA_DOLLAR__tokens
+end
+
+function __pragma_mission_list
+  set -l tokens (commandline -opc)
+  contains mission __PRAGMA_DOLLAR__tokens; and contains list __PRAGMA_DOLLAR__tokens
+end
+
+function __pragma_mission_get
+  set -l tokens (commandline -opc)
+  contains mission __PRAGMA_DOLLAR__tokens; and contains get __PRAGMA_DOLLAR__tokens
+end
+
+function __pragma_queue_list
+  set -l tokens (commandline -opc)
+  contains queue __PRAGMA_DOLLAR__tokens; and contains list __PRAGMA_DOLLAR__tokens
+end
+
+function __pragma_queue_mutation
+  set -l tokens (commandline -opc)
+  contains queue __PRAGMA_DOLLAR__tokens; and contains remove __PRAGMA_DOLLAR__tokens
+  or contains queue __PRAGMA_DOLLAR__tokens; and contains steer __PRAGMA_DOLLAR__tokens
+end
+
 complete -c pragma -f -n '__fish_use_subcommand' -a 'version doctor completion team expert flow mission'
 complete -c pragma -f -n '__fish_seen_subcommand_from team expert flow' -a 'discover describe run'
 complete -c pragma -f -n '__fish_seen_subcommand_from mission' -a 'list get resume watch send steer respond interrupt board queue'
 complete -c pragma -f -n '__pragma_mission_queue' -a 'list remove resume steer'
 complete -c pragma -f -n '__fish_seen_subcommand_from board' -a 'list read search'
+complete -c pragma -f -n '__pragma_discover' -a '--project --query --status --limit --cursor --format --json --stream-json'
+complete -c pragma -f -n '__pragma_mission_list' -a '--status --executor --limit --cursor --format --json --stream-json'
+complete -c pragma -f -n '__pragma_mission_get' -a '--view --limit --cursor --format --json --stream-json'
+complete -c pragma -f -n '__pragma_queue_list' -a '--limit --cursor --format --json --stream-json'
+complete -c pragma -f -n '__pragma_queue_mutation' -a '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json'
 complete -c pragma -f -n '__fish_seen_subcommand_from watch' -a '--after --replay --until --format --stream-json'
-complete -c pragma -f -a '--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor'
+complete -c pragma -f -a '--format --json --stream-json --color --interactive --help --after --replay --until --project --revision --expected-fingerprint --prompt --input --input-json --expected-execution --request-id --request --wait --detach --ack-timeout --interaction --answer --choice --answers-json --reason --limit --cursor --query --status --executor --view'
 `,
     "\n",
   );
@@ -708,10 +780,15 @@ function completionPowerShellScript(): string {
       'mission' { __PRAGMA_DOLLAR__candidates = @('list','get','resume','watch','send','steer','respond','interrupt','board','queue') }
     }
   }
+  if (__PRAGMA_DOLLAR__tokens -contains 'discover') { __PRAGMA_DOLLAR__candidates = @('--project','--query','--status','--limit','--cursor','--format','--json','--stream-json') }
+  if (__PRAGMA_DOLLAR__tokens -contains 'mission' -and __PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = @('--status','--executor','--limit','--cursor','--format','--json','--stream-json') }
+  if (__PRAGMA_DOLLAR__tokens -contains 'mission' -and __PRAGMA_DOLLAR__tokens -contains 'get') { __PRAGMA_DOLLAR__candidates = @('--view','--limit','--cursor','--format','--json','--stream-json') }
   if (__PRAGMA_DOLLAR__tokens -contains 'queue') { __PRAGMA_DOLLAR__candidates = @('list','remove','resume','steer') }
+  if (__PRAGMA_DOLLAR__tokens -contains 'queue' -and __PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = @('--limit','--cursor','--format','--json','--stream-json') }
+  if (__PRAGMA_DOLLAR__tokens -contains 'queue' -and (__PRAGMA_DOLLAR__tokens -contains 'remove' -or __PRAGMA_DOLLAR__tokens -contains 'steer')) { __PRAGMA_DOLLAR__candidates = @('--request','--request-id','--expected-execution','--wait','--detach','--ack-timeout','--format','--json','--stream-json') }
   if (__PRAGMA_DOLLAR__tokens -contains 'board') { __PRAGMA_DOLLAR__candidates = @('list','read','search') }
   if (__PRAGMA_DOLLAR__wordToComplete -like '--*') {
-    __PRAGMA_DOLLAR__candidates = @('--format','--json','--stream-json','--color','--interactive','--help','--after','--replay','--until','--project','--revision','--expected-fingerprint','--prompt','--input','--input-json','--expected-execution','--request-id','--wait','--detach','--ack-timeout','--interaction','--answer','--choice','--answers-json','--reason','--limit','--cursor')
+    __PRAGMA_DOLLAR__candidates = @('--format','--json','--stream-json','--color','--interactive','--help','--after','--replay','--until','--project','--revision','--expected-fingerprint','--prompt','--input','--input-json','--expected-execution','--request-id','--request','--wait','--detach','--ack-timeout','--interaction','--answer','--choice','--answers-json','--reason','--limit','--cursor','--query','--status','--executor','--view')
   }
   __PRAGMA_DOLLAR__candidates | Where-Object { __PRAGMA_DOLLAR___.ToString() -like "__PRAGMA_DOLLAR__wordToComplete*" } | ForEach-Object {
     [System.Management.Automation.CompletionResult]::new(__PRAGMA_DOLLAR___.ToString(), __PRAGMA_DOLLAR___.ToString(), 'ParameterValue', __PRAGMA_DOLLAR___.ToString())

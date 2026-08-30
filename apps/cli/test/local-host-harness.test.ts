@@ -21,6 +21,9 @@ describe("CLI-side Local Host harness", () => {
       missions: {
         get: async (id) => ({ id, title: "Fixture Mission" }),
         list: async () => [{ id: "mission-1", title: "Fixture Mission" }],
+        query: async () => {
+          throw new Error("Mission query is not used by this fixture.");
+        },
       },
       workspace: {
         stat: async () => ({ isDirectory: () => true }),

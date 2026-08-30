@@ -87,6 +87,16 @@ describe("M8 production composition", () => {
           }),
         ]),
       );
+
+      const io = createIo();
+      await expect(
+        runCli(["mission", "list", "--executor", "expert:expert-1", "--format=json"], io, {
+          localHost: host,
+        }),
+      ).resolves.toBe(0);
+      expect(CliResultV2Schema.parse(JSON.parse(io.stdout[0]!))).toMatchObject({
+        result: { items: [{ id: MISSION_ID }] },
+      });
     } finally {
       if (previousHome === undefined) delete process.env["PRAGMA_HOME"];
       else process.env["PRAGMA_HOME"] = previousHome;
@@ -545,7 +555,11 @@ describe("M8 production composition", () => {
       expect(io.stderr).toEqual([]);
 
       if (format === "text") {
-        expect(io.stdout.join("")).toContain('"state": "applied"').and.toContain(MISSION_ID);
+        expect(io.stdout.join(""))
+          .toContain("Applied: interrupt")
+          .and.toContain(`Mission ID: ${MISSION_ID}`)
+          .and.toContain(`Operation ID: ${OPERATION_ID}`)
+          .and.toContain("Status: applied");
         return;
       }
       if (format === "json") {

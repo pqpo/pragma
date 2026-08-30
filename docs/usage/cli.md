@@ -8,6 +8,12 @@ Desktop 不共享进程内 owner；同一个 Mission 由当前 owner 消费持�
 ## 命令
 
 ```text
+pragma team|expert|flow discover [SELECTOR] [--query TEXT] [--status STATUS]
+pragma team|expert|flow describe <REF> [--revision N]
+pragma team|expert run <REF> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
+pragma flow run <REF> --workspace ABSOLUTE_PATH --input-json FILE|-
+pragma mission list [--status STATUS] [--executor REF] [--limit N] [--cursor CURSOR]
+pragma mission get <MISSION_ID> [--view summary|result|events] [--limit N] [--cursor CURSOR]
 pragma mission watch <MISSION_ID> [--after CURSOR | --replay COUNT]
 pragma mission send <MISSION_ID> --prompt TEXT [--wait | --detach]
 pragma mission steer <MISSION_ID> --prompt TEXT [--expected-execution EXECUTION_ID]
@@ -31,6 +37,26 @@ ack timeout 为 30 秒，可用 `--ack-timeout` 调整。
 `queue list` 展示 Core ExpertSession prompt queue，不是 Inbox operation list。`watch` 是只读
 watcher，不 claim lease，也不 interrupt Mission；输出只支持 `text` 与 `jsonl`。jsonl 每行是
 一个事件，并以唯一的 `stream.end` 结束；Ctrl-C 是本地 detach，退出码为 0。
+
+`discover` 可以接收一个 positional selector：canonical `kind:ID` 做精确匹配，其他文本按
+名称或描述做不区分大小写的 substring 匹配；selector 与 `--query` 不能同时使用。canonical
+selector 跨 kind 会立即返回 `INVALID_ARGUMENT`，canonical selector 无结果返回
+`EXECUTOR_NOT_FOUND`。即使只有一个结果，JSON 结果的 `items` 仍然是数组。
+
+`mission get` 的 `summary` 是不含完整事件的紧凑摘要，`result` 只表示最新一次
+`run.started`/`execution.started` 对应的执行状态，`events` 按 durable sequence 分页。事件页的
+`nextCursor` 可直接复制到下一次 `--cursor`；cursor 由 Local Host controller 校验，过期或跨
+Mission cursor 会返回 `CURSOR_EXPIRED`/`CURSOR_INVALID`。`chat` 与 `work` 尚未就绪，会明确
+提示使用 `--view events` 或 `mission watch`。
+
+文本模式的 `mission list` 列出 `MISSION ID/STATUS/EXECUTOR/UPDATED/WORKSPACE`；`queue list`
+先列出 `state/pendingCount/supportsSteer`，再列出完整 REQUEST ID 和内容预览。所有文本分页
+支持 cursor 的文本分页结果都会打印可复制的 continuation 命令。
+
+`run` 默认等待终态，`--detach` 在 Mission handle 接受后返回。`--request-id` 可选；省略时
+CLI 自动生成 UUID。文本模式会在副作用前显示 Request ID，并在获得 handle 后显示 Mission ID
+和 Execution ID；JSON/JSONL 不增加旁路文本，仍分别使用 `pragma.cli-result/v2` 与
+`pragma.cli-event/v2`。
 
 ## 历史 Mission 恢复
 

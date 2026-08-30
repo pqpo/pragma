@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { CliEventV2StreamSchema, createIntegrationError } from "@pragma/local-host/wire";
 
@@ -59,11 +59,39 @@ function createHost(
     }),
     listExecutors: async () => [executor],
     getMission: async () => ({
-      id: MISSION_ID,
-      title: "Fixture Mission",
-      result: { status: "succeeded" },
-      events: [{ type: "mission.created" }],
+      snapshot: { missionId: MISSION_ID, eventSequence: 0 },
+      cursor: "fixture-cursor",
+      events: [],
     }),
+    queryMission: async ({ missionId, view }) => {
+      if (view === "summary") {
+        return {
+          schemaVersion: "pragma.mission-summary/v1",
+          missionId,
+          status: "succeeded",
+          lifecycleStatus: "completed",
+          executor: { kind: executorKind, id: EXECUTOR_ID },
+          createdAt: "2026-08-27T00:00:00.000Z",
+          updatedAt: "2026-08-27T00:00:01.000Z",
+          eventSequence: 1,
+          cursor: "fixture-cursor",
+        };
+      }
+      if (view === "result") {
+        return {
+          schemaVersion: "pragma.mission-result/v1",
+          missionId,
+          status: "succeeded",
+          available: true,
+          result: { status: "succeeded" },
+        };
+      }
+      return {
+        schemaVersion: "pragma.mission-events/v1",
+        missionId,
+        items: [],
+      };
+    },
     listMissions: async () => [
       { id: MISSION_ID, title: "Fixture Mission", lifecycleStatus: "succeeded" },
       {
@@ -204,6 +232,306 @@ describe("M6 parser and read-only command surface", () => {
     },
   );
 
+  it("supports canonical, name/description, and invalid discover selectors", async () => {
+    const exactIo = createIo();
+    await expect(
+      runCli(["expert", "discover", EXECUTOR_REF, "--format=json"], exactIo, {
+        localHost: createHost(),
+      }),
+    ).resolves.toBe(0);
+    expect(jsonOutput(exactIo).result.items).toHaveLength(1);
+
+    const keywordIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "fixture", "--format=json"], keywordIo, {
+        localHost: createHost(),
+      }),
+    ).resolves.toBe(0);
+    expect(jsonOutput(keywordIo).result.items).toHaveLength(1);
+
+    const missingIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "expert:bbbbbbbbbbbbbbbb", "--format=json"], missingIo, {
+        localHost: createHost(),
+      }),
+    ).resolves.toBe(3);
+    expect(jsonOutput(missingIo).error.code).toBe("EXECUTOR_NOT_FOUND");
+
+    const conflictIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "fixture", "--query", "research", "--format=json"], conflictIo),
+    ).resolves.toBe(2);
+    expect(jsonOutput(conflictIo).error.code).toBe("INVALID_ARGUMENT");
+
+    const crossKindIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "team:bbbbbbbbbbbbbbbb", "--format=json"], crossKindIo),
+    ).resolves.toBe(2);
+    expect(jsonOutput(crossKindIo).error.code).toBe("INVALID_ARGUMENT");
+
+    const textIo = createIo();
+    await expect(runCli(["expert", "discover"], textIo, { localHost: createHost() })).resolves.toBe(
+      0,
+    );
+    expect(textIo.stdout.join("")).toContain("REF\tNAME\tSTATUS\tSOURCE");
+    expect(textIo.stdout.join("")).toContain(`${EXECUTOR_REF}\tResearch Expert\tready\tbuilt_in`);
+  });
+
+  it("returns every executor matching a selector substring", async () => {
+    const host = createHost();
+    const executors = await host.listExecutors();
+    const first = executors[0]!;
+    const multiHost: CliLocalHost = {
+      ...host,
+      listExecutors: async () => [
+        first,
+        {
+          ...first,
+          ref: { kind: "expert", id: "bbbbbbbbbbbbbbbb" },
+          name: "Fixture Specialist",
+          description: "Another fixture executor",
+        },
+      ],
+    };
+    const io = createIo();
+    await expect(
+      runCli(["expert", "discover", "fixture", "--format=json"], io, {
+        localHost: multiHost,
+      }),
+    ).resolves.toBe(0);
+    expect(jsonOutput(io).result.items).toHaveLength(2);
+  });
+
+  it("normalizes all supported Mission executor reference shapes for filtering", async () => {
+    const host = createHost();
+    const variants = [
+      { id: "11111111-1111-4111-8111-111111111111", executor: { kind: "expert", id: EXECUTOR_ID } },
+      { id: "22222222-2222-4222-8222-222222222222", executor: EXECUTOR_REF },
+      {
+        id: "33333333-3333-4333-8333-333333333333",
+        executor: { ref: { kind: "expert", id: EXECUTOR_ID } },
+      },
+      { id: "44444444-4444-4444-8444-444444444444", executor: { kind: "team", id: EXECUTOR_ID } },
+      {
+        id: "55555555-5555-4555-8555-555555555555",
+        executor: { kind: "expert", id: "bbbbbbbbbbbbbbbb" },
+      },
+    ];
+    const filteredHost: CliLocalHost = {
+      ...host,
+      listMissions: async () => variants,
+    };
+    const io = createIo();
+    await expect(
+      runCli(["mission", "list", "--executor", EXECUTOR_REF, "--format=json"], io, {
+        localHost: filteredHost,
+      }),
+    ).resolves.toBe(0);
+    expect(jsonOutput(io).result.items.map((item: { readonly id: string }) => item.id)).toEqual(
+      variants.slice(0, 3).map((variant) => variant.id),
+    );
+  });
+
+  it("uses the Local Host query contract and fails loudly for chat/work", async () => {
+    const host = createHost();
+    const calls: unknown[] = [];
+    const queryHost: CliLocalHost = {
+      ...host,
+      queryMission: async (input) => {
+        calls.push(input);
+        return {
+          schemaVersion: "pragma.mission-events/v1",
+          missionId: input.missionId,
+          items: [],
+        };
+      },
+    };
+    const eventsIo = createIo();
+    await expect(
+      runCli(
+        [
+          "mission",
+          "get",
+          MISSION_ID,
+          "--view",
+          "events",
+          "--limit",
+          "1",
+          "--cursor",
+          "cursor-1",
+          "--format=json",
+        ],
+        eventsIo,
+        { localHost: queryHost },
+      ),
+    ).resolves.toBe(0);
+    expect(calls).toEqual([
+      { missionId: MISSION_ID, view: "events", limit: 1, cursor: "cursor-1" },
+    ]);
+
+    const chatIo = createIo();
+    await expect(
+      runCli(["mission", "get", MISSION_ID, "--view", "chat", "--format=json"], chatIo, {
+        localHost: queryHost,
+      }),
+    ).resolves.toBe(2);
+    expect(jsonOutput(chatIo).error).toMatchObject({
+      code: "INVALID_ARGUMENT",
+      details: { view: "chat", supportedViews: ["summary", "result", "events"] },
+    });
+    expect(calls).toHaveLength(1);
+
+    const resultIo = createIo();
+    const runningHost: CliLocalHost = {
+      ...host,
+      queryMission: async ({ missionId, view }) =>
+        view === "result"
+          ? {
+              schemaVersion: "pragma.mission-result/v1",
+              missionId,
+              executionId: "33333333-3333-4333-8333-333333333333",
+              status: "running",
+              available: false,
+            }
+          : {
+              schemaVersion: "pragma.mission-events/v1",
+              missionId,
+              items: [],
+            },
+    };
+    await expect(
+      runCli(["mission", "get", MISSION_ID, "--view", "result"], resultIo, {
+        localHost: runningHost,
+      }),
+    ).resolves.toBe(0);
+    expect(resultIo.stdout.join("")).toContain(`MISSION ID: ${MISSION_ID}`);
+    expect(resultIo.stdout.join("")).toContain(`NEXT: mission watch ${MISSION_ID}`);
+  });
+
+  it("shows generated/explicit run identity in text without adding machine side channels", async () => {
+    const start = vi.fn(async (request: { readonly requestId: string }) => ({
+      request,
+      missionId: MISSION_ID,
+      payloadHash: `sha256:${"a".repeat(64)}`,
+      disposition: "reserved" as const,
+      executionId: "33333333-3333-4333-8333-333333333333",
+      outcome: Promise.resolve({
+        status: "accepted" as const,
+        missionId: MISSION_ID,
+        executionId: "33333333-3333-4333-8333-333333333333",
+        executor: { kind: "expert" as const, id: EXECUTOR_ID },
+        workspace: {
+          schemaVersion: "pragma.integration-workspace/v1" as const,
+          requestedPath: "/workspace",
+          canonicalPath: "/workspace",
+          displayName: "workspace",
+          identityHash: `sha256:${"b".repeat(64)}`,
+          access: { exists: true, readable: true, writable: true },
+          source: "explicit" as const,
+        },
+        result: { detached: true },
+      }),
+      cancel: async () => undefined,
+    }));
+    const host: CliLocalHost = {
+      ...createHost(),
+      resolveWorkspace: async (requestedPath) => ({
+        schemaVersion: "pragma.integration-workspace/v1",
+        requestedPath,
+        canonicalPath: "/workspace",
+        displayName: "workspace",
+        identityHash: `sha256:${"b".repeat(64)}`,
+        access: { exists: true, readable: true, writable: true },
+        source: "explicit",
+      }),
+      run: { start } as never,
+    };
+
+    const generatedIo = createIo();
+    await expect(
+      runCli(
+        [
+          "expert",
+          "run",
+          EXECUTOR_REF,
+          "--workspace",
+          "/workspace",
+          "--prompt",
+          "hello",
+          "--detach",
+        ],
+        generatedIo,
+        { localHost: host },
+      ),
+    ).resolves.toBe(0);
+    const generatedRequestId = start.mock.calls[0]?.[0].requestId;
+    expect(generatedRequestId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(generatedIo.stderr.join("")).toContain(
+      `Request ID: ${generatedRequestId} (generated; reuse with --request-id for an exact retry)`,
+    );
+    expect(generatedIo.stderr.join("")).toContain(`Mission ID: ${MISSION_ID}`);
+    expect(generatedIo.stderr.join("")).toContain(
+      "Execution ID: 33333333-3333-4333-8333-333333333333",
+    );
+    expect(generatedIo.stdout.join("")).toContain(`request ${generatedRequestId}`);
+
+    const explicitId = "44444444-4444-4444-8444-444444444444";
+    const machineIo = createIo();
+    await expect(
+      runCli(
+        [
+          "expert",
+          "run",
+          EXECUTOR_REF,
+          "--workspace",
+          "/workspace",
+          "--prompt",
+          "hello",
+          "--request-id",
+          explicitId,
+          "--detach",
+          "--format=json",
+        ],
+        machineIo,
+        { localHost: host },
+      ),
+    ).resolves.toBe(0);
+    expect(machineIo.stderr).toEqual([]);
+    expect(machineIo.stdout).toHaveLength(1);
+    expect(JSON.parse(machineIo.stdout[0]!).requestId).toBe(explicitId);
+    expect(start.mock.calls[1]?.[0].requestId).toBe(explicitId);
+
+    const failureIo = createIo();
+    const failureStart = vi.fn(async () => {
+      throw createIntegrationError({
+        code: "EXECUTION_FAILED",
+        category: "execution",
+        message: "fixture failed",
+        retryable: false,
+      });
+    });
+    await expect(
+      runCli(
+        [
+          "expert",
+          "run",
+          EXECUTOR_REF,
+          "--workspace",
+          "/workspace",
+          "--prompt",
+          "hello",
+          "--request-id",
+          explicitId,
+        ],
+        failureIo,
+        { localHost: { ...host, run: { start: failureStart } as never } },
+      ),
+    ).resolves.toBe(10);
+    expect(failureIo.stderr.join("")).toContain(`Request ID: ${explicitId}`);
+  });
+
   it("rejects an unknown executor status with the usage exit code", async () => {
     const io = createIo();
     await expect(runCli(["team", "discover", "--status=unknown"], io)).resolves.toBe(2);
@@ -256,6 +584,30 @@ describe("M6 parser and read-only command surface", () => {
         status: "succeeded",
       });
     }
+  });
+
+  it("uses copyable Mission and queue text columns", async () => {
+    const missionIo = createIo();
+    await expect(runCli(["mission", "list"], missionIo, { localHost: createHost() })).resolves.toBe(
+      0,
+    );
+    const missionText = missionIo.stdout.join("");
+    expect(missionText).toContain("MISSION ID\tSTATUS\tEXECUTOR\tUPDATED\tWORKSPACE");
+    expect(missionText).toContain(MISSION_ID);
+    expect(missionText).not.toContain("Fixture Mission");
+
+    const queueIo = createIo();
+    await expect(
+      runCli(["mission", "queue", "list", MISSION_ID], queueIo, {
+        localHost: createHost(),
+      }),
+    ).resolves.toBe(0);
+    const queueText = queueIo.stdout.join("");
+    expect(queueText).toContain("state:");
+    expect(queueText).toContain("pendingCount:");
+    expect(queueText).toContain("supportsSteer:");
+    expect(queueText).toContain("POSITION\tREQUEST ID\tSTATUS\tSTEERABLE\tCONTENT PREVIEW");
+    expect(queueText).toContain("queue-1");
   });
 
   it("renders multiple Board matches and an explicit empty result in text mode", async () => {
@@ -421,6 +773,33 @@ describe("M6 parser and read-only command surface", () => {
     expect(jsonOutput(io).result.shell).toBe("powershell");
   });
 
+  it("provides command-specific help and preserves list filters in text continuation", async () => {
+    const helpIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "--help", "--format=json"], helpIo, {
+        localHost: createHost(),
+      }),
+    ).resolves.toBe(0);
+    expect(jsonOutput(helpIo).result.help).toContain("SELECTOR");
+
+    const textIo = createIo();
+    const host: CliLocalHost = {
+      ...createHost(),
+      listMissions: async () => [
+        { id: MISSION_ID, lifecycleStatus: "succeeded" },
+        { id: "22222222-2222-4222-8222-222222222222", lifecycleStatus: "succeeded" },
+      ],
+    };
+    await expect(
+      runCli(["mission", "list", "--status", "succeeded", "--limit", "1"], textIo, {
+        localHost: host,
+      }),
+    ).resolves.toBe(0);
+    expect(textIo.stdout.join("")).toContain(
+      "Continue: pragma mission list --status succeeded --limit 1 --cursor",
+    );
+  });
+
   it("returns the same read-only result before and after the Desktop lifecycle changes", async () => {
     const host = createHost();
     const runningIo = createIo();
@@ -440,7 +819,7 @@ describe("M6 parser and read-only command surface", () => {
     const missingIo = createIo();
     const missingHost: CliLocalHost = {
       ...createHost(),
-      getMission: async () => {
+      queryMission: async () => {
         throw createIntegrationError({
           code: "MISSION_NOT_FOUND",
           category: "not_found",

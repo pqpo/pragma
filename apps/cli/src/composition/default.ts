@@ -30,6 +30,7 @@ import {
   LOCAL_HOST_SHARED_BOARD_STORE_ID,
   createExpertSessionPromptQueueProjection,
   createMissionWatchApplication,
+  createMissionQuery,
   createRuntimeTokenCounter,
   listLocalHostBuiltInExecutorDescriptors,
   hashMissionResumePayload,
@@ -93,6 +94,7 @@ export function createProductionLocalHost(): CliLocalHost {
   const missionController = createMissionControllerStore({
     missionsPath: join(pragmaHome, "data", "missions"),
   });
+  const missionQuery = createMissionQuery({ controller: missionController });
   const missionWatch = createMissionWatchApplication({ controller: missionController });
   const ownerScope = createMissionOwnerScope({ controller: missionController });
   const { executions: executionStore, sessions: expertSessionStore } = createLocalHostCoreStores({
@@ -200,6 +202,7 @@ export function createProductionLocalHost(): CliLocalHost {
         "run",
         "human-interaction",
         "idempotency",
+        "mission.query",
         "mission.watch",
         "mission.resume",
         "mission.send",
@@ -228,6 +231,7 @@ export function createProductionLocalHost(): CliLocalHost {
       get: async (missionId) => await readMissionSnapshot(missionController, missionId),
       list: async () =>
         await listMissionSnapshots(missionController, join(pragmaHome, "data", "missions")),
+      query: missionQuery.queryMission,
     },
     workspace: {
       stat: async (path) => await stat(path),

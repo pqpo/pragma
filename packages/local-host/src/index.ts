@@ -17,6 +17,7 @@ import type { HumanInteractionResponse } from "@pragma/shared";
 import type { LocalHostRunApplication } from "./run.ts";
 import type { MissionControlApplication } from "./missions/controller/mission-control.ts";
 import type { MissionWatchPort } from "./missions/controller/watch.ts";
+import type { MissionQueryPort } from "./missions/query.ts";
 
 export {
   CliResultSchema,
@@ -40,6 +41,7 @@ export * from "./missions/controller/retention.ts";
 export * from "./missions/controller/watch.ts";
 export * from "./missions/controller/mission-control.ts";
 export * from "./missions/controller/migrations/index.ts";
+export * from "./missions/query.ts";
 export * from "./run-payload.ts";
 export * from "./run.ts";
 export * from "./mission-event-projector.ts";
@@ -169,6 +171,8 @@ export interface LocalHostApplicationPort<
   listExecutors(): Promise<readonly TExecutor[]>;
   getMission(id: string): Promise<TMission>;
   listMissions(): Promise<readonly TMissionSummary[]>;
+  /** Real, view-specific Mission projection owned by Local Host. */
+  readonly queryMission: MissionQueryPort["queryMission"];
   resolveWorkspace(requestedPath: string): Promise<WorkspaceSelection>;
   listSharedBoard(missionId: string): Promise<TBoardList>;
   readSharedBoard(
@@ -220,6 +224,7 @@ export interface LocalHostApplicationPorts<
   readonly missions: {
     readonly get: (id: string) => Promise<TMission>;
     readonly list: () => Promise<readonly TMissionSummary[]>;
+    readonly query: MissionQueryPort["queryMission"];
   };
   /** Desktop and CLI inject raw filesystem operations; Local Host owns the resolution policy. */
   readonly workspace: WorkspaceFilesystemPort;
@@ -283,6 +288,7 @@ export function createLocalHostApplication<
     listExecutors: ports.catalog.listExecutors,
     getMission: ports.missions.get,
     listMissions: ports.missions.list,
+    queryMission: ports.missions.query,
     resolveWorkspace: async (requestedPath) =>
       await resolveWorkspace(requestedPath, ports.workspace),
     listSharedBoard: async (missionId) =>

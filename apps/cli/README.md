@@ -40,6 +40,37 @@ active owner reports a stable busy error; it does not silently enqueue a
 different operation. Human checkpoints can be answered interactively or
 returned as `input_required` for a later response.
 
+Useful read-only commands:
+
+```bash
+pragma expert discover "memory"
+pragma mission list --executor expert:<16-char-id>
+pragma mission get <MISSION_ID> --view summary
+pragma mission get <MISSION_ID> --view result
+pragma mission get <MISSION_ID> --view events --limit 20
+pragma mission queue list <MISSION_ID>
+```
+
+`discover` accepts one selector. A canonical `kind:ID` is an exact match;
+other selectors search executor names and descriptions. `--query` is the
+keyword-search form and cannot be combined with a selector. Event pages return
+a durable `nextCursor`; copy it into the printed continuation command.
+
+`mission get --view summary|result|events` is backed by the Local Host query
+projection. `chat` and `work` deliberately fail with `INVALID_ARGUMENT` until
+their contracts are ready; use `--view events` or `mission watch` meanwhile.
+The text renderers use stable Mission/queue columns, while JSON and JSONL stay
+pure `pragma.cli-result/v2` and `pragma.cli-event/v2` protocol output.
+
+Runs wait for a terminal result by default. `--detach` returns after handle
+acceptance, and `--request-id` is optional because the CLI generates one when
+omitted. Text mode prints the request, Mission, and execution identities;
+machine formats keep those identities inside the protocol envelope.
+
+Command-specific help includes usage, defaults, output format, idempotency,
+and a copyable example, for example `pragma mission get --help` or
+`pragma expert discover --help`.
+
 For scripts and other AI tools, use `--format=json` or `--format=jsonl` and
 inspect the process exit code.
 

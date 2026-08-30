@@ -106,6 +106,9 @@ function createApplication(
     missions: {
       get: async (id) => ({ ...fixture.mission, id }),
       list: async () => [fixture.mission],
+      query: async () => {
+        throw new Error("Mission query is not used by this fixture.");
+      },
     },
     workspace: filesystem,
     board: {

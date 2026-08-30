@@ -16,6 +16,10 @@ export {
   IntegrationErrorRetryPolicies,
   IntegrationErrorSchema,
   integrationErrorExitCode,
+  MissionEventViewItemSchema,
+  MissionEventsSchema,
+  MissionResultSchema,
+  MissionSummarySchema,
 } from "@pragma/shared/integration";
 export type {
   CliEventV2,
@@ -26,5 +30,9 @@ export type {
   HumanInteractionRequestEnvelope,
   HumanInteractionResponseEnvelope,
   JsonValue,
+  MissionEventViewItem,
+  MissionEvents,
+  MissionResult,
+  MissionSummary,
   RunOutcome,
 } from "@pragma/shared/integration";
