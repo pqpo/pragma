@@ -1841,6 +1841,7 @@ class ExpertSessionImpl implements ExpertSession {
         await runExpertInvocation({
           executionId: prompt.executionId,
           invocationId: prompt.executionId,
+          isRecovery: this.recoveredExecutionId === prompt.executionId,
           expert: this.expert,
           prompt:
             this.recoveredExecutionId === prompt.executionId

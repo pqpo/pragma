@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createPragmaLogger,
   defineExpert,
+  HumanInteractionCheckpointError,
   registerExpertToolsMcpSession,
   type ExpertToolsMcpSessionRegistration,
 } from "../src/index.ts";
@@ -240,6 +241,54 @@ describe.sequential("Expert tools MCP Gateway", () => {
     expect(
       (schema as { properties?: { redundant?: unknown } }).properties?.redundant,
     ).not.toHaveProperty("oneOf");
+  });
+
+  it("keeps human checkpoints out of ordinary tool failure results", async () => {
+    const expert = await defineExpert({
+      id: "runtime-human-checkpoint",
+      name: "Runtime human checkpoint",
+      description: "MCP Gateway checkpoint control signal test",
+      tags: [],
+      scope: "test",
+      workspace: process.cwd(),
+      tools: [
+        {
+          name: "checkpoint",
+          description: "Trigger a human checkpoint.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          async call() {
+            throw new HumanInteractionCheckpointError("checkpoint-execution");
+          },
+        },
+      ],
+    });
+    const registration = await registerExpertToolsMcpSession({
+      agent: expert,
+      getContext: () => undefined,
+      logger: createPragmaLogger(undefined, {
+        component: "runtime.adapter",
+        scope: { agentId: expert.id },
+      }),
+      state: {},
+    });
+    registrations.add(registration);
+    const client = await connectClient(registration.url, "human-checkpoint-client");
+
+    const result = await client.callTool({ name: "checkpoint", arguments: {} });
+    expect(result).toMatchObject({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "Execution checkpointed while waiting for human input: checkpoint-execution",
+        },
+      ],
+    });
+    expect((result.content[0] as { text: string }).text).not.toContain("tool_execution_failed");
   });
 });
 

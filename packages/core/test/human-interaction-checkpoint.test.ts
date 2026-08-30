@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExecutionRecord, Invocation } from "@pragma/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFileExecutionStore,
   type ExecutionStore,
   type ExpertAgentHumanRequest,
+  type RuntimeAgentSession,
+  type RuntimeSubmitHandle,
 } from "../src/index.ts";
 import {
   ExecutionController,
@@ -93,6 +95,51 @@ describe("human interaction checkpoint", () => {
     ).resolves.toBeUndefined();
     expect(conflictInjected).toBe(true);
     await expect(store.get(executionId)).resolves.toMatchObject({ state: {} });
+  });
+
+  it("stops the active Runtime submission and records a checkpoint fence", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-human-checkpoint-runtime-"));
+    roots.push(home);
+    const store = createFileExecutionStore({ pragmaHome: home });
+    const { executionId, invocationId } = await createFixture(store);
+    const controller = new ExecutionController(executionId, store);
+    const cancel = vi.fn(async () => undefined);
+    const handle = {
+      runId: "runtime-run",
+      events: [],
+      result: Promise.resolve({ runId: "runtime-run", result: { output: "late" } }),
+      cancel,
+    } as unknown as RuntimeSubmitHandle;
+    controller.registerRuntimeSubmission(
+      invocationId,
+      "checkpoint-context",
+      {} as RuntimeAgentSession,
+      handle,
+      false,
+    );
+    const pending = controller
+      .requestHumanInteraction(
+        invocationId,
+        {
+          kind: "tool_approval",
+          toolName: "write_file",
+          toolCallId: "tool-call-runtime",
+          reason: "Write a file",
+          input: { path: "out.txt" },
+        },
+        "interaction-runtime",
+      )
+      .catch((error: unknown) => error);
+    await waitForEvent(store, executionId, "human.waiting");
+
+    await expect(controller.checkpointWaitingHuman()).resolves.toBeUndefined();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await expect(pending).resolves.toBeInstanceOf(HumanInteractionCheckpointError);
+    expect(controller.getHumanInteractionCheckpoint(invocationId)).toBeInstanceOf(
+      HumanInteractionCheckpointError,
+    );
+    await expect(store.get(executionId)).resolves.toMatchObject({ status: "waiting" });
   });
 });
 

@@ -16,6 +16,7 @@ import type {
 } from "@modelcontextprotocol/server";
 
 import type { Expert } from "./agent/expert-agent.ts";
+import { isHumanInteractionCheckpointError } from "./execution/expert-runner.ts";
 import type { PragmaLogger } from "./logging/logger.ts";
 import type { McpManagedTool } from "./mcp-tools.ts";
 import type { ExpertAgentRunContext } from "./runtime/run-context.ts";
@@ -452,6 +453,12 @@ function registerLocalTool(
 
         return toCallToolResult(result);
       } catch (error) {
+        // A human checkpoint is a control signal for the owning Runtime turn,
+        // not a tool result that the model may recover from. The controller
+        // also stops the active submission out of band; rethrowing here keeps
+        // the HTTP MCP boundary from manufacturing tool_execution_failed and
+        // giving an external Runtime a chance to continue the turn.
+        if (isHumanInteractionCheckpointError(error)) throw error;
         const message = error instanceof Error ? error.message : String(error);
         const payload = {
           ok: false as const,

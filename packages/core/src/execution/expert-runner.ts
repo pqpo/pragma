@@ -146,6 +146,7 @@ export class ExecutionController {
   private readonly linkedInvocationSignals = new Map<string, AbortSignal>();
   private readonly orchestrators = new Map<string, ExpertOrchestrator>();
   private readonly pendingInteractions = new Map<string, PendingHumanInteraction>();
+  private readonly checkpointedInvocations = new Map<string, HumanInteractionCheckpointError>();
   private readonly humanResponseOperations = new Map<
     string,
     { readonly requestId: string; readonly promise: Promise<void> }
@@ -240,7 +241,31 @@ export class ExecutionController {
     }
 
     const checkpoint = new HumanInteractionCheckpointError(this.executionId);
+    const invocationIds = new Set(pending.map((interaction) => interaction.invocationId));
+    const runtimeStops: Promise<void>[] = [];
+    for (const invocationId of invocationIds) {
+      this.checkpointedInvocations.set(invocationId, checkpoint);
+      const signal = this.invocationSignals.get(invocationId);
+      if (signal !== undefined && !signal.signal.aborted) signal.abort(checkpoint);
+      const submission = this.activeRuntimeSubmissions.get(invocationId);
+      if (submission !== undefined) {
+        runtimeStops.push(Promise.resolve().then(async () => await submission.handle.cancel()));
+      }
+    }
+    // Abort the in-memory human waits after starting the provider cancellation. The
+    // abort/rejection unblocks an HTTP MCP request while the Runtime handle is
+    // independently being stopped, so a provider cannot interpret the MCP error as
+    // an ordinary tool failure and continue the turn.
     for (const interaction of pending) interaction.reject(checkpoint);
+    await Promise.allSettled(runtimeStops);
+  }
+
+  /**
+   * Returns the durable checkpoint reason for an invocation whose Runtime turn
+   * must not be converted into a terminal failure or success.
+   */
+  getHumanInteractionCheckpoint(invocationId: string): HumanInteractionCheckpointError | undefined {
+    return this.checkpointedInvocations.get(invocationId);
   }
 
   signalForInvocation(invocationId: string, parentInvocationId?: string): AbortSignal {
@@ -290,6 +315,11 @@ export class ExecutionController {
   ): void {
     const submission = { invocationId, contextId, session, handle, supportsSteer };
     this.activeRuntimeSubmissions.set(invocationId, submission);
+    if (this.checkpointedInvocations.has(invocationId)) {
+      void Promise.resolve()
+        .then(async () => await handle.cancel())
+        .catch(() => undefined);
+    }
     const waiters = this.runtimeSubmissionWaiters.get(contextId);
     if (waiters === undefined) return;
     this.runtimeSubmissionWaiters.delete(contextId);
@@ -425,6 +455,8 @@ export class ExecutionController {
     request: ExpertAgentHumanRequest,
     requestedInteractionId?: string,
   ): Promise<ExpertAgentHumanResponse> {
+    const checkpoint = this.getHumanInteractionCheckpoint(invocationId);
+    if (checkpoint !== undefined) throw checkpoint;
     if (this.cancelled) throw new Error("Execution was cancelled.");
     const signal = this.signalForInvocation(invocationId);
     if (signal.aborted) throw signal.reason ?? new Error("Invocation was aborted.");
@@ -727,6 +759,7 @@ export class ExecutionController {
       new Error("ExpertTurn completed before its Runtime submission became active."),
     );
     this.activeRuntimeSubmissions.clear();
+    this.checkpointedInvocations.clear();
     this.invocationSignals.clear();
     this.linkedInvocationSignals.clear();
     this.orchestrators.clear();
@@ -871,6 +904,8 @@ async function readHumanInteractionResponse(
 export interface RunExpertInvocationOptions {
   readonly executionId: string;
   readonly invocationId: string;
+  /** True when this invocation is being replayed after a persisted checkpoint. */
+  readonly isRecovery?: boolean | undefined;
   readonly parentInvocationId?: string | undefined;
   readonly agentId?: string | undefined;
   readonly expert: ExpertDefinition;
@@ -996,7 +1031,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   await appendUserMessage(
     options,
     formattedPrompt,
-    `invocation-user-message:${options.invocationId}`,
+    options.isRecovery === true
+      ? `invocation-recovery-user-message:${options.invocationId}`
+      : `invocation-user-message:${options.invocationId}`,
   );
   const invocationSignal = options.controller.signalForInvocation(
     options.invocationId,
@@ -1300,6 +1337,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       );
       await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, invocationOutput);
       while (true) {
+        const checkpoint = options.controller.getHumanInteractionCheckpoint(options.invocationId);
+        if (checkpoint !== undefined) throw checkpoint;
         const currentExecution = await requireExecution(options.store, options.executionId);
         const currentInvocation = await options.store.getInvocation(
           options.executionId,
@@ -1962,6 +2001,10 @@ async function submitRuntimeTurn(options: {
     const result = await handle.result;
     await drain;
     await usagePreview;
+    const checkpoint = options.options.controller.getHumanInteractionCheckpoint(
+      options.options.invocationId,
+    );
+    if (checkpoint !== undefined) throw checkpoint;
     const output = result.result.output;
     const finalMessage =
       completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
@@ -1976,7 +2019,10 @@ async function submitRuntimeTurn(options: {
     const usage = await handle.usage?.catch(() => undefined);
     await usagePreview;
     await settleRuntimeTurnUsage(options, usage);
-    throw error;
+    throw (
+      options.options.controller.getHumanInteractionCheckpoint(options.options.invocationId) ??
+      error
+    );
   } finally {
     await drain.catch(() => undefined);
     options.options.controller.unregisterRuntimeSubmission(
