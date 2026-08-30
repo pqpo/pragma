@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { access, realpath, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +50,7 @@ export function createCliLocalHost(
 
 export function createProductionLocalHost(): CliLocalHost {
   const pragmaHome = process.env["PRAGMA_HOME"]?.trim() || join(homedir(), ".pragma");
+  const clientInstanceId = randomUUID();
   const environment = filterLocalHostRuntimeProcessEnvironment(process.env);
   const tokenCounter = createRuntimeTokenCounter();
   const runtimes = [
@@ -160,7 +162,7 @@ export function createProductionLocalHost(): CliLocalHost {
     controller: missionController,
     ownerScope,
     consumer: coreControl.consumer,
-    client: { surface: "cli", version: CLI_VERSION, instanceId: process.pid.toString() },
+    client: { surface: "cli", version: CLI_VERSION, instanceId: clientInstanceId },
     assertMission: async (missionId) => {
       const snapshot = await missionController.readSnapshot({ missionId });
       if (!snapshot.events.some((event) => event.type === "mission.created")) {

@@ -94,6 +94,109 @@ describe("M8 production composition", () => {
     }
   });
 
+  it("submits a real respond mutation with one UUID client instance per Host", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-cli-mutation-composition-"));
+    const previousHome = process.env["PRAGMA_HOME"];
+    process.env["PRAGMA_HOME"] = pragmaHome;
+    try {
+      const controller = createMissionControllerStore({
+        missionsPath: join(pragmaHome, "data", "missions"),
+      });
+      const guard = await controller.claim({
+        missionId: MISSION_ID,
+        claimId: CLAIM_ID,
+        leaseMs: 10_000,
+      });
+      await controller.write({
+        missionId: MISSION_ID,
+        guard,
+        operation: async ({ appendEvent }) => {
+          await appendEvent("mission.created", {
+            executor: { kind: "expert", id: "expert-1" },
+            workspace: "/tmp/m8-mutation-composition-workspace",
+          });
+        },
+      });
+
+      const host = createProductionLocalHost();
+      const submit = async (requestId: string) => {
+        const io = createIo();
+        await expect(
+          runCli(
+            [
+              "mission",
+              "respond",
+              MISSION_ID,
+              "--interaction",
+              "interaction-1",
+              "--answer",
+              "yes",
+              "--request-id",
+              requestId,
+              "--detach",
+              "--format=json",
+            ],
+            io,
+            { localHost: host },
+          ),
+        ).resolves.toBe(0);
+        expect(io.stderr).toEqual([]);
+        expect(JSON.parse(io.stdout[0]!)).toMatchObject({
+          command: "mission.respond",
+          status: "accepted",
+        });
+      };
+
+      const firstRequestId = "77777777-7777-4777-8777-777777777777";
+      const secondRequestId = "88888888-8888-4888-8888-888888888888";
+      await submit(firstRequestId);
+      await submit(secondRequestId);
+
+      const firstCommand = await controller.getCommand({
+        missionId: MISSION_ID,
+        requestId: firstRequestId,
+      });
+      const secondCommand = await controller.getCommand({
+        missionId: MISSION_ID,
+        requestId: secondRequestId,
+      });
+      expect(firstCommand).toMatchObject({
+        kind: "respond",
+        request: {
+          requestId: firstRequestId,
+          client: {
+            surface: "cli",
+            instanceId: expect.stringMatching(
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+            ),
+          },
+        },
+        payload: {
+          kind: "respond",
+          response: { answers: "yes" },
+        },
+      });
+      expect(secondCommand).toMatchObject({
+        kind: "respond",
+        request: { requestId: secondRequestId },
+      });
+      expect(secondCommand?.request.client.instanceId).toBe(
+        firstCommand?.request.client.instanceId,
+      );
+      await expect(
+        controller.getOperation({ missionId: MISSION_ID, requestId: firstRequestId }),
+      ).resolves.toMatchObject({ state: "queued", kind: "respond" });
+      await expect(
+        controller.getOperation({ missionId: MISSION_ID, requestId: secondRequestId }),
+      ).resolves.toMatchObject({ state: "queued", kind: "respond" });
+      await controller.release({ missionId: MISSION_ID, guard });
+    } finally {
+      if (previousHome === undefined) delete process.env["PRAGMA_HOME"];
+      else process.env["PRAGMA_HOME"] = previousHome;
+      await rm(pragmaHome, { recursive: true, force: true });
+    }
+  });
+
   it("keeps mission list lifecycle filters and help/completion aligned with the M8 command surface", async () => {
     const host: CliLocalHost = {
       listMissions: async () => [
