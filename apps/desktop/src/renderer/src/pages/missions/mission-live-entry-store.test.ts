@@ -47,4 +47,27 @@ describe("MissionLiveEntryStore", () => {
 
     expect(listener).not.toHaveBeenCalled();
   });
+
+  it("notifies changed and removed entries when a structural snapshot resets the store", () => {
+    const store = new MissionLiveEntryStore();
+    const unchanged = assistant("unchanged", "same");
+    const changed = assistant("changed", "old");
+    const removed = assistant("removed", "gone");
+    store.reset([unchanged, changed, removed]);
+    const unchangedListener = vi.fn();
+    const changedListener = vi.fn();
+    const removedListener = vi.fn();
+    store.subscribe(unchanged.id, unchangedListener);
+    store.subscribe(changed.id, changedListener);
+    store.subscribe(removed.id, removedListener);
+
+    const replacement = assistant("changed", "new");
+    store.reset([unchanged, replacement]);
+
+    expect(unchangedListener).not.toHaveBeenCalled();
+    expect(changedListener).toHaveBeenCalledOnce();
+    expect(removedListener).toHaveBeenCalledOnce();
+    expect(store.get(changed.id)).toBe(replacement);
+    expect(store.get(removed.id)).toBeUndefined();
+  });
 });

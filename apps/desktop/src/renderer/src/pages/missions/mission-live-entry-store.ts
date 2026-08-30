@@ -25,8 +25,13 @@ export class MissionLiveEntryStore {
   }
 
   reset(entries: readonly MissionChatEntry[]): void {
+    const previous = new Map(this.#entries);
     this.#entries.clear();
     for (const entry of entries) this.#entries.set(entry.id, entry);
+    for (const [entryId, listeners] of this.#listeners) {
+      if (previous.get(entryId) === this.#entries.get(entryId)) continue;
+      for (const listener of listeners) listener();
+    }
   }
 
   clear(): void {

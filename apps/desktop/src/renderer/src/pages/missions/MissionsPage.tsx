@@ -5778,6 +5778,22 @@ export function mergeLatestChatPage(
   const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
   const latestOldest = latest.page.oldestSequence;
   const latestEntryIds = new Set(latest.entries.map((entry) => entry.id));
+  const currentEntriesById = new Map(current.entries.map((entry) => [entry.id, entry] as const));
+  const latestEntries = latest.entries.map((entry) => {
+    const existing = currentEntriesById.get(entry.id);
+    if (
+      (entry.kind === "assistant" || entry.kind === "thinking") &&
+      existing?.kind === entry.kind &&
+      existing.content.length > entry.content.length &&
+      existing.content.startsWith(entry.content)
+    ) {
+      // Mission text entries are append-only. A shorter prefix can only be a projection that was
+      // captured before its advertised revision, so retain the already-rendered content while
+      // accepting terminal and presentation metadata from the newer snapshot.
+      return { ...entry, content: existing.content };
+    }
+    return entry;
+  });
   const retainedOlder =
     latestOldest === undefined
       ? []
@@ -5792,11 +5808,7 @@ export function mergeLatestChatPage(
   delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
-    entries: uniqueChatEntries([
-      ...retainedOlder,
-      ...retainedUnavailableHistory,
-      ...latest.entries,
-    ]),
+    entries: uniqueChatEntries([...retainedOlder, ...retainedUnavailableHistory, ...latestEntries]),
     page:
       retainedOlder.length === 0
         ? latest.page
