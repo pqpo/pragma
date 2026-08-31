@@ -266,6 +266,8 @@ export async function runCli(
             missionId: result.missionId,
             missionContinues: true,
             lastCursor: result.lastCursor,
+            observedStatus: result.observedStatus,
+            stopReason: result.stopReason,
           } as const;
           if (runStreamPresenter !== undefined) {
             runStreamPresenter.emit({
@@ -286,6 +288,8 @@ export async function runCli(
             missionId: result.missionId,
             result: watchResultData(result),
             lastCursor: result.lastCursor,
+            observedStatus: result.observedStatus,
+            stopReason: result.stopReason,
           });
         }
         return 0;
@@ -381,7 +385,7 @@ function watchResultData(result: MissionWatchResult): JsonValue {
 
 function renderWatchCompletionText(result: MissionWatchResult): string {
   const until = result.until === undefined ? "watch" : `--until ${result.until}`;
-  return `Mission ${result.missionId} reached ${until}; cursor ${result.lastCursor}.\n`;
+  return `Mission ${result.missionId} reached ${until}; observedStatus=${result.observedStatus}; stopReason=${result.stopReason}; cursor ${result.lastCursor}.\n`;
 }
 
 function runOutcomeExitCode(outcome: {

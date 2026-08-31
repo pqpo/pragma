@@ -809,7 +809,7 @@ describe("M6 parser and read-only command surface", () => {
     expect(JSON.parse(searchIo.stdout.join("")).result.matches[0].line).toBe(2);
   });
 
-  it("supports local cursors for large in-memory lists", async () => {
+  it("binds local cursors to the command and filters", async () => {
     const host = createHost();
     const firstIo = createIo();
     await expect(
@@ -837,6 +837,86 @@ describe("M6 parser and read-only command surface", () => {
       }),
     ).resolves.toBe(2);
     expect(jsonOutput(invalidIo).error.code).toBe("CURSOR_INVALID");
+
+    const crossCommandHost: CliLocalHost = {
+      ...host,
+      listExecutors: async () => [
+        ...(await host.listExecutors()),
+        {
+          ...(await host.listExecutors())[0]!,
+          ref: { kind: "expert", id: "bbbbbbbbbbbbbbbb" },
+          name: "Second executor",
+        },
+      ],
+    };
+    const discoverIo = createIo();
+    await expect(
+      runCli(["expert", "discover", "--limit", "1", "--format=json"], discoverIo, {
+        localHost: crossCommandHost,
+      }),
+    ).resolves.toBe(0);
+    const discoverCursor = jsonOutput(discoverIo).result.nextCursor;
+    expect(typeof discoverCursor).toBe("string");
+
+    const crossCommandIo = createIo();
+    await expect(
+      runCli(["mission", "list", "--cursor", discoverCursor, "--format=json"], crossCommandIo, {
+        localHost: crossCommandHost,
+      }),
+    ).resolves.toBe(2);
+    expect(jsonOutput(crossCommandIo).error).toMatchObject({ code: "CURSOR_INVALID" });
+
+    const filteredHost: CliLocalHost = {
+      ...host,
+      listMissions: async () => [
+        { id: MISSION_ID, status: "succeeded" },
+        { id: "22222222-2222-4222-8222-222222222222", status: "succeeded" },
+        { id: "33333333-3333-4333-8333-333333333333", status: "queued" },
+      ],
+    };
+    const filteredFirstIo = createIo();
+    await expect(
+      runCli(
+        ["mission", "list", "--status", "succeeded", "--limit", "1", "--format=json"],
+        filteredFirstIo,
+        { localHost: filteredHost },
+      ),
+    ).resolves.toBe(0);
+    const filteredFirst = jsonOutput(filteredFirstIo);
+    const filteredCursor = filteredFirst.result.nextCursor;
+    expect(typeof filteredCursor).toBe("string");
+
+    const filteredSecondIo = createIo();
+    await expect(
+      runCli(
+        [
+          "mission",
+          "list",
+          "--status",
+          "succeeded",
+          "--limit",
+          "1",
+          "--cursor",
+          filteredCursor,
+          "--format=json",
+        ],
+        filteredSecondIo,
+        { localHost: filteredHost },
+      ),
+    ).resolves.toBe(0);
+    expect(jsonOutput(filteredSecondIo).result.items[0].id).toBe(
+      "22222222-2222-4222-8222-222222222222",
+    );
+
+    const differentFilterIo = createIo();
+    await expect(
+      runCli(
+        ["mission", "list", "--status", "queued", "--cursor", filteredCursor, "--format=json"],
+        differentFilterIo,
+        { localHost: filteredHost },
+      ),
+    ).resolves.toBe(2);
+    expect(jsonOutput(differentFilterIo).error).toMatchObject({ code: "CURSOR_INVALID" });
   });
 
   it("keeps completion independent of Host and secret inspection", async () => {
@@ -884,7 +964,7 @@ describe("M6 parser and read-only command surface", () => {
     const cases = [
       {
         shell: "bash",
-        marker: "        send) candidates=\"--prompt",
+        marker: '        send) candidates="--prompt',
         allowed: ["--prompt", "--input", "--request-id", "--wait", "--detach", "--ack-timeout"],
         forbidden: ["--expected-execution", "--request"],
       },
@@ -908,7 +988,7 @@ describe("M6 parser and read-only command surface", () => {
       },
       {
         shell: "bash",
-        marker: "        steer) candidates=\"--prompt",
+        marker: '        steer) candidates="--prompt',
         allowed: [
           "--prompt",
           "--input",
@@ -964,7 +1044,7 @@ describe("M6 parser and read-only command surface", () => {
       },
       {
         shell: "bash",
-        marker: "            remove) candidates=\"--request",
+        marker: '            remove) candidates="--request',
         allowed: ["--request", "--request-id", "--ack-timeout"],
         forbidden: ["--expected-execution", "--wait", "--detach", "--prompt", "--input"],
       },
@@ -988,7 +1068,7 @@ describe("M6 parser and read-only command surface", () => {
       },
       {
         shell: "bash",
-        marker: "            resume) candidates=\"--request-id",
+        marker: '            resume) candidates="--request-id',
         allowed: ["--request-id", "--ack-timeout"],
         forbidden: [
           "--request",
@@ -1040,7 +1120,7 @@ describe("M6 parser and read-only command surface", () => {
       },
       {
         shell: "bash",
-        marker: "            steer) candidates=\"--request",
+        marker: '            steer) candidates="--request',
         allowed: [
           "--request",
           "--request-id",

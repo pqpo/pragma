@@ -14,7 +14,15 @@ import { detectInstalledDesktopVersion } from "../desktop-version.ts";
 import { toIntegrationError } from "./errors.ts";
 import { collectHumanInteraction } from "../terminal.ts";
 import type { CliCommandContext } from "./types.ts";
-import { asJsonValue, hostPage, isRecord, pageItems, recordField, stringField } from "./utils.ts";
+import {
+  asJsonValue,
+  hostPage,
+  isRecord,
+  pageItems,
+  recordField,
+  stringField,
+  type CursorScope,
+} from "./utils.ts";
 
 export async function executeReadOnlyCommand(
   command: ParsedCommand,
@@ -141,6 +149,15 @@ async function discoverExecutors(
     page.nextCursor,
     command.limit,
     command.cursor,
+    {
+      command: `${command.executorKind}.discover`,
+      filters: {
+        selector: command.selector,
+        query: command.query,
+        status: command.status,
+        project: command.project,
+      },
+    },
   );
   return {
     kind: command.executorKind,
@@ -186,6 +203,10 @@ async function listMissions(
     page.nextCursor,
     command.limit,
     command.cursor,
+    {
+      command: "mission.list",
+      filters: { status: command.status, executor: command.executor },
+    },
   );
   return {
     items: result.items.map(asJsonValue),
@@ -225,6 +246,7 @@ async function listBoard(
     page.nextCursor,
     command.limit,
     command.cursor,
+    { command: "mission.board.list", filters: { missionId: command.missionId } },
   );
   return asJsonValue(
     BoardListResultSchema.parse({
@@ -306,6 +328,16 @@ async function searchBoard(
     page.nextCursor,
     command.maxResults,
     undefined,
+    {
+      command: "mission.board.search",
+      filters: {
+        missionId: command.missionId,
+        query: command.query,
+        maxResults: command.maxResults,
+        caseSensitive: command.caseSensitive,
+        contextLines: command.contextLines,
+      },
+    },
   );
   return asJsonValue(
     BoardSearchResultSchema.parse({
@@ -330,6 +362,7 @@ async function listQueue(
     page.nextCursor,
     command.limit,
     command.cursor,
+    { command: "mission.queue.list", filters: { missionId: command.missionId } },
   );
   const projection = isRecord(raw) ? (isRecord(raw["queue"]) ? raw["queue"] : raw) : undefined;
   return {
@@ -562,6 +595,7 @@ function paginateOrHost<T>(
   hostNextCursor: string | undefined,
   limit: number,
   cursor: string | undefined,
+  scope: CursorScope,
 ): { readonly items: readonly T[]; readonly nextCursor?: string | undefined } {
   if (hostPaged) {
     if (cursor !== undefined) {
@@ -576,7 +610,7 @@ function paginateOrHost<T>(
     };
   }
   try {
-    return pageItems(items, limit, cursor);
+    return pageItems(items, limit, cursor, scope);
   } catch {
     throw toIntegrationError({
       code: "CURSOR_INVALID",

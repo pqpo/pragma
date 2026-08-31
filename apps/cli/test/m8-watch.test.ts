@@ -82,6 +82,8 @@ describe("M8 mission watch command", () => {
       return {
         missionId: MISSION_ID,
         status: "detached",
+        observedStatus: "detached",
+        stopReason: "detached",
         missionContinues: true,
         lastCursor: CURSOR,
       };
@@ -130,11 +132,22 @@ describe("M8 mission watch command", () => {
     });
     expect(events[2]).not.toHaveProperty("cursor");
     expect(events[3]).toMatchObject({
-      data: { missionContinues: true, lastCursor: CURSOR },
+      data: {
+        missionContinues: true,
+        lastCursor: CURSOR,
+        observedStatus: "detached",
+        stopReason: "detached",
+      },
       replayable: false,
     });
     expect(events[4]).toMatchObject({
-      data: { status: "succeeded", exitCode: 0, lastCursor: CURSOR },
+      data: {
+        status: "succeeded",
+        exitCode: 0,
+        lastCursor: CURSOR,
+        observedStatus: "detached",
+        stopReason: "detached",
+      },
     });
     expect(watchMission).toHaveBeenCalledOnce();
     expect(io.stderr).toEqual([]);
@@ -153,6 +166,8 @@ describe("M8 mission watch command", () => {
       return {
         missionId: MISSION_ID,
         status: "detached",
+        observedStatus: "detached",
+        stopReason: "detached",
         missionContinues: true,
         lastCursor: CURSOR,
       };
@@ -165,8 +180,46 @@ describe("M8 mission watch command", () => {
     ).resolves.toBe(0);
     expect(io.stdout.join("")).toContain("Watching Mission");
     expect(io.stdout.join("")).toContain("Detached; Mission continues.");
+    expect(io.stdout.join("")).toContain("observedStatus=detached");
+    expect(io.stdout.join("")).toContain("stopReason=detached");
     expect(io.stderr).toEqual([]);
   });
+
+  it.each(["input_required", "succeeded", "failed", "interrupted"] as const)(
+    "exposes the observed %s status in the final stream event",
+    async (status) => {
+      const io = createIo();
+      const watchMission = async (): Promise<MissionWatchResult> => ({
+        missionId: MISSION_ID,
+        status: "completed",
+        observedStatus: status,
+        stopReason: status,
+        missionContinues: status === "input_required",
+        lastCursor: CURSOR,
+        until: "input-required",
+      });
+
+      await expect(
+        runCli(
+          ["mission", "watch", MISSION_ID, "--until", "input-required", "--format=jsonl"],
+          io,
+          { localHost: { watchMission } as unknown as CliLocalHost },
+        ),
+      ).resolves.toBe(0);
+
+      const events = CliEventV2StreamSchema.parse(io.stdout.map((value) => JSON.parse(value)));
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: "stream.end",
+        data: {
+          status: "succeeded",
+          exitCode: 0,
+          observedStatus: status,
+          stopReason: status,
+        },
+      });
+    },
+  );
 
   it("returns INVALID_FORMAT with exit 2 for --format json", async () => {
     const io = createIo();

@@ -36,7 +36,10 @@ ack timeout 为 30 秒，可用 `--ack-timeout` 调整。
 
 `queue list` 展示 Core ExpertSession prompt queue，不是 Inbox operation list。`watch` 是只读
 watcher，不 claim lease，也不 interrupt Mission；输出只支持 `text` 与 `jsonl`。jsonl 每行是
-一个事件，并以唯一的 `stream.end` 结束；Ctrl-C 是本地 detach，退出码为 0。
+一个事件，并以唯一的 `stream.end` 结束；Ctrl-C 是本地 detach，退出码为 0。watcher 的
+`stream.end.data.status` 表示 watcher 命令成功/失败，`observedStatus` 表示它实际观察到的
+Mission 状态，`stopReason` 表示停止原因；后三者可分别区分 `succeeded`、`failed`、
+`interrupted`、`input_required` 和本地 `detached`。
 
 `discover` 可以接收一个 positional selector：canonical `kind:ID` 做精确匹配，其他文本按
 名称或描述做不区分大小写的 substring 匹配；selector 与 `--query` 不能同时使用。canonical
@@ -80,6 +83,49 @@ pragma completion powershell
 
 CLI 不会把 secret、Runtime 环境或 Desktop 私有状态写入 stdout；诊断和错误信息按协议输出，
 并将人类可读错误写入 stderr。
+
+## Agent canonical invocation profile
+
+Agent 或 Codex 调用 CLI 时固定使用 `--format=json`（单次结果）或 `--format=jsonl`（事件流），
+并显式指定 `--interactive=never --color=never`。调用方应先生成并持久化一个 UUID，作为
+`--request-id` 传入；Agent profile 对新的 `run` 默认显式使用 `--detach`，随后用
+`mission watch` 跟踪，而不是把一个长时间的 Runtime 执行绑定在单个 subprocess 上。这是
+调用方约定，不改变 CLI 省略 `--detach` 时默认等待终态的行为。`watch` 必须带
+`--until`，建议使用 `--until input-required`。
+
+对 JSONL，消费并持久化每一条 `replayable=true` 事件的 `cursor` 后，才推进本地的
+`lastCursor`；也要保存最终结果中的 cursor。断线后使用原 Mission ID 和
+`mission watch --after "$lastCursor"` 续传。cursor 是不透明值，只能原样保存和传回。
+
+推荐的 Codex/skills 调用状态机如下：
+
+1. `expert|team|flow discover`、`describe`：单次 JSON 调用，严格校验 v2 envelope 和首批
+   输出。
+2. `expert|team|flow run`：调用方生成 UUID，使用 `--input -`（Flow 使用 `--input-json -`）、
+   `--detach --format=json`，保存返回的 `requestId`、`missionId` 和 `executionId`。
+3. `mission watch`：使用 `--after "$lastCursor" --until input-required --format=jsonl`；
+   每确认写入一条可重放事件后再更新 cursor。
+4. `observedStatus=input_required`：读取事件中的 `interactionId`，用新的命令
+   `request-id` 调用 `mission respond`，再从保存的 cursor 继续 watch。
+5. `steer`/`interrupt`：先用 `mission get --view summary` 或 `result` 读取最新
+   `executionId`，再带 `--expected-execution`。若目标 stale/changed，重新读取状态，不能
+   盲目重试到新的 Execution。
+6. 调用方必须在 CLI subprocess 外部设置总 timeout。暂时性失败或超时按错误码和
+   `retryable` 处理；使用同一个 request ID 和完全相同的语义 payload 重试。终止本地
+   subprocess 只停止本地 watcher，不等于中断 Mission；恢复时使用原 request ID/cursor。
+
+### Agent 输入与 bootstrap exception
+
+Agent 输入默认走 stdin：文本使用 `--input -`，Flow 的 JSON 使用 `--input-json -`，交互回答
+使用 `--answers-json -`。写入完整 UTF-8 内容后应立即关闭 stdin，让 CLI 收到 EOF；不要让
+stdin 长时间保持打开。`--prompt` 仅适合短的、非敏感文本，因为参数会出现在 argv、进程列表，
+并可能进入 shell tracing 或 history。
+
+机器模式的 stdout 只能是 `pragma.cli-result/v2` 或 `pragma.cli-event/v2`；stderr 中的
+`pragma.log/v1` 是结构化诊断。Node 版本不满足要求或 CLI bundle import 失败时，bootstrap
+只写纯文本 stderr，不会生成 v2 envelope，这是协议例外路径（分别使用退出码 2/10）。
+tool/skill 层应先检查 Node 与 CLI 版本，再按“无 stdout envelope + 非零退出码”的方式处理
+bootstrap 失败。
 
 ## 安装与运行环境
 

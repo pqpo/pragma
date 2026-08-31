@@ -100,6 +100,8 @@ describe("Mission watch", () => {
       expect(result).toEqual({
         missionId,
         status: "completed",
+        observedStatus: "succeeded",
+        stopReason: "succeeded",
         missionContinues: false,
         lastCursor: makeMissionEventCursor(missionId, 3),
         until: "terminal",
@@ -187,6 +189,8 @@ describe("Mission watch", () => {
       expect(output[0]).toMatchObject({ data: { status: "input_required" } });
       expect(result).toMatchObject({
         status: "completed",
+        observedStatus: "input_required",
+        stopReason: "input_required",
         missionContinues: true,
         until: "input-required",
       });
@@ -269,6 +273,50 @@ describe("Mission watch", () => {
     expect(result.lastCursor).toBe(makeMissionEventCursor(missionId, 2));
   });
 
+  it.each([
+    ["succeeded", "succeeded", false],
+    ["failed", "failed", false],
+    ["interrupted", "interrupted", false],
+    ["input_required", "input_required", true],
+  ] as const)(
+    "maps a completed watcher to the observed %s status",
+    async (observedStatus, eventStatus, missionContinues) => {
+      const cursor = makeMissionEventCursor(missionId, 1);
+      const snapshot = {
+        schemaVersion: "pragma.local-host-mission-aggregate/v1" as const,
+        missionId,
+        nextFencingToken: "1",
+        eventSequence: 1,
+        operations: {},
+      };
+      const readWatchBarrier = vi.fn(async () => ({
+        snapshot,
+        cursor,
+        barrierSequence: 1,
+        events: [],
+        latestStatusEventType:
+          eventStatus === "input_required" ? "run.input_required" : `run.${eventStatus}`,
+      }));
+
+      const result = await createMissionWatchApplication({
+        controller: { readWatchBarrier },
+      }).watch({
+        missionId,
+        replay: 0,
+        until: "input-required",
+        onEvent: () => undefined,
+      });
+
+      expect(result).toMatchObject({
+        status: "completed",
+        observedStatus,
+        stopReason: observedStatus,
+        missionContinues,
+        lastCursor: cursor,
+      });
+    },
+  );
+
   it("detaches normally on abort without touching the Mission owner lease", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-watch-detach-"));
     try {
@@ -304,7 +352,12 @@ describe("Mission watch", () => {
         },
       });
 
-      expect(result).toMatchObject({ status: "detached", missionContinues: true });
+      expect(result).toMatchObject({
+        status: "detached",
+        observedStatus: "detached",
+        stopReason: "detached",
+        missionContinues: true,
+      });
       expect(output.map((event) => event.type)).toEqual(["mission.snapshot", "watch.ready"]);
       expect((await store.readSnapshot({ missionId })).snapshot.lease).toEqual(before);
     } finally {
@@ -490,6 +543,8 @@ describe("Mission watch", () => {
       controller.abort();
       await expect(watchPromise).resolves.toMatchObject({
         status: "detached",
+        observedStatus: "detached",
+        stopReason: "detached",
         missionContinues: true,
         lastCursor: makeMissionEventCursor(missionId, 1),
       });

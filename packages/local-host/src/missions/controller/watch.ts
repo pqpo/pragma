@@ -9,6 +9,11 @@ import {
 
 export type MissionWatchUntil = "terminal" | "input-required";
 
+export type MissionWatchObservedStatus =
+  "input_required" | "succeeded" | "failed" | "interrupted" | "detached";
+
+export type MissionWatchStopReason = MissionWatchObservedStatus;
+
 export interface MissionWatchEvent {
   readonly type: string;
   readonly data: JsonValue;
@@ -36,6 +41,10 @@ export interface MissionWatchRequest {
 export interface MissionWatchResult {
   readonly missionId: string;
   readonly status: "detached" | "completed";
+  /** The Mission state observed when this watcher stopped. */
+  readonly observedStatus: MissionWatchObservedStatus;
+  /** Why the watcher stopped; detached means local Ctrl-C only. */
+  readonly stopReason: MissionWatchStopReason;
   readonly missionContinues: boolean;
   readonly lastCursor: string;
   readonly until?: MissionWatchUntil | undefined;
@@ -240,10 +249,13 @@ function completedResult(
   lastCursor: string,
   status: MissionWatchStatus,
 ): MissionWatchResult {
+  const observedStatus = completedObservedStatus(status);
   return {
     missionId: input.missionId,
     status: "completed",
-    missionContinues: status === "input_required" || status === "running" || status === "created",
+    observedStatus,
+    stopReason: observedStatus,
+    missionContinues: observedStatus === "input_required",
     lastCursor,
     ...(input.until === undefined ? {} : { until: input.until }),
   };
@@ -253,9 +265,33 @@ function detachedResult(input: MissionWatchRequest, lastCursor: string): Mission
   return {
     missionId: input.missionId,
     status: "detached",
+    observedStatus: "detached",
+    stopReason: "detached",
     missionContinues: true,
     lastCursor,
   };
+}
+
+function completedObservedStatus(
+  status: MissionWatchStatus,
+): Exclude<MissionWatchObservedStatus, "detached"> {
+  switch (status) {
+    case "input_required":
+      return "input_required";
+    case "succeeded":
+      return "succeeded";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "interrupted";
+    default:
+      throw createIntegrationError({
+        code: "INTERNAL_ERROR",
+        category: "execution",
+        message: "Mission watch stopped without an observable terminal status.",
+        retryable: false,
+      });
+  }
 }
 
 async function waitForPoll(

@@ -754,7 +754,13 @@ describe("integration wire v2", () => {
     };
     const validEnds = [
       { status: "accepted", exitCode: 0, result: {} },
-      { status: "succeeded", exitCode: 0, result: { value: 1 } },
+      {
+        status: "succeeded",
+        exitCode: 0,
+        result: { value: 1 },
+        observedStatus: "failed",
+        stopReason: "failed",
+      },
       { status: "input_required", exitCode: 3, interaction },
       { status: "failed", exitCode: 2, error: fixedError },
       {
@@ -799,6 +805,35 @@ describe("integration wire v2", () => {
     for (const end of invalidEnds) {
       expect(CliStreamEndDataV2Schema.safeParse({ ...common, ...end }).success).toBe(false);
     }
+
+    for (const observedStatus of [
+      "input_required",
+      "succeeded",
+      "failed",
+      "interrupted",
+      "detached",
+    ] as const) {
+      expect(
+        CliStreamEndDataV2Schema.safeParse({
+          ...common,
+          status: "succeeded",
+          exitCode: 0,
+          result: {},
+          observedStatus,
+          stopReason: observedStatus,
+        }).success,
+        observedStatus,
+      ).toBe(true);
+    }
+    expect(
+      CliStreamEndDataV2Schema.safeParse({
+        ...common,
+        status: "succeeded",
+        exitCode: 0,
+        result: {},
+        observedStatus: "detached",
+      }).success,
+    ).toBe(false);
 
     expect(
       CliEventV2Schema.safeParse({

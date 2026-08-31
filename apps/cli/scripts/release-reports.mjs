@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +24,9 @@ if (packRecord === undefined || typeof packRecord.filename !== "string") {
 const tarballPath = resolve(releaseDirectory, packRecord.filename);
 const tarball = await readFile(tarballPath);
 const sha256 = createHash("sha256").update(tarball).digest("hex");
+const cliBundle = await readFile(join(stagingDirectory, "dist", "cli.js"));
+const cliSha256 = createHash("sha256").update(cliBundle).digest("hex");
+const commit = await readGitCommit();
 const metafiles = await Promise.all(
   ["cli.metafile.json", "code-service-worker.metafile.json"].map(
     async (filename) => await readJson(join(releaseDirectory, filename)),
@@ -44,6 +49,11 @@ const packFiles = (packRecord.files ?? []).map((file) => ({
 const artifactManifest = {
   package: packageManifest.name,
   version: packageManifest.version,
+  buildIdentity: {
+    version: packageManifest.version,
+    commit,
+    cliSha256,
+  },
   tarball: "pragma-cli.tgz",
   sha256,
   tarballBytes: tarball.byteLength,
@@ -90,6 +100,18 @@ process.stdout.write(
     2,
   ) + "\n",
 );
+
+async function readGitCommit() {
+  const { stdout } = await promisify(execFile)("git", ["rev-parse", "HEAD"], {
+    cwd: repositoryDirectory,
+    encoding: "utf8",
+  });
+  const commit = stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(commit)) {
+    throw new Error(`Unable to determine a full git commit for the CLI artifact: ${commit}`);
+  }
+  return commit;
+}
 
 async function collectComponents(rootManifest, metafiles) {
   const manifests = new Map();

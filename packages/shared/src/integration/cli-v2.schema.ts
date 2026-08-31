@@ -28,6 +28,24 @@ export const CliRunStatusSchema = z.enum([
   "interrupted",
 ]);
 
+/** Final Mission state observed by a read-only `mission watch` command. */
+export const CliWatchObservedStatusSchema = z.enum([
+  "input_required",
+  "succeeded",
+  "failed",
+  "interrupted",
+  "detached",
+]);
+
+/** Reason a read-only `mission watch` command stopped observing the Mission. */
+export const CliWatchStopReasonSchema = z.enum([
+  "input_required",
+  "succeeded",
+  "failed",
+  "interrupted",
+  "detached",
+]);
+
 const RunOutcomeCommonSchema = z
   .object({
     missionId: MissionIdSchema.optional(),
@@ -125,9 +143,18 @@ export const CliStreamEndDataV2Schema = z
     usage: AgentMessageUsageSchema.optional(),
     warnings: z.array(IntegrationWarningSchema).default([]),
     lastCursor: OpaqueCursorSchema.optional(),
+    observedStatus: CliWatchObservedStatusSchema.optional(),
+    stopReason: CliWatchStopReasonSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
+    if ((value.observedStatus === undefined) !== (value.stopReason === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["stopReason"],
+        message: "Watch observedStatus and stopReason must be provided together.",
+      });
+    }
     switch (value.status) {
       case "accepted":
       case "succeeded":
@@ -341,6 +368,8 @@ export const CliEventV2StreamSchema = z.array(CliEventV2Schema).superRefine((eve
 });
 
 export type CliRunStatus = z.infer<typeof CliRunStatusSchema>;
+export type CliWatchObservedStatus = z.infer<typeof CliWatchObservedStatusSchema>;
+export type CliWatchStopReason = z.infer<typeof CliWatchStopReasonSchema>;
 export type RunOutcome = z.infer<typeof RunOutcomeSchema>;
 export type CliResultV2 = z.infer<typeof CliResultV2Schema>;
 export type CliStreamEndDataV2 = z.infer<typeof CliStreamEndDataV2Schema>;

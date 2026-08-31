@@ -10,13 +10,21 @@ const artifactDirectory = resolve(options.artifactDirectory);
 const artifactManifest = JSON.parse(
   await readFile(join(artifactDirectory, "artifact-manifest.json"), "utf8"),
 );
+const buildIdentity = artifactManifest.buildIdentity;
 if (
   artifactManifest.package !== "@pqpo/pragma" ||
   artifactManifest.tarball !== "pragma-cli.tgz" ||
   typeof artifactManifest.version !== "string" ||
-  !/^[a-f0-9]{64}$/u.test(artifactManifest.sha256)
+  !/^[a-f0-9]{64}$/u.test(artifactManifest.sha256) ||
+  buildIdentity === null ||
+  typeof buildIdentity !== "object" ||
+  buildIdentity.version !== artifactManifest.version ||
+  !/^[a-f0-9]{40}$/u.test(buildIdentity.commit) ||
+  !/^[a-f0-9]{64}$/u.test(buildIdentity.cliSha256)
 ) {
-  throw new Error(`Invalid canonical artifact manifest: ${JSON.stringify(artifactManifest)}`);
+  throw new Error(
+    `Invalid canonical artifact manifest or build identity: ${JSON.stringify(artifactManifest)}`,
+  );
 }
 const tarballPath = join(artifactDirectory, artifactManifest.tarball);
 const tarball = await readFile(tarballPath);
@@ -59,6 +67,7 @@ try {
       environment,
       tarballPath,
       version: artifactManifest.version,
+      buildIdentity,
     });
   } else if (options.mode === "node20") {
     await runNode20NegativeSmoke({ smokeRoot, environment, tarballPath });
@@ -74,6 +83,8 @@ try {
         platform: process.platform,
         arch: process.arch,
         version: artifactManifest.version,
+        commit: buildIdentity.commit,
+        cliSha256: buildIdentity.cliSha256,
         tarballSha256: actualSha256,
       },
       null,
@@ -140,7 +151,7 @@ function createIsolatedEnvironment(smokeRoot, npmCacheOverride) {
   };
 }
 
-async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version }) {
+async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version, buildIdentity }) {
   const prefix = join(smokeRoot, "全局 前缀");
   const binDirectory = getBinDirectory(prefix);
   const firstInstall = await installPackage(prefix, tarballPath, environment);
@@ -154,6 +165,13 @@ async function runPositiveSmoke({ smokeRoot, environment, tarballPath, version }
   if (installedManifest.version !== version) {
     throw new Error(
       `Installed version mismatch: expected ${version}, got ${installedManifest.version}.`,
+    );
+  }
+  const installedCli = await readFile(join(packageRoot, "@pqpo", "pragma", "dist", "cli.js"));
+  const installedCliSha256 = createHash("sha256").update(installedCli).digest("hex");
+  if (installedCliSha256 !== buildIdentity.cliSha256) {
+    throw new Error(
+      `Installed CLI bundle identity mismatch: expected ${buildIdentity.cliSha256}, got ${installedCliSha256}.`,
     );
   }
   await assertInstalledShim(prefix, binDirectory);

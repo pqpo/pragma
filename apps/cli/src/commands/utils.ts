@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { JsonValue } from "@pragma/local-host/wire";
 
 export interface HostPage {
@@ -6,7 +8,12 @@ export interface HostPage {
   readonly hostPaged: boolean;
 }
 
-const CURSOR_PREFIX = "pragma.cli.cursor.v1.";
+const CURSOR_PREFIX = "pragma.cli.cursor.v2.";
+
+export interface CursorScope {
+  readonly command: string;
+  readonly filters?: Readonly<Record<string, string | number | boolean | undefined>>;
+}
 
 export function asJsonValue(value: unknown): JsonValue {
   try {
@@ -42,23 +49,31 @@ export function pageItems<T>(
   items: readonly T[],
   limit: number,
   cursor: string | undefined,
+  scope: CursorScope,
 ): { readonly items: readonly T[]; readonly nextCursor?: string | undefined } {
-  const offset = cursor === undefined ? 0 : decodeCursor(cursor);
+  const offset = cursor === undefined ? 0 : decodeCursor(cursor, scope);
   if (offset > items.length) throw new Error("Cursor is beyond the end of the result set.");
   const page = items.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
   return {
     items: page,
-    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
+    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset, scope) } : {}),
   };
 }
 
-export function decodeCursor(cursor: string): number {
+export function decodeCursor(cursor: string, scope: CursorScope): number {
   if (!cursor.startsWith(CURSOR_PREFIX)) throw new Error("Invalid cursor.");
   try {
     const raw = Buffer.from(cursor.slice(CURSOR_PREFIX.length), "base64url").toString("utf8");
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed) || typeof parsed["offset"] !== "number") throw new Error();
+    if (
+      !isRecord(parsed) ||
+      typeof parsed["offset"] !== "number" ||
+      parsed["command"] !== scope.command ||
+      parsed["queryHash"] !== cursorQueryHash(scope)
+    ) {
+      throw new Error();
+    }
     const offset = parsed["offset"];
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error();
     return offset;
@@ -67,8 +82,24 @@ export function decodeCursor(cursor: string): number {
   }
 }
 
-function encodeCursor(offset: number): string {
-  return `${CURSOR_PREFIX}${Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url")}`;
+function encodeCursor(offset: number, scope: CursorScope): string {
+  return `${CURSOR_PREFIX}${Buffer.from(
+    JSON.stringify({
+      offset,
+      command: scope.command,
+      queryHash: cursorQueryHash(scope),
+    }),
+    "utf8",
+  ).toString("base64url")}`;
+}
+
+function cursorQueryHash(scope: CursorScope): string {
+  const filters = Object.entries(scope.filters ?? {})
+    .filter(([, value]) => value !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return createHash("sha256")
+    .update(JSON.stringify({ command: scope.command, filters }), "utf8")
+    .digest("hex");
 }
 
 export function stringField(value: unknown, key: string): string | undefined {

@@ -92,7 +92,8 @@ global prefix、Unicode prefix、重复安装、PATH precedence、version/doctor
 
 build job 会上传以下审计文件：
 
-- `SHA256SUMS.txt` 与 `artifact-manifest.json`：实际 tarball digest、大小、版本和文件清单；
+- `SHA256SUMS.txt` 与 `artifact-manifest.json`：实际 tarball digest、大小、版本、构建身份
+  （版本、git commit、打包后的 `dist/cli.js` SHA-256）和文件清单；
 - `sbom.cdx.json`：CycloneDX SBOM；
 - `license-report.txt`：bundle metafile 发现的 package license 报告；
 - `pack-files.json` 与 npm `pack.json`：allowlist 打包明细。

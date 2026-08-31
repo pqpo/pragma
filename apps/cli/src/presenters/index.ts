@@ -9,6 +9,8 @@ import {
 import type { AgentMessageUsage } from "@pragma/shared";
 import {
   EventIdSchema,
+  type CliWatchObservedStatus,
+  type CliWatchStopReason,
   type ExecutorReference,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
@@ -43,6 +45,8 @@ export type CliRunPresentationOutcome =
       readonly usage?: AgentMessageUsage | undefined;
       readonly warnings?: readonly unknown[] | undefined;
       readonly lastCursor?: string | undefined;
+      readonly observedStatus?: CliWatchObservedStatus | undefined;
+      readonly stopReason?: CliWatchStopReason | undefined;
     }
   | {
       readonly status: "input_required" | "failed" | "interrupted";
@@ -55,6 +59,8 @@ export type CliRunPresentationOutcome =
       readonly usage?: AgentMessageUsage | undefined;
       readonly warnings?: readonly unknown[] | undefined;
       readonly lastCursor?: string | undefined;
+      readonly observedStatus?: CliWatchObservedStatus | undefined;
+      readonly stopReason?: CliWatchStopReason | undefined;
     };
 
 export interface CliV2StreamPresenter {
@@ -151,6 +157,8 @@ export function createV2StreamPresenter(input: PresentationInput): CliV2StreamPr
         ...((outcome.lastCursor ?? lastCursor) === undefined
           ? {}
           : { lastCursor: outcome.lastCursor ?? lastCursor }),
+        ...(outcome.observedStatus === undefined ? {} : { observedStatus: outcome.observedStatus }),
+        ...(outcome.stopReason === undefined ? {} : { stopReason: outcome.stopReason }),
         ...(outcome.status === "accepted" || outcome.status === "succeeded"
           ? { result: outcome.result }
           : {}),
@@ -285,7 +293,13 @@ export function renderWatchEventText(event: {
   }
   if (event.type === "watch.detached") {
     const cursor = typeof data?.["lastCursor"] === "string" ? data["lastCursor"] : undefined;
-    return `Detached; Mission continues.${cursor === undefined ? "" : ` cursor=${cursor}`}\n`;
+    const observedStatus = valueText(data, "observedStatus");
+    const stopReason = valueText(data, "stopReason");
+    return `Detached; Mission continues.${
+      observedStatus === undefined ? "" : ` observedStatus=${observedStatus};`
+    }${stopReason === undefined ? "" : ` stopReason=${stopReason};`}${
+      cursor === undefined ? "" : ` cursor=${cursor}`
+    }\n`;
   }
   if (event.type === "mission.created") {
     return `Mission ${valueText(data, "missionId") ?? "unknown"} created.\n`;
