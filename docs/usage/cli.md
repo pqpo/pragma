@@ -1,5 +1,8 @@
 # Pragma CLI Mission 控制
 
+机器调用、stdout/stderr 协议、cursor 续传和 input_required 状态机见
+[Pragma CLI Agent / automation guide](./cli-agent.md)。
+
 `pragma` 是与 Desktop Main 共用 `@pragma/local-host` 的 Node.js 22+ 命令行入口。CLI 与
 Desktop 不共享进程内 owner；同一个 Mission 由当前 owner 消费持久化 Inbox，另一个端只提交
 命令或只读事件。因此关闭 Desktop 后，CLI 仍可恢复已被证明可恢复的 Mission；CLI 退出也不会
@@ -8,19 +11,35 @@ Desktop 不共享进程内 owner；同一个 Mission 由当前 owner 消费持�
 ## 命令
 
 ```text
-pragma team|expert|flow discover [SELECTOR] [--query TEXT] [--status STATUS]
-pragma team|expert|flow describe <REF> [--revision N]
-pragma team|expert run <REF> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
+pragma team discover [SELECTOR] [--query TEXT] [--status STATUS]
+pragma expert discover [SELECTOR] [--query TEXT] [--status STATUS]
+pragma flow discover [SELECTOR] [--query TEXT] [--status STATUS]
+pragma team describe <REF> [--revision N]
+pragma expert describe <REF> [--revision N]
+pragma flow describe <REF> [--revision N]
+pragma team run <REF> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
+pragma expert run <REF> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
 pragma flow run <REF> --workspace ABSOLUTE_PATH --input-json FILE|-
 pragma mission list [--status STATUS] [--executor REF] [--limit N] [--cursor CURSOR]
 pragma mission get <MISSION_ID> [--view summary|result|events] [--limit N] [--cursor CURSOR]
 pragma mission watch <MISSION_ID> [--after CURSOR | --replay COUNT]
-pragma mission send <MISSION_ID> --prompt TEXT [--wait | --detach]
-pragma mission steer <MISSION_ID> --prompt TEXT [--expected-execution EXECUTION_ID]
+  [--until terminal|input-required]
+pragma mission send <MISSION_ID> (--prompt TEXT | --input FILE|-)
+  [--request-id UUID] [--wait | --detach] [--ack-timeout SECONDS]
+pragma mission steer <MISSION_ID> (--prompt TEXT | --input FILE|-)
+  [--expected-execution EXECUTION_ID] [--request-id UUID]
+  [--wait | --detach] [--ack-timeout SECONDS]
 pragma mission resume <MISSION_ID> [--project PROJECT_ID --revision N]
-pragma mission respond <MISSION_ID> --interaction INTERACTION_ID (--answer TEXT | --choice VALUE | --answers-json FILE|-)
+  [--expected-fingerprint SHA256] [--request-id UUID] [--detach]
+pragma mission respond <MISSION_ID> --interaction INTERACTION_ID
+  (--answer TEXT | --choice VALUE... | --answers-json FILE|-)
+  [--request-id UUID] [--wait | --detach] [--ack-timeout SECONDS]
 pragma mission interrupt <MISSION_ID> [--expected-execution EXECUTION_ID]
-pragma mission queue list <MISSION_ID>
+  [--reason TEXT] [--request-id UUID] [--wait | --detach] [--ack-timeout SECONDS]
+pragma mission board list <MISSION_ID> [--limit N] [--cursor CURSOR]
+pragma mission board read <MISSION_ID> <CONTEXT_ID> [--start BYTE] [--offset MAX_BYTES]
+pragma mission board search <MISSION_ID> QUERY [--case-sensitive] [--context-lines N] [--max-results N]
+pragma mission queue list <MISSION_ID> [--limit N] [--cursor CURSOR]
 pragma mission queue remove <MISSION_ID> --request REQUEST_ID
 pragma mission queue resume <MISSION_ID>
 pragma mission queue steer <MISSION_ID> --request REQUEST_ID [--expected-execution EXECUTION_ID]
@@ -89,48 +108,20 @@ pragma completion powershell
 CLI 不会把 secret、Runtime 环境或 Desktop 私有状态写入 stdout；诊断和错误信息按协议输出，
 并将人类可读错误写入 stderr。
 
-## Agent canonical invocation profile
+### stderr 日志级别（P1）
 
-Agent 或 Codex 调用 CLI 时固定使用 `--format=json`（单次结果）或 `--format=jsonl`（事件流），
-并显式指定 `--interactive=never --color=never`。调用方应先生成并持久化一个 UUID，作为
-`--request-id` 传入；Agent profile 对新的 `run` 默认显式使用 `--detach`，随后用
-`mission watch` 跟踪，而不是把一个长时间的 Runtime 执行绑定在单个 subprocess 上。这是
-调用方约定，不改变 CLI 省略 `--detach` 时默认等待终态的行为。`watch` 必须带
-`--until`，建议使用 `--until input-required`。
+--log-level 与 PRAGMA_LOG_LEVEL 是 P1 设计契约，当前代码尚未合入，当前发布版本可能
+尚未支持。落地后的值域为 silent|fatal|error|warn|info|debug，优先级为
+CLI --log-level > 环境变量 PRAGMA_LOG_LEVEL > 默认 info。silent 只控制
+pragma.log/v1 诊断行，不隐藏 stdout 结果、协议错误、text renderer 的必要输出或
+bootstrap 纯文本异常。format 与 interactive 不会自动改变日志级别。
 
-对 JSONL，消费并持久化每一条 `replayable=true` 事件的 `cursor` 后，才推进本地的
-`lastCursor`；也要保存最终结果中的 cursor。断线后使用原 Mission ID 和
-`mission watch --after "$lastCursor"` 续传。cursor 是不透明值，只能原样保存和传回。
+## 脚本与 Agent
 
-推荐的 Codex/skills 调用状态机如下：
-
-1. `expert|team|flow discover`、`describe`：单次 JSON 调用，严格校验 v2 envelope 和首批
-   输出。
-2. `expert|team|flow run`：调用方生成 UUID，使用 `--input -`（Flow 使用 `--input-json -`）、
-   `--detach --format=json`，保存返回的 `requestId`、`missionId` 和 `executionId`。
-3. `mission watch`：使用 `--after "$lastCursor" --until input-required --format=jsonl`；
-   每确认写入一条可重放事件后再更新 cursor。
-4. `observedStatus=input_required`：读取事件中的 `interactionId`，用新的命令
-   `request-id` 调用 `mission respond`，再从保存的 cursor 继续 watch。
-5. `steer`/`interrupt`：先用 `mission get --view summary` 或 `result` 读取最新
-   `executionId`，再带 `--expected-execution`。若目标 stale/changed，重新读取状态，不能
-   盲目重试到新的 Execution。
-6. 调用方必须在 CLI subprocess 外部设置总 timeout。暂时性失败或超时按错误码和
-   `retryable` 处理；使用同一个 request ID 和完全相同的语义 payload 重试。终止本地
-   subprocess 只停止本地 watcher，不等于中断 Mission；恢复时使用原 request ID/cursor。
-
-### Agent 输入与 bootstrap exception
-
-Agent 输入默认走 stdin：文本使用 `--input -`，Flow 的 JSON 使用 `--input-json -`，交互回答
-使用 `--answers-json -`。写入完整 UTF-8 内容后应立即关闭 stdin，让 CLI 收到 EOF；不要让
-stdin 长时间保持打开。`--prompt` 仅适合短的、非敏感文本，因为参数会出现在 argv、进程列表，
-并可能进入 shell tracing 或 history。
-
-机器模式的 stdout 只能是 `pragma.cli-result/v2` 或 `pragma.cli-event/v2`；stderr 中的
-`pragma.log/v1` 是结构化诊断。Node 版本不满足要求或 CLI bundle import 失败时，bootstrap
-只写纯文本 stderr，不会生成 v2 envelope，这是协议例外路径（分别使用退出码 2/10）。
-tool/skill 层应先检查 Node 与 CLI 版本，再按“无 stdout envelope + 非零退出码”的方式处理
-bootstrap 失败。
+脚本或 Agent 只需先固定 `--format=json`（单体结果）或 `--format=jsonl`（事件流），并
+显式指定 `--interactive=never --color=never`。完整的机器输入、cursor、错误恢复、
+input_required 状态机和 bootstrap exception 见
+[Pragma CLI Agent / automation guide](./cli-agent.md)。
 
 ## 安装与运行环境
 
@@ -204,3 +195,5 @@ Windows：
 
 Node.js 20 即使 npm 发出 `EBADENGINE` 警告也不满足运行要求：bootstrap 会在主 bundle
 加载前以退出码 2 拒绝。启用 `engine-strict` 时安装本身应失败。
+
+机器调用入口：[Pragma CLI Agent / automation guide](./cli-agent.md)。

@@ -72,7 +72,18 @@ and a copyable example, for example `pragma mission get --help` or
 `pragma expert discover --help`.
 
 For scripts and other AI tools, use `--format=json` or `--format=jsonl` and
-inspect the process exit code.
+inspect the process exit code. The P1 `--log-level` /
+`PRAGMA_LOG_LEVEL` contract will use `silent|fatal|error|warn|info|debug` with
+priority CLI > environment > default `info`; the current release may not yet
+include this option.
+
+The three documents have separate jobs: this README is the npm installation
+and entry-point guide, the human guide explains interactive CLI/Mission
+semantics, and the Agent/automation guide defines machine output, recovery,
+and cursor handling.
+
+- Human CLI guide → [docs/usage/cli.md](https://github.com/pqpo/pragma/blob/main/docs/usage/cli.md)
+- Agent/automation guide → [docs/usage/cli-agent.md](https://github.com/pqpo/pragma/blob/main/docs/usage/cli-agent.md)
 
 ## Upgrade, rollback, and uninstall
 
