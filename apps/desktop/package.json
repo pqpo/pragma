@@ -78,7 +78,7 @@
     "electron": "latest",
     "electron-builder": "^26.15.3",
     "electron-vite": "latest",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "postcss": "^8.5.26",
     "typescript": "latest",
     "vite": "^7.3.6",
