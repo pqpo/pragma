@@ -92,7 +92,6 @@ describe("ContextStoreRevisionFragment", () => {
         onApprove={() => undefined}
         onReject={() => undefined}
         onRetry={() => undefined}
-        onDraftChanged={async () => undefined}
       />,
     );
 
@@ -106,6 +105,8 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("guide.md");
     expect(html).toContain("同意并应用");
     expect(html).toContain('class="revision-diff-scroll-area"');
+    expect(html).not.toContain("revision-draft-editor");
+    expect(html).not.toContain("保存草稿文件");
   });
 
   it("builds stable line-level additions and deletions", () => {

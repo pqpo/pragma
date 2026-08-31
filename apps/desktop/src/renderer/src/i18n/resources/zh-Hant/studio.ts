@@ -446,6 +446,8 @@ export const studio = {
   rejectRevision: "拒絕",
   retryRevision: "重試",
   deleteRevisionTask: "刪除任務",
+  deleteRevisionTaskTitle: "刪除此修訂任務？",
+  deleteRevisionTaskDescription: "「{{name}}」將從修訂任務列表中刪除，不會修改知識庫內容。",
   viewAllStoreRevisions: "修訂任務",
   viewStoreRevisions: "修訂記錄",
   viewRevisionChanges: "查看變更",
@@ -462,10 +464,7 @@ export const studio = {
   revisionSummaryDocumentDescription:
     "概括 Agent 為本次任務產生的變更方案，協助快速瞭解修改範圍，不會進入 Memory。",
   revisionDiffUnavailable: "這個較早的任務沒有保留變更前的檔案內容。",
-  revisionDraftContent: "草稿 Markdown 內容",
-  saveRevisionDraftFile: "儲存草稿檔案",
   openRevisionMission: "開啟任務",
-  revisionDraftEditInvalidatesReview: "修改後草稿會回到編輯狀態，目前審核結果將失效。",
   filesChanged: "變更 {{count}} 個檔案",
   baseRevision: "基於版本 {{count}}",
   revisionOperation: {

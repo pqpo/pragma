@@ -1093,7 +1093,7 @@
   outline-offset: 2px;
 }
 
-.revision-task-delete {
+.revision-task-icon-button {
   display: inline-grid;
   width: 34px;
   height: 34px;
@@ -1106,17 +1106,22 @@
   cursor: pointer;
 }
 
-.revision-task-delete:hover:not(:disabled) {
-  background: rgb(196 64 64 / 8%);
+.revision-task-icon-button:hover:not(:disabled) {
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+}
+
+.revision-task-icon-button.is-danger:hover:not(:disabled) {
+  background: var(--ui-danger-subtle);
   color: var(--ui-danger);
 }
 
-.revision-task-delete:focus-visible {
+.revision-task-icon-button:focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
 }
 
-.revision-task-delete:disabled {
+.revision-task-icon-button:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -1362,38 +1367,6 @@
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.revision-draft-editor {
-  display: grid;
-  min-height: 100%;
-  grid-template-rows: minmax(320px, 1fr) auto;
-  gap: 12px;
-  padding: 20px;
-}
-
-.revision-draft-editor textarea {
-  width: 100%;
-  min-height: 320px;
-  resize: vertical;
-  border: 1px solid var(--ui-border);
-  border-radius: 8px;
-  background: var(--ui-surface);
-  color: var(--ui-text);
-  font:
-    12px/1.65 "SFMono-Regular",
-    Consolas,
-    "Liberation Mono",
-    monospace;
-  padding: 16px;
-}
-
-.revision-draft-editor .primary-button {
-  justify-self: start;
-}
-
-.revision-draft-editor small {
-  color: var(--ui-text-secondary);
 }
 
 .revision-diff-stats {
