@@ -147,6 +147,11 @@ describe("M8 mission watch command", () => {
         lastCursor: CURSOR,
         observedStatus: "detached",
         stopReason: "detached",
+        result: {
+          status: "detached",
+          observedStatus: "detached",
+          stopReason: "detached",
+        },
       },
     });
     expect(watchMission).toHaveBeenCalledOnce();
@@ -216,6 +221,11 @@ describe("M8 mission watch command", () => {
           exitCode: 0,
           observedStatus: status,
           stopReason: status,
+          result: {
+            status: "completed",
+            observedStatus: status,
+            stopReason: status,
+          },
         },
       });
     },

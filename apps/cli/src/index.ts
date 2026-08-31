@@ -377,6 +377,8 @@ function watchResultData(result: MissionWatchResult): JsonValue {
   return {
     missionId: result.missionId,
     status: result.status,
+    observedStatus: result.observedStatus,
+    stopReason: result.stopReason,
     missionContinues: result.missionContinues,
     lastCursor: result.lastCursor,
     ...(result.until === undefined ? {} : { until: result.until }),

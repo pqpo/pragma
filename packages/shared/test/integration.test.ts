@@ -834,6 +834,15 @@ describe("integration wire v2", () => {
         observedStatus: "detached",
       }).success,
     ).toBe(false);
+    expect(
+      CliStreamEndDataV2Schema.safeParse({
+        ...common,
+        status: "succeeded",
+        exitCode: 0,
+        result: {},
+        stopReason: "detached",
+      }).success,
+    ).toBe(false);
 
     expect(
       CliEventV2Schema.safeParse({
