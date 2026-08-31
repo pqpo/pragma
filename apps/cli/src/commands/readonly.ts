@@ -37,6 +37,12 @@ export async function executeReadOnlyCommand(
       return { shell: command.shell, script: completionScript(command.shell) };
     case "doctor":
       throw new Error("doctor must be handled by the doctor command.");
+    case "registry-init":
+    case "registry-package-init":
+    case "registry-publish":
+    case "registry-build":
+    case "registry-check":
+      throw new Error("Registry commands must be handled by the Registry command.");
     case "executor-discover":
       return await discoverExecutors(command, context);
     case "executor-describe":

@@ -579,6 +579,9 @@ importers:
       '@pragma/shared':
         specifier: workspace:*
         version: link:../shared
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: latest
         version: 4.4.3

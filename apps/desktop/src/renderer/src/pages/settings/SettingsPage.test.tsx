@@ -30,6 +30,15 @@ describe("SettingsPage", () => {
     expect(html).not.toContain("Default Runtime");
     expect(html).not.toContain("Task workspace");
     expect(html).not.toContain("<h1>Settings</h1>");
+    expect(html.indexOf("Runtime Environments")).toBeLessThan(html.indexOf("Bundle Sources"));
+  });
+
+  it("shows Bundle sources as the final settings section without an inline add form", () => {
+    const html = renderToStaticMarkup(<SettingsPage initialView="bundle-sources" />);
+
+    expect(html.indexOf("Runtime Environments")).toBeLessThan(html.indexOf("Bundle Sources"));
+    expect(html).toContain("Add source");
+    expect(html).not.toContain('id="bundle-source-add-form"');
   });
 
   it("renders General settings in Simplified Chinese", async () => {

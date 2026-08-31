@@ -21,7 +21,14 @@ export type ExpertModel = Extract<
   { readonly mode: "pinned" }
 >["model"];
 export type StudioView =
-  "experts" | "teams" | "flows" | "integrations" | "capabilities" | "plugins" | "context-stores";
+  | "square"
+  | "experts"
+  | "teams"
+  | "flows"
+  | "integrations"
+  | "capabilities"
+  | "plugins"
+  | "context-stores";
 
 export type ExpertRecord = {
   readonly ref?: string | undefined;

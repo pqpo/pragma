@@ -50,6 +50,17 @@ import {
   StartPragmaBundleImportSchema,
 } from "./bundles.ts";
 import {
+  AddDesktopBundleRegistrySourceSchema,
+  DesktopBundleRegistrySourceRefSchema,
+  DesktopBundleRegistrySourceStatusSchema,
+  DesktopSquareBundleDownloadSchema,
+  DesktopSquareCatalogSchema,
+  DesktopSquarePackageDetailSchema,
+  DownloadDesktopSquareBundleSchema,
+  GetDesktopSquarePackageSchema,
+  UpdateDesktopBundleRegistrySourceSchema,
+} from "./bundle-registry.ts";
+import {
   CapabilityDefinitionSchema,
   CapabilityDeleteResultSchema,
   CapabilityHealthSchema,
@@ -309,6 +320,19 @@ export type StartPragmaBundleImport = z.infer<typeof StartPragmaBundleImportSche
 export type PragmaBundleInstallation = z.infer<typeof PragmaBundleInstallationSchema>;
 export type ResolvePragmaBundleInstallation = z.infer<typeof ResolvePragmaBundleInstallationSchema>;
 export type PragmaBundleInstallationAction = z.infer<typeof PragmaBundleInstallationActionSchema>;
+export type DesktopBundleRegistrySourceStatus = z.infer<
+  typeof DesktopBundleRegistrySourceStatusSchema
+>;
+export type AddDesktopBundleRegistrySource = z.infer<typeof AddDesktopBundleRegistrySourceSchema>;
+export type DesktopBundleRegistrySourceRef = z.infer<typeof DesktopBundleRegistrySourceRefSchema>;
+export type UpdateDesktopBundleRegistrySource = z.infer<
+  typeof UpdateDesktopBundleRegistrySourceSchema
+>;
+export type DesktopSquareCatalog = z.infer<typeof DesktopSquareCatalogSchema>;
+export type GetDesktopSquarePackage = z.infer<typeof GetDesktopSquarePackageSchema>;
+export type DesktopSquarePackageDetail = z.infer<typeof DesktopSquarePackageDetailSchema>;
+export type DownloadDesktopSquareBundle = z.infer<typeof DownloadDesktopSquareBundleSchema>;
+export type DesktopSquareBundleDownload = z.infer<typeof DesktopSquareBundleDownloadSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;

@@ -29,6 +29,7 @@
     "@pragma/interpreter": "workspace:*",
     "@pragma/mission-board": "workspace:*",
     "@pragma/shared": "workspace:*",
+    "yaml": "^2.9.0",
     "zod": "latest"
   },
   "devDependencies": {

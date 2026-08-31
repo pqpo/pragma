@@ -1,0 +1,144 @@
+.bundle-registry-settings .settings-screen-body {
+  display: grid;
+  align-content: start;
+  gap: 24px;
+}
+
+.bundle-source-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.bundle-source-heading > div {
+  min-width: 0;
+}
+
+.bundle-source-heading > .primary-button {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.bundle-source-dialog.ui-dialog {
+  width: min(520px, 100%);
+}
+
+.bundle-source-form {
+  display: grid;
+  gap: 16px;
+}
+
+.bundle-source-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.bundle-source-form input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.bundle-source-list {
+  display: grid;
+  gap: 12px;
+}
+
+.bundle-source-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.bundle-source-card > div:first-child {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bundle-source-card code {
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bundle-source-card small {
+  color: var(--ui-text-tertiary);
+}
+
+.bundle-source-title,
+.bundle-source-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.bundle-source-title > span,
+.bundle-source-status {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.bundle-source-status.is-ready {
+  background: #e8f4eb;
+  color: #27713c;
+}
+
+.bundle-source-status.is-stale,
+.bundle-source-status.is-error {
+  background: #fff1df;
+  color: #9b5a14;
+}
+
+.bundle-source-actions {
+  flex: 0 0 auto;
+}
+
+.bundle-source-actions label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.bundle-source-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 64px 24px;
+  color: var(--ui-text-secondary);
+  text-align: center;
+}
+
+.bundle-source-empty p {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .bundle-source-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

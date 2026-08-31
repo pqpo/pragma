@@ -2,6 +2,7 @@ export * from "./api.ts";
 export * from "./automations.ts";
 export * from "./avatars.ts";
 export * from "./bundles.ts";
+export * from "./bundle-registry.ts";
 export * from "./capabilities.ts";
 export * from "./context-stores.ts";
 export * from "./context-store-revisions.ts";

@@ -143,6 +143,15 @@ import type {
   PragmaBundleInstallation,
   ResolvePragmaBundleInstallation,
   PragmaBundleInstallationAction,
+  AddDesktopBundleRegistrySource,
+  UpdateDesktopBundleRegistrySource,
+  DesktopBundleRegistrySourceRef,
+  DesktopBundleRegistrySourceStatus,
+  DesktopSquareCatalog,
+  GetDesktopSquarePackage,
+  DesktopSquarePackageDetail,
+  DownloadDesktopSquareBundle,
+  DesktopSquareBundleDownload,
   DesktopGlobalMemoryPolicySnapshot,
   DesktopAssetMemoryPolicySnapshot,
   UpdateDesktopGlobalMemoryPolicy,
@@ -465,6 +474,23 @@ export interface PragmaDesktopAPI {
     input: PragmaBundleInstallationAction,
   ) => Promise<PragmaBundleInstallation>;
   discardPragmaBundleInstallation: (input: PragmaBundleInstallationAction) => Promise<void>;
+  listBundleRegistrySources: () => Promise<DesktopBundleRegistrySourceStatus[]>;
+  addBundleRegistrySource: (
+    input: AddDesktopBundleRegistrySource,
+  ) => Promise<DesktopBundleRegistrySourceStatus>;
+  updateBundleRegistrySource: (
+    input: UpdateDesktopBundleRegistrySource,
+  ) => Promise<DesktopBundleRegistrySourceStatus>;
+  removeBundleRegistrySource: (input: DesktopBundleRegistrySourceRef) => Promise<void>;
+  refreshBundleRegistrySource: (
+    input: DesktopBundleRegistrySourceRef,
+  ) => Promise<DesktopBundleRegistrySourceStatus>;
+  refreshBundleRegistrySources: () => Promise<DesktopBundleRegistrySourceStatus[]>;
+  getSquareCatalog: () => Promise<DesktopSquareCatalog>;
+  getSquarePackage: (input: GetDesktopSquarePackage) => Promise<DesktopSquarePackageDetail>;
+  downloadSquareBundle: (
+    input: DownloadDesktopSquareBundle,
+  ) => Promise<DesktopSquareBundleDownload>;
   listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
   listAutomations: () => Promise<AutomationSummary[]>;
   saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;

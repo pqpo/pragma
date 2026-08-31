@@ -1029,12 +1029,17 @@
   }
 }
 
-.studio-bundle-actions {
+.studio-distribution-actions {
   display: grid;
   gap: 6px;
   margin-top: 10px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.studio-bundle-actions {
+  display: grid;
+  gap: 6px;
 }
 
 .studio-bundle-actions button {

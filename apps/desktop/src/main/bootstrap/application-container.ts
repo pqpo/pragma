@@ -43,6 +43,8 @@ import { createAutomationStore } from "../features/automations/automation-store.
 import { installPragmaBundleHandlers } from "../features/bundles/pragma-bundle-ipc.ts";
 import { BundleSetupRequiredError } from "../features/bundles/pragma-bundle-errors.ts";
 import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
+import { installBundleRegistryHandlers } from "../features/bundle-registry/bundle-registry-ipc.ts";
+import { createDesktopBundleRegistrySourceService } from "../features/bundle-registry/bundle-registry-source-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
@@ -227,6 +229,9 @@ export interface DesktopApplicationContainerOptions {
   readonly sendRuntimeModelCatalogUpdate: (runtimeId: string) => void;
   readonly trashItem: (path: string) => Promise<void>;
   readonly activateLogging: () => Promise<void>;
+  readonly officialBundleRegistrySource?:
+    | { readonly name: string; readonly remote: string; readonly ref?: string | undefined }
+    | undefined;
 }
 
 export async function createDesktopApplicationContainer(
@@ -787,6 +792,12 @@ export async function createDesktopApplicationContainer(
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
   });
   installPragmaBundleHandlers(bundleService, options.getWindow);
+  const bundleRegistrySources = createDesktopBundleRegistrySourceService({
+    sourcesPath: join(pragmaPaths.dataRoot(), "bundle-registry", "sources.json"),
+    cacheRoot: join(pragmaPaths.cacheRoot(), "bundle-registry"),
+    officialSource: options.officialBundleRegistrySource,
+  });
+  installBundleRegistryHandlers(bundleRegistrySources);
   const assertBundleExecutorReady = async (
     ref: string,
     operation: "create_mission" | "run_mission",

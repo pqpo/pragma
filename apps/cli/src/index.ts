@@ -17,6 +17,7 @@ import { toIntegrationError } from "./commands/errors.ts";
 import { executeReadOnlyCommand } from "./commands/readonly.ts";
 import { executeMutationCommand } from "./commands/mutations.ts";
 import { startExecutorRun } from "./commands/run.ts";
+import { executeRegistryCommand, type RegistryCommand } from "./commands/registry.ts";
 import type { CliLocalHost } from "./commands/types.ts";
 import { createCliLocalHost } from "./composition/default.ts";
 import { CliInputError, readProcessStdin } from "./input.ts";
@@ -216,6 +217,10 @@ export async function runCli(
       startedAt,
       continuationCommand: (cursor: string) => continuationCommandFor(parsed.command, cursor),
     } as const;
+    if (isRegistryCommand(parsed.command)) {
+      presentSuccess(presentationInput, await executeRegistryCommand(parsed.command));
+      return 0;
+    }
     if (parsed.command.kind === "mission-watch") {
       if (context.localHost.watchMission === undefined) {
         throw createIntegrationError({
@@ -464,6 +469,16 @@ function commandName(command: ParsedCommand): string {
       return "doctor";
     case "completion":
       return "completion";
+    case "registry-init":
+      return "registry.init";
+    case "registry-package-init":
+      return "registry.package.init";
+    case "registry-publish":
+      return "registry.publish";
+    case "registry-build":
+      return "registry.build";
+    case "registry-check":
+      return "registry.check";
     case "executor-discover":
       return `${command.executorKind}.discover`;
     case "executor-describe":
@@ -501,6 +516,10 @@ function commandName(command: ParsedCommand): string {
     case "queue-list":
       return "mission.queue.list";
   }
+}
+
+function isRegistryCommand(command: ParsedCommand): command is RegistryCommand {
+  return command.kind.startsWith("registry-");
 }
 
 function continuationCommandFor(command: ParsedCommand, cursor: string): string {

@@ -13,6 +13,7 @@
 
 @import "./features/settings/base.css";
 @import "./features/settings/model-providers.css";
+@import "./features/settings/bundle-registry.css";
 @import "./features/settings/runtimes.css";
 @import "./features/settings/memory.css";
 
@@ -21,6 +22,7 @@
 @import "./features/studio/capabilities.css";
 @import "./features/studio/context-stores.css";
 @import "./features/studio/bundles.css";
+@import "./features/studio/square.css";
 @import "./features/studio/resources.css";
 @import "./features/studio/team-permissions.css";
 @import "./features/studio/flow-detail.css";

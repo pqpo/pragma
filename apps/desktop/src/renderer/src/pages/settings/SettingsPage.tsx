@@ -11,8 +11,10 @@ import { EvaluationSettingsFragment } from "./EvaluationSettingsFragment.tsx";
 import { MemorySettingsFragment } from "./MemorySettingsFragment.tsx";
 import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
+import { BundleRegistrySourcesFragment } from "./BundleRegistrySourcesFragment.tsx";
 
-export type SettingsView = "general" | "memory" | "evaluations" | "models" | "runtimes";
+export type SettingsView =
+  "general" | "memory" | "evaluations" | "bundle-sources" | "models" | "runtimes";
 
 export function SettingsPage(
   props: {
@@ -81,6 +83,17 @@ export function SettingsPage(
         >
           {t("runtimes.navigation")}
         </button>
+        <button
+          className={
+            activeView === "bundle-sources" ? "settings-nav-item is-active" : "settings-nav-item"
+          }
+          type="button"
+          aria-selected={activeView === "bundle-sources"}
+          aria-controls="bundle-sources-panel"
+          onClick={() => setActiveView("bundle-sources")}
+        >
+          {t("bundleSources.navigation")}
+        </button>
       </nav>
       <SidebarResizeHandle
         label={t("navigation.resize", { ns: "common" })}
@@ -96,6 +109,8 @@ export function SettingsPage(
           <MemorySettingsFragment onMemoryEnabledChange={props.onMemoryEnabledChange} />
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
+        ) : activeView === "bundle-sources" ? (
+          <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (
           <ModelProvidersFragment />
         ) : (

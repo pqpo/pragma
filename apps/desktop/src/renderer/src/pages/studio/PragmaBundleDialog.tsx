@@ -113,6 +113,7 @@ export function PragmaBundleDialog(props: {
   readonly capabilities: readonly Capability[];
   readonly contextStores: readonly ContextStore[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly initialSourcePath?: string | undefined;
   readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
@@ -300,6 +301,7 @@ function BundleImportDialog(props: {
   readonly capabilities: readonly Capability[];
   readonly contextStores: readonly ContextStore[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly initialSourcePath?: string | undefined;
   readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
@@ -381,7 +383,7 @@ function BundleImportDialog(props: {
     props.onClose();
   };
 
-  const resetForInspection = async (next: PragmaBundleImportInspection) => {
+  const resetForInspection = useCallback(async (next: PragmaBundleImportInspection) => {
     const api = desktopApi();
     const recoverable =
       api === undefined || next.alreadyInstalledId === undefined
@@ -402,7 +404,27 @@ function BundleImportDialog(props: {
     setSecrets({});
     setInstallation(null);
     setStep("select");
-  };
+  }, []);
+
+  const initialPathInspected = useRef(false);
+  useEffect(() => {
+    const api = desktopApi();
+    if (
+      api === undefined ||
+      props.initialSourcePath === undefined ||
+      initialPathInspected.current
+    ) {
+      return;
+    }
+    initialPathInspected.current = true;
+    setBusy(true);
+    setError(null);
+    void api
+      .inspectPragmaBundle({ sourcePath: props.initialSourcePath })
+      .then(resetForInspection)
+      .catch((cause: unknown) => setError(displayError(cause)))
+      .finally(() => setBusy(false));
+  }, [props.initialSourcePath, resetForInspection]);
 
   const inspectPickedBundle = async () => {
     const api = desktopApi();

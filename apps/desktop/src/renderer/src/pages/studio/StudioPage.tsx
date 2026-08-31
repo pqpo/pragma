@@ -55,7 +55,8 @@ import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
-import { DownloadSimple, UploadSimple } from "@phosphor-icons/react";
+import { SquareDirectoryFragment } from "./SquareDirectoryFragment.tsx";
+import { DownloadSimple, Storefront, UploadSimple } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
@@ -149,6 +150,7 @@ export function StudioPage(props: {
     readonly newResourceId?: string | undefined;
   } | null>(null);
   const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
+  const [squareBundlePath, setSquareBundlePath] = useState<string | undefined>();
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const openedInitialResourceRef = useRef<string | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
@@ -673,6 +675,16 @@ export function StudioPage(props: {
     return next;
   }, []);
 
+  const openStudioView = (view: StudioView) => {
+    setExpertDetailReturn(null);
+    setContextStoreDetailReturn(null);
+    setActiveView(view);
+    setScreen("directory");
+    setContextDrawerOpen(false);
+    setResourceEditor(null);
+    resourceSaveCompletedRef.current = false;
+  };
+
   return (
     <section
       className="studio-page"
@@ -706,15 +718,7 @@ export function StudioPage(props: {
               className={isActive ? "studio-nav-item is-active" : "studio-nav-item"}
               type="button"
               aria-current={isActive ? "page" : undefined}
-              onClick={() => {
-                setExpertDetailReturn(null);
-                setContextStoreDetailReturn(null);
-                setActiveView(section.id);
-                setScreen("directory");
-                setContextDrawerOpen(false);
-                setResourceEditor(null);
-                resourceSaveCompletedRef.current = false;
-              }}
+              onClick={() => openStudioView(section.id)}
             >
               <SectionIcon size={20} aria-hidden="true" />
               <span>{t(section.labelKey)}</span>
@@ -722,15 +726,36 @@ export function StudioPage(props: {
             </button>
           );
         })}
-        <div className="studio-bundle-actions">
-          <button type="button" onClick={() => setBundleMode("import")}>
-            <DownloadSimple size={18} aria-hidden="true" />
-            <span>{t("importBundle")}</span>
+        <div className="studio-distribution-actions">
+          <button
+            className={activeView === "square" ? "studio-nav-item is-active" : "studio-nav-item"}
+            type="button"
+            aria-current={activeView === "square" ? "page" : undefined}
+            onClick={() => openStudioView("square")}
+          >
+            <Storefront size={20} aria-hidden="true" />
+            <span>{t("square.navigation")}</span>
           </button>
-          <button type="button" disabled={project === null} onClick={() => setBundleMode("export")}>
-            <UploadSimple size={18} aria-hidden="true" />
-            <span>{t("exportBundle")}</span>
-          </button>
+          <div className="studio-bundle-actions">
+            <button
+              type="button"
+              onClick={() => {
+                setSquareBundlePath(undefined);
+                setBundleMode("import");
+              }}
+            >
+              <DownloadSimple size={18} aria-hidden="true" />
+              <span>{t("importBundle")}</span>
+            </button>
+            <button
+              type="button"
+              disabled={project === null}
+              onClick={() => setBundleMode("export")}
+            >
+              <UploadSimple size={18} aria-hidden="true" />
+              <span>{t("exportBundle")}</span>
+            </button>
+          </div>
         </div>
       </nav>
       <SidebarResizeHandle
@@ -741,6 +766,14 @@ export function StudioPage(props: {
       />
 
       <div className="studio-content">
+        {screen === "directory" && activeView === "square" ? (
+          <SquareDirectoryFragment
+            onInstall={(sourcePath) => {
+              setSquareBundlePath(sourcePath);
+              setBundleMode("import");
+            }}
+          />
+        ) : null}
         {screen === "expert-detail" && selectedExpert !== null ? (
           <ExpertDetailFragment
             expert={selectedExpert}
@@ -1110,11 +1143,16 @@ export function StudioPage(props: {
           capabilities={userCapabilities}
           contextStores={contextStores}
           runtimes={runtimes}
+          initialSourcePath={squareBundlePath}
           onRefreshRuntimes={refreshRuntimeAvailability}
-          onClose={() => setBundleMode(null)}
+          onClose={() => {
+            setBundleMode(null);
+            setSquareBundlePath(undefined);
+          }}
           onChanged={refreshBundleData}
           onOpenCapability={(capabilityId) => {
             setBundleMode(null);
+            setSquareBundlePath(undefined);
             setActiveView("capabilities");
             setSelectedCapabilityId(capabilityId);
             setScreen("capability-detail");
