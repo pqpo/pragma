@@ -28,7 +28,7 @@
   "dependencies": {
     "@pragma/core": "workspace:*",
     "@pragma/shared": "workspace:*",
-    "@qoder-ai/qoder-agent-sdk": "1.0.16",
+    "@qoder-ai/qoder-agent-sdk": "1.0.28",
     "zod": "latest"
   },
   "devDependencies": {
