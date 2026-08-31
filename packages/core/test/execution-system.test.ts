@@ -1266,7 +1266,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId: "leased-session",
       expertId: "expert",
       definitionFingerprint: "a".repeat(64),
@@ -1325,7 +1325,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const original = team(3);
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId: "fingerprint-session",
       expertId: original.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(original),
@@ -1389,7 +1389,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       },
     };
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId,
       expertId: "legacy-expert",
       definitionFingerprint: "b".repeat(64),
@@ -1871,11 +1871,21 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     expect(steers).toEqual(["redirect"]);
     expect(
       (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
-    ).toMatchObject({ mode: "steer", status: "succeeded", executionId: active.executionId });
+    ).toMatchObject({
+      mode: "enqueue",
+      status: "succeeded",
+      executionId: queued.executionId,
+      deliveryAttempt: {
+        kind: "queue_steer",
+        state: "confirmed",
+        sourceExecutionId: queued.executionId,
+        targetExecutionId: active.executionId,
+      },
+    });
     await session.close();
   });
 
-  it("restores the original queued prompt when queue steer is rejected by Runtime", async () => {
+  it("pauses the original queued prompt when Runtime steer delivery is uncertain", async () => {
     const home = await createTemporaryHome("pragma-queued-steer-failure-");
     const stats = createFakeRuntimeStats();
     const app = createPragma({
@@ -1907,7 +1917,9 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       expect((await session.getState()).activeExecutionId).toBe(active.executionId),
     );
 
-    await expect(session.steerQueuedPrompt("redirect")).rejects.toThrow("fake steer failed");
+    await expect(session.steerQueuedPrompt("redirect")).rejects.toThrow(
+      "Queued steer delivery outcome is uncertain",
+    );
     expect(
       (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
     ).toMatchObject({
@@ -1915,6 +1927,13 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       status: "queued",
       executionId: queued.executionId,
       content: "redirect",
+      error: "delivery_uncertain",
+      deliveryAttempt: { kind: "queue_steer", state: "uncertain" },
+    });
+    await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
+    await expect(session.attemptQueuedPromptSteer("redirect")).resolves.toEqual({
+      outcome: "retained",
+      reason: "delivery_uncertain",
     });
     expect((await queued.getTree()).invocation.status).toBe("queued");
     expect((await session.getState()).activeExecutionId).toBe(active.executionId);
@@ -2373,11 +2392,11 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const sessionCreated = (await session.listEvents()).items;
     const now = new Date().toISOString();
     const executionId = "journal-execution";
-    const definition = { id: expert.id, kind: "expert" as const };
+    const definition = { id: expert.id, version: "1", kind: "expert" as const };
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v6",
+        schemaVersion: "pragma.expert-session-transaction/v10",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -2389,6 +2408,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
             requestId: "journal-request",
             sessionId: session.sessionId,
             content: "recover me",
+            purpose: "user",
             mode: "enqueue",
             executionId,
             status: "queued",
@@ -2413,7 +2433,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v7",
+          schemaVersion: "pragma.execution/v10",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -2460,7 +2480,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId: "atomic-session",
       expertId: "expert",
       definitionFingerprint: "a".repeat(64),
@@ -2486,7 +2506,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v6",
+        schemaVersion: "pragma.expert-session-transaction/v10",
         session: {
           ...current,
           status: "closed",

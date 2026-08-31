@@ -14,6 +14,7 @@ import {
 import {
   MissionAggregateStateSchema,
   MissionCommandAppendTransactionSchema,
+  MissionCommandInboxMigrationSchema,
   MissionCommandTransactionSchema,
   MissionControllerLeaseSchema,
   MissionEventSchema,
@@ -46,6 +47,30 @@ import {
   type MissionRetentionPolicy,
   type MissionRetentionReport,
 } from "./retention.ts";
+import { MissionCommandV1Schema } from "./migrations/mission-command/schemas/v1.ts";
+
+function parseStoredMissionCommand(value: unknown): MissionCommand {
+  const current = MissionCommandSchema.safeParse(value);
+  if (current.success) return current.data;
+  const legacy = MissionCommandV1Schema.parse(value);
+  return MissionCommandSchema.parse({
+    ...legacy,
+    schemaVersion: "pragma.mission-command/v2",
+  });
+}
+
+/**
+ * The Host mutation may already have happened and its durable semantic-write
+ * journal still needs replay. Rejecting the Inbox command in that state would
+ * lie about the lower-level execution, so the controller keeps it accepted
+ * and retries it under the current owner fence.
+ */
+export class MissionSemanticWritePendingError extends Error {
+  constructor(options: { readonly cause: unknown }) {
+    super("Mission semantic write is pending durable replay.", options);
+    this.name = "MissionSemanticWritePendingError";
+  }
+}
 
 export interface MissionControllerGuard {
   readonly claimId: string;
@@ -88,6 +113,7 @@ interface WatchBarrierCacheEntry {
 }
 
 const WATCH_RECOVERY_MARKERS = new Set([
+  ".command-inbox-migration.json",
   ".retention-transaction.json",
   ".command-append-transaction.json",
   ".command-transaction.json",
@@ -95,6 +121,10 @@ const WATCH_RECOVERY_MARKERS = new Set([
 ]);
 
 export type MissionControllerJournalPhase =
+  | "command-inbox-migration.prepare"
+  | "command-inbox-migration.backup"
+  | "command-inbox-migration.replace"
+  | "command-inbox-migration.clear"
   | "command-append.prepare"
   | "command-append.command"
   | "command-append.operation"
@@ -196,7 +226,7 @@ export interface MissionControllerStore {
     readonly missionId: string;
     readonly guard: MissionControllerGuard;
     readonly replay: (operation: MissionSemanticOperation) => Promise<void>;
-  }): Promise<void>;
+  }): Promise<MissionSemanticOperation | undefined>;
   reserveRunRequest(input: { readonly requestId: string; readonly payloadHash: string }): Promise<{
     readonly missionId: string;
     readonly disposition: "reserved" | "existing";
@@ -323,6 +353,10 @@ export function createMissionControllerStore(options: {
   const statePath = (missionId: string) => join(missionDirectory(missionId), "aggregate.json");
   const commandsPath = (missionId: string) =>
     join(missionDirectory(missionId), "command-inbox.json");
+  const commandV1BackupPath = (missionId: string) =>
+    join(missionDirectory(missionId), "command-inbox.v1.backup.json");
+  const commandInboxMigrationPath = (missionId: string) =>
+    join(missionDirectory(missionId), ".command-inbox-migration.json");
   const eventsPath = (missionId: string) => join(missionDirectory(missionId), "events.jsonl");
   const transactionPath = (missionId: string) =>
     join(missionDirectory(missionId), ".command-transaction.json");
@@ -363,10 +397,55 @@ export function createMissionControllerStore(options: {
   const writeState = async (missionId: string, state: MissionAggregateState): Promise<void> =>
     await writeJsonAtomically(statePath(missionId), MissionAggregateStateSchema.parse(state));
 
+  const recoverCommandInboxMigration = async (missionId: string): Promise<void> => {
+    const raw = await readJsonIfExists(commandInboxMigrationPath(missionId));
+    if (raw === undefined) return;
+    const migration = MissionCommandInboxMigrationSchema.parse(raw);
+    if (migration.missionId !== missionId) {
+      throw storageError("Command Inbox migration belongs to another Mission.");
+    }
+    for (const value of migration.sourceCommands) {
+      const current = MissionCommandSchema.safeParse(value);
+      if (!current.success) MissionCommandV1Schema.parse(value);
+    }
+    const migratedCommands = MissionCommandSchema.array().parse(migration.migratedCommands);
+    if ((await readJsonIfExists(commandV1BackupPath(missionId))) === undefined) {
+      await writeJsonAtomically(commandV1BackupPath(missionId), migration.sourceCommands);
+      await checkpoint("command-inbox-migration.backup");
+    }
+    await writeJsonAtomically(commandsPath(missionId), migratedCommands);
+    await checkpoint("command-inbox-migration.replace");
+    await rm(commandInboxMigrationPath(missionId), { force: true });
+    await checkpoint("command-inbox-migration.clear");
+  };
+
   const readCommands = async (missionId: string): Promise<MissionCommand[]> => {
     const raw = await readJsonIfExists(commandsPath(missionId));
     if (raw === undefined) return [];
-    return MissionCommandSchema.array().parse(raw);
+    if (!Array.isArray(raw)) return MissionCommandSchema.array().parse(raw);
+    let migrated = false;
+    const commands = raw.map((value) => {
+      const current = MissionCommandSchema.safeParse(value);
+      if (current.success) return current.data;
+      const legacy = MissionCommandV1Schema.parse(value);
+      migrated = true;
+      return MissionCommandSchema.parse({
+        ...legacy,
+        schemaVersion: "pragma.mission-command/v2",
+      });
+    });
+    if (migrated) {
+      const migration = MissionCommandInboxMigrationSchema.parse({
+        schemaVersion: "pragma.local-host-mission-command-inbox-migration/v1",
+        missionId,
+        sourceCommands: raw,
+        migratedCommands: commands,
+      });
+      await writeJsonAtomically(commandInboxMigrationPath(missionId), migration);
+      await checkpoint("command-inbox-migration.prepare");
+      await recoverCommandInboxMigration(missionId);
+    }
+    return commands;
   };
 
   const writeCommands = async (
@@ -488,7 +567,7 @@ export function createMissionControllerStore(options: {
       }
       return event;
     });
-    const retainedCommands = MissionCommandSchema.array().parse(transaction.retainedCommands);
+    const retainedCommands = transaction.retainedCommands.map(parseStoredMissionCommand);
     const currentEvents = await readEvents(missionId);
     if (!sameJsonArray(currentEvents, retainedEvents)) {
       await writeEventsAtomically(eventsPath(missionId), retainedEvents);
@@ -526,7 +605,7 @@ export function createMissionControllerStore(options: {
     const transaction = MissionCommandAppendTransactionSchema.parse(raw);
     if (transaction.missionId !== missionId)
       throw storageError("Command append transaction mission does not match its owner.");
-    const command = MissionCommandSchema.parse(transaction.command);
+    const command = parseStoredMissionCommand(transaction.command);
     const commands = await readCommands(missionId);
     if (!commands.some((candidate) => candidate.commandId === command.commandId)) {
       await writeCommands(missionId, [...commands, command]);
@@ -559,7 +638,7 @@ export function createMissionControllerStore(options: {
     const transaction = MissionCommandTransactionSchema.parse(raw);
     if (transaction.missionId !== missionId)
       throw storageError("Transaction mission does not match its owner.");
-    const command = MissionCommandSchema.parse(transaction.command);
+    const command = parseStoredMissionCommand(transaction.command);
     const commands = await readCommands(missionId);
     const index = commands.findIndex((candidate) => candidate.commandId === command.commandId);
     if (index < 0 || JSON.stringify(commands[index]) !== JSON.stringify(command)) {
@@ -598,6 +677,7 @@ export function createMissionControllerStore(options: {
   };
 
   const recoverTransactions = async (missionId: string): Promise<void> => {
+    await recoverCommandInboxMigration(missionId);
     await recoverRetentionTransaction(missionId);
     await recoverCommandAppendTransaction(missionId);
     await recoverCommandTransaction(missionId);
@@ -1014,21 +1094,26 @@ export function createMissionControllerStore(options: {
     },
     async coordinateSemanticWrite(input) {
       const transaction = await prepareSemanticWrite(input);
-      const result = await input.apply();
-      await checkpoint("semantic-write.mutation-commit");
-      await completeSemanticWrite({
-        missionId: input.missionId,
-        guard: input.guard,
-        transaction,
-      });
-      return result;
+      try {
+        const result = await input.apply();
+        await checkpoint("semantic-write.mutation-commit");
+        await completeSemanticWrite({
+          missionId: input.missionId,
+          guard: input.guard,
+          transaction,
+        });
+        return result;
+      } catch (error) {
+        throw new MissionSemanticWritePendingError({ cause: error });
+      }
     },
     async recoverSemanticWrite(input) {
       const transaction = await readSemanticWriteForRecovery(input);
-      if (transaction === undefined) return;
+      if (transaction === undefined) return undefined;
       await input.replay(transaction.operation);
       await checkpoint("semantic-write.mutation-commit");
       await completeSemanticWrite({ missionId: input.missionId, guard: input.guard, transaction });
+      return transaction.operation;
     },
     async reserveRunRequest(input) {
       return await withFileLock(
@@ -1204,7 +1289,7 @@ export function createMissionControllerStore(options: {
         const createdAt = input.createdAt ?? now();
         const command = MissionCommandSchema.parse({
           ...input,
-          schemaVersion: "pragma.mission-command/v1",
+          schemaVersion: "pragma.mission-command/v2",
           commandId: input.commandId ?? randomUUID(),
           state: "pending",
           createdAt,
@@ -1378,6 +1463,7 @@ export function createMissionControllerStore(options: {
         });
         if (recorded) outcome = { state: "applied", result: applied.result };
       } catch (error) {
+        if (error instanceof MissionSemanticWritePendingError) throw error;
         let recorded = false;
         const integrationError = toIntegrationError(error);
         await withAggregateLock(input.missionId, async () => {

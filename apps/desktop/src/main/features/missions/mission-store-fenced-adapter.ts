@@ -30,7 +30,7 @@ export function createFencedMissionStore(
     input,
   });
 
-  options.setSemanticWriteReplay(async (operation) => {
+  const replay = async (operation: MissionSemanticOperation): Promise<void> => {
     switch (operation.name) {
       case "mission.origin.backfill":
         await store.backfillAutomationOrigin(
@@ -84,7 +84,14 @@ export function createFencedMissionStore(
       default:
         throw new Error(`Unknown durable Mission semantic operation: ${operation.name}`);
     }
-  });
+  };
+
+  options.setSemanticWriteReplay(replay);
+
+  const sameOperation = (
+    left: MissionSemanticOperation,
+    right: MissionSemanticOperation,
+  ): boolean => JSON.stringify(left) === JSON.stringify(right);
 
   const write = async <T>(
     missionId: string,
@@ -93,6 +100,17 @@ export function createFencedMissionStore(
     apply: () => Promise<T>,
   ): Promise<T> => {
     const guard = await options.ownerScope.acquire(missionId);
+    const recovered = await options.controller.recoverSemanticWrite({
+      missionId,
+      guard,
+      replay,
+    });
+    if (recovered !== undefined && sameOperation(recovered, operation)) {
+      // Replay has already committed this exact Host mutation and its event.
+      // Apply once more only to recover the method result; MissionStore
+      // mutations are idempotent by their stable product identifiers.
+      return await apply();
+    }
     return await options.controller.coordinateSemanticWrite({
       missionId,
       guard,

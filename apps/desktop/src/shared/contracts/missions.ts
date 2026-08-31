@@ -8,6 +8,7 @@ import {
   RuntimeContextWindowUsageSchema,
   type MissionExecutor,
 } from "@pragma/shared";
+import { MissionQueueSteerOutcomeSchema } from "@pragma/shared/integration";
 import {
   canonicalPragmaResourceRef,
   PragmaAutomationRefSchema,
@@ -599,6 +600,11 @@ export const MissionMessageAcceptanceSchema = z.object({
   requestedMode: z.enum(["enqueue", "steer"]),
   effectiveMode: z.enum(["enqueue", "steer"]),
   fallbackReason: z.string().min(1).optional(),
+});
+
+export const MissionQueueSteerResultSchema = z.object({
+  mission: MissionSchema,
+  queueSteer: MissionQueueSteerOutcomeSchema,
 });
 export const MissionHumanInteractionSchema = z.object({
   interactionId: z.string().min(1),

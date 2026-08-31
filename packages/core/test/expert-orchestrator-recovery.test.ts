@@ -118,6 +118,56 @@ describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
     ]);
   });
 
+  it("applies bounded backpressure to durable Agent message continuations", async () => {
+    const home = await temporaryRoot("pragma-message-backpressure-");
+    const store = createFileExecutionStore({ pragmaHome: home });
+    const executionId = "message-backpressure";
+    await store.create(executionRecord(executionId), {
+      ...invocationRecord(),
+      status: "running",
+      agentId: "agent",
+      pendingExpertMessages: Array.from({ length: 128 }, (_, index) =>
+        expertMessage(`00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`, "pending"),
+      ),
+    });
+    await store.commit({
+      commitId: "seed-message-backpressure-agent",
+      executionId,
+      contextPuts: [runtimeContext(executionId)],
+      agentPuts: [{ ...agentRecord(executionId), activeInvocationId: "root" }],
+    });
+    const orchestrator = createOrchestrator(store, executionId);
+    const access = {
+      ownerContextId: "coordinator-context",
+      callerInvocationId: "coordinator",
+      callerDepth: 0,
+      spawnExpertIds: new Set<string>(),
+      interactExpertIds: new Set<string>(),
+      isCoordinator: true,
+    };
+
+    await expect(
+      orchestrator.message(access, {
+        agentId: "agent",
+        invocationId: "root",
+        message: "one more",
+      }),
+    ).rejects.toThrow("expert_message_backpressure");
+
+    await store.commit({
+      commitId: "clear-message-backpressure",
+      executionId,
+      invocationPatches: [{ invocationId: "root", patch: { pendingExpertMessages: [] } }],
+    });
+    await expect(
+      orchestrator.message(access, {
+        agentId: "agent",
+        invocationId: "root",
+        message: "x".repeat(100_001),
+      }),
+    ).rejects.toThrow("expert_message_too_large");
+  });
+
   it("rebinds a recovered active Invocation even after its original activation was committed", async () => {
     const home = await temporaryRoot("pragma-agent-reactivation-");
     const store = createFileExecutionStore({ pragmaHome: home });

@@ -51,7 +51,9 @@ export function createExpertSessionPromptQueueProjection(options: {
       ]);
       const pending = prompts.filter(
         (prompt) =>
-          prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+          prompt.purpose === "user" &&
+          prompt.mode === "enqueue" &&
+          (prompt.status === "queued" || prompt.status === "running"),
       );
       const lastControl = [...events]
         .toReversed()
@@ -70,30 +72,24 @@ export function createExpertSessionPromptQueueProjection(options: {
       const supportsSteer =
         options.supportsSteer === undefined ? false : await options.supportsSteer(sessionId);
       const items = await Promise.all(
-        prompts
-          .filter(
-            (prompt) =>
-              prompt.mode === "enqueue" &&
-              (prompt.status === "queued" || prompt.status === "running"),
-          )
-          .map(async (prompt, index) => {
-            const metadata = await options.resolvePromptMetadata?.(prompt);
-            const hasAttachments = metadata?.hasAttachments ?? false;
-            return {
-              position: index + 1,
-              requestId: prompt.requestId,
-              executionId: prompt.executionId,
-              status: prompt.status === "running" ? ("running" as const) : ("queued" as const),
-              content: prompt.content,
-              hasAttachments,
-              createdAt: prompt.createdAt,
-              updatedAt: prompt.updatedAt,
-              // Only a queued item can be promoted to the active turn.  A
-              // running item is the active turn itself and is therefore not a
-              // queue.steer target.
-              steerable: prompt.status === "queued" && supportsSteer && !hasAttachments,
-            };
-          }),
+        pending.map(async (prompt, index) => {
+          const metadata = await options.resolvePromptMetadata?.(prompt);
+          const hasAttachments = metadata?.hasAttachments ?? false;
+          return {
+            position: index + 1,
+            requestId: prompt.requestId,
+            executionId: prompt.executionId,
+            status: prompt.status === "running" ? ("running" as const) : ("queued" as const),
+            content: prompt.content,
+            hasAttachments,
+            createdAt: prompt.createdAt,
+            updatedAt: prompt.updatedAt,
+            // Only a queued item can be promoted to the active turn.  A
+            // running item is the active turn itself and is therefore not a
+            // queue.steer target.
+            steerable: prompt.status === "queued" && supportsSteer && !hasAttachments,
+          };
+        }),
       );
       return {
         missionId,

@@ -4,6 +4,7 @@ import {
   ExpertAgentStreamEventSchema,
   InvocationOutputSchema,
   isTerminalExecutionStatus,
+  pragmaUnicodeLength,
   type AgentInstance,
   type Invocation,
   type RuntimeContextRecord,
@@ -28,6 +29,10 @@ import {
 } from "./context-resolution-service.ts";
 import type { ContextIdResolutionSource, ContextIdResolver } from "./context-id-resolver.ts";
 import { defineContextIdResolver } from "./context-id-resolver.ts";
+
+const MAX_EXPERT_MESSAGE_CHARACTERS = 100_000;
+const MAX_PENDING_EXPERT_MESSAGES = 128;
+const MAX_PENDING_EXPERT_MESSAGE_BYTES = 1024 * 1024;
 
 export interface DelegationPermit {
   suspend():
@@ -584,6 +589,24 @@ export class ExpertOrchestrator {
         isTerminalExecutionStatus(invocation.status)
       ) {
         throw new Error("stale_invocation: The target Invocation is no longer active.");
+      }
+      if (pragmaUnicodeLength(request.message) > MAX_EXPERT_MESSAGE_CHARACTERS) {
+        throw new Error(
+          `expert_message_too_large: Agent messages are limited to ${MAX_EXPERT_MESSAGE_CHARACTERS} characters.`,
+        );
+      }
+      const pendingBytes = invocation.pendingExpertMessages.reduce(
+        (total, message) => total + Buffer.byteLength(message.content, "utf8"),
+        0,
+      );
+      const nextBytes = pendingBytes + Buffer.byteLength(request.message, "utf8");
+      if (
+        invocation.pendingExpertMessages.length >= MAX_PENDING_EXPERT_MESSAGES ||
+        nextBytes > MAX_PENDING_EXPERT_MESSAGE_BYTES
+      ) {
+        throw new Error(
+          "expert_message_backpressure: The target Invocation has too many pending Agent messages.",
+        );
       }
       const envelope = {
         messageId,

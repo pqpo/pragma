@@ -1,0 +1,27 @@
+[
+  {
+    "schemaVersion": "pragma.mission-command/v1",
+    "commandId": "00000000-0000-4000-8000-000000000032",
+    "request": {
+      "schemaVersion": "pragma.integration-request/v1",
+      "requestId": "00000000-0000-4000-8000-000000000031",
+      "payloadHash": "sha256:603710166a4919331a27e34c38f2c554986a880252043b626f81f2f1cabe2a21",
+      "requestedAt": "2026-08-24T00:00:00.000Z",
+      "client": {
+        "surface": "cli",
+        "version": "test",
+        "instanceId": "00000000-0000-4000-8000-000000000099"
+      }
+    },
+    "missionId": "00000000-0000-4000-8000-000000000001",
+    "kind": "send",
+    "payload": {
+      "kind": "send",
+      "input": {
+        "prompt": "continue"
+      }
+    },
+    "state": "pending",
+    "createdAt": "2026-08-24T00:00:00.000Z"
+  }
+]

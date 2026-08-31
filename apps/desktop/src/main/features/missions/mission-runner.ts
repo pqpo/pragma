@@ -216,8 +216,6 @@ export interface MissionRunner {
   }): Promise<void>;
   /** Lower-level Desktop Host adapter used by the shared Inbox consumer. */
   createLocalHostMissionControlAdapter(options?: {
-    readonly resolvePromptAttachments?:
-      ((requestId: string) => readonly ExpertPromptAttachment[]) | undefined;
     readonly onCommandOutcome?: ((requestId: string) => void | Promise<void>) | undefined;
   }): {
     readonly consumer: MissionCommandConsumer;
@@ -2022,18 +2020,7 @@ export function createMissionRunner(options: {
     if (compiled !== undefined) {
       rememberSessionCompilation(mission.id, desiredCompilationIdentity, compiled);
     }
-    const userMessage = await options.missions.appendUserMessage(mission.id, {
-      id: input.requestId,
-      content: input.content,
-      ...((input.attachments?.length ?? 0) === 0
-        ? {}
-        : { attachments: [...(input.attachments ?? [])] }),
-      createdAt: new Date().toISOString(),
-    });
-    if (userMessage.kind !== "user") {
-      throw new Error("Mission user message persistence returned an invalid timeline record.");
-    }
-    const promptAttachments = userMessage.attachments ?? [];
+    const promptAttachments = input.attachments ?? [];
     phaseStartedAt = performance.now();
     const requestedMode = input.mode ?? "enqueue";
     const turn = await session.prompt(input.content, {
@@ -2043,6 +2030,19 @@ export function createMissionRunner(options: {
       ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
     logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
+    // Core owns acceptance and idempotency. Project the user message only
+    // after Core accepts it so a rejected strict steer cannot leave an orphan
+    // in the Mission timeline. Replaying an accepted Inbox command is safe:
+    // both session.prompt and appendUserMessage are keyed by requestId.
+    const userMessage = await options.missions.appendUserMessage(mission.id, {
+      id: input.requestId,
+      content: input.content,
+      ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
+      createdAt: new Date().toISOString(),
+    });
+    if (userMessage.kind !== "user") {
+      throw new Error("Mission user message persistence returned an invalid timeline record.");
+    }
     const startedAt = new Date().toISOString();
     await options.missions.appendExecutionReference({
       missionId: mission.id,
@@ -2574,9 +2574,26 @@ export function createMissionRunner(options: {
         return typeof requestId === "string" ? [requestId] : [];
       }),
     );
-    const queuedPrompts = promptQueue.filter(
-      (prompt) => prompt.mode === "enqueue" && prompt.status === "queued",
+    const visiblePendingPrompts = promptQueue.filter(
+      (prompt) =>
+        prompt.purpose === "user" &&
+        prompt.mode === "enqueue" &&
+        (prompt.status === "queued" || prompt.status === "running"),
     );
+    const queuedPrompts = visiblePendingPrompts.filter((prompt) => prompt.status === "queued");
+    const visibleQueueState = {
+      ...queueState,
+      state:
+        queueState.state === "paused" && queuedPrompts.length > 0
+          ? ("paused" as const)
+          : visiblePendingPrompts.length > 0
+            ? ("running" as const)
+            : ("idle" as const),
+      pendingCount: visiblePendingPrompts.length,
+      ...(queueState.state === "paused" && queuedPrompts.length > 0
+        ? {}
+        : { pausedAfterRequestId: undefined }),
+    };
     const presentedUserEntries = new Map(
       presentedEntries.flatMap((entry) => (entry.kind === "user" ? [[entry.id, entry]] : [])),
     );
@@ -2601,8 +2618,9 @@ export function createMissionRunner(options: {
       presentedEntries.flatMap((entry) => {
         if (entry.kind !== "user" || entry.executionId === undefined) return [];
         const prompt = promptByRequestId.get(entry.id);
-        return prompt?.mode === "steer" && prompt.executionId !== entry.executionId
-          ? [entry.executionId]
+        return prompt?.deliveryAttempt?.kind === "queue_steer" &&
+          prompt.deliveryAttempt.state === "confirmed"
+          ? [prompt.deliveryAttempt.sourceExecutionId ?? entry.executionId]
           : [];
       }),
     );
@@ -2618,11 +2636,14 @@ export function createMissionRunner(options: {
         const prompt = promptByRequestId.get(entry.id);
         if (prompt === undefined) return entry;
         const fallbackReason = steerFallbackByRequestId.get(entry.id);
+        const queueSteered =
+          prompt.deliveryAttempt?.kind === "queue_steer" &&
+          prompt.deliveryAttempt.state === "confirmed";
         return {
           ...entry,
           delivery: {
-            requestedMode: fallbackReason === undefined ? prompt.mode : "steer",
-            effectiveMode: prompt.mode,
+            requestedMode: queueSteered || fallbackReason !== undefined ? "steer" : prompt.mode,
+            effectiveMode: queueSteered ? "steer" : prompt.mode,
             status: prompt.status,
             ...(removedPromptIds.has(prompt.requestId) ? { removed: true } : {}),
             ...(fallbackReason === undefined ? {} : { fallbackReason }),
@@ -2642,7 +2663,7 @@ export function createMissionRunner(options: {
       },
       pendingInteractions,
       queue: {
-        ...queueState,
+        ...visibleQueueState,
         supportsSteer,
         items: queuedPrompts.map((prompt) => ({
           requestId: prompt.requestId,
@@ -2790,6 +2811,22 @@ export function createMissionRunner(options: {
     await session.steerQueuedPrompt(input.requestId);
     invalidateChat(input.id, missionSurfaceAudience(mission));
     return await options.missions.get(input.id);
+  };
+
+  const trySteerQueuedMissionMessage = async (input: {
+    readonly id: string;
+    readonly requestId: string;
+  }) => {
+    const { mission, session } = await openMissionSessionForQueueMutation(input.id);
+    const attempt = await session.attemptQueuedPromptSteer(input.requestId);
+    invalidateChat(input.id, missionSurfaceAudience(mission));
+    return {
+      mission: await options.missions.get(input.id),
+      queueSteer:
+        attempt.outcome === "steered"
+          ? { outcome: "steered" as const, executionId: attempt.turn.executionId }
+          : attempt,
+    };
   };
 
   const removeQueuedMissionMessage = async (input: {
@@ -2982,8 +3019,6 @@ export function createMissionRunner(options: {
 
   const createLocalHostMissionControlAdapter = (
     adapterOptions: {
-      readonly resolvePromptAttachments?:
-        ((requestId: string) => readonly ExpertPromptAttachment[]) | undefined;
       readonly onCommandOutcome?: ((requestId: string) => void | Promise<void>) | undefined;
     } = {},
   ) => {
@@ -3031,11 +3066,9 @@ export function createMissionRunner(options: {
             content: command.payload.input.prompt,
             requestId: command.request.requestId,
             mode: "enqueue",
-            ...(adapterOptions.resolvePromptAttachments === undefined
+            ...(command.payload.input.attachments.length === 0
               ? {}
-              : {
-                  attachments: adapterOptions.resolvePromptAttachments(command.request.requestId),
-                }),
+              : { attachments: command.payload.input.attachments }),
           });
           return {
             missionId: command.missionId,
@@ -3051,11 +3084,9 @@ export function createMissionRunner(options: {
             content: command.payload.input.prompt,
             requestId: command.request.requestId,
             mode: "steer",
-            ...(adapterOptions.resolvePromptAttachments === undefined
+            ...(command.payload.input.attachments.length === 0
               ? {}
-              : {
-                  attachments: adapterOptions.resolvePromptAttachments(command.request.requestId),
-                }),
+              : { attachments: command.payload.input.attachments }),
           });
           if (accepted.effectiveMode !== "steer") {
             throw createIntegrationError({
@@ -3121,6 +3152,17 @@ export function createMissionRunner(options: {
             requestId: command.payload.requestId,
           });
           return { missionId: mission.id, requestId: command.payload.requestId };
+        }
+        case "queue.try-steer": {
+          const result = await trySteerQueuedMissionMessage({
+            id: command.missionId,
+            requestId: command.payload.requestId,
+          });
+          return {
+            missionId: result.mission.id,
+            requestId: command.payload.requestId,
+            queueSteer: result.queueSteer,
+          };
         }
       }
     };

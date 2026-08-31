@@ -26,6 +26,11 @@ import {
   type RuntimeResolver,
 } from "@pragma/core";
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import {
+  createMissionControlApplication,
+  createMissionControllerStore,
+  createMissionOwnerScope,
+} from "@pragma/local-host";
 import type {
   PragmaExpertResource,
   PragmaExpertTeamResource,
@@ -143,6 +148,33 @@ const createMissionRunner = (
   trackedRunners.add({ runner: trackedRunner, missionIds });
   return trackedRunner;
 };
+
+function createTestMissionControl(input: {
+  readonly missionsPath: string;
+  readonly missions: ReturnType<typeof createMissionStore>;
+  readonly runner: MissionRunner;
+}) {
+  const controller = createMissionControllerStore({ missionsPath: input.missionsPath });
+  const ownerScope = createMissionOwnerScope({ controller });
+  const adapter = input.runner.createLocalHostMissionControlAdapter();
+  const control = createMissionControlApplication({
+    controller,
+    ownerScope,
+    consumer: adapter.consumer,
+    assertMission: async (missionId) => {
+      await input.missions.get(missionId);
+    },
+    assertAcquisitionAllowed: adapter.assertAcquisitionAllowed,
+    resolveStrictTarget: adapter.resolveStrictTarget,
+    resolveExecutionTarget: adapter.resolveExecutionTarget,
+    client: {
+      surface: "desktop",
+      version: "test",
+      instanceId: "70000000-0000-4000-8000-000000000001",
+    },
+  });
+  return control;
+}
 
 const isNodeErrorCode = (error: unknown, code: string): error is NodeJS.ErrnoException =>
   typeof error === "object" &&
@@ -913,6 +945,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           requestId: queuedRequestId,
           sessionId,
           content: "Keep this queued message",
+          purpose: "user" as const,
           mode: "enqueue" as const,
           executionId: "00000000-0000-4000-8000-000000000095",
           status: "queued" as const,
@@ -3632,7 +3665,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const startedAt = new Date().toISOString();
     const definition = { id: expert.id, kind: "expert" as const };
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId,
       expertId: expert.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
@@ -3693,6 +3726,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           requestId: mission.initialMessageId,
           sessionId,
           content: mission.goal,
+          purpose: "human_checkpoint_recovery" as const,
           mode: "enqueue" as const,
           executionId,
           status: "running" as const,
@@ -3779,6 +3813,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           content: "Choose the environment to continue.",
         }),
       ],
+      queue: { state: "idle", pendingCount: 0, items: [] },
     });
     const interactions = await runner.listHumanInteractions(mission.id);
     expect(interactions).toEqual([
@@ -3795,12 +3830,47 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ),
     ).resolves.toBe("available");
 
-    await runner.respondToHumanInteraction({
-      missionId: mission.id,
-      interactionId,
-      requestId: "40000000-0000-4000-8000-000000000001",
-      response: { answers: { "Which environment?": "staging" } },
+    const control = createTestMissionControl({
+      missionsPath: join(root, "missions"),
+      missions,
+      runner,
     });
+
+    const strictSteerRequestId = "40000000-0000-4000-8000-000000000000";
+    await expect(
+      control.submit({
+        missionId: mission.id,
+        requestId: strictSteerRequestId,
+        kind: "steer",
+        payload: {
+          kind: "steer",
+          input: {
+            prompt: "This must not be persisted as the human response.",
+            attachments: [],
+          },
+        },
+        expectedExecutionId: executionId,
+      }),
+    ).rejects.toMatchObject({ code: "STEER_TARGET_NOT_ACTIVE" });
+    expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.not.toMatchObject({
+      entries: expect.arrayContaining([expect.objectContaining({ id: strictSteerRequestId })]),
+    });
+
+    const responseRequestId = "40000000-0000-4000-8000-000000000001";
+    await control.submit({
+      missionId: mission.id,
+      requestId: responseRequestId,
+      kind: "respond",
+      target: { interactionId },
+      payload: {
+        kind: "respond",
+        response: { answers: { "Which environment?": "staging" } },
+      },
+    });
+    await expect(
+      control.wait({ missionId: mission.id, requestId: responseRequestId }),
+    ).resolves.toMatchObject({ state: "applied" });
     await vi.waitFor(
       async () =>
         expect((await missions.get(mission.id)).execution).toMatchObject({
@@ -3811,6 +3881,178 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
     expect(runtimeStarts).toBe(1);
     expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
+    await control.stopOwner(mission.id);
+  });
+
+  it("keeps an ExpertTeam askUserQuestion response out of the steer queue", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-team-human-response-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const coordinator = expertFixture();
+    const reviewer = reviewerFixture();
+    const team = expertTeamFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), coordinator, reviewer, team],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Choose the release environment",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(team),
+    });
+    const request = {
+      kind: "user_question" as const,
+      toolName: "askUserQuestion" as const,
+      toolCallId: "team-environment-question",
+      questions: [
+        {
+          question: "Which environment?",
+          header: "Environment",
+          kind: "single_choice" as const,
+          options: [
+            { label: "staging", description: "Use staging." },
+            { label: "production", description: "Use production." },
+          ],
+        },
+      ],
+    };
+    let runtimeStarts = 0;
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      restoreSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "team-human-runtime" }),
+      async startTurn(session) {
+        runtimeStarts += 1;
+        const handler = session.context.request.humanInteractionHandler;
+        if (handler === undefined) throw new Error("Human interaction handler is missing.");
+        const response = await handler(request);
+        return {
+          outputText: JSON.stringify(response),
+          runtimeSessionId: "team-human-runtime",
+        };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
+      { timeout: settlementTimeoutMs },
+    );
+    const waitingMission = await missions.get(mission.id);
+    const waitingPrompts = await createFileExpertSessionStore({
+      executions: createFileExecutionStore({ pragmaHome }),
+      pragmaHome,
+    }).listPrompts(waitingMission.execution!.sessionId!);
+    expect(waitingPrompts).toEqual([
+      expect.objectContaining({ purpose: "human_checkpoint_recovery" }),
+    ]);
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.pendingInteractions).toHaveLength(1);
+    expect(chat.queue).toMatchObject({ state: "idle", pendingCount: 0, items: [] });
+    const interactionId = chat.pendingInteractions[0]!.interactionId;
+    const control = createTestMissionControl({
+      missionsPath: join(root, "missions"),
+      missions,
+      runner,
+    });
+
+    const followupRequestId = "50000000-0000-4000-8000-000000000000";
+    await control.submit({
+      missionId: mission.id,
+      requestId: followupRequestId,
+      kind: "send",
+      payload: {
+        kind: "send",
+        input: {
+          prompt: "Continue with the deployment notes after the answer.",
+          attachments: [],
+        },
+      },
+    });
+    await expect(
+      control.wait({ missionId: mission.id, requestId: followupRequestId }),
+    ).resolves.toMatchObject({ state: "applied" });
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      pendingInteractions: [expect.objectContaining({ interactionId })],
+      queue: {
+        state: "running",
+        pendingCount: 1,
+        items: [expect.objectContaining({ requestId: followupRequestId })],
+      },
+    });
+    const trySteerRequestId = "50000000-0000-4000-8000-000000000005";
+    await control.submit({
+      missionId: mission.id,
+      requestId: trySteerRequestId,
+      kind: "queue.try-steer",
+      payload: { kind: "queue.try-steer", requestId: followupRequestId },
+    });
+    await expect(
+      control.wait({ missionId: mission.id, requestId: trySteerRequestId }),
+    ).resolves.toMatchObject({
+      state: "applied",
+      result: { queueSteer: { outcome: "retained" } },
+    });
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      pendingInteractions: [expect.objectContaining({ interactionId })],
+      queue: {
+        pendingCount: 1,
+        items: [expect.objectContaining({ requestId: followupRequestId })],
+      },
+    });
+
+    const removeRequestId = "50000000-0000-4000-8000-000000000006";
+    await control.submit({
+      missionId: mission.id,
+      requestId: removeRequestId,
+      kind: "queue.remove",
+      payload: { kind: "queue.remove", requestId: followupRequestId },
+    });
+    await expect(
+      control.wait({ missionId: mission.id, requestId: removeRequestId }),
+    ).resolves.toMatchObject({ state: "applied" });
+
+    const responseRequestId = "50000000-0000-4000-8000-000000000003";
+    await control.submit({
+      missionId: mission.id,
+      requestId: responseRequestId,
+      kind: "respond",
+      target: { interactionId },
+      payload: {
+        kind: "respond",
+        response: { answers: { "Which environment?": "staging" } },
+      },
+    });
+    await expect(
+      control.wait({ missionId: mission.id, requestId: responseRequestId }),
+    ).resolves.toMatchObject({ state: "applied" });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    // The in-process Runtime may still own the suspended handler; the durable response resumes
+    // that exact turn without manufacturing a second queued prompt or steer attempt.
+    expect(runtimeStarts).toBe(1);
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, items: [] },
+    });
+    await control.stopOwner(mission.id);
   });
 
   it("retries durable human-wait synchronization after a transient read failure", async () => {
@@ -4067,7 +4309,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const now = new Date().toISOString();
     const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId,
       expertId: "issue_reporter",
       definitionFingerprint: "c".repeat(64),
@@ -4169,7 +4411,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
     const definition = { id: expertResource.metadata.id, kind: "expert" as const };
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId,
       expertId: expertResource.metadata.id,
       definitionFingerprint: "b".repeat(64),
@@ -4315,7 +4557,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const now = new Date().toISOString();
     const runtimeBinding = (await availableRuntimes.bind({ runtimeId: "fake" })).binding;
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId,
       expertId: expertResource.metadata.id,
       definitionFingerprint: "c".repeat(64),
@@ -4348,6 +4590,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           requestId: mission.initialMessageId,
           sessionId,
           content: mission.goal,
+          purpose: "user" as const,
           mode: "enqueue" as const,
           executionId,
           status: "queued" as const,

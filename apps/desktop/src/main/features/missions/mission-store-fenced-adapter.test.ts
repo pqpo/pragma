@@ -60,6 +60,55 @@ describe("Desktop fenced MissionStore adapter", () => {
     ).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
     await competingOwner.release(mission.id);
   });
+
+  it("recovers a pending semantic write under the same live owner before the retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-fenced-recovery-"));
+    roots.push(root);
+    const missionsPath = join(root, "missions");
+    const rawStore = createMissionStore({ missionsPath });
+    const mission = await rawStore.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover a projected command",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const controller = createMissionControllerStore({ missionsPath });
+    const ownerScope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const fencedStore = createFencedMissionStore(rawStore, {
+      controller,
+      ownerScope,
+      setSemanticWriteReplay: () => undefined,
+    });
+    const guard = await ownerScope.acquire(mission.id);
+    const operation = {
+      name: "mission.options.update",
+      input: {
+        id: mission.id,
+        input: { toolPermissionMode: "request-approval" },
+      },
+    };
+
+    await expect(
+      controller.coordinateSemanticWrite({
+        missionId: mission.id,
+        guard,
+        operation,
+        eventType: "mission.options.updated",
+        eventData: {},
+        apply: async () => {
+          throw new Error("simulated projection interruption");
+        },
+      }),
+    ).rejects.toMatchObject({ name: "MissionSemanticWritePendingError" });
+
+    await expect(
+      fencedStore.updateOptions(mission.id, { toolPermissionMode: "request-approval" }),
+    ).resolves.toMatchObject({ toolPermissionMode: "request-approval" });
+    await expect(controller.readSnapshot({ missionId: mission.id })).resolves.toMatchObject({
+      events: [expect.objectContaining({ type: "mission.options.updated" })],
+    });
+    await ownerScope.release(mission.id);
+  });
 });
 
 function expertFixture(): PragmaExpertResource {

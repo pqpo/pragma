@@ -34,6 +34,7 @@ import {
   type HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
 import { freshContextIdResolver } from "./context-id-resolver.ts";
+import { SteerNotDispatchedError } from "./steer-delivery-error.ts";
 import type { Flow } from "../flow/flow.ts";
 import { runNestedFlowInvocation } from "../flow/flow-execution.ts";
 import type {
@@ -165,6 +166,7 @@ export class ExecutionController {
       readonly recoverHumanInteractionIds?: readonly string[];
       readonly automaticHumanInteractionHandler?:
         ExpertAgentAutomaticHumanInteractionHandler | undefined;
+      readonly onHumanInteractionRequested?: (() => Promise<void>) | undefined;
     } = {},
   ) {
     this.recoverableInteractions =
@@ -204,8 +206,7 @@ export class ExecutionController {
         throw new Error(`Execution is already terminal: ${this.executionId}`);
       }
       const waiting = (await this.store.listInvocations(this.executionId)).some(
-        (invocation) =>
-          invocation.status === "waiting" && invocation.waitReason === "human_input",
+        (invocation) => invocation.status === "waiting" && invocation.waitReason === "human_input",
       );
       pending = [...this.pendingInteractions.values()];
       const durablePending = await readPendingHumanInteractions(this.store, this.executionId);
@@ -485,6 +486,7 @@ export class ExecutionController {
         return restoredResponse;
       }
     } else {
+      await this.options.onHumanInteractionRequested?.();
       await this.store.appendEvent(
         this.executionId,
         invocationId,
@@ -756,7 +758,10 @@ export class ExecutionController {
 
   finish(): void {
     this.rejectRuntimeSubmissionWaiters(
-      new Error("ExpertTurn completed before its Runtime submission became active."),
+      new SteerNotDispatchedError(
+        "target_changed",
+        "ExpertTurn completed before its Runtime submission became active.",
+      ),
     );
     this.activeRuntimeSubmissions.clear();
     this.checkpointedInvocations.clear();
@@ -776,7 +781,12 @@ export class ExecutionController {
       (submission) => submission.contextId === contextId,
     );
     if (active !== undefined) return active;
-    if (this.cancelled) throw new Error(`Execution cancelled: ${this.executionId}`);
+    if (this.cancelled) {
+      throw new SteerNotDispatchedError(
+        "target_changed",
+        `Execution cancelled: ${this.executionId}`,
+      );
+    }
     return await new Promise((resolve, reject) => {
       const waiters = this.runtimeSubmissionWaiters.get(contextId) ?? new Set();
       waiters.add({ resolve, reject });

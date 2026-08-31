@@ -3,13 +3,12 @@ import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
 import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
-import type { ExpertPromptAttachment } from "@pragma/shared";
 import type {
   LocalHostApplicationPort,
   LocalHostRunApplication,
   MissionControlApplication,
 } from "@pragma/local-host";
-import { createIntegrationError } from "@pragma/shared/integration";
+import { createIntegrationError, MissionQueueSteerOutcomeSchema } from "@pragma/shared/integration";
 
 import {
   CreateMissionSchema,
@@ -80,7 +79,6 @@ export function installMissionHandlers(options: {
   readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
   readonly runner: MissionRunner;
-  readonly pendingPromptAttachments: Map<string, readonly ExpertPromptAttachment[]>;
   readonly getAutomationMissionSources: () => Promise<ReadonlyMap<string, string>>;
   readonly getWindow: () => BrowserWindow | null;
   readonly getDefaultToolPermissionMode: () =>
@@ -173,9 +171,9 @@ export function installMissionHandlers(options: {
   const waitForLocalHostCommand = async (input: {
     readonly missionId: string;
     readonly requestId: string;
-  }): Promise<void> => {
+  }) => {
     const operation = await options.localHost.missionControl.wait(input);
-    if (operation.state === "applied") return;
+    if (operation.state === "applied") return operation;
     if (operation.error !== undefined) throw operation.error;
     throw createIntegrationError({
       code: "COMMAND_REJECTED",
@@ -186,7 +184,7 @@ export function installMissionHandlers(options: {
   };
   const runLocalHostCommand = async (input: Parameters<MissionControlApplication["submit"]>[0]) => {
     await options.localHost.missionControl.submit(input);
-    await waitForLocalHostCommand({
+    return await waitForLocalHostCommand({
       missionId: input.missionId,
       requestId: input.requestId,
     });
@@ -433,22 +431,15 @@ export function installMissionHandlers(options: {
       const parsed = SendMissionMessageSchema.parse(input);
       await assertManagedMission(parsed.id);
       const kind = parsed.mode === "steer" ? ("steer" as const) : ("send" as const);
-      if (parsed.attachments.length > 0) {
-        options.pendingPromptAttachments.set(parsed.requestId, parsed.attachments);
-      }
-      try {
-        await runLocalHostCommand({
-          missionId: parsed.id,
-          requestId: parsed.requestId,
+      await runLocalHostCommand({
+        missionId: parsed.id,
+        requestId: parsed.requestId,
+        kind,
+        payload: {
           kind,
-          payload: {
-            kind,
-            input: { prompt: parsed.content },
-          },
-        });
-      } finally {
-        options.pendingPromptAttachments.delete(parsed.requestId);
-      }
+          input: { prompt: parsed.content, attachments: parsed.attachments },
+        },
+      });
       await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
       const mission = await getManagedMission(parsed.id);
       await publishMission(mission);
@@ -460,14 +451,17 @@ export function installMissionHandlers(options: {
       };
     }),
   );
-  ipcMain.handle("missions:queue:steer", (_event, input: unknown) =>
+  ipcMain.handle("missions:queue:try-steer", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = MissionQueuePromptActionSchema.parse(input);
       await assertManagedMission(parsed.id);
-      await runLocalHostCommand(toMissionQueueCommand(parsed, "queue.steer"));
+      const operation = await runLocalHostCommand(toMissionQueueCommand(parsed, "queue.try-steer"));
       const mission = await getManagedMission(parsed.id);
       await publishMission(mission);
-      return mission;
+      return {
+        mission,
+        queueSteer: MissionQueueSteerOutcomeSchema.parse(operation.result?.["queueSteer"]),
+      };
     }),
   );
   ipcMain.handle("missions:queue:remove", (_event, input: unknown) =>

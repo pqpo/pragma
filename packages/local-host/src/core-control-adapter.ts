@@ -18,6 +18,7 @@ import {
   createFileExpertSessionStore,
   createFileExecutionStore,
   createPragma,
+  SteerNotDispatchedError,
   unwrapInvocationOutput,
 } from "@pragma/core";
 import {
@@ -685,6 +686,7 @@ async function applyCoreMissionCommand(options: {
       const turn = await owner.session.prompt(command.payload.input.prompt, {
         requestId: command.request.requestId,
         mode: "enqueue",
+        attachments: command.payload.input.attachments,
       });
       const queue = await owner.session.getPromptQueue();
       const queueState = await owner.session.getPromptQueueState();
@@ -704,6 +706,7 @@ async function applyCoreMissionCommand(options: {
       const turn = await owner.session.prompt(command.payload.input.prompt, {
         requestId: command.request.requestId,
         mode: "steer",
+        attachments: command.payload.input.attachments,
       });
       return {
         missionId: command.missionId,
@@ -767,7 +770,7 @@ async function applyCoreMissionCommand(options: {
         };
       } catch (error) {
         if (isIntegrationError(error)) throw error;
-        if (error instanceof Error && error.message.includes("changed")) {
+        if (error instanceof SteerNotDispatchedError && error.reason === "target_changed") {
           throw createIntegrationError({
             code: "STEER_TARGET_CHANGED",
             category: "conflict",
@@ -775,6 +778,29 @@ async function applyCoreMissionCommand(options: {
             details: { missionId: command.missionId },
           });
         }
+        throw commandRejected(command.missionId, "queue_item_not_steerable");
+      }
+    }
+    case "queue.try-steer": {
+      try {
+        const attempt = await owner.session.attemptQueuedPromptSteer(command.payload.requestId);
+        return attempt.outcome === "steered"
+          ? {
+              missionId: command.missionId,
+              executionId: attempt.turn.executionId,
+              requestId: command.payload.requestId,
+              queueSteer: {
+                outcome: "steered",
+                executionId: attempt.turn.executionId,
+              },
+            }
+          : {
+              missionId: command.missionId,
+              requestId: command.payload.requestId,
+              queueSteer: attempt,
+            };
+      } catch (error) {
+        if (isIntegrationError(error)) throw error;
         throw commandRejected(command.missionId, "queue_item_not_steerable");
       }
     }

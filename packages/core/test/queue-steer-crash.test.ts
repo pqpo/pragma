@@ -31,7 +31,7 @@ interface FixtureSession {
 }
 
 describe("queue steer crash recovery", () => {
-  it("restores the original queued item after an owner dies after durable reservation", async () => {
+  it("pauses an ambiguous queued item instead of risking duplicate delivery", async () => {
     const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-queue-steer-crash-"));
     roots.push(pragmaHome);
     const sessionId = "queue-steer-crash-session";
@@ -93,7 +93,18 @@ describe("queue steer crash recovery", () => {
         (prompt) => prompt.requestId === "redirect",
       );
       expect(restored).not.toHaveProperty("targetExecutionId");
-      expect(restored).not.toHaveProperty("error");
+      expect(restored).toMatchObject({
+        error: "delivery_uncertain",
+        deliveryAttempt: { kind: "queue_steer", state: "uncertain" },
+      });
+      await expect(recovered.getPromptQueueState()).resolves.toMatchObject({
+        state: "paused",
+        pausedAfterRequestId: "redirect",
+      });
+      await expect(recovered.attemptQueuedPromptSteer("redirect")).resolves.toEqual({
+        outcome: "retained",
+        reason: "delivery_uncertain",
+      });
       expect((await recovered.getState()).activeExecutionId).toBeUndefined();
       await recovered.close();
     } finally {

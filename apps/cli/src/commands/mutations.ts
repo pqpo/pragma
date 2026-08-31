@@ -182,7 +182,7 @@ async function createSubmissionInput(
       }
       const payload = {
         kind: command.kind === "mission-send" ? ("send" as const) : ("steer" as const),
-        input: { prompt },
+        input: { prompt, attachments: [] },
       } satisfies MissionCommand["payload"];
       return {
         missionId: command.missionId,

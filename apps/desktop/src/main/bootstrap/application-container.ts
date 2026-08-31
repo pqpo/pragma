@@ -11,7 +11,6 @@ import {
   type PragmaLogger,
   type PragmaLoggerProvider,
 } from "@pragma/core";
-import type { ExpertPromptAttachment } from "@pragma/shared";
 import {
   BUILT_IN_PRAGMA_REF,
   EVALUATION_JUDGE_EXPERT_REF,
@@ -1082,13 +1081,7 @@ export async function createDesktopApplicationContainer(
     },
   });
   missionRunnerRef.current = missionRunner;
-  const pendingPromptAttachments = new Map<string, readonly ExpertPromptAttachment[]>();
-  const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter({
-    resolvePromptAttachments: (requestId) => pendingPromptAttachments.get(requestId) ?? [],
-    onCommandOutcome: (requestId) => {
-      pendingPromptAttachments.delete(requestId);
-    },
-  });
+  const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter();
   const localHostMissionControl = createMissionControlApplication({
     controller: missionControllerStore,
     ownerScope,
@@ -1291,7 +1284,6 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     getWindow: options.getWindow,
     runner: missionRunner,
-    pendingPromptAttachments,
     getAutomationMissionSources: () => automationService.listMissionSources(),
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>

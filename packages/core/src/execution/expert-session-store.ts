@@ -21,6 +21,7 @@ import {
   type ExpertSessionTransactionJournal,
 } from "../storage/migrations/expert-session-transaction/index.ts";
 import { expertSessionRecordMigrationChain } from "../storage/migrations/expert-session/index.ts";
+import { migratePromptPurposes } from "../storage/migrations/expert-session/steps/prompt-purpose.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import {
   applyAtomicStateMigration,
@@ -97,7 +98,7 @@ export function createFileExpertSessionStore(options: {
         const parsedRecord = ExpertSessionRecordSchema.parse(record);
         const rootContext = parsedRecord.contexts[parsedRecord.rootContextId]!;
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v9",
+          schemaVersion: "pragma.expert-session-transaction/v10",
           session: parsedRecord,
           prompts: [],
           events: [
@@ -192,7 +193,7 @@ export function createFileExpertSessionStore(options: {
             ),
           );
           const journal = ExpertSessionTransactionJournalSchema.parse({
-            schemaVersion: "pragma.expert-session-transaction/v9",
+            schemaVersion: "pragma.expert-session-transaction/v10",
             session: nextSession,
             prompts: nextPrompts,
             events: materializeSessionEvents(sessionId, events, [
@@ -238,7 +239,7 @@ export function createFileExpertSessionStore(options: {
         });
         const nextPrompts = PromptRequestSchema.array().parse([...prompts, prompt]);
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v9",
+          schemaVersion: "pragma.expert-session-transaction/v10",
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
@@ -290,7 +291,7 @@ export function createFileExpertSessionStore(options: {
         );
         const next = await action({ session: session.data, prompts });
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v9",
+          schemaVersion: "pragma.expert-session-transaction/v10",
           session: next.session,
           prompts: next.prompts,
           events: materializeSessionEvents(
@@ -333,7 +334,7 @@ export function createFileExpertSessionStore(options: {
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v9",
+          schemaVersion: "pragma.expert-session-transaction/v10",
           session,
           prompts,
           events: materializeSessionEvents(sessionId, events, [
@@ -563,13 +564,20 @@ async function prepareExpertSession(
     if (value === undefined) return;
     const upgraded = expertSessionRecordMigrationChain.upgrade(value);
     if (!upgraded.migrated) return;
+    const prompts = (await readJson(paths.expertSessionPrompts(sessionId))) ?? [];
+    const events = ExpertSessionEventSchema.array().parse(
+      (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
+    );
     await applyAtomicStateMigration({
       aggregateRoot: paths.expertSessionRoot(sessionId),
       journalFile: paths.expertSessionMigration(sessionId),
       resource: { family: "pragma.expert-session", id: sessionId },
       fromVersion: upgraded.fromVersion,
       toVersion: upgraded.toVersion,
-      documents: { "session.json": upgraded.value },
+      documents: {
+        "session.json": upgraded.value,
+        "prompts.json": migratePromptPurposes(prompts as readonly unknown[], events),
+      },
       validateDocuments: validateExpertSessionMigrationDocuments,
     });
   } catch (error) {
@@ -584,10 +592,17 @@ function validateExpertSessionMigrationDocuments(
   documents: Readonly<Record<string, unknown>>,
 ): void {
   const keys = Object.keys(documents);
-  if (keys.length !== 1 || keys[0] !== "session.json") {
+  if (
+    (keys.length !== 1 && keys.length !== 2) ||
+    !keys.includes("session.json") ||
+    (keys.length === 2 && !keys.includes("prompts.json"))
+  ) {
     throw new Error("ExpertSession migration journal contains unexpected documents.");
   }
   ExpertSessionRecordSchema.parse(documents["session.json"]);
+  if (documents["prompts.json"] !== undefined) {
+    PromptRequestSchema.array().parse(documents["prompts.json"]);
+  }
 }
 
 async function applyTransaction(

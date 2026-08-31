@@ -83,7 +83,10 @@ Mission-owned 图片目录边界，Renderer 不能把任意本地路径转换成
 
 ### Expert Core
 
-`PromptRequest` 继续保存纯文本，不升级 `pragma.expert-session/v5`。有附件时，既有 `ExecutionRecord.input` 和根 `Invocation.input` 的 `unknown` 插槽保存 `ExpertPromptInput`；没有附件时仍保存原来的字符串。这使旧数据保持原义，同时让崩溃恢复可以从 Invocation 重新取得附件。
+`PromptRequest` 继续保存纯文本；附件本身仍不要求升级 ExpertSession。当前
+`pragma.expert-session/v6` 的升级来自 steer delivery attempt 的安全语义。有附件时，既有
+`ExecutionRecord.input` 和根 `Invocation.input` 的 `unknown` 插槽保存 `ExpertPromptInput`；没有附件时仍保存
+原来的字符串。这使旧数据保持原义，同时让崩溃恢复可以从 Invocation 重新取得附件。
 
 Core 为所有 Runtime 构造稳定的模型可见前言：
 

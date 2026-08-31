@@ -71,6 +71,14 @@ export interface MissionCommandAppendTransaction {
   readonly operation: MissionOperationProjection;
 }
 
+/** Lazy, replayable upgrade of the Mission command Inbox from wire v1 to v2. */
+export interface MissionCommandInboxMigration {
+  readonly schemaVersion: "pragma.local-host-mission-command-inbox-migration/v1";
+  readonly missionId: string;
+  readonly sourceCommands: readonly unknown[];
+  readonly migratedCommands: readonly unknown[];
+}
+
 /** Durable event/state-sequence append. */
 export interface MissionEventTransaction {
   readonly schemaVersion: "pragma.local-host-mission-event-transaction/v1";
@@ -141,6 +149,9 @@ export const MissionCommandTransactionSchema: RuntimeSchema<MissionCommandTransa
 };
 export const MissionCommandAppendTransactionSchema: RuntimeSchema<MissionCommandAppendTransaction> =
   { parse: parseCommandAppendTransaction };
+export const MissionCommandInboxMigrationSchema: RuntimeSchema<MissionCommandInboxMigration> = {
+  parse: parseCommandInboxMigration,
+};
 export const MissionEventTransactionSchema: RuntimeSchema<MissionEventTransaction> = {
   parse: parseEventTransaction,
 };
@@ -333,6 +344,29 @@ function parseCommandAppendTransaction(value: unknown): MissionCommandAppendTran
     missionId: string(record.missionId, "missionId"),
     command: record.command,
     operation: parseOperation(record.operation),
+  };
+}
+
+function parseCommandInboxMigration(value: unknown): MissionCommandInboxMigration {
+  const record = object(value, "Mission command Inbox migration");
+  exact(
+    record,
+    ["schemaVersion", "missionId", "sourceCommands", "migratedCommands"],
+    "Mission command Inbox migration",
+  );
+  if (
+    record.schemaVersion !== "pragma.local-host-mission-command-inbox-migration/v1" ||
+    !uuid.test(string(record.missionId, "missionId")) ||
+    !Array.isArray(record.sourceCommands) ||
+    !Array.isArray(record.migratedCommands)
+  ) {
+    throw invalid("Mission command Inbox migration");
+  }
+  return {
+    schemaVersion: "pragma.local-host-mission-command-inbox-migration/v1",
+    missionId: string(record.missionId, "missionId"),
+    sourceCommands: record.sourceCommands,
+    migratedCommands: record.migratedCommands,
   };
 }
 

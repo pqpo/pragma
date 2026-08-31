@@ -9,6 +9,8 @@ import { createFileExecutionStore } from "../src/execution/execution-store.ts";
 import { createFileExpertSessionStore } from "../src/execution/expert-session-store.ts";
 import { PragmaPaths } from "../src/storage/pragma-paths.ts";
 import { expertSessionTransactionMigrationChain } from "../src/storage/migrations/expert-session-transaction/index.ts";
+import { expertSessionRecordMigrationChain } from "../src/storage/migrations/expert-session/index.ts";
+import { migratePromptPurposes } from "../src/storage/migrations/expert-session/steps/prompt-purpose.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -21,14 +23,76 @@ afterEach(async () => {
 });
 
 describe("ExpertSession transaction migration", () => {
-  it("upgrades a historical v8 transaction fixture to v9", async () => {
+  it("classifies only detached human-wait checkpoint prompts as internal recovery", () => {
+    const prompt = {
+      requestId: "checkpoint-prompt",
+      sessionId: "historical-session",
+      content: "Resume after the human answer.",
+      mode: "enqueue",
+      executionId: "historical-execution",
+      status: "queued",
+      createdAt: "2026-08-24T00:00:00.000Z",
+      updatedAt: "2026-08-24T00:00:00.000Z",
+    } as const;
+    expect(
+      migratePromptPurposes(
+        [prompt],
+        [
+          {
+            type: "execution.detached",
+            data: { executionId: prompt.executionId, status: "waiting" },
+          },
+        ],
+      ),
+    ).toMatchObject([{ purpose: "human_checkpoint_recovery" }]);
+    expect(
+      migratePromptPurposes(
+        [prompt],
+        [
+          {
+            type: "execution.detached",
+            data: { executionId: prompt.executionId, status: "waiting" },
+          },
+          { type: "execution.attached", data: { executionId: prompt.executionId } },
+        ],
+      ),
+    ).toMatchObject([{ purpose: "user" }]);
+  });
+
+  it("upgrades the historical v5 Session record and rejects future state", async () => {
+    const fixture = (await readFixture("expert-session-transaction-v8.json")) as {
+      readonly session: unknown;
+    };
+    const upgraded = expertSessionRecordMigrationChain.upgrade(fixture.session);
+
+    expect(upgraded).toMatchObject({
+      fromVersion: 5,
+      toVersion: 6,
+      migrated: true,
+      value: { schemaVersion: "pragma.expert-session/v6" },
+    });
+    expect(expertSessionRecordMigrationChain.upgrade(upgraded.value)).toMatchObject({
+      fromVersion: 6,
+      toVersion: 6,
+      migrated: false,
+    });
+    expect(() =>
+      expertSessionRecordMigrationChain.upgrade({
+        ...upgraded.value,
+        schemaVersion: "pragma.expert-session/v7",
+      }),
+    ).toThrow("pragma.expert-session/v7 is newer than the supported pragma.expert-session/v6");
+  });
+
+  it("upgrades a historical v8 transaction fixture through v10", async () => {
     const fixture = await readFixture("expert-session-transaction-v8.json");
 
     const upgraded = expertSessionTransactionMigrationChain.upgrade(fixture);
 
-    expect(upgraded).toMatchObject({ fromVersion: 8, toVersion: 9, migrated: true });
+    expect(upgraded).toMatchObject({ fromVersion: 8, toVersion: 10, migrated: true });
     expect(upgraded.value).toMatchObject({
-      schemaVersion: "pragma.expert-session-transaction/v9",
+      schemaVersion: "pragma.expert-session-transaction/v10",
+      session: { schemaVersion: "pragma.expert-session/v6" },
       execution: { schemaVersion: "pragma.execution/v10" },
       rootInvocation: { pendingExpertMessages: [] },
     });
@@ -39,28 +103,28 @@ describe("ExpertSession transaction migration", () => {
 
     expect(expertSessionTransactionMigrationChain.upgrade(fixture)).toMatchObject({
       fromVersion: 6,
-      toVersion: 9,
+      toVersion: 10,
       migrated: true,
-      value: { schemaVersion: "pragma.expert-session-transaction/v9" },
+      value: { schemaVersion: "pragma.expert-session-transaction/v10" },
     });
   });
 
-  it("treats current v9 state as a no-op and rejects future state", async () => {
+  it("treats current v10 state as a no-op and rejects future state", async () => {
     const fixture = await readFixture("expert-session-transaction-v8.json");
     const current = expertSessionTransactionMigrationChain.upgrade(fixture).value;
 
     expect(expertSessionTransactionMigrationChain.upgrade(current)).toMatchObject({
-      fromVersion: 9,
-      toVersion: 9,
+      fromVersion: 10,
+      toVersion: 10,
       migrated: false,
     });
     expect(() =>
       expertSessionTransactionMigrationChain.upgrade({
         ...current,
-        schemaVersion: "pragma.expert-session-transaction/v10",
+        schemaVersion: "pragma.expert-session-transaction/v11",
       }),
     ).toThrow(
-      "pragma.expert-session-transaction/v10 is newer than the supported pragma.expert-session-transaction/v9",
+      "pragma.expert-session-transaction/v11 is newer than the supported pragma.expert-session-transaction/v10",
     );
   });
 
@@ -79,6 +143,7 @@ describe("ExpertSession transaction migration", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
 
     await expect(sessions.get("historical-session")).resolves.toMatchObject({
+      schemaVersion: "pragma.expert-session/v6",
       sessionId: "historical-session",
       activeExecutionId: "historical-execution",
     });

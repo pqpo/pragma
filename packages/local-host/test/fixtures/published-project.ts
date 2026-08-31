@@ -23,7 +23,7 @@ export const PUBLISHED_FLOW_ID = "t9ne4d8njvvxv2ea" as const;
 export async function writePublishedProjectFixture(home: string): Promise<{
   readonly fingerprint: string;
 }> {
-  const resources = createResources();
+  const resources = createPublishedProjectResources();
   const service = new PragmaProjectService({ repository: emptyRepository() });
   const files = await service.renderProjectFiles({ resources });
   const lock = PragmaLockSchema.parse(parsePragmaYaml(files.get("pragma.lock.yaml")!));

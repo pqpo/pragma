@@ -2575,7 +2575,7 @@ export function MissionDetailFragment(props: {
     const api = desktopApi();
     if (api === undefined || !beginQueuedMessageAction(queueItemRequestId)) return;
     try {
-      await api.steerQueuedMissionMessage({
+      await api.trySteerQueuedMissionMessage({
         id: props.mission.id,
         requestId: crypto.randomUUID(),
         queueItemRequestId,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ExpertPromptAttachmentSchema } from "../expert-prompt.schema.ts";
 import { ExecutionStatusSchema } from "../execution/execution.schema.ts";
 import {
   HumanInteractionRequestSchema,
@@ -150,6 +151,26 @@ export const MissionOperationKindSchema = z.enum([
   "queue.remove",
   "queue.resume",
   "queue.steer",
+  "queue.try-steer",
+]);
+
+export const MissionQueueSteerRetainedReasonSchema = z.enum([
+  "no_active_turn",
+  "target_changed",
+  "runtime_unsupported",
+  "attachments_not_supported",
+  "human_input_wait",
+  "delivery_uncertain",
+]);
+
+export const MissionQueueSteerOutcomeSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("steered"), executionId: ExecutionIdSchema }).strict(),
+  z
+    .object({
+      outcome: z.literal("retained"),
+      reason: MissionQueueSteerRetainedReasonSchema,
+    })
+    .strict(),
 ]);
 
 const MissionOperationTargetSchema = z
@@ -168,6 +189,7 @@ const MissionOperationResultSchema = z
     interactionId: InteractionIdSchema.optional(),
     queueItemId: z.string().uuid().optional(),
     queueItemRevision: z.number().int().nonnegative().optional(),
+    queueSteer: MissionQueueSteerOutcomeSchema.optional(),
   })
   .strict();
 
@@ -221,9 +243,16 @@ export const MissionCommandKindSchema = z.enum([
   "queue.remove",
   "queue.resume",
   "queue.steer",
+  "queue.try-steer",
 ]);
 
-const TextInputPayloadSchema = z.object({ prompt: z.string().min(1) }).strict();
+const TextInputPayloadSchema = z
+  .object({
+    prompt: z.string().min(1),
+    attachments: z.array(ExpertPromptAttachmentSchema).max(20).default([]),
+  })
+  .strict();
+
 const MissionCommandPayloadSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("send"), input: TextInputPayloadSchema }).strict(),
   z.object({ kind: z.literal("steer"), input: TextInputPayloadSchema }).strict(),
@@ -241,11 +270,12 @@ const MissionCommandPayloadSchema = z.discriminatedUnion("kind", [
       requestId: RequestIdSchema,
     })
     .strict(),
+  z.object({ kind: z.literal("queue.try-steer"), requestId: RequestIdSchema }).strict(),
 ]);
 
 export const MissionCommandSchema = z
   .object({
-    schemaVersion: z.literal("pragma.mission-command/v1"),
+    schemaVersion: z.literal("pragma.mission-command/v2"),
     commandId: CommandIdSchema,
     request: IntegrationRequestMetaSchema,
     missionId: MissionIdSchema,
@@ -287,6 +317,33 @@ export const MissionCommandSchema = z
         code: "custom",
         path: ["targetFencingToken"],
         message: "Persisted strict steer commands require an owner fencing target.",
+      });
+    }
+    if (value.kind === "respond" && value.target?.interactionId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["target", "interactionId"],
+        message: "Respond commands require an interactionId target.",
+      });
+    }
+    const queuePayloadRequestId =
+      value.payload.kind === "queue.remove" ||
+      value.payload.kind === "queue.steer" ||
+      value.payload.kind === "queue.try-steer"
+        ? value.payload.requestId
+        : undefined;
+    if (
+      (value.kind === "queue.remove" ||
+        value.kind === "queue.steer" ||
+        value.kind === "queue.try-steer") &&
+      value.target?.queueItemId !== undefined &&
+      queuePayloadRequestId !== undefined &&
+      value.target.queueItemId !== queuePayloadRequestId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["target", "queueItemId"],
+        message: "Queue command target must match its payload requestId.",
       });
     }
   });
@@ -661,6 +718,8 @@ export type WorkspaceSelection = z.infer<typeof WorkspaceSelectionSchema>;
 export type ExecutorReference = z.infer<typeof ExecutorReferenceSchema>;
 export type ExecutorDescriptor = z.infer<typeof ExecutorDescriptorSchema>;
 export type MissionOperation = z.infer<typeof MissionOperationSchema>;
+export type MissionQueueSteerRetainedReason = z.infer<typeof MissionQueueSteerRetainedReasonSchema>;
+export type MissionQueueSteerOutcome = z.infer<typeof MissionQueueSteerOutcomeSchema>;
 export type MissionCommand = z.infer<typeof MissionCommandSchema>;
 export type HumanInteractionEnvelope = z.infer<typeof HumanInteractionEnvelopeSchema>;
 export type HumanInteractionRequestEnvelope = z.infer<typeof HumanInteractionRequestEnvelopeSchema>;

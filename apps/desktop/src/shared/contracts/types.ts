@@ -155,6 +155,7 @@ import {
   MissionChatPatchSchema,
   MissionChatSnapshotSchema,
   MissionMessageAcceptanceSchema,
+  MissionQueueSteerResultSchema,
   MissionQueuePromptActionSchema,
   MissionChatUpdateSchema,
   MissionContextCompactionResultSchema,
@@ -568,6 +569,7 @@ export type MissionChatQuery = z.output<typeof GetMissionChatSchema>;
 export type SendMissionMessage = z.input<typeof SendMissionMessageSchema>;
 export type MissionQueuePromptAction = z.infer<typeof MissionQueuePromptActionSchema>;
 export type MissionMessageAcceptance = z.infer<typeof MissionMessageAcceptanceSchema>;
+export type MissionQueueSteerResult = z.infer<typeof MissionQueueSteerResultSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;

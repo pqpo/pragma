@@ -31,8 +31,15 @@ apps/cli ──────────┘                              ▲
 
 同一 Mission 的执行控制由持久 `MissionControllerLease` 和单调 fencing token 管理；非 owner 的
 `send`、`steer`、`respond`、`interrupt` 与 queue mutation 通过持久 `MissionCommandInbox` 投递。
-`steer` 保持严格 same-turn 语义，绝不降级为 queue/send。Shared integration wire schema 置于
+`steer` 与 `queue.steer` 保持严格 same-turn 语义，绝不降级为 queue/send；Desktop 的普通队列引导使用
+`queue.try-steer`，目标边界不可用时返回 `retained` 并保留原 FIFO 队列项。人类交互回答只使用按
+`interactionId` 寻址的 `respond`，不会继承此前的 steer 模式。Shared integration wire schema 置于
 `@pragma/shared/integration`，保持浏览器安全，不能暴露 Electron 状态、Node 对象或 secret。
+
+Mission Inbox command 先在 Core 以 requestId 幂等接受，再投影 Mission timeline 和 Execution reference；
+因此 strict steer 拒绝不会留下孤儿用户消息。附件 metadata 作为 command payload 的一部分持久化，不使用
+进程内旁路。Runtime steer 调用使用显式 delivery attempt；无法确认调用是否发生的崩溃恢复进入
+`delivery_uncertain` 并暂停队列，禁止自动重试造成重复输入。
 
 ## 当前真实架构
 
@@ -185,6 +192,10 @@ Execution 已采用单一 Canonical Event Log，只持久化完整标准化消�
 实时 Output 使用 `ExecutionOutputItem`，保留来源 event id、run/session 父子关系和 Invocation/Executor/Context 信息，但不拥有持久化 cursor。活动 Execution 的进程内 Live Bus 会向晚订阅者补发本次执行已产生的 Output，执行结束后即释放；完整 `AgentMessage` 仍通过 `invocation.message.appended` 进入 Canonical Event Log。Execution 状态、Invocation patch 与语义事件可通过幂等 `commit()` 原子提交。
 
 Runtime 原生子 Agent 使用 `sessionId` / `parentSessionId` 表达会话归属，同一会话的多轮任务拥有不同 `runId`；spawn、wait、list、send、resume、interrupt 统一归一化为 `agent.command`。工作投影按 session 聚合记录并按 run 展开任务，子 Agent 输出不会再混入父 Invocation 的 Chat。
+
+跨 Agent 的 durable continuation message 在 admission 边界限制为单条 100,000 个 Unicode code point、每个
+Invocation 最多 128 条待确认消息且总 UTF-8 大小不超过 1 MiB；达到上限返回稳定 backpressure 错误，已持久化的
+历史数据仍可读取和 drain，不通过收紧 Schema 破坏恢复。
 
 该设计明确拆分“活动执行的非持久化实时输出”和“历史/审计”：`subscribeOutput()` 可读取当前活动执行的内存回放并继续跟随新事件，`getMessageHistory()` 读取完整消息，`listEvents()` 使用 Execution cursor 分页读取编排历史。详见 ADR 007。
 

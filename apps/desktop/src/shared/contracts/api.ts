@@ -75,6 +75,7 @@ import type {
   DeleteWorkflowLayout,
   Mission,
   MissionMessageAcceptance,
+  MissionQueueSteerResult,
   MissionSummary,
   MissionUpdate,
   MissionExecutorOption,
@@ -498,7 +499,9 @@ export interface PragmaDesktopAPI {
   updateMissionContextMounts: (input: UpdateMissionContextMounts) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<MissionMessageAcceptance>;
-  steerQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;
+  trySteerQueuedMissionMessage: (
+    input: MissionQueuePromptAction,
+  ) => Promise<MissionQueueSteerResult>;
   removeQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   compactMissionContext: (id: string) => Promise<MissionContextCompactionResult>;

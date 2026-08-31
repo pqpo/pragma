@@ -26,10 +26,40 @@ controller lease. Version one supports `send`, `steer`, `respond`, `interrupt`, 
 command acknowledgement and Mission durable event must commit together. `requestId` and
 `payloadHash` provide idempotency; a command id remains a separate durable delivery identity.
 
+Version two adds durable prompt attachment metadata and `queue.try-steer`. The latter is a
+best-effort queue promotion addressed only by the stable queue request id; it returns `steered` or
+`retained` and never requires a moving execution/turn fencing target. Historical v1 command
+inboxes are upgraded lazily under the Mission aggregate lock, with the original inbox retained as
+a v1 backup before atomic replacement. A stable command-Inbox migration journal contains both the
+validated source and target arrays, so crashes after backup or replacement replay idempotently on
+the next access before business reads continue.
+
 `steer` and `queue.steer` are strict same-turn operations: they require the expected execution/turn
 and owner fencing target. A changed, inactive, unsupported, or unavailable target is rejected and
 never converted into a send or queue operation. Different Missions may execute concurrently; a
 second controller for the same Mission receives `MISSION_LEASE_HELD`.
+
+`respond` is a distinct interaction-addressed operation. It requires `interactionId`, persists the
+human response against that interaction, and resumes the execution that owns it; it is never
+interpreted as `send`, `steer`, or a queue mutation. An ExpertSession may internally re-queue the
+owning prompt while a human-input checkpoint releases its Runtime owner for crash recovery. That
+recovery prompt is control-plane state, not a user-authored queue item. Core persists its explicit
+`purpose: human_checkpoint_recovery`; Core and Mission queue projections select only
+`purpose: user` prompts. Hosts must not reconstruct this distinction by scanning event text or
+pending interaction state. User-authored follow-up prompts queued during the same wait remain
+visible and independently actionable.
+
+Mission semantic projection writes use a durable replay journal. If the Host mutation or its event
+commit becomes uncertain after a command is accepted, the Inbox command remains `accepted` and the
+operation remains `applying`; the owner replays the journal before the next semantic write. It must
+not publish a rejected command while the lower-level Core side effect may already be live.
+
+Runtime steering is an external side effect and is not assumed replayable. A persisted delivery
+attempt that cannot be reconciled after a crash becomes `delivery_uncertain`; queue execution is
+paused until an explicit operator action, rather than risking duplicate instructions.
+Because an older Host ignoring this field could duplicate an external steer, ExpertSession state
+advances from v5 to v6 and its transaction journal from v9 to v10 with registered adjacent
+migrations; the version change is safety-driven rather than an attachment-format change.
 
 ## Consequences
 

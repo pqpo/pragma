@@ -13,6 +13,7 @@ import { createPragmaLogger, type PragmaLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
 import { AsyncPushQueue } from "./async-push-queue.ts";
+import { SteerNotDispatchedError } from "../execution/steer-delivery-error.ts";
 import {
   createQueuedAgentLifecycle,
   type AgentLifecycle,
@@ -1418,10 +1419,16 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
     readonly targetRunId: string;
   }): Promise<void> {
     if (this.options.driver.steerTurn === undefined) {
-      throw new Error(`Runtime ${this.options.descriptor.id} does not support safe steer.`);
+      throw new SteerNotDispatchedError(
+        "runtime_unsupported",
+        `Runtime ${this.options.descriptor.id} does not support safe steer.`,
+      );
     }
     if (this.activeRunId === undefined || this.activeRunId !== request.targetRunId) {
-      throw new Error(`Cannot steer inactive Runtime submission: ${request.targetRunId}`);
+      throw new SteerNotDispatchedError(
+        "target_changed",
+        `Cannot steer inactive Runtime submission: ${request.targetRunId}`,
+      );
     }
     await this.options.driver.steerTurn(this.options.nativeSession, request);
   }

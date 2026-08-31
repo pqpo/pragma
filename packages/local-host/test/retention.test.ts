@@ -330,7 +330,7 @@ function commandInput(id: string) {
 
 function commandEnvelope(kind: "send" | "respond", id: string, value: string) {
   return {
-    schemaVersion: "pragma.mission-command/v1",
+    schemaVersion: "pragma.mission-command/v2",
     commandId: eventId(Number(id.slice(-3)) + 20),
     request: {
       schemaVersion: "pragma.integration-request/v1",

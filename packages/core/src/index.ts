@@ -50,6 +50,7 @@ export * from "./execution/execution-view.ts";
 export * from "./events/canonical-event-feed.ts";
 export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";
+export * from "./execution/steer-delivery-error.ts";
 export * from "./execution/expert-prompt.ts";
 export {
   ExecutionController,

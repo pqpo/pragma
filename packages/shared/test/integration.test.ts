@@ -202,7 +202,7 @@ describe("integration wire v1", () => {
       },
     };
     const command = {
-      schemaVersion: "pragma.mission-command/v1",
+      schemaVersion: "pragma.mission-command/v2",
       commandId: "00000000-0000-4000-8000-000000000006",
       request,
       missionId,
@@ -448,7 +448,7 @@ describe("integration wire v1", () => {
       result: { missionId },
     };
     const command = {
-      schemaVersion: "pragma.mission-command/v1",
+      schemaVersion: "pragma.mission-command/v2",
       commandId: "00000000-0000-4000-8000-000000000006",
       request,
       missionId,
@@ -532,8 +532,12 @@ describe("integration wire v1", () => {
         false,
       );
       expect(
-        schema.safeParse({ ...value, schemaVersion: value.schemaVersion.replace("/v1", "/v2") })
-          .success,
+        schema.safeParse({
+          ...value,
+          schemaVersion: value.schemaVersion.endsWith("/v2")
+            ? value.schemaVersion.replace("/v2", "/v3")
+            : value.schemaVersion.replace("/v1", "/v2"),
+        }).success,
         `${name} future version`,
       ).toBe(false);
     }
@@ -553,7 +557,7 @@ describe("integration wire v1", () => {
     const commandPayloads = [
       ["send", { kind: "send", input: { prompt: "Send" } }, undefined],
       ["steer", { kind: "steer", input: { prompt: "Steer" } }, { executionId, turnId: requestId }],
-      ["respond", { kind: "respond", response: { decision: "yes" } }, undefined],
+      ["respond", { kind: "respond", response: { decision: "yes" } }, { interactionId: requestId }],
       ["interrupt", { kind: "interrupt", reason: "Stop" }, undefined],
       ["queue.remove", { kind: "queue.remove", requestId }, undefined],
       ["queue.resume", { kind: "queue.resume" }, undefined],
@@ -562,11 +566,12 @@ describe("integration wire v1", () => {
         { kind: "queue.steer", requestId, input: { prompt: "Steer queued" } },
         { executionId, turnId: requestId },
       ],
+      ["queue.try-steer", { kind: "queue.try-steer", requestId }, undefined],
     ] as const;
 
     for (const [kind, payload, target] of commandPayloads) {
       const command = {
-        schemaVersion: "pragma.mission-command/v1",
+        schemaVersion: "pragma.mission-command/v2",
         commandId: "00000000-0000-4000-8000-000000000006",
         request,
         missionId,
@@ -579,10 +584,35 @@ describe("integration wire v1", () => {
       };
       expect(MissionCommandSchema.safeParse(command).success, `${kind} command`).toBe(true);
     }
+    expect(
+      MissionCommandSchema.safeParse({
+        schemaVersion: "pragma.mission-command/v2",
+        commandId: "00000000-0000-4000-8000-000000000006",
+        request,
+        missionId,
+        kind: "respond",
+        payload: { kind: "respond", response: { decision: "yes" } },
+        state: "pending",
+        createdAt: timestamp,
+      }).success,
+    ).toBe(false);
+    expect(
+      MissionCommandSchema.safeParse({
+        schemaVersion: "pragma.mission-command/v2",
+        commandId: "00000000-0000-4000-8000-000000000006",
+        request,
+        missionId,
+        kind: "queue.remove",
+        target: { queueItemId: "00000000-0000-4000-8000-000000000007" },
+        payload: { kind: "queue.remove", requestId },
+        state: "pending",
+        createdAt: timestamp,
+      }).success,
+    ).toBe(false);
     for (const state of ["pending", "accepted", "applied", "rejected", "expired"] as const) {
       expect(
         MissionCommandSchema.safeParse({
-          schemaVersion: "pragma.mission-command/v1",
+          schemaVersion: "pragma.mission-command/v2",
           commandId: "00000000-0000-4000-8000-000000000006",
           request,
           missionId,
@@ -596,7 +626,7 @@ describe("integration wire v1", () => {
     }
     expect(
       MissionCommandSchema.safeParse({
-        schemaVersion: "pragma.mission-command/v1",
+        schemaVersion: "pragma.mission-command/v2",
         commandId: "00000000-0000-4000-8000-000000000006",
         request,
         missionId,

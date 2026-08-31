@@ -23,6 +23,7 @@ import {
   MissionModelOptionsSchema,
   MissionMessageAcceptanceSchema,
   MissionQueuePromptActionSchema,
+  MissionQueueSteerResultSchema,
   MissionSchema,
   MissionSummarySchema,
   MissionUpdateSchema,
@@ -155,9 +156,9 @@ export const missionsApi = {
     MissionMessageAcceptanceSchema.parse(
       await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
-  steerQueuedMissionMessage: async (input) =>
-    MissionSchema.parse(
-      await invokeMutation("missions:queue:steer", MissionQueuePromptActionSchema.parse(input)),
+  trySteerQueuedMissionMessage: async (input) =>
+    MissionQueueSteerResultSchema.parse(
+      await invokeMutation("missions:queue:try-steer", MissionQueuePromptActionSchema.parse(input)),
     ),
   removeQueuedMissionMessage: async (input) =>
     MissionSchema.parse(
@@ -250,7 +251,7 @@ export const missionsApi = {
   | "updateMissionContextMounts"
   | "runMission"
   | "sendMissionMessage"
-  | "steerQueuedMissionMessage"
+  | "trySteerQueuedMissionMessage"
   | "removeQueuedMissionMessage"
   | "getMissionChat"
   | "compactMissionContext"

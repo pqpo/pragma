@@ -146,7 +146,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId: "stale-lease-session",
       expertId: "expert",
       definitionFingerprint: "a".repeat(64),
@@ -282,7 +282,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
       kind: "expert" as const,
     };
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v5",
+      schemaVersion: "pragma.expert-session/v6",
       sessionId,
       expertId: expert.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
@@ -343,6 +343,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
           requestId: "prompt-1",
           sessionId,
           content: "Continue after the human response.",
+          purpose: "human_checkpoint_recovery",
           mode: "enqueue",
           executionId,
           status: "running",

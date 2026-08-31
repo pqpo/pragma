@@ -103,7 +103,10 @@ function normalizeCommandPayload(payload: MissionCommand["payload"]): MissionCom
   ) {
     return {
       ...payload,
-      input: { prompt: normalizePrompt(payload.input!.prompt) },
+      input: {
+        prompt: normalizePrompt(payload.input!.prompt),
+        attachments: [...(payload.input!.attachments ?? [])],
+      },
     };
   }
   return sortJsonObject(payload) as MissionCommand["payload"];

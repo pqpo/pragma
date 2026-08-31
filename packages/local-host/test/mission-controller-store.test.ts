@@ -8,6 +8,7 @@ import {
   createMissionControllerStore,
   MissionAggregateStateSchema,
   MissionCommandTransactionSchema,
+  MissionSemanticWritePendingError,
   type MissionControlClock,
   type MissionControllerJournalPhase,
 } from "../src/index.ts";
@@ -151,6 +152,52 @@ describe("MissionControllerStore", () => {
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
+  it("replays an interrupted v1 command Inbox upgrade and keeps an exact backup", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    let interruptMigration = true;
+    const store = createMissionControllerStore({
+      missionsPath,
+      onJournalPhase: (phase) => {
+        if (phase === "command-inbox-migration.replace" && interruptMigration) {
+          interruptMigration = false;
+          throw new Error("simulated command Inbox migration crash");
+        }
+      },
+    });
+    const directory = join(missionsPath, missionId, "local-host");
+    await mkdir(directory, { recursive: true });
+    const requestId = "00000000-0000-4000-8000-000000000031";
+    // Captured from the released v1 writer rather than synthesized by changing
+    // the version field on a current command.
+    const legacy = JSON.parse(
+      await readFile(new URL("./fixtures/mission-command-inbox-v1.json", import.meta.url), "utf8"),
+    ) as readonly unknown[];
+    await writeFile(join(directory, "command-inbox.json"), JSON.stringify(legacy), "utf8");
+
+    await expect(store.getCommand({ missionId, requestId })).rejects.toThrow(
+      "simulated command Inbox migration crash",
+    );
+    await expect(
+      readFile(join(directory, ".command-inbox-migration.json"), "utf8"),
+    ).resolves.toContain("pragma.local-host-mission-command-inbox-migration/v1");
+
+    const recovered = createMissionControllerStore({ missionsPath });
+    await expect(recovered.getCommand({ missionId, requestId })).resolves.toMatchObject({
+      schemaVersion: "pragma.mission-command/v2",
+      payload: { kind: "send", input: { prompt: "continue", attachments: [] } },
+    });
+    await expect(
+      readFile(join(directory, "command-inbox.v1.backup.json"), "utf8").then(JSON.parse),
+    ).resolves.toEqual(legacy);
+    await expect(
+      readFile(join(directory, "command-inbox.json"), "utf8").then(JSON.parse),
+    ).resolves.toEqual([expect.objectContaining({ schemaVersion: "pragma.mission-command/v2" })]);
+    await expect(
+      readFile(join(directory, ".command-inbox-migration.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("waits for a terminal operation without holding the aggregate lock", async () => {
     const store = await createStore();
     const guard = await store.claim({
@@ -274,6 +321,59 @@ describe("MissionControllerStore", () => {
     expect(lines.map((event) => event.sequence)).toEqual([1, 2, 3]);
   });
 
+  it("keeps an accepted Inbox command recoverable while a semantic write journal is pending", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionControllerStore({ missionsPath: join(root, "missions") });
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000034",
+      leaseMs: 10_000,
+    });
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000035");
+    await store.appendCommand(command);
+
+    await expect(
+      store.processNext({
+        missionId,
+        guard,
+        consumer: {
+          apply: async () =>
+            await store.coordinateSemanticWrite({
+              missionId,
+              guard,
+              operation: { name: "mission.timeline.user-message.append", input: { id: "m1" } },
+              eventType: "mission.timeline.user-message.appended",
+              eventData: {},
+              apply: async () => {
+                throw new Error("transient projection failure");
+              },
+            }),
+        },
+      }),
+    ).rejects.toBeInstanceOf(MissionSemanticWritePendingError);
+    await expect(
+      store.getOperation({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "applying" });
+    await expect(
+      store.getCommand({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "accepted" });
+
+    const replay = vi.fn(async () => undefined);
+    await expect(store.recoverSemanticWrite({ missionId, guard, replay })).resolves.toEqual({
+      name: "mission.timeline.user-message.append",
+      input: { id: "m1" },
+    });
+    expect(replay).toHaveBeenCalledOnce();
+    await store.processNext({
+      missionId,
+      guard,
+      consumer: { apply: async () => ({ result: { delivered: true } }) },
+    });
+    await expect(
+      store.getOperation({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "applied", result: { delivered: true } });
+  });
+
   it("rejects strict steer without a complete target and never sends on target change", async () => {
     const time = mutableClock("2026-08-24T00:00:00.000Z");
     const store = await createStore(time);
@@ -305,6 +405,38 @@ describe("MissionControllerStore", () => {
     await expect(
       store.getOperation({ missionId, requestId: strict.request.requestId }),
     ).resolves.toMatchObject({ state: "rejected", error: { code: "STEER_TARGET_CHANGED" } });
+
+    const bestEffortRequestId = "00000000-0000-4000-8000-000000000046";
+    const bestEffort = {
+      ...commandInput("send", bestEffortRequestId),
+      kind: "queue.try-steer" as const,
+      target: { queueItemId: "00000000-0000-4000-8000-000000000047" },
+      payload: {
+        kind: "queue.try-steer" as const,
+        requestId: "00000000-0000-4000-8000-000000000047",
+      },
+    };
+    await store.appendCommand(bestEffort);
+    const validateStrictTarget = vi.fn(async () => undefined);
+    await store.processNext({
+      missionId,
+      guard: takeover,
+      consumer: {
+        validateStrictTarget,
+        apply: async () => ({
+          result: {
+            queueSteer: { outcome: "retained", reason: "no_active_turn" },
+          },
+        }),
+      },
+    });
+    expect(validateStrictTarget).not.toHaveBeenCalled();
+    await expect(
+      store.getOperation({ missionId, requestId: bestEffortRequestId }),
+    ).resolves.toMatchObject({
+      state: "applied",
+      result: { queueSteer: { outcome: "retained", reason: "no_active_turn" } },
+    });
   });
 
   it("captures strict fencing targets atomically and expires only pending expired commands", async () => {
@@ -355,7 +487,7 @@ describe("MissionControllerStore", () => {
     await mkdir(missionRoot, { recursive: true });
     const command = {
       ...commandInput("send", "00000000-0000-4000-8000-000000000062"),
-      schemaVersion: "pragma.mission-command/v1" as const,
+      schemaVersion: "pragma.mission-command/v2" as const,
       commandId: "00000000-0000-4000-8000-000000000063",
       state: "accepted" as const,
       createdAt: "2026-08-24T00:00:00.000Z",
@@ -422,7 +554,7 @@ describe("MissionControllerStore", () => {
     await mkdir(missionRoot, { recursive: true });
     const replayedCommand = {
       ...commandInput("send", "00000000-0000-4000-8000-000000000050"),
-      schemaVersion: "pragma.mission-command/v1" as const,
+      schemaVersion: "pragma.mission-command/v2" as const,
       commandId: "00000000-0000-4000-8000-000000000051",
       state: "applied" as const,
       createdAt: "2026-08-24T00:00:00.000Z",

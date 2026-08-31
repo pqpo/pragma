@@ -1,8 +1,9 @@
-import { ExpertSessionEventSchema, InvocationSchema, PromptRequestSchema } from "@pragma/shared";
+import { ExpertSessionEventSchema, InvocationSchema } from "@pragma/shared";
 import { z } from "zod";
 
 import { ExecutionRecordV6Schema } from "../../execution/schemas/v6.ts";
 import { ExpertSessionRecordV4Schema } from "../../expert-session/schemas/v4.ts";
+import { PromptRequestV1Schema } from "../../expert-session/schemas/prompt-request-v1.ts";
 
 const InvocationV6Schema = InvocationSchema.extend({
   definition: z.object({
@@ -16,7 +17,7 @@ export const ExpertSessionTransactionJournalV5Schema = z
   .object({
     schemaVersion: z.literal("pragma.expert-session-transaction/v5"),
     session: ExpertSessionRecordV4Schema,
-    prompts: PromptRequestSchema.array(),
+    prompts: PromptRequestV1Schema.array(),
     events: ExpertSessionEventSchema.array(),
     execution: ExecutionRecordV6Schema.optional(),
     rootInvocation: InvocationV6Schema.optional(),

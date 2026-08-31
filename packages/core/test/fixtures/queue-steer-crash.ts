@@ -83,7 +83,7 @@ await sessionStore.transact(sessionId, ({ session: record, prompts }) => {
   if (current === undefined || record.activeExecutionId === undefined) {
     throw new Error("The fixture queued prompt is missing.");
   }
-  const marker = `__pragma_queue_steer_pending__:${current.executionId}`;
+  const attemptId = "00000000-0000-4000-8000-000000000099";
   return {
     result: undefined,
     session: {
@@ -95,11 +95,15 @@ await sessionStore.transact(sessionId, ({ session: record, prompts }) => {
       prompt.requestId === current.requestId
         ? {
             ...prompt,
-            mode: "steer" as const,
-            executionId: record.activeExecutionId!,
-            targetExecutionId: record.activeExecutionId,
             status: "running" as const,
-            error: marker,
+            error: undefined,
+            deliveryAttempt: {
+              attemptId,
+              kind: "queue_steer" as const,
+              sourceExecutionId: current.executionId,
+              targetExecutionId: record.activeExecutionId!,
+              state: "dispatching" as const,
+            },
             updatedAt: new Date().toISOString(),
           }
         : prompt,

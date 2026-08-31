@@ -18,23 +18,46 @@ export const PromptStatusSchema = z.enum([
   "interrupted",
 ]);
 
+export const PromptPurposeSchema = z.enum(["user", "human_checkpoint_recovery"]);
+
+export const PromptDeliveryAttemptSchema = z
+  .object({
+    attemptId: z.string().min(1),
+    kind: z.enum(["strict_steer", "queue_steer"]),
+    sourceExecutionId: z.string().min(1).optional(),
+    targetExecutionId: z.string().min(1),
+    state: z.enum(["dispatching", "confirmed", "not_dispatched", "uncertain"]),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.kind === "queue_steer" && value.sourceExecutionId === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceExecutionId"],
+        message: "Queue steer delivery attempts require the source Execution.",
+      });
+    }
+  });
+
 export const PromptRequestSchema = z.object({
   requestId: z.string().min(1),
   sessionId: z.string().min(1),
   content: z.string().min(1),
+  purpose: PromptPurposeSchema.default("user"),
   mode: PromptModeSchema,
   executionId: z.string().min(1),
   status: PromptStatusSchema,
   modelSelection: RuntimeModelSelectionSchema.optional(),
   targetExecutionId: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
+  deliveryAttempt: PromptDeliveryAttemptSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 
 export const ExpertSessionRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.expert-session/v5"),
+    schemaVersion: z.literal("pragma.expert-session/v6"),
     sessionId: z.string().min(1),
     expertId: z.string().min(1),
     definitionFingerprint: z.string().length(64),
@@ -145,6 +168,8 @@ export const ExpertMessageHistorySchema = z.object({
 
 export type PromptMode = z.infer<typeof PromptModeSchema>;
 export type PromptStatus = z.infer<typeof PromptStatusSchema>;
+export type PromptPurpose = z.infer<typeof PromptPurposeSchema>;
+export type PromptDeliveryAttempt = z.infer<typeof PromptDeliveryAttemptSchema>;
 export type PromptRuntimeModelSelection = z.infer<typeof RuntimeModelSelectionSchema>;
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 export type ExpertSessionRecord = z.infer<typeof ExpertSessionRecordSchema>;
