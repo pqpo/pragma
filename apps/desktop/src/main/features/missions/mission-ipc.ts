@@ -398,10 +398,18 @@ export function installMissionHandlers(options: {
         workspace,
         executorSource: executor.origin === "project" ? "project" : "built_in",
       });
-      const handle = await options.localHost.run.startAttached({
-        missionId,
-        request,
-      });
+      const handle = await options.localHost.run.startAttached(
+        {
+          missionId,
+          request,
+        },
+        {
+          // Desktop answers human interactions asynchronously through the Mission
+          // command inbox. Keep the originating Runtime/tool call alive so the
+          // answer completes that exact call instead of racing a checkpoint cancel.
+          onHumanInteraction: async () => ({ kind: "await_external_response" }),
+        },
+      );
       await handle.outcome;
       const refreshed = await getManagedMission(missionId);
       await publishMission(refreshed);

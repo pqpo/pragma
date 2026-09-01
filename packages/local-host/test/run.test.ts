@@ -477,6 +477,88 @@ describe("Local Host run application", () => {
     }
   });
 
+  it("keeps an interactive Host Runtime alive until an external response completes the tool call", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-local-run-live-human-"));
+    try {
+      const controller = createMissionControllerStore({ missionsPath: join(home, "missions") });
+      const release = vi.fn(async () => undefined);
+      const checkpoint = vi.fn(async () => undefined);
+      const presented = vi.fn(async () => ({ kind: "await_external_response" as const }));
+      let finish!: (terminal: LocalHostRunTerminal) => void;
+      const application = createLocalHostRunApplication({
+        executors: {
+          resolve: async () => ({ descriptor }),
+          start: async ({ missionId, onEvent }) => {
+            const interaction: HumanInteractionRequestEnvelope = {
+              schemaVersion: "pragma.human-interaction/v1",
+              kind: "request",
+              missionId,
+              executionId: "22222222-2222-4222-8222-222222222222",
+              interactionId: "interaction-1",
+              sensitive: false,
+              interaction: {
+                kind: "question",
+                title: "Continue",
+                questions: [{ header: "Answer", question: "Continue?", kind: "text", options: [] }],
+              },
+            };
+            const result = new Promise<LocalHostRunTerminal>((resolve) => {
+              finish = resolve;
+            });
+            onEvent?.({
+              type: "human.interaction.requested",
+              data: interaction,
+              replayable: true,
+              cursor: "1",
+            });
+            return {
+              executionId: interaction.executionId,
+              result,
+              release,
+              checkpointWaitingHuman: checkpoint,
+            } satisfies LocalHostRunHandle;
+          },
+          respond: async ({ executionId, interactionId, response }) => {
+            expect(executionId).toBe("22222222-2222-4222-8222-222222222222");
+            expect(interactionId).toBe("interaction-1");
+            expect(response).toEqual({ answers: { Continue: "yes" } });
+            finish({
+              status: "succeeded",
+              executionId,
+              result: { answer: "yes" },
+            });
+          },
+        },
+        mission: createControllerRunMissionPort(controller),
+      });
+      const handle = await application.startAttached(
+        {
+          missionId: "33333333-3333-4333-8333-333333333335",
+          request: request(),
+        },
+        { onHumanInteraction: presented },
+      );
+
+      await vi.waitFor(() => expect(presented).toHaveBeenCalledTimes(1));
+      expect(checkpoint).not.toHaveBeenCalled();
+      await application.respond({
+        missionId: handle.missionId,
+        executionId: handle.executionId!,
+        interactionId: "interaction-1",
+        response: { answers: { Continue: "yes" } },
+        requestId: "44444444-4444-4444-8444-444444444444",
+      });
+      await expect(handle.outcome).resolves.toMatchObject({
+        status: "succeeded",
+        executionId: "22222222-2222-4222-8222-222222222222",
+      });
+      expect(checkpoint).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it.each(["failed", "interrupted"] as const)(
     "releases lower-level resources for a %s terminal outcome",
     async (status) => {

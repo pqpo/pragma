@@ -181,7 +181,9 @@ export interface LocalHostRunPresentation {
     | ((
         request: HumanInteractionRequestEnvelope,
       ) => Promise<
-        { readonly kind: "respond"; readonly response: unknown } | { readonly kind: "checkpoint" }
+        | { readonly kind: "respond"; readonly response: unknown }
+        | { readonly kind: "checkpoint" }
+        | { readonly kind: "await_external_response" }
       >)
     | undefined;
 }
@@ -403,6 +405,11 @@ export function createLocalHostRunApplication(options: {
             });
             return;
           }
+          // Interactive Hosts such as Desktop deliver the response through the
+          // Mission command channel. Keep the original Runtime tool call alive
+          // until that command resolves it; checkpointing here would cancel the
+          // provider turn and race the external response.
+          if (decision?.kind === "await_external_response") return;
           await handle?.checkpointWaitingHuman?.();
         })
         .catch((error: unknown) => {
