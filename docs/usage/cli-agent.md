@@ -51,8 +51,8 @@ pragma version，不要仅按包名或一个旧版本号推断所有行为。
   P1 的版本中省略它，否则当前 parser 可能把它视为未知选项。
 - 调用方为每一个新的 run 或 mutation 生成 UUID 并持久化。重试同一 durable 请求
   时，只有契约明确要求复用 ID 且 payload 完全相同才复用旧 UUID。
-- 新的 expert run、team run 或 flow run 显式使用 --detach，先取得 Mission/Execution
-  ID，再用 mission watch 跟踪。
+- 新的 expert run、team run 或 flow run 显式使用 --detach，先取得已持久化的
+  Mission/Execution 回执，再用 mission watch 跟踪；回执返回时任务可能仍在队列中。
 - mission watch 必须显式给出 --until terminal 或 --until input-required；
   省略时会持续 follow，即使 Mission 已经终态也不会自动退出。
 - 每一个子进程都设置调用方自己的总 deadline 或 idle deadline。CLI 当前没有通用的

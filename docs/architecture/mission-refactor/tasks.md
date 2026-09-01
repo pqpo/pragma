@@ -33,3 +33,11 @@ Status values: `Planned`, `In progress`, `Blocked`, `Completed`.
 | MRF-534 | Completed | Extract Work, human-interaction, options, and Context-operation state.                      |
 | MRF-535 | Completed | Reduce MissionsPage to orchestration and split renderer tests by domain.                    |
 | MRF-504 | Completed | Delete obsolete compatibility code and duplicate tests; run final validation.               |
+
+## Host convergence follow-up
+
+| ID      | Status      | Task                                                                                                                     |
+| ------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
+| MRF-601 | Completed   | Move the shared Node Host composition root, Mission control and run wiring behind `@pragma/local-host/node-application`. |
+| MRF-602 | Completed   | Compose Mission controller, owner lease, query, and watch as one reusable Local Host lifecycle.                          |
+| MRF-603 | In progress | Move remaining Desktop product stores/services behind Host ports without leaking Electron.                               |

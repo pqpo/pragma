@@ -1,6 +1,6 @@
 # Pragma 当前架构概览与演进判断
 
-> 基线：2026-08-07 当前仓库实现。本文面向架构评审，描述已经
+> 基线：2026-09-01 当前仓库实现。本文面向架构评审，描述已经
 > 存在的系统，而不是早期愿景；不展开类和函数级细节。
 
 ## 结论先行
@@ -40,6 +40,25 @@ Mission Inbox command 先在 Core 以 requestId 幂等接受，再投影 Mission
 因此 strict steer 拒绝不会留下孤儿用户消息。附件 metadata 作为 command payload 的一部分持久化，不使用
 进程内旁路。Runtime steer 调用使用显式 delivery attempt；无法确认调用是否发生的崩溃恢复进入
 `delivery_uncertain` 并暂停队列，禁止自动重试造成重复输入。
+
+### 2026-09-01 组合根收敛
+
+`@pragma/local-host/node-application` 现在提供共享的 Node Host 组合入口。它负责默认的 Mission
+controller、owner lease/poller、query/watch、Project catalog、Board、Core store、Usage sink 和
+Mission control wiring；CLI 只注入具体 Runtime adapters、进程环境、工作区文件系统和客户端身份。
+Desktop Main 也通过同一入口复用协议 facade，并注入自身更丰富的 Mission/Runtime/Board 适配器；Electron
+IPC、窗口、对话框、权限策略和 Desktop 专属业务服务仍留在 Desktop。
+
+Desktop 的 MissionRunner 适配器现在也只作为 Local Host 的端口输入：Mission control application 与
+Local Host run application 由同一 Node 组合入口创建，不再在 Desktop composition root 里重复组装。这样
+未来迁移 Project、Automation、Memory 和 Usage 等产品服务时，可以沿用同一个“Host port + Local Host
+application”切片，不需要再复制一套控制面 wiring。
+
+这里的 `node-application` 是显式的 Node-only composition subpath，不向 `shared`、preload 或 renderer
+泄漏。`@pragma/shared/integration` 是唯一跨进程 wire 出口；旧的 `@pragma/local-host/wire` 兼容转发已删除。
+Detached mutation 的成功边界统一为 Inbox durable submit，queued receipt 通过后续 query/watch 观察，不再
+等待 owner acceptance。CLI 不启动常驻 daemon；没有存活 Host owner 时，queued 只是可恢复回执，必须由
+后续 Host 或 attached/resume 调用继续消费。
 
 ## 当前真实架构
 

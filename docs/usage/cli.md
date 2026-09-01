@@ -46,7 +46,9 @@ pragma mission queue steer <MISSION_ID> --request REQUEST_ID [--expected-executi
 ```
 
 `send`、`respond`、`interrupt` 和 queue mutation 通过 durable Inbox 路由；`--wait` 等待执行
-结果，`--detach` 只等待命令已接受。所有 mutation 使用 `requestId + payloadHash` 幂等。默认
+结果，`--detach` 在 Inbox 持久化后立即返回（operation 可能仍为 queued），后续用 query/watch
+观察。CLI 本身不启动常驻 daemon；没有存活的 Desktop/Host owner 时，queued 表示可恢复回执，
+需要后续 Host 或一次 attached/resume 调用继续消费。所有 mutation 使用 `requestId + payloadHash` 幂等。默认
 ack timeout 为 30 秒，可用 `--ack-timeout` 调整。
 
 `steer` 与 `queue steer` 是 strict target 操作，要求 execution、turn 和 fencing target 仍然
@@ -80,7 +82,8 @@ Mission cursor 会返回 `CURSOR_EXPIRED`/`CURSOR_INVALID`。`chat` 与 `work` �
 先列出 `state/pendingCount/supportsSteer`，再列出完整 REQUEST ID 和内容预览。所有文本分页
 支持 cursor 的文本分页结果都会打印可复制的 continuation 命令。
 
-`run` 默认等待终态，`--detach` 在 Mission handle 接受后返回。`--request-id` 可选；省略时
+`run` 默认等待终态，`--detach` 在 durable Mission/Execution receipt 持久化后返回；回执返回时
+任务可能仍在队列中。`--request-id` 可选；省略时
 CLI 自动生成 UUID。文本模式会在副作用前显示 Request ID，并在获得 handle 后显示 Mission ID
 和 Execution ID；JSON/JSONL 不增加旁路文本，仍分别使用 `pragma.cli-result/v2` 与
 `pragma.cli-event/v2`。

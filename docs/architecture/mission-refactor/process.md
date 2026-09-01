@@ -111,3 +111,26 @@ remaining risks so the work can resume safely after interruption.
   test exceed its 5-second timeout by 31 ms under concurrent load; the test passed alone (3 tests)
   and the complete `pnpm test:core` rerun passed (10 tasks). `pnpm build` passed all 24 tasks,
   including Desktop style, main bundle, and preload verification. `git diff --check` is clean.
+
+## 2026-09-01 — Shared Node Host composition
+
+- CLI production composition was reduced to Runtime factories, process environment, client identity,
+  and filesystem ports. Mission controller, owner lifecycle, query/watch, Project catalog, Board,
+  Core stores, Usage sink, and command/run wiring now live in
+  `@pragma/local-host/node-application`.
+- Desktop Main now reuses the same Node composition entry and injects its richer Mission/Runtime/
+  Board adapters. Mission control/run applications are assembled by Local Host from the injected
+  MissionRunner ports. Its Electron IPC, permission, window, credential, and product-specific
+  services remain application-owned.
+- Added `createLocalHostMissionController` so controller, owner lease/poller, query, and watch are
+  composed as one lifecycle in both hosts. Removed the unused `@pragma/local-host/wire` forwarding
+  subpath and the `missionCommands` compatibility alias; cross-process schemas come directly from
+  `@pragma/shared/integration`.
+- Detached CLI mutations now return after durable Inbox submit. A queued operation is a successful
+  durable receipt and is observed later through query/watch; the CLI does not become a resident
+  daemon, so a queued item without a live Host owner is consumed by a later Host or attached/resume
+  call. Acceptance and terminal waits remain available for attached calls.
+- Verification: Local Host full suite 206 passed/1 skipped; CLI focused mutation/composition/watch
+  suite 30 passed; Desktop full suite 157 files/1010 tests passed. Repository lint and typecheck,
+  runtime feature and DSL-version checks passed; Desktop production build passed main/preload/style
+  verification; `git diff --check` is clean.

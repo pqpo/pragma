@@ -58,13 +58,22 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 
-`@pragma/local-host` is a Node-only application layer, not a Runtime adapter or UI layer. It may not
-depend on any `apps/*`, Electron, React/Next, `@pragma/client`, `@pragma/server`, or
-`@pragma/runtime-*`. Runtime factories are injected by `apps/desktop` Main or `apps/cli` composition.
+`@pragma/local-host` is a Node-only application layer, not a Runtime adapter or UI layer. Its
+`@pragma/local-host/node-application` subpath owns the shared Node composition (Mission controller,
+owner lifecycle, query/watch, catalog, Board and Core run wiring). It may not depend on any `apps/*`,
+Electron, React/Next, `@pragma/client`, `@pragma/server`, or `@pragma/runtime-*`. Runtime factories
+or a Host-owned `RuntimeResolver` are injected by `apps/desktop` Main or `apps/cli` composition. A
+richer Host may inject MissionRunner control/run ports; Local Host still owns the Mission control and
+run application assembly.
 `@pragma/shared`, Core, Interpreter, Evaluation, Built-in Agents, Memory, Mission Board,
 Context Filesystem, Runtime packages, Server, Client, plugins, and examples may not depend on
 `@pragma/local-host` or `@pqpo/pragma`. Desktop preload/renderer/shared code remains browser-safe and
 may consume `@pragma/shared/integration` but never Local Host.
+
+`@pragma/shared/integration` is the sole cross-process wire source. The former
+`@pragma/local-host/wire` forwarding subpath was removed; CLI/IPC adapters import integration
+schemas directly. Detached commands cross the durable Inbox boundary before returning and use
+query/watch for eventual owner/execution state.
 
 Expert Agents are cloud-first execution units scheduled by Server/Worker. Local Claude Code, Codex, Qoder CLI, Antigravity CLI, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
 
