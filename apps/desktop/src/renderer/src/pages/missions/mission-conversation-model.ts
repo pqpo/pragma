@@ -166,7 +166,7 @@ export function applyMissionChatPatches(
         entries.push({ ...patch.entry });
       } else {
         const existing = entries[existingIndex]!;
-        entries[existingIndex] = {
+        const incoming = {
           ...patch.entry,
           ...(patch.entry.timelineSequence === undefined && existing.timelineSequence !== undefined
             ? { timelineSequence: existing.timelineSequence }
@@ -178,6 +178,7 @@ export function applyMissionChatPatches(
             ? { executorAvatarId: existing.executorAvatarId }
             : {}),
         };
+        entries[existingIndex] = preserveAppendOnlyEntryContent(existing, incoming);
       }
       continue;
     }
@@ -204,6 +205,102 @@ export function applyMissionChatPatches(
     };
   }
   return { ...snapshot, revision, entries };
+}
+
+export interface MissionChatUpdateBatchResult {
+  readonly snapshot: MissionChatSnapshot;
+  readonly remaining: readonly MissionChatUpdate[];
+  readonly needsRefresh: boolean;
+  readonly requiresRender: boolean;
+  readonly changedEntryIds: ReadonlySet<string>;
+  readonly requiredRefreshRevision?: number | undefined;
+}
+
+/**
+ * Applies every contiguous update as one immutable entries copy. IPC updates remain revisioned,
+ * while high-frequency append patches are compacted within the renderer frame.
+ */
+export function applyMissionChatUpdateBatch(
+  base: MissionChatSnapshot,
+  pending: readonly MissionChatUpdate[],
+): MissionChatUpdateBatchResult {
+  const updates = pending.toSorted((left, right) => left.revision - right.revision);
+  const contiguous: Extract<MissionChatUpdate, { readonly kind: "patch" }>[] = [];
+  let remaining: MissionChatUpdate[] = [];
+  let expectedRevision = base.revision + 1;
+  let consumedRevision = base.revision;
+  let requiredRefreshRevision: number | undefined;
+
+  for (let index = 0; index < updates.length; index += 1) {
+    const candidate = updates[index]!;
+    if (candidate.revision <= base.revision) continue;
+    if (candidate.revision !== expectedRevision) {
+      remaining = updates.slice(index);
+      break;
+    }
+    consumedRevision = candidate.revision;
+    expectedRevision += 1;
+    if (candidate.kind === "invalidate") {
+      requiredRefreshRevision = candidate.revision;
+      continue;
+    }
+    contiguous.push(candidate);
+  }
+
+  if (contiguous.length === 0) {
+    return {
+      snapshot: consumedRevision === base.revision ? base : { ...base, revision: consumedRevision },
+      remaining,
+      needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
+      requiresRender: false,
+      changedEntryIds: new Set(),
+      ...(requiredRefreshRevision === undefined ? {} : { requiredRefreshRevision }),
+    };
+  }
+
+  const patches = compactMissionChatPatches(contiguous.flatMap((update) => update.patches));
+  const changedEntryIds = new Set<string>();
+  for (const patch of patches) {
+    if (patch.type === "entry.append") changedEntryIds.add(patch.entryId);
+    else if (patch.type === "entry.upsert") changedEntryIds.add(patch.entry.id);
+  }
+  const snapshot = applyMissionChatPatches(base, patches, consumedRevision);
+  if (snapshot === null) {
+    return {
+      snapshot: base,
+      remaining: updates.filter((update) => update.revision > base.revision),
+      needsRefresh: true,
+      requiresRender: false,
+      changedEntryIds: new Set(),
+      ...(requiredRefreshRevision === undefined ? {} : { requiredRefreshRevision }),
+    };
+  }
+  return {
+    snapshot,
+    remaining,
+    needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
+    requiresRender: missionChatPatchesRequireRender(patches),
+    changedEntryIds,
+    ...(requiredRefreshRevision === undefined ? {} : { requiredRefreshRevision }),
+  };
+}
+
+function compactMissionChatPatches(patches: readonly MissionChatPatch[]): MissionChatPatch[] {
+  const compacted: MissionChatPatch[] = [];
+  for (const patch of patches) {
+    const previous = compacted.at(-1);
+    if (
+      patch.type === "entry.append" &&
+      previous?.type === "entry.append" &&
+      previous.entryId === patch.entryId &&
+      previous.field === patch.field
+    ) {
+      compacted[compacted.length - 1] = { ...previous, delta: previous.delta + patch.delta };
+    } else {
+      compacted.push(patch);
+    }
+  }
+  return compacted;
 }
 
 export function missionChatPatchesRequireRender(patches: readonly MissionChatPatch[]): boolean {
@@ -268,21 +365,16 @@ export function mergeLatestChatPage(
   latest: MissionChatSnapshot,
 ): MissionChatSnapshot {
   if (current === null || current.missionId !== latest.missionId) return latest;
+  // A refresh can finish after newer IPC patches were already painted. Never let that older
+  // request move the renderer revision or its append-only entries backwards.
+  if (latest.revision < current.revision) return current;
   const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
   const latestOldest = latest.page.oldestSequence;
   const latestEntryIds = new Set(latest.entries.map((entry) => entry.id));
   const currentEntriesById = new Map(current.entries.map((entry) => [entry.id, entry] as const));
   const latestEntries = latest.entries.map((entry) => {
     const existing = currentEntriesById.get(entry.id);
-    if (
-      (entry.kind === "assistant" || entry.kind === "thinking") &&
-      existing?.kind === entry.kind &&
-      existing.content.length > entry.content.length &&
-      existing.content.startsWith(entry.content)
-    ) {
-      return { ...entry, content: existing.content };
-    }
-    return entry;
+    return existing === undefined ? entry : preserveAppendOnlyEntryContent(existing, entry);
   });
   const retainedOlder =
     latestOldest === undefined
@@ -315,6 +407,79 @@ export function mergeLatestChatPage(
       ? { contextWindow: current.contextWindow }
       : {}),
   };
+}
+
+/**
+ * Materializes already-received deltas before accepting an asynchronous refresh. A snapshot may
+ * advertise their revision while still carrying an older projection, so filtering the queue first
+ * would permanently discard visible text.
+ */
+export function reconcileMissionChatRefresh(
+  current: MissionChatSnapshot | null,
+  latest: MissionChatSnapshot,
+  pending: readonly MissionChatUpdate[],
+): MissionChatUpdateBatchResult {
+  let base = current;
+  let remaining = [...pending];
+  let requiredRefreshRevision: number | undefined;
+  if (base !== null && base.missionId === latest.missionId) {
+    const live = applyMissionChatUpdateBatch(base, remaining);
+    base = live.snapshot;
+    remaining = [...live.remaining];
+    requiredRefreshRevision = live.requiredRefreshRevision;
+  }
+  const merged =
+    base !== null && latest.revision < base.revision
+      ? mergeStaleRefreshMetadata(base, latest)
+      : mergeLatestChatPage(base, latest);
+  remaining = remaining.filter((candidate) => candidate.revision > merged.revision);
+  const applied = applyMissionChatUpdateBatch(merged, remaining);
+  const refreshStillRequired =
+    requiredRefreshRevision !== undefined && latest.revision < requiredRefreshRevision;
+  return {
+    ...applied,
+    needsRefresh: applied.needsRefresh || refreshStillRequired,
+    ...(refreshStillRequired ? { requiredRefreshRevision } : {}),
+  };
+}
+
+function mergeStaleRefreshMetadata(
+  current: MissionChatSnapshot,
+  latest: MissionChatSnapshot,
+): MissionChatSnapshot {
+  const latestEntriesById = new Map(latest.entries.map((entry) => [entry.id, entry] as const));
+  const currentEntryIds = new Set(current.entries.map((entry) => entry.id));
+  const entries = [
+    ...current.entries.map((entry) => {
+      const incoming = latestEntriesById.get(entry.id);
+      return incoming === undefined ? entry : preserveAppendOnlyEntryContent(entry, incoming);
+    }),
+    ...latest.entries.filter((entry) => !currentEntryIds.has(entry.id)),
+  ];
+  return mergeLatestChatPage(current, {
+    ...latest,
+    revision: current.revision,
+    entries,
+  });
+}
+
+function preserveAppendOnlyEntryContent(
+  existing: MissionChatEntry,
+  incoming: MissionChatEntry,
+): MissionChatEntry {
+  if (
+    (incoming.kind !== "assistant" && incoming.kind !== "thinking") ||
+    existing.kind !== incoming.kind
+  ) {
+    return incoming;
+  }
+  const regresses = incoming.content.length < existing.content.length;
+  const rewritesActiveStream =
+    existing.streaming === true &&
+    existing.content.length > 0 &&
+    incoming.content !== existing.content &&
+    !incoming.content.startsWith(existing.content);
+  return regresses || rewritesActiveStream ? { ...incoming, content: existing.content } : incoming;
 }
 
 export function prependChatPage(

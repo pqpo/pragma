@@ -15,11 +15,24 @@ import { readMissionDraft, writeMissionDraft } from "../../lib/mission-draft.ts"
 
 export function useMissionComposerState(options: {
   readonly mission: Pick<Mission, "id" | "lifecycleStatus">;
+  readonly initialDraft?: string | undefined;
   readonly discardDrafts?: PragmaDesktopAPI["discardMissionAttachmentDrafts"] | undefined;
   readonly onAttachmentLimit: () => void;
   readonly onAttachmentsAccepted: () => void;
 }) {
-  const [draft, setDraft] = useState(() => initialDraft(options.mission));
+  const initialDraftOverrideRef = useRef(
+    options.initialDraft === undefined
+      ? undefined
+      : { missionId: options.mission.id, draft: options.initialDraft },
+  );
+  const initialMissionLifecycleStatusRef = useRef(options.mission.lifecycleStatus);
+  const lifecycleStatusRef = useRef({
+    missionId: options.mission.id,
+    status: options.mission.lifecycleStatus,
+  });
+  const [draft, setDraft] = useState(() =>
+    initialDraft(options.mission, initialDraftOverrideRef.current),
+  );
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
   const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
     {},
@@ -114,10 +127,11 @@ export function useMissionComposerState(options: {
   );
 
   useEffect(() => {
+    if (draftMissionIdRef.current === options.mission.id) return;
     discard(attachmentIdsRef.current);
     attachmentIdsRef.current = [];
     draftMissionIdRef.current = null;
-    setDraft(initialDraft(options.mission));
+    setDraft(initialDraft(options.mission, initialDraftOverrideRef.current));
     setAttachments([]);
     setAttachmentPreviews({});
   }, [discard, options.mission.id]);
@@ -136,7 +150,32 @@ export function useMissionComposerState(options: {
   }, [draft, options.mission.id]);
 
   useEffect(() => {
-    if (options.mission.lifecycleStatus !== "completed") return;
+    if (options.initialDraft === undefined) return;
+    initialDraftOverrideRef.current = {
+      missionId: options.mission.id,
+      draft: options.initialDraft,
+    };
+    setDraft(options.initialDraft);
+  }, [options.initialDraft, options.mission.id]);
+
+  useEffect(() => {
+    const previousLifecycle = lifecycleStatusRef.current;
+    const sameMission = previousLifecycle.missionId === options.mission.id;
+    lifecycleStatusRef.current = {
+      missionId: options.mission.id,
+      status: options.mission.lifecycleStatus,
+    };
+    if (options.mission.lifecycleStatus !== "completed") {
+      return;
+    }
+    if (
+      sameMission &&
+      previousLifecycle.status === "completed" &&
+      initialMissionLifecycleStatusRef.current === "completed" &&
+      initialDraftOverrideRef.current?.missionId === options.mission.id
+    ) {
+      return;
+    }
     setDraft("");
     discard(attachmentIdsRef.current);
     clearAttachments();
@@ -160,7 +199,11 @@ export function useMissionComposerState(options: {
   };
 }
 
-function initialDraft(mission: Pick<Mission, "id" | "lifecycleStatus">): string {
+function initialDraft(
+  mission: Pick<Mission, "id" | "lifecycleStatus">,
+  override?: { readonly missionId: string; readonly draft: string },
+): string {
+  if (override?.missionId === mission.id) return override.draft;
   return mission.lifecycleStatus === "active"
     ? readMissionDraft(typeof window === "undefined" ? undefined : window.localStorage, mission.id)
     : "";

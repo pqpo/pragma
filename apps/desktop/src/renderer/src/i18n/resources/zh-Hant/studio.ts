@@ -474,10 +474,12 @@ export const studio = {
   retryRevision: "重試",
   deleteRevisionTask: "刪除任務",
   deleteRevisionTaskTitle: "刪除此修訂任務？",
-  deleteRevisionTaskDescription: "「{{name}}」將從修訂任務列表中刪除，不會修改知識庫內容。",
+  deleteRevisionTaskDescription:
+    "「{{name}}」將從修訂任務列表中移除。刪除任務不會回滾已套用的變更，也不會刪除知識庫。",
   viewAllStoreRevisions: "修訂任務",
   viewStoreRevisions: "修訂記錄",
   viewRevisionChanges: "查看變更",
+  handleRevisionRebase: "處理變基",
   backRevisionTasks: "返回修訂任務",
   revisionResult: "修訂結果",
   revisionDiff: "修訂差異",
@@ -492,6 +494,21 @@ export const studio = {
     "概括 Agent 為本次任務產生的變更方案，協助快速瞭解修改範圍，不會進入 Memory。",
   revisionDiffUnavailable: "這個較早的任務沒有保留變更前的檔案內容。",
   openRevisionMission: "開啟任務",
+  openRevisionMissionToRebase: "開啟任務並變基",
+  revisionNeedsRebaseTitle: "知識庫已更新，需要先變基",
+  revisionNeedsRebaseDescription:
+    "這份草稿基於較早的知識庫版本，不能直接套用。請繼續關聯任務，讓修訂 Agent 將草稿變基到最新版本。已發佈的知識庫不會被修改。",
+  revisionNeedsRebaseStepOpenMission:
+    "點擊下方「開啟任務並變基」；下一步指令會自動帶入任務輸入框。",
+  revisionNeedsRebaseStepReopen: "如果任務顯示為已完成，先點擊「重新開啟」，再繼續對話。",
+  revisionNeedsRebasePrompt:
+    "請檢查最新知識庫，將此草稿變基到最新版本；如有衝突，請逐項說明並和我確認處理方式，然後重新提交修訂。",
+  revisionNeedsRebaseStepAskAgent:
+    "檢查任務輸入框中已帶入的提示詞，確認後傳送給修訂 Agent：「{{prompt}}」",
+  revisionNeedsRebaseStepReview:
+    "返回「工作室 → 知識庫 → 修訂任務」，審核新的變更方案，然後點擊「同意並套用」。",
+  revisionNeedsRebaseNoMission:
+    "此任務沒有可繼續的關聯任務。請刪除它，然後前往「工作室 → 知識庫 → 對應知識庫 → 提交修訂」，重新建立一份修訂方案。",
   filesChanged: "變更 {{count}} 個檔案",
   baseRevision: "基於版本 {{count}}",
   revisionOperation: {

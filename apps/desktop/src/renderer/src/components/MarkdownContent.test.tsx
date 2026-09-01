@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import "../i18n/index.ts";
 import {
+  advanceStreamingMarkdown,
   MarkdownContent,
   splitStreamingMarkdown,
   StreamingMarkdownContent,
@@ -70,6 +71,32 @@ describe("MarkdownContent", () => {
     const source = "```ts\nconst first = 1;\n\nconst second = 2;";
 
     expect(splitStreamingMarkdown(source)).toEqual({ stableBlocks: [], tail: source });
+  });
+
+  it("rescans only the unfinished tail as append-only Markdown grows", () => {
+    const first = advanceStreamingMarkdown(undefined, "## Stable\n\nThe active");
+    const second = advanceStreamingMarkdown(first, "## Stable\n\nThe active tail\n\nNext");
+
+    expect(first).toEqual({
+      source: "## Stable\n\nThe active",
+      stableBlocks: ["## Stable\n\n"],
+      tail: "The active",
+    });
+    expect(second).toEqual({
+      source: "## Stable\n\nThe active tail\n\nNext",
+      stableBlocks: ["## Stable\n\n", "The active tail\n\n"],
+      tail: "Next",
+    });
+  });
+
+  it("falls back to a full streaming Markdown split for a non-append rewrite", () => {
+    const first = advanceStreamingMarkdown(undefined, "Old heading\n\nTail");
+    const rewritten = "New heading\n\nTail";
+
+    expect(advanceStreamingMarkdown(first, rewritten)).toEqual({
+      source: rewritten,
+      ...splitStreamingMarkdown(rewritten),
+    });
   });
 
   it("bounds stable React blocks for very long streaming output", () => {

@@ -26,6 +26,8 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.main);
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
+  const [missionComposerDraftToOpen, setMissionComposerDraftToOpen] = useState<string>();
+  const [autoRunMissionOnOpen, setAutoRunMissionOnOpen] = useState(false);
   const [missionsMemoryState, setMissionsMemoryState] = useState<MissionsPageMemoryState>();
   const [studioExpertRef, setStudioExpertRef] = useState<string>();
   const [studioExpertStep, setStudioExpertStep] = useState<"capabilities" | undefined>();
@@ -57,8 +59,15 @@ export function App() {
     if (memoryEnabled === false && activeView === "memory") setActiveView("home");
   }, [activeView, memoryEnabled]);
 
+  useEffect(() => {
+    if (missionComposerDraftToOpen === undefined) return;
+    setMissionComposerDraftToOpen(undefined);
+  }, [missionComposerDraftToOpen]);
+
   const navigate = (view: AppView) => {
     setMissionExecutorRef(undefined);
+    setMissionComposerDraftToOpen(undefined);
+    setAutoRunMissionOnOpen(false);
     setStudioExpertRef(undefined);
     setStudioExpertStep(undefined);
     setStudioResourceRef(undefined);
@@ -140,6 +149,8 @@ export function App() {
           onOpenKnowledgeBases={openKnowledgeBases}
           onCreated={(mission) => {
             setMissionToOpen(mission);
+            setMissionComposerDraftToOpen(undefined);
+            setAutoRunMissionOnOpen(true);
             setMissionExecutorRef(undefined);
             setActiveView("missions");
           }}
@@ -147,9 +158,10 @@ export function App() {
       ) : activeView === "missions" ? (
         <MissionsPage
           initialMission={missionToOpen}
+          initialComposerDraft={missionComposerDraftToOpen}
           initialMemoryState={missionsMemoryState}
           memoryEnabled={memoryEnabled}
-          autoRunInitialMission={missionToOpen !== undefined}
+          autoRunInitialMission={autoRunMissionOnOpen}
           onMemoryStateChange={setMissionsMemoryState}
           onConfigureModels={openModelSettings}
           onOpenKnowledgeBases={openKnowledgeBases}
@@ -169,6 +181,8 @@ export function App() {
           }}
           onCreate={() => {
             setMissionToOpen(undefined);
+            setMissionComposerDraftToOpen(undefined);
+            setAutoRunMissionOnOpen(false);
             setMissionExecutorRef(undefined);
             setActiveView("home");
           }}
@@ -184,11 +198,15 @@ export function App() {
           onTryExpert={(expert) => {
             setMissionExecutorRef(`expert:${expert.id}`);
             setMissionToOpen(undefined);
+            setMissionComposerDraftToOpen(undefined);
+            setAutoRunMissionOnOpen(false);
             setActiveView("home");
           }}
-          onOpenMission={(missionId) => {
+          onOpenMission={(missionId, composerDraft) => {
             void window.pragmaDesktop.getMission(missionId).then((mission) => {
               setMissionToOpen(mission);
+              setMissionComposerDraftToOpen(composerDraft);
+              setAutoRunMissionOnOpen(false);
               setStudioRevisionStoreId(undefined);
               setActiveView("missions");
             });

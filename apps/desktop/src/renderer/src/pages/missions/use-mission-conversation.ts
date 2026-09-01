@@ -7,17 +7,13 @@ import type {
   PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
 import {
-  applyMissionChatPatches,
+  applyMissionChatUpdateBatch,
   firstVisiblePatchExecutionId,
-  mergeLatestChatPage,
-  missionChatPatchesRequireRender,
   prependChatPage,
+  reconcileMissionChatRefresh,
 } from "./mission-conversation-model.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
-import {
-  MISSION_CHAT_PAGE_SIZE,
-  MISSION_CHAT_STREAM_FLUSH_INTERVAL_MS,
-} from "./mission-view-constants.ts";
+import { MISSION_CHAT_PAGE_SIZE } from "./mission-view-constants.ts";
 
 export function useMissionConversation(input: {
   readonly missionId: string;
@@ -90,9 +86,7 @@ export function useMissionConversation(input: {
     let refreshing = false;
     let refreshQueued = false;
     let frame: number | undefined;
-    let visibleTimer: ReturnType<typeof setTimeout> | undefined;
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
-    let lastVisibleFlushAt = 0;
     let lastPerformanceLogAt = 0;
     let pending: MissionChatUpdate[] = [];
     receivedFirstTokensRef.current.clear();
@@ -104,31 +98,9 @@ export function useMissionConversation(input: {
     firstTokenPaintFramesRef.current.clear();
 
     const drainPending = (base: MissionChatSnapshot) => {
-      const updates = pending.toSorted((left, right) => left.revision - right.revision);
-      pending = [];
-      let snapshot = base;
-      let requiresRender = false;
-      const changedEntryIds = new Set<string>();
-      for (let index = 0; index < updates.length; index += 1) {
-        const candidate = updates[index]!;
-        if (candidate.revision <= snapshot.revision) continue;
-        if (candidate.revision !== snapshot.revision + 1 || candidate.kind === "invalidate") {
-          pending.push(...updates.slice(index));
-          return { snapshot, needsRefresh: true, requiresRender, changedEntryIds };
-        }
-        const next = applyMissionChatPatches(snapshot, candidate.patches, candidate.revision);
-        if (next === null) {
-          pending.push(...updates.slice(index));
-          return { snapshot, needsRefresh: true, requiresRender, changedEntryIds };
-        }
-        for (const patch of candidate.patches) {
-          if (patch.type === "entry.append") changedEntryIds.add(patch.entryId);
-          else if (patch.type === "entry.upsert") changedEntryIds.add(patch.entry.id);
-          if (missionChatPatchesRequireRender([patch])) requiresRender = true;
-        }
-        snapshot = next;
-      }
-      return { snapshot, needsRefresh: false, requiresRender, changedEntryIds };
+      const drained = applyMissionChatUpdateBatch(base, pending);
+      pending = [...drained.remaining];
+      return drained;
     };
 
     const refresh = async (): Promise<void> => {
@@ -143,10 +115,12 @@ export function useMissionConversation(input: {
           limit: MISSION_CHAT_PAGE_SIZE,
         });
         if (!cancelled) {
-          pending = pending.filter((candidate) => candidate.revision > snapshot.revision);
-          const drained = drainPending(mergeLatestChatPage(chatRef.current, snapshot));
+          const drained = reconcileMissionChatRefresh(chatRef.current, snapshot, pending);
+          pending = [...drained.remaining];
           update(drained.snapshot);
-          setSyncError(snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage);
+          setSyncError(
+            drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
+          );
           if (drained.needsRefresh) refreshQueued = true;
         }
       } catch (error) {
@@ -163,12 +137,9 @@ export function useMissionConversation(input: {
 
     const flush = (): void => {
       frame = undefined;
-      if (visibleTimer !== undefined) clearTimeout(visibleTimer);
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
-      visibleTimer = undefined;
       hiddenTimer = undefined;
       if (cancelled || chatRef.current === null || pending.length === 0) return;
-      if (document.visibilityState !== "hidden") lastVisibleFlushAt = performance.now();
       const startedAt = performance.now();
       const drained = drainPending(chatRef.current);
       if (drained.requiresRender) update(drained.snapshot);
@@ -197,36 +168,18 @@ export function useMissionConversation(input: {
     };
 
     const scheduleFlush = (): void => {
-      if (
-        frame !== undefined ||
-        visibleTimer !== undefined ||
-        hiddenTimer !== undefined ||
-        cancelled
-      )
-        return;
+      if (frame !== undefined || hiddenTimer !== undefined || cancelled) return;
       if (document.visibilityState === "hidden") {
         hiddenTimer = setTimeout(flush, 100);
         return;
       }
-      const remaining = Math.max(
-        0,
-        MISSION_CHAT_STREAM_FLUSH_INTERVAL_MS - (performance.now() - lastVisibleFlushAt),
-      );
-      if (remaining === 0) frame = requestAnimationFrame(flush);
-      else {
-        visibleTimer = setTimeout(() => {
-          visibleTimer = undefined;
-          frame = requestAnimationFrame(flush);
-        }, remaining);
-      }
+      frame = requestAnimationFrame(flush);
     };
 
     const flushVisibleFirstPatch = (): void => {
       if (frame !== undefined) cancelAnimationFrame(frame);
-      if (visibleTimer !== undefined) clearTimeout(visibleTimer);
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       frame = undefined;
-      visibleTimer = undefined;
       hiddenTimer = undefined;
       flushSync(flush);
     };
@@ -255,7 +208,6 @@ export function useMissionConversation(input: {
     return () => {
       cancelled = true;
       if (frame !== undefined) cancelAnimationFrame(frame);
-      if (visibleTimer !== undefined) clearTimeout(visibleTimer);
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       pendingFirstTokenPaintsRef.current.clear();
       for (const frames of firstTokenPaintFramesRef.current.values()) {

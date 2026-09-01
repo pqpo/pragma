@@ -319,6 +319,34 @@ describe("MissionsPage", () => {
     );
   });
 
+  it("carries a rebase instruction into the selected Mission composer", () => {
+    const prompt =
+      "Please inspect the latest knowledge base, rebase this draft, and submit the revision again.";
+    const html = renderToStaticMarkup(
+      <MissionsPage
+        initialMission={missionFixture("expert")}
+        initialComposerDraft={prompt}
+        onCreate={() => undefined}
+      />,
+    );
+
+    expect(html).toContain(prompt);
+  });
+
+  it("keeps a carried rebase instruction visible before a completed Mission is reopened", () => {
+    const prompt =
+      "Please inspect the latest knowledge base, rebase this draft, and submit the revision again.";
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={{ ...missionFixture("expert"), lifecycleStatus: "completed" }}
+        initialComposerDraft={prompt}
+      />,
+    );
+
+    expect(html).toContain(prompt);
+    expect(html).toContain('placeholder="Reopen this mission to continue the conversation"');
+  });
+
   it("renders a compact, stepwise question flow", () => {
     const mission = missionFixture("expert");
     const chat: MissionChatSnapshot = {

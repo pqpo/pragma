@@ -83,7 +83,7 @@ export function StudioPage(props: {
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onTryExpert: (expert: ExpertRecord) => void;
-  readonly onOpenMission?: ((missionId: string) => void) | undefined;
+  readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(

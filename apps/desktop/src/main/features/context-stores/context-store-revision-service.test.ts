@@ -359,6 +359,35 @@ describe("context store sparse draft revisions", () => {
     expect(revisionLock).toHaveBeenCalledWith(store.id, expect.any(Function));
   });
 
+  it("deletes revision task records in every lifecycle state", async () => {
+    const { directory, service, store } = await fixture();
+    const jobsPath = join(directory, "state", "context-store-revisions", "jobs");
+    const states = [
+      "editing",
+      "running",
+      "pending_review",
+      "merging",
+      "merged",
+      "rejected",
+      "needs_rebase",
+      "needs_attention",
+    ] as const;
+
+    for (const state of states) {
+      const job = await service.start({
+        schemaVersion: "pragma.context-store-revision-request/v1",
+        storeId: store.id,
+        prompt: `Delete ${state}`,
+        source: "user",
+      });
+      await writeFile(join(jobsPath, `${job.id}.json`), `${JSON.stringify({ ...job, state })}\n`);
+
+      await expect(service.delete(job.id, job.revision)).resolves.toBeUndefined();
+    }
+
+    await expect(service.list()).resolves.toEqual([]);
+  });
+
   it("resolves same-path rebase conflicts and rechecks CAS at approval", async () => {
     const { service, contextStores, store } = await fixture();
     const base = await contextStores.createFile(store.id, "items/shared.md", "# Base\n");

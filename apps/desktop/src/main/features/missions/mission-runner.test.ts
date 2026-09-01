@@ -300,6 +300,44 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     ]);
   });
 
+  it("ignores a late Codex delta after completion for the same run", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const output = (input: {
+      readonly sourceEventId: string;
+      readonly delta?: string;
+      readonly value?: unknown;
+    }): ExecutionOutputItem => ({
+      sourceEventId: input.sourceEventId,
+      executionId: chat.executionId,
+      invocationId: "invocation-a",
+      executorId: "expert-a",
+      contextId: "context:invocation-a",
+      runId: "run:invocation-a",
+      source: { kind: "runtime", runId: "run:invocation-a", path: [] },
+      channel: "message",
+      ...(input.delta === undefined ? {} : { delta: input.delta }),
+      ...(input.value === undefined ? {} : { value: input.value }),
+      occurredAt: "2026-08-24T00:00:00.000Z",
+    });
+
+    consumeLiveChatOutput(chat, output({ sourceEventId: "completed", value: "answer" }));
+    expect(
+      consumeLiveChatOutput(chat, output({ sourceEventId: "late-delta", delta: "answer" })),
+    ).toEqual([]);
+    expect(chat.entries).toHaveLength(1);
+    expect(chat.entries[0]).toMatchObject({
+      kind: "assistant",
+      content: "answer",
+      streaming: false,
+    });
+  });
+
   it("stops emitting visible patches after a streaming message reaches its content cap", () => {
     const chat: LiveMissionChat = {
       executionId: "execution-1",
@@ -4035,6 +4073,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
     expect(runtimeStarts).toBe(2);
+    const completedChat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(completedChat.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(1);
     await expect(
       runner.respondToHumanInteraction({
         missionId: mission.id,

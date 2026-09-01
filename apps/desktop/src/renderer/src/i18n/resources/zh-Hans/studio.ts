@@ -474,10 +474,12 @@ export const studio = {
   retryRevision: "重试",
   deleteRevisionTask: "删除任务",
   deleteRevisionTaskTitle: "删除此修订任务？",
-  deleteRevisionTaskDescription: "“{{name}}”将从修订任务列表中删除，不会修改知识库内容。",
+  deleteRevisionTaskDescription:
+    "“{{name}}”将从修订任务列表中移除。删除任务不会回滚已经应用的变更，也不会删除知识库。",
   viewAllStoreRevisions: "修订任务",
   viewStoreRevisions: "修订记录",
   viewRevisionChanges: "查看变更",
+  handleRevisionRebase: "处理变基",
   backRevisionTasks: "返回修订任务",
   revisionResult: "修订结果",
   revisionDiff: "修订差异",
@@ -492,6 +494,20 @@ export const studio = {
     "概括 Agent 为本次任务生成的变更方案，帮助快速了解修改范围，不会进入 Memory。",
   revisionDiffUnavailable: "这个较早的任务没有保留变更前的文件内容。",
   openRevisionMission: "打开任务",
+  openRevisionMissionToRebase: "打开任务并变基",
+  revisionNeedsRebaseTitle: "知识库已更新，需要先变基",
+  revisionNeedsRebaseDescription:
+    "这份草稿基于较早的知识库版本，不能直接应用。请继续关联任务，让修订 Agent 把草稿变基到最新版本。已发布的知识库不会被修改。",
+  revisionNeedsRebaseStepOpenMission: "点击下方“打开任务并变基”；下一步指令会自动带入任务输入框。",
+  revisionNeedsRebaseStepReopen: "如果任务显示为已完成，先点击“重新打开”，再继续对话。",
+  revisionNeedsRebasePrompt:
+    "请检查最新知识库，将此草稿变基到最新版本；如有冲突，请逐项说明并和我确认处理方式，然后重新提交修订。",
+  revisionNeedsRebaseStepAskAgent:
+    "检查任务输入框中已带入的提示词，确认后发送给修订 Agent：“{{prompt}}”",
+  revisionNeedsRebaseStepReview:
+    "返回“工作室 → 知识库 → 修订任务”，审核新的变更方案，然后点击“同意并应用”。",
+  revisionNeedsRebaseNoMission:
+    "此任务没有可继续的关联任务。请删除它，然后前往“工作室 → 知识库 → 对应知识库 → 提交修订”，重新创建一份修订方案。",
   filesChanged: "变更 {{count}} 个文件",
   baseRevision: "基于版本 {{count}}",
   revisionOperation: {

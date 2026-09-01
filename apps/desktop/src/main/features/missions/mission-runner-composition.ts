@@ -1434,7 +1434,18 @@ export function createMissionRunner(options: {
       resolveExecutorName,
       resolveExecutorAvatarId,
     );
-    chatService.setLive(missionId, live);
+    const replacedLive = chatService.setLive(missionId, live);
+    if (replacedLive !== undefined && replacedLive !== live) {
+      // A Mission owns one live projection. Close a stale observer immediately when a
+      // recovery/retry installs a replacement, otherwise both observers publish patches.
+      void replacedLive.close().catch((error: unknown) => {
+        logger.warn(
+          "mission.chat_observer_replaced_close_failed",
+          "Failed to close the replaced Mission chat observer.",
+          { error, missionId, executionId: input.handle.executionId },
+        );
+      });
+    }
     let releaseCheckpoint = (): void => undefined;
     const checkpoint = new Promise<void>((resolve) => {
       releaseCheckpoint = resolve;
@@ -4683,6 +4694,10 @@ function observeMissionChat(
   };
   let closed = false;
   let durableEntries: Promise<readonly MissionChatEntry[]> | undefined;
+  // Output subscriptions replay the in-memory history when they reconnect. Keep the
+  // source event ids seen by this live projection so a replay cannot append the same
+  // assistant message a second time.
+  const seenOutputEventIds = new Set<string>();
   chat.readDurableEntries = (timelineSequence) => {
     durableEntries ??= readDurableMissionChatEntries(execution, timelineSequence).catch((error) => {
       durableEntries = undefined;
@@ -4699,6 +4714,8 @@ function observeMissionChat(
         outputSubscription = subscription;
         for await (const item of subscription) {
           if (closed) break;
+          if (seenOutputEventIds.has(item.sourceEventId)) continue;
+          seenOutputEventIds.add(item.sourceEventId);
           onItem(item);
           const patches = consumeLiveChatOutput(chat, item, {
             resolveExecutorName,
@@ -4986,6 +5003,16 @@ export function consumeLiveChatOutput(
     const content = item.delta ?? completedMessageText(item.value);
     const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "assistant");
+    // Codex can deliver an item/completed notification before a queued delta is
+    // drained. The completed item already owns the final text; treating that late
+    // delta as a new stream would create a second assistant row for the same run.
+    if (
+      item.delta !== undefined &&
+      current === undefined &&
+      hasCompletedMessageForRun(chat.entries, item)
+    ) {
+      return patches;
+    }
     if (item.delta !== undefined && current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
       const nextContent = truncate(current.content + content, 200_000);
@@ -5130,6 +5157,22 @@ export function consumeLiveChatOutput(
     }
   }
   return [];
+}
+
+function hasCompletedMessageForRun(
+  entries: readonly MissionChatEntry[],
+  item: Pick<ExecutionOutputItem, "executionId" | "invocationId" | "runId">,
+): boolean {
+  const prefix = `message:${item.executionId}:${item.invocationId}:${item.runId}:assistant:`;
+  return entries.some(
+    (entry) =>
+      entry.kind === "assistant" &&
+      entry.executionId === item.executionId &&
+      entry.invocationId === item.invocationId &&
+      entry.streaming === false &&
+      entry.content.length > 0 &&
+      entry.id.startsWith(prefix),
+  );
 }
 
 function findStreamingInvocationEntry<K extends "assistant" | "thinking">(

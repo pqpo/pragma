@@ -199,6 +199,7 @@ export function resolveMissionsPageInitialState(input: {
 
 export function MissionsPage(props: {
   readonly initialMission?: Mission | undefined;
+  readonly initialComposerDraft?: string | undefined;
   readonly initialMemoryState?: MissionsPageMemoryState | undefined;
   readonly memoryEnabled?: boolean | undefined;
   readonly autoRunInitialMission?: boolean | undefined;
@@ -580,6 +581,7 @@ export function MissionsPage(props: {
           <MissionDetailFragment
             key={selectedMission.id}
             mission={selectedMission}
+            initialComposerDraft={props.initialComposerDraft}
             memoryEnabled={props.memoryEnabled}
             chatCache={missionChatCacheRef.current}
             initialThinkingRequestId={
@@ -1343,6 +1345,7 @@ export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly chatCache?: Map<string, MissionChatSnapshot> | undefined;
+  readonly initialComposerDraft?: string | undefined;
   readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
   readonly onDismissError?: (() => void) | undefined;
@@ -1426,6 +1429,7 @@ export function MissionDetailFragment(props: {
     discardAttachments,
   } = useMissionComposerState({
     mission: props.mission,
+    initialDraft: props.initialComposerDraft,
     discardDrafts: desktopApi()?.discardMissionAttachmentDrafts,
     onAttachmentLimit: () => setOptionsError(t("attachmentLimit", { ns: "missions" })),
     onAttachmentsAccepted: () => setOptionsError(null),

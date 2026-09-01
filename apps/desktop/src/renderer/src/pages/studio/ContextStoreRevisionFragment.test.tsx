@@ -109,6 +109,60 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).not.toContain("保存草稿文件");
   });
 
+  it("shows a clear path for continuing a stale draft", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const html = renderToStaticMarkup(
+      <ContextStoreRevisionDiffFragment
+        job={{
+          schemaVersion: "pragma.context-store-revision-job/v2",
+          id: "10000000-0000-4000-8000-000000000002",
+          revision: 4,
+          draftId: "20000000-0000-4000-8000-000000000002",
+          missionId: "30000000-0000-4000-8000-000000000002",
+          request: {
+            schemaVersion: "pragma.context-store-revision-request/v1",
+            storeId: "00000000-0000-4000-8000-000000000002",
+            prompt: "同步最新知识库",
+            source: "user",
+          },
+          state: "needs_rebase",
+          createdAt: "2026-08-05T07:24:00.000Z",
+          updatedAt: "2026-08-05T07:29:00.000Z",
+        }}
+        draft={{
+          schemaVersion: "pragma.context-store-draft/v1",
+          id: "20000000-0000-4000-8000-000000000002",
+          revision: 3,
+          name: "同步最新知识库",
+          storeId: "00000000-0000-4000-8000-000000000002",
+          baseRevision: 4,
+          baseSnapshotHash: "0".repeat(64),
+          state: "needs_rebase",
+          overlay: {
+            files: [],
+            deletedFiles: [],
+            directories: [],
+            deletedDirectories: [],
+          },
+          createdAt: "2026-08-05T07:24:00.000Z",
+          updatedAt: "2026-08-05T07:29:00.000Z",
+        }}
+        busy={false}
+        error={null}
+        onBack={() => undefined}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+        onRetry={() => undefined}
+        onOpenMission={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("知识库已更新，需要先变基");
+    expect(html).toContain("打开任务并变基");
+    expect(html).toContain("请检查最新知识库");
+    expect(html).toContain("工作室 → 知识库 → 修订任务");
+  });
+
   it("builds stable line-level additions and deletions", () => {
     expect(buildRevisionLineDiff("first\nold", "first\nnew")).toEqual([
       { kind: "context", content: "first", oldLine: 1, newLine: 1 },

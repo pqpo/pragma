@@ -1179,6 +1179,66 @@
   white-space: nowrap;
 }
 
+.revision-rebase-guidance {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--ui-warning) 32%, var(--ui-line));
+  border-radius: var(--ui-radius-md);
+  background: color-mix(in srgb, var(--ui-warning) 7%, var(--ui-surface));
+}
+
+.revision-rebase-guidance-icon {
+  margin-top: 1px;
+  color: var(--ui-warning);
+}
+
+.revision-rebase-guidance-body {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.revision-rebase-guidance-body h2 {
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.revision-rebase-guidance-body p,
+.revision-rebase-guidance-body ol {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.revision-rebase-guidance-body p {
+  margin: 0;
+}
+
+.revision-rebase-guidance-body ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.revision-rebase-guidance-body li {
+  overflow-wrap: anywhere;
+}
+
+.revision-rebase-guidance-body li + li {
+  margin-top: 4px;
+}
+
+.revision-rebase-guidance .secondary-button {
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+
 .revision-diff-actions {
   display: flex;
   flex: 0 0 auto;

@@ -9,6 +9,7 @@ import {
   Plus,
   Trash,
   X,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -102,7 +103,7 @@ export function ContextStoreRevisionFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly initialStoreId?: string | undefined;
   readonly onCountChanged?: ((count: number) => void) | undefined;
-  readonly onOpenMission?: ((missionId: string) => void) | undefined;
+  readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onBack: () => void;
 }) {
   const { t, i18n } = useTranslation("studio");
@@ -247,13 +248,17 @@ export function ContextStoreRevisionFragment(props: {
                 );
                 const draft = drafts.find((candidate) => candidate.id === job.draftId);
                 const canOpen = draft !== undefined;
+                const openLabel =
+                  job.state === "needs_rebase"
+                    ? t("handleRevisionRebase")
+                    : t("viewRevisionChanges");
                 return (
                   <article className="revision-task-row" role="listitem" key={job.id}>
                     <button
                       className="revision-task-open"
                       type="button"
                       disabled={!canOpen}
-                      aria-label={canOpen ? t("viewRevisionChanges") : undefined}
+                      aria-label={canOpen ? openLabel : undefined}
                       onClick={() => canOpen && setSelectedJobId(job.id)}
                     >
                       <span className="revision-task-summary">
@@ -298,7 +303,7 @@ export function ContextStoreRevisionFragment(props: {
                           type="button"
                           onClick={() => setSelectedJobId(job.id)}
                         >
-                          {t("viewRevisionChanges")}
+                          {openLabel}
                           <ArrowRight size={14} aria-hidden="true" />
                         </button>
                       ) : null}
@@ -314,18 +319,16 @@ export function ContextStoreRevisionFragment(props: {
                           <ArrowClockwise size={16} aria-hidden="true" />
                         </button>
                       ) : null}
-                      {["merged", "rejected", "needs_attention"].includes(job.state) ? (
-                        <button
-                          className="revision-task-icon-button is-danger"
-                          type="button"
-                          aria-label={t("deleteRevisionTask")}
-                          title={t("deleteRevisionTask")}
-                          disabled={busy === job.id}
-                          onClick={() => setPendingDelete(job)}
-                        >
-                          <Trash size={16} aria-hidden="true" />
-                        </button>
-                      ) : null}
+                      <button
+                        className="revision-task-icon-button is-danger"
+                        type="button"
+                        aria-label={t("deleteRevisionTask")}
+                        title={t("deleteRevisionTask")}
+                        disabled={busy === job.id}
+                        onClick={() => setPendingDelete(job)}
+                      >
+                        <Trash size={16} aria-hidden="true" />
+                      </button>
                     </div>
                   </article>
                 );
@@ -364,7 +367,7 @@ export function ContextStoreRevisionDiffFragment(props: {
   readonly onApprove: () => void;
   readonly onReject: () => void;
   readonly onRetry: () => void;
-  readonly onOpenMission?: ((missionId: string) => void) | undefined;
+  readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [selection, setSelection] = useState<RevisionDiffSelection>({ kind: "summary" });
@@ -450,7 +453,9 @@ export function ContextStoreRevisionDiffFragment(props: {
                   {t("retryRevision")}
                 </button>
               ) : null}
-              {props.job.missionId !== undefined && props.onOpenMission !== undefined ? (
+              {props.job.state !== "needs_rebase" &&
+              props.job.missionId !== undefined &&
+              props.onOpenMission !== undefined ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -461,6 +466,50 @@ export function ContextStoreRevisionDiffFragment(props: {
               ) : null}
             </div>
           </div>
+          {props.job.state === "needs_rebase" ? (
+            <aside
+              className="revision-rebase-guidance"
+              aria-labelledby="revision-rebase-guidance-title"
+            >
+              <WarningCircle
+                className="revision-rebase-guidance-icon"
+                size={22}
+                aria-hidden="true"
+              />
+              <div className="revision-rebase-guidance-body">
+                <h2 id="revision-rebase-guidance-title">{t("revisionNeedsRebaseTitle")}</h2>
+                <p>{t("revisionNeedsRebaseDescription")}</p>
+                {props.job.missionId !== undefined && props.onOpenMission !== undefined ? (
+                  <>
+                    <ol>
+                      <li>{t("revisionNeedsRebaseStepOpenMission")}</li>
+                      <li>{t("revisionNeedsRebaseStepReopen")}</li>
+                      <li>
+                        {t("revisionNeedsRebaseStepAskAgent", {
+                          prompt: t("revisionNeedsRebasePrompt"),
+                        })}
+                      </li>
+                      <li>{t("revisionNeedsRebaseStepReview")}</li>
+                    </ol>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={props.busy}
+                      onClick={() =>
+                        props.onOpenMission?.(props.job.missionId!, t("revisionNeedsRebasePrompt"))
+                      }
+                    >
+                      {t("openRevisionMissionToRebase")}
+                    </button>
+                  </>
+                ) : (
+                  <p className="revision-rebase-guidance-fallback">
+                    {t("revisionNeedsRebaseNoMission")}
+                  </p>
+                )}
+              </div>
+            </aside>
+          ) : null}
         </header>
       }
     >

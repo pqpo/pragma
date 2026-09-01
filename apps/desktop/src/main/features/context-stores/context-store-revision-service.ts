@@ -538,9 +538,6 @@ export function createContextStoreRevisionService(options: {
       await withFileLock(jobsLockPath, async () => {
         const job = await readJob(jobId);
         if (job.revision !== expectedRevision) throw revisionConflict();
-        if (!["merged", "rejected", "needs_attention"].includes(job.state)) {
-          throw invalidState("Active revision tasks cannot be deleted.");
-        }
         await rm(jobPath(jobId));
       });
     },

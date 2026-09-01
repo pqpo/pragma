@@ -67,6 +67,16 @@ describe("Mission service state ownership", () => {
     expect(service.revision("mission-1")).toBe(2);
   });
 
+  it("returns the replaced live projection so its owner can close it", () => {
+    const service = new MissionChatService<{ close: () => Promise<void> }>(() => undefined);
+    const first = { close: async () => undefined };
+    const second = { close: async () => undefined };
+
+    expect(service.setLive("mission-1", first)).toBeUndefined();
+    expect(service.setLive("mission-1", second)).toBe(first);
+    expect(service.live("mission-1")).toBe(second);
+  });
+
   it("coalesces Work projection loads and invalidates cached projections", async () => {
     const service = new MissionWorkService<{ entries: [] }>(() => undefined);
     const projection: MissionWorkProjection = {

@@ -32,8 +32,10 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     return this.#liveChats.get(missionId);
   }
 
-  setLive(missionId: string, live: TLiveChat): void {
+  setLive(missionId: string, live: TLiveChat): TLiveChat | undefined {
+    const previous = this.#liveChats.get(missionId);
     this.#liveChats.set(missionId, live);
+    return previous;
   }
 
   async closeLiveIfCurrent(missionId: string, expected: TLiveChat): Promise<void> {

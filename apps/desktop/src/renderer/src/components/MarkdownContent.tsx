@@ -20,6 +20,10 @@ export interface StreamingMarkdownParts {
   readonly tail: string;
 }
 
+export interface StreamingMarkdownProjection extends StreamingMarkdownParts {
+  readonly source: string;
+}
+
 const STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT = 12;
 const STREAMING_MARKDOWN_CHUNK_TARGET = 8_192;
 
@@ -28,7 +32,10 @@ const STREAMING_MARKDOWN_CHUNK_TARGET = 8_192;
  * fenced code block. Stable blocks are memoized independently while the active
  * tail remains cheap plain text until the stream completes.
  */
-export function splitStreamingMarkdown(source: string): StreamingMarkdownParts {
+export function splitStreamingMarkdown(
+  source: string,
+  eagerBlockLimit = STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT,
+): StreamingMarkdownParts {
   const safeBlocks: string[] = [];
   let leadingWhitespace = "";
   let blockStart = 0;
@@ -75,9 +82,9 @@ export function splitStreamingMarkdown(source: string): StreamingMarkdownParts {
     lineStart = nextLineStart;
   }
 
-  const stableBlocks = safeBlocks.slice(0, STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT);
+  const stableBlocks = safeBlocks.slice(0, eagerBlockLimit);
   let pendingChunk = "";
-  for (const block of safeBlocks.slice(STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT)) {
+  for (const block of safeBlocks.slice(eagerBlockLimit)) {
     pendingChunk += block;
     if (pendingChunk.length < STREAMING_MARKDOWN_CHUNK_TARGET) continue;
     stableBlocks.push(pendingChunk);
@@ -89,12 +96,38 @@ export function splitStreamingMarkdown(source: string): StreamingMarkdownParts {
   };
 }
 
+export function advanceStreamingMarkdown(
+  previous: StreamingMarkdownProjection | undefined,
+  source: string,
+): StreamingMarkdownProjection {
+  if (previous === undefined || !source.startsWith(previous.source)) {
+    return { source, ...splitStreamingMarkdown(source) };
+  }
+  if (source === previous.source) return previous;
+  const appended = source.slice(previous.source.length);
+  const remainingEagerBlocks = Math.max(
+    0,
+    STREAMING_MARKDOWN_EAGER_BLOCK_LIMIT - previous.stableBlocks.length,
+  );
+  const next = splitStreamingMarkdown(previous.tail + appended, remainingEagerBlocks);
+  return {
+    source,
+    stableBlocks: [...previous.stableBlocks, ...next.stableBlocks],
+    tail: next.tail,
+  };
+}
+
 export function StreamingMarkdownContent(props: {
   readonly source: string;
   readonly codeBlockControls?: boolean | undefined;
   readonly onInternalLink?: ((id: string) => void) | undefined;
 }) {
-  const parts = useMemo(() => splitStreamingMarkdown(props.source), [props.source]);
+  const projectionRef = useRef<StreamingMarkdownProjection | undefined>(undefined);
+  const parts = useMemo(() => {
+    const projection = advanceStreamingMarkdown(projectionRef.current, props.source);
+    projectionRef.current = projection;
+    return projection;
+  }, [props.source]);
   return (
     <>
       {parts.stableBlocks.map((source, index) => (

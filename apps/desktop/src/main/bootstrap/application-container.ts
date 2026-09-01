@@ -24,18 +24,19 @@ import {
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
-  createControllerRunMissionPort,
-  createLocalHostApplication,
-  createLocalHostRunApplication,
-  createMissionControllerStore,
-  createMissionControlApplication,
-  createMissionOwnerScope,
-  createMissionQuery,
-  createMissionWatchApplication,
+  createLocalHostMissionController,
   createNativeOsKeychain,
   createSecretStore,
+  type MissionControllerStore,
+  type LocalHostRunExecutorPort,
 } from "@pragma/local-host";
-import { isUserFacingMissionOrigin } from "../../shared/contracts/index.ts";
+import { createLocalHostNodeApplication } from "@pragma/local-host/node-application";
+import {
+  isUserFacingMissionOrigin,
+  MissionExecutorOptionSchema,
+  MissionSchema,
+  MissionSummarySchema,
+} from "../../shared/contracts/index.ts";
 
 import { installAutomationHandlers } from "../features/automations/automation-ipc.ts";
 import { createAutomationService } from "../features/automations/automation-service.ts";
@@ -346,20 +347,19 @@ export async function createDesktopApplicationContainer(
         { missionId, errorCode: error.code, error },
       ),
   });
-  // Local Host owns aggregate lease persistence; Desktop Main composes it with
-  // the existing MissionStore without moving Electron or Runtime concerns into
-  // @pragma/local-host.
-  const missionControllerStore = createMissionControllerStore({ missionsPath });
-  const missionQuery = createMissionQuery({ controller: missionControllerStore });
-  const missionWatch = createMissionWatchApplication({ controller: missionControllerStore });
   const missionRunnerRef: {
     current?: ReturnType<typeof createMissionRunner>;
   } = {};
   const semanticWriteReplayRef: {
-    current?: Parameters<typeof missionControllerStore.recoverSemanticWrite>[0]["replay"];
+    current?: Parameters<MissionControllerStore["recoverSemanticWrite"]>[0]["replay"];
   } = {};
-  const ownerScope = createMissionOwnerScope({
-    controller: missionControllerStore,
+  const missionControllerRef: {
+    current?: MissionControllerStore;
+  } = {};
+  // Local Host owns aggregate lease persistence and the query/watch lifecycle;
+  // Desktop supplies only Electron-facing stop/replay hooks.
+  const missionLifecycle = createLocalHostMissionController({
+    missionsPath,
     onPollingError: ({ missionId, error, consecutiveFailures }) => {
       mainLogger.warn(
         "mission.controller_inbox_poll_failed",
@@ -377,10 +377,18 @@ export async function createDesktopApplicationContainer(
     },
     recoverSemanticWrite: async ({ missionId, guard }) => {
       const replay = semanticWriteReplayRef.current;
-      if (replay === undefined) return;
-      await missionControllerStore.recoverSemanticWrite({ missionId, guard, replay });
+      const controller = missionControllerRef.current;
+      if (replay === undefined || controller === undefined) return;
+      await controller.recoverSemanticWrite({ missionId, guard, replay });
     },
   });
+  missionControllerRef.current = missionLifecycle.controller;
+  const {
+    controller: missionControllerStore,
+    query: missionQuery,
+    watch: missionWatch,
+    ownerScope,
+  } = missionLifecycle;
   const commandExecutionProjector = createMissionCommandExecutionProjector({
     controller: missionControllerStore,
     ownerScope,
@@ -1105,41 +1113,15 @@ export async function createDesktopApplicationContainer(
   });
   missionRunnerRef.current = missionRunner;
   const localHostMissionControlAdapter = missionRunner.createLocalHostMissionControlAdapter();
-  const localHostMissionControl = createMissionControlApplication({
-    controller: missionControllerStore,
-    ownerScope,
-    consumer: localHostMissionControlAdapter.consumer,
-    assertMission: async (missionId) => {
-      await missionStore.get(missionId);
-    },
-    assertAcquisitionAllowed: localHostMissionControlAdapter.assertAcquisitionAllowed,
-    resolveStrictTarget: localHostMissionControlAdapter.resolveStrictTarget,
-    resolveExecutionTarget: localHostMissionControlAdapter.resolveExecutionTarget,
-    onOwnerStartError: ({ missionId, error }) =>
-      mainLogger.warn(
-        "mission.controller_owner_start_failed",
-        "Mission command is durable, but its owner could not be started yet.",
-        { missionId, error },
-      ),
-    client: {
-      surface: "desktop",
-      version: "desktop",
-      instanceId: randomUUID(),
-    },
-  });
   const localHostRunExecutorResolver = createDesktopLocalHostExecutorResolver({
     executors: missionExecutors,
     project: pragmaProjectStore,
   });
-  const localHostRun = createLocalHostRunApplication({
-    executors: {
-      resolve: localHostRunExecutorResolver,
-      assertStartAllowed: async (input) => await missionRunner.assertLocalHostRunAllowed(input),
-      start: async (input) => await missionRunner.startLocalHostRun(input),
-    },
-    mission: createControllerRunMissionPort(missionControllerStore, { ownerScope }),
-    commandConsumer: localHostMissionControlAdapter.consumer,
-  });
+  const localHostRunExecutor: LocalHostRunExecutorPort = {
+    resolve: localHostRunExecutorResolver,
+    assertStartAllowed: async (input) => await missionRunner.assertLocalHostRunAllowed(input),
+    start: async (input) => await missionRunner.startLocalHostRun(input),
+  };
   const memoryCurator = createDesktopMemoryCurator({
     profiles: memoryPlane.extractorProfiles,
     missions: missionStore,
@@ -1237,70 +1219,97 @@ export async function createDesktopApplicationContainer(
     memory: memoryPlane,
     runner: missionRunner,
   });
-  const localHost = createLocalHostApplication({
-    integrationCapability: async () => ({
-      schemaVersion: "pragma.integration-capability/v1",
-      protocol: "pragma.integration/v1",
-      readableVersions: ["pragma.integration/v1"],
-      migratableFromVersions: [],
-      features: [
-        "catalog.query",
-        "mission.query",
-        "mission.watch",
-        "mission.queue.read",
-        "mission.queue.list",
-        "mission.send",
-        "mission.steer",
-        "mission.respond",
-        "mission.interrupt",
-        "mission.queue.remove",
-        "mission.queue.resume",
-        "mission.queue.steer",
-        "workspace.resolve",
-        "board.shared.read",
-      ],
-    }),
-    catalog: {
-      listProjects: async () => [{ id: pragmaProjectStore.projectId }],
-      getProjectRevision: async (projectId, revision) =>
-        projectId === pragmaProjectStore.projectId
-          ? await pragmaProjectStore.openRevision(revision)
-          : undefined,
-      listExecutors: async () => await missionExecutors.list(),
-    },
-    missions: {
-      get: async (missionId) => await missionStore.get(missionId),
-      list: async () => await missionStore.list(),
-      query: missionQuery.queryMission,
+  const localHost = createLocalHostNodeApplication({
+    pragmaHome: pragmaPaths.root,
+    runtimes,
+    client: {
+      surface: "desktop",
+      version: "desktop",
+      instanceId: randomUUID(),
     },
     workspace: createWorkspaceFilesystemPort(),
-    board: {
-      list: async (input) => await missionContextStoreBrowser.list(input),
-      read: async (input) => await missionContextStoreBrowser.read(input),
-      search: async (input) =>
-        await missionContextStoreBrowser.search({
-          ...input,
-          caseSensitive: input.caseSensitive ?? false,
-        }),
-    },
-    queue: {
-      list: async (missionId) => {
-        if (missionRunner.listPromptQueue === undefined) {
-          throw new Error("Desktop ExpertSession prompt queue projection is unavailable.");
-        }
-        return await missionRunner.listPromptQueue(missionId);
+    application: {
+      catalog: {
+        listProjects: async () => [{ id: pragmaProjectStore.projectId }],
+        getProjectRevision: async (projectId, revision) =>
+          projectId === pragmaProjectStore.projectId
+            ? await pragmaProjectStore.openRevision(revision)
+            : undefined,
+        listExecutors: async () => await missionExecutors.list(),
       },
+      missions: {
+        get: async (missionId) => await missionStore.get(missionId),
+        list: async () => await missionStore.list(),
+        query: missionQuery.queryMission,
+      },
+      missionLifecycle,
+      missionControlAdapter: localHostMissionControlAdapter,
+      assertMission: async (missionId) => {
+        await missionStore.get(missionId);
+      },
+      onOwnerStartError: ({ missionId, error }) =>
+        mainLogger.warn(
+          "mission.controller_owner_start_failed",
+          "Mission command is durable, but its owner could not be started yet.",
+          { missionId, error },
+        ),
+      board: {
+        list: async ({ missionId, storeId, scopeId }) =>
+          await missionContextStoreBrowser.list({ missionId, storeId, scopeId }),
+        read: async ({ missionId, storeId, scopeId, id, start, maxBytes }) =>
+          await missionContextStoreBrowser.read({
+            missionId,
+            storeId,
+            scopeId,
+            id,
+            start,
+            maxBytes,
+          }),
+        search: async ({
+          missionId,
+          storeId,
+          scopeId,
+          query,
+          maxResults,
+          contextLines,
+          caseSensitive,
+        }) =>
+          await missionContextStoreBrowser.search({
+            missionId,
+            storeId,
+            scopeId,
+            query,
+            maxResults,
+            contextLines,
+            caseSensitive: caseSensitive ?? false,
+          }),
+      },
+      queue: {
+        list: async (missionId) => {
+          if (missionRunner.listPromptQueue === undefined) {
+            throw new Error("Desktop ExpertSession prompt queue projection is unavailable.");
+          }
+          return await missionRunner.listPromptQueue(missionId);
+        },
+      },
+      watch: missionWatch,
+      runExecutor: localHostRunExecutor,
     },
-    watch: missionWatch,
-    missionControl: { commands: localHostMissionControl },
-    runtime: { resolver: runtimes },
-    run: localHostRun,
   });
   if (localHost.missionControl === undefined || localHost.run === undefined) {
     throw new Error("Desktop Local Host control and run ports were not composed.");
   }
+  // The shared Node composition intentionally exposes unknown application
+  // payloads so it stays independent from Desktop's renderer contracts. Parse
+  // the three Desktop-facing projections once at this boundary instead of
+  // leaking casts throughout IPC handlers.
   const desktopLocalHost = {
     ...localHost,
+    getMission: async (missionId: string) =>
+      MissionSchema.parse(await localHost.getMission(missionId)),
+    listMissions: async () => MissionSummarySchema.array().parse(await localHost.listMissions()),
+    listExecutors: async () =>
+      MissionExecutorOptionSchema.array().parse(await localHost.listExecutors()),
     missionControl: localHost.missionControl,
     run: localHost.run,
   };
