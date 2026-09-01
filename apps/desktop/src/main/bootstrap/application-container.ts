@@ -100,10 +100,8 @@ import { createMissionExecutorCatalog } from "../features/missions/mission-execu
 import { installMissionHandlers } from "../features/missions/mission-ipc.ts";
 import { installMissionContextStoreBrowserHandlers } from "../features/missions/mission-context-store-browser-ipc.ts";
 import { createMissionContextStoreBrowserService } from "../features/missions/mission-context-store-browser.ts";
-import {
-  createDesktopAdapterHost,
-  createMissionRunner,
-} from "../features/missions/mission-runner.ts";
+import { createDesktopAdapterHost } from "../features/missions/mission-adapter-host.ts";
+import { createMissionRunner } from "../features/missions/mission-runner.ts";
 import { createMissionCommandExecutionProjector } from "../features/missions/mission-command-execution-projector.ts";
 import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
 import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";

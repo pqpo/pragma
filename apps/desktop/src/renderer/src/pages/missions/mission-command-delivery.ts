@@ -76,6 +76,13 @@ export function useMissionCommandDelivery(options: {
     });
   }, [options.missionId, options.subscribe]);
 
+  useEffect(() => {
+    submittedMessagesRef.current.clear();
+    setOptimisticMessages([]);
+    setPendingQueuedMessages([]);
+    setAwaitingRequestId(null);
+  }, [options.missionId]);
+
   return {
     optimisticMessages,
     setOptimisticMessages,

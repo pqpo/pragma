@@ -10,28 +10,20 @@ import { i18n } from "../../i18n/index.ts";
 import { expertAvatarSource } from "../../components/ExpertAvatar.tsx";
 import {
   applyMissionUsageHintRevision,
-  applyMissionChatPatches,
-  claimMissionClientOperation,
   copyMissionReply,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
   formatMissionHumanQuestionNotes,
-  groupMissionConversationEntries,
   hasValidMissionHumanAnswer,
   hasValidMissionHumanAnswers,
-  hidePreparingQueuedChatEntries,
-  hideInterruptedExecutionFallbackEntries,
   mergeMissionHumanAnswers,
-  mergeLatestChatPage,
-  missionChatPatchesRequireRender,
   MissionContextOperationEntry,
   MissionChatEntryView,
   MissionChatSkeleton,
   MISSION_CHAT_PAGE_SIZE,
   MISSION_WORK_CONVERSATION_PAGE_SIZE,
   MISSION_WORK_RECORD_PAGE_SIZE,
-  startMissionContextOperation,
   MissionDetailFragment,
   MissionDetailSkeleton,
   MissionMemoryActivity,
@@ -47,21 +39,28 @@ import {
   missionWorkPageRecords,
   missionWorkRecordTitle,
   missionStatusLabel,
-  missionTurnFinalReplyIds,
   workStatusLabel,
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
   resolveMissionComposerAction,
-  releaseMissionClientOperation,
-  readyPendingQueuedRequestIds,
-  resolveMissionHumanResponseAttempt,
-  shouldClearMissionThinkingPlaceholder,
-  shouldShowMissionThinkingPlaceholder,
   unavailableMcpToolName,
   upsertMissionSummary,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
+import { resolveMissionHumanResponseAttempt } from "./use-mission-human-interaction.ts";
+import {
+  claimMissionClientOperation,
+  releaseMissionClientOperation,
+} from "./mission-client-operation.ts";
+import {
+  applyMissionChatPatches,
+  groupMissionConversationEntries,
+  mergeLatestChatPage,
+  missionChatPatchesRequireRender,
+  shouldClearMissionThinkingPlaceholder,
+  shouldShowMissionThinkingPlaceholder,
+} from "./mission-conversation-model.ts";
 
 describe("MissionsPage", () => {
   it("uses bounded initial pages for Mission conversations", () => {
@@ -89,75 +88,6 @@ describe("MissionsPage", () => {
 
     expect(retry).toBe(first);
     expect(changed.requestId).toBe("changed-request");
-  });
-
-  it("identifies only the final completed Assistant reply in each Turn", () => {
-    const createdAt = "2026-07-11T00:00:00.000Z";
-    const entries = [
-      {
-        id: "turn-1-draft",
-        kind: "assistant" as const,
-        content: "draft",
-        streaming: false,
-        timelineSequence: 1,
-        createdAt,
-      },
-      {
-        id: "turn-1-final",
-        kind: "assistant" as const,
-        content: "final",
-        streaming: false,
-        timelineSequence: 1,
-        createdAt,
-      },
-      {
-        id: "turn-2-streaming",
-        kind: "assistant" as const,
-        content: "streaming",
-        streaming: true,
-        timelineSequence: 2,
-        createdAt,
-      },
-      {
-        id: "turn-2-final",
-        kind: "assistant" as const,
-        content: "done",
-        streaming: false,
-        timelineSequence: 2,
-        createdAt,
-      },
-    ];
-
-    expect([...missionTurnFinalReplyIds(entries)]).toEqual(["turn-1-final", "turn-2-final"]);
-  });
-
-  it("hides only synthetic interrupted execution fallbacks from the conversation", () => {
-    const createdAt = "2026-07-11T00:00:00.000Z";
-    const executionId = "00000000-0000-4000-8000-000000000010";
-    const interruptedFallback = {
-      id: `result:${executionId}`,
-      kind: "assistant" as const,
-      executionId,
-      content: "Execution interrupted.",
-      streaming: false,
-      createdAt,
-    };
-    const realReply = {
-      ...interruptedFallback,
-      id: "assistant:real-reply",
-    };
-    const failedFallback = {
-      ...interruptedFallback,
-      id: `result:00000000-0000-4000-8000-000000000011`,
-      executionId: "00000000-0000-4000-8000-000000000011",
-      content: "Execution failed: command exited with code 1",
-    };
-
-    expect(
-      hideInterruptedExecutionFallbackEntries([interruptedFallback, realReply, failedFallback]).map(
-        (entry) => entry.id,
-      ),
-    ).toEqual([realReply.id, failedFallback.id]);
   });
 
   it("copies the original Markdown and reports clipboard denial", async () => {
@@ -192,52 +122,6 @@ describe("MissionsPage", () => {
         execution: { ...mission.execution!, status: "waiting", waitReason: "experts" },
       }),
     ).toBe("Waiting for experts");
-  });
-  it("keeps a preparing queued message out of the conversation until delivery is known", () => {
-    const requestId = "00000000-0000-4000-8000-000000000012";
-    const entry = {
-      id: requestId,
-      kind: "user" as const,
-      content: "Adjust the implementation",
-      createdAt: "2026-07-11T00:00:02.000Z",
-    };
-
-    expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([]);
-    expect(hidePreparingQueuedChatEntries([entry], new Set())).toEqual([entry]);
-  });
-
-  it("releases a preparing queued message when it has started running", () => {
-    const requestId = "00000000-0000-4000-8000-000000000012";
-    const entry = {
-      id: requestId,
-      kind: "user" as const,
-      content: "Adjust the implementation",
-      createdAt: "2026-07-11T00:00:02.000Z",
-      delivery: {
-        requestedMode: "enqueue" as const,
-        effectiveMode: "enqueue" as const,
-        status: "running" as const,
-      },
-    };
-
-    expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([entry]);
-  });
-
-  it("makes a queued message actionable as soon as its queue item is persisted", () => {
-    const requestId = "00000000-0000-4000-8000-000000000012";
-    const ready = readyPendingQueuedRequestIds(
-      [
-        {
-          requestId,
-          content: "Adjust the implementation",
-          attachments: [],
-        },
-      ],
-      new Set([requestId]),
-      [],
-    );
-
-    expect([...ready]).toEqual([requestId]);
   });
 
   it("shows a shimmer skeleton only when no in-memory snapshot is available", () => {
@@ -878,32 +762,6 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("Browse memory store");
     expect(html).toContain("Memory activity is unavailable");
     expect(html).toContain('role="alert"');
-  });
-
-  it("reuses the failed context operation when retrying", () => {
-    const failed = [
-      {
-        id: "compact-1",
-        createdAt: "2026-07-29T00:00:00.000Z",
-        status: "failed" as const,
-        error: "provider unavailable",
-      },
-    ];
-
-    expect(
-      startMissionContextOperation(failed, {
-        id: "compact-1",
-        createdAt: "2026-07-29T00:01:00.000Z",
-        retry: true,
-      }),
-    ).toEqual([
-      {
-        id: "compact-1",
-        createdAt: "2026-07-29T00:00:00.000Z",
-        status: "running",
-        error: undefined,
-      },
-    ]);
   });
 
   it("holds a synchronous client-operation lock throughout context compaction", () => {

@@ -81,3 +81,33 @@ remaining risks so the work can resume safely after interruption.
 - MissionStore now owns aggregate locking and Mission existence checks, while projection file
   representation and compatibility are isolated behind one storage interface.
 - Desktop Node typecheck passed; Mission Store coverage passed with 41 tests.
+
+## 2026-09-01 — Phase 5 structural completion started
+
+- Re-audited MRF-501 and MRF-503 after commit `ec3fea79`. MissionRunner still owns roughly twenty
+  mutable registries, while MissionDetail owns more than forty state/ref groups and direct IPC.
+- Recorded `structural-completion-plan.md` and expanded both parent tasks into independently
+  verifiable service, hook, facade, component, and test boundaries.
+- Historical Mission storage, durable command receipts, request identity, and IPC wire shapes are
+  explicitly frozen for this phase.
+
+## 2026-09-01 — Phase 5 structural completion finished
+
+- Reduced `mission-runner.ts` to a stable 22-line facade. Desktop wiring remains in the composition
+  module; contracts, adapter host, and Chat, Work, Session, Lifecycle, and Command state owners are
+  separate modules. Mutable listeners, revisions, caches, active runs, Session identities, command
+  outcomes, and coalesced operations each have one owner.
+- Reduced `MissionsPage.tsx` to a stable page entry. Extracted the pure conversation model, live
+  conversation subscription/cache/paging hook, draft and attachment state, client-operation lock,
+  Work, human interaction, model options, Context compaction, and message presentation.
+- Removed duplicate page-size literals and moved conversation-model assertions into their owning
+  test file without copying tests. Added five service-boundary tests for coalescing, invalidation,
+  listener isolation, and state ownership.
+- Preserved Mission storage v10, every v3-v10 historical schema/fixture/migration, IPC contracts,
+  request IDs, command receipts, and visible behavior.
+- Focused Mission Store/fencing/service regression: 3 files and 48 tests passed. Renderer Mission
+  regression: 3 files and 93 tests passed. Desktop full regression: 157 files and 1010 tests passed.
+- Repository lint and typecheck passed. The first all-core run had one unrelated Interpreter cache
+  test exceed its 5-second timeout by 31 ms under concurrent load; the test passed alone (3 tests)
+  and the complete `pnpm test:core` rerun passed (10 tasks). `pnpm build` passed all 24 tasks,
+  including Desktop style, main bundle, and preload verification. `git diff --check` is clean.

@@ -31,7 +31,8 @@ import type {
 import { classifyDesktopMemoryProblem } from "../../../../shared/memory-problem.ts";
 import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
-import { applyMissionChatPatches, MissionChatEntryView } from "../missions/MissionsPage.tsx";
+import { MissionChatEntryView } from "../missions/MissionsPage.tsx";
+import { applyMissionChatPatches } from "../missions/mission-conversation-model.ts";
 
 type MemoryView =
   | "all"
