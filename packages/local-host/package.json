@@ -8,9 +8,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./wire": {
-      "types": "./dist/cli-result.d.ts",
-      "default": "./dist/cli-result.js"
+    "./node-application": {
+      "types": "./dist/node-application.d.ts",
+      "default": "./dist/node-application.js"
     }
   },
   "scripts": {

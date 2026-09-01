@@ -2,17 +2,13 @@ import { createHash } from "node:crypto";
 import { basename, isAbsolute } from "node:path";
 
 import {
-  createStaticRuntimeResolver,
-  type RuntimeAdapter,
-  type RuntimeResolver,
-} from "@pragma/core";
-import {
   createIntegrationError,
   WorkspaceSelectionSchema,
   type IntegrationCapability,
   type HumanInteractionRequestEnvelope,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
+import type { RuntimeResolver } from "@pragma/core";
 import type { HumanInteractionResponse } from "@pragma/shared";
 import type { LocalHostRunApplication } from "./run.ts";
 import type { MissionControlApplication } from "./missions/controller/mission-control.ts";
@@ -35,6 +31,7 @@ export * from "./missions/controller/schemas.ts";
 export * from "./missions/controller/pinned-binding.ts";
 export * from "./missions/controller/pinned-binding-backfill.ts";
 export * from "./missions/controller/owner-scope.ts";
+export * from "./missions/controller/composition.ts";
 export * from "./missions/controller/prompt-queue.ts";
 export * from "./missions/controller/command-payload.ts";
 export * from "./missions/command-dispatcher.ts";
@@ -59,50 +56,10 @@ export * from "./logger.ts";
 export * from "./project-revision.ts";
 export * from "./project-catalog.ts";
 export * from "./secrets/index.ts";
+export * from "./runtime-resolver.ts";
 /** Composition convenience: this is Core's shared counter, not a Host estimator. */
 export { createRuntimeTokenCounter } from "@pragma/core";
 
-/**
- * Host composition keeps concrete Runtime adapters at the application edge,
- * while the Core resolver construction remains in this Node-only adapter.
- */
-export function createLocalHostRuntimeResolver(options: {
-  readonly runtimes: readonly RuntimeAdapter[];
-  readonly defaultRuntimeId: string;
-  /** Logical IDs retained by published project revisions. */
-  readonly runtimeAliases?: Readonly<Record<string, string>> | undefined;
-}): RuntimeResolver {
-  const delegate = createStaticRuntimeResolver(options);
-  const aliases = options.runtimeAliases ?? {};
-  const resolveRuntimeId = (runtimeId: string): string => aliases[runtimeId] ?? runtimeId;
-  const restoreBindingId = <T extends { readonly runtimeId: string }>(
-    binding: T,
-    runtimeId: string,
-  ): T => ({ ...binding, runtimeId });
-  return {
-    getDefaultRuntimeId: async () => await delegate.getDefaultRuntimeId(),
-    bind: async (request = {}) => {
-      const runtimeId = request.runtimeId;
-      const resolved = await delegate.bind({
-        ...(runtimeId === undefined ? {} : { runtimeId: resolveRuntimeId(runtimeId) }),
-        ...(request.modelSelection === undefined ? {} : { modelSelection: request.modelSelection }),
-      });
-      return runtimeId === undefined
-        ? resolved
-        : { ...resolved, binding: restoreBindingId(resolved.binding, runtimeId) };
-    },
-    resolve: async ({ binding, modelSelection }) => {
-      const resolved = await delegate.resolve({
-        binding: { ...binding, runtimeId: resolveRuntimeId(binding.runtimeId) },
-        ...(modelSelection === undefined ? {} : { modelSelection }),
-      });
-      return {
-        ...resolved,
-        binding: restoreBindingId(resolved.binding, binding.runtimeId),
-      };
-    },
-  };
-}
 
 export interface WorkspaceFilesystemPort {
   readonly stat: (path: string) => Promise<{ readonly isDirectory: () => boolean }>;
@@ -197,8 +154,6 @@ export interface LocalHostApplicationPort<
   readonly resumeMission?: (input: LocalHostMissionResumeRequest) => Promise<unknown>;
   /** Durable mutation entry point shared by CLI and Host adapters. */
   readonly missionControl?: MissionControlApplication;
-  /** @deprecated Prefer missionControl; retained as a descriptive alias for CLI callers. */
-  readonly missionCommands?: MissionControlApplication;
   /** Runtime adapter selection is supplied by the Host composition root, never imported here. */
   runtimeResolver(): RuntimeResolver;
   readonly run?: LocalHostRunApplication | undefined;
@@ -337,7 +292,6 @@ export function createLocalHostApplication<
       ? {}
       : {
           missionControl: ports.missionControl.commands,
-          missionCommands: ports.missionControl.commands,
         }),
     runtimeResolver: () => ports.runtime.resolver,
     ...(ports.run === undefined ? {} : { run: ports.run }),
