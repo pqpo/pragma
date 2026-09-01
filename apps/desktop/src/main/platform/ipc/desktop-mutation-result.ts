@@ -34,6 +34,14 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
     return DesktopMutationErrorSchema.parse({
       code: integrationError.data.code,
       message: integrationError.data.message,
+      category: integrationError.data.category,
+      retryable: integrationError.data.retryable,
+      ...(integrationError.data.details === undefined
+        ? {}
+        : { details: integrationError.data.details }),
+      ...(integrationError.data.causeId === undefined
+        ? {}
+        : { causeId: integrationError.data.causeId }),
       diagnostics: [],
     });
   }

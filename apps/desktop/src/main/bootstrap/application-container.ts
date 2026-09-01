@@ -104,6 +104,7 @@ import {
   createDesktopAdapterHost,
   createMissionRunner,
 } from "../features/missions/mission-runner.ts";
+import { createMissionCommandExecutionProjector } from "../features/missions/mission-command-execution-projector.ts";
 import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
 import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
@@ -361,6 +362,13 @@ export async function createDesktopApplicationContainer(
   } = {};
   const ownerScope = createMissionOwnerScope({
     controller: missionControllerStore,
+    onPollingError: ({ missionId, error, consecutiveFailures }) => {
+      mainLogger.warn(
+        "mission.controller_inbox_poll_failed",
+        "Mission Inbox polling failed; the durable command will be retried while the owner remains healthy.",
+        { missionId, consecutiveFailures, error },
+      );
+    },
     onLeaseLost: async (missionId) => {
       await missionRunnerRef.current?.stopLocalController(missionId);
       mainLogger.warn(
@@ -374,6 +382,10 @@ export async function createDesktopApplicationContainer(
       if (replay === undefined) return;
       await missionControllerStore.recoverSemanticWrite({ missionId, guard, replay });
     },
+  });
+  const commandExecutionProjector = createMissionCommandExecutionProjector({
+    controller: missionControllerStore,
+    ownerScope,
   });
   const guardedMissionStore = createFencedMissionStore(missionStore, {
     controller: missionControllerStore,
@@ -876,6 +888,7 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.deleteExecutionState(executionIds);
     },
     onExecutionLinked: async ({ mission, executionId }) => {
+      await commandExecutionProjector.link(mission, executionId);
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.registerMemoryExecutionContext({
         executionId,
@@ -890,7 +903,8 @@ export async function createDesktopApplicationContainer(
         state: "active",
       });
     },
-    onExecutionTerminal: async ({ mission }) => {
+    onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
+      await commandExecutionProjector.terminal({ mission, executionId, status, result, error });
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.setMemoryConversationState({
         missionId: mission.id,
@@ -1103,6 +1117,12 @@ export async function createDesktopApplicationContainer(
     assertAcquisitionAllowed: localHostMissionControlAdapter.assertAcquisitionAllowed,
     resolveStrictTarget: localHostMissionControlAdapter.resolveStrictTarget,
     resolveExecutionTarget: localHostMissionControlAdapter.resolveExecutionTarget,
+    onOwnerStartError: ({ missionId, error }) =>
+      mainLogger.warn(
+        "mission.controller_owner_start_failed",
+        "Mission command is durable, but its owner could not be started yet.",
+        { missionId, error },
+      ),
     client: {
       surface: "desktop",
       version: "desktop",

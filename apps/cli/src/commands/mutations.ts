@@ -66,7 +66,7 @@ export async function executeMutationCommand(
   if ("detach" in command && command.detach) {
     return { result: asJsonValue(submission.operation), detached: true };
   }
-  const operation = await control.wait({
+  const operation = await control.waitForTerminal({
     missionId: command.missionId,
     requestId,
     timeoutMs: command.ackTimeoutSeconds * 1_000,
@@ -143,7 +143,7 @@ async function waitForMutationExecution(options: {
       payload: { kind: "respond", response },
       target: { interactionId: interaction.interactionId },
     });
-    const responseOperation = await options.control.wait({
+    const responseOperation = await options.control.waitForTerminal({
       missionId: options.command.missionId,
       requestId: responseRequestId,
       timeoutMs: options.command.ackTimeoutSeconds * 1_000,

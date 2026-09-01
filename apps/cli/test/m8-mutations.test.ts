@@ -73,7 +73,8 @@ function createMutationHost(
   );
   const missionControl = {
     submit,
-    wait,
+    waitForAcceptance: wait,
+    waitForTerminal: wait,
     waitExecution,
   } as unknown as MissionControlApplication;
   return {
@@ -199,7 +200,11 @@ describe("M8 mutation and queue command surface", () => {
               run: { start: vi.fn() },
             } as unknown as CliLocalHost)
           : ({
-              missionControl: { submit: vi.fn(), wait: vi.fn() },
+              missionControl: {
+                submit: vi.fn(),
+                waitForAcceptance: vi.fn(),
+                waitForTerminal: vi.fn(),
+              },
             } as unknown as CliLocalHost);
 
       await expect(

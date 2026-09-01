@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
@@ -9,6 +10,35 @@ import {
 } from "../../features/projects/pragma-project-store.ts";
 
 describe("runDesktopMutation", () => {
+  it("preserves IntegrationError recovery fields across the IPC boundary", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw createIntegrationError({
+        code: "COMMAND_ACCEPTANCE_TIMEOUT",
+        category: "conflict",
+        message: "The durable command is still pending.",
+        details: {
+          missionId: "22222222-2222-4222-8222-222222222222",
+          requestId: "11111111-1111-4111-8111-111111111111",
+        },
+      });
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "COMMAND_ACCEPTANCE_TIMEOUT",
+        message: "The durable command is still pending.",
+        category: "conflict",
+        retryable: true,
+        details: {
+          missionId: "22222222-2222-4222-8222-222222222222",
+          requestId: "11111111-1111-4111-8111-111111111111",
+        },
+        diagnostics: [],
+      },
+    });
+  });
+
   it("returns successful values in a transport-safe envelope", async () => {
     await expect(runDesktopMutation(async () => ({ revision: 3 }))).resolves.toEqual({
       ok: true,

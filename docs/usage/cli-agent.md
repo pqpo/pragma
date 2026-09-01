@@ -317,16 +317,16 @@ retryable=true 只表示存在某种恢复路径，不表示可以原样重放�
 
 ### 7.2 错误码与退出码分组
 
-| 分组               | 错误码                                                                                                                                                                                                             | 退出码 | 默认 retryable                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -----: | ---------------------------------------------------------------- |
-| usage              | INVALID_ARGUMENT、INVALID_FORMAT、CURSOR_INVALID、WORKSPACE_REQUIRED、INTERACTIVE_TTY_REQUIRED、INPUT_SCHEMA_INVALID                                                                                               |      2 | false                                                            |
-| lookup             | NOT_FOUND、EXECUTOR_NOT_FOUND、MISSION_NOT_FOUND、BOARD_ITEM_NOT_FOUND、WORKSPACE_NOT_FOUND                                                                                                                        |      3 | false                                                            |
-| conflict / command | CURSOR_EXPIRED、IDEMPOTENCY_CONFLICT、MISSION_LEASE_HELD、MISSION_FENCING_REJECTED、COMMAND_REJECTED、COMMAND_EXPIRED、COMMAND_ACK_TIMEOUT、STEER_TARGET_NOT_ACTIVE、STEER_TARGET_CHANGED、INTERACTION_NOT_PENDING |      4 | 按 code 固定；CURSOR_EXPIRED、lease/fencing、ack timeout 为 true |
-| dependency         | DEPENDENCY_UNAVAILABLE、RUNTIME_UNAVAILABLE、KEYCHAIN_UNAVAILABLE、SECRET_MIGRATION_REQUIRED、SECRET_STORE_LOCKED                                                                                                  |      5 | migration false，其余 true                                       |
-| permission         | WORKSPACE_ACCESS_DENIED、PERMISSION_DENIED                                                                                                                                                                         |      6 | false                                                            |
-| protocol / storage | PROTOCOL_VERSION_UNSUPPORTED、STORAGE_VERSION_UNSUPPORTED、STORAGE_CORRUPTED                                                                                                                                       |      7 | false                                                            |
-| execution          | EXECUTION_FAILED、INTERNAL_ERROR                                                                                                                                                                                   |     10 | cause-dependent                                                  |
-| interrupted        | INTERRUPTED                                                                                                                                                                                                        |    130 | false                                                            |
+| 分组               | 错误码                                                                                                                                                                                                                                            | 退出码 | 默认 retryable                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -----: | -------------------------------------------------------------------- |
+| usage              | INVALID_ARGUMENT、INVALID_FORMAT、CURSOR_INVALID、WORKSPACE_REQUIRED、INTERACTIVE_TTY_REQUIRED、INPUT_SCHEMA_INVALID                                                                                                                              |      2 | false                                                                |
+| lookup             | NOT_FOUND、EXECUTOR_NOT_FOUND、MISSION_NOT_FOUND、BOARD_ITEM_NOT_FOUND、WORKSPACE_NOT_FOUND                                                                                                                                                       |      3 | false                                                                |
+| conflict / command | CURSOR_EXPIRED、IDEMPOTENCY_CONFLICT、MISSION_LEASE_HELD、MISSION_FENCING_REJECTED、COMMAND_REJECTED、COMMAND_EXPIRED、COMMAND_ACCEPTANCE_TIMEOUT、COMMAND_RESULT_TIMEOUT、STEER_TARGET_NOT_ACTIVE、STEER_TARGET_CHANGED、INTERACTION_NOT_PENDING |      4 | 按 code 固定；CURSOR_EXPIRED、lease/fencing、command timeout 为 true |
+| dependency         | DEPENDENCY_UNAVAILABLE、RUNTIME_UNAVAILABLE、KEYCHAIN_UNAVAILABLE、SECRET_MIGRATION_REQUIRED、SECRET_STORE_LOCKED                                                                                                                                 |      5 | migration false，其余 true                                           |
+| permission         | WORKSPACE_ACCESS_DENIED、PERMISSION_DENIED                                                                                                                                                                                                        |      6 | false                                                                |
+| protocol / storage | PROTOCOL_VERSION_UNSUPPORTED、STORAGE_VERSION_UNSUPPORTED、STORAGE_CORRUPTED                                                                                                                                                                      |      7 | false                                                                |
+| execution          | EXECUTION_FAILED、INTERNAL_ERROR                                                                                                                                                                                                                  |     10 | cause-dependent                                                      |
+| interrupted        | INTERRUPTED                                                                                                                                                                                                                                       |    130 | false                                                                |
 
 COMMAND_REJECTED 的 recovery 还要读取 details.reason；不能只根据 category 做动作。
 EXECUTION_FAILED 与 INTERNAL_ERROR 的 retryable 由生产者按原因决定。
@@ -335,7 +335,8 @@ EXECUTION_FAILED 与 INTERNAL_ERROR 的 retryable 由生产者按原因决定。
 
 | 错误码或状态                                                                                            | recovery 动作                                          | Agent 应做什么                                                                                       |
 | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| COMMAND_ACK_TIMEOUT                                                                                     | reuseRequestId + retryWithSamePayload                  | 命令已经 durable 但 ack 未确认；短退避后以相同 request ID 和完全相同语义 payload 重发，不生成新 ID   |
+| COMMAND_ACCEPTANCE_TIMEOUT                                                                              | reuseRequestId + retryWithSamePayload                  | 命令已 durable，但 owner 尚未确认接收；短退避后以相同 request ID 和完全相同 payload 重发             |
+| COMMAND_RESULT_TIMEOUT                                                                                  | queryOperation                                         | owner 已接收命令但结果尚未完成；查询同一 operation，不能据此重复产生新语义命令                       |
 | MISSION_LEASE_HELD、MISSION_FENCING_REJECTED                                                            | reuseRequestId + retryWithSamePayload                  | 等待 owner/lease 竞争缓解后精确重试                                                                  |
 | DEPENDENCY_UNAVAILABLE、RUNTIME_UNAVAILABLE、KEYCHAIN_UNAVAILABLE、SECRET_STORE_LOCKED                  | retryWithSamePayload；run/mutation 另加 reuseRequestId | 依赖恢复后重试；副作用命令必须保留原 request ID                                                      |
 | INTERNAL_ERROR 且 retryable=true                                                                        | retryWithSamePayload；run/mutation 另加 reuseRequestId | 只有生产者明确判定为暂时性时才精确重试                                                               |
@@ -405,7 +406,8 @@ schemaVersion 或 schema 校验失败时，回退到：
    failed 读取 Mission result/error；interrupted 收尾且不自动重启；detached 只表示
    本地 watcher 停止、Mission 仍可继续。Steer/interrupt/queue steer 先读取最新
    Execution 并带 --expected-execution；若 stale/changed，执行 refresh，不要盲目
-   重试到新的 Execution。COMMAND_ACK_TIMEOUT 复用原命令 ID 和 payload；
+   重试到新的 Execution。COMMAND_ACCEPTANCE_TIMEOUT 复用原命令 ID 和 payload；
+   COMMAND_RESULT_TIMEOUT 查询原 operation；
    INTERACTION_NOT_PENDING 不重复回答。
 10. **处理 subprocess deadline。** 外部 timeout 只终止本地 CLI 进程；它不等价于
     mission interrupt，也不代表 Mission 已取消。恢复时使用已持久化的原 request
@@ -508,7 +510,7 @@ pragma.log/v1，也不能等待一个不存在的 stream.end。
 
 ### 11.2 JSON failure with recovery hint
 
-下面的结果对应进程退出码 4。COMMAND_ACK_TIMEOUT 的 retryable=true 与两个
+下面的结果对应进程退出码 4。COMMAND_ACCEPTANCE_TIMEOUT 的 retryable=true 与两个
 recovery flag 组合表示“同 ID、同 payload 重发”；它不表示创建新 Mission。
 
 ```json
@@ -520,8 +522,8 @@ recovery flag 组合表示“同 ID、同 payload 重发”；它不表示创建
   "missionId": "22222222-2222-4222-8222-222222222222",
   "error": {
     "schemaVersion": "pragma.integration-error/v1",
-    "code": "COMMAND_ACK_TIMEOUT",
-    "message": "The command acknowledgement timed out.",
+    "code": "COMMAND_ACCEPTANCE_TIMEOUT",
+    "message": "The command acceptance timed out.",
     "retryable": true,
     "category": "conflict",
     "details": {

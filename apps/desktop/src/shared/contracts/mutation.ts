@@ -3,6 +3,7 @@ import {
   PragmaResourceRefSchema,
   PragmaSemanticResourceRefSchema,
 } from "@pragma/interpreter/ast";
+import { IntegrationErrorCategorySchema, JsonObjectSchema } from "@pragma/shared/integration";
 import { PragmaBundleDependencyReadinessSchema } from "./bundles.ts";
 import { z } from "zod";
 
@@ -46,6 +47,10 @@ export const DesktopMutationErrorSchema = z
   .object({
     code: z.string().trim().min(1).max(100),
     message: z.string().min(1).max(10_000),
+    category: IntegrationErrorCategorySchema.optional(),
+    retryable: z.boolean().optional(),
+    details: JsonObjectSchema.optional(),
+    causeId: z.string().uuid().optional(),
     diagnostics: z.array(PragmaDiagnosticSchema).default([]),
     conflict: DesktopMutationConflictSchema.optional(),
     revisionFailure: DesktopProjectRevisionFailureSchema.optional(),

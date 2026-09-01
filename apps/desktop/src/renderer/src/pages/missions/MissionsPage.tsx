@@ -80,6 +80,12 @@ import { localizedMissionError } from "../../lib/mission-errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
+import {
+  createMissionSendAttempt,
+  useMissionCommandDelivery,
+  type LocalMissionUserMessage,
+  type PendingMissionQueuedMessage,
+} from "./mission-command-delivery.ts";
 import { runtimeDisplayName, type RuntimeDisplayIdentity } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
@@ -577,16 +583,14 @@ export function MissionsPage(props: {
               const api = desktopApi();
               if (api === undefined) return;
               try {
-                const acceptance = await api.sendMissionMessage({
+                await api.sendMissionMessage({
                   id: selectedMission.id,
                   content,
                   requestId,
                   attachments: [...attachments],
                   mode,
                 });
-                replaceMission(acceptance.mission);
                 setError(null);
-                return { effectiveMode: acceptance.effectiveMode };
               } catch (sendError) {
                 setError(missionError(sendError));
                 throw sendError;
@@ -1299,20 +1303,6 @@ function comparePinnedMissions(
   return right.updatedAt.localeCompare(left.updatedAt);
 }
 
-interface LocalMissionUserMessage {
-  readonly id: string;
-  readonly content: string;
-  readonly createdAt: string;
-  readonly attachments: readonly ExpertPromptAttachment[];
-  readonly status: "pending" | "failed";
-}
-
-interface PendingMissionQueuedMessage {
-  readonly requestId: string;
-  readonly content: string;
-  readonly attachments: readonly ExpertPromptAttachment[];
-}
-
 export interface MissionHumanResponseAttempt {
   readonly requestId: string;
   readonly responseKey: string;
@@ -1562,12 +1552,7 @@ export function MissionDetailFragment(props: {
   const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
     {},
   );
-  const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
-  const [pendingQueuedMessages, setPendingQueuedMessages] = useState<PendingMissionQueuedMessage[]>(
-    [],
-  );
   const [contextOperations, setContextOperations] = useState<LocalMissionContextOperation[]>([]);
-  const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
   const [clientOperation, setClientOperation] = useState<MissionClientOperationState>({
     kind: "idle",
   });
@@ -1605,6 +1590,23 @@ export function MissionDetailFragment(props: {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [chatSyncError, setChatSyncError] = useState<string | null>(null);
   const [chatRefreshRevision, setChatRefreshRevision] = useState(0);
+  const {
+    optimisticMessages,
+    setOptimisticMessages,
+    pendingQueuedMessages,
+    setPendingQueuedMessages,
+    awaitingRequestId,
+    setAwaitingRequestId,
+    recordSubmission,
+    discardSubmission,
+  } = useMissionCommandDelivery({
+    missionId: props.mission.id,
+    subscribe: desktopApi()?.subscribeMissionCommandOutcomes,
+    onApplied: () => setChatRefreshRevision((current) => current + 1),
+    onRejected: (outcome) => {
+      if (outcome.error !== undefined) setOptionsError(missionError(outcome.error));
+    },
+  });
   const [humanQuestionIndex, setHumanQuestionIndex] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
@@ -1617,6 +1619,7 @@ export function MissionDetailFragment(props: {
   const [humanCustomAnswers, setHumanCustomAnswers] = useState<
     Record<string, Record<string, string>>
   >({});
+
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
   const liveEntryStore = useMemo(() => new MissionLiveEntryStore(), [props.mission.id]);
@@ -2384,50 +2387,56 @@ export function MissionDetailFragment(props: {
     setQueuedMessageActions(next);
   };
 
-  const send = async () => {
-    const content = draft.trim();
+  const send = async (retry?: LocalMissionUserMessage) => {
+    const content = retry?.content ?? draft.trim();
     if (content === "" || isFlow) return;
     const operationToken = beginClientOperation("sending");
     if (operationToken === undefined) return;
-    const requestId = crypto.randomUUID();
-    const optimistic: LocalMissionUserMessage = {
-      id: requestId,
+    const optimistic = createMissionSendAttempt({
       content,
-      createdAt: new Date().toISOString(),
-      attachments: [...attachments],
-      status: "pending",
-    };
+      attachments,
+      retry,
+      createRequestId: () => crypto.randomUUID(),
+      now: () => new Date().toISOString(),
+    });
+    const requestId = optimistic.id;
+    recordSubmission(optimistic, retry?.retryMode === "new-request" ? retry.id : undefined);
     const shouldPrepareQueuedMessage = executionActive;
-    setDraft("");
-    const sentAttachmentIds = attachments.map((attachment) => attachment.id);
+    if (retry === undefined) setDraft("");
+    const sentAttachmentIds = optimistic.attachments.map((attachment) => attachment.id);
     const sentAttachmentPreviews = attachmentPreviews;
     let discardSentDrafts = false;
-    attachmentIdsRef.current = [];
-    setAttachments([]);
-    setAttachmentPreviews({});
+    if (retry === undefined) {
+      attachmentIdsRef.current = [];
+      setAttachments([]);
+      setAttachmentPreviews({});
+    }
     if (shouldPrepareQueuedMessage) {
-      setPendingQueuedMessages((current) => [
-        ...current,
-        { requestId, content, attachments: optimistic.attachments },
-      ]);
+      setPendingQueuedMessages((current) =>
+        current.some((message) => message.requestId === requestId)
+          ? current
+          : [...current, { requestId, content, attachments: optimistic.attachments }],
+      );
     } else {
-      setOptimisticMessages((current) => [...current, optimistic]);
+      setOptimisticMessages((current) =>
+        (retry?.retryMode === "new-request"
+          ? current.filter((message) => message.id !== retry.id)
+          : current
+        ).some((message) => message.id === requestId)
+          ? current.map((message) => (message.id === requestId ? optimistic : message))
+          : [
+              ...(retry?.retryMode === "new-request"
+                ? current.filter((message) => message.id !== retry.id)
+                : current),
+              optimistic,
+            ],
+      );
       setAwaitingRequestId(requestId);
     }
     followLatestRef.current = true;
     try {
-      const acceptance = await props.onSend?.(
-        content,
-        requestId,
-        optimistic.attachments,
-        "enqueue",
-      );
-      setDeliveryNotice(
-        acceptance !== undefined && acceptance.effectiveMode !== "enqueue"
-          ? t("steerQueued", { ns: "missions" })
-          : undefined,
-      );
-      discardSentDrafts = true;
+      await props.onSend?.(content, requestId, optimistic.attachments, "enqueue");
+      setDeliveryNotice(undefined);
       if (shouldPrepareQueuedMessage) {
         const api = desktopApi();
         const snapshot =
@@ -2450,6 +2459,7 @@ export function MissionDetailFragment(props: {
               .catch(() => undefined);
       if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
       const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
+      if (persisted) discardSubmission(requestId);
       discardSentDrafts = persisted;
       setPendingQueuedMessages((current) =>
         current.filter((message) => message.requestId !== requestId),
@@ -2461,11 +2471,13 @@ export function MissionDetailFragment(props: {
             ? current.filter((message) => message.id !== requestId)
             : current.some((message) => message.id === requestId)
               ? current.map((message) =>
-                  message.id === requestId ? { ...message, status: "failed" } : message,
+                  message.id === requestId
+                    ? { ...message, status: "failed", retryMode: "same-request" }
+                    : message,
                 )
-              : [...current, { ...optimistic, status: "failed" }],
+              : [...current, { ...optimistic, status: "failed", retryMode: "same-request" }],
       );
-      if (!persisted && optimistic.attachments.length > 0) {
+      if (retry === undefined && !persisted && optimistic.attachments.length > 0) {
         setDraft(content);
         attachmentIdsRef.current = sentAttachmentIds;
         setAttachments(optimistic.attachments);
@@ -3194,6 +3206,12 @@ export function MissionDetailFragment(props: {
                       message={block.item.entry}
                       missionId={props.mission.id}
                       key={block.item.entry.id}
+                      retryDisabled={clientOperationBusy}
+                      onRetry={
+                        block.item.entry.retryMode !== undefined
+                          ? (message) => void send(message)
+                          : undefined
+                      }
                     />
                   ) : block.item.type === "context-operation" ? (
                     <MissionContextOperationEntry
@@ -4583,6 +4601,8 @@ export function unavailableMcpToolName(error: string): string | undefined {
 function LocalMissionUserMessageView(props: {
   readonly message: LocalMissionUserMessage;
   readonly missionId: string;
+  readonly retryDisabled?: boolean | undefined;
+  readonly onRetry?: ((message: LocalMissionUserMessage) => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
   return (
@@ -4599,7 +4619,20 @@ function LocalMissionUserMessageView(props: {
           missionId={props.missionId}
         />
         <MissionMessageContent source={props.message.content} />
-        {props.message.status === "failed" ? <small>{t("messageSendFailed")}</small> : null}
+        {props.message.status === "failed" ? (
+          <small>
+            {t("messageSendFailed")}
+            {props.onRetry === undefined ? null : (
+              <button
+                type="button"
+                disabled={props.retryDisabled}
+                onClick={() => props.onRetry?.(props.message)}
+              >
+                {t("retryChatSync")}
+              </button>
+            )}
+          </small>
+        ) : null}
       </div>
     </div>
   );

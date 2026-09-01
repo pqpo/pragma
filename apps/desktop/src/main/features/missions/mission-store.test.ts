@@ -1502,6 +1502,14 @@ describe("mission store", { timeout: 30_000 }, () => {
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v10");
+    for (const version of ["v3", "v4", "v5"]) {
+      await expect(
+        readFile(
+          join(root, "missions", created.id, "migration-backups", `mission.${version}.yaml`),
+          "utf8",
+        ),
+      ).resolves.toContain(`schemaVersion: pragma.mission/${version}`);
+    }
 
     const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     future["schemaVersion"] = "pragma.mission/v99";
@@ -1529,12 +1537,53 @@ describe("mission store", { timeout: 30_000 }, () => {
       origin: { type: "user" },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
+    await expect(
+      readFile(join(root, "missions", created.id, "migration-backups", "mission.v5.yaml"), "utf8"),
+    ).resolves.toContain("schemaVersion: pragma.mission/v5");
     expect(
       await readFile(
         join(root, "missions", created.id, "migration-backups", "mission.v6.yaml"),
         "utf8",
       ),
     ).toContain("schemaVersion: pragma.mission/v6");
+  });
+
+  it("replays an interrupted v5-to-v6 migration journal before business parsing", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Replay early migration",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const directory = join(root, "missions", created.id);
+    const manifestPath = join(directory, "mission.yaml");
+    const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    legacy["schemaVersion"] = "pragma.mission/v5";
+    delete legacy["origin"];
+    delete legacy["contextMounts"];
+    const target = { ...legacy, schemaVersion: "pragma.mission/v6", origin: { type: "user" } };
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+    await writeFile(
+      join(directory, ".schema-migration.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-schema-migration/v1",
+        missionId: created.id,
+        fromVersion: "pragma.mission/v5",
+        toVersion: "pragma.mission/v6",
+        target,
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v10",
+      origin: { type: "user" },
+    });
+    await expect(
+      readFile(join(directory, ".schema-migration.transaction.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("migrates v7 Missions to empty Mission Knowledge references with a backup", async () => {

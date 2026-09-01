@@ -220,7 +220,7 @@ describe("MissionControllerStore", () => {
       }, 10);
     });
     await expect(
-      store.waitOperation({
+      store.waitForTerminalOperation({
         missionId,
         requestId: command.request.requestId,
         timeoutMs: 1_000,
@@ -230,25 +230,50 @@ describe("MissionControllerStore", () => {
     await processing;
   });
 
-  it("returns COMMAND_ACK_TIMEOUT while keeping a queued operation durable", async () => {
+  it("returns COMMAND_ACCEPTANCE_TIMEOUT while keeping a queued operation durable", async () => {
     const store = await createStore();
     const command = commandInput("send", "00000000-0000-4000-8000-000000000036");
     await store.appendCommand(command);
 
     await expect(
-      store.waitOperation({
+      store.waitForAcceptanceOperation({
         missionId,
         requestId: command.request.requestId,
         timeoutMs: 10,
         pollIntervalMs: 1,
       }),
     ).rejects.toMatchObject({
-      code: "COMMAND_ACK_TIMEOUT",
+      code: "COMMAND_ACCEPTANCE_TIMEOUT",
       details: { missionId, requestId: command.request.requestId, timeoutMs: 10 },
     });
     await expect(
       store.getOperation({ missionId, requestId: command.request.requestId }),
     ).resolves.toMatchObject({ state: "queued" });
+  });
+
+  it("reports repeated polling failures and relinquishes the unhealthy owner", async () => {
+    const store = await createStore();
+    const onPollingError = vi.fn();
+    const onLeaseLost = vi.fn();
+    const poller = store.startPolling({
+      missionId,
+      guard: () => {
+        throw new Error("aggregate unavailable");
+      },
+      consumer: { apply: async () => ({ result: {} }) },
+      initialDelayMs: 1,
+      maxDelayMs: 4,
+      jitter: () => 0,
+      onPollingError,
+      onLeaseLost,
+    });
+
+    await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), {
+      timeout: 200,
+      interval: 5,
+    });
+    expect(onPollingError.mock.calls.map((call) => call[0].consecutiveFailures)).toEqual([1, 2, 3]);
+    await poller.stop();
   });
 
   it("commits a semantic-write event after concurrently advanced Inbox poller events", async () => {

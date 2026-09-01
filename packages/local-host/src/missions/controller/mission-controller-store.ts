@@ -302,7 +302,14 @@ export interface MissionControllerStore {
     readonly result?: Record<string, unknown> | undefined;
     readonly error?: Record<string, unknown> | undefined;
   }): Promise<MissionOperationProjection>;
-  waitOperation(input: {
+  waitForAcceptanceOperation(input: {
+    readonly missionId: string;
+    readonly requestId: string;
+    /** Maximum wall-clock time to wait for an owner to accept the command. */
+    readonly timeoutMs?: number | undefined;
+    readonly pollIntervalMs?: number | undefined;
+  }): Promise<MissionOperationProjection>;
+  waitForTerminalOperation(input: {
     readonly missionId: string;
     readonly requestId: string;
     /** Maximum wall-clock time to wait for a terminal operation projection. */
@@ -332,6 +339,12 @@ export interface MissionControllerStore {
     readonly guard: MissionControllerGuardSource;
     readonly consumer: MissionCommandConsumer;
     readonly onLeaseLost: () => Promise<void> | void;
+    readonly onPollingError?:
+      | ((input: {
+          readonly error: unknown;
+          readonly consecutiveFailures: number;
+        }) => Promise<void> | void)
+      | undefined;
     readonly initialDelayMs?: number;
     readonly maxDelayMs?: number;
     readonly jitter?: () => number;
@@ -1650,31 +1663,16 @@ export function createMissionControllerStore(options: {
         return operation;
       });
     },
-    async waitOperation(input) {
-      const timeoutMs = input.timeoutMs ?? 30_000;
-      const pollIntervalMs = input.pollIntervalMs ?? 100;
-      assertWaitDuration(timeoutMs, "timeoutMs");
-      assertWaitDuration(pollIntervalMs, "pollIntervalMs");
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const operation = await this.getOperation({
-          missionId: input.missionId,
-          requestId: input.requestId,
-        });
-        if (operation !== undefined && isTerminalOperation(operation.state)) return operation;
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        await delay(Math.min(pollIntervalMs, remaining));
-      }
-      throw createIntegrationError({
-        code: "COMMAND_ACK_TIMEOUT",
-        category: "conflict",
-        message: "Mission command acknowledgement timed out; the command remains durable.",
-        details: {
-          missionId: input.missionId,
-          requestId: input.requestId,
-          timeoutMs,
-        },
+    async waitForAcceptanceOperation(input) {
+      return await waitForOperation(input, (operation) => operation.state !== "queued", {
+        code: "COMMAND_ACCEPTANCE_TIMEOUT",
+        message: "Mission command acceptance timed out; the command remains durable.",
+      });
+    },
+    async waitForTerminalOperation(input) {
+      return await waitForOperation(input, (operation) => isTerminalOperation(operation.state), {
+        code: "COMMAND_RESULT_TIMEOUT",
+        message: "Mission command result timed out; the command remains durable.",
       });
     },
     async listOperations(input) {
@@ -1720,6 +1718,7 @@ export function createMissionControllerStore(options: {
       let stopped = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
       let delayMs = initialDelayMs;
+      let consecutiveFailures = 0;
       const schedule = (): void => {
         if (stopped) return;
         const jitter = Math.max(-0.25, Math.min(0.25, input.jitter?.() ?? 0));
@@ -1731,10 +1730,23 @@ export function createMissionControllerStore(options: {
         try {
           const guard = typeof input.guard === "function" ? input.guard() : input.guard;
           const command = await this.processNext({ ...input, guard });
+          consecutiveFailures = 0;
           delayMs = command === undefined ? Math.min(maxDelayMs, delayMs * 2) : initialDelayMs;
           schedule();
         } catch (error) {
           if (isFencingError(error)) {
+            stopped = true;
+            await input.onLeaseLost();
+            return;
+          }
+          consecutiveFailures += 1;
+          delayMs = Math.min(maxDelayMs, Math.max(initialDelayMs, delayMs * 2));
+          try {
+            await input.onPollingError?.({ error, consecutiveFailures });
+          } catch {
+            // Diagnostics must not replace the original polling failure.
+          }
+          if (consecutiveFailures >= 3) {
             stopped = true;
             await input.onLeaseLost();
             return;
@@ -1751,6 +1763,46 @@ export function createMissionControllerStore(options: {
       };
     },
   };
+
+  async function waitForOperation(
+    input: {
+      readonly missionId: string;
+      readonly requestId: string;
+      readonly timeoutMs?: number | undefined;
+      readonly pollIntervalMs?: number | undefined;
+    },
+    satisfied: (operation: MissionOperationProjection) => boolean,
+    timeout: {
+      readonly code: "COMMAND_ACCEPTANCE_TIMEOUT" | "COMMAND_RESULT_TIMEOUT";
+      readonly message: string;
+    },
+  ): Promise<MissionOperationProjection> {
+    const timeoutMs = input.timeoutMs ?? 30_000;
+    const pollIntervalMs = input.pollIntervalMs ?? 100;
+    assertWaitDuration(timeoutMs, "timeoutMs");
+    assertWaitDuration(pollIntervalMs, "pollIntervalMs");
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const operation = await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        return (await readState(input.missionId)).operations[input.requestId];
+      });
+      if (operation !== undefined && satisfied(operation)) return operation;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await delay(Math.min(pollIntervalMs, remaining));
+    }
+    throw createIntegrationError({
+      code: timeout.code,
+      category: "conflict",
+      message: timeout.message,
+      details: {
+        missionId: input.missionId,
+        requestId: input.requestId,
+        timeoutMs,
+      },
+    });
+  }
 }
 
 function nextFencingToken(current: string): string {

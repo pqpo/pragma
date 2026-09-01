@@ -3869,7 +3869,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
     });
     await expect(
-      control.wait({ missionId: mission.id, requestId: responseRequestId }),
+      control.waitForTerminal({ missionId: mission.id, requestId: responseRequestId }),
     ).resolves.toMatchObject({ state: "applied" });
     await vi.waitFor(
       async () =>
@@ -4127,7 +4127,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
     });
     await expect(
-      control.wait({ missionId: mission.id, requestId: followupRequestId }),
+      control.waitForTerminal({ missionId: mission.id, requestId: followupRequestId }),
     ).resolves.toMatchObject({ state: "applied" });
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       pendingInteractions: [expect.objectContaining({ interactionId })],
@@ -4145,7 +4145,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       payload: { kind: "queue.try-steer", requestId: followupRequestId },
     });
     await expect(
-      control.wait({ missionId: mission.id, requestId: trySteerRequestId }),
+      control.waitForTerminal({ missionId: mission.id, requestId: trySteerRequestId }),
     ).resolves.toMatchObject({
       state: "applied",
       result: { queueSteer: { outcome: "retained" } },
@@ -4166,7 +4166,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       payload: { kind: "queue.remove", requestId: followupRequestId },
     });
     await expect(
-      control.wait({ missionId: mission.id, requestId: removeRequestId }),
+      control.waitForTerminal({ missionId: mission.id, requestId: removeRequestId }),
     ).resolves.toMatchObject({ state: "applied" });
 
     const responseRequestId = "50000000-0000-4000-8000-000000000003";
@@ -4181,7 +4181,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
     });
     await expect(
-      control.wait({ missionId: mission.id, requestId: responseRequestId }),
+      control.waitForTerminal({ missionId: mission.id, requestId: responseRequestId }),
     ).resolves.toMatchObject({ state: "applied" });
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),

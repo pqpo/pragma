@@ -128,6 +128,7 @@ export interface LocalHostRunExecutorPort {
 
 export interface LocalHostRunMissionPort {
   readonly controller: MissionControllerStore;
+  readonly bindConsumer?: ((consumer: MissionCommandConsumer) => void) | undefined;
   readonly claim: (missionId: string, claimId: string) => Promise<MissionControllerGuard>;
   readonly append: (
     missionId: string,
@@ -141,13 +142,6 @@ export interface LocalHostRunMissionPort {
     readonly guard: MissionControllerGuard;
     readonly binding: MissionPinnedBinding;
   }) => Promise<{ readonly disposition: "appended" | "existing" }>;
-  readonly startPolling?: (input: {
-    readonly missionId: string;
-    readonly consumer: MissionCommandConsumer;
-    readonly initialDelayMs?: number | undefined;
-    readonly maxDelayMs?: number | undefined;
-    readonly jitter?: (() => number) | undefined;
-  }) => Promise<{ stop(): Promise<void> }>;
   readonly release: (missionId: string) => Promise<void>;
   readonly releaseAfterLowerLevel: (input: {
     readonly missionId: string;
@@ -225,6 +219,16 @@ export function createLocalHostRunApplication(options: {
   readonly commandConsumer?: MissionCommandConsumer | undefined;
   readonly redactor?: RunRedactor | (() => RunRedactor) | undefined;
 }): LocalHostRunApplication {
+  if (options.commandConsumer !== undefined) {
+    if (options.mission.bindConsumer === undefined) {
+      throw createIntegrationError({
+        code: "DEPENDENCY_UNAVAILABLE",
+        category: "dependency",
+        message: "Mission owner consumer binding is not available in this Host composition.",
+      });
+    }
+    options.mission.bindConsumer(options.commandConsumer);
+  }
   const startRun = async (input: {
     readonly request: LocalHostRunRequest;
     readonly target: RunMissionTarget;
@@ -477,19 +481,6 @@ export function createLocalHostRunApplication(options: {
           executionId: handle.executionId,
         });
       }
-      if (options.commandConsumer !== undefined) {
-        if (options.mission.startPolling === undefined) {
-          throw createIntegrationError({
-            code: "DEPENDENCY_UNAVAILABLE",
-            category: "dependency",
-            message: "Mission Inbox polling is not available in this Host composition.",
-          });
-        }
-        await options.mission.startPolling({
-          missionId: reservation.missionId,
-          consumer: options.commandConsumer,
-        });
-      }
     } catch (error) {
       if (handle.cancel !== undefined) {
         await handle.cancel("Mission run setup failed").catch(() => undefined);
@@ -606,6 +597,7 @@ export function createControllerRunMissionPort(
     });
   return {
     controller,
+    bindConsumer: (consumer) => ownerScope.bindConsumer(consumer),
     claim: async (missionId, claimId) => await ownerScope.acquire(missionId, claimId),
     append: async (missionId, guard, type, data, eventId) => {
       const currentGuard = ownerScope.currentGuard(missionId) ?? guard;
@@ -623,7 +615,6 @@ export function createControllerRunMissionPort(
         ...input,
         guard: ownerScope.currentGuard(input.missionId) ?? input.guard,
       }),
-    startPolling: async (input) => await ownerScope.startPolling(input),
     release: async (missionId) => await ownerScope.release(missionId),
     releaseAfterLowerLevel: async (input) =>
       await ownerScope.releaseAfterLowerLevel(input.missionId, input.releaseLowerLevel),

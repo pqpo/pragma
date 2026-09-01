@@ -27,9 +27,7 @@ import {
   IntegrationProtocolVersionSchema,
   IntegrationRequestMetaSchema,
   MissionCommandKindSchema,
-  canTransitionMissionOperation,
   MissionCommandSchema,
-  MissionOperationSchema,
   PayloadHashSchema,
   WorkspaceSelectionSchema,
 } from "../src/integration/index.ts";
@@ -162,9 +160,7 @@ describe("integration wire v1", () => {
     expect(CliEventSchema.safeParse({ ...event, cursor: "not-allowed" }).success).toBe(false);
   });
 
-  it("models only forward operation transitions and one final stream end", () => {
-    expect(canTransitionMissionOperation("accepted", "queued")).toBe(true);
-    expect(canTransitionMissionOperation("applied", "queued")).toBe(false);
+  it("models exactly one final stream end", () => {
     const end = {
       schemaVersion: "pragma.cli-event/v1",
       requestId,
@@ -224,17 +220,7 @@ describe("integration wire v1", () => {
     ).toBe(false);
   });
 
-  it("validates operation terminal and workspace identity invariants", () => {
-    const operation = {
-      schemaVersion: "pragma.mission-operation/v1",
-      operationId: "00000000-0000-4000-8000-000000000007",
-      requestId,
-      missionId,
-      kind: "run",
-      state: "applied",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
+  it("validates workspace identity invariants", () => {
     const workspace = {
       schemaVersion: "pragma.integration-workspace/v1",
       requestedPath: ".",
@@ -245,7 +231,6 @@ describe("integration wire v1", () => {
       source: "cwd",
     };
 
-    expect(MissionOperationSchema.safeParse(operation).success).toBe(false);
     expect(WorkspaceSelectionSchema.safeParse(workspace).success).toBe(true);
     expect(
       WorkspaceSelectionSchema.safeParse({ ...workspace, identityHash: "not-a-hash" }).success,
@@ -436,17 +421,6 @@ describe("integration wire v1", () => {
       workspace: { required: true, allowNonGitDirectory: false },
       capabilities: { interactive: true, resumable: true, steerable: true, supportsQueue: true },
     };
-    const operation = {
-      schemaVersion: "pragma.mission-operation/v1",
-      operationId: "00000000-0000-4000-8000-000000000007",
-      requestId,
-      missionId,
-      kind: "run",
-      state: "applied",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      result: { missionId },
-    };
     const command = {
       schemaVersion: "pragma.mission-command/v2",
       commandId: "00000000-0000-4000-8000-000000000006",
@@ -516,7 +490,6 @@ describe("integration wire v1", () => {
       ["integration error", IntegrationErrorSchema, fixedError],
       ["workspace", WorkspaceSelectionSchema, workspace],
       ["executor", ExecutorDescriptorSchema, executor],
-      ["operation", MissionOperationSchema, operation],
       ["command", MissionCommandSchema, command],
       ["human interaction", HumanInteractionEnvelopeSchema, humanRequest],
       ["board list", BoardListResultSchema, boardList],

@@ -77,7 +77,8 @@ function categoryFor(code: IntegrationErrorCode) {
     code === "MISSION_FENCING_REJECTED" ||
     code === "COMMAND_REJECTED" ||
     code === "COMMAND_EXPIRED" ||
-    code === "COMMAND_ACK_TIMEOUT" ||
+    code === "COMMAND_ACCEPTANCE_TIMEOUT" ||
+    code === "COMMAND_RESULT_TIMEOUT" ||
     code === "CURSOR_INVALID" ||
     code === "CURSOR_EXPIRED" ||
     code === "IDEMPOTENCY_CONFLICT" ||

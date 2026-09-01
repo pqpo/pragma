@@ -213,9 +213,9 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
         payload: { kind: "respond", response },
         target: { interactionId: pending.interactionId },
       });
-      expect(submission.owner).toBe("acquired");
+      expect(submission.owner).toBe("scheduled");
       await expect(
-        control.wait({ missionId: human.missionId, requestId, timeoutMs: 5_000 }),
+        control.waitForTerminal({ missionId: human.missionId, requestId, timeoutMs: 5_000 }),
       ).resolves.toMatchObject({ state: "applied" });
       await expect(
         control.waitExecution!({

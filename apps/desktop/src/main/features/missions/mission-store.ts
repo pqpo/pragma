@@ -10,31 +10,19 @@ import {
   rename,
   rm,
   stat,
-  truncate,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 
 import { withFileLock } from "@pragma/core";
 import type { ExpertPromptAttachment } from "@pragma/shared";
-import {
-  formatPragmaYaml,
-  migrateLegacyPragmaResourceRef,
-  parsePragmaYaml,
-} from "@pragma/interpreter";
+import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
 import {
   MissionIdSchema,
   MissionOriginSchema,
   MissionSchema,
-  MissionV8Schema,
-  MissionV9Schema,
-  MissionV3Schema,
-  MissionV4Schema,
-  MissionV5Schema,
-  MissionV6Schema,
-  MissionV7Schema,
   MissionTimelineRecordSchema,
   isUserFacingMissionOrigin,
   MissionAttachmentsManifestSchema,
@@ -55,25 +43,37 @@ import {
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
 import {
+  MissionV6Schema,
+  MissionV7Schema,
+  MissionV8Schema,
+  MissionV9Schema,
+  missionV3ToV4Step,
+  missionV4ToV5Step,
+  missionV5ToV6Step,
+  missionV6ToV7Step,
+  missionV7ToV8Step,
+  missionV8ToV9Step,
+  missionV9ToV10Step,
+} from "./migrations/index.ts";
+import {
   MissionExecutionProjectionError,
-  readMissionExecutionProjection,
-  readMissionExecutionProjectionPage,
-  writeMissionExecutionProjection,
   type MissionExecutionProjectionPage,
 } from "./mission-execution-projection.ts";
+import {
+  createMissionProjectionStorage,
+  MissionProjectionStorageError,
+} from "./mission-projection-storage.ts";
+import { MissionStoreError } from "./mission-store-error.ts";
+import {
+  foldTimeline,
+  readTimelinePageFromTail,
+  readTimelineRecords,
+  timelinePageFromTurns,
+  type MissionTimelinePage,
+} from "./mission-timeline-storage.ts";
 
-export interface MissionTimelineTurn {
-  readonly sequence: number;
-  readonly message: MissionUserMessage;
-  readonly executionId?: string | undefined;
-}
-
-export interface MissionTimelinePage {
-  readonly turns: readonly MissionTimelineTurn[];
-  readonly oldestSequence?: number | undefined;
-  readonly newestSequence?: number | undefined;
-  readonly nextBeforeSequence?: number | undefined;
-}
+export { MissionStoreError } from "./mission-store-error.ts";
+export type { MissionTimelinePage, MissionTimelineTurn } from "./mission-timeline-storage.ts";
 
 export interface MissionStore {
   readonly storagePath?: ((id: string) => string) | undefined;
@@ -172,23 +172,6 @@ export interface MissionStoreReadIssue {
   readonly error: MissionStoreError;
 }
 
-export class MissionStoreError extends Error {
-  constructor(
-    readonly code:
-      | "mission_not_found"
-      | "mission_active"
-      | "unsupported_schema"
-      | "timeline_invalid"
-      | "projection_invalid"
-      | "message_conflict"
-      | "config_invalid",
-    message: string,
-  ) {
-    super(message);
-    this.name = "MissionStoreError";
-  }
-}
-
 const MessageTransactionSchema = z.object({
   schemaVersion: z.literal("pragma.mission-message-transaction/v1"),
   record: MissionTimelineRecordSchema,
@@ -231,6 +214,14 @@ const MissionV10MigrationTransactionSchema = z.object({
   target: MissionSchema,
 });
 
+const EarlyMissionMigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-schema-migration/v1"),
+  missionId: MissionIdSchema,
+  fromVersion: z.enum(["pragma.mission/v3", "pragma.mission/v4", "pragma.mission/v5"]),
+  toVersion: z.enum(["pragma.mission/v4", "pragma.mission/v5", "pragma.mission/v6"]),
+  target: z.record(z.string(), z.unknown()),
+});
+
 export function createMissionStore(options: {
   readonly missionsPath: string;
   readonly onReadIssue?: ((issue: MissionStoreReadIssue) => void) | undefined;
@@ -246,6 +237,10 @@ export function createMissionStore(options: {
     join(missionPath(id), `.user-message-${messageId}.attachments.tmp`);
   const v7MigrationTransactionPath = (id: string) =>
     join(missionPath(id), ".v6-to-v7.transaction.json");
+  const earlyMigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".schema-migration.transaction.json");
+  const earlyBackupPath = (id: string, version: string) =>
+    join(missionPath(id), "migration-backups", `mission.${version}.yaml`);
   const v6BackupPath = (id: string) =>
     join(missionPath(id), "migration-backups", "mission.v6.yaml");
   const v8MigrationTransactionPath = (id: string) =>
@@ -261,10 +256,7 @@ export function createMissionStore(options: {
   const v9BackupPath = (id: string) =>
     join(missionPath(id), "migration-backups", "mission.v9.yaml");
   const branchHistoryPath = (id: string) => join(missionPath(id), "branch", "history.json");
-  const legacyProjectionPath = (id: string, executionId: string) =>
-    join(missionPath(id), "execution-projections", `${executionId}.json`);
-  const projectionPath = (id: string, executionId: string) =>
-    join(missionPath(id), "execution-projections", `${executionId}.jsonl`);
+  const projections = createMissionProjectionStorage(missionPath);
   const lockPath = (id: string) => join(options.missionsPath, ".locks", `${id}.lock`);
   const timelineCache = new Map<
     string,
@@ -278,6 +270,58 @@ export function createMissionStore(options: {
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
     await withFileLock(lockPath(id), operation);
+
+  const recoverEarlyMigration = async (id: string): Promise<unknown | undefined> => {
+    const value = await readJsonIfExists(earlyMigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = EarlyMissionMigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target["id"] !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has an early migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (
+      persistedVersion !== transaction.fromVersion &&
+      persistedVersion !== transaction.toVersion
+    ) {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay ${transaction.fromVersion}-to-${transaction.toVersion} from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(earlyMigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const applyEarlyMigration = async (input: {
+    readonly id: string;
+    readonly fromVersion: "pragma.mission/v3" | "pragma.mission/v4" | "pragma.mission/v5";
+    readonly toVersion: "pragma.mission/v4" | "pragma.mission/v5" | "pragma.mission/v6";
+    readonly source: unknown;
+    readonly target: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> => {
+    await writeTextIfAbsent(
+      earlyBackupPath(input.id, input.fromVersion.replace("pragma.mission/", "")),
+      formatPragmaYaml(input.source),
+    );
+    await writeJsonAtomically(
+      earlyMigrationTransactionPath(input.id),
+      EarlyMissionMigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-schema-migration/v1",
+        missionId: input.id,
+        fromVersion: input.fromVersion,
+        toVersion: input.toVersion,
+        target: input.target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(input.id), input.target);
+    await rm(earlyMigrationTransactionPath(input.id), { force: true });
+    return input.target;
+  };
 
   const recoverV7Migration = async (
     id: string,
@@ -308,7 +352,7 @@ export function createMissionStore(options: {
     id: string,
     legacy: z.infer<typeof MissionV6Schema>,
   ): Promise<z.infer<typeof MissionV7Schema>> => {
-    const target = MissionV7Schema.parse({ ...legacy, schemaVersion: "pragma.mission/v7" });
+    const target = missionV6ToV7Step.migrate(legacy);
     await writeTextIfAbsent(v6BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
       v7MigrationTransactionPath(id),
@@ -352,11 +396,7 @@ export function createMissionStore(options: {
     id: string,
     legacy: z.infer<typeof MissionV7Schema>,
   ): Promise<z.infer<typeof MissionV8Schema>> => {
-    const target = MissionV8Schema.parse({
-      ...legacy,
-      schemaVersion: "pragma.mission/v8",
-      contextStoreIds: [],
-    });
+    const target = missionV7ToV8Step.migrate(legacy);
     await writeTextIfAbsent(v7BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
       v8MigrationTransactionPath(id),
@@ -400,7 +440,7 @@ export function createMissionStore(options: {
     id: string,
     legacy: z.infer<typeof MissionV8Schema>,
   ): Promise<z.infer<typeof MissionV9Schema>> => {
-    const target = MissionV9Schema.parse({ ...legacy, schemaVersion: "pragma.mission/v9" });
+    const target = missionV8ToV9Step.migrate(legacy);
     await writeTextIfAbsent(v8BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
       v9MigrationTransactionPath(id),
@@ -442,15 +482,7 @@ export function createMissionStore(options: {
     id: string,
     legacy: z.infer<typeof MissionV9Schema>,
   ): Promise<Mission> => {
-    const { contextStoreIds, ...rest } = legacy;
-    const target = MissionSchema.parse({
-      ...rest,
-      schemaVersion: "pragma.mission/v10",
-      contextMounts: contextStoreIds.map((storeId) => ({
-        kind: "context-store" as const,
-        storeId,
-      })),
-    });
+    const target = missionV9ToV10Step.migrate(legacy);
     await writeTextIfAbsent(v9BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
       v10MigrationTransactionPath(id),
@@ -500,54 +532,45 @@ export function createMissionStore(options: {
       if (recoveredV8 !== undefined)
         return await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8));
       const recoveredV7 = await recoverV7Migration(id);
-      const value = recoveredV7 ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+      const recoveredEarly = await recoverEarlyMigration(id);
+      const value =
+        recoveredV7 ?? recoveredEarly ?? parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
       const schemaVersion = readSchemaVersion(value);
       let current = value;
       if (schemaVersion === "pragma.mission/v3") {
-        const legacy = MissionV3Schema.parse(value);
-        current = MissionV4Schema.parse({
-          ...legacy,
-          schemaVersion: "pragma.mission/v4",
-          ...(legacy.executor.kind === "flow"
-            ? {
-                flowInput: {
-                  goal: legacy.goal,
-                  workspace: legacy.workspace.path,
-                },
-              }
-            : {}),
+        current = await applyEarlyMigration({
+          id,
+          fromVersion: "pragma.mission/v3",
+          toVersion: "pragma.mission/v4",
+          source: value,
+          target: missionV3ToV4Step.migrate(value),
         });
-        await writeYamlAtomically(manifestPath(id), current);
       }
       const currentVersion = readSchemaVersion(current);
       if (currentVersion === "pragma.mission/v4") {
-        const legacy = MissionV4Schema.parse(current);
-        const { version: _version, ...executor } = legacy.executor;
-        void _version;
-        const migratedExecutor = {
-          ...executor,
-          ref: migrateLegacyPragmaResourceRef(executor.ref, legacy.project.id),
-        };
-        const migrated = MissionV5Schema.parse({
-          ...legacy,
-          schemaVersion: "pragma.mission/v5",
-          executor: migratedExecutor,
+        current = await applyEarlyMigration({
+          id,
+          fromVersion: "pragma.mission/v4",
+          toVersion: "pragma.mission/v5",
+          source: current,
+          target: missionV4ToV5Step.migrate(current),
         });
-        await writeYamlAtomically(manifestPath(id), migrated);
-        current = migrated;
       }
       const versionAfterRefMigration = readSchemaVersion(current);
       if (versionAfterRefMigration === "pragma.mission/v5") {
-        const legacy = MissionV5Schema.parse(current);
-        const migrated = MissionV6Schema.parse({
-          ...legacy,
-          schemaVersion: "pragma.mission/v6",
-          origin: { type: "user" },
+        const migrated = await applyEarlyMigration({
+          id,
+          fromVersion: "pragma.mission/v5",
+          toVersion: "pragma.mission/v6",
+          source: current,
+          target: missionV5ToV6Step.migrate(current),
         });
-        await writeYamlAtomically(manifestPath(id), migrated);
         return await migrateV9ToV10(
           id,
-          await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, migrated))),
+          await migrateV8ToV9(
+            id,
+            await migrateV7ToV8(id, await migrateV6ToV7(id, MissionV6Schema.parse(migrated))),
+          ),
         );
       }
       if (versionAfterRefMigration === "pragma.mission/v6") {
@@ -743,27 +766,12 @@ export function createMissionStore(options: {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
-          const current = await readMissionExecutionProjection(
-            projectionPath(parsedId, executionId),
-            executionId,
-          );
-          if (current !== undefined) return current;
-          const legacy = await readLegacyExecutionProjection(
-            legacyProjectionPath(parsedId, executionId),
-          );
-          if (legacy === undefined) return undefined;
-          await writeMissionExecutionProjection(
-            projectionPath(parsedId, executionId),
-            executionId,
-            legacy,
-          );
-          await rm(legacyProjectionPath(parsedId, executionId), { force: true });
-          return await readMissionExecutionProjection(
-            projectionPath(parsedId, executionId),
-            executionId,
-          );
+          return await projections.read(parsedId, executionId);
         } catch (error) {
           if (error instanceof MissionStoreError) throw error;
+          if (error instanceof MissionProjectionStorageError) {
+            throw new MissionStoreError(error.code, error.message);
+          }
           throw new MissionStoreError(
             "projection_invalid",
             error instanceof Error ? error.message : String(error),
@@ -777,29 +785,12 @@ export function createMissionStore(options: {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
-          const current = await readMissionExecutionProjectionPage(
-            projectionPath(parsedId, executionId),
-            executionId,
-            input,
-          );
-          if (current !== undefined) return current;
-          const legacy = await readLegacyExecutionProjection(
-            legacyProjectionPath(parsedId, executionId),
-          );
-          if (legacy === undefined) return undefined;
-          await writeMissionExecutionProjection(
-            projectionPath(parsedId, executionId),
-            executionId,
-            legacy,
-          );
-          await rm(legacyProjectionPath(parsedId, executionId), { force: true });
-          return await readMissionExecutionProjectionPage(
-            projectionPath(parsedId, executionId),
-            executionId,
-            input,
-          );
+          return await projections.readPage(parsedId, executionId, input);
         } catch (error) {
           if (error instanceof MissionStoreError) throw error;
+          if (error instanceof MissionProjectionStorageError) {
+            throw new MissionStoreError(error.code, error.message);
+          }
           throw new MissionStoreError(
             "projection_invalid",
             error instanceof Error ? error.message : String(error),
@@ -813,12 +804,7 @@ export function createMissionStore(options: {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
-          await writeMissionExecutionProjection(
-            projectionPath(id, executionId),
-            executionId,
-            entries,
-          );
-          await rm(legacyProjectionPath(id, executionId), { force: true });
+          await projections.write(parsedId, executionId, entries);
         } catch (error) {
           if (error instanceof MissionExecutionProjectionError) {
             throw new MissionStoreError("projection_invalid", error.message);
@@ -1824,210 +1810,6 @@ function toMissionSummary(mission: Mission): MissionSummary {
   };
 }
 
-function foldTimeline(records: readonly MissionTimelineRecord[]): MissionTimelineTurn[] {
-  const turns: Array<{
-    sequence: number;
-    message: MissionUserMessage;
-    executionId?: string;
-  }> = [];
-  const byMessageId = new Map<string, (typeof turns)[number]>();
-  for (const record of records) {
-    if (record.kind === "user") {
-      const turn = {
-        sequence: record.sequence,
-        message: {
-          id: record.id,
-          content: record.content,
-          ...(record.attachments === undefined ? {} : { attachments: record.attachments }),
-          createdAt: record.createdAt,
-        },
-      };
-      turns.push(turn);
-      byMessageId.set(record.id, turn);
-      continue;
-    }
-    const turn = byMessageId.get(record.inputMessageId);
-    if (turn === undefined) {
-      throw new MissionStoreError(
-        "timeline_invalid",
-        `Mission timeline execution ${record.executionId} has no input message.`,
-      );
-    }
-    // Recovery may replace an interrupted execution while keeping the same visible user turn.
-    turn.executionId = record.executionId;
-  }
-  return turns;
-}
-
-function timelinePageFromTurns(
-  turns: readonly MissionTimelineTurn[],
-  options: { readonly beforeSequence?: number | undefined; readonly limit: number },
-): MissionTimelinePage {
-  const eligible =
-    options.beforeSequence === undefined
-      ? turns
-      : turns.filter((turn) => turn.sequence < options.beforeSequence!);
-  const start = Math.max(0, eligible.length - options.limit);
-  const pageTurns = eligible.slice(start);
-  const oldestSequence = pageTurns[0]?.sequence;
-  const newestSequence = pageTurns.at(-1)?.sequence;
-  return {
-    turns: pageTurns,
-    ...(oldestSequence === undefined ? {} : { oldestSequence }),
-    ...(newestSequence === undefined ? {} : { newestSequence }),
-    ...(start > 0 && oldestSequence !== undefined ? { nextBeforeSequence: oldestSequence } : {}),
-  };
-}
-
-async function readTimelinePageFromTail(
-  file: string,
-  options: { readonly beforeSequence?: number | undefined; readonly limit: number },
-  cacheCompleteRead: (
-    records: readonly MissionTimelineRecord[],
-    metadata: { readonly size: number; readonly mtimeMs: number },
-  ) => void,
-): Promise<MissionTimelinePage> {
-  let handle: Awaited<ReturnType<typeof open>>;
-  try {
-    handle = await open(file, "r");
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return { turns: [] };
-    throw error;
-  }
-  try {
-    const metadata = await handle.stat();
-    if (metadata.size === 0) {
-      cacheCompleteRead([], metadata);
-      return { turns: [] };
-    }
-    const finalByte = Buffer.allocUnsafe(1);
-    await handle.read(finalByte, 0, 1, metadata.size - 1);
-    if (finalByte[0] !== 0x0a) {
-      throw new MissionStoreError(
-        "timeline_invalid",
-        `Mission timeline has a torn final record: ${file}`,
-      );
-    }
-
-    const records: MissionTimelineRecord[] = [];
-    let remainder = Buffer.alloc(0);
-    let position = metadata.size;
-    const chunkSize = 64 * 1024;
-    while (position > 0) {
-      const length = Math.min(chunkSize, position);
-      position -= length;
-      const chunk = Buffer.allocUnsafe(length);
-      await handle.read(chunk, 0, length, position);
-      const combined = Buffer.concat([chunk, remainder]);
-      let complete = combined;
-      if (position > 0) {
-        const firstNewline = combined.indexOf(0x0a);
-        if (firstNewline === -1) {
-          remainder = combined;
-          continue;
-        }
-        remainder = combined.subarray(0, firstNewline);
-        complete = combined.subarray(firstNewline + 1);
-      } else {
-        remainder = Buffer.alloc(0);
-      }
-      const parsed = complete
-        .toString("utf8")
-        .split(/\r?\n/u)
-        .filter((line) => line.length > 0)
-        .map((line) => parseTimelineRecord(line, file));
-      records.unshift(...parsed);
-      validateTimelineRecordSequence(records, position === 0);
-      const userMessageIds = new Set(
-        records.flatMap((record) => (record.kind === "user" ? [record.id] : [])),
-      );
-      const hasMissingExecutionInput = records.some(
-        (record) => record.kind === "execution" && !userMessageIds.has(record.inputMessageId),
-      );
-      if (hasMissingExecutionInput && position > 0) continue;
-      const turns = foldTimeline(records);
-      if (position === 0) cacheCompleteRead([...records], metadata);
-      const eligible =
-        options.beforeSequence === undefined
-          ? turns
-          : turns.filter((turn) => turn.sequence < options.beforeSequence!);
-      if (eligible.length > options.limit || position === 0) {
-        return timelinePageFromTurns(turns, options);
-      }
-    }
-    return { turns: [] };
-  } finally {
-    await handle.close();
-  }
-}
-
-function parseTimelineRecord(line: string, file: string): MissionTimelineRecord {
-  try {
-    return MissionTimelineRecordSchema.parse(JSON.parse(line) as unknown);
-  } catch (error) {
-    throw new MissionStoreError(
-      "timeline_invalid",
-      `Mission timeline record is invalid in ${file}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-function validateTimelineRecordSequence(
-  records: readonly MissionTimelineRecord[],
-  includesFileStart: boolean,
-): void {
-  for (let index = 0; index < records.length; index += 1) {
-    const previous = records[index - 1];
-    const received = records[index]!.sequence;
-    const expected =
-      previous === undefined ? (includesFileStart ? 1 : received) : previous.sequence + 1;
-    if (received !== expected) {
-      throw new MissionStoreError(
-        "timeline_invalid",
-        `Mission timeline sequence conflict: expected ${expected}, received ${received}.`,
-      );
-    }
-  }
-}
-
-async function readTimelineRecords(
-  file: string,
-  repairTornTail: boolean,
-): Promise<MissionTimelineRecord[]> {
-  let content: string;
-  try {
-    content = await readFile(file, "utf8");
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return [];
-    throw error;
-  }
-  if (content !== "" && !content.endsWith("\n")) {
-    if (!repairTornTail) {
-      throw new MissionStoreError(
-        "timeline_invalid",
-        `Mission timeline has a torn final record: ${file}`,
-      );
-    }
-    const lastNewline = content.lastIndexOf("\n");
-    const complete = lastNewline === -1 ? "" : content.slice(0, lastNewline + 1);
-    await truncate(file, Buffer.byteLength(complete));
-    content = complete;
-  }
-  const records = content
-    .split(/\r?\n/u)
-    .filter((line) => line.length > 0)
-    .map((line) => parseTimelineRecord(line, file));
-  records.forEach((record, index) => {
-    if (record.sequence !== index + 1) {
-      throw new MissionStoreError(
-        "timeline_invalid",
-        `Mission timeline sequence conflict: expected ${index + 1}, received ${record.sequence}.`,
-      );
-    }
-  });
-  return records;
-}
-
 async function appendJsonLine(file: string, value: unknown): Promise<void> {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const handle = await open(file, "a", 0o600);
@@ -2084,23 +1866,6 @@ async function statIfExists(path: string) {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
   }
-}
-
-async function readLegacyExecutionProjection(
-  path: string,
-): Promise<readonly MissionChatEntry[] | undefined> {
-  const value = await readJsonIfExists(path);
-  if (value === undefined) return undefined;
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("schemaVersion" in value) ||
-    value.schemaVersion !== "pragma.mission-execution-projection/v1" ||
-    !("entries" in value)
-  ) {
-    throw new MissionStoreError("unsupported_schema", "Unsupported Mission projection schema.");
-  }
-  return MissionChatEntrySchema.array().parse(value.entries);
 }
 
 function findSameIdentity(

@@ -21,7 +21,8 @@ import {
   MissionHumanInteractionSchema,
   MissionModelOptionsRequestSchema,
   MissionModelOptionsSchema,
-  MissionMessageAcceptanceSchema,
+  MissionCommandReceiptSchema,
+  MissionCommandOutcomeSchema,
   MissionQueuePromptActionSchema,
   MissionQueueSteerResultSchema,
   MissionSchema,
@@ -113,6 +114,13 @@ export const missionsApi = {
     ipcRenderer.on("missions:updated", handler);
     return () => ipcRenderer.removeListener("missions:updated", handler);
   },
+  subscribeMissionCommandOutcomes: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(MissionCommandOutcomeSchema.parse(value));
+    };
+    ipcRenderer.on("missions:command:outcome", handler);
+    return () => ipcRenderer.removeListener("missions:command:outcome", handler);
+  },
   createMission: async (input) =>
     MissionSchema.parse(await invokeMutation("missions:create", CreateMissionSchema.parse(input))),
   createMissionBranch: async (input) =>
@@ -153,7 +161,7 @@ export const missionsApi = {
   runMission: async (id) =>
     MissionSchema.parse(await invokeMutation("missions:run", MissionActionSchema.parse({ id }))),
   sendMissionMessage: async (input) =>
-    MissionMessageAcceptanceSchema.parse(
+    MissionCommandReceiptSchema.parse(
       await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
   trySteerQueuedMissionMessage: async (input) =>
@@ -242,6 +250,7 @@ export const missionsApi = {
   | "readMissionContextStoreEntry"
   | "searchMissionContextStore"
   | "subscribeMissionUpdates"
+  | "subscribeMissionCommandOutcomes"
   | "createMission"
   | "createMissionBranch"
   | "pickMissionAttachments"

@@ -13,6 +13,8 @@ const MISSION_ERROR_TRANSLATION_KEYS: Readonly<Record<string, string>> = {
   message_conflict: "errorMessageConflict",
   config_invalid: "errorConfigurationInvalid",
   invalid_request: "errorInvalidRequest",
+  COMMAND_ACCEPTANCE_TIMEOUT: "errorOperationInProgress",
+  COMMAND_RESULT_TIMEOUT: "errorOperationInProgress",
 };
 
 export function localizedMissionError(

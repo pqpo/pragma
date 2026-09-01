@@ -51,7 +51,8 @@ describe("M8 production composition", () => {
       expect(host.missionControl).toEqual(
         expect.objectContaining({
           submit: expect.any(Function),
-          wait: expect.any(Function),
+          waitForAcceptance: expect.any(Function),
+          waitForTerminal: expect.any(Function),
         }),
       );
       expect(host.listMissionQueue).toEqual(expect.any(Function));
@@ -544,7 +545,11 @@ describe("M8 production composition", () => {
         ...operation,
         requestId: input.requestId,
       }));
-      const missionControl = { submit, wait } as unknown as MissionControlApplication;
+      const missionControl = {
+        submit,
+        waitForAcceptance: wait,
+        waitForTerminal: wait,
+      } as unknown as MissionControlApplication;
       const io = createIo();
 
       await expect(
@@ -588,7 +593,8 @@ describe("M8 production composition", () => {
         submit: async () => {
           throw new Error(canary);
         },
-        wait: vi.fn(),
+        waitForAcceptance: vi.fn(),
+        waitForTerminal: vi.fn(),
       } as unknown as MissionControlApplication,
     } as unknown as CliLocalHost;
 

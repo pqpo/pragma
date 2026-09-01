@@ -111,49 +111,6 @@ export const ExecutorDescriptorSchema = z
   })
   .strict();
 
-export const MissionOperationStateSchema = z.enum([
-  "accepted",
-  "queued",
-  "applying",
-  "applied",
-  "rejected",
-  "expired",
-  "failed",
-  "cancelled",
-]);
-export const MissionOperationTransitions = {
-  accepted: ["queued", "rejected", "expired", "failed", "cancelled"],
-  queued: ["applying", "rejected", "expired", "failed", "cancelled"],
-  applying: ["applied", "rejected", "expired", "failed"],
-  applied: [],
-  rejected: [],
-  expired: [],
-  failed: [],
-  cancelled: [],
-} as const satisfies Record<
-  z.infer<typeof MissionOperationStateSchema>,
-  readonly z.infer<typeof MissionOperationStateSchema>[]
->;
-
-export function canTransitionMissionOperation(
-  from: z.infer<typeof MissionOperationStateSchema>,
-  to: z.infer<typeof MissionOperationStateSchema>,
-): boolean {
-  return (MissionOperationTransitions[from] as readonly string[]).includes(to);
-}
-export const MissionOperationKindSchema = z.enum([
-  "run",
-  "resume",
-  "send",
-  "steer",
-  "respond",
-  "interrupt",
-  "queue.remove",
-  "queue.resume",
-  "queue.steer",
-  "queue.try-steer",
-]);
-
 export const MissionQueueSteerRetainedReasonSchema = z.enum([
   "no_active_turn",
   "target_changed",
@@ -181,59 +138,6 @@ const MissionOperationTargetSchema = z
     queueItemId: z.string().uuid().optional(),
   })
   .strict();
-
-const MissionOperationResultSchema = z
-  .object({
-    missionId: MissionIdSchema,
-    executionId: ExecutionIdSchema.optional(),
-    interactionId: InteractionIdSchema.optional(),
-    queueItemId: z.string().uuid().optional(),
-    queueItemRevision: z.number().int().nonnegative().optional(),
-    queueSteer: MissionQueueSteerOutcomeSchema.optional(),
-  })
-  .strict();
-
-export const MissionOperationSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.mission-operation/v1"),
-    operationId: OperationIdSchema,
-    requestId: RequestIdSchema,
-    missionId: MissionIdSchema,
-    kind: MissionOperationKindSchema,
-    state: MissionOperationStateSchema,
-    createdAt: IsoDateTimeSchema,
-    updatedAt: IsoDateTimeSchema,
-    target: MissionOperationTargetSchema.optional(),
-    result: MissionOperationResultSchema.optional(),
-    error: IntegrationErrorSchema.optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.state === "applied" && value.result === undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["result"],
-        message: "Applied operations require a result.",
-      });
-    }
-    if (["rejected", "expired", "failed"].includes(value.state) && value.error === undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["error"],
-        message: "Failed operations require an error.",
-      });
-    }
-    if (
-      (value.kind === "steer" || value.kind === "queue.steer") &&
-      (value.target?.executionId === undefined || value.target.turnId === undefined)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["target"],
-        message: "Strict steer operations require executionId and turnId targets.",
-      });
-    }
-  });
 
 export const MissionCommandKindSchema = z.enum([
   "send",
@@ -717,7 +621,6 @@ export const CliEventStreamSchema = z.array(CliEventSchema).superRefine((events,
 export type WorkspaceSelection = z.infer<typeof WorkspaceSelectionSchema>;
 export type ExecutorReference = z.infer<typeof ExecutorReferenceSchema>;
 export type ExecutorDescriptor = z.infer<typeof ExecutorDescriptorSchema>;
-export type MissionOperation = z.infer<typeof MissionOperationSchema>;
 export type MissionQueueSteerRetainedReason = z.infer<typeof MissionQueueSteerRetainedReasonSchema>;
 export type MissionQueueSteerOutcome = z.infer<typeof MissionQueueSteerOutcomeSchema>;
 export type MissionCommand = z.infer<typeof MissionCommandSchema>;

@@ -43,7 +43,7 @@ export interface MissionControlSubmitInput {
 export interface MissionControlSubmission {
   readonly command: MissionCommand;
   readonly operation: MissionOperationProjection;
-  readonly owner: "live" | "acquired";
+  readonly owner: "live" | "scheduled";
 }
 
 export interface MissionControlOperationInput {
@@ -66,7 +66,13 @@ export interface MissionControlExecutionOutcome {
 
 export interface MissionControlApplication {
   submit(input: MissionControlSubmitInput): Promise<MissionControlSubmission>;
-  wait(input: {
+  waitForAcceptance(input: {
+    readonly missionId: string;
+    readonly requestId: string;
+    readonly timeoutMs?: number | undefined;
+    readonly pollIntervalMs?: number | undefined;
+  }): Promise<MissionOperationProjection>;
+  waitForTerminal(input: {
     readonly missionId: string;
     readonly requestId: string;
     readonly timeoutMs?: number | undefined;
@@ -119,13 +125,16 @@ export function createMissionControlApplication(options: {
     | undefined;
   readonly now?: (() => Date) | undefined;
   readonly waitExecution?: MissionControlApplication["waitExecution"];
+  readonly onOwnerStartError?:
+    | ((input: { readonly missionId: string; readonly error: unknown }) => Promise<void> | void)
+    | undefined;
 }): MissionControlApplication {
   const now = options.now ?? (() => new Date());
+  options.ownerScope.bindConsumer(options.consumer);
 
   const startOwner = async (missionId: string): Promise<"live" | "acquired"> => {
     const current = options.ownerScope.currentGuard(missionId);
     if (current !== undefined) {
-      await options.ownerScope.startPolling({ missionId, consumer: options.consumer });
       return "live";
     }
 
@@ -137,15 +146,6 @@ export function createMissionControlApplication(options: {
       await options.ownerScope.acquire(missionId);
     } catch (error) {
       if (isIntegrationErrorCode(error, "MISSION_LEASE_HELD")) return "live";
-      throw error;
-    }
-    try {
-      await options.ownerScope.startPolling({ missionId, consumer: options.consumer });
-    } catch (error) {
-      // Do not leave a newly acquired lease behind when poller setup fails.
-      // The lower-level Core owner is created lazily by the consumer, so the
-      // controller lease is the only resource that needs releasing here.
-      await options.ownerScope.release(missionId).catch(() => undefined);
       throw error;
     }
     return "acquired";
@@ -231,11 +231,24 @@ export function createMissionControlApplication(options: {
       // A command is durable before owner acquisition. If the process races a
       // live owner, MISSION_LEASE_HELD is treated as successful routing to that
       // owner and the existing poller consumes the same Inbox item.
-      const owner = await startOwner(input.missionId);
-      return { ...appended, owner };
+      if (options.ownerScope.currentGuard(input.missionId) !== undefined) {
+        return { ...appended, owner: "live" };
+      }
+      void startOwner(input.missionId).catch(async (error: unknown) => {
+        try {
+          await options.onOwnerStartError?.({ missionId: input.missionId, error });
+        } catch {
+          // The command is already durable. Diagnostics must not create an
+          // unhandled rejection or change its idempotent retry semantics.
+        }
+      });
+      return { ...appended, owner: "scheduled" };
     },
-    async wait(input) {
-      return await options.controller.waitOperation(input);
+    async waitForAcceptance(input) {
+      return await options.controller.waitForAcceptanceOperation(input);
+    },
+    async waitForTerminal(input) {
+      return await options.controller.waitForTerminalOperation(input);
     },
   };
 }

@@ -74,7 +74,8 @@ import type {
   GetWorkflowLayout,
   DeleteWorkflowLayout,
   Mission,
-  MissionMessageAcceptance,
+  MissionCommandReceipt,
+  MissionCommandOutcome,
   MissionQueueSteerResult,
   MissionSummary,
   MissionUpdate,
@@ -514,6 +515,9 @@ export interface PragmaDesktopAPI {
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
+  subscribeMissionCommandOutcomes: (
+    listener: (outcome: MissionCommandOutcome) => void,
+  ) => () => void;
   createMission: (input: CreateMission) => Promise<Mission>;
   createMissionBranch: (input: CreateMissionBranch) => Promise<Mission>;
   pickMissionAttachments: (input: PickMissionAttachments) => Promise<PickMissionAttachmentsResult>;
@@ -524,7 +528,7 @@ export interface PragmaDesktopAPI {
   updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   updateMissionContextMounts: (input: UpdateMissionContextMounts) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
-  sendMissionMessage: (input: SendMissionMessage) => Promise<MissionMessageAcceptance>;
+  sendMissionMessage: (input: SendMissionMessage) => Promise<MissionCommandReceipt>;
   trySteerQueuedMissionMessage: (
     input: MissionQueuePromptAction,
   ) => Promise<MissionQueueSteerResult>;

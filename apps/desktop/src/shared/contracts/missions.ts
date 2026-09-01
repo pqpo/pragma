@@ -8,7 +8,7 @@ import {
   RuntimeContextWindowUsageSchema,
   type MissionExecutor,
 } from "@pragma/shared";
-import { MissionQueueSteerOutcomeSchema } from "@pragma/shared/integration";
+import { IntegrationErrorSchema, MissionQueueSteerOutcomeSchema } from "@pragma/shared/integration";
 import {
   canonicalPragmaResourceRef,
   PragmaAutomationRefSchema,
@@ -157,31 +157,6 @@ const MissionBaseSchema = z.object({
   completedAt: z.string().datetime().optional(),
 });
 
-const MissionExecutorV4Schema = z.object({
-  kind: z.enum(["expert", "team", "flow"]),
-  ref: z.string().min(1),
-  name: z.string().trim().min(1).max(120),
-  version: z.string().trim().min(1).max(100),
-});
-
-const MissionBaseV4Schema = MissionBaseSchema.extend({
-  executor: MissionExecutorV4Schema,
-});
-
-export const MissionV3Schema = MissionBaseV4Schema.extend({
-  schemaVersion: z.literal("pragma.mission/v3"),
-});
-
-export const MissionV4Schema = MissionBaseV4Schema.extend({
-  schemaVersion: z.literal("pragma.mission/v4"),
-  flowInput: z.record(z.string(), z.unknown()).optional(),
-});
-
-export const MissionV5Schema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v5"),
-  flowInput: z.record(z.string(), z.unknown()).optional(),
-});
-
 export const MissionOriginSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("user") }),
   z.object({
@@ -214,53 +189,6 @@ export const MissionOriginSchema = z.discriminatedUnion("type", [
     phase: z.enum(["subject", "judge"]),
   }),
 ]);
-
-export const MissionV6Schema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v6"),
-  flowInput: z.record(z.string(), z.unknown()).optional(),
-  origin: z.discriminatedUnion("type", [
-    z.object({ type: z.literal("user") }),
-    z.object({ type: z.literal("system-memory"), jobId: z.string().min(1) }),
-  ]),
-});
-
-export const MissionV7Schema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v7"),
-  flowInput: z.record(z.string(), z.unknown()).optional(),
-  origin: MissionOriginSchema.default({ type: "user" }),
-}).superRefine((mission, context) => {
-  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
-    context.addIssue({
-      code: "custom",
-      message: "Flow missions require flowInput.",
-      path: ["flowInput"],
-    });
-  }
-  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
-    context.addIssue({
-      code: "custom",
-      message: "Only Flow missions may store flowInput.",
-      path: ["flowInput"],
-    });
-  }
-});
-
-const MissionContextStoreIdsSchema = z
-  .array(ContextStoreIdSchema)
-  .max(200)
-  .superRefine((storeIds, context) => {
-    const seen = new Set<string>();
-    for (const [index, storeId] of storeIds.entries()) {
-      if (seen.has(storeId)) {
-        context.addIssue({
-          code: "custom",
-          message: "Mission Knowledge Stores must be unique.",
-          path: [index],
-        });
-      }
-      seen.add(storeId);
-    }
-  });
 
 export const MissionContextMountSchema = z.discriminatedUnion("kind", [
   z
@@ -297,64 +225,12 @@ export const MissionContextMountsSchema = z
     }
   });
 
-export const MissionV8Schema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v8"),
-  flowInput: z.record(z.string(), z.unknown()).optional(),
-  origin: MissionOriginSchema.default({ type: "user" }),
-  contextStoreIds: MissionContextStoreIdsSchema,
-}).superRefine((mission, context) => {
-  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
-    context.addIssue({
-      code: "custom",
-      message: "Flow missions require flowInput.",
-      path: ["flowInput"],
-    });
-  }
-  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
-    context.addIssue({
-      code: "custom",
-      message: "Only Flow missions may store flowInput.",
-      path: ["flowInput"],
-    });
-  }
-});
-
 export const MissionBranchSourceSchema = z.object({
   sourceMissionId: MissionIdSchema,
   sourceProjectRevision: z.number().int().positive(),
   cutoffExecutionId: z.string().uuid().optional(),
   cutoffMessageId: z.string().min(1),
   createdAt: z.string().datetime(),
-});
-
-export const MissionV9Schema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v9"),
-  flowInput: z.record(z.string(), z.unknown()).optional(),
-  origin: MissionOriginSchema.default({ type: "user" }),
-  contextStoreIds: MissionContextStoreIdsSchema,
-  branch: MissionBranchSourceSchema.optional(),
-}).superRefine((mission, context) => {
-  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
-    context.addIssue({
-      code: "custom",
-      message: "Flow missions require flowInput.",
-      path: ["flowInput"],
-    });
-  }
-  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
-    context.addIssue({
-      code: "custom",
-      message: "Only Flow missions may store flowInput.",
-      path: ["flowInput"],
-    });
-  }
-  if (mission.branch !== undefined && mission.executor.kind === "flow") {
-    context.addIssue({
-      code: "custom",
-      message: "Flow missions cannot be conversation branches.",
-      path: ["branch"],
-    });
-  }
 });
 
 export const MissionSchema = MissionBaseSchema.extend({
@@ -594,12 +470,33 @@ export const SendMissionMessageSchema = z.object({
   mode: z.enum(["enqueue", "steer"]).default("enqueue"),
 });
 
-export const MissionMessageAcceptanceSchema = z.object({
-  mission: MissionSchema,
+export const MissionCommandReceiptSchema = z.object({
+  schemaVersion: z.literal("pragma.desktop-mission-command-receipt/v1"),
+  missionId: MissionIdSchema,
   requestId: z.string().uuid(),
+  kind: z.enum([
+    "send",
+    "steer",
+    "respond",
+    "interrupt",
+    "queue.remove",
+    "queue.resume",
+    "queue.steer",
+    "queue.try-steer",
+  ]),
+  state: z.enum(["queued", "accepted", "applying", "applied", "rejected", "expired", "failed"]),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
   requestedMode: z.enum(["enqueue", "steer"]),
-  effectiveMode: z.enum(["enqueue", "steer"]),
-  fallbackReason: z.string().min(1).optional(),
+});
+
+export const MissionCommandOutcomeSchema = z.object({
+  schemaVersion: z.literal("pragma.desktop-mission-command-outcome/v1"),
+  missionId: MissionIdSchema,
+  requestId: z.string().uuid(),
+  state: z.enum(["applied", "rejected"]),
+  result: z.record(z.string(), z.unknown()).optional(),
+  error: IntegrationErrorSchema.optional(),
 });
 
 export const MissionQueueSteerResultSchema = z.object({

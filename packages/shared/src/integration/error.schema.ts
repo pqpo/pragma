@@ -16,7 +16,8 @@ export const IntegrationErrorCodeSchema = z.enum([
   "MISSION_FENCING_REJECTED",
   "COMMAND_REJECTED",
   "COMMAND_EXPIRED",
-  "COMMAND_ACK_TIMEOUT",
+  "COMMAND_ACCEPTANCE_TIMEOUT",
+  "COMMAND_RESULT_TIMEOUT",
   "STEER_TARGET_NOT_ACTIVE",
   "STEER_TARGET_CHANGED",
   "INTERACTION_NOT_PENDING",
@@ -106,7 +107,8 @@ export const IntegrationErrorExitCodes = {
   MISSION_FENCING_REJECTED: 4,
   COMMAND_REJECTED: 4,
   COMMAND_EXPIRED: 4,
-  COMMAND_ACK_TIMEOUT: 4,
+  COMMAND_ACCEPTANCE_TIMEOUT: 4,
+  COMMAND_RESULT_TIMEOUT: 4,
   STEER_TARGET_NOT_ACTIVE: 4,
   STEER_TARGET_CHANGED: 4,
   INTERACTION_NOT_PENDING: 4,
@@ -146,7 +148,8 @@ export const IntegrationErrorRetryPolicies = {
   MISSION_FENCING_REJECTED: true,
   COMMAND_REJECTED: false,
   COMMAND_EXPIRED: false,
-  COMMAND_ACK_TIMEOUT: true,
+  COMMAND_ACCEPTANCE_TIMEOUT: true,
+  COMMAND_RESULT_TIMEOUT: true,
   STEER_TARGET_NOT_ACTIVE: false,
   STEER_TARGET_CHANGED: false,
   INTERACTION_NOT_PENDING: false,
@@ -172,8 +175,9 @@ export const IntegrationErrorRetryPolicies = {
   boolean | "cause_dependent"
 >;
 
-export type IntegrationErrorRetryPolicy =
-  (typeof IntegrationErrorRetryPolicies)[z.infer<typeof IntegrationErrorCodeSchema>];
+export type IntegrationErrorRetryPolicy = (typeof IntegrationErrorRetryPolicies)[z.infer<
+  typeof IntegrationErrorCodeSchema
+>];
 
 export function integrationErrorExitCode(
   code: z.infer<typeof IntegrationErrorCodeSchema>,
@@ -184,9 +188,9 @@ export function integrationErrorExitCode(
 type IntegrationErrorFactoryInput<Code extends IntegrationErrorCode> = Omit<
   IntegrationError,
   "code" | "retryable" | "schemaVersion"
-> &
-  { readonly code: Code } &
-  ((typeof IntegrationErrorRetryPolicies)[Code] extends "cause_dependent"
+> & {
+  readonly code: Code;
+} & ((typeof IntegrationErrorRetryPolicies)[Code] extends "cause_dependent"
     ? { readonly retryable: boolean }
     : { readonly retryable?: never });
 

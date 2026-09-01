@@ -8,7 +8,11 @@ import type {
   LocalHostRunApplication,
   MissionControlApplication,
 } from "@pragma/local-host";
-import { createIntegrationError, MissionQueueSteerOutcomeSchema } from "@pragma/shared/integration";
+import {
+  createIntegrationError,
+  IntegrationErrorSchema,
+  MissionQueueSteerOutcomeSchema,
+} from "@pragma/shared/integration";
 
 import {
   CreateMissionSchema,
@@ -39,7 +43,7 @@ import {
   type PickMissionAttachmentsResult,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
-import type { MissionRunner } from "./mission-runner.ts";
+import type { MissionCommandOutcomeNotification, MissionRunner } from "./mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
@@ -98,6 +102,7 @@ export function installMissionHandlers(options: {
   let legacyAutomationMissionSources: ReadonlyMap<string, string> = new Map();
   let legacyAutomationMissionSourcesRequest: Promise<ReadonlyMap<string, string>> | undefined;
   const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
+  const submittedAttachmentDrafts = new Map<string, readonly string[]>();
   installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
     const workspace = await options.localHost.resolveWorkspace(await options.getDefaultWorkspace());
@@ -172,7 +177,7 @@ export function installMissionHandlers(options: {
     readonly missionId: string;
     readonly requestId: string;
   }) => {
-    const operation = await options.localHost.missionControl.wait(input);
+    const operation = await options.localHost.missionControl.waitForTerminal(input);
     if (operation.state === "applied") return operation;
     if (operation.error !== undefined) throw operation.error;
     throw createIntegrationError({
@@ -189,6 +194,47 @@ export function installMissionHandlers(options: {
       requestId: input.requestId,
     });
   };
+  const forwardCommandOutcome = (outcome: MissionCommandOutcomeNotification): void => {
+    try {
+      options.getWindow()?.webContents.send("missions:command:outcome", {
+        schemaVersion: "pragma.desktop-mission-command-outcome/v1",
+        ...outcome,
+      });
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          component: "desktop.missions",
+          event: "mission_command_outcome_delivery_failed",
+          message: error instanceof Error ? error.message : String(error),
+          missionId: outcome.missionId,
+          requestId: outcome.requestId,
+        }),
+      );
+    }
+    const attachmentIds = submittedAttachmentDrafts.get(outcome.requestId) ?? [];
+    submittedAttachmentDrafts.delete(outcome.requestId);
+    void Promise.resolve()
+      .then(async () => {
+        if (outcome.state === "applied" && attachmentIds.length > 0) {
+          await imageDrafts.discard(attachmentIds);
+        }
+        await publishMission(await getManagedMission(outcome.missionId));
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            component: "desktop.missions",
+            event: "mission_command_outcome_projection_failed",
+            message: error instanceof Error ? error.message : String(error),
+            missionId: outcome.missionId,
+            requestId: outcome.requestId,
+          }),
+        );
+      });
+  };
+  options.runner.subscribeCommandOutcomes(forwardCommandOutcome);
   ipcMain.handle("missions:list", async () => {
     await ensureLegacyAutomationMissionSources();
     return (await options.localHost.listMissions()).map((mission) => {
@@ -439,23 +485,56 @@ export function installMissionHandlers(options: {
       const parsed = SendMissionMessageSchema.parse(input);
       await assertManagedMission(parsed.id);
       const kind = parsed.mode === "steer" ? ("steer" as const) : ("send" as const);
-      await runLocalHostCommand({
+      submittedAttachmentDrafts.set(
+        parsed.requestId,
+        parsed.attachments.map((attachment) => attachment.id),
+      );
+      let submission: Awaited<ReturnType<MissionControlApplication["submit"]>>;
+      try {
+        submission = await options.localHost.missionControl.submit({
+          missionId: parsed.id,
+          requestId: parsed.requestId,
+          kind,
+          payload: {
+            kind,
+            input: { prompt: parsed.content, attachments: parsed.attachments },
+          },
+        });
+      } catch (error) {
+        submittedAttachmentDrafts.delete(parsed.requestId);
+        throw error;
+      }
+      if (submission.operation.state === "applied") {
+        forwardCommandOutcome({
+          missionId: parsed.id,
+          requestId: parsed.requestId,
+          state: "applied",
+          ...(submission.operation.result === undefined
+            ? {}
+            : { result: submission.operation.result }),
+        });
+      } else if (
+        submission.operation.state === "rejected" ||
+        submission.operation.state === "expired" ||
+        submission.operation.state === "failed"
+      ) {
+        const parsedError = IntegrationErrorSchema.safeParse(submission.operation.error);
+        forwardCommandOutcome({
+          missionId: parsed.id,
+          requestId: parsed.requestId,
+          state: "rejected",
+          ...(parsedError.success ? { error: parsedError.data } : {}),
+        });
+      }
+      return {
+        schemaVersion: "pragma.desktop-mission-command-receipt/v1" as const,
         missionId: parsed.id,
         requestId: parsed.requestId,
         kind,
-        payload: {
-          kind,
-          input: { prompt: parsed.content, attachments: parsed.attachments },
-        },
-      });
-      await imageDrafts.discard(parsed.attachments.map((attachment) => attachment.id));
-      const mission = await getManagedMission(parsed.id);
-      await publishMission(mission);
-      return {
-        mission,
-        requestId: parsed.requestId,
+        state: submission.operation.state,
+        createdAt: submission.operation.createdAt,
+        updatedAt: submission.operation.updatedAt,
         requestedMode: parsed.mode,
-        effectiveMode: parsed.mode,
       };
     }),
   );

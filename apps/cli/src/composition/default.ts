@@ -80,6 +80,7 @@ export function createProductionLocalHost(): CliLocalHost {
     runtimeAliases: { codex: "codex-local" },
   });
   const loggerProvider = createLocalHostStderrLoggerProvider();
+  const missionLogger = loggerProvider.createLogger({ component: "cli.mission-controller" });
   const resolveBuiltInExecutor = createLocalHostBuiltInExecutorResolver({
     pragmaHome,
     runtimes: runtimeResolver,
@@ -96,7 +97,21 @@ export function createProductionLocalHost(): CliLocalHost {
   });
   const missionQuery = createMissionQuery({ controller: missionController });
   const missionWatch = createMissionWatchApplication({ controller: missionController });
-  const ownerScope = createMissionOwnerScope({ controller: missionController });
+  const ownerScope = createMissionOwnerScope({
+    controller: missionController,
+    onPollingError: ({ missionId, error, consecutiveFailures }) =>
+      missionLogger.warn(
+        "mission.controller_inbox_poll_failed",
+        "Mission Inbox polling failed; the durable command remains recoverable.",
+        { missionId, consecutiveFailures, error },
+      ),
+    onLeaseLost: (missionId) =>
+      missionLogger.warn(
+        "mission.controller_lease_lost",
+        "Mission controller lease was lost; pending durable work can be reacquired.",
+        { missionId },
+      ),
+  });
   const { executions: executionStore, sessions: expertSessionStore } = createLocalHostCoreStores({
     pragmaHome,
   });
@@ -186,6 +201,12 @@ export function createProductionLocalHost(): CliLocalHost {
     resolveStrictTarget: coreControl.resolveStrictTarget,
     resolveExecutionTarget: coreControl.resolveExecutionTarget,
     waitExecution: coreControl.waitExecution,
+    onOwnerStartError: ({ missionId, error }) =>
+      missionLogger.warn(
+        "mission.controller_owner_start_failed",
+        "Mission command is durable, but its owner could not be started yet.",
+        { missionId, error },
+      ),
   });
   const run = createLocalHostRunApplication({
     executors: executorPort,
@@ -478,7 +499,7 @@ async function waitForResumedExecution(options: {
       payload: { kind: "respond", response: decision.response },
       target: { interactionId: interaction.interactionId },
     });
-    const responseOperation = await options.control.wait({
+    const responseOperation = await options.control.waitForTerminal({
       missionId: options.missionId,
       requestId: responseRequestId,
     });

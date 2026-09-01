@@ -37,6 +37,7 @@ export * from "./missions/controller/pinned-binding-backfill.ts";
 export * from "./missions/controller/owner-scope.ts";
 export * from "./missions/controller/prompt-queue.ts";
 export * from "./missions/controller/command-payload.ts";
+export * from "./missions/command-dispatcher.ts";
 export * from "./bundle-source.ts";
 export * from "./bundle-source-migration.ts";
 export * from "./missions/controller/retention.ts";

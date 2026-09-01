@@ -18,7 +18,6 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
-  isHumanInteractionCheckpointError,
   isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
@@ -97,7 +96,6 @@ import {
   type MissionChatEntry,
   type MissionChatPatch,
   type MissionChatSnapshot,
-  type MissionMessageAcceptance,
   type MissionChatUpdate,
   type MissionChatQuery,
   type MissionContextCompactionResult,
@@ -132,10 +130,15 @@ import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
-import { createIntegrationError, type MissionCommand } from "@pragma/shared/integration";
+import {
+  createIntegrationError,
+  type IntegrationError,
+  type MissionCommand,
+} from "@pragma/shared/integration";
 import {
   createExpertSessionPromptQueueProjection,
   createLocalHostRunHandleState,
+  dispatchMissionCommand,
   hashCanonicalRunPayload,
   type PromptQueueProjection,
   type LocalHostRunEvent,
@@ -147,6 +150,7 @@ import {
   type ResolvedRunExecutor,
 } from "@pragma/local-host";
 import { createMissionBranchContext } from "./mission-branch-context.ts";
+import { observeMissionExecution } from "./mission-execution-observer.ts";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -190,9 +194,25 @@ export interface MissionChatNotification {
   readonly update: MissionChatUpdate;
 }
 
+interface MissionMessageApplicationResult {
+  readonly mission: Mission;
+  readonly requestId: string;
+  readonly requestedMode: "enqueue" | "steer";
+  readonly effectiveMode: "enqueue" | "steer";
+  readonly fallbackReason?: string | undefined;
+}
+
 export interface MissionWorkNotification {
   readonly audience: MissionSurfaceAudience;
   readonly update: MissionWorkUpdate;
+}
+
+export interface MissionCommandOutcomeNotification {
+  readonly missionId: string;
+  readonly requestId: string;
+  readonly state: "applied" | "rejected";
+  readonly result?: Readonly<Record<string, unknown>> | undefined;
+  readonly error?: IntegrationError | undefined;
 }
 
 export interface MissionRunner {
@@ -239,7 +259,7 @@ export interface MissionRunner {
     readonly requestId: string;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly mode?: "enqueue" | "steer" | undefined;
-  }): Promise<MissionMessageAcceptance>;
+  }): Promise<MissionMessageApplicationResult>;
   steerQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   removeQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
@@ -267,6 +287,9 @@ export interface MissionRunner {
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
   subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
+  subscribeCommandOutcomes(
+    listener: (notification: MissionCommandOutcomeNotification) => void,
+  ): () => void;
   interrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   stopLocalController(id: string): Promise<void>;
   getCanonicalStrictTarget(
@@ -428,7 +451,13 @@ export function createMissionRunner(options: {
   readonly onMissionActivity?:
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
   readonly onExecutionTerminal?:
-    | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
+    | ((input: {
+        readonly mission: Mission;
+        readonly executionId: string;
+        readonly status: "succeeded" | "failed" | "cancelled";
+        readonly result?: unknown;
+        readonly error?: unknown;
+      }) => Promise<void>)
     | undefined;
   readonly adapterHostForMission?:
     ((mission: Mission, defaultHost: PragmaAdapterHost) => PragmaAdapterHost) | undefined;
@@ -825,6 +854,9 @@ export function createMissionRunner(options: {
   const inFlightRuns = new Map<string, Promise<Mission>>();
   const inFlightCompactions = new Map<string, Promise<MissionContextCompactionResult>>();
   const chatListeners = new Set<(notification: MissionChatNotification) => void>();
+  const commandOutcomeListeners = new Set<
+    (notification: MissionCommandOutcomeNotification) => void
+  >();
   const chatRevisions = new Map<string, number>();
   const degradedChatSync = new Set<string>();
   const liveChats = new Map<string, LiveMissionChat>();
@@ -1600,7 +1632,7 @@ export function createMissionRunner(options: {
       releaseCheckpoint = resolve;
     });
     let settlementKind: "terminal" | "checkpointed" = "terminal";
-    const settlement = observeExecution(
+    const settlement = observeMissionExecution(
       options.missions,
       missionId,
       input.handle,
@@ -1612,7 +1644,7 @@ export function createMissionRunner(options: {
       },
       input.sessionId,
       logger,
-      async () => {
+      async (terminal) => {
         await persistMissionExecutionProjection(
           options.missions,
           executionStore,
@@ -1622,6 +1654,9 @@ export function createMissionRunner(options: {
         await options.onExecutionTerminal?.({
           mission: await options.missions.get(missionId),
           executionId: input.handle.executionId,
+          status: terminal.status,
+          ...(terminal.result === undefined ? {} : { result: terminal.result }),
+          ...(terminal.error === undefined ? {} : { error: terminal.error }),
         });
       },
       checkpoint,
@@ -1893,7 +1928,7 @@ export function createMissionRunner(options: {
     readonly requestId: string;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly mode?: "enqueue" | "steer" | undefined;
-  }): Promise<MissionMessageAcceptance> => {
+  }): Promise<MissionMessageApplicationResult> => {
     const acceptedAt = performance.now();
     logger.info("mission.message_accepted", "Mission request accepted", {
       missionId: input.id,
@@ -3112,9 +3147,9 @@ export function createMissionRunner(options: {
       }
     };
 
-    const apply = async (command: MissionCommand): Promise<Record<string, unknown>> => {
-      switch (command.payload.kind) {
-        case "send": {
+    const apply = async (command: MissionCommand): Promise<Record<string, unknown>> =>
+      await dispatchMissionCommand(command, {
+        async send(command) {
           const accepted = await sendMissionMessage({
             id: command.missionId,
             content: command.payload.input.prompt,
@@ -3124,15 +3159,22 @@ export function createMissionRunner(options: {
               ? {}
               : { attachments: command.payload.input.attachments }),
           });
+          const queue = await promptQueueProjection.list(command.missionId);
+          const queuedPosition = queue.items.findIndex(
+            (item) => item.requestId === command.request.requestId,
+          );
           return {
             missionId: command.missionId,
             ...(accepted.mission.execution === undefined
               ? {}
               : { executionId: accepted.mission.execution.id }),
             mode: accepted.effectiveMode,
+            turnId: command.request.requestId,
+            queueState: queue.state,
+            ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
           };
-        }
-        case "steer": {
+        },
+        async steer(command) {
           const accepted = await sendMissionMessage({
             id: command.missionId,
             content: command.payload.input.prompt,
@@ -3156,9 +3198,10 @@ export function createMissionRunner(options: {
               ? {}
               : { executionId: accepted.mission.execution.id }),
             mode: "steer",
+            turnId: command.request.requestId,
           };
-        }
-        case "respond": {
+        },
+        async respond(command) {
           const interactionId = command.target?.interactionId;
           if (interactionId === undefined) {
             throw createIntegrationError({
@@ -3181,33 +3224,48 @@ export function createMissionRunner(options: {
             executionId: execution.handle.executionId,
             interactionId,
           };
-        }
-        case "interrupt": {
+        },
+        async interrupt(command) {
           const mission = await interruptMission(command.missionId, command.target?.executionId);
           return {
             missionId: mission.id,
             ...(mission.execution ? { executionId: mission.execution.id } : {}),
           };
-        }
-        case "queue.remove": {
+        },
+        async "queue.remove"(command) {
           const mission = await removeQueuedMissionMessage({
             id: command.missionId,
             requestId: command.payload.requestId,
           });
-          return { missionId: mission.id, requestId: command.payload.requestId };
-        }
-        case "queue.resume": {
+          return {
+            missionId: mission.id,
+            requestId: command.payload.requestId,
+            changed: true,
+          };
+        },
+        async "queue.resume"(command) {
+          const before = await promptQueueProjection.list(command.missionId);
           const mission = await resumeMissionQueue(command.missionId);
-          return { missionId: mission.id };
-        }
-        case "queue.steer": {
+          return {
+            missionId: mission.id,
+            changed: before.state === "paused",
+            state: before.state === "paused" ? "running" : before.state,
+          };
+        },
+        async "queue.steer"(command) {
           const mission = await steerQueuedMissionMessage({
             id: command.missionId,
             requestId: command.payload.requestId,
           });
-          return { missionId: mission.id, requestId: command.payload.requestId };
-        }
-        case "queue.try-steer": {
+          return {
+            missionId: mission.id,
+            requestId: command.payload.requestId,
+            executionId: mission.execution?.id,
+            turnId: command.payload.requestId,
+            mode: "steer",
+          };
+        },
+        async "queue.try-steer"(command) {
           const result = await trySteerQueuedMissionMessage({
             id: command.missionId,
             requestId: command.payload.requestId,
@@ -3217,9 +3275,8 @@ export function createMissionRunner(options: {
             requestId: command.payload.requestId,
             queueSteer: result.queueSteer,
           };
-        }
-      }
-    };
+        },
+      });
 
     const consumer: MissionCommandConsumer = {
       validateStrictTarget,
@@ -3227,8 +3284,28 @@ export function createMissionRunner(options: {
         await validateStrictTarget({ command });
         return { result: await apply(command) };
       },
-      afterOutcome: async ({ command }) =>
-        await adapterOptions.onCommandOutcome?.(command.request.requestId),
+      afterOutcome: async (outcome) => {
+        const notification: MissionCommandOutcomeNotification = {
+          missionId: outcome.command.missionId,
+          requestId: outcome.command.request.requestId,
+          state: outcome.state,
+          ...(outcome.result === undefined ? {} : { result: outcome.result }),
+          ...(outcome.error === undefined ? {} : { error: outcome.error }),
+        };
+        for (const listener of commandOutcomeListeners) {
+          try {
+            listener(notification);
+          } catch (error) {
+            logger.error(
+              "mission.command_outcome_listener_failed",
+              "A Mission command outcome listener failed.",
+              error,
+              { missionId: notification.missionId, requestId: notification.requestId },
+            );
+          }
+        }
+        await adapterOptions.onCommandOutcome?.(outcome.command.request.requestId);
+      },
     };
     return {
       consumer,
@@ -3702,6 +3779,10 @@ export function createMissionRunner(options: {
       workListeners.add(listener);
       return () => workListeners.delete(listener);
     },
+    subscribeCommandOutcomes(listener) {
+      commandOutcomeListeners.add(listener);
+      return () => commandOutcomeListeners.delete(listener);
+    },
     async interrupt(id, expectedExecutionId) {
       return await withMissionController(
         id,
@@ -4055,96 +4136,6 @@ function matchesBoundModel(
     requested.model.modelId === bound.model.modelId &&
     requested.thinkingLevel === bound.thinkingLevel
   );
-}
-
-function observeExecution(
-  missions: MissionStore,
-  missionId: string,
-  execution: {
-    readonly executionId: string;
-    readonly result: Promise<unknown>;
-    readonly getState: () => Promise<{ readonly status: string }>;
-  },
-  startedAt: string,
-  inputMessageId: string,
-  onFinished: () => void | Promise<void>,
-  sessionId?: string,
-  logger?: import("@pragma/core").PragmaLogger,
-  onTerminal?: (() => void | Promise<void>) | undefined,
-  checkpoint?: Promise<void> | undefined,
-): Promise<"terminal" | "checkpointed"> {
-  return (async () => {
-    let status: "succeeded" | "failed" | "cancelled" = "succeeded";
-    let failure: unknown;
-    let checkpointed = false;
-    try {
-      if (checkpoint === undefined) {
-        await execution.result;
-      } else {
-        const outcome = await Promise.race([
-          execution.result.then(
-            () => ({ kind: "completed" as const }),
-            (error: unknown) => ({ kind: "failed" as const, error }),
-          ),
-          checkpoint.then(() => ({ kind: "checkpointed" as const })),
-        ]);
-        if (outcome.kind === "checkpointed") checkpointed = true;
-        else if (outcome.kind === "failed") throw outcome.error;
-      }
-    } catch (error) {
-      if (isHumanInteractionCheckpointError(error)) {
-        checkpointed = true;
-      } else {
-        const state = await execution.getState().catch(() => undefined);
-        status =
-          state?.status === "cancelled" || state?.status === "interrupted" ? "cancelled" : "failed";
-        failure = error;
-      }
-    }
-    try {
-      await onFinished();
-    } catch (error) {
-      logger?.error(
-        "mission.finish_callback_failed",
-        `Failed to finish Mission execution ${execution.executionId}.`,
-        error,
-        { missionId, executionId: execution.executionId },
-      );
-    }
-    // A human checkpoint deliberately ends the current in-memory observer but
-    // leaves the durable Execution and Mission waiting for the response. It is
-    // neither terminal nor eligible for projection/archive cleanup.
-    if (checkpointed) return "checkpointed";
-    try {
-      await onTerminal?.();
-    } catch (error) {
-      logger?.error(
-        "mission.terminal_callback_failed",
-        `Failed to compact Mission execution ${execution.executionId}.`,
-        error,
-        { missionId, executionId: execution.executionId },
-      );
-    }
-    await missions.updateExecution(
-      missionId,
-      {
-        id: execution.executionId,
-        inputMessageId,
-        ...(sessionId === undefined ? {} : { sessionId }),
-        status,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        ...(status === "failed"
-          ? { error: failure instanceof Error ? failure.message : String(failure) }
-          : {}),
-      },
-      {
-        executionId: execution.executionId,
-        statuses: ["queued", "running", "waiting"],
-      },
-    );
-    return "terminal";
-  })();
 }
 
 function observeMissionHumanWaitingStatus(input: {

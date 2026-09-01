@@ -60,6 +60,7 @@ import type {
   MissionControlExecutionOutcome,
   MissionControlTargetResolution,
 } from "./missions/controller/mission-control.ts";
+import { dispatchMissionCommand } from "./missions/command-dispatcher.ts";
 
 export interface LocalHostCoreMissionControlAdapter {
   readonly consumer: MissionCommandConsumer;
@@ -681,8 +682,8 @@ async function applyCoreMissionCommand(options: {
     throw commandRejected(command.missionId, `${command.kind.replaceAll(".", "_")}_not_supported`);
   }
 
-  switch (command.payload.kind) {
-    case "send": {
+  return await dispatchMissionCommand(command, {
+    async send(command) {
       const turn = await owner.session.prompt(command.payload.input.prompt, {
         requestId: command.request.requestId,
         mode: "enqueue",
@@ -701,8 +702,8 @@ async function applyCoreMissionCommand(options: {
         queueState: queueState.state,
         ...(queuedPosition < 0 ? {} : { queuePosition: queuedPosition + 1 }),
       };
-    }
-    case "steer": {
+    },
+    async steer(command) {
       const turn = await owner.session.prompt(command.payload.input.prompt, {
         requestId: command.request.requestId,
         mode: "steer",
@@ -714,10 +715,11 @@ async function applyCoreMissionCommand(options: {
         turnId: turn.requestId,
         mode: "steer",
       };
-    }
-    case "respond":
+    },
+    async respond(command) {
       return await applySessionResponse(owner.session, options.executions, command);
-    case "interrupt": {
+    },
+    async interrupt(command) {
       const state = await owner.session.getState();
       const current = state.activeExecutionId;
       const expected = command.target?.executionId;
@@ -741,15 +743,16 @@ async function applyCoreMissionCommand(options: {
         executionId: current,
         targetStatus: "interrupted",
       };
-    }
-    case "queue.remove":
+    },
+    async "queue.remove"(command) {
       try {
         await owner.session.removeQueuedPrompt(command.payload.requestId);
       } catch {
         throw commandRejected(command.missionId, "queue_item_not_queued");
       }
       return { missionId: command.missionId, requestId: command.payload.requestId, changed: true };
-    case "queue.resume": {
+    },
+    async "queue.resume"(command) {
       const before = await owner.session.getPromptQueueState();
       await owner.session.resumePromptQueue();
       return {
@@ -757,8 +760,8 @@ async function applyCoreMissionCommand(options: {
         changed: before.state === "paused",
         state: before.state === "paused" ? "running" : before.state,
       };
-    }
-    case "queue.steer": {
+    },
+    async "queue.steer"(command) {
       try {
         const turn = await owner.session.steerQueuedPrompt(command.payload.requestId);
         return {
@@ -780,8 +783,8 @@ async function applyCoreMissionCommand(options: {
         }
         throw commandRejected(command.missionId, "queue_item_not_steerable");
       }
-    }
-    case "queue.try-steer": {
+    },
+    async "queue.try-steer"(command) {
       try {
         const attempt = await owner.session.attemptQueuedPromptSteer(command.payload.requestId);
         return attempt.outcome === "steered"
@@ -803,8 +806,8 @@ async function applyCoreMissionCommand(options: {
         if (isIntegrationError(error)) throw error;
         throw commandRejected(command.missionId, "queue_item_not_steerable");
       }
-    }
-  }
+    },
+  });
 }
 
 async function applySessionResponse(
