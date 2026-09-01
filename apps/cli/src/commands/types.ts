@@ -1,5 +1,5 @@
 import type { LocalHostApplicationPort } from "@pragma/local-host";
-import type { IntegrationError, JsonValue } from "@pragma/local-host/wire";
+import type { IntegrationError, JsonValue } from "@pragma/shared/integration";
 import type { InteractiveMode, OutputFormat } from "../parser/argv.ts";
 import type { TerminalPort } from "../terminal.ts";
 

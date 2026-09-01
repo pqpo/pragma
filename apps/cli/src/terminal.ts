@@ -6,7 +6,7 @@ import { ReadStream as TtyReadStream } from "node:tty";
 import type {
   HumanInteractionRequestEnvelope,
   HumanInteractionResponseEnvelope,
-} from "@pragma/local-host/wire";
+} from "@pragma/shared/integration";
 
 export interface TerminalPort {
   isControllingTerminal(): boolean;

@@ -2,7 +2,7 @@ import {
   createIntegrationError,
   integrationErrorExitCode,
   type IntegrationError,
-} from "@pragma/local-host/wire";
+} from "@pragma/shared/integration";
 import type { AgentMessageUsage, JsonValue } from "@pragma/shared";
 import type { LocalHostRunApplicationOutcome, MissionWatchResult } from "@pragma/local-host";
 

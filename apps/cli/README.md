@@ -62,10 +62,14 @@ their contracts are ready; use `--view events` or `mission watch` meanwhile.
 The text renderers use stable Mission/queue columns, while JSON and JSONL stay
 pure `pragma.cli-result/v2` and `pragma.cli-event/v2` protocol output.
 
-Runs wait for a terminal result by default. `--detach` returns after handle
-acceptance, and `--request-id` is optional because the CLI generates one when
-omitted. Text mode prints the request, Mission, and execution identities;
+Runs wait for a terminal result by default. `--detach` returns after the durable
+command is persisted (it may still be queued), and `--request-id` is optional
+because the CLI generates one when omitted. Text mode prints the request,
+Mission, and execution identities;
 machine formats keep those identities inside the protocol envelope.
+The CLI does not start a resident daemon; without a live Desktop/Host owner, a
+queued receipt remains recoverable until a later Host or attached/resume call
+consumes it.
 
 Command-specific help includes usage, defaults, output format, idempotency,
 and a copyable example, for example `pragma mission get --help` or

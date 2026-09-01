@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { MissionControlApplication, MissionControlExecutionOutcome } from "@pragma/local-host";
-import { createIntegrationError } from "@pragma/local-host/wire";
+import { createIntegrationError } from "@pragma/shared/integration";
 
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";
 import { parseCliArgv } from "../src/parser/argv.ts";
@@ -259,9 +259,10 @@ describe("M8 mutation and queue command surface", () => {
     expect(io.stderr).toEqual([]);
   });
 
-  it("waits for acceptance but not a terminal result for a detached command", async () => {
+  it("returns after the durable submit without waiting for owner acceptance", async () => {
     const io = createIo();
-    const { host, waitForAcceptance, waitForTerminal } = createMutationHost();
+    const operation = createOperation("send", "queued");
+    const { host, waitForAcceptance, waitForTerminal } = createMutationHost({ operation });
 
     await expect(
       runCli(
@@ -271,13 +272,12 @@ describe("M8 mutation and queue command surface", () => {
       ),
     ).resolves.toBe(0);
 
-    expect(waitForAcceptance).toHaveBeenCalledWith(
-      expect.objectContaining({ missionId: MISSION_ID, timeoutMs: 30_000 }),
-    );
+    expect(waitForAcceptance).not.toHaveBeenCalled();
     expect(waitForTerminal).not.toHaveBeenCalled();
     expect(JSON.parse(io.stdout[0]!)).toMatchObject({
       command: "mission.send",
       status: "accepted",
+      result: expect.objectContaining({ state: "queued" }),
     });
   });
 

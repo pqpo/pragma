@@ -3,10 +3,10 @@ import {
   BoardReadResultSchema,
   BoardSearchResultSchema,
   ExecutorDescriptorSchema,
+  type HumanInteractionRequestEnvelope,
   type JsonValue,
-} from "@pragma/local-host/wire";
+} from "@pragma/shared/integration";
 import { unsupportedMissionView } from "@pragma/local-host";
-import type { HumanInteractionRequestEnvelope } from "@pragma/local-host/wire";
 
 import type { ParsedCommand } from "../parser/argv.ts";
 import { HELP_TEXT } from "../parser/argv.ts";

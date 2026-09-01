@@ -6,13 +6,11 @@ import {
 import {
   createIntegrationError,
   IntegrationErrorSchema,
-  type JsonValue,
-} from "@pragma/local-host/wire";
-import { HumanInteractionResponseSchema } from "@pragma/shared";
-import {
   HumanInteractionRequestEnvelopeSchema,
+  type JsonValue,
   type MissionCommand,
 } from "@pragma/shared/integration";
+import { HumanInteractionResponseSchema } from "@pragma/shared";
 
 import { readBoundedJson, readBoundedUtf8 } from "../input.ts";
 import type { ParsedCommand } from "../parser/argv.ts";
@@ -60,7 +58,18 @@ export async function executeMutationCommand(
     });
   }
   const requestId = command.requestId ?? context.requestId;
-  await control.submit(await createSubmissionInput(command, requestId, readStdin));
+  const submission = await control.submit(
+    await createSubmissionInput(command, requestId, readStdin),
+  );
+  if (isTerminalOperation(submission.operation.state) && submission.operation.state !== "applied") {
+    assertOperationSucceeded(submission.operation);
+  }
+  if ("detach" in command && command.detach) {
+    // submit() is the durability barrier. Detached callers must not wait for
+    // an owner to acquire the Mission lease; a queued operation is a valid
+    // successful receipt and can be observed later through mission watch/query.
+    return { result: asJsonValue(submission.operation), detached: true };
+  }
   const accepted = await control.waitForAcceptance({
     missionId: command.missionId,
     requestId,
@@ -68,9 +77,6 @@ export async function executeMutationCommand(
   });
   if (isTerminalOperation(accepted.state) && accepted.state !== "applied") {
     assertOperationSucceeded(accepted);
-  }
-  if ("detach" in command && command.detach) {
-    return { result: asJsonValue(accepted), detached: true };
   }
   const operation = isTerminalOperation(accepted.state)
     ? accepted

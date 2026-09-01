@@ -9,7 +9,7 @@ import {
   createLocalHostMissionBoardBindings,
   type MissionControlApplication,
 } from "@pragma/local-host";
-import { CliEventV2StreamSchema, CliResultV2Schema } from "@pragma/local-host/wire";
+import { CliEventV2StreamSchema, CliResultV2Schema } from "@pragma/shared/integration";
 
 import { createProductionLocalHost } from "../src/composition/default.ts";
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";

@@ -4,7 +4,7 @@ import {
   IntegrationErrorSchema,
   type IntegrationError,
   type IntegrationErrorCode,
-} from "@pragma/local-host/wire";
+} from "@pragma/shared/integration";
 
 import { isRecord } from "./utils.ts";
 

@@ -1,4 +1,4 @@
-import { createIntegrationError, type IntegrationError } from "@pragma/local-host/wire";
+import { createIntegrationError, type IntegrationError } from "@pragma/shared/integration";
 import { isAbsolute } from "node:path";
 
 export type OutputFormat = "text" | "json" | "jsonl";
@@ -217,7 +217,7 @@ Mission watch:
   Ctrl-C detaches the local watcher and leaves the Mission owner untouched.
 
 Run semantics:
-  run waits for a terminal result by default; --detach returns after the Mission handle is accepted.
+  run waits for a terminal result by default; --detach returns after the durable command is persisted.
   --request-id is optional; the CLI generates one when omitted. Reusing it with a different payload is a conflict.
 
 Common examples:
@@ -300,7 +300,7 @@ Example: pragma ${command} describe ${command}:abcdefghjkmnpqrs`;
     if (subcommand === "run") {
       return `Usage: pragma ${command} run ${command}:<ID> --workspace ABSOLUTE_PATH (--prompt TEXT | --input FILE|-)
 
-Runs to a terminal result by default; --detach returns after the Mission handle is accepted.
+Runs to a terminal result by default; --detach returns after the durable command is persisted.
 --request-id is optional and is generated when omitted. Reusing it with a different payload is a conflict.
 Output: text keeps the agent result readable; --format=json or --format=jsonl preserves the v2 machine protocol.
 
@@ -381,13 +381,13 @@ Example: pragma mission queue steer MISSION_ID --request QUEUE_REQUEST_ID --deta
       }
       return `Usage: pragma mission queue list|remove|resume|steer MISSION_ID [options]
 
-Queue mutations are durable and idempotent by request ID plus payload hash. --wait waits for execution; --detach waits only for acceptance.`;
+Queue mutations are durable and idempotent by request ID plus payload hash. --wait waits for execution; --detach returns after persistence.`;
     }
     if (subcommand === "resume") {
       return `Usage: pragma mission resume MISSION_ID [options]
 
 Resumes a historical Mission after its executor binding is proven. Use --project PROJECT_ID and --revision N together for the one-time historical pin backfill; --expected-fingerprint optionally verifies that revision.
---detach returns after the resume command is accepted. The command is durable and idempotent by request ID plus payload hash. Use --format=json for scripts and inspect the exit code.
+--detach returns after the resume command is durably persisted. The command is idempotent by request ID plus payload hash. Use --format=json for scripts and inspect the exit code.
 Options: --project PROJECT_ID --revision N --expected-fingerprint SHA256 --request-id REQUEST_ID --detach
 
 Example: pragma mission resume MISSION_ID --project PROJECT_ID --revision N --detach`;
@@ -404,7 +404,7 @@ Example: pragma mission resume MISSION_ID --project PROJECT_ID --revision N --de
       return `Usage: pragma mission ${subcommand} MISSION_ID [options]
 
 The command is durable and idempotent by request ID plus payload hash. --wait waits for execution;
---detach waits only for command acceptance. Use --format=json for scripts and inspect the exit code.
+--detach returns after the command is durably persisted. Use --format=json for scripts and inspect the exit code.
 
 Example: ${example}`;
     }

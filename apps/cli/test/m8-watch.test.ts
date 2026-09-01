@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { type MissionWatchRequest, type MissionWatchResult } from "@pragma/local-host";
-import { CliEventV2StreamSchema } from "@pragma/local-host/wire";
+import { CliEventV2StreamSchema } from "@pragma/shared/integration";
 
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";
 import { CliParseError, parseCliArgv } from "../src/parser/argv.ts";

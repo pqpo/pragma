@@ -3,8 +3,10 @@ import type {
   LocalHostRunEvent,
   LocalHostRunRequest,
 } from "@pragma/local-host";
-import { createIntegrationError } from "@pragma/local-host/wire";
-import type { HumanInteractionRequestEnvelope } from "@pragma/local-host/wire";
+import {
+  createIntegrationError,
+  type HumanInteractionRequestEnvelope,
+} from "@pragma/shared/integration";
 
 import { readBoundedJson, readBoundedUtf8 } from "../input.ts";
 import type { ParsedCommand } from "../parser/argv.ts";

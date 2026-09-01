@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { JsonValue } from "@pragma/local-host/wire";
+import type { JsonValue } from "@pragma/shared/integration";
 
 export interface HostPage {
   readonly items: readonly unknown[];

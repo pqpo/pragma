@@ -2,18 +2,16 @@ import {
   CliEventV2Schema,
   CliResultV2Schema,
   CliStreamEndDataV2Schema,
-  integrationErrorExitCode,
-  type IntegrationError,
-  type JsonValue,
-} from "@pragma/local-host/wire";
-import type { AgentMessageUsage } from "@pragma/shared";
-import {
   EventIdSchema,
+  integrationErrorExitCode,
   type CliWatchObservedStatus,
   type CliWatchStopReason,
   type ExecutorReference,
+  type IntegrationError,
+  type JsonValue,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
+import type { AgentMessageUsage } from "@pragma/shared";
 
 import { HELP_TEXT, type OutputFormat } from "../parser/argv.ts";
 import { isRecord } from "../commands/utils.ts";

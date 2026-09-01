@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { CliEventV2StreamSchema, createIntegrationError } from "@pragma/local-host/wire";
+import { CliEventV2StreamSchema, createIntegrationError } from "@pragma/shared/integration";
 
 import { runCli, type CliIo, type CliLocalHost } from "../src/index.ts";
 import { parseCliArgv } from "../src/parser/argv.ts";

@@ -5,8 +5,7 @@ import type {
   LocalHostRunApplicationOutcome,
   LocalHostRunRequest,
 } from "@pragma/local-host";
-import { CliEventV2StreamSchema } from "@pragma/local-host/wire";
-import type { WorkspaceSelection } from "@pragma/shared/integration";
+import { CliEventV2StreamSchema, type WorkspaceSelection } from "@pragma/shared/integration";
 
 import { codeForError, runCli, selectPrimaryDoctorCode, type CliLocalHost } from "../src/index.ts";
 import { toIntegrationError } from "../src/commands/errors.ts";

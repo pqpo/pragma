@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { ReadStream as TtyReadStream } from "node:tty";
 
-import type { HumanInteractionRequestEnvelope } from "@pragma/local-host/wire";
+import type { HumanInteractionRequestEnvelope } from "@pragma/shared/integration";
 import { describe, expect, it, vi } from "vitest";
 
 import {

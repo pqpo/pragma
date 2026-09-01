@@ -5,7 +5,7 @@ import {
   type IntegrationError,
   type IntegrationErrorCode,
   type JsonValue,
-} from "@pragma/local-host/wire";
+} from "@pragma/shared/integration";
 import type { CredentialDoctorFinding, OsKeychain } from "@pragma/local-host";
 
 export interface DoctorDependencies {
