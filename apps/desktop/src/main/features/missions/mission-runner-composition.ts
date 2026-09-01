@@ -3607,9 +3607,11 @@ export function createMissionRunner(options: {
     async delete(id) {
       const inFlight = lifecycleService.run(id);
       if (inFlight !== undefined) await inFlight.catch(() => undefined);
-      await chatService.clear(id);
+      const liveChat = chatService.live(id);
+      if (liveChat !== undefined) await chatService.closeLiveIfCurrent(id, liveChat);
       await (options.ownerScope?.terminalDelete(id, async () => await deleteMission(id)) ??
         deleteMission(id));
+      await chatService.clear(id);
       workService.clear(id);
     },
     async listHumanInteractions(id) {

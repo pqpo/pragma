@@ -2950,12 +2950,16 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: runtimeResolver,
       runtimesForToolPermissionMode,
     });
+    const chatRevisions: number[] = [];
+    runner.subscribeChat(({ update }) => chatRevisions.push(update.revision));
 
     const firstRunPromise = runner.run(mission.id);
     const duplicateRunPromise = runner.run(mission.id);
     await expect(runner.delete(mission.id)).rejects.toThrow(
       "Stop the active execution before deleting this mission.",
     );
+    const revisionAfterFailedDelete = chatRevisions.at(-1);
+    expect(revisionAfterFailedDelete).toBeGreaterThan(0);
     const [firstRun, duplicateRun] = await Promise.all([firstRunPromise, duplicateRunPromise]);
     expect(firstRun.execution?.status).toBe("running");
     expect(duplicateRun.execution?.id).toBe(firstRun.execution?.id);
@@ -2964,6 +2968,12 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
+    await vi.waitFor(() =>
+      expect(chatRevisions.at(-1)).toBeGreaterThan(revisionAfterFailedDelete!),
+    );
+    expect(
+      chatRevisions.every((revision, index) => index === 0 || revision > chatRevisions[index - 1]!),
+    ).toBe(true);
     await expect(runner.getRuntimeBinding(mission.id)).resolves.toMatchObject({
       runtimeId: "fake",
       revision: 1,
