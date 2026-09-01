@@ -148,8 +148,8 @@ import type {
   DesktopBundleRegistrySourceRef,
   DesktopBundleRegistrySourceStatus,
   DesktopSquareCatalog,
-  GetDesktopSquarePackage,
-  DesktopSquarePackageDetail,
+  GetDesktopSquareItem,
+  DesktopSquareItemDetail,
   DownloadDesktopSquareBundle,
   DesktopSquareBundleDownload,
   DesktopGlobalMemoryPolicySnapshot,
@@ -487,7 +487,7 @@ export interface PragmaDesktopAPI {
   ) => Promise<DesktopBundleRegistrySourceStatus>;
   refreshBundleRegistrySources: () => Promise<DesktopBundleRegistrySourceStatus[]>;
   getSquareCatalog: () => Promise<DesktopSquareCatalog>;
-  getSquarePackage: (input: GetDesktopSquarePackage) => Promise<DesktopSquarePackageDetail>;
+  getSquareItem: (input: GetDesktopSquareItem) => Promise<DesktopSquareItemDetail>;
   downloadSquareBundle: (
     input: DownloadDesktopSquareBundle,
   ) => Promise<DesktopSquareBundleDownload>;

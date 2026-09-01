@@ -2,7 +2,9 @@
 
 ## 状态
 
-Accepted
+Superseded by [ADR 046](046-lightweight-git-bundle-source.md)
+
+> 本 ADR 保留为旧 `pragma.bundle-registry/v1` 决策记录，不再描述当前实现。
 
 ## 背景
 

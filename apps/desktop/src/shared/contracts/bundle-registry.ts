@@ -1,8 +1,10 @@
 import {
-  BundleRegistryCatalogIndexSchema,
-  BundleRegistryManifestSchema,
-  BundleRegistryPackageSchema,
-  BundleRegistryPackageSummarySchema,
+  BundleSourceCategorySchema,
+  BundleSourceItemSummarySchema,
+  BundleSourceKindSchema,
+  BundleSourceManifestSchema,
+  BundleSourceSemverSchema,
+  BundleSourceSlugSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 
@@ -26,7 +28,7 @@ export const DesktopBundleRegistryRemoteSchema = z
     } catch {
       return false;
     }
-  }, "Git credentials must not be embedded in a Registry URL.");
+  }, "Git credentials must not be embedded in a Bundle Source URL.");
 
 export const DesktopBundleRegistryRefSchema = z
   .string()
@@ -61,7 +63,7 @@ export const DesktopBundleRegistrySourceStatusSchema = DesktopBundleRegistrySour
     .regex(/^[a-f0-9]{40,64}$/)
     .optional(),
   syncedAt: z.string().datetime().optional(),
-  packageCount: z.number().int().nonnegative().optional(),
+  itemCount: z.number().int().nonnegative().optional(),
   errorCode: z.string().trim().min(1).max(100).optional(),
   errorMessage: z.string().trim().min(1).max(2_000).optional(),
 });
@@ -88,43 +90,49 @@ export const DesktopBundleRegistrySourceRefSchema = z
   .object({ sourceId: z.string().uuid() })
   .strict();
 
-export const DesktopSquarePackageSchema = BundleRegistryPackageSummarySchema.extend({
+export const DesktopSquareItemSchema = BundleSourceItemSummarySchema.extend({
   sourceId: z.string().uuid(),
   sourceName: z.string().trim().min(1).max(200),
   sourceOfficial: z.boolean(),
   commit: z.string().regex(/^[a-f0-9]{40,64}$/),
 });
 
+export const DesktopSquareCategorySchema = BundleSourceCategorySchema.extend({
+  kind: BundleSourceKindSchema,
+});
+
 export const DesktopSquareCatalogSchema = z
   .object({
-    packages: z.array(DesktopSquarePackageSchema),
+    items: z.array(DesktopSquareItemSchema),
+    categories: z.array(DesktopSquareCategorySchema),
     sources: z.array(DesktopBundleRegistrySourceStatusSchema),
   })
   .strict();
 
-export const GetDesktopSquarePackageSchema = z
+export const GetDesktopSquareItemSchema = z
   .object({
     sourceId: z.string().uuid(),
-    packageId: z.string().trim().min(1).max(80),
+    kind: BundleSourceKindSchema,
+    itemId: BundleSourceSlugSchema,
   })
   .strict();
 
-export const DesktopSquarePackageDetailSchema = z
+export const DesktopSquareItemDetailSchema = z
   .object({
     sourceId: z.string().uuid(),
     sourceName: z.string().trim().min(1).max(200),
     sourceOfficial: z.boolean(),
     commit: z.string().regex(/^[a-f0-9]{40,64}$/),
-    package: BundleRegistryPackageSchema,
-    readme: z.string().max(512 * 1024),
+    item: BundleSourceItemSummarySchema,
   })
   .strict();
 
 export const DownloadDesktopSquareBundleSchema = z
   .object({
     sourceId: z.string().uuid(),
-    packageId: z.string().trim().min(1).max(80),
-    version: z.string().trim().min(1).max(100),
+    kind: BundleSourceKindSchema,
+    itemId: BundleSourceSlugSchema,
+    version: BundleSourceSemverSchema,
   })
   .strict();
 
@@ -138,11 +146,10 @@ export const DesktopSquareBundleDownloadSchema = z
 
 export const DesktopBundleRegistrySnapshotSchema = z
   .object({
-    schemaVersion: z.literal("pragma.desktop-bundle-registry-snapshot/v1"),
+    schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v2"),
     commit: z.string().regex(/^[a-f0-9]{40,64}$/),
     syncedAt: z.string().datetime(),
-    manifest: BundleRegistryManifestSchema,
-    catalog: BundleRegistryCatalogIndexSchema,
-    packages: z.array(BundleRegistryPackageSummarySchema),
+    manifest: BundleSourceManifestSchema,
+    items: z.array(BundleSourceItemSummarySchema),
   })
   .strict();

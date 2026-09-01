@@ -122,7 +122,7 @@ export function BundleRegistrySourcesFragment() {
                   {source.commit === undefined
                     ? t("bundleSources.notSynced")
                     : t("bundleSources.synced", {
-                        count: source.packageCount ?? 0,
+                        count: source.itemCount ?? 0,
                         commit: source.commit.slice(0, 8),
                       })}
                 </small>
@@ -230,7 +230,7 @@ export function BundleRegistrySourcesFragment() {
                 value={remote}
                 disabled={adding}
                 onChange={(event) => setRemote(event.target.value)}
-                placeholder="git@github.com:organization/pragma-registry.git"
+                placeholder="git@github.com:organization/awesome-pragma.git"
                 required
               />
             </label>

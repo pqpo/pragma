@@ -4,7 +4,7 @@ import {
   AddDesktopBundleRegistrySourceSchema,
   DesktopBundleRegistrySourceRefSchema,
   DownloadDesktopSquareBundleSchema,
-  GetDesktopSquarePackageSchema,
+  GetDesktopSquareItemSchema,
   UpdateDesktopBundleRegistrySourceSchema,
 } from "../../../shared/contracts/index.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
@@ -36,8 +36,8 @@ export function installBundleRegistryHandlers(service: DesktopBundleRegistrySour
     runDesktopMutation(() => service.refreshEnabledSources()),
   );
   ipcMain.handle("bundle-registry:catalog", () => service.getCatalog());
-  ipcMain.handle("bundle-registry:package", (_event, input: unknown) =>
-    service.getPackage(GetDesktopSquarePackageSchema.parse(input)),
+  ipcMain.handle("bundle-registry:item", (_event, input: unknown) =>
+    service.getItem(GetDesktopSquareItemSchema.parse(input)),
   );
   ipcMain.handle("bundle-registry:download", (_event, input: unknown) =>
     runDesktopMutation(() =>

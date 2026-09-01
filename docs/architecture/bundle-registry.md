@@ -1,110 +1,100 @@
-# Bundle Registry 仓库规范
+# Bundle Source 仓库规范
 
-Bundle Registry 是 Pragma 工作室“广场”的 Git 数据源。它可以托管在 GitHub、GitLab 或任意支持 HTTPS/SSH 的 Git 服务中；私有仓库由系统 Git 完成鉴权。
+Bundle Source 是 Pragma 工作室“广场”的 Git 数据源。它可以托管在 GitHub、GitLab 或支持
+HTTPS/SSH 的 Git 服务中；私有仓库复用系统 Git 凭据。协议刻意保持为可直接阅读、复制和提交 PR
+的文件结构。
 
-## 目录格式
+## 固定目录
 
 ```text
-pragma-registry.yaml
-catalog/
-  index.json
-  packages/
-    a.json
-    b.json
-    ...                         # 按 package id 首字符分片
-  categories/
-    development.json
-    development/
-      coding.json
-packages/
-  development/
-    coding/
-      review-assistant/
-        package.yaml
-        README.md
-        README.zh-Hans.md       # 可选
-        media/                  # 可选图标和截图
-objects/
-  sha256/
-    ab/
-      abcd...0123.pragma        # 完整 SHA-256 命名的不可变 Bundle
+pragma-source.yaml
+
+experts/<category>/<item>/
+  config.yaml
+  versions/<semver>/bundle.pragma
+
+expert-teams/<category>/<item>/
+  config.yaml
+  versions/<semver>/bundle.pragma
+
+flows/<category>/<item>/
+  config.yaml
+  versions/<semver>/bundle.pragma
 ```
 
-`pragma-registry.yaml` 管理 Registry 身份、最大 Bundle 大小和最多两级的分类目录。`packages/**/package.yaml` 管理包身份、分类、tags、发布者、版本、channel 和对象引用。包目录用于人类审阅；包 ID 在整个仓库内仍须唯一。
+Source 根目录可以保留 README、许可证和 `.github/`。三种类型目录内只允许上述条目文件：不放
+README、图片、截图、catalog 或对象索引。路径是条目类型和唯一主分类的权威来源，`config.yaml`
+不重复声明。tags 只用于长尾搜索。
 
-`catalog/**` 由 CLI 确定性生成并提交。`catalog/index.json` 只列出分片路径、SHA-256 和数量；Desktop 先校验索引，再按分片读取摘要。这样大量包不会集中在单个 JSON 中，分类页也不需要扫描所有包文件。
+## 根清单
 
-`.pragma` 文件只存放一次，路径由其内容 SHA-256 决定。同一个 Bundle 被多个包版本引用时不会重复提交。已经发布的对象视为不可变；修订内容必须发布新版本。
+`pragma-source.yaml` 的 `schemaVersion` 固定为 `pragma.bundle-source/v1`，包含 Source ID、多语言
+名称和描述、`maxBundleBytes`，以及 `expert`、`expert-team`、`flow` 三个 section。每个 section
+分别维护一层分类的 ID、多语言名称、说明和排序。推荐初始分类为：
 
-## 分类与检索
+- `general`
+- `software-development`
+- `research`
+- `product-design`
+- `content-creation`
+- `productivity`
+- `education`
 
-- 分类由 Registry 维护者在 `pragma-registry.yaml` 统一治理，最多两级，例如 `development/coding`。
-- 每个包有一个 `primaryCategory`，并可属于最多十个分类。
-- 发布者可维护自由 tags，用于技术栈、行业和使用场景等长尾检索。
-- 不使用任意深度分类，也不通过目录名表达版本或发布者身份。
+不同 Source 出现相同分类 ID 时，Desktop 使用官方源优先、随后设置顺序的首个名称和排序。
 
-## CLI 工作流
+## 条目配置
 
-初始化一个 Registry：
+`config.yaml` 使用 `pragma.bundle-source-item/v1`，包含 `id`、`rootRef`、多语言 name/summary、
+Markdown description、author、license、可选 homepage、tags、可选内置 avatarId、latestVersion、
+createdAt 和 updatedAt。
+
+版本目录必须是合法 SemVer，文件名固定为 `bundle.pragma`，`latestVersion` 必须存在。条目 ID 在
+同一类型内唯一，因此不能通过换分类重复创建；不同 Source 的同名条目继续独立展示。
+
+## CLI
+
+初始化一个目录：
 
 ```bash
-pragma registry init ./pragma-registry --id official --name "Pragma Official"
+pragma source init ./awesome-pragma --id awesome-pragma --name "Awesome Pragma"
 ```
 
-初始化一个包：
+该命令只创建清单和默认分类目录，不执行 `git init`。将 Desktop 导出的 Bundle 加入已 clone/fork
+的工作树：
 
 ```bash
-pragma registry package init review-assistant \
-  --directory ./pragma-registry \
-  --category development/coding \
-  --name "Review Assistant" \
-  --publisher "Pragma Community"
+pragma source add ./my-expert.pragma --directory ./awesome-pragma
 ```
 
-编辑生成的 `package.yaml` 和 README 后，发布 Bundle：
+交互流程会选择可调用根、类型分类并收集元数据。新增条目写 config 和版本；已有条目只增加版本并
+更新 latestVersion/updatedAt。命令不 clone、commit、push 或创建 PR，也绝不覆盖已有版本。
+
+维护者和 CI 使用内部只读验证入口：
 
 ```bash
-pragma registry publish ./review-assistant.pragma \
-  --directory ./pragma-registry \
-  --package review-assistant \
-  --version 1.0.0 \
-  --channel stable
+pnpm --filter @pragma/local-host build
+node scripts/validate-bundle-source.mjs /path/to/source
 ```
 
-重新生成目录或在 CI 中检查：
+## Desktop 同步与下载
+
+Desktop 对每个启用源执行 shallow fetch + partial clone，锁定 `FETCH_HEAD` commit。刷新时通过
+`git ls-tree` 校验文件模式和路径，只读取 `pragma-source.yaml` 与 `config.yaml` blob；不会读取
+`.pragma`。成功后保存包含 manifest 和 items 的可重建快照。新 commit 无效时保留上一快照并标记
+stale。
+
+用户选择版本后，Desktop 才从该固定 commit 流式读取 `bundle.pragma`，实施大小限制，并由 Bundle
+decoder 校验内部文件哈希、fingerprint 和协议。随后核对 config 的 rootRef 与根资源类型，再把缓存
+文件交给导入向导。
+
+## v1 Registry 迁移
+
+旧 `pragma.bundle-registry/v1` 使用内部一次性迁移器，不属于公共 CLI：
 
 ```bash
-pragma registry build ./pragma-registry
-pragma registry check ./pragma-registry
+pnpm --filter @pragma/local-host build
+node scripts/migrate-bundle-registry-v1.mjs /path/to/legacy-registry
 ```
 
-为官方源贡献时，可让 CLI 创建本地提交：
-
-```bash
-pragma registry publish ./review-assistant.pragma \
-  --directory ./pragma-registry \
-  --package review-assistant \
-  --version 1.0.0 \
-  --channel stable \
-  --prepare-pr
-```
-
-该命令创建 `registry/review-assistant-1.0.0` 分支并提交 Registry 改动，但不会 push 或创建远端 PR。贡献者应自行检查 diff、推送分支并向官方仓库提交 PR。
-
-## Desktop 同步与安装
-
-设置页可以添加多个源、指定可选 branch/tag、启停和手动刷新。Desktop 将每个源同步到独立 bare Git cache，记录解析成功的 commit 快照。广场把启用源的摘要合并展示；同名 package 来自不同源时仍保留来源身份，不做隐式覆盖。
-
-打开详情时，Desktop 从快照对应的同一 commit 读取 `package.yaml` 和 README。安装时只读取所选版本的对象 blob，并在写入 cache 的同时校验声明大小与 SHA-256，随后交给现有 Pragma Bundle 检查和安装向导。
-
-启动应用不会刷新所有源。网络同步只由添加源或用户刷新触发；同步失败不会破坏此前已验证的目录快照。
-
-## 官方源治理建议
-
-官方仓库应启用分支保护，并在 PR 中至少运行：
-
-```bash
-pragma registry check .
-```
-
-评审需要确认包 ID、分类、许可证、发布者信息、README、Bundle 权限需求和版本变更。官方标识由 Pragma Desktop 的预置配置赋予，而不是远端仓库中的可伪造字段。
+迁移器使用 staging、稳定 journal、`.pragma-registry-v1-backup/` 和迁移报告。无法无损映射的媒体
+字段会在移动旧文件前中止。迁移成功后应运行只读验证器，并人工审阅报告和 Git diff。

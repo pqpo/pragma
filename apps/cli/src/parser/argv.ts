@@ -18,29 +18,16 @@ export type ParsedCommand =
   | { readonly kind: "doctor" }
   | { readonly kind: "completion"; readonly shell: CompletionShell }
   | {
-      readonly kind: "registry-init";
+      readonly kind: "source-init";
       readonly directory: string;
       readonly id: string;
       readonly name: string;
     }
   | {
-      readonly kind: "registry-package-init";
+      readonly kind: "source-add";
       readonly directory: string;
-      readonly packageId: string;
-      readonly categoryId: string;
-      readonly name?: string | undefined;
-      readonly publisher?: string | undefined;
-    }
-  | {
-      readonly kind: "registry-publish";
-      readonly directory: string;
-      readonly packageId: string;
-      readonly version: string;
       readonly bundlePath: string;
-      readonly channel?: "stable" | "preview" | undefined;
-      readonly preparePr: boolean;
     }
-  | { readonly kind: "registry-build" | "registry-check"; readonly directory: string }
   | {
       readonly kind: "executor-discover";
       readonly executorKind: ExecutorKind;
@@ -205,7 +192,7 @@ Commands:
   version
   doctor
   completion <bash|zsh|fish|powershell>
-  registry init|package init|publish|build|check ...
+  source init|add ...
   team discover [SELECTOR] | describe <REF>
   expert discover [SELECTOR] | describe <REF>
   flow discover [SELECTOR] | describe <REF>
@@ -275,18 +262,15 @@ Checks credential and installation readiness. Text is human-readable; JSON/JSONL
 
 Prints a shell completion script. Evaluate or install the returned script in the selected shell.`;
   }
-  if (command === "registry") {
-    return `Usage: pragma registry <command> [options]
+  if (command === "source") {
+    return `Usage: pragma source <command> [options]
 
 Commands:
-  init [DIR] --id REGISTRY_ID --name NAME
-  package init PACKAGE_ID --category CATEGORY [--name NAME] [--publisher NAME] [--directory DIR]
-  publish BUNDLE --package PACKAGE_ID --version SEMVER [--channel stable|preview] [--directory DIR] [--prepare-pr]
-  build [DIR]
-  check [DIR]
+  init [DIR] --id SOURCE_ID --name NAME
+  add BUNDLE [--directory DIR]
 
-publish validates the .pragma Bundle, stores it by SHA-256, updates package metadata, and rebuilds catalog shards.
---prepare-pr also creates and commits a local registry/<package>-<version> branch; it never pushes or opens a remote PR.`;
+init creates the readable Bundle Source directory format without initializing Git.
+add interactively validates and copies one exported .pragma Bundle into a local Source Git work tree.`;
   }
   if (command === "team" || command === "expert" || command === "flow") {
     if (subcommand === undefined) {
@@ -569,8 +553,8 @@ function parseCommand(command: string, args: readonly string[]): ParsedCommand {
       return { kind: "doctor" };
     case "completion":
       return parseCompletion(args);
-    case "registry":
-      return parseRegistryCommand(args);
+    case "source":
+      return parseSourceCommand(args);
     case "team":
     case "expert":
     case "flow":
@@ -582,73 +566,36 @@ function parseCommand(command: string, args: readonly string[]): ParsedCommand {
   }
 }
 
-function parseRegistryCommand(args: readonly string[]): ParsedCommand {
+function parseSourceCommand(args: readonly string[]): ParsedCommand {
   const subcommand = args[0];
   if (subcommand === "init") {
     const { positionals, values } = parseOptions(
       args.slice(1),
       { id: "value", name: "value" },
-      "registry init",
+      "source init",
     );
-    if (positionals.length > 1) throw new Error("registry init accepts at most one directory.");
+    if (positionals.length > 1) throw new Error("source init accepts at most one directory.");
     return {
-      kind: "registry-init",
+      kind: "source-init",
       directory: positionals[0] ?? ".",
       id: requiredOption(values, "id"),
       name: requiredOption(values, "name"),
     };
   }
-  if (subcommand === "package" && args[1] === "init") {
-    const { positionals, values } = parseOptions(
-      args.slice(2),
-      { category: "value", directory: "value", name: "value", publisher: "value" },
-      "registry package init",
-    );
-    if (positionals.length !== 1) {
-      throw new Error("registry package init requires exactly one package ID.");
-    }
-    return {
-      kind: "registry-package-init",
-      directory: optionalValue(values, "directory") ?? ".",
-      packageId: positionals[0]!,
-      categoryId: requiredOption(values, "category"),
-      name: optionalValue(values, "name"),
-      publisher: optionalValue(values, "publisher"),
-    };
-  }
-  if (subcommand === "publish") {
+  if (subcommand === "add") {
     const { positionals, values } = parseOptions(
       args.slice(1),
-      {
-        package: "value",
-        version: "value",
-        channel: "value",
-        directory: "value",
-        "prepare-pr": "flag",
-      },
-      "registry publish",
+      { directory: "value" },
+      "source add",
     );
-    if (positionals.length !== 1) throw new Error("registry publish requires one Bundle path.");
+    if (positionals.length !== 1) throw new Error("source add requires one Bundle path.");
     return {
-      kind: "registry-publish",
+      kind: "source-add",
       directory: optionalValue(values, "directory") ?? ".",
-      packageId: requiredOption(values, "package"),
-      version: requiredOption(values, "version"),
       bundlePath: positionals[0]!,
-      channel: optionalEnum(values, "channel", ["stable", "preview"]) as
-        "stable" | "preview" | undefined,
-      preparePr: values.get("prepare-pr") === true,
     };
   }
-  if (subcommand === "build" || subcommand === "check") {
-    const { positionals } = parseOptions(args.slice(1), {}, `registry ${subcommand}`);
-    if (positionals.length > 1) throw new Error(`registry ${subcommand} accepts one directory.`);
-    return {
-      kind: subcommand === "build" ? "registry-build" : "registry-check",
-      directory: positionals[0] ?? ".",
-    };
-  }
-  throw new Error("registry requires init, package init, publish, build, or check.");
+  throw new Error("source requires init or add.");
 }
 
 function parseCompletion(args: readonly string[]): ParsedCommand {

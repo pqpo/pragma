@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Transform } from "node:stream";
@@ -8,13 +8,18 @@ import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 
 import { withFileLock } from "@pragma/core";
+import { decodePragmaBundle, loadPragmaProject } from "@pragma/interpreter";
+import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import {
-  BundleRegistryCatalogIndexSchema,
-  BundleRegistryCategoryCatalogSchema,
-  BundleRegistryManifestSchema,
-  BundleRegistryPackageSchema,
-  BundleRegistryPackageShardSchema,
-  type BundleRegistryPackageSummary,
+  BUNDLE_SOURCE_KIND_DIRECTORIES,
+  BundleSourceItemSchema,
+  BundleSourceItemSummarySchema,
+  BundleSourceManifestSchema,
+  bundleSourceItemDirectory,
+  bundleSourceRootPrefix,
+  parseBundleSourceRepositoryEntry,
+  type BundleSourceItemSummary,
+  type BundleSourceKind,
 } from "@pragma/shared";
 import { parse } from "yaml";
 
@@ -25,19 +30,28 @@ import {
   type DesktopBundleRegistrySourceStatus,
   type DesktopSquareBundleDownload,
   type DesktopSquareCatalog,
-  type DesktopSquarePackageDetail,
+  type DesktopSquareItemDetail,
   type DownloadDesktopSquareBundle,
-  type GetDesktopSquarePackage,
+  type GetDesktopSquareItem,
   type UpdateDesktopBundleRegistrySource,
 } from "../../../shared/contracts/index.ts";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
-const CATALOG_BLOB_LIMIT = 16 * 1024 * 1024;
+const CONFIG_BLOB_LIMIT = 2 * 1024 * 1024;
+const CONFIG_BATCH_LIMIT = 64 * 1024 * 1024;
+const LS_TREE_LIMIT = 32 * 1024 * 1024;
 
 type StoredSources = ReturnType<typeof DesktopBundleRegistrySourcesSchema.parse>;
 type StoredSource = StoredSources["sources"][number];
 type Snapshot = ReturnType<typeof DesktopBundleRegistrySnapshotSchema.parse>;
+
+interface GitTreeEntry {
+  readonly mode: string;
+  readonly type: string;
+  readonly objectId: string;
+  readonly path: string;
+}
 
 export interface DesktopBundleRegistrySourceService {
   listSources(): Promise<readonly DesktopBundleRegistrySourceStatus[]>;
@@ -49,7 +63,7 @@ export interface DesktopBundleRegistrySourceService {
   refreshSource(sourceId: string): Promise<DesktopBundleRegistrySourceStatus>;
   refreshEnabledSources(): Promise<readonly DesktopBundleRegistrySourceStatus[]>;
   getCatalog(): Promise<DesktopSquareCatalog>;
-  getPackage(input: GetDesktopSquarePackage): Promise<DesktopSquarePackageDetail>;
+  getItem(input: GetDesktopSquareItem): Promise<DesktopSquareItemDetail>;
   downloadBundle(input: DownloadDesktopSquareBundle): Promise<DesktopSquareBundleDownload>;
 }
 
@@ -80,7 +94,7 @@ export function createDesktopBundleRegistrySourceService(options: {
           options.officialSource,
         );
       }
-      throw new Error("Bundle Registry source configuration is unreadable.", { cause: error });
+      throw new Error("Bundle Source configuration is unreadable.", { cause: error });
     }
   };
 
@@ -96,8 +110,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       return DesktopBundleRegistrySnapshotSchema.parse(
         JSON.parse(await readFile(snapshotPath(snapshotsRoot, sourceId), "utf8")),
       );
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) return undefined;
+    } catch {
       return undefined;
     }
   };
@@ -110,11 +123,11 @@ export function createDesktopBundleRegistrySourceService(options: {
       ...source,
       status: snapshot === undefined ? "error" : "ready",
       ...(snapshot === undefined
-        ? { errorCode: "registry_not_synced", errorMessage: "This source has not been synced." }
+        ? { errorCode: "source_not_synced", errorMessage: "This source has not been synced." }
         : {
             commit: snapshot.commit,
             syncedAt: snapshot.syncedAt,
-            packageCount: snapshot.packages.length,
+            itemCount: snapshot.items.length,
           }),
     };
   };
@@ -125,7 +138,6 @@ export function createDesktopBundleRegistrySourceService(options: {
     try {
       const repositoryPath = join(repositoriesRoot, source.id);
       await ensureRepository(repositoryPath, source.remote);
-      const targetRef = source.ref ?? "HEAD";
       await runGit(repositoryPath, [
         "fetch",
         "--force",
@@ -133,82 +145,32 @@ export function createDesktopBundleRegistrySourceService(options: {
         "--depth=1",
         "--filter=blob:none",
         "origin",
-        targetRef,
+        source.ref ?? "HEAD",
       ]);
       const commit = (await runGit(repositoryPath, ["rev-parse", "FETCH_HEAD"])).trim();
-      const manifest = BundleRegistryManifestSchema.parse(
-        parse(await readGitBlob(repositoryPath, commit, "pragma-registry.yaml", 1024 * 1024)),
+      const manifest = BundleSourceManifestSchema.parse(
+        parse(await readGitBlob(repositoryPath, commit, "pragma-source.yaml", CONFIG_BLOB_LIMIT)),
       );
-      const catalog = BundleRegistryCatalogIndexSchema.parse(
-        JSON.parse(await readGitBlob(repositoryPath, commit, manifest.catalog, CATALOG_BLOB_LIMIT)),
+      const tree = await readGitTree(repositoryPath, commit);
+      const unsafeEntry = tree.find(
+        (entry) => entry.mode === "120000" || entry.mode === "160000" || entry.type === "commit",
       );
-      if (catalog.registryId !== manifest.id) {
-        throw new Error("Registry catalog identity does not match pragma-registry.yaml.");
-      }
-      const packages: BundleRegistryPackageSummary[] = [];
-      const packageIds = new Set<string>();
-      for (const shard of catalog.packageShards) {
-        const sourceText = await readGitBlob(
-          repositoryPath,
-          commit,
-          shard.path,
-          CATALOG_BLOB_LIMIT,
+      if (unsafeEntry !== undefined) {
+        throw new Error(
+          `Bundle Source symlinks and submodules are not allowed: ${unsafeEntry.path}`,
         );
-        if (hashText(sourceText) !== shard.sha256) {
-          throw new Error(`Registry catalog shard hash mismatch: ${shard.path}`);
-        }
-        const parsed = BundleRegistryPackageShardSchema.parse(JSON.parse(sourceText));
-        if (parsed.packages.length !== shard.count) {
-          throw new Error(`Registry catalog shard count mismatch: ${shard.path}`);
-        }
-        for (const item of parsed.packages) {
-          if (item.id[0] !== shard.prefix) {
-            throw new Error(`Registry package is in the wrong shard: ${item.id}`);
-          }
-          if (packageIds.has(item.id)) {
-            throw new Error(`Registry catalog contains a duplicate package: ${item.id}`);
-          }
-          packageIds.add(item.id);
-        }
-        packages.push(...parsed.packages);
       }
-      if (packages.length !== catalog.packageCount) {
-        throw new Error("Registry package count does not match its catalog index.");
+      const manifestEntry = tree.find((entry) => entry.path === "pragma-source.yaml");
+      if (manifestEntry?.mode !== "100644" || manifestEntry.type !== "blob") {
+        throw new Error("pragma-source.yaml must be a regular file.");
       }
-      const categoryIds = new Set(manifest.categories.map((category) => category.id));
-      if (catalog.categoryIndexes.length !== categoryIds.size) {
-        throw new Error("Registry catalog does not index every category.");
-      }
-      for (const category of catalog.categoryIndexes) {
-        if (!categoryIds.has(category.categoryId)) {
-          throw new Error(`Registry catalog uses an unknown category: ${category.categoryId}`);
-        }
-        const sourceText = await readGitBlob(
-          repositoryPath,
-          commit,
-          category.path,
-          CATALOG_BLOB_LIMIT,
-        );
-        if (hashText(sourceText) !== category.sha256) {
-          throw new Error(`Registry category index hash mismatch: ${category.path}`);
-        }
-        const parsed = BundleRegistryCategoryCatalogSchema.parse(JSON.parse(sourceText));
-        if (
-          parsed.categoryId !== category.categoryId ||
-          parsed.packageIds.length !== category.count ||
-          new Set(parsed.packageIds).size !== parsed.packageIds.length ||
-          parsed.packageIds.some((packageId) => !packageIds.has(packageId))
-        ) {
-          throw new Error(`Registry category index is inconsistent: ${category.path}`);
-        }
-      }
+      const items = await loadSourceItems(repositoryPath, manifest, tree);
       const snapshot = DesktopBundleRegistrySnapshotSchema.parse({
-        schemaVersion: "pragma.desktop-bundle-registry-snapshot/v1",
+        schemaVersion: "pragma.desktop-bundle-source-snapshot/v2",
         commit,
         syncedAt: new Date().toISOString(),
         manifest,
-        catalog,
-        packages,
+        items,
       });
       await writeJsonAtomically(snapshotPath(snapshotsRoot, source.id), snapshot);
       const status: DesktopBundleRegistrySourceStatus = {
@@ -216,7 +178,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         status: "ready",
         commit,
         syncedAt: snapshot.syncedAt,
-        packageCount: packages.length,
+        itemCount: items.length,
       };
       transientStatuses.set(source.id, status);
       return status;
@@ -229,10 +191,10 @@ export function createDesktopBundleRegistrySourceService(options: {
           : {
               commit: previous.commit,
               syncedAt: previous.syncedAt,
-              packageCount: previous.packages.length,
+              itemCount: previous.items.length,
             }),
-        errorCode: registryErrorCode(error),
-        errorMessage: error instanceof Error ? error.message : "Registry sync failed.",
+        errorCode: sourceErrorCode(error),
+        errorMessage: error instanceof Error ? error.message : "Bundle Source sync failed.",
       };
       transientStatuses.set(source.id, status);
       return status;
@@ -249,17 +211,19 @@ export function createDesktopBundleRegistrySourceService(options: {
 
   return {
     async listSources() {
-      const sources = (await readSources()).sources.toSorted(
-        (left, right) => left.order - right.order,
-      );
+      const sources = sourcePriorityOrder((await readSources()).sources);
       return await Promise.all(sources.map(statusFor));
     },
     async addSource(input) {
       assertSafeRemote(input.remote);
-      const duplicate = (await readSources()).sources.some(
-        (source) => canonicalRemote(source.remote) === canonicalRemote(input.remote),
-      );
-      if (duplicate) throw new Error("This Git Registry source is already configured.");
+      const current = await readSources();
+      if (
+        current.sources.some(
+          (source) => canonicalRemote(source.remote) === canonicalRemote(input.remote),
+        )
+      ) {
+        throw new Error("This Git Bundle Source is already configured.");
+      }
       const source: StoredSource = {
         id: randomUUID(),
         name: input.name,
@@ -267,25 +231,25 @@ export function createDesktopBundleRegistrySourceService(options: {
         ...(input.ref === undefined ? {} : { ref: input.ref }),
         enabled: true,
         official: false,
-        order: (await readSources()).sources.length,
+        order: current.sources.filter((candidate) => !candidate.official).length,
       };
       const status = await refresh(source);
       if (status.status === "error") {
         await rm(join(repositoriesRoot, source.id), { recursive: true, force: true });
         transientStatuses.delete(source.id);
-        throw new Error(status.errorMessage ?? "Registry source validation failed.");
+        throw new Error(status.errorMessage ?? "Bundle Source validation failed.");
       }
       try {
         await withFileLock(lockPath, async () => {
-          const current = await readSources();
+          const latest = await readSources();
           if (
-            current.sources.some(
+            latest.sources.some(
               (candidate) => canonicalRemote(candidate.remote) === canonicalRemote(source.remote),
             )
           ) {
-            throw new Error("This Git Registry source is already configured.");
+            throw new Error("This Git Bundle Source is already configured.");
           }
-          await writeSources({ ...current, sources: [...current.sources, source] });
+          await writeSources({ ...latest, sources: [...latest.sources, source] });
         });
       } catch (error) {
         transientStatuses.delete(source.id);
@@ -300,7 +264,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       await withFileLock(lockPath, async () => {
         const current = await readSources();
         const source = current.sources.find((candidate) => candidate.id === input.sourceId);
-        if (source === undefined) throw new Error("Bundle Registry source was not found.");
+        if (source === undefined) throw new Error("Bundle Source was not found.");
         updated = {
           ...source,
           name: input.name ?? source.name,
@@ -319,7 +283,7 @@ export function createDesktopBundleRegistrySourceService(options: {
           ),
         });
       });
-      if (updated === undefined) throw new Error("Bundle Registry source update did not complete.");
+      if (updated === undefined) throw new Error("Bundle Source update did not complete.");
       transientStatuses.delete(updated.id);
       return await statusFor(updated);
     },
@@ -328,7 +292,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         const current = await readSources();
         const source = current.sources.find((candidate) => candidate.id === sourceId);
         if (source?.official === true)
-          throw new Error("The official Registry source cannot be removed.");
+          throw new Error("The official Bundle Source cannot be removed.");
         await writeSources({
           ...current,
           sources: current.sources.filter((candidate) => candidate.id !== sourceId),
@@ -340,7 +304,7 @@ export function createDesktopBundleRegistrySourceService(options: {
     },
     async refreshSource(sourceId) {
       const source = (await readSources()).sources.find((candidate) => candidate.id === sourceId);
-      if (source === undefined) throw new Error("Bundle Registry source was not found.");
+      if (source === undefined) throw new Error("Bundle Source was not found.");
       return await refresh(source);
     },
     async refreshEnabledSources() {
@@ -348,17 +312,17 @@ export function createDesktopBundleRegistrySourceService(options: {
       return await Promise.all(sources.map(refresh));
     },
     async getCatalog() {
-      const sources = (await readSources()).sources.toSorted(
-        (left, right) => left.order - right.order,
-      );
+      const sources = sourcePriorityOrder((await readSources()).sources);
       const statuses = await Promise.all(sources.map(statusFor));
-      const packages: DesktopSquareCatalog["packages"][number][] = [];
+      const items: DesktopSquareCatalog["items"] = [];
+      const categories: DesktopSquareCatalog["categories"] = [];
+      const seenCategories = new Set<string>();
       for (const source of sources) {
         if (!source.enabled) continue;
         const snapshot = await readSnapshot(source.id);
         if (snapshot === undefined) continue;
-        packages.push(
-          ...snapshot.packages.map((item) => ({
+        items.push(
+          ...snapshot.items.map((item) => ({
             ...item,
             sourceId: source.id,
             sourceName: source.name,
@@ -366,35 +330,31 @@ export function createDesktopBundleRegistrySourceService(options: {
             commit: snapshot.commit,
           })),
         );
+        for (const kind of ["expert", "expert-team", "flow"] as const) {
+          for (const category of snapshot.manifest.sections[kind].categories) {
+            const key = `${kind}:${category.id}`;
+            if (seenCategories.has(key)) continue;
+            seenCategories.add(key);
+            categories.push({ ...category, kind });
+          }
+        }
       }
-      return { packages, sources: statuses };
+      return { items, categories, sources: statuses };
     },
-    async getPackage(input) {
+    async getItem(input) {
       const source = (await readSources()).sources.find(
         (candidate) => candidate.id === input.sourceId,
       );
       const snapshot = await readSnapshot(input.sourceId);
       if (source === undefined || snapshot === undefined)
-        throw new Error("Registry source is unavailable.");
-      const summary = snapshot.packages.find((candidate) => candidate.id === input.packageId);
-      if (summary === undefined) throw new Error("Registry package was not found.");
-      const repositoryPath = join(repositoriesRoot, source.id);
-      const item = BundleRegistryPackageSchema.parse(
-        parse(
-          await readGitBlob(repositoryPath, snapshot.commit, summary.packagePath, 2 * 1024 * 1024),
-        ),
-      );
-      if (item.id !== summary.id)
-        throw new Error("Registry package identity does not match its catalog.");
-      const readmePath = localizedReadme(item, undefined);
-      const readme = await readGitBlob(repositoryPath, snapshot.commit, readmePath, 512 * 1024);
+        throw new Error("Bundle Source is unavailable.");
+      const item = findSnapshotItem(snapshot, input);
       return {
         sourceId: source.id,
         sourceName: source.name,
         sourceOfficial: source.official,
         commit: snapshot.commit,
-        package: item,
-        readme,
+        item,
       };
     },
     async downloadBundle(input) {
@@ -403,60 +363,184 @@ export function createDesktopBundleRegistrySourceService(options: {
       );
       const snapshot = await readSnapshot(input.sourceId);
       if (source === undefined || snapshot === undefined)
-        throw new Error("Registry source is unavailable.");
-      const summary = snapshot.packages.find((candidate) => candidate.id === input.packageId);
-      if (summary === undefined) throw new Error("Registry package was not found.");
-      const item = BundleRegistryPackageSchema.parse(
-        parse(
-          await readGitBlob(
-            join(repositoriesRoot, source.id),
-            snapshot.commit,
-            summary.packagePath,
-            2 * 1024 * 1024,
-          ),
-        ),
-      );
-      if (item.id !== summary.id)
-        throw new Error("Registry package identity does not match its catalog.");
-      const version = item.versions.find((candidate) => candidate.version === input.version);
-      if (version === undefined) throw new Error("Registry package version was not found.");
-      const destination = join(
-        artifactsRoot,
-        version.bundle.sha256.slice(0, 2),
-        `${version.bundle.sha256}.pragma`,
-      );
-      try {
-        const existing = await stat(destination);
-        if (
-          existing.size === version.bundle.size &&
-          (await hashFile(destination)) === version.bundle.sha256
-        ) {
-          return { path: destination, sha256: version.bundle.sha256, cached: true };
-        }
-      } catch (error) {
-        if (!isNodeError(error, "ENOENT")) throw error;
-      }
-      await mkdir(dirname(destination), { recursive: true });
-      const temporary = `${destination}.${randomUUID()}.tmp`;
+        throw new Error("Bundle Source is unavailable.");
+      const item = findSnapshotItem(snapshot, input);
+      if (!item.versions.includes(input.version))
+        throw new Error("Bundle Source item version was not found.");
+      const bundlePath = `${bundleSourceItemDirectory({
+        kind: item.kind,
+        categoryId: item.categoryId,
+        itemId: item.id,
+      })}/versions/${input.version}/bundle.pragma`;
+      const temporary = join(options.cacheRoot, "artifacts", "tmp", `${randomUUID()}.pragma`);
+      await mkdir(dirname(temporary), { recursive: true, mode: 0o700 });
       try {
         const result = await writeGitBlob(
           join(repositoriesRoot, source.id),
           snapshot.commit,
-          version.bundle.path,
+          bundlePath,
           temporary,
-          version.bundle.size,
+          snapshot.manifest.maxBundleBytes,
         );
-        if (result.bytes !== version.bundle.size || result.sha256 !== version.bundle.sha256) {
-          throw new Error("Downloaded Registry Bundle does not match its catalog metadata.");
+        await validateDownloadedBundle(temporary, item);
+        const destination = join(
+          artifactsRoot,
+          result.sha256.slice(0, 2),
+          `${result.sha256}.pragma`,
+        );
+        try {
+          if (
+            (await stat(destination)).size === result.bytes &&
+            (await hashFile(destination)) === result.sha256
+          ) {
+            await rm(temporary, { force: true });
+            return { path: destination, sha256: result.sha256, cached: true };
+          }
+        } catch (error) {
+          if (!isNodeError(error, "ENOENT")) throw error;
         }
+        await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+        await rm(destination, { force: true });
         await rename(temporary, destination);
+        return { path: destination, sha256: result.sha256, cached: false };
       } catch (error) {
         await rm(temporary, { force: true });
         throw error;
       }
-      return { path: destination, sha256: version.bundle.sha256, cached: false };
     },
   };
+}
+
+async function loadSourceItems(
+  repositoryPath: string,
+  manifest: ReturnType<typeof BundleSourceManifestSchema.parse>,
+  tree: readonly GitTreeEntry[],
+): Promise<BundleSourceItemSummary[]> {
+  const sourceRoots = new Set<string>(Object.values(BUNDLE_SOURCE_KIND_DIRECTORIES));
+  const parsed = tree
+    .filter((entry) => sourceRoots.has(entry.path.split("/")[0] ?? ""))
+    .map((entry) => {
+      if (entry.mode !== "100644" || entry.type !== "blob") {
+        throw new Error(`Bundle Source item paths must be regular files: ${entry.path}`);
+      }
+      const value = parseBundleSourceRepositoryEntry(entry.path);
+      if (value === undefined)
+        throw new Error(`Unsupported Bundle Source item file: ${entry.path}`);
+      return { entry, value };
+    });
+  const configs = parsed.filter(
+    (entry): entry is typeof entry & { value: Extract<typeof entry.value, { kind: "config" }> } =>
+      entry.value.kind === "config",
+  );
+  const bundles = parsed.filter(
+    (entry): entry is typeof entry & { value: Extract<typeof entry.value, { kind: "bundle" }> } =>
+      entry.value.kind === "bundle",
+  );
+  const seen = new Set<string>();
+  const items: BundleSourceItemSummary[] = [];
+  const configBlobs = await readGitBlobs(
+    repositoryPath,
+    configs.map((config) => config.entry.objectId),
+    CONFIG_BATCH_LIMIT,
+  );
+  for (const config of configs) {
+    const key = `${config.value.sourceKind}:${config.value.itemId}`;
+    if (seen.has(key)) throw new Error(`Duplicate Bundle Source item: ${key}`);
+    seen.add(key);
+    const configText = configBlobs.get(config.entry.objectId);
+    if (configText === undefined)
+      throw new Error(`Bundle Source config blob is missing: ${config.entry.path}`);
+    if (Buffer.byteLength(configText, "utf8") > CONFIG_BLOB_LIMIT) {
+      throw new Error(`Bundle Source config is too large: ${config.entry.path}`);
+    }
+    const item = BundleSourceItemSchema.parse(parse(configText));
+    if (item.id !== config.value.itemId)
+      throw new Error(`Bundle Source item id does not match its directory: ${config.entry.path}`);
+    if (!item.rootRef.startsWith(`${bundleSourceRootPrefix(config.value.sourceKind)}:`)) {
+      throw new Error(`Bundle Source rootRef does not match item kind: ${config.entry.path}`);
+    }
+    if (
+      !manifest.sections[config.value.sourceKind].categories.some(
+        (category) => category.id === config.value.categoryId,
+      )
+    ) {
+      throw new Error(`Bundle Source item uses an unknown category: ${config.value.categoryId}`);
+    }
+    const versions = bundles
+      .filter(
+        (bundle) =>
+          bundle.value.sourceKind === config.value.sourceKind &&
+          bundle.value.categoryId === config.value.categoryId &&
+          bundle.value.itemId === config.value.itemId,
+      )
+      .map((bundle) => bundle.value.version)
+      .toSorted();
+    if (!versions.includes(item.latestVersion))
+      throw new Error(`Latest Bundle Source version is missing: ${item.id}@${item.latestVersion}`);
+    items.push(
+      BundleSourceItemSummarySchema.parse({
+        ...item,
+        kind: config.value.sourceKind,
+        categoryId: config.value.categoryId,
+        versions,
+        configPath: config.entry.path,
+      }),
+    );
+  }
+  if (
+    bundles.some(
+      (bundle) =>
+        !configs.some(
+          (config) =>
+            config.value.sourceKind === bundle.value.sourceKind &&
+            config.value.categoryId === bundle.value.categoryId &&
+            config.value.itemId === bundle.value.itemId,
+        ),
+    )
+  ) {
+    throw new Error("Bundle Source contains a version without config.yaml.");
+  }
+  return items;
+}
+
+function findSnapshotItem(
+  snapshot: Snapshot,
+  input: { readonly kind: BundleSourceKind; readonly itemId: string },
+): BundleSourceItemSummary {
+  const item = snapshot.items.find(
+    (candidate) => candidate.kind === input.kind && candidate.id === input.itemId,
+  );
+  if (item === undefined) throw new Error("Bundle Source item was not found.");
+  return item;
+}
+
+async function validateDownloadedBundle(
+  path: string,
+  item: BundleSourceItemSummary,
+): Promise<void> {
+  const decoded = await decodePragmaBundle({ kind: "file", path });
+  if (!decoded.manifest.roots.includes(item.rootRef)) {
+    throw new Error(`Downloaded Bundle does not contain configured root ${item.rootRef}.`);
+  }
+  const project = await loadPragmaProject({ kind: "decoded-bundle", bundle: decoded });
+  try {
+    const root = project
+      .listResources()
+      .find((resource) => canonicalPragmaResourceRef(resource) === item.rootRef);
+    const expectedKind =
+      item.kind === "expert" ? "Expert" : item.kind === "expert-team" ? "ExpertTeam" : "Flow";
+    if (root?.kind !== expectedKind) {
+      throw new Error(`Downloaded Bundle root type does not match ${item.kind}.`);
+    }
+  } finally {
+    await project.dispose();
+  }
+}
+
+function sourcePriorityOrder(sources: readonly StoredSource[]): StoredSource[] {
+  return [...sources].toSorted(
+    (left, right) => Number(right.official) - Number(left.official) || left.order - right.order,
+  );
 }
 
 function withOfficialSource(
@@ -496,9 +580,9 @@ function officialSourceId(remote: string): string {
 async function ensureRepository(path: string, remote: string): Promise<void> {
   try {
     await stat(join(path, "HEAD"));
-    const currentRemote = (await runGit(path, ["remote", "get-url", "origin"])).trim();
+    const currentRemote = (await runGit(path, ["config", "--get", "remote.origin.url"])).trim();
     if (canonicalRemote(currentRemote) !== canonicalRemote(remote)) {
-      throw new Error("Registry cache remote does not match its source configuration.");
+      throw new Error("Bundle Source cache remote does not match its configuration.");
     }
     return;
   } catch (error) {
@@ -519,7 +603,7 @@ async function runGit(
   const completeArgs = repositoryPath === undefined ? [...args] : ["-C", repositoryPath, ...args];
   const { stdout } = await execFileAsync("git", completeArgs, {
     timeout: GIT_TIMEOUT_MS,
-    maxBuffer: CATALOG_BLOB_LIMIT,
+    maxBuffer: LS_TREE_LIMIT,
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
@@ -527,6 +611,18 @@ async function runGit(
     },
   });
   return stdout;
+}
+
+async function readGitTree(repositoryPath: string, commit: string): Promise<GitTreeEntry[]> {
+  const output = await runGit(repositoryPath, ["ls-tree", "-r", "-z", commit]);
+  return output
+    .split("\0")
+    .filter((record) => record.length > 0)
+    .map((record) => {
+      const match = /^(\d+) ([a-z]+) ([a-f0-9]+)\t(.+)$/u.exec(record);
+      if (match === null) throw new Error("Git returned an invalid tree entry.");
+      return { mode: match[1]!, type: match[2]!, objectId: match[3]!, path: match[4]! };
+    });
 }
 
 async function readGitBlob(
@@ -542,12 +638,74 @@ async function readGitBlob(
     {
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: maxBytes,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      env: gitEnvironment(),
     },
   );
   if (Buffer.byteLength(stdout, "utf8") > maxBytes)
-    throw new Error(`Registry blob is too large: ${path}`);
+    throw new Error(`Bundle Source config is too large: ${path}`);
   return stdout;
+}
+
+async function readGitBlobs(
+  repositoryPath: string,
+  objectIds: readonly string[],
+  maxBytes: number,
+): Promise<Map<string, string>> {
+  if (objectIds.length === 0) return new Map();
+  const child = spawn("git", ["-C", repositoryPath, "cat-file", "--batch"], {
+    env: gitEnvironment(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    bytes += chunk.byteLength;
+    if (bytes > maxBytes) child.kill();
+    else chunks.push(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderr.length < 4_000) stderr += chunk.toString("utf8");
+  });
+  const completed = new Promise<void>((resolvePromise, reject) => {
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, GIT_TIMEOUT_MS);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      if (bytes > maxBytes) reject(new Error("Bundle Source config batch is too large."));
+      else if (code === 0) resolvePromise();
+      else if (timedOut) reject(new Error("git cat-file timed out."));
+      else reject(new Error(stderr.trim() || `git cat-file exited with code ${String(code)}.`));
+    });
+  });
+  child.stdin.end(`${objectIds.join("\n")}\n`);
+  await completed;
+  const output = Buffer.concat(chunks);
+  const blobs = new Map<string, string>();
+  let offset = 0;
+  for (const requestedId of objectIds) {
+    const headerEnd = output.indexOf(10, offset);
+    if (headerEnd < 0) throw new Error("Git returned a truncated config batch header.");
+    const header = output.subarray(offset, headerEnd).toString("utf8");
+    const match = /^([a-f0-9]+) blob (\d+)$/u.exec(header);
+    if (match === null) throw new Error(`Git could not read Bundle Source config ${requestedId}.`);
+    const blobBytes = Number(match[2]);
+    const contentStart = headerEnd + 1;
+    const contentEnd = contentStart + blobBytes;
+    if (contentEnd >= output.length || output[contentEnd] !== 10) {
+      throw new Error("Git returned a truncated config blob.");
+    }
+    blobs.set(match[1]!, output.subarray(contentStart, contentEnd).toString("utf8"));
+    offset = contentEnd + 1;
+  }
+  return blobs;
 }
 
 async function writeGitBlob(
@@ -555,11 +713,11 @@ async function writeGitBlob(
   commit: string,
   path: string,
   destination: string,
-  expectedBytes: number,
+  maxBytes: number,
 ): Promise<{ readonly bytes: number; readonly sha256: string }> {
   assertGitObjectPath(path);
   const child = spawn("git", ["-C", repositoryPath, "show", `${commit}:${path}`], {
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    env: gitEnvironment(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const hash = createHash("sha256");
@@ -571,9 +729,9 @@ async function writeGitBlob(
   const limiter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.byteLength;
-      if (bytes > expectedBytes) {
+      if (bytes > maxBytes) {
         child.kill();
-        callback(new Error("Registry Bundle exceeded its declared size."));
+        callback(new Error("Bundle exceeded the Source size limit."));
         return;
       }
       hash.update(chunk);
@@ -608,12 +766,20 @@ function assertSafeRemote(remote: string): void {
   if (remote.startsWith("https://") || remote.startsWith("ssh://")) {
     const parsed = new URL(remote);
     if (parsed.password !== "" || (parsed.protocol === "https:" && parsed.username !== "")) {
-      throw new Error("Git credentials must not be embedded in a Registry URL.");
+      throw new Error("Git credentials must not be embedded in a Bundle Source URL.");
     }
     return;
   }
   if (/^[A-Za-z0-9._-]+@[^:\s]+:[^\s]+$/u.test(remote)) return;
-  throw new Error("Only HTTPS and SSH Git Registry remotes are supported.");
+  throw new Error("Only HTTPS and SSH Git Bundle Source remotes are supported.");
+}
+
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+  };
 }
 
 function canonicalRemote(remote: string): string {
@@ -630,19 +796,18 @@ function assertGitObjectPath(path: string): void {
     path.includes("\\") ||
     path.split("/").some((part) => part === "" || part === "." || part === "..")
   ) {
-    throw new Error(`Unsafe Registry object path: ${path}`);
+    throw new Error(`Unsafe Bundle Source object path: ${path}`);
   }
-}
-
-function localizedReadme(
-  item: ReturnType<typeof BundleRegistryPackageSchema.parse>,
-  locale: "en" | "zh-Hans" | "zh-Hant" | undefined,
-): string {
-  return (locale === undefined ? undefined : item.localizedReadmes?.[locale]) ?? item.readme;
 }
 
 function snapshotPath(root: string, sourceId: string): string {
   return join(root, `${sourceId}.json`);
+}
+
+async function hashFile(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }
 
 async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
@@ -652,24 +817,15 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
   await rename(temporary, path);
 }
 
-async function hashFile(path: string): Promise<string> {
-  return createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
-}
-
-function hashText(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function registryErrorCode(error: unknown): string {
+function sourceErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (isNodeError(error, "ENOENT")) return "git_unavailable";
   if (message.includes("not found") && message.includes("git")) return "git_unavailable";
   if (message.includes("authentication") || message.includes("permission denied"))
     return "git_auth_failed";
-  if (message.includes("schema") || message.includes("parse")) return "registry_protocol_invalid";
-  return "registry_sync_failed";
+  if (message.includes("schema") || message.includes("parse") || message.includes("source"))
+    return "source_protocol_invalid";
+  return "source_sync_failed";
 }
 
 function isNodeError(error: unknown, code: string): boolean {

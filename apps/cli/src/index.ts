@@ -17,7 +17,7 @@ import { toIntegrationError } from "./commands/errors.ts";
 import { executeReadOnlyCommand } from "./commands/readonly.ts";
 import { executeMutationCommand } from "./commands/mutations.ts";
 import { startExecutorRun } from "./commands/run.ts";
-import { executeRegistryCommand, type RegistryCommand } from "./commands/registry.ts";
+import { executeSourceCommand, type SourceCommand } from "./commands/source.ts";
 import type { CliLocalHost } from "./commands/types.ts";
 import { createCliLocalHost } from "./composition/default.ts";
 import { CliInputError, readProcessStdin } from "./input.ts";
@@ -217,8 +217,8 @@ export async function runCli(
       startedAt,
       continuationCommand: (cursor: string) => continuationCommandFor(parsed.command, cursor),
     } as const;
-    if (isRegistryCommand(parsed.command)) {
-      presentSuccess(presentationInput, await executeRegistryCommand(parsed.command));
+    if (isSourceCommand(parsed.command)) {
+      presentSuccess(presentationInput, await executeSourceCommand(parsed.command, context));
       return 0;
     }
     if (parsed.command.kind === "mission-watch") {
@@ -469,16 +469,10 @@ function commandName(command: ParsedCommand): string {
       return "doctor";
     case "completion":
       return "completion";
-    case "registry-init":
-      return "registry.init";
-    case "registry-package-init":
-      return "registry.package.init";
-    case "registry-publish":
-      return "registry.publish";
-    case "registry-build":
-      return "registry.build";
-    case "registry-check":
-      return "registry.check";
+    case "source-init":
+      return "source.init";
+    case "source-add":
+      return "source.add";
     case "executor-discover":
       return `${command.executorKind}.discover`;
     case "executor-describe":
@@ -518,8 +512,8 @@ function commandName(command: ParsedCommand): string {
   }
 }
 
-function isRegistryCommand(command: ParsedCommand): command is RegistryCommand {
-  return command.kind.startsWith("registry-");
+function isSourceCommand(command: ParsedCommand): command is SourceCommand {
+  return command.kind.startsWith("source-");
 }
 
 function continuationCommandFor(command: ParsedCommand, cursor: string): string {

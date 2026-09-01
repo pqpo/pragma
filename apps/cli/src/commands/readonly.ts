@@ -37,12 +37,9 @@ export async function executeReadOnlyCommand(
       return { shell: command.shell, script: completionScript(command.shell) };
     case "doctor":
       throw new Error("doctor must be handled by the doctor command.");
-    case "registry-init":
-    case "registry-package-init":
-    case "registry-publish":
-    case "registry-build":
-    case "registry-check":
-      throw new Error("Registry commands must be handled by the Registry command.");
+    case "source-init":
+    case "source-add":
+      throw new Error("Source commands must be handled by the Source command.");
     case "executor-discover":
       return await discoverExecutors(command, context);
     case "executor-describe":
@@ -654,7 +651,7 @@ function completionBashScript(): string {
 _pragma_complete() {
   local cur candidates
   cur="__PRAGMA_DOLLAR__{COMP_WORDS[COMP_CWORD]}"
-  candidates="version doctor completion team expert flow mission --format --json --stream-json --color --interactive --help"
+  candidates="version doctor completion team expert flow mission source --format --json --stream-json --color --interactive --help"
   case "__PRAGMA_DOLLAR__{COMP_WORDS[1]}" in
     team|expert|flow)
       case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
@@ -687,6 +684,13 @@ _pragma_complete() {
         *) candidates="list get resume watch send steer respond interrupt board queue --format --json --stream-json --color --interactive --help" ;;
       esac
       ;;
+    source)
+      case "__PRAGMA_DOLLAR__{COMP_WORDS[2]}" in
+        init) candidates="--id --name --format --json --stream-json --color --interactive --help" ;;
+        add) candidates="--directory --format --json --stream-json --color --interactive --help" ;;
+        *) candidates="init add --format --json --stream-json --color --interactive --help" ;;
+      esac
+      ;;
   esac
   COMPREPLY=( $(compgen -W "__PRAGMA_DOLLAR__candidates" -- "__PRAGMA_DOLLAR__cur") )
 }
@@ -702,7 +706,7 @@ function completionZshScript(): string {
 _pragma() {
   local state
   _arguments -C \
-    '1:command:(version doctor completion team expert flow mission)' \
+    '1:command:(version doctor completion team expert flow mission source)' \
     '*:argument:->argument'
   case __PRAGMA_DOLLAR__state in
     argument)
@@ -744,6 +748,16 @@ _pragma() {
               send) _describe option '--prompt --input --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
               steer) _describe option '--prompt --input --expected-execution --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
               *) _describe option '--format --json --stream-json --color --interactive --help' ;;
+            esac
+          fi
+          ;;
+        source)
+          if (( CURRENT == 3 )); then
+            _describe command 'init add'
+          else
+            case __PRAGMA_DOLLAR__words[3] in
+              init) _describe option '--id --name --format --json --stream-json --color --interactive --help' ;;
+              add) _describe option '--directory --format --json --stream-json --color --interactive --help' ;;
             esac
           fi
           ;;
@@ -902,8 +916,11 @@ function __pragma_queue_steer
   return 1
 end
 
-complete -c pragma -f -n '__fish_use_subcommand' -a 'version doctor completion team expert flow mission'
+complete -c pragma -f -n '__fish_use_subcommand' -a 'version doctor completion team expert flow mission source'
 complete -c pragma -f -n '__fish_seen_subcommand_from team expert flow' -a 'discover describe run'
+complete -c pragma -f -n '__fish_seen_subcommand_from source' -a 'init add'
+complete -c pragma -f -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from init' -a '--id --name --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__fish_seen_subcommand_from source; and __fish_seen_subcommand_from add' -a '--directory --format --json --stream-json --color --interactive --help'
 complete -c pragma -f -n '__fish_seen_subcommand_from mission' -a 'list get resume watch send steer respond interrupt board queue'
 complete -c pragma -f -n '__pragma_mission_queue' -a 'list remove resume steer'
 complete -c pragma -f -n '__fish_seen_subcommand_from board' -a 'list read search'
@@ -935,7 +952,7 @@ function completionPowerShellScript(): string {
   __PRAGMA_DOLLAR__tokens = @(__PRAGMA_DOLLAR__commandAst.CommandElements | ForEach-Object { __PRAGMA_DOLLAR___.ToString().Trim([char]39, [char]34) })
   __PRAGMA_DOLLAR__globalOptions = @('--format','--json','--stream-json','--color','--interactive','--help')
   __PRAGMA_DOLLAR__watchGlobalOptions = @('--format','--stream-json','--color','--interactive','--help')
-  __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('version','doctor','completion','team','expert','flow','mission')
+  __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('version','doctor','completion','team','expert','flow','mission','source')
   if (__PRAGMA_DOLLAR__tokens.Count -ge 2) {
     switch (__PRAGMA_DOLLAR__tokens[1]) {
       'team' {
@@ -974,6 +991,11 @@ function completionPowerShellScript(): string {
         elseif (__PRAGMA_DOLLAR__tokens -contains 'interrupt') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--expected-execution','--reason','--request-id','--wait','--detach','--ack-timeout') }
         elseif (__PRAGMA_DOLLAR__tokens -contains 'board') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','read','search') }
         else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','get','resume','watch','send','steer','respond','interrupt','board','queue') }
+      }
+      'source' {
+        if (__PRAGMA_DOLLAR__tokens -contains 'init') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--id','--name') }
+        elseif (__PRAGMA_DOLLAR__tokens -contains 'add') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--directory') }
+        else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('init','add') }
       }
     }
   }

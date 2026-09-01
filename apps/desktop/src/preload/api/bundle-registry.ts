@@ -7,9 +7,9 @@ import {
   DesktopBundleRegistrySourceStatusSchema,
   DesktopSquareBundleDownloadSchema,
   DesktopSquareCatalogSchema,
-  DesktopSquarePackageDetailSchema,
+  DesktopSquareItemDetailSchema,
   DownloadDesktopSquareBundleSchema,
-  GetDesktopSquarePackageSchema,
+  GetDesktopSquareItemSchema,
   UpdateDesktopBundleRegistrySourceSchema,
 } from "../../shared/contracts/index.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
@@ -52,12 +52,9 @@ export const bundleRegistryApi = {
     ),
   getSquareCatalog: async () =>
     DesktopSquareCatalogSchema.parse(await ipcRenderer.invoke("bundle-registry:catalog")),
-  getSquarePackage: async (input) =>
-    DesktopSquarePackageDetailSchema.parse(
-      await ipcRenderer.invoke(
-        "bundle-registry:package",
-        GetDesktopSquarePackageSchema.parse(input),
-      ),
+  getSquareItem: async (input) =>
+    DesktopSquareItemDetailSchema.parse(
+      await ipcRenderer.invoke("bundle-registry:item", GetDesktopSquareItemSchema.parse(input)),
     ),
   downloadSquareBundle: async (input) =>
     DesktopSquareBundleDownloadSchema.parse(
@@ -75,6 +72,6 @@ export const bundleRegistryApi = {
   | "refreshBundleRegistrySource"
   | "refreshBundleRegistrySources"
   | "getSquareCatalog"
-  | "getSquarePackage"
+  | "getSquareItem"
   | "downloadSquareBundle"
 >;

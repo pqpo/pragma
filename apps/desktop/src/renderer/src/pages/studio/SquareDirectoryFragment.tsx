@@ -11,22 +11,34 @@ import { useTranslation } from "react-i18next";
 
 import type {
   DesktopSquareCatalog,
-  DesktopSquarePackageDetail,
+  DesktopSquareItemDetail,
 } from "../../../../shared/contracts/index.ts";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
+type SquareKind = DesktopSquareCatalog["items"][number]["kind"];
+type SquareSort = "latest" | "name";
+
+const KINDS: readonly SquareKind[] = ["expert", "expert-team", "flow"];
+
 export function SquareDirectoryFragment(props: {
   readonly onInstall: (sourcePath: string) => void;
 }) {
   const { t, i18n } = useTranslation("studio");
-  const [catalog, setCatalog] = useState<DesktopSquareCatalog>({ packages: [], sources: [] });
-  const [selected, setSelected] = useState<DesktopSquarePackageDetail | null>(null);
+  const [catalog, setCatalog] = useState<DesktopSquareCatalog>({
+    items: [],
+    categories: [],
+    sources: [],
+  });
+  const [selected, setSelected] = useState<DesktopSquareItemDetail | null>(null);
+  const [kind, setKind] = useState<SquareKind>("expert");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
+  const [sort, setSort] = useState<SquareSort>("latest");
   const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,24 +54,37 @@ export function SquareDirectoryFragment(props: {
   }, []);
 
   const categories = useMemo(
-    () => [...new Set(catalog.packages.flatMap((item) => item.categories))].toSorted(),
-    [catalog.packages],
+    () =>
+      catalog.categories
+        .filter((item) => item.kind === kind)
+        .toSorted((left, right) => left.order - right.order),
+    [catalog.categories, kind],
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const packages = catalog.packages.filter((item) => {
-    const searchable = [
-      localized(item.name, i18n.language),
-      localized(item.summary, i18n.language),
-      item.publisher.name,
-      ...item.tags,
-    ]
-      .join(" ")
-      .toLocaleLowerCase();
-    return (
-      (category === "all" || item.categories.includes(category)) &&
-      searchable.includes(normalizedQuery)
+  const items = catalog.items
+    .filter((item) => {
+      const searchable = [
+        localized(item.name, i18n.language),
+        localized(item.summary, i18n.language),
+        item.author.name,
+        ...item.tags,
+      ]
+        .join(" ")
+        .toLocaleLowerCase();
+      return (
+        item.kind === kind &&
+        (category === "all" || item.categoryId === category) &&
+        searchable.includes(normalizedQuery)
+      );
+    })
+    .toSorted((left, right) =>
+      sort === "latest"
+        ? Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+        : localized(left.name, i18n.language).localeCompare(
+            localized(right.name, i18n.language),
+            i18n.language,
+          ),
     );
-  });
 
   const refresh = async () => {
     const api = desktopApi();
@@ -76,15 +101,19 @@ export function SquareDirectoryFragment(props: {
     }
   };
 
-  const open = async (item: DesktopSquareCatalog["packages"][number]) => {
+  const open = async (item: DesktopSquareCatalog["items"][number]) => {
     const api = desktopApi();
     if (api === undefined) return;
     setBusy(true);
     setError(null);
     try {
-      const detail = await api.getSquarePackage({ sourceId: item.sourceId, packageId: item.id });
+      const detail = await api.getSquareItem({
+        sourceId: item.sourceId,
+        kind: item.kind,
+        itemId: item.id,
+      });
       setSelected(detail);
-      setVersion(detail.package.channels.stable);
+      setVersion(detail.item.latestVersion);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -100,7 +129,8 @@ export function SquareDirectoryFragment(props: {
     try {
       const result = await api.downloadSquareBundle({
         sourceId: selected.sourceId,
-        packageId: selected.package.id,
+        kind: selected.item.kind,
+        itemId: selected.item.id,
         version,
       });
       props.onInstall(result.path);
@@ -112,6 +142,9 @@ export function SquareDirectoryFragment(props: {
   };
 
   if (selected !== null) {
+    const selectedCategory = catalog.categories.find(
+      (item) => item.kind === selected.item.kind && item.id === selected.item.categoryId,
+    );
     return (
       <StudioScreenFrame
         className="square-detail"
@@ -122,18 +155,15 @@ export function SquareDirectoryFragment(props: {
               <ArrowLeft size={17} /> {t("square.back")}
             </button>
             <div>
-              <h1 id="square-detail-heading">{localized(selected.package.name, i18n.language)}</h1>
-              <p>{localized(selected.package.summary, i18n.language)}</p>
+              <h1 id="square-detail-heading">{localized(selected.item.name, i18n.language)}</h1>
+              <p>{localized(selected.item.summary, i18n.language)}</p>
             </div>
             <div className="square-install-controls">
               <SelectMenu
                 ariaLabel={t("square.version")}
                 className="square-version-select"
                 value={version}
-                options={selected.package.versions.map((item) => ({
-                  value: item.version,
-                  label: item.version,
-                }))}
+                options={selected.item.versions.map((item) => ({ value: item, label: item }))}
                 onChange={setVersion}
               />
               <button
@@ -156,12 +186,18 @@ export function SquareDirectoryFragment(props: {
                 {selected.sourceOfficial ? <SealCheck size={16} /> : null}
                 {selected.sourceName}
               </dd>
-              <dt>{t("square.publisher")}</dt>
-              <dd>{selected.package.publisher.name}</dd>
+              <dt>{t("square.author")}</dt>
+              <dd>{selected.item.author.name}</dd>
               <dt>{t("square.license")}</dt>
-              <dd>{selected.package.license}</dd>
+              <dd>{selected.item.license}</dd>
+              <dt>{t("square.type")}</dt>
+              <dd>{t(`square.kinds.${selected.item.kind}`)}</dd>
               <dt>{t("square.category")}</dt>
-              <dd>{selected.package.primaryCategory}</dd>
+              <dd>
+                {selectedCategory === undefined
+                  ? selected.item.categoryId
+                  : localized(selectedCategory.name, i18n.language)}
+              </dd>
               <dt>{t("square.commit")}</dt>
               <dd>
                 <code>{selected.commit.slice(0, 12)}</code>
@@ -169,7 +205,10 @@ export function SquareDirectoryFragment(props: {
             </dl>
           </aside>
           <article className="square-readme">
-            <MarkdownContent source={selected.readme} codeBlockControls />
+            <MarkdownContent
+              source={localized(selected.item.description, i18n.language)}
+              codeBlockControls
+            />
           </article>
         </div>
         {error ? <p className="form-error">{error}</p> : null}
@@ -198,6 +237,42 @@ export function SquareDirectoryFragment(props: {
         </header>
       }
     >
+      <div className="square-kind-tabs" role="tablist" aria-label={t("square.type")}>
+        {KINDS.map((item) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={kind === item}
+            className={kind === item ? "is-active" : undefined}
+            key={item}
+            onClick={() => {
+              setKind(item);
+              setCategory("all");
+            }}
+          >
+            {t(`square.kinds.${item}`)}
+          </button>
+        ))}
+      </div>
+      <div className="square-category-strip">
+        <button
+          type="button"
+          className={category === "all" ? "is-active" : undefined}
+          onClick={() => setCategory("all")}
+        >
+          {t("square.allCategories")}
+        </button>
+        {categories.map((item) => (
+          <button
+            type="button"
+            className={category === item.id ? "is-active" : undefined}
+            key={item.id}
+            onClick={() => setCategory(item.id)}
+          >
+            {localized(item.name, i18n.language)}
+          </button>
+        ))}
+      </div>
       <div className="square-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} />
@@ -210,46 +285,46 @@ export function SquareDirectoryFragment(props: {
           />
         </label>
         <SelectMenu
-          className="square-category-select"
-          ariaLabel={t("square.category")}
-          value={category}
+          className="square-sort-select"
+          ariaLabel={t("square.sort")}
+          value={sort}
           options={[
-            { value: "all", label: t("square.allCategories") },
-            ...categories.map((item) => ({ value: item, label: item })),
+            { value: "latest", label: t("square.sortLatest") },
+            { value: "name", label: t("square.sortName") },
           ]}
-          onChange={setCategory}
+          onChange={(value) => setSort(value as SquareSort)}
         />
       </div>
       {error ? <p className="form-error">{error}</p> : null}
       {catalog.sources.length === 0 ? (
-        <div className="square-empty">
-          <Storefront size={36} />
-          <strong>{t("square.noSources")}</strong>
-          <p>{t("square.noSourcesDescription")}</p>
-        </div>
-      ) : packages.length === 0 ? (
-        <div className="square-empty">
-          <Storefront size={36} />
-          <strong>{t("square.empty")}</strong>
-          <p>{t("square.emptyDescription")}</p>
-        </div>
+        <SquareEmpty title={t("square.noSources")} description={t("square.noSourcesDescription")} />
+      ) : items.length === 0 ? (
+        <SquareEmpty title={t("square.empty")} description={t("square.emptyDescription")} />
       ) : (
         <div className="square-grid">
-          {packages.map((item) => (
+          {items.map((item) => (
             <button
               className="square-card"
               type="button"
-              key={`${item.sourceId}:${item.id}`}
+              key={`${item.sourceId}:${item.kind}:${item.id}`}
               onClick={() => void open(item)}
             >
-              <span className="square-card-icon">
-                <Storefront size={22} />
-              </span>
+              {item.kind === "flow" ? (
+                <span className="square-card-icon">
+                  <Storefront size={22} />
+                </span>
+              ) : (
+                <ExpertAvatar
+                  avatarId={item.avatarId}
+                  team={item.kind === "expert-team"}
+                  size="md"
+                />
+              )}
               <strong>{localized(item.name, i18n.language)}</strong>
               <p>{localized(item.summary, i18n.language)}</p>
               <small>
                 {item.sourceOfficial ? <SealCheck size={14} /> : null}
-                {item.sourceName} · {item.stable.version}
+                {item.sourceName} · {item.latestVersion}
               </small>
               <span className="square-tags">
                 {item.tags.slice(0, 3).map((tag) => (
@@ -264,12 +339,22 @@ export function SquareDirectoryFragment(props: {
   );
 }
 
+function SquareEmpty(props: { readonly title: string; readonly description: string }) {
+  return (
+    <div className="square-empty">
+      <Storefront size={36} />
+      <strong>{props.title}</strong>
+      <p>{props.description}</p>
+    </div>
+  );
+}
+
 function localized(
-  value: DesktopSquareCatalog["packages"][number]["name"],
+  value: {
+    readonly default: string;
+    readonly translations?: Readonly<Record<string, string | undefined>> | undefined;
+  },
   locale: string,
 ): string {
-  if (locale === "en" || locale === "zh-Hans" || locale === "zh-Hant") {
-    return value.translations?.[locale] ?? value.default;
-  }
-  return value.default;
+  return value.translations?.[locale] ?? value.default;
 }
