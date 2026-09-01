@@ -232,7 +232,7 @@ describe("M8 mutation and queue command surface", () => {
       expect.objectContaining({
         missionId: MISSION_ID,
         kind: "send",
-        payload: { kind: "send", input: { prompt: "hello\nworld" } },
+        payload: { kind: "send", input: { prompt: "hello\nworld", attachments: [] } },
       }),
     );
     expect(wait).toHaveBeenCalledWith(
