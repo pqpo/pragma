@@ -90,6 +90,15 @@ import {
 } from "./runtime-session-pool.ts";
 import { ContextOutputService, unwrapInvocationOutput } from "./context-output-service.ts";
 import { formatExpertPromptWithAttachments } from "./expert-prompt.ts";
+import {
+  HumanInteractionCheckpointError,
+  isHumanInteractionCheckpointError,
+} from "./human-interaction-checkpoint.ts";
+
+export {
+  HumanInteractionCheckpointError,
+  isHumanInteractionCheckpointError,
+} from "./human-interaction-checkpoint.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
 
@@ -113,24 +122,6 @@ interface PendingHumanInteraction {
   readonly invocationId: string;
   readonly resolve: (value: ExpertAgentHumanResponse) => void;
   readonly reject: (reason: unknown) => void;
-}
-
-/**
- * Signals a deliberate non-terminal checkpoint while an invocation is waiting
- * for a durable human response.  Callers must not turn this error into a
- * failed execution; the waiting state has already been committed.
- */
-export class HumanInteractionCheckpointError extends Error {
-  constructor(readonly executionId: string) {
-    super(`Execution checkpointed while waiting for human input: ${executionId}`);
-    this.name = "HumanInteractionCheckpointError";
-  }
-}
-
-export function isHumanInteractionCheckpointError(
-  error: unknown,
-): error is HumanInteractionCheckpointError {
-  return error instanceof HumanInteractionCheckpointError;
 }
 
 export class ExecutionController {
@@ -250,7 +241,11 @@ export class ExecutionController {
       if (signal !== undefined && !signal.signal.aborted) signal.abort(checkpoint);
       const submission = this.activeRuntimeSubmissions.get(invocationId);
       if (submission !== undefined) {
-        runtimeStops.push(Promise.resolve().then(async () => await submission.handle.cancel()));
+        // Start cancellation in this stack frame. Deferring cancel() to a
+        // microtask lets the MCP rejection below reach the provider first,
+        // where it is rendered as a failed askUserQuestion tool call before
+        // the Runtime has even received its interrupt request.
+        runtimeStops.push((async () => await submission.handle.cancel())());
       }
     }
     // Abort the in-memory human waits after starting the provider cancellation. The

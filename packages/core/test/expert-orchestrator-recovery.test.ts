@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defineExpert } from "../src/agent/expert-agent.ts";
 import { DelegationSemaphore, ExpertOrchestrator } from "../src/execution/expert-orchestrator.ts";
 import { createFileExecutionStore } from "../src/execution/execution-store.ts";
+import { HumanInteractionCheckpointError } from "../src/execution/human-interaction-checkpoint.ts";
 
 const temporaryRoots: string[] = [];
 const now = "2026-08-22T08:00:00.000Z";
@@ -61,6 +62,85 @@ async function waitForTemporaryRootsToQuiesce(): Promise<void> {
 }
 
 describe("ExpertOrchestrator recovery", { timeout: 30_000 }, () => {
+  it("keeps a Team member human checkpoint recoverable instead of failing the Agent task", async () => {
+    const home = await temporaryRoot("pragma-member-human-checkpoint-");
+    const executionId = "member-human-checkpoint";
+    const store = createFileExecutionStore({ pragmaHome: home });
+    await store.create(executionRecord(executionId), {
+      ...invocationRecord(),
+      agentId: "agent",
+      agentTaskSequence: 0,
+    });
+    await store.commit({
+      commitId: "seed-member-human-checkpoint",
+      executionId,
+      contextPuts: [runtimeContext(executionId)],
+      agentPuts: [agentRecord(executionId)],
+    });
+    const expert = await defineExpert({
+      id: "worker",
+      name: "Worker",
+      description: "Worker",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const checkpointing = createOrchestrator(store, executionId, async (job) => {
+      await store.commit({
+        commitId: "member-waiting-for-human",
+        executionId,
+        executionPatch: { status: "waiting" },
+        invocationPatches: [
+          {
+            invocationId: job.invocation.invocationId,
+            patch: { status: "waiting", waitReason: "human_input" },
+          },
+        ],
+      });
+      throw new HumanInteractionCheckpointError(executionId);
+    });
+
+    await checkpointing.registerExperts([expert]);
+    await waitUntil(
+      async () => (await store.getInvocation(executionId, "root"))?.waitReason === "human_input",
+    );
+    await waitUntil(
+      async () => (await store.getAgent(executionId, "agent"))?.activeInvocationId === "root",
+    );
+    await waitUntil(async () => {
+      const state = checkpointing as unknown as {
+        readonly activeJobs: ReadonlyMap<string, Promise<void>>;
+        readonly pumping: ReadonlySet<string>;
+      };
+      return state.activeJobs.size === 0 && state.pumping.size === 0;
+    });
+    expect((await store.readEvents(executionId)).map((event) => event.type)).not.toContain(
+      "invocation.failed",
+    );
+
+    const recovering = createOrchestrator(store, executionId, async (job) => {
+      await store.commit({
+        commitId: "member-completed-after-human-response",
+        executionId,
+        invocationPatches: [
+          {
+            invocationId: job.invocation.invocationId,
+            patch: { status: "succeeded", waitReason: undefined },
+          },
+        ],
+        agentPatches: [{ agentId: job.agent.agentId, patch: { activeInvocationId: undefined } }],
+      });
+    });
+    await recovering.registerExperts([expert]);
+    await waitUntil(
+      async () => (await store.getInvocation(executionId, "root"))?.status === "succeeded",
+    );
+    expect((await store.readEvents(executionId)).map((event) => event.type)).toContain(
+      "agent.task.recovered",
+    );
+  });
+
   it("lets a timed-out waiter regain control without corrupting the concurrency queue", async () => {
     const semaphore = new DelegationSemaphore(1);
     const parent = await semaphore.acquire();

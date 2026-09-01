@@ -29,6 +29,7 @@ import {
 } from "./context-resolution-service.ts";
 import type { ContextIdResolutionSource, ContextIdResolver } from "./context-id-resolver.ts";
 import { defineContextIdResolver } from "./context-id-resolver.ts";
+import { isHumanInteractionCheckpointError } from "./human-interaction-checkpoint.ts";
 
 const MAX_EXPERT_MESSAGE_CHARACTERS = 100_000;
 const MAX_PENDING_EXPERT_MESSAGES = 128;
@@ -1161,6 +1162,7 @@ export class ExpertOrchestrator {
     readonly prompt: string;
     readonly permit: DelegationPermit;
   }): Promise<void> {
+    let checkpointed = false;
     try {
       await this.options.store.commit({
         commitId: `agent-activated:${options.invocation.invocationId}:${randomUUID()}`,
@@ -1190,16 +1192,23 @@ export class ExpertOrchestrator {
         prompt: options.prompt,
         permit: options.permit,
       });
-    } catch {
-      const current = await this.options.store.getInvocation(
-        this.options.executionId,
-        options.invocation.invocationId,
-      );
-      if (current !== undefined && !isTerminalExecutionStatus(current.status)) {
-        await this.failUnrecoverableJob(
-          current,
-          "Expert task failed before reaching a terminal state.",
+    } catch (error) {
+      if (isHumanInteractionCheckpointError(error)) {
+        // Keep the Agent ownership claim intact. Recovery uses it to identify
+        // and requeue this exact member Invocation after the durable human
+        // response arrives.
+        checkpointed = true;
+      } else {
+        const current = await this.options.store.getInvocation(
+          this.options.executionId,
+          options.invocation.invocationId,
         );
+        if (current !== undefined && !isTerminalExecutionStatus(current.status)) {
+          await this.failUnrecoverableJob(
+            current,
+            "Expert task failed before reaching a terminal state.",
+          );
+        }
       }
     } finally {
       try {
@@ -1207,7 +1216,7 @@ export class ExpertOrchestrator {
           this.options.executionId,
           options.agentId,
         );
-        if (currentAgent?.activeInvocationId === options.invocation.invocationId) {
+        if (!checkpointed && currentAgent?.activeInvocationId === options.invocation.invocationId) {
           await this.options.store.commit({
             commitId: `agent-idle:${options.invocation.invocationId}`,
             executionId: this.options.executionId,

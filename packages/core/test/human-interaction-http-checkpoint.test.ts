@@ -42,6 +42,7 @@ describe("Human interaction checkpoint across the HTTP MCP boundary", { timeout:
       starts: 0,
       cancelCalls: 0,
       initialTurnReturnedWithoutCancellation: false,
+      checkpointReachedRuntimeBeforeCancellation: false,
     };
     const runtime = createHttpMcpRuntime(state);
     const runtimes = createStaticRuntimeResolver({
@@ -85,6 +86,7 @@ describe("Human interaction checkpoint across the HTTP MCP boundary", { timeout:
     ).rejects.toMatchObject({ code: "ENOENT" });
     expect(state.cancelCalls).toBe(1);
     expect(state.initialTurnReturnedWithoutCancellation).toBe(false);
+    expect(state.checkpointReachedRuntimeBeforeCancellation).toBe(false);
 
     const resumed = await app.experts.resumeSession(expert, { sessionId });
     const resumedTurn = (await resumed.listTurns()).find(
@@ -120,6 +122,7 @@ function createHttpMcpRuntime(state: {
   starts: number;
   cancelCalls: number;
   initialTurnReturnedWithoutCancellation: boolean;
+  checkpointReachedRuntimeBeforeCancellation: boolean;
 }) {
   return defineRuntimeDriver<never, HttpMcpRuntimeSession>({
     features: createRuntimeTestFeatures({ enabled: ["cancellation", "close"] }),
@@ -152,19 +155,26 @@ function createHttpMcpRuntime(state: {
         if (!tools.tools.some((tool) => tool.name === "askUserQuestion")) {
           throw new Error("The HTTP MCP gateway did not expose askUserQuestion.");
         }
-        const result = await client.callTool({
-          name: "askUserQuestion",
-          arguments: {
-            questions: [
-              {
-                question: "Continue",
-                header: "Decision",
-                kind: "text",
-                options: [],
-              },
-            ],
-          },
-        });
+        const result = await client
+          .callTool({
+            name: "askUserQuestion",
+            arguments: {
+              questions: [
+                {
+                  question: "Continue",
+                  header: "Decision",
+                  kind: "text",
+                  options: [],
+                },
+              ],
+            },
+          })
+          .catch((error: unknown) => {
+            if (state.cancelCalls === 0) {
+              state.checkpointReachedRuntimeBeforeCancellation = true;
+            }
+            throw error;
+          });
         if (state.starts === 1 && !turn.signal.aborted) {
           state.initialTurnReturnedWithoutCancellation = true;
         }

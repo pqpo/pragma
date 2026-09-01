@@ -18,6 +18,7 @@ import {
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
+  isHumanInteractionCheckpointError,
   isRuntimeContextCompactionNotNeededError,
   isExpertTeam,
   StoredExecutionView,
@@ -316,6 +317,7 @@ interface ActiveMissionExecution {
   readonly handle: DesktopExecutionHandle;
   readonly settlement: Promise<void>;
   readonly audience: MissionSurfaceAudience;
+  readonly releaseAfterHumanCheckpoint: () => Promise<void>;
 }
 
 type DesktopExecutionHandle = MutableExecution & {
@@ -1065,12 +1067,14 @@ export function createMissionRunner(options: {
 
   const forgetActive = async (
     id: string,
-    executionId: string,
+    handle: DesktopExecutionHandle,
+    expectedLive: LiveMissionChat,
     audience: MissionSurfaceAudience,
+    attachNextTurn = true,
   ): Promise<void> => {
-    if (active.get(id)?.handle.executionId === executionId) active.delete(id);
+    if (active.get(id)?.handle === handle) active.delete(id);
     const live = liveChats.get(id);
-    if (live?.executionId === executionId) {
+    if (live === expectedLive) {
       await live.close();
       liveChats.delete(id);
     }
@@ -1078,7 +1082,7 @@ export function createMissionRunner(options: {
     liveContextWindows.delete(id);
     invalidateChat(id, audience);
     invalidateWork(id, audience);
-    await attachNextSessionTurn(id, audience);
+    if (attachNextTurn) await attachNextSessionTurn(id, audience);
   };
 
   const compileMissionExecutor = async (
@@ -1591,6 +1595,11 @@ export function createMissionRunner(options: {
       resolveExecutorAvatarId,
     );
     liveChats.set(missionId, live);
+    let releaseCheckpoint = (): void => undefined;
+    const checkpoint = new Promise<void>((resolve) => {
+      releaseCheckpoint = resolve;
+    });
+    let settlementKind: "terminal" | "checkpointed" = "terminal";
     const settlement = observeExecution(
       options.missions,
       missionId,
@@ -1615,9 +1624,11 @@ export function createMissionRunner(options: {
           executionId: input.handle.executionId,
         });
       },
+      checkpoint,
     )
-      .then(() => {
-        if (input.acceptedAt !== undefined) {
+      .then((kind) => {
+        settlementKind = kind;
+        if (kind === "terminal" && input.acceptedAt !== undefined) {
           logger.info("mission.final_result", "Mission execution reached a final result", {
             missionId,
             executionId: input.handle.executionId,
@@ -1625,8 +1636,25 @@ export function createMissionRunner(options: {
           });
         }
       })
-      .finally(async () => await forgetActive(missionId, input.handle.executionId, audience));
-    active.set(missionId, { handle: input.handle, settlement, audience });
+      .finally(
+        async () =>
+          await forgetActive(
+            missionId,
+            input.handle,
+            live,
+            audience,
+            settlementKind !== "checkpointed",
+          ),
+      );
+    active.set(missionId, {
+      handle: input.handle,
+      settlement,
+      audience,
+      releaseAfterHumanCheckpoint: async () => {
+        releaseCheckpoint();
+        await settlement;
+      },
+    });
     invalidateChat(missionId, audience);
     invalidateWork(missionId, audience);
     void settlement.catch((error: unknown) => {
@@ -2953,13 +2981,27 @@ export function createMissionRunner(options: {
         details: { missionId: input.missionId },
       });
     }
-    return createLocalHostRunHandleState({
+    const localHostState = createLocalHostRunHandleState({
       coreHandle: current.handle,
       executions: executionStore,
       missionId: input.missionId,
       release: async () => undefined,
       onEvent: input.onEvent,
-    }).handle;
+    });
+    return {
+      ...localHostState.handle,
+      checkpointWaitingHuman: async () => {
+        await localHostState.handle.checkpointWaitingHuman?.();
+        // checkpointWaitingHuman closes and releases this ExpertSession. Do
+        // not let a fast response reuse the closed in-memory instance; the
+        // durable recovery path must reopen it and consume the response.
+        sessions.delete(input.missionId);
+        const checkpointed = active.get(input.missionId);
+        if (checkpointed?.handle === current.handle) {
+          await checkpointed.releaseAfterHumanCheckpoint();
+        }
+      },
+    };
   };
 
   const resolveLocalHostExecutionTarget = async (input: {
@@ -4029,17 +4071,35 @@ function observeExecution(
   sessionId?: string,
   logger?: import("@pragma/core").PragmaLogger,
   onTerminal?: (() => void | Promise<void>) | undefined,
-): Promise<void> {
+  checkpoint?: Promise<void> | undefined,
+): Promise<"terminal" | "checkpointed"> {
   return (async () => {
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
     let failure: unknown;
+    let checkpointed = false;
     try {
-      await execution.result;
+      if (checkpoint === undefined) {
+        await execution.result;
+      } else {
+        const outcome = await Promise.race([
+          execution.result.then(
+            () => ({ kind: "completed" as const }),
+            (error: unknown) => ({ kind: "failed" as const, error }),
+          ),
+          checkpoint.then(() => ({ kind: "checkpointed" as const })),
+        ]);
+        if (outcome.kind === "checkpointed") checkpointed = true;
+        else if (outcome.kind === "failed") throw outcome.error;
+      }
     } catch (error) {
-      const state = await execution.getState().catch(() => undefined);
-      status =
-        state?.status === "cancelled" || state?.status === "interrupted" ? "cancelled" : "failed";
-      failure = error;
+      if (isHumanInteractionCheckpointError(error)) {
+        checkpointed = true;
+      } else {
+        const state = await execution.getState().catch(() => undefined);
+        status =
+          state?.status === "cancelled" || state?.status === "interrupted" ? "cancelled" : "failed";
+        failure = error;
+      }
     }
     try {
       await onFinished();
@@ -4051,6 +4111,10 @@ function observeExecution(
         { missionId, executionId: execution.executionId },
       );
     }
+    // A human checkpoint deliberately ends the current in-memory observer but
+    // leaves the durable Execution and Mission waiting for the response. It is
+    // neither terminal nor eligible for projection/archive cleanup.
+    if (checkpointed) return "checkpointed";
     try {
       await onTerminal?.();
     } catch (error) {
@@ -4079,6 +4143,7 @@ function observeExecution(
         statuses: ["queued", "running", "waiting"],
       },
     );
+    return "terminal";
   })();
 }
 

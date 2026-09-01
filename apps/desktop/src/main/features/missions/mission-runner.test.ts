@@ -3884,6 +3884,148 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await control.stopOwner(mission.id);
   });
 
+  it("keeps the first Local Host askUserQuestion checkpoint non-terminal and resumes it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-first-human-checkpoint-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expertResource = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertResource],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Ask which environment to use, then continue.",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertResource),
+    });
+    const request = {
+      kind: "user_question" as const,
+      toolName: "askUserQuestion" as const,
+      toolCallId: "first-environment-question",
+      questions: [
+        {
+          question: "Which environment?",
+          header: "Environment",
+          kind: "single_choice" as const,
+          options: [
+            { label: "staging", description: "Use staging." },
+            { label: "production", description: "Use production." },
+          ],
+        },
+      ],
+    };
+    let runtimeStarts = 0;
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      restoreSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "first-human-runtime" }),
+      async startTurn(session) {
+        runtimeStarts += 1;
+        const handler = session.context.request.humanInteractionHandler;
+        if (handler === undefined) throw new Error("Human interaction handler is missing.");
+        const response = await handler(request);
+        return {
+          outputText: JSON.stringify(response),
+          runtimeSessionId: "first-human-runtime",
+        };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const workspace = {
+      schemaVersion: "pragma.integration-workspace/v1" as const,
+      requestedPath: root,
+      canonicalPath: root,
+      displayName: "workspace",
+      identityHash: `sha256:${"a".repeat(64)}`,
+      access: { exists: true, readable: true, writable: true },
+      source: "explicit" as const,
+    };
+    const handle = await runner.startLocalHostRun({
+      missionId: mission.id,
+      request: {
+        requestId: mission.initialMessageId,
+        command: "expert.run",
+        executor: { kind: "expert", id: expertResource.metadata.id },
+        workspace,
+        project: { projectId: snapshot.projectId, revision: snapshot.revision },
+        prompt: mission.goal,
+        detach: true,
+      },
+      executor: {
+        descriptor: {
+          schemaVersion: "pragma.integration-executor/v1",
+          ref: { kind: "expert", id: expertResource.metadata.id },
+          name: expertResource.metadata.name,
+          description: expertResource.metadata.description,
+          source: "project",
+          project: {
+            projectId: snapshot.projectId,
+            revision: snapshot.revision,
+            fingerprint: "b".repeat(64),
+          },
+          availability: { status: "ready", blockingCodes: [] },
+          workspace: { required: true, allowNonGitDirectory: true },
+          capabilities: {
+            interactive: true,
+            resumable: true,
+            steerable: true,
+            supportsQueue: true,
+          },
+        },
+      },
+    });
+
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
+      { timeout: settlementTimeoutMs },
+    );
+    await handle.checkpointWaitingHuman?.();
+    await expect(handle.result).resolves.toMatchObject({
+      status: "input_required",
+      executionId: handle.executionId,
+    });
+    expect((await missions.get(mission.id)).execution).toMatchObject({
+      id: handle.executionId,
+      status: "waiting",
+    });
+
+    const interaction = (await runner.listHumanInteractions(mission.id))[0];
+    expect(interaction).toBeDefined();
+    await runner.respondToHumanInteraction({
+      missionId: mission.id,
+      interactionId: interaction!.interactionId,
+      requestId: "60000000-0000-4000-8000-000000000001",
+      response: { answers: { "Which environment?": "staging" } },
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(runtimeStarts).toBe(2);
+    await expect(
+      runner.respondToHumanInteraction({
+        missionId: mission.id,
+        interactionId: interaction!.interactionId,
+        requestId: "60000000-0000-4000-8000-000000000002",
+        response: { answers: { "Which environment?": "production" } },
+      }),
+    ).rejects.toThrow("no longer waiting");
+  });
+
   it("keeps an ExpertTeam askUserQuestion response out of the steer queue", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-team-human-response-"));
     temporaryPaths.push(root);
