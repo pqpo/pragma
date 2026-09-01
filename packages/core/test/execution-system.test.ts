@@ -767,6 +767,97 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await second.close();
   });
 
+  it("explicitly recovers one closed ExpertSession owner and restores its Runtime context", async () => {
+    const home = await createTemporaryHome("pragma-closed-session-recovery-");
+    const stats = createFakeRuntimeStats();
+    const runtime = createFakeRuntime({ stats });
+    const runtimes = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "fake",
+    });
+    const expert = await defineExpert({
+      id: "closed-session-recovery",
+      name: "Closed Session Recovery",
+      description: "Closed Session recovery test",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const originalApp = createPragma({ pragmaHome: home, runtimes });
+    const original = await originalApp.experts.createSession(expert);
+    await (
+      await original.prompt("first", { requestId: "closed-recovery-first" })
+    ).result;
+    const beforeClose = await original.getState();
+    const originalSnapshot = beforeClose.contexts[beforeClose.rootContextId]?.snapshot;
+    expect(originalSnapshot).toBeDefined();
+    await original.close("Simulate the v0.2.25 Mission controller cleanup bug.");
+
+    const firstRecoveryApp = createPragma({ pragmaHome: home, runtimes });
+    const secondRecoveryApp = createPragma({ pragmaHome: home, runtimes });
+    await expect(
+      firstRecoveryApp.experts.resumeSession(expert, { sessionId: original.sessionId }),
+    ).rejects.toThrow(`ExpertSession is closed: ${original.sessionId}`);
+
+    const attempts = await Promise.allSettled([
+      firstRecoveryApp.experts.recoverClosedSession(expert, {
+        sessionId: original.sessionId,
+        reason: "Active Mission still references this Session.",
+      }),
+      secondRecoveryApp.experts.recoverClosedSession(expert, {
+        sessionId: original.sessionId,
+        reason: "Concurrent recovery attempt.",
+      }),
+    ]);
+    const fulfilled = attempts.filter(
+      (
+        attempt,
+      ): attempt is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof originalApp.experts.createSession>>
+      > => attempt.status === "fulfilled",
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(attempts.filter((attempt) => attempt.status === "rejected")).toHaveLength(1);
+
+    const recovered = fulfilled[0]!.value;
+    const recoveredState = await recovered.getState();
+    expect(recoveredState).toMatchObject({
+      sessionId: original.sessionId,
+      status: "open",
+      rootContextId: beforeClose.rootContextId,
+    });
+    expect(recoveredState.contexts[recoveredState.rootContextId]).toMatchObject({
+      lifecycle: "open",
+      snapshot: originalSnapshot,
+    });
+    expect(recoveredState.contexts[recoveredState.rootContextId]).not.toHaveProperty("closedAt");
+    expect((await recovered.listEvents()).items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "context.recovered",
+          data: expect.objectContaining({
+            reason: "Active Mission still references this Session.",
+          }),
+        }),
+        expect.objectContaining({
+          type: "session.recovered",
+          data: expect.objectContaining({
+            reason: "Active Mission still references this Session.",
+          }),
+        }),
+      ]),
+    );
+
+    await (
+      await recovered.prompt("second", { requestId: "closed-recovery-second" })
+    ).result;
+    expect(stats.restoreSessionCalls).toBe(1);
+    expect(stats.sessionContexts.at(-1)).toMatchObject({
+      systemSessionId: originalSnapshot!.systemSessionId,
+    });
+    await recovered.close();
+  });
+
   it("streams only future events until terminal and exposes durable message history", async () => {
     const { app, expert } = await fixture(100);
     const session = await app.experts.createSession(expert);

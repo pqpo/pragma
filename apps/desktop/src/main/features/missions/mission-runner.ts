@@ -1387,6 +1387,18 @@ export function createMissionRunner(options: {
       record,
       identityIndex,
     });
+    if (record?.status === "closed") {
+      const recovered = await app.experts.recoverClosedSession(compiled.value, {
+        ...request,
+        reason: `Active Desktop Mission ${mission.id} still references this closed ExpertSession.`,
+      });
+      logger.warn(
+        "mission.closed_session_recovered",
+        `Recovered closed ExpertSession ${sessionId} for active Mission ${mission.id}.`,
+        { missionId: mission.id, sessionId },
+      );
+      return recovered;
+    }
     return await app.experts.resumeSession(compiled.value, request);
   };
 
@@ -3666,8 +3678,16 @@ export function createMissionRunner(options: {
         await session
           .cancelPromptQueue("Mission controller lease was lost.")
           .catch(() => undefined);
-        await session.close("Mission controller lease was lost.").catch(() => undefined);
+        await session.releaseAfterTerminal().catch((error: unknown) => {
+          logger.warn(
+            "mission.controller_session_release_failed",
+            `Mission ${id} could not release its ExpertSession after the controller lease was lost.`,
+            { error, missionId: id, sessionId: session.sessionId },
+          );
+        });
         sessions.delete(id);
+        sessionCompilationIdentities.delete(id);
+        sessionDefinitionFingerprints.delete(id);
       }
       executionContexts.delete(id);
     },

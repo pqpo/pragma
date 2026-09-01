@@ -3,6 +3,7 @@ import {
   ExpertSessionManager,
   type CreateExpertSessionOptions,
   type ExpertSession,
+  type RecoverClosedExpertSessionOptions,
   type ResumeExpertSessionOptions,
 } from "./execution/expert-session.ts";
 import {
@@ -48,6 +49,10 @@ export interface PragmaApp {
     resumeSession(
       expert: ExpertDefinition,
       request: ResumeExpertSessionOptions,
+    ): Promise<ExpertSession>;
+    recoverClosedSession(
+      expert: ExpertDefinition,
+      request: RecoverClosedExpertSessionOptions,
     ): Promise<ExpertSession>;
   };
   readonly flows: {
@@ -103,6 +108,8 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     experts: {
       createSession: async (expert, request) => await experts.createSession(expert, request),
       resumeSession: async (expert, request) => await experts.resumeSession(expert, request),
+      recoverClosedSession: async (expert, request) =>
+        await experts.recoverClosedSession(expert, request),
     },
     flows: {
       start: async (flow, request) => await flows.start(flow, request),

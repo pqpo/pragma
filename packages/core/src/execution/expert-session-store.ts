@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import {
   ExpertSessionEventSchema,
   ExpertSessionRecordSchema,
+  isTerminalExecutionStatus,
   PromptRequestSchema,
   type ExecutionRecord,
   type ExpertSessionEvent,
@@ -45,6 +46,13 @@ export interface ExpertSessionStore {
   create(record: ExpertSessionRecord): Promise<void>;
   enqueue(transaction: EnqueuePromptTransaction): Promise<string>;
   get(sessionId: string): Promise<ExpertSessionRecord | undefined>;
+  recoverClosed(input: {
+    readonly sessionId: string;
+    readonly expectedUpdatedAt: string;
+    readonly claimId: string;
+    readonly leaseMs: number;
+    readonly reason: string;
+  }): Promise<ExpertSessionRecord | undefined>;
   transact<T>(
     sessionId: string,
     action: (state: {
@@ -274,6 +282,89 @@ export function createFileExpertSessionStore(options: {
         const parsed = ExpertSessionRecordSchema.safeParse(value);
         if (!parsed.success) throw unsupported(sessionId, parsed.error);
         return parsed.data;
+      });
+    },
+    async recoverClosed(input) {
+      return await withFileLock(paths.expertSessionLock(input.sessionId), async () => {
+        await prepareExpertSession(paths, options.executions, input.sessionId);
+        const session = ExpertSessionRecordSchema.parse(
+          await requireJson(paths.expertSessionState(input.sessionId), input.sessionId),
+        );
+        if (session.status !== "closed" || session.updatedAt !== input.expectedUpdatedAt) {
+          return undefined;
+        }
+        if (session.activeExecutionId !== undefined) {
+          throw new Error(`Closed ExpertSession has an active Execution: ${input.sessionId}`);
+        }
+        const prompts = PromptRequestSchema.array().parse(
+          (await readJson(paths.expertSessionPrompts(input.sessionId))) ?? [],
+        );
+        if (prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running")) {
+          throw new Error(`Closed ExpertSession has pending prompts: ${input.sessionId}`);
+        }
+        for (const executionId of session.executionIds) {
+          const execution = await options.executions.get(executionId);
+          if (execution !== undefined && !isTerminalExecutionStatus(execution.status)) {
+            throw new Error(
+              `Closed ExpertSession has a non-terminal Execution: ${input.sessionId}`,
+            );
+          }
+        }
+        const existingValue = await readJson(paths.expertSessionLease(input.sessionId));
+        const existing =
+          existingValue === undefined ? undefined : ExpertSessionLeaseSchema.parse(existingValue);
+        if (
+          existing !== undefined &&
+          existing.claimId !== input.claimId &&
+          Date.parse(existing.expiresAt) > Date.now() &&
+          (existing.processId === undefined || isProcessAlive(existing.processId))
+        ) {
+          return undefined;
+        }
+        const rootContext = session.contexts[session.rootContextId];
+        if (rootContext === undefined) throw new Error("ExpertSession root Context is missing.");
+        const reopenedRoot = {
+          ...rootContext,
+          lifecycle: "open" as const,
+          updatedAt: new Date().toISOString(),
+        };
+        delete reopenedRoot.closedAt;
+        const recovered = ExpertSessionRecordSchema.parse({
+          ...session,
+          status: "open",
+          contexts: { ...session.contexts, [session.rootContextId]: reopenedRoot },
+          updatedAt: reopenedRoot.updatedAt,
+        });
+        const events = ExpertSessionEventSchema.array().parse(
+          (await readJson(paths.expertSessionEvents(input.sessionId))) ?? [],
+        );
+        const journal = ExpertSessionTransactionJournalSchema.parse({
+          schemaVersion: "pragma.expert-session-transaction/v10",
+          session: recovered,
+          prompts,
+          events: materializeSessionEvents(input.sessionId, events, [
+            {
+              eventId: `context-recovered:${session.rootContextId}:${recovered.updatedAt}`,
+              type: "context.recovered",
+              data: { contextId: session.rootContextId, reason: input.reason },
+              occurredAt: recovered.updatedAt,
+            },
+            {
+              eventId: `session-recovered:${recovered.updatedAt}`,
+              type: "session.recovered",
+              data: { reason: input.reason },
+              occurredAt: recovered.updatedAt,
+            },
+          ]),
+        });
+        await writeJson(paths.expertSessionTransaction(input.sessionId), journal);
+        await applyTransaction(paths, options.executions, input.sessionId, journal);
+        await writeJson(paths.expertSessionLease(input.sessionId), {
+          claimId: input.claimId,
+          processId: process.pid,
+          expiresAt: new Date(Date.now() + input.leaseMs).toISOString(),
+        });
+        return recovered;
       });
     },
     async transact(sessionId, action) {

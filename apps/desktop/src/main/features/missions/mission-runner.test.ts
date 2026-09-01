@@ -4519,6 +4519,122 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
   });
 
+  it("recovers a v0.2.25 Mission that still references a closed ExpertSession", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-closed-session-recovery-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expertResource = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertResource],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Remember the original Mission context",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertResource),
+    });
+    let runtimeRestores = 0;
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "closed-session-runtime" }),
+      restoreSession: () => {
+        runtimeRestores += 1;
+        return { id: "closed-session-runtime" };
+      },
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText: `writer:${turn.rawQuery}`,
+        runtimeSessionId: "closed-session-runtime",
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes,
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const settled = await missions.get(mission.id);
+    const sessionId = settled.execution!.sessionId!;
+    await runner.stopLocalController(mission.id);
+
+    const executions = createFileExecutionStore({ pragmaHome });
+    const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
+    await expect(expertSessions.get(sessionId)).resolves.toMatchObject({ status: "open" });
+
+    const closedAt = new Date().toISOString();
+    await expertSessions.transact(sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        status: "closed",
+        contexts: Object.fromEntries(
+          Object.entries(session.contexts).map(([contextId, context]) => [
+            contextId,
+            { ...context, lifecycle: "closed" as const, closedAt, updatedAt: closedAt },
+          ]),
+        ),
+        updatedAt: closedAt,
+      },
+      prompts,
+    }));
+    await expect(expertSessions.get(sessionId)).resolves.toMatchObject({ status: "closed" });
+
+    const restartingRunner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes,
+    });
+    await restartingRunner.sendMessage({
+      id: mission.id,
+      content: "Continue with the preserved context",
+      requestId: "00000000-0000-4000-8000-000000000216",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    const recoveredMission = await missions.get(mission.id);
+    expect(recoveredMission.execution?.sessionId).toBe(sessionId);
+    expect(runtimeRestores).toBe(1);
+    const recoveredSession = (await expertSessions.get(sessionId))!;
+    expect(recoveredSession).toMatchObject({ status: "open" });
+    expect(recoveredSession.contexts[recoveredSession.rootContextId]).toMatchObject({
+      lifecycle: "open",
+    });
+    expect((await expertSessions.listEvents(sessionId)).map((event) => event.type)).toContain(
+      "session.recovered",
+    );
+    await expect(restartingRunner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: `writer:${mission.goal}` }),
+        expect.objectContaining({
+          kind: "assistant",
+          content: "writer:Continue with the preserved context",
+        }),
+      ]),
+    });
+  });
+
   it("keeps the old ExpertSession active when successor creation fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-successor-create-fails-"));
     temporaryPaths.push(root);

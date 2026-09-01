@@ -90,6 +90,10 @@ export interface ResumeExpertSessionOptions {
     | undefined;
 }
 
+export interface RecoverClosedExpertSessionOptions extends ResumeExpertSessionOptions {
+  readonly reason: string;
+}
+
 export class ExpertDefinitionMismatchError extends Error {
   constructor(readonly sessionId: string) {
     super(`Expert definition mismatch for Session ${sessionId}.`);
@@ -552,6 +556,62 @@ export class ExpertSessionManager {
         recoveredHumanInteractionIds,
       );
       await session.recoverPendingQueueSteers();
+      this.active.set(request.sessionId, session);
+      return session;
+    } catch (error) {
+      await this.dependencies.sessions.releaseLease(request.sessionId, claimId);
+      throw error;
+    }
+  }
+
+  async recoverClosedSession(
+    expert: ExpertDefinition,
+    request: RecoverClosedExpertSessionOptions,
+  ): Promise<ExpertSession> {
+    const existing = this.active.get(request.sessionId);
+    if (existing !== undefined) return existing;
+    if (request.reason.trim() === "") {
+      throw new Error("Closed ExpertSession recovery requires a reason.");
+    }
+    const record = await this.dependencies.sessions.get(request.sessionId);
+    if (record === undefined) throw new Error(`ExpertSession not found: ${request.sessionId}`);
+    if (record.status !== "closed") {
+      throw new Error(`ExpertSession is not closed: ${request.sessionId}`);
+    }
+    const currentFingerprint = fingerprintExpertExecutionDefinition(expert);
+    const definitionMatches =
+      record.expertId === expert.id && record.definitionFingerprint === currentFingerprint;
+    const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
+    const migration = definitionMatches
+      ? undefined
+      : validateDefinitionMigration(record, expert, currentFingerprint, request);
+    if (!definitionMatches && migration === undefined) {
+      throw new ExpertDefinitionMismatchError(request.sessionId);
+    }
+    const claimId = randomUUID();
+    const recovered = await this.dependencies.sessions.recoverClosed({
+      sessionId: request.sessionId,
+      expectedUpdatedAt: record.updatedAt,
+      claimId,
+      leaseMs: EXPERT_SESSION_LEASE_MS,
+      reason: request.reason,
+    });
+    if (recovered === undefined) {
+      throw new Error(`ExpertSession recovery conflict: ${request.sessionId}`);
+    }
+    try {
+      if (migration !== undefined) {
+        await this.migrateSessionDefinition({
+          sessionId: request.sessionId,
+          expertId: expert.id,
+          rootExpertId: rootExpert.id,
+          definitionFingerprint: currentFingerprint,
+          previousExpertId: migration.previousExpertId,
+          previousRootExpertId: migration.previousRootExpertId,
+          reason: migration.reason,
+        });
+      }
+      const session = this.createActiveSession(expert, request.sessionId, true, claimId);
       this.active.set(request.sessionId, session);
       return session;
     } catch (error) {
