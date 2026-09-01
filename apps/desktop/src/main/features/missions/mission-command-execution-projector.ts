@@ -5,7 +5,11 @@ import type { MissionControllerStore, MissionOwnerScope } from "@pragma/local-ho
 import type { Mission } from "../../../shared/contracts/index.ts";
 
 export interface MissionCommandExecutionProjector {
-  link(mission: Mission, executionId: string): Promise<void>;
+  link(input: {
+    readonly mission: Mission;
+    readonly executionId: string;
+    readonly requestId: string;
+  }): Promise<void>;
   terminal(input: {
     readonly mission: Mission;
     readonly executionId: string;
@@ -48,12 +52,10 @@ export function createMissionCommandExecutionProjector(options: {
   };
 
   return {
-    async link(mission, executionId) {
-      const inputMessageId = mission.execution?.inputMessageId;
-      if (inputMessageId === undefined) return;
+    async link({ mission, executionId, requestId }) {
       const operation = await options.controller.getOperation({
         missionId: mission.id,
-        requestId: inputMessageId,
+        requestId,
       });
       if (operation?.kind !== "send" && operation?.kind !== "steer") return;
       commandExecutionIds.add(executionId);

@@ -28,7 +28,7 @@ function createIo(): CliIo & { readonly stdout: string[]; readonly stderr: strin
 
 function createOperation(
   kind: string,
-  state: "queued" | "applied" = "applied",
+  state: "queued" | "applying" | "applied" = "applied",
   result: Record<string, unknown> = { missionId: MISSION_ID, executionId: EXECUTION_ID },
 ) {
   return {
@@ -53,16 +53,20 @@ function createMutationHost(
 ): {
   readonly host: CliLocalHost;
   readonly submit: ReturnType<typeof vi.fn>;
-  readonly wait: ReturnType<typeof vi.fn>;
+  readonly waitForAcceptance: ReturnType<typeof vi.fn>;
+  readonly waitForTerminal: ReturnType<typeof vi.fn>;
   readonly waitExecution: ReturnType<typeof vi.fn>;
 } {
   const operation = options.operation ?? createOperation("send");
+  const acceptedOperation =
+    operation.state === "queued" ? operation : createOperation(operation.kind, "applying");
   const submit = vi.fn(async () => ({
     command: {} as never,
     operation,
     owner: "live" as const,
   }));
-  const wait = vi.fn(async () => operation);
+  const waitForAcceptance = vi.fn(async () => acceptedOperation);
+  const waitForTerminal = vi.fn(async () => operation);
   const waitExecution = vi.fn(
     async (): Promise<MissionControlExecutionOutcome> =>
       options.execution ?? {
@@ -73,14 +77,15 @@ function createMutationHost(
   );
   const missionControl = {
     submit,
-    waitForAcceptance: wait,
-    waitForTerminal: wait,
+    waitForAcceptance,
+    waitForTerminal,
     waitExecution,
   } as unknown as MissionControlApplication;
   return {
     host: { missionControl } as unknown as CliLocalHost,
     submit,
-    wait,
+    waitForAcceptance,
+    waitForTerminal,
     waitExecution,
   };
 }
@@ -221,7 +226,7 @@ describe("M8 mutation and queue command surface", () => {
 
   it("normalizes send input, uses the shared Inbox operation, and applies the 30 second ack default", async () => {
     const io = createIo();
-    const { host, submit, wait } = createMutationHost({
+    const { host, submit, waitForAcceptance, waitForTerminal } = createMutationHost({
       operation: createOperation("send"),
     });
 
@@ -240,9 +245,13 @@ describe("M8 mutation and queue command surface", () => {
         payload: { kind: "send", input: { prompt: "hello\nworld", attachments: [] } },
       }),
     );
-    expect(wait).toHaveBeenCalledWith(
+    expect(waitForAcceptance).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: MISSION_ID, timeoutMs: 30_000 }),
     );
+    expect(waitForTerminal).toHaveBeenCalledWith({
+      missionId: MISSION_ID,
+      requestId: expect.any(String),
+    });
     expect(JSON.parse(io.stdout[0]!)).toMatchObject({
       command: "mission.send",
       status: "succeeded",
@@ -250,11 +259,9 @@ describe("M8 mutation and queue command surface", () => {
     expect(io.stderr).toEqual([]);
   });
 
-  it("does not wait for a detached command", async () => {
+  it("waits for acceptance but not a terminal result for a detached command", async () => {
     const io = createIo();
-    const { host, wait } = createMutationHost({
-      operation: createOperation("send", "queued"),
-    });
+    const { host, waitForAcceptance, waitForTerminal } = createMutationHost();
 
     await expect(
       runCli(
@@ -264,7 +271,10 @@ describe("M8 mutation and queue command surface", () => {
       ),
     ).resolves.toBe(0);
 
-    expect(wait).not.toHaveBeenCalled();
+    expect(waitForAcceptance).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: MISSION_ID, timeoutMs: 30_000 }),
+    );
+    expect(waitForTerminal).not.toHaveBeenCalled();
     expect(JSON.parse(io.stdout[0]!)).toMatchObject({
       command: "mission.send",
       status: "accepted",

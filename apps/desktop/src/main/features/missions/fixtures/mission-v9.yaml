@@ -21,3 +21,8 @@ origin:
   type: user
 contextStoreIds:
   - 10000000-0000-4000-8000-000000000001
+branch:
+  sourceMissionId: 80000000-0000-4000-8000-000000000008
+  sourceProjectRevision: 2
+  cutoffMessageId: historical-assistant-message
+  createdAt: 2026-08-20T03:05:06.000Z

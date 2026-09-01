@@ -128,6 +128,45 @@ describe("Mission owner scope", () => {
     }
   });
 
+  it("retries initial owner acquisition while a durable operation remains queued", async () => {
+    let claimCount = 0;
+    const poller = { stop: vi.fn(async () => undefined) };
+    const controller = {
+      claim: vi.fn(async () => {
+        claimCount += 1;
+        if (claimCount === 1) throw new Error("temporary owner startup failure");
+        return {
+          claimId: "11111111-1111-4111-8111-111111111111",
+          fencingToken: "1",
+          acquiredAt: "2026-08-27T00:00:00.000Z",
+          renewedAt: "2026-08-27T00:00:00.000Z",
+          expiresAt: "2026-08-27T00:01:00.000Z",
+        };
+      }),
+      renew: vi.fn(async () => {
+        throw new Error("renew should not run in this test");
+      }),
+      startPolling: vi.fn(() => poller),
+      listOperations: vi.fn(async () => [{ state: "queued" }]),
+      release: vi.fn(async () => undefined),
+    } as unknown as MissionControllerStore;
+    const scope = createMissionOwnerScope({ controller, leaseMs: 20 });
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+    const missionId = "22222222-2222-4222-8222-222222222222";
+
+    try {
+      await expect(scope.acquire(missionId)).rejects.toThrow("temporary owner startup failure");
+      await vi.waitFor(() => expect(controller.claim).toHaveBeenCalledTimes(2), {
+        timeout: 200,
+        interval: 5,
+      });
+      expect(controller.startPolling).toHaveBeenCalledOnce();
+      expect(scope.currentGuard(missionId)).toBeDefined();
+    } finally {
+      await scope.stop(missionId);
+    }
+  });
+
   it("stops the owner and notifies once when renewal and polling lose the fence together", async () => {
     const onLeaseLost = vi.fn(async () => undefined);
     const poller = { stop: vi.fn(async () => undefined) };

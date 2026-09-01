@@ -328,7 +328,11 @@ export function createMissionRunner(options: {
       }) => Promise<void>)
     | undefined;
   readonly onExecutionLinked?:
-    | ((input: { readonly mission: Mission; readonly executionId: string }) => Promise<void>)
+    | ((input: {
+        readonly mission: Mission;
+        readonly executionId: string;
+        readonly requestId: string;
+      }) => Promise<void>)
     | undefined;
   readonly onMissionActivity?:
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
@@ -351,9 +355,13 @@ export function createMissionRunner(options: {
   });
   const executionStore =
     options.executionStore ?? createFileExecutionStore({ pragmaHome: options.pragmaHome });
-  const notifyExecutionLinked = async (mission: Mission, executionId: string): Promise<void> => {
+  const notifyExecutionLinked = async (
+    mission: Mission,
+    executionId: string,
+    requestId: string,
+  ): Promise<void> => {
     try {
-      await options.onExecutionLinked?.({ mission, executionId });
+      await options.onExecutionLinked?.({ mission, executionId, requestId });
     } catch (error) {
       logger.warn(
         "mission.memory_subject_registration_failed",
@@ -1580,7 +1588,7 @@ export function createMissionRunner(options: {
           executionId: mission.execution!.id,
           createdAt: executionStartedAt,
         });
-        await notifyExecutionLinked(mission, mission.execution!.id);
+        await notifyExecutionLinked(mission, mission.execution!.id, inputMessageId);
       }
       const handle = recoverable
         ? await app.flows.recover(compiled.value, {
@@ -1598,7 +1606,7 @@ export function createMissionRunner(options: {
           executionId: handle.executionId,
           createdAt: executionStartedAt,
         });
-        await notifyExecutionLinked(mission, handle.executionId);
+        await notifyExecutionLinked(mission, handle.executionId, inputMessageId);
       }
       const recoveredWaiting = recoverable && (await hasPendingHumanInteraction(handle));
       const running = await options.missions.updateExecution(mission.id, {
@@ -1699,7 +1707,7 @@ export function createMissionRunner(options: {
       executionId: turn.executionId,
       createdAt: executionStartedAt,
     });
-    await notifyExecutionLinked(mission, turn.executionId);
+    await notifyExecutionLinked(mission, turn.executionId, inputMessageId);
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
       inputMessageId,
@@ -1919,7 +1927,7 @@ export function createMissionRunner(options: {
       executionId: turn.executionId,
       createdAt: startedAt,
     });
-    await notifyExecutionLinked(mission, turn.executionId);
+    await notifyExecutionLinked(mission, turn.executionId, input.requestId);
     if (turn.effectiveMode === "steer") {
       invalidateChat(mission.id, missionSurfaceAudience(mission));
       return {

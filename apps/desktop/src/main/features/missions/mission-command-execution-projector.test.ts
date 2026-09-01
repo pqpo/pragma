@@ -60,8 +60,12 @@ describe("Mission command execution projector", () => {
       },
     });
 
-    await projector.link(mission(), executionId);
-    await projector.link(mission(), executionId);
+    const staleMission = MissionSchema.parse({
+      ...mission(),
+      execution: { ...mission().execution!, inputMessageId: mission().initialMessageId },
+    });
+    await projector.link({ mission: staleMission, executionId, requestId });
+    await projector.link({ mission: staleMission, executionId, requestId });
     await projector.terminal({
       mission: mission(),
       executionId,
@@ -73,6 +77,7 @@ describe("Mission command execution projector", () => {
       { type: "run.started", data: { executionId } },
       { type: "run.succeeded", data: { executionId, result: { answer: 42 } } },
     ]);
+    expect(controller.getOperation).toHaveBeenCalledWith({ missionId, requestId });
   });
 
   it("ignores executions that were not created by a durable send or steer command", async () => {
@@ -86,7 +91,7 @@ describe("Mission command execution projector", () => {
       ownerScope: { currentGuard: () => undefined },
     });
 
-    await projector.link(mission(), executionId);
+    await projector.link({ mission: mission(), executionId, requestId });
     await projector.terminal({ mission: mission(), executionId, status: "cancelled" });
 
     expect(write).not.toHaveBeenCalled();

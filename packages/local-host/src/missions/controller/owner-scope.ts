@@ -304,6 +304,12 @@ export function createMissionOwnerScope(options: {
       acquiring.set(missionId, acquisition);
       try {
         return await acquisition;
+      } catch (error) {
+        // Acquisition can fail after a command is already durable (for
+        // example while starting its Inbox poller). Keep that queued work on
+        // the same bounded recovery path used after lease loss.
+        scheduleRecovery(missionId, Math.min(5_000, leaseMs));
+        throw error;
       } finally {
         acquiring.delete(missionId);
       }

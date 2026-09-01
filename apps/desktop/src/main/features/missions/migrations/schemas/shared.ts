@@ -127,7 +127,7 @@ export const HistoricalMissionOriginSchema = z.discriminatedUnion("type", [
 export const HistoricalMissionBranchSourceV9Schema = z.object({
   sourceMissionId: HistoricalMissionIdSchema,
   sourceProjectRevision: z.number().int().positive(),
-  cutoffExecutionId: z.string().uuid(),
+  cutoffExecutionId: z.string().uuid().optional(),
   cutoffMessageId: z.string().min(1),
   createdAt: z.string().datetime(),
 });

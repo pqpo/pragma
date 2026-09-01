@@ -1680,7 +1680,12 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.get(id)).resolves.toMatchObject({
       schemaVersion: "pragma.mission/v10",
       contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
+      branch: {
+        sourceMissionId: "80000000-0000-4000-8000-000000000008",
+        cutoffMessageId: "historical-assistant-message",
+      },
     });
+    expect((await store.get(id)).branch).not.toHaveProperty("cutoffExecutionId");
     expect(
       parsePragmaYaml(
         await readFile(join(directory, "migration-backups", "mission.v9.yaml"), "utf8"),

@@ -60,17 +60,21 @@ export async function executeMutationCommand(
     });
   }
   const requestId = command.requestId ?? context.requestId;
-  const submission = await control.submit(
-    await createSubmissionInput(command, requestId, readStdin),
-  );
-  if ("detach" in command && command.detach) {
-    return { result: asJsonValue(submission.operation), detached: true };
-  }
-  const operation = await control.waitForTerminal({
+  await control.submit(await createSubmissionInput(command, requestId, readStdin));
+  const accepted = await control.waitForAcceptance({
     missionId: command.missionId,
     requestId,
     timeoutMs: command.ackTimeoutSeconds * 1_000,
   });
+  if (isTerminalOperation(accepted.state) && accepted.state !== "applied") {
+    assertOperationSucceeded(accepted);
+  }
+  if ("detach" in command && command.detach) {
+    return { result: asJsonValue(accepted), detached: true };
+  }
+  const operation = isTerminalOperation(accepted.state)
+    ? accepted
+    : await control.waitForTerminal({ missionId: command.missionId, requestId });
   assertOperationSucceeded(operation);
   const executionId = operation.result?.["executionId"];
   if (
@@ -143,13 +147,23 @@ async function waitForMutationExecution(options: {
       payload: { kind: "respond", response },
       target: { interactionId: interaction.interactionId },
     });
-    const responseOperation = await options.control.waitForTerminal({
+    const acceptedResponse = await options.control.waitForAcceptance({
       missionId: options.command.missionId,
       requestId: responseRequestId,
       timeoutMs: options.command.ackTimeoutSeconds * 1_000,
     });
+    const responseOperation = isTerminalOperation(acceptedResponse.state)
+      ? acceptedResponse
+      : await options.control.waitForTerminal({
+          missionId: options.command.missionId,
+          requestId: responseRequestId,
+        });
     assertOperationSucceeded(responseOperation);
   }
+}
+
+function isTerminalOperation(state: string): boolean {
+  return state === "applied" || state === "rejected" || state === "expired" || state === "failed";
 }
 
 async function createSubmissionInput(

@@ -885,8 +885,8 @@ export async function createDesktopApplicationContainer(
     onOwnerDeleting: async ({ executionIds }) => {
       await memoryPlane.deleteExecutionState(executionIds);
     },
-    onExecutionLinked: async ({ mission, executionId }) => {
-      await commandExecutionProjector.link(mission, executionId);
+    onExecutionLinked: async ({ mission, executionId, requestId }) => {
+      await commandExecutionProjector.link({ mission, executionId, requestId });
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.registerMemoryExecutionContext({
         executionId,

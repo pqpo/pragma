@@ -652,7 +652,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(onExecutionLinked).toHaveBeenCalledWith({
       mission: expect.objectContaining({ id: mission.id }),
       executionId: expect.any(String),
+      requestId: expect.any(String),
     });
+    expect(onExecutionLinked).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "00000000-0000-4000-8000-000000000099" }),
+    );
     expect(onMissionActivity).toHaveBeenCalledTimes(2);
     await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2), {
       timeout: settlementTimeoutMs,
@@ -2714,6 +2718,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }
       return await originalUpdateExecution(...args);
     });
+    const onExecutionLinked = vi.fn(async () => undefined);
     const runner = createMissionRunner({
       missions,
       project,
@@ -2722,6 +2727,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      onExecutionLinked,
     });
 
     await runner.run(mission.id);
@@ -2742,6 +2748,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           status: "succeeded",
         }),
       { timeout: settlementTimeoutMs },
+    );
+    expect(onExecutionLinked).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: followupRequestId }),
     );
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
