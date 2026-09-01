@@ -1,6 +1,6 @@
 {
   "name": "@pqpo/pragma",
-  "version": "0.1.0-next.14",
+  "version": "0.1.0-next.15",
   "description": "Pragma command-line interface",
   "type": "module",
   "bin": {
