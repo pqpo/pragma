@@ -259,6 +259,37 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     ]);
   });
 
+  it("recovers the writable namespace for a draft claimed by the current Mission", async () => {
+    const { port, listDrafts, getDraft } = fixture(true);
+    const draft = {
+      schemaVersion: "pragma.context-store-draft/v1" as const,
+      id: "00000000-0000-4000-8000-000000000301",
+      revision: 5,
+      name: "Retry invariants",
+      storeId: STORE_ID,
+      baseRevision: 4,
+      baseSnapshotHash: "a".repeat(64),
+      state: "editing" as const,
+      overlay: { files: [], deletedFiles: [], directories: [], deletedDirectories: [] },
+      activeMissionId: "00000000-0000-4000-8000-000000000401",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      updatedAt: "2026-08-28T01:00:00.000Z",
+    };
+    listDrafts.mockResolvedValue([draft]);
+    getDraft.mockResolvedValue(draft);
+
+    await expect(port.listDrafts({ ...invocation })).resolves.toEqual([
+      expect.objectContaining({
+        draftId: draft.id,
+        writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
+      }),
+    ]);
+    await expect(port.getDraft({ ...invocation, draftId: draft.id })).resolves.toMatchObject({
+      mode: "summary",
+      draft: { draftId: draft.id, writableNamespace: `mission-knowledge-draft:${STORE_ID}` },
+    });
+  });
+
   it("reads draft hashes by default and only one file body on demand", async () => {
     const { port, getDraft, getDraftFile } = fixture();
     getDraft.mockResolvedValue({

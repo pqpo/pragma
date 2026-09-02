@@ -85,6 +85,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       return (await targets()).map((target) => target.target);
     },
     async listDrafts(input) {
+      const inlineMission = options.inlineMission;
       const selectedStoreId =
         input.targetRef === undefined
           ? undefined
@@ -107,6 +108,11 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           ...(draft.activeMissionId === undefined
             ? {}
             : { activeMissionId: draft.activeMissionId }),
+          ...(inlineMission !== undefined &&
+          draft.activeMissionId === inlineMission.id &&
+          inlineMission.allowedStoreIds.has(draft.storeId)
+            ? { writableNamespace: inlineMission.writableNamespaceForStore(draft.storeId) }
+            : {}),
           ...(draft.submittedRevision === undefined
             ? {}
             : { submittedRevision: draft.submittedRevision }),
@@ -201,6 +207,12 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
     },
     async getDraft(input) {
       const draft = await options.revisions.getDraft(input.draftId);
+      const writableNamespace =
+        options.inlineMission !== undefined &&
+        draft.activeMissionId === options.inlineMission.id &&
+        options.inlineMission.allowedStoreIds.has(draft.storeId)
+          ? options.inlineMission.writableNamespaceForStore(draft.storeId)
+          : undefined;
       if (input.fileId !== undefined) {
         const file = await options.revisions.getDraftFile({
           draftId: input.draftId,
@@ -210,6 +222,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
         return KnowledgeRevisionDraftFileSchema.parse({
           mode: "file",
           draftId: draft.id,
+          ...(writableNamespace === undefined ? {} : { writableNamespace }),
           draftRevision: draft.revision,
           id: file.id,
           content: file.content,
@@ -232,6 +245,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           baseSnapshotHash: draft.baseSnapshotHash,
           state: draft.state,
           activeMissionId: draft.activeMissionId,
+          ...(writableNamespace === undefined ? {} : { writableNamespace }),
           submittedRevision: draft.submittedRevision,
           summary: draft.summary,
           createdAt: draft.createdAt,

@@ -66,6 +66,13 @@ const DraftIdSchema = z
   .string()
   .uuid()
   .describe("Exact draftId returned by a revision draft tool.");
+const WritableNamespaceSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .describe(
+    "Writable Context namespace for this draft in the current Mission. Pass it unchanged to Expert Context tools.",
+  );
 
 export const KnowledgeRevisionDraftSummarySchema = z
   .object({
@@ -76,6 +83,7 @@ export const KnowledgeRevisionDraftSummarySchema = z
     baseRevision: ContextStoreDraftSchema.shape.baseRevision,
     state: ContextStoreDraftSchema.shape.state,
     activeMissionId: ContextStoreDraftSchema.shape.activeMissionId,
+    writableNamespace: WritableNamespaceSchema.optional(),
     submittedRevision: ContextStoreDraftSchema.shape.submittedRevision,
     summary: ContextStoreDraftSchema.shape.summary,
     createdAt: ContextStoreDraftSchema.shape.createdAt,
@@ -151,6 +159,7 @@ export const KnowledgeRevisionDraftFileSchema = z
   .object({
     mode: z.literal("file"),
     draftId: DraftIdSchema,
+    writableNamespace: WritableNamespaceSchema.optional(),
     draftRevision: ContextStoreDraftSchema.shape.revision,
     id: z.string().min(1).max(500),
     content: z.string().max(1_000_000),
@@ -232,7 +241,7 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_LIST_DRAFTS_TOOL_NAME,
-    "List lightweight summaries of sparse knowledge revision drafts, optionally for one exact target ref.",
+    "List lightweight summaries of sparse knowledge revision drafts, optionally for one exact target ref. A draft claimed by the current Mission includes writableNamespace so it can be recovered after context compaction.",
     KnowledgeRevisionListDraftsInputSchema,
   ),
   definition(
@@ -242,7 +251,7 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_GET_DRAFT_TOOL_NAME,
-    "Inspect one knowledge draft without loading full overlay content. Omit fileId for hashes, current formal-store revision/snapshot, and staleness; provide one fileId to read only that effective draft file with its draft-scoped revision/etag.",
+    "Inspect one knowledge draft without loading full overlay content. A draft claimed by the current Mission includes writableNamespace so it can be recovered after context compaction. Omit fileId for hashes, current formal-store revision/snapshot, and staleness; provide one fileId to read only that effective draft file with its draft-scoped revision/etag.",
     KnowledgeRevisionGetDraftInputSchema,
   ),
   definition(
@@ -257,7 +266,7 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_SUBMIT_DRAFT_TOOL_NAME,
-    "Submit a non-empty validated knowledge draft for human review. This does not merge or publish it.",
+    "Submit a non-empty validated knowledge draft for human review. Submission makes the draft non-editable; it does not merge or publish it.",
     KnowledgeRevisionSubmitDraftInputSchema,
   ),
 ] as const;

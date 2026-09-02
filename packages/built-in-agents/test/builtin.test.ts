@@ -481,8 +481,23 @@ describe("built-in Pragma Agent DSL", () => {
       }),
     ]);
     expect(resource.spec.instructions).toContain("edit_expert_context");
+    expect(resource.spec.instructions).toContain(
+      "result directly contains draftId and writableNamespace",
+    );
+    expect(resource.spec.instructions).toContain(
+      "list_expert_context with namespace=writableNamespace",
+    );
+    expect(resource.spec.instructions).toContain("do not\ncall knowledge_revision_start again");
+    expect(resource.spec.instructions).toContain("Both return writableNamespace");
     expect(resource.spec.instructions).toContain("Never reuse a token");
-    expect(resource.spec.instructions).toContain("read that item from writableNamespace");
+    expect(resource.spec.instructions).toContain("Read every changed or added effective file");
+    expect(resource.spec.instructions).toContain(
+      "repeat the entire final check after the last fix",
+    );
+    expect(resource.spec.instructions).toContain(
+      "draft enters human review and can no longer be edited",
+    );
+    expect(resource.spec.instructions).toContain("latest draft.revision");
     expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
   });
 
