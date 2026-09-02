@@ -2,7 +2,7 @@ apiVersion: pragma/v5
 kind: Expert
 metadata:
   id: 0000000000st0rev
-  avatarId: pragma.avatar.expert.07
+  avatarId: pragma.avatar.expert.22
   name: Store Revision Agent
   description: Built-in expert for creating and collaboratively editing sparse knowledge-base drafts.
   tags: [builtin, system, context-store, revision]

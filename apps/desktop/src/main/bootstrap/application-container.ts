@@ -910,6 +910,12 @@ export async function createDesktopApplicationContainer(
         state: "active",
       });
     },
+    getSystemExecutorMetadata: () =>
+      systemExperts.list().map((expert) => ({
+        id: expert.id,
+        name: expert.name,
+        avatarId: expert.avatarId,
+      })),
     onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
       await commandExecutionProjector.terminal({ mission, executionId, status, result, error });
       if (!isUserFacingMissionOrigin(mission.origin)) return;

@@ -53,6 +53,7 @@ import {
   consumeLiveChatOutput,
   createMissionRunner as createMissionRunnerImplementation,
   isRootMissionRuntimeOutput,
+  mergeMissionExecutorMetadata,
   missionKnowledgeNamespace,
   activeMissionKnowledgeDraftNamespace,
   toDesktopHumanRequest,
@@ -250,6 +251,26 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 30_000 }, () => {
+  it("merges system Expert names and avatars into Mission presentation metadata", () => {
+    const metadata = mergeMissionExecutorMetadata(
+      {
+        names: new Map([["project-expert", "Project Expert"]]),
+        avatarIds: new Map([["project-expert", "pragma.avatar.expert.01"]]),
+      },
+      [
+        {
+          id: "0000000000st0rev",
+          name: "Store Revision Agent",
+          avatarId: "pragma.avatar.expert.22",
+        },
+      ],
+    );
+
+    expect(metadata.names.get("0000000000st0rev")).toBe("Store Revision Agent");
+    expect(metadata.avatarIds.get("0000000000st0rev")).toBe("pragma.avatar.expert.22");
+    expect(metadata.names.get("project-expert")).toBe("Project Expert");
+  });
+
   it("keeps interleaved expert token streams grouped by invocation", () => {
     const chat: LiveMissionChat = {
       executionId: "execution-1",

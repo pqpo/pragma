@@ -10,6 +10,7 @@ export {
   consumeLiveChatOutput,
   createMissionRunner,
   isRootMissionRuntimeOutput,
+  mergeMissionExecutorMetadata,
   missionKnowledgeDraftNamespace,
   missionKnowledgeNamespace,
   toDesktopHumanRequest,
@@ -17,6 +18,7 @@ export {
   type MissionChatNotification,
   type MissionCommandOutcomeNotification,
   type MissionRunner,
+  type MissionExecutorPresentationMetadata,
   type MissionSurfaceAudience,
   type MissionWorkNotification,
 } from "./mission-runner-composition.ts";

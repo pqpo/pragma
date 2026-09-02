@@ -265,6 +265,12 @@ interface ExecutorMetadata {
   readonly avatarIds: ReadonlyMap<string, string>;
 }
 
+export interface MissionExecutorPresentationMetadata {
+  readonly id: string;
+  readonly name: string;
+  readonly avatarId?: string | undefined;
+}
+
 interface MissionExecutionContext {
   readonly app: ReturnType<typeof createPragma>;
   readonly runtimes: RuntimeResolver;
@@ -281,6 +287,19 @@ export function missionKnowledgeDraftNamespace(draftId: string): string {
 
 export function activeMissionKnowledgeDraftNamespace(storeId: string): string {
   return `mission-knowledge-draft:${storeId}`;
+}
+
+export function mergeMissionExecutorMetadata(
+  projectMetadata: ExecutorMetadata,
+  systemMetadata: readonly MissionExecutorPresentationMetadata[],
+): ExecutorMetadata {
+  const names = new Map(projectMetadata.names);
+  const avatarIds = new Map(projectMetadata.avatarIds);
+  for (const executor of systemMetadata) {
+    names.set(executor.id, executor.name);
+    if (executor.avatarId !== undefined) avatarIds.set(executor.id, executor.avatarId);
+  }
+  return { names, avatarIds };
 }
 
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
@@ -318,6 +337,8 @@ export function createMissionRunner(options: {
     | undefined;
   readonly getSystemExecutorFingerprint?:
     ((mission: Mission) => string | undefined | Promise<string | undefined>) | undefined;
+  readonly getSystemExecutorMetadata?:
+    (() => readonly MissionExecutorPresentationMetadata[]) | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
@@ -803,10 +824,12 @@ export function createMissionRunner(options: {
   ): Promise<ExecutorMetadata> => {
     const projectKey = `${mission.project.id}:${mission.project.revision}`;
     const existing = sessionService.executorMetadata(projectKey);
-    if (existing !== undefined) return existing;
-    const metadata = await readExecutorMetadata(mission);
-    sessionService.setExecutorMetadata(projectKey, metadata);
-    return metadata;
+    const projectMetadata = existing ?? (await readExecutorMetadata(mission));
+    if (existing === undefined) sessionService.setExecutorMetadata(projectKey, projectMetadata);
+    return mergeMissionExecutorMetadata(
+      projectMetadata,
+      options.getSystemExecutorMetadata?.() ?? [],
+    );
   };
 
   const getExecutorMetadataOrFallback = async (
