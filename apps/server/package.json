@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@pragma/shared": "workspace:*",
-    "@pragma/server": "workspace:*",
     "fastify": "latest"
   },
   "devDependencies": {

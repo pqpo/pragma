@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@pragma/shared": "workspace:*",
-    "@pragma/client": "workspace:*",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"

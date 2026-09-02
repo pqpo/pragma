@@ -13,8 +13,7 @@
   },
   "dependencies": {
     "@pragma/core": "workspace:*",
-    "@pragma/shared": "workspace:*",
-    "@pragma/server": "workspace:*"
+    "@pragma/shared": "workspace:*"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

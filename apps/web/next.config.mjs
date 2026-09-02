@@ -1,6 +1,6 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@pragma/shared", "@pragma/client"],
+  transpilePackages: ["@pragma/shared"],
 };
 
 export default nextConfig;

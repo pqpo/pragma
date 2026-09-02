@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { ContextSystem, InMemoryContextStore, withExecutionRunScope } from "@pragma/core";
+import { describe, expect, it } from "vitest";
 
 import {
   MISSION_BOARD_GUIDE,
@@ -8,7 +8,7 @@ import {
   MISSION_BOARD_SHARED_NAMESPACE,
   createMissionBoard,
   type MissionBoardMutationEvent,
-} from "../src/index.ts";
+} from "../src/mission-board.ts";
 
 describe("Mission Board", () => {
   it("exposes a guide, a shared board, and context-isolated private boards", async () => {

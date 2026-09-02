@@ -70,7 +70,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/server", "@pragma/core", "@pragma/evaluation", "@prisma/client"],
+          paths: ["@pragma/core", "@pragma/evaluation", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             { group: ["@pragma/server-*", "node:*"], message: "Web must stay browser-safe." },
@@ -91,7 +91,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
+          paths: ["@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             desktopMainCliImportRestriction,
@@ -116,14 +116,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            "electron",
-            "@pragma/client",
-            "@pragma/server",
-            "@pragma/desktop",
-            "react",
-            "next",
-          ],
+          paths: ["electron", "@pragma/desktop", "react", "next"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -153,7 +146,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["electron", "@pragma/client", "@pragma/server", "@pqpo/pragma", "react", "next"],
+          paths: ["electron", "@pqpo/pragma", "react", "next"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -297,7 +290,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "@prisma/client", "react", "next"],
+          paths: ["@prisma/client", "react", "next"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -321,8 +314,6 @@ const config = tseslint.config(
         "error",
         {
           paths: [
-            "@pragma/client",
-            "@pragma/server",
             "@pragma/core",
             "@pragma/interpreter",
             "@pragma/evaluation",
@@ -347,7 +338,6 @@ const config = tseslint.config(
     files: [
       "apps/server/**/*.{ts,tsx}",
       "apps/worker/**/*.{ts,tsx}",
-      "packages/server/**/*.{ts,tsx}",
       "packages/core/**/*.{ts,tsx}",
       "packages/evaluation/**/*.{ts,tsx}",
       "packages/interpreter/**/*.{ts,tsx}",
@@ -368,7 +358,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "react", "fastify", "@prisma/client"],
+          paths: ["react", "fastify", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -391,69 +381,12 @@ const config = tseslint.config(
     },
   },
   {
-    files: ["packages/client/**/*.{ts,tsx}"],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.es2023,
-      },
-    },
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: ["@pragma/server", "@prisma/client"],
-          patterns: [
-            ...commonRestrictedPatterns,
-            localHostReverseImportRestriction,
-            {
-              group: [
-                "@pragma/core",
-                "@pragma/evaluation",
-                "@pragma/evaluation/*",
-                "@pragma/server",
-                "@pragma/server-*",
-                "node:*",
-              ],
-              message: "Client packages must stay browser-safe.",
-            },
-          ],
-        },
-      ],
-    },
-  },
-  {
-    files: ["packages/server/**/*.{ts,tsx}"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: ["@pragma/client", "react"],
-          patterns: [
-            ...commonRestrictedPatterns,
-            localHostReverseImportRestriction,
-            {
-              group: ["@pragma/ui-*", "@pragma/playbook-canvas", "next", "next/*"],
-              message: "Server packages must not depend on client UI.",
-            },
-          ],
-        },
-      ],
-    },
-  },
-  {
     files: ["packages/core/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            "@pragma/client",
-            "@pragma/evaluation",
-            "@pragma/interpreter",
-            "@pragma/server",
-            "react",
-          ],
+          paths: ["@pragma/evaluation", "@pragma/interpreter", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -481,7 +414,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "react"],
+          paths: ["@pragma/interpreter", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -501,7 +434,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "react"],
+          paths: ["react"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -521,13 +454,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            "@pragma/client",
-            "@pragma/server",
-            "@pragma/runtime-codex",
-            "@pragma/runtime-claude-code",
-            "react",
-          ],
+          paths: ["@pragma/runtime-codex", "@pragma/runtime-claude-code", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -553,8 +480,6 @@ const config = tseslint.config(
         "error",
         {
           paths: [
-            "@pragma/client",
-            "@pragma/server",
             "@pragma/runtime-pi",
             "@pragma/runtime-claude-code",
             "@earendil-works/pi-coding-agent",
@@ -585,8 +510,6 @@ const config = tseslint.config(
         "error",
         {
           paths: [
-            "@pragma/client",
-            "@pragma/server",
             "@pragma/runtime-pi",
             "@pragma/runtime-codex",
             "@earendil-works/pi-coding-agent",
@@ -617,7 +540,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "react"],
+          paths: ["react"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -644,7 +567,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "react"],
+          paths: ["react"],
           patterns: [
             ...commonRestrictedPatterns,
             localHostReverseImportRestriction,
@@ -668,7 +591,6 @@ const config = tseslint.config(
   {
     files: [
       "packages/memory/**/*.{ts,tsx}",
-      "packages/mission-board/**/*.{ts,tsx}",
       "packages/context-filesystem/**/*.{ts,tsx}",
       "packages/runtime/qodercli/**/*.{ts,tsx}",
       "apps/server/**/*.{ts,tsx}",

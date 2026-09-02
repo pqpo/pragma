@@ -13,9 +13,7 @@ const dependencyBuckets = [
 ] as const;
 
 type DependencyBucket = (typeof dependencyBuckets)[number];
-type PackageManifest = Partial<
-  Record<DependencyBucket, Readonly<Record<string, string>>>
->;
+type PackageManifest = Partial<Record<DependencyBucket, Readonly<Record<string, string>>>>;
 type InternalDependencyAllowlist = Readonly<Record<DependencyBucket, readonly string[]>>;
 
 const localHostInternalDependencyAllowlist: InternalDependencyAllowlist = {
@@ -24,7 +22,6 @@ const localHostInternalDependencyAllowlist: InternalDependencyAllowlist = {
     "@pragma/context-filesystem",
     "@pragma/core",
     "@pragma/interpreter",
-    "@pragma/mission-board",
     "@pragma/shared",
   ],
   devDependencies: ["@pragma/tsconfig"],
@@ -120,25 +117,22 @@ describe("Local Host boundary guards", () => {
   }, 15_000);
 
   it("keeps Local Host and CLI manifests within their internal dependency partitions", async () => {
-    const [localHostManifest, cliManifest] = (await Promise.all([
-      readFile(new URL("../package.json", import.meta.url), "utf8"),
-      readFile(new URL("../../../apps/cli/package.json", import.meta.url), "utf8"),
-    ])).map((content) => JSON.parse(content) as PackageManifest);
+    const [localHostManifest, cliManifest] = (
+      await Promise.all([
+        readFile(new URL("../package.json", import.meta.url), "utf8"),
+        readFile(new URL("../../../apps/cli/package.json", import.meta.url), "utf8"),
+      ])
+    ).map((content) => JSON.parse(content) as PackageManifest);
 
-    expect(manifestBoundaryViolations(localHostManifest, localHostInternalDependencyAllowlist)).toEqual(
-      [],
-    );
+    expect(
+      manifestBoundaryViolations(localHostManifest, localHostInternalDependencyAllowlist),
+    ).toEqual([]);
     expect(manifestBoundaryViolations(cliManifest, cliInternalDependencyAllowlist)).toEqual([]);
 
     for (const manifest of [localHostManifest, cliManifest]) {
       expect(
         manifestDependencyNames(manifest).some(
-          (name) =>
-            name === "electron" ||
-            name === "@pragma/client" ||
-            name === "@pragma/server" ||
-            name === "@pragma/desktop" ||
-            name.startsWith("apps/"),
+          (name) => name === "electron" || name === "@pragma/desktop" || name.startsWith("apps/"),
         ),
       ).toBe(false);
     }

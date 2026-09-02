@@ -126,9 +126,6 @@ importers:
       '@pragma/memory':
         specifier: workspace:*
         version: link:../../packages/memory
-      '@pragma/mission-board':
-        specifier: workspace:*
-        version: link:../../packages/mission-board
       '@pragma/runtime-antigravity':
         specifier: workspace:*
         version: link:../../packages/runtime/antigravity
@@ -233,9 +230,6 @@ importers:
 
   apps/server:
     dependencies:
-      '@pragma/server':
-        specifier: workspace:*
-        version: link:../../packages/server
       '@pragma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -261,9 +255,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@pragma/client':
-        specifier: workspace:*
-        version: link:../../packages/client
       '@pragma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -298,9 +289,6 @@ importers:
       '@pragma/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@pragma/server':
-        specifier: workspace:*
-        version: link:../../packages/server
       '@pragma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -406,22 +394,6 @@ importers:
       '@types/node':
         specifier: 26.1.0
         version: 26.1.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@26.1.0)(vite@8.2.0(@types/node@26.1.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  packages/client:
-    dependencies:
-      '@pragma/shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
-      '@pragma/tsconfig':
-        specifier: workspace:*
-        version: link:../tsconfig
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -576,9 +548,6 @@ importers:
       '@pragma/interpreter':
         specifier: workspace:*
         version: link:../interpreter
-      '@pragma/mission-board':
-        specifier: workspace:*
-        version: link:../mission-board
       '@pragma/shared':
         specifier: workspace:*
         version: link:../shared
@@ -613,25 +582,6 @@ importers:
       zod:
         specifier: latest
         version: 4.4.3
-    devDependencies:
-      '@pragma/tsconfig':
-        specifier: workspace:*
-        version: link:../tsconfig
-      '@types/node':
-        specifier: 26.1.0
-        version: 26.1.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@26.1.0)(vite@8.2.0(@types/node@26.1.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  packages/mission-board:
-    dependencies:
-      '@pragma/core':
-        specifier: workspace:*
-        version: link:../core
     devDependencies:
       '@pragma/tsconfig':
         specifier: workspace:*
@@ -764,21 +714,6 @@ importers:
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../tsconfig
-      '@types/node':
-        specifier: 26.1.0
-        version: 26.1.0
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@26.1.0)(vite@8.2.0(@types/node@26.1.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
-
-  packages/server:
-    devDependencies:
-      '@pragma/tsconfig':
-        specifier: workspace:*
-        version: link:../tsconfig
       '@types/node':
         specifier: 26.1.0
         version: 26.1.0

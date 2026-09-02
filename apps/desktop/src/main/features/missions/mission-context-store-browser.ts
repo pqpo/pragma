@@ -9,7 +9,7 @@ import {
   MISSION_BOARD_GUIDE,
   MISSION_BOARD_GUIDE_ID,
   MISSION_BOARD_SHARED_NAMESPACE,
-} from "@pragma/mission-board";
+} from "@pragma/local-host";
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
 import {

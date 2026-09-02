@@ -3,7 +3,10 @@ import { join } from "node:path";
 
 import { PragmaPaths, encodePragmaPathSegment, type HostContextBindings } from "@pragma/core";
 import { FileSystemContextStore } from "@pragma/context-filesystem";
-import { createMissionBoard } from "@pragma/mission-board";
+
+import { createMissionBoard } from "./mission-board-capability.ts";
+
+export * from "./mission-board-capability.ts";
 
 const BOARD_INCLUDE = ["*.md", "**/*.md", "*.json", "**/*.json", "*.txt", "**/*.txt"] as const;
 

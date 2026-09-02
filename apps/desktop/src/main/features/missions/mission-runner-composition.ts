@@ -57,7 +57,7 @@ import {
   LEGACY_EXECUTION_OUTPUT_NAMESPACE,
   LegacyExecutionOutputContextStore,
 } from "@pragma/context-filesystem";
-import { createMissionBoard } from "@pragma/mission-board";
+import { createMissionBoard } from "@pragma/local-host";
 import type {
   InvocableResource,
   CompiledResource,

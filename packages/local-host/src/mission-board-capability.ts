@@ -19,9 +19,9 @@ import {
   type ExpertAgentStoredContextRegisterInput,
 } from "@pragma/core";
 
-import { MISSION_BOARD_GUIDE, MISSION_BOARD_GUIDE_ID } from "./guide.ts";
+import { MISSION_BOARD_GUIDE, MISSION_BOARD_GUIDE_ID } from "./mission-board-guide.ts";
 
-export { MISSION_BOARD_GUIDE, MISSION_BOARD_GUIDE_ID } from "./guide.ts";
+export { MISSION_BOARD_GUIDE, MISSION_BOARD_GUIDE_ID } from "./mission-board-guide.ts";
 
 export const MISSION_BOARD_SHARED_NAMESPACE = "mission-board";
 export const MISSION_BOARD_PRIVATE_NAMESPACE = "mission-board-private";

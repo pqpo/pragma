@@ -1,9 +1,9 @@
 "use client";
 
+import type { HealthResponse } from "@pragma/shared";
 import { useEffect, useState } from "react";
-import { ServerClient, type PragmaClient, type HealthResponse } from "@pragma/client";
 
-const client: PragmaClient = new ServerClient();
+import { getServerHealth } from "./server-health.ts";
 
 export function HealthPanel() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -12,8 +12,7 @@ export function HealthPanel() {
   useEffect(() => {
     let cancelled = false;
 
-    client
-      .getHealth()
+    getServerHealth()
       .then((response) => {
         if (!cancelled) {
           setHealth(response);
