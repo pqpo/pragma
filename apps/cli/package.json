@@ -36,7 +36,8 @@
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
-    "@pragma/runtime-qodercli": "workspace:*"
+    "@pragma/runtime-qodercli": "workspace:*",
+    "commander": "14.0.3"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",

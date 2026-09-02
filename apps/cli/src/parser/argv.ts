@@ -1,4 +1,5 @@
 import { createIntegrationError, type IntegrationError } from "@pragma/shared/integration";
+import { Command, CommanderError, Option } from "commander";
 import { isAbsolute } from "node:path";
 
 export type OutputFormat = "text" | "json" | "jsonl";
@@ -413,33 +414,39 @@ Example: ${example}`;
 }
 
 export function parseCliArgv(argv: readonly string[]): ParsedCli {
-  let global: ReturnType<typeof parseGlobalOptions>;
+  let parsedCommand: ParsedCommand | undefined;
+  const program = createCliProgram((command) => {
+    parsedCommand = command;
+  });
+
   try {
-    global = parseGlobalOptions(argv);
+    validateSeparatedOptionValues(argv, program);
+    validateOptionOccurrences(argv, program);
+    program.parse([...argv], { from: "user" });
   } catch (error) {
+    const options = globalOptionsFrom(program);
+    if (isHelpDisplay(error)) {
+      const helpPath = commandPathForHelp(argv);
+      return {
+        options: helpOptions(options, argv),
+        command: {
+          kind: "help",
+          ...(helpPath.length === 0 ? {} : { text: commandHelpText(helpPath) }),
+        },
+      };
+    }
     if (error instanceof CliParseError) throw error;
+    const message = normalizeCommanderError(error, argv);
+    const globalFailure = isGlobalOptionFailure(message);
     throw new CliParseError(
-      createFormatError(error instanceof Error ? error.message : "Invalid global options."),
-      formatForGlobalOptionError(argv),
+      globalFailure ? createFormatError(message) : createUsageError(message),
+      globalFailure ? formatForGlobalOptionError(argv) : options.format,
     );
   }
-  const { options, args, helpRequested } = global;
-  if (helpRequested) {
-    return {
-      options,
-      command: {
-        kind: "help",
-        ...(args.length === 0 ? {} : { text: commandHelpText(args) }),
-      },
-    };
-  }
-  if (args.length === 0) return { options, command: { kind: "help" } };
 
-  const [command, ...rest] = args;
-  if (command === undefined) return { options, command: { kind: "help" } };
-
+  const options = globalOptionsFrom(program);
+  if (parsedCommand === undefined) return { options, command: { kind: "help" } };
   try {
-    const parsedCommand = parseCommand(command, rest);
     if (parsedCommand.kind === "mission-watch" && options.format === "json") {
       throw new CliParseError(
         createFormatError(
@@ -459,121 +466,495 @@ export function parseCliArgv(argv: readonly string[]): ParsedCli {
   }
 }
 
-function parseGlobalOptions(argv: readonly string[]): {
-  readonly options: GlobalCliOptions;
-  readonly args: readonly string[];
-  readonly helpRequested: boolean;
-} {
-  let format: OutputFormat = "text";
-  let formatSource: string | undefined;
-  let color: ColorMode = "auto";
-  let interactive: InteractiveMode = "auto";
-  let helpRequested = false;
-  let optionsTerminated = false;
-  const args: string[] = [];
+type ParsedCommandSink = (command: ParsedCommand) => void;
 
+interface CliOptionDefinition {
+  readonly flags: string;
+  readonly multiple?: boolean | undefined;
+}
+
+function createCliProgram(setCommand: ParsedCommandSink): Command {
+  const program = configureCommand(new Command("pragma"));
+  program
+    .addOption(
+      new Option("--format <format>").argParser(parseFormat).conflicts(["json", "streamJson"]),
+    )
+    .addOption(new Option("--json").conflicts(["format", "streamJson"]))
+    .addOption(new Option("--stream-json").conflicts(["format", "json"]))
+    .addOption(
+      new Option("--color <mode>").argParser((value) =>
+        parseEnum(value, ["auto", "always", "never"], "--color"),
+      ),
+    )
+    .addOption(
+      new Option("--interactive <mode>").argParser((value) =>
+        parseEnum(value, ["auto", "always", "never"], "--interactive"),
+      ),
+    );
+
+  configureCommand(program.command("help")).action(() => setCommand({ kind: "help" }));
+  configureCommand(program.command("version")).action(() => setCommand({ kind: "version" }));
+  configureCommand(program.command("doctor")).action(() => setCommand({ kind: "doctor" }));
+  addLeaf(program, "completion", [], (positionals) => parseCompletion(positionals), setCommand);
+
+  const source = addCommandGroup(program, "source", "source requires init or add.");
+  addLeaf(
+    source,
+    "init",
+    [{ flags: "--id <id>" }, { flags: "--name <name>" }],
+    (positionals, values) => parseSourceCommand("init", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    source,
+    "add",
+    [{ flags: "--directory <directory>" }],
+    (positionals, values) => parseSourceCommand("add", positionals, values),
+    setCommand,
+  );
+
+  for (const executorKind of ["team", "expert", "flow"] as const) {
+    const executor = addCommandGroup(
+      program,
+      executorKind,
+      `${executorKind} requires discover, describe, or run.`,
+    );
+    addLeaf(
+      executor,
+      "discover",
+      [
+        { flags: "--project <project>" },
+        { flags: "--query <query>" },
+        { flags: "--status <status>" },
+        { flags: "--limit <limit>" },
+        { flags: "--cursor <cursor>" },
+      ],
+      (positionals, values) => parseExecutorCommand(executorKind, "discover", positionals, values),
+      setCommand,
+    );
+    addLeaf(
+      executor,
+      "describe",
+      [{ flags: "--revision <revision>" }],
+      (positionals, values) => parseExecutorCommand(executorKind, "describe", positionals, values),
+      setCommand,
+    );
+    addLeaf(
+      executor,
+      "run",
+      [
+        { flags: "--workspace <workspace>" },
+        { flags: "--prompt <prompt>" },
+        { flags: "--input <path>" },
+        { flags: "--input-json <path>" },
+        { flags: "--project <project>" },
+        { flags: "--revision <revision>" },
+        { flags: "--expected-fingerprint <fingerprint>" },
+        { flags: "--request-id <requestId>" },
+        { flags: "--detach" },
+      ],
+      (positionals, values) => parseExecutorRunCommand(executorKind, positionals, values),
+      setCommand,
+    );
+  }
+
+  const mission = addCommandGroup(
+    program,
+    "mission",
+    "mission requires list, get, resume, watch, send, steer, respond, interrupt, board, or queue.",
+  );
+  registerMissionCommands(mission, setCommand);
+  return program;
+}
+
+function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink): void {
+  addLeaf(
+    mission,
+    "list",
+    [
+      { flags: "--status <status>" },
+      { flags: "--executor <executor>" },
+      { flags: "--limit <limit>" },
+      { flags: "--cursor <cursor>" },
+    ],
+    (positionals, values) => parseMissionCommand("list", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    mission,
+    "get",
+    [{ flags: "--view <view>" }, { flags: "--limit <limit>" }, { flags: "--cursor <cursor>" }],
+    (positionals, values) => parseMissionCommand("get", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    mission,
+    "watch",
+    [
+      { flags: "--after <cursor>" },
+      { flags: "--replay <count>" },
+      { flags: "--until <condition>" },
+    ],
+    (positionals, values) => parseMissionCommand("watch", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    mission,
+    "resume",
+    [
+      { flags: "--project <project>" },
+      { flags: "--revision <revision>" },
+      { flags: "--expected-fingerprint <fingerprint>" },
+      { flags: "--request-id <requestId>" },
+      { flags: "--detach" },
+    ],
+    (positionals, values) => parseMissionCommand("resume", positionals, values),
+    setCommand,
+  );
+
+  const messageOptions: readonly CliOptionDefinition[] = [
+    { flags: "--prompt <prompt>" },
+    { flags: "--input <path>" },
+    { flags: "--request-id <requestId>" },
+    { flags: "--wait" },
+    { flags: "--detach" },
+    { flags: "--ack-timeout <seconds>" },
+  ];
+  addLeaf(
+    mission,
+    "send",
+    messageOptions,
+    (positionals, values) => parseMissionCommand("send", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    mission,
+    "steer",
+    [...messageOptions, { flags: "--expected-execution <executionId>" }],
+    (positionals, values) => parseMissionCommand("steer", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    mission,
+    "respond",
+    [
+      { flags: "--interaction <interactionId>" },
+      { flags: "--answer <answer>" },
+      { flags: "--choice <choice>", multiple: true },
+      { flags: "--answers-json <path>" },
+      { flags: "--request-id <requestId>" },
+      { flags: "--wait" },
+      { flags: "--detach" },
+      { flags: "--ack-timeout <seconds>" },
+    ],
+    (positionals, values) => parseMissionCommand("respond", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    mission,
+    "interrupt",
+    [
+      { flags: "--expected-execution <executionId>" },
+      { flags: "--reason <reason>" },
+      { flags: "--request-id <requestId>" },
+      { flags: "--wait" },
+      { flags: "--detach" },
+      { flags: "--ack-timeout <seconds>" },
+    ],
+    (positionals, values) => parseMissionCommand("interrupt", positionals, values),
+    setCommand,
+  );
+
+  const board = addCommandGroup(mission, "board", "mission board requires list, read, or search.");
+  addLeaf(
+    board,
+    "list",
+    [{ flags: "--limit <limit>" }, { flags: "--cursor <cursor>" }],
+    (positionals, values) => parseBoardCommand(["list", ...positionals], values),
+    setCommand,
+  );
+  addLeaf(
+    board,
+    "read",
+    [{ flags: "--start <start>" }, { flags: "--offset <bytes>" }],
+    (positionals, values) => parseBoardCommand(["read", ...positionals], values),
+    setCommand,
+  );
+  addLeaf(
+    board,
+    "search",
+    [
+      { flags: "--case-sensitive" },
+      { flags: "--context-lines <lines>" },
+      { flags: "--max-results <count>" },
+    ],
+    (positionals, values) => parseBoardCommand(["search", ...positionals], values),
+    setCommand,
+  );
+
+  const queue = addCommandGroup(
+    mission,
+    "queue",
+    "mission queue requires list, remove, resume, or steer.",
+  );
+  addLeaf(
+    queue,
+    "list",
+    [{ flags: "--limit <limit>" }, { flags: "--cursor <cursor>" }],
+    (positionals, values) => parseQueueCommand(["list", ...positionals], values),
+    setCommand,
+  );
+  addLeaf(
+    queue,
+    "remove",
+    [
+      { flags: "--request <requestId>" },
+      { flags: "--request-id <requestId>" },
+      { flags: "--ack-timeout <seconds>" },
+    ],
+    (positionals, values) => parseQueueCommand(["remove", ...positionals], values),
+    setCommand,
+  );
+  addLeaf(
+    queue,
+    "resume",
+    [{ flags: "--request-id <requestId>" }, { flags: "--ack-timeout <seconds>" }],
+    (positionals, values) => parseQueueCommand(["resume", ...positionals], values),
+    setCommand,
+  );
+  addLeaf(
+    queue,
+    "steer",
+    [
+      { flags: "--request <requestId>" },
+      { flags: "--expected-execution <executionId>" },
+      { flags: "--request-id <requestId>" },
+      { flags: "--wait" },
+      { flags: "--detach" },
+      { flags: "--ack-timeout <seconds>" },
+    ],
+    (positionals, values) => parseQueueCommand(["steer", ...positionals], values),
+    setCommand,
+  );
+}
+
+function configureCommand(command: Command): Command {
+  return command
+    .helpCommand(false)
+    .exitOverride()
+    .showSuggestionAfterError(false)
+    .configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
+}
+
+function addCommandGroup(parent: Command, name: string, missingCommandMessage: string): Command {
+  const command = configureCommand(parent.command(name));
+  command.action(() => {
+    throw new Error(missingCommandMessage);
+  });
+  return command;
+}
+
+function addLeaf(
+  parent: Command,
+  name: string,
+  options: readonly CliOptionDefinition[],
+  parse: (
+    positionals: readonly string[],
+    values: ReadonlyMap<string, OptionValue>,
+  ) => ParsedCommand,
+  setCommand: ParsedCommandSink,
+): Command {
+  const command = configureCommand(parent.command(name)).argument("[args...]");
+  for (const definition of options) {
+    const option = new Option(definition.flags);
+    if (definition.multiple === true) option.argParser(collectOptionValues);
+    command.addOption(option);
+  }
+  command.action((positionals: readonly string[] | undefined) => {
+    setCommand(parse(positionals ?? [], commandOptionValues(command)));
+  });
+  return command;
+}
+
+function collectOptionValues(value: string, previous: readonly string[] | undefined): string[] {
+  return [...(previous ?? []), value];
+}
+
+function commandOptionValues(command: Command): ReadonlyMap<string, OptionValue> {
+  const values = new Map<string, OptionValue>();
+  const parsed = command.opts() as Readonly<Record<string, unknown>>;
+  for (const option of command.options) {
+    const attribute = option.attributeName();
+    if (command.getOptionValueSource(attribute) === undefined) continue;
+    const name = option.long?.slice(2);
+    const value = parsed[attribute];
+    if (name === undefined) continue;
+    if (typeof value === "string" || value === true) values.set(name, value);
+    else if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+      values.set(name, value);
+    }
+  }
+  return values;
+}
+
+function globalOptionsFrom(program: Command): GlobalCliOptions {
+  const values = program.opts() as {
+    readonly format?: OutputFormat | undefined;
+    readonly json?: boolean | undefined;
+    readonly streamJson?: boolean | undefined;
+    readonly color?: ColorMode | undefined;
+    readonly interactive?: InteractiveMode | undefined;
+  };
+  return {
+    format: values.format ?? (values.json ? "json" : values.streamJson ? "jsonl" : "text"),
+    color: values.color ?? "auto",
+    interactive: values.interactive ?? "auto",
+  };
+}
+
+function helpOptions(options: GlobalCliOptions, argv: readonly string[]): GlobalCliOptions {
+  const inferredFormat = formatForGlobalOptionError(argv);
+  return inferredFormat === "text" ? options : { ...options, format: inferredFormat };
+}
+
+function isHelpDisplay(error: unknown): boolean {
+  return (
+    error instanceof CommanderError &&
+    error.exitCode === 0 &&
+    (error.code === "commander.helpDisplayed" || error.code.includes("help"))
+  );
+}
+
+function isGlobalOptionFailure(message: string): boolean {
+  return /--(?:format|json|stream-json|color|interactive)\b/u.test(message);
+}
+
+function normalizeCommanderError(error: unknown, argv: readonly string[]): string {
+  const message =
+    error instanceof Error
+      ? error.message.replace(/^error:\s*/iu, "")
+      : "Invalid command arguments.";
+  if (!(error instanceof CommanderError)) return message;
+  if (error.code === "commander.unknownCommand") return unknownCommandMessage(argv);
+  if (error.code === "commander.excessArguments") {
+    const command = commandPathForHelp(argv)[0];
+    if (
+      command === "source" ||
+      command === "team" ||
+      command === "expert" ||
+      command === "flow" ||
+      command === "mission"
+    ) {
+      return unknownCommandMessage(argv);
+    }
+  }
+  if (error.code === "commander.conflictingOption" && isGlobalOptionFailure(message)) {
+    const flags = [...message.matchAll(/option ['`]([^'`]+)['`]/giu)].map((match) => match[1]);
+    return `Output format flags ${flags[0] ?? ""} and ${flags[1] ?? ""} are mutually exclusive.`;
+  }
+  const unknownOption = message.match(/unknown option ['`](--[^'`]+)['`]/iu)?.[1];
+  if (unknownOption !== undefined) return `Unknown option ${unknownOption}.`;
+  const missingValue = message.match(/option ['`](--[^\s'`]+)[^'`]*['`] argument missing/iu)?.[1];
+  if (missingValue !== undefined) return `Option ${missingValue} requires a value.`;
+  return message;
+}
+
+function validateSeparatedOptionValues(argv: readonly string[], program: Command): void {
+  const valueOptions = new Set<string>();
+  collectValueOptions(program, valueOptions);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === undefined) continue;
-    if (optionsTerminated) {
-      args.push(token);
-      continue;
+    if (token === undefined || token === "--") break;
+    if (!valueOptions.has(token)) continue;
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`Option ${token} requires a value.`);
     }
-    if (token === "--") {
-      optionsTerminated = true;
-      args.push(token);
-      continue;
-    }
-    if (token === "--help" || token === "-h") {
-      helpRequested = true;
-      continue;
-    }
-    if (token === "--json" || token === "--stream-json") {
-      const nextFormat = token === "--json" ? "json" : "jsonl";
-      if (formatSource !== undefined) {
-        throw new CliParseError(
-          createFormatError(
-            `Output format flags ${formatSource} and ${token} are mutually exclusive.`,
-          ),
-          format,
-        );
-      }
-      format = nextFormat;
-      formatSource = token;
-      continue;
-    }
-    if (token === "--format" || token.startsWith("--format=")) {
-      const value = token === "--format" ? argv[++index] : token.slice("--format=".length);
-      if (value === undefined || value.length === 0) {
-        throw new CliParseError(createFormatError("--format requires a value."), format);
-      }
-      if (formatSource !== undefined) {
-        throw new CliParseError(
-          createFormatError(
-            `Output format flags ${formatSource} and --format are mutually exclusive.`,
-          ),
-          format,
-        );
-      }
-      format = parseFormat(value);
-      formatSource = "--format";
-      continue;
-    }
-    if (token === "--color" || token.startsWith("--color=")) {
-      const value = token === "--color" ? argv[++index] : token.slice("--color=".length);
-      color = parseEnum(value, ["auto", "always", "never"], "--color") as ColorMode;
-      continue;
-    }
-    if (token === "--interactive" || token.startsWith("--interactive=")) {
-      const value =
-        token === "--interactive" ? argv[++index] : token.slice("--interactive=".length);
-      interactive = parseEnum(
-        value,
-        ["auto", "always", "never"],
-        "--interactive",
-      ) as InteractiveMode;
-      continue;
-    }
-    args.push(token);
-  }
-
-  return { options: { format, color, interactive }, args, helpRequested };
-}
-
-function parseCommand(command: string, args: readonly string[]): ParsedCommand {
-  switch (command) {
-    case "help":
-      ensureNoArguments(args, "help");
-      return { kind: "help" };
-    case "version":
-      ensureNoArguments(args, "version");
-      return { kind: "version" };
-    case "doctor":
-      ensureNoArguments(args, "doctor");
-      return { kind: "doctor" };
-    case "completion":
-      return parseCompletion(args);
-    case "source":
-      return parseSourceCommand(args);
-    case "team":
-    case "expert":
-    case "flow":
-      return parseExecutorCommand(command, args);
-    case "mission":
-      return parseMissionCommand(args);
-    default:
-      throw new Error(`Unknown command: ${command}`);
+    index += 1;
   }
 }
 
-function parseSourceCommand(args: readonly string[]): ParsedCommand {
-  const subcommand = args[0];
+const REPEATABLE_OPTIONS = new Set(["--choice"]);
+
+function validateOptionOccurrences(argv: readonly string[], program: Command): void {
+  const knownOptions = new Set<string>();
+  collectLongOptions(program, knownOptions);
+  const occurrences = new Map<string, number>();
+
+  for (const token of argv) {
+    if (token === "--") break;
+    if (!token.startsWith("--")) continue;
+
+    const separator = token.indexOf("=");
+    const optionName = separator === -1 ? token : token.slice(0, separator);
+    if (!knownOptions.has(optionName)) continue;
+
+    const count = (occurrences.get(optionName) ?? 0) + 1;
+    occurrences.set(optionName, count);
+    if (count > 1 && !REPEATABLE_OPTIONS.has(optionName)) {
+      throw new Error(`Option ${optionName} may only be specified once.`);
+    }
+  }
+}
+
+function collectLongOptions(command: Command, target: Set<string>): void {
+  for (const option of command.options) {
+    if (option.long !== undefined) target.add(option.long);
+  }
+  for (const child of command.commands) collectLongOptions(child, target);
+}
+
+function collectValueOptions(command: Command, target: Set<string>): void {
+  for (const option of command.options) {
+    if (option.required && option.long !== undefined) target.add(option.long);
+  }
+  for (const child of command.commands) collectValueOptions(child, target);
+}
+
+function unknownCommandMessage(argv: readonly string[]): string {
+  const path = commandPathForHelp(argv);
+  const [command, subcommand, nestedCommand] = path;
+  if (command === "source") return "source requires init or add.";
+  if (command === "team" || command === "expert" || command === "flow") {
+    return `${command} requires discover, describe, or run.`;
+  }
+  if (command === "mission" && subcommand === "board") {
+    return "mission board requires list, read, or search.";
+  }
+  if (command === "mission" && subcommand === "queue") {
+    return "mission queue requires list, remove, resume, or steer.";
+  }
+  if (command === "mission" && (subcommand !== undefined || nestedCommand !== undefined)) {
+    return "mission requires list, get, resume, watch, send, steer, respond, interrupt, board, or queue.";
+  }
+  return `Unknown command: ${command ?? ""}`;
+}
+
+function commandPathForHelp(argv: readonly string[]): readonly string[] {
+  const path: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === undefined || token === "--help" || token === "-h") continue;
+    if (token === "--") break;
+    if (token === "--json" || token === "--stream-json") continue;
+    if (token === "--format" || token === "--color" || token === "--interactive") {
+      index += 1;
+      continue;
+    }
+    if (/^--(?:format|color|interactive)=/u.test(token)) continue;
+    if (token.startsWith("-")) continue;
+    path.push(token);
+    if (path.length === 3) break;
+  }
+  return path;
+}
+
+function parseSourceCommand(
+  subcommand: "init" | "add",
+  positionals: readonly string[],
+  values: ReadonlyMap<string, OptionValue>,
+): ParsedCommand {
   if (subcommand === "init") {
-    const { positionals, values } = parseOptions(
-      args.slice(1),
-      { id: "value", name: "value" },
-      "source init",
-    );
     if (positionals.length > 1) throw new Error("source init accepts at most one directory.");
     return {
       kind: "source-init",
@@ -582,57 +963,32 @@ function parseSourceCommand(args: readonly string[]): ParsedCommand {
       name: requiredOption(values, "name"),
     };
   }
-  if (subcommand === "add") {
-    const { positionals, values } = parseOptions(
-      args.slice(1),
-      { directory: "value" },
-      "source add",
-    );
-    if (positionals.length !== 1) throw new Error("source add requires one Bundle path.");
-    return {
-      kind: "source-add",
-      directory: optionalValue(values, "directory") ?? ".",
-      bundlePath: positionals[0]!,
-    };
-  }
-  throw new Error("source requires init or add.");
-}
-
-function parseCompletion(args: readonly string[]): ParsedCommand {
-  const { positionals } = parseOptions(args, {}, "completion");
-  if (positionals.length !== 1) throw new Error("completion requires exactly one shell.");
+  if (positionals.length !== 1) throw new Error("source add requires one Bundle path.");
   return {
-    kind: "completion",
-    shell: parseEnum(
-      positionals[0],
-      ["bash", "zsh", "fish", "powershell"],
-      "shell",
-    ) as CompletionShell,
+    kind: "source-add",
+    directory: optionalValue(values, "directory") ?? ".",
+    bundlePath: positionals[0]!,
   };
 }
 
-function parseExecutorCommand(command: ExecutorKind, args: readonly string[]): ParsedCommand {
-  if (args[0] === "run") return parseExecutorRunCommand(command, args.slice(1));
-  const { positionals, values } = parseOptions(
-    args,
-    {
-      project: "value",
-      query: "value",
-      status: "value",
-      limit: "value",
-      cursor: "value",
-      revision: "value",
-    },
-    command,
-  );
-  const subcommand = positionals[0];
-  if (subcommand !== "discover" && subcommand !== "describe") {
-    throw new Error(`${command} requires discover or describe.`);
-  }
+function parseCompletion(args: readonly string[]): ParsedCommand {
+  if (args.length !== 1) throw new Error("completion requires exactly one shell.");
+  return {
+    kind: "completion",
+    shell: parseEnum(args[0], ["bash", "zsh", "fish", "powershell"], "shell") as CompletionShell,
+  };
+}
+
+function parseExecutorCommand(
+  command: ExecutorKind,
+  subcommand: "discover" | "describe",
+  positionals: readonly string[],
+  values: ReadonlyMap<string, OptionValue>,
+): ParsedCommand {
   if (subcommand === "discover") {
-    if (positionals.length > 2)
+    if (positionals.length > 1)
       throw new Error(`${command} discover accepts at most one positional selector.`);
-    const selector = positionals[1];
+    const selector = positionals[0];
     const query = optionalValue(values, "query");
     if (selector !== undefined && query !== undefined) {
       throw new Error(`${command} discover cannot combine a selector with --query.`);
@@ -655,34 +1011,20 @@ function parseExecutorCommand(command: ExecutorKind, args: readonly string[]): P
       cursor: optionalValue(values, "cursor"),
     };
   }
-  if (positionals.length !== 2) throw new Error(`${command} describe requires a resource ref.`);
+  if (positionals.length !== 1) throw new Error(`${command} describe requires a resource ref.`);
   return {
     kind: "executor-describe",
     executorKind: command,
-    ref: positionals[1]!,
+    ref: positionals[0]!,
     revision: optionalPositiveInteger(values, "revision"),
   };
 }
 
 function parseExecutorRunCommand(
   executorKind: ExecutorKind,
-  args: readonly string[],
+  positionals: readonly string[],
+  values: ReadonlyMap<string, OptionValue>,
 ): Extract<ParsedCommand, { readonly kind: "executor-run" }> {
-  const { positionals, values } = parseOptions(
-    args,
-    {
-      workspace: "value",
-      prompt: "value",
-      input: "value",
-      "input-json": "value",
-      project: "value",
-      revision: "value",
-      "expected-fingerprint": "value",
-      "request-id": "value",
-      detach: "flag",
-    },
-    `${executorKind} run`,
-  );
   if (positionals.length !== 1) {
     throw new Error(`${executorKind} run requires exactly one canonical executor ref.`);
   }
@@ -747,46 +1089,14 @@ function validateRunOptions(options: GlobalCliOptions, command: ParsedCommand): 
   }
 }
 
-function parseMissionCommand(args: readonly string[]): ParsedCommand {
-  const { positionals, values } = parseOptions(
-    args,
-    {
-      status: "value",
-      executor: "value",
-      limit: "value",
-      cursor: "value",
-      view: "value",
-      after: "value",
-      replay: "value",
-      until: "value",
-      start: "value",
-      offset: "value",
-      "case-sensitive": "flag",
-      "context-lines": "value",
-      "max-results": "value",
-      project: "value",
-      revision: "value",
-      "expected-fingerprint": "value",
-      prompt: "value",
-      input: "value",
-      "request-id": "value",
-      wait: "flag",
-      detach: "flag",
-      "ack-timeout": "value",
-      "expected-execution": "value",
-      interaction: "value",
-      answer: "value",
-      choice: "value",
-      "answers-json": "value",
-      reason: "value",
-      request: "value",
-    },
-    "mission",
-  );
-  const subcommand = positionals[0];
+function parseMissionCommand(
+  subcommand: "list" | "get" | "watch" | "resume" | "send" | "steer" | "respond" | "interrupt",
+  positionals: readonly string[],
+  values: ReadonlyMap<string, OptionValue>,
+): ParsedCommand {
   if (subcommand === "list") {
     assertOnlyOptions(values, ["status", "executor", "limit", "cursor"], "mission list");
-    if (positionals.length !== 1)
+    if (positionals.length !== 0)
       throw new Error("mission list does not accept positional arguments.");
     return {
       kind: "mission-list",
@@ -807,10 +1117,10 @@ function parseMissionCommand(args: readonly string[]): ParsedCommand {
   }
   if (subcommand === "get") {
     assertOnlyOptions(values, ["view", "limit", "cursor"], "mission get");
-    if (positionals.length !== 2) throw new Error("mission get requires a Mission ID.");
+    if (positionals.length !== 1) throw new Error("mission get requires a Mission ID.");
     return {
       kind: "mission-get",
-      missionId: positionals[1]!,
+      missionId: positionals[0]!,
       view: (optionalEnum(values, "view", ["summary", "result", "chat", "work", "events"]) ??
         "summary") as MissionView,
       limit: optionalPositiveInteger(values, "limit") ?? DEFAULT_LIMIT,
@@ -819,7 +1129,7 @@ function parseMissionCommand(args: readonly string[]): ParsedCommand {
   }
   if (subcommand === "watch") {
     assertOnlyOptions(values, ["after", "replay", "until"], "mission watch");
-    if (positionals.length !== 2) throw new Error("mission watch requires a Mission ID.");
+    if (positionals.length !== 1) throw new Error("mission watch requires a Mission ID.");
     const after = optionalValue(values, "after");
     const replay = optionalNonNegativeInteger(values, "replay");
     if (after !== undefined && replay !== undefined) {
@@ -830,24 +1140,19 @@ function parseMissionCommand(args: readonly string[]): ParsedCommand {
     }
     return {
       kind: "mission-watch",
-      missionId: positionals[1]!,
+      missionId: positionals[0]!,
       ...(after === undefined ? {} : { after }),
       ...(replay === undefined ? {} : { replay }),
       until: optionalEnum(values, "until", ["terminal", "input-required"]) as
         "terminal" | "input-required" | undefined,
     };
   }
-  if (subcommand === "board") return parseBoardCommand(positionals.slice(1), values);
-  if (subcommand === "queue") return parseQueueCommand(positionals.slice(1), values);
-  if (subcommand === "resume") return parseMissionResumeCommand(positionals.slice(1), values);
+  if (subcommand === "resume") return parseMissionResumeCommand(positionals, values);
   if (subcommand === "send" || subcommand === "steer") {
-    return parseMissionMessageCommand(subcommand, positionals.slice(1), values);
+    return parseMissionMessageCommand(subcommand, positionals, values);
   }
-  if (subcommand === "respond") return parseMissionRespondCommand(positionals.slice(1), values);
-  if (subcommand === "interrupt") return parseMissionInterruptCommand(positionals.slice(1), values);
-  throw new Error(
-    "mission requires list, get, resume, watch, send, steer, respond, interrupt, board, or queue.",
-  );
+  if (subcommand === "respond") return parseMissionRespondCommand(positionals, values);
+  return parseMissionInterruptCommand(positionals, values);
 }
 
 function parseMissionResumeCommand(
@@ -1126,60 +1431,7 @@ function parseQueueCommand(
   throw new Error("mission queue requires list, remove, resume, or steer.");
 }
 
-type OptionType = "flag" | "value";
 type OptionValue = string | true | readonly string[];
-
-function parseOptions(
-  args: readonly string[],
-  allowed: Readonly<Record<string, OptionType>>,
-  command: string,
-): {
-  readonly positionals: readonly string[];
-  readonly values: ReadonlyMap<string, OptionValue>;
-} {
-  const positionals: string[] = [];
-  const values = new Map<string, OptionValue>();
-  let optionsTerminated = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const token = args[index];
-    if (token === undefined) continue;
-    if (optionsTerminated || !token.startsWith("--")) {
-      positionals.push(token);
-      continue;
-    }
-    if (token === "--") {
-      optionsTerminated = true;
-      continue;
-    }
-    const withoutPrefix = token.slice(2);
-    const equalIndex = withoutPrefix.indexOf("=");
-    const name = equalIndex === -1 ? withoutPrefix : withoutPrefix.slice(0, equalIndex);
-    const inlineValue = equalIndex === -1 ? undefined : withoutPrefix.slice(equalIndex + 1);
-    const optionType = allowed[name];
-    if (optionType === undefined) throw new Error(`Unknown option --${name} for ${command}.`);
-    if (optionType === "flag") {
-      if (inlineValue !== undefined) throw new Error(`Option --${name} does not accept a value.`);
-      if (values.has(name)) throw new Error(`Option --${name} may only be specified once.`);
-      values.set(name, true);
-      continue;
-    }
-    const value = inlineValue ?? args[++index];
-    if (value === undefined || (inlineValue === undefined && value.startsWith("--"))) {
-      throw new Error(`Option --${name} requires a value.`);
-    }
-    const existing = values.get(name);
-    if (name === "choice" && existing !== undefined) {
-      values.set(name, [
-        ...(typeof existing === "string" ? [existing] : Array.isArray(existing) ? existing : []),
-        value,
-      ]);
-    } else {
-      if (existing !== undefined) throw new Error(`Option --${name} may only be specified once.`);
-      values.set(name, value);
-    }
-  }
-  return { positionals, values };
-}
 
 function assertOnlyOptions(
   values: ReadonlyMap<string, OptionValue>,
@@ -1192,12 +1444,6 @@ function assertOnlyOptions(
       throw new Error("Unknown option --" + name + " for " + command + ".");
     }
   }
-}
-
-function ensureNoArguments(args: readonly string[], command: string): void {
-  const { positionals, values } = parseOptions(args, {}, command);
-  if (positionals.length !== 0 || values.size !== 0)
-    throw new Error(`${command} does not accept arguments.`);
 }
 
 function parseFormat(value: string): OutputFormat {
