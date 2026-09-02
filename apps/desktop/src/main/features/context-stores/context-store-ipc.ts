@@ -149,6 +149,9 @@ export function installContextStoreHandlers(
     ipcMain.handle("context-store-drafts:get", (_event, draftId: unknown) =>
       revisions.getDraft(z.string().uuid().parse(draftId)),
     );
+    ipcMain.handle("context-store-drafts:get-change-set", (_event, draftId: unknown) =>
+      revisions.getDraftChangeSet(z.string().uuid().parse(draftId)),
+    );
     ipcMain.handle("context-store-drafts:get-file", (_event, input: unknown) =>
       revisions.getDraftFile(GetContextStoreDraftFileSchema.parse(input)),
     );

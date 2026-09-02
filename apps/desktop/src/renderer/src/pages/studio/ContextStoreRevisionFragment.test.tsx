@@ -6,6 +6,7 @@ import {
   buildRevisionLineDiff,
   ContextStoreRevisionDiffFragment,
   ContextStoreRevisionFragment,
+  draftOverlayOperations,
 } from "./ContextStoreRevisionFragment.tsx";
 
 afterEach(async () => {
@@ -169,5 +170,59 @@ describe("ContextStoreRevisionFragment", () => {
       { kind: "deletion", content: "old", oldLine: 2 },
       { kind: "addition", content: "new", newLine: 2 },
     ]);
+  });
+
+  it("uses fixed baseline content when reviewing an updated draft file", () => {
+    const draft = {
+      schemaVersion: "pragma.context-store-draft/v1" as const,
+      id: "20000000-0000-4000-8000-000000000003",
+      revision: 2,
+      name: "Update guide",
+      storeId: "00000000-0000-4000-8000-000000000003",
+      baseRevision: 4,
+      baseSnapshotHash: "0".repeat(64),
+      state: "pending_review" as const,
+      submittedRevision: 2,
+      overlay: {
+        files: [
+          {
+            id: "guide.md",
+            content: "first\nnew",
+            metadata: { trigger: "manual" as const, priority: "normal" as const },
+          },
+        ],
+        deletedFiles: [],
+        directories: [],
+        deletedDirectories: [],
+      },
+      createdAt: "2026-08-05T07:24:00.000Z",
+      updatedAt: "2026-08-05T07:29:00.000Z",
+    };
+    const [operation] = draftOverlayOperations(draft, {
+      schemaVersion: "pragma.context-store-change-set/v1",
+      storeId: draft.storeId,
+      baseRevision: draft.baseRevision,
+      baseSnapshotHash: draft.baseSnapshotHash,
+      summary: "Update guide",
+      operations: [
+        {
+          operation: "upsert",
+          id: "guide.md",
+          previousContent: "first\nold",
+          content: "first\nnew",
+          metadata: { trigger: "manual", priority: "normal" },
+        },
+      ],
+    });
+
+    expect(operation).toMatchObject({
+      operation: "upsert",
+      previousContent: "first\nold",
+      content: "first\nnew",
+    });
+    if (operation?.operation !== "upsert") throw new Error("Expected an upsert operation.");
+    const diff = buildRevisionLineDiff(operation.previousContent ?? "", operation.content);
+    expect(diff.filter((line) => line.kind === "addition")).toHaveLength(1);
+    expect(diff.filter((line) => line.kind === "deletion")).toHaveLength(1);
   });
 });

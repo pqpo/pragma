@@ -1,6 +1,7 @@
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
+  ContextStoreChangeSetSchema,
   ContextStoreContentSchema,
   ContextStoreEntrySchema,
   ContextStoreImportInspectionSchema,
@@ -160,6 +161,10 @@ export const contextStoresApi = {
     ),
   getContextStoreDraft: async (draftId) =>
     ContextStoreDraftSchema.parse(await ipcRenderer.invoke("context-store-drafts:get", draftId)),
+  getContextStoreDraftChangeSet: async (draftId) =>
+    ContextStoreChangeSetSchema.parse(
+      await ipcRenderer.invoke("context-store-drafts:get-change-set", draftId),
+    ),
   getContextStoreDraftFile: async (input) =>
     ContextStoreContentSchema.parse(
       await ipcRenderer.invoke(
@@ -247,6 +252,7 @@ export const contextStoresApi = {
   | "createContextStoreDraft"
   | "listContextStoreDrafts"
   | "getContextStoreDraft"
+  | "getContextStoreDraftChangeSet"
   | "getContextStoreDraftFile"
   | "submitContextStoreDraft"
   | "updateContextStoreDraftFile"

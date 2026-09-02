@@ -130,6 +130,17 @@ describe("context store sparse draft revisions", () => {
     const changed = await service.getDraft(draft.id);
     expect(changed.overlay.files.map((file) => file.id)).toEqual(["items/base.md"]);
     expect(changed.overlay.files.some((file) => file.content.includes("Untouched"))).toBe(false);
+    await expect(service.getDraftChangeSet(draft.id)).resolves.toMatchObject({
+      baseRevision: draft.baseRevision,
+      operations: [
+        {
+          operation: "upsert",
+          id: "items/base.md",
+          previousContent: "# Base\n",
+          content: "# Draft\n",
+        },
+      ],
+    });
     await expect(contextStores.getContent(store.id, "items/base.md")).resolves.toMatchObject({
       content: "# Base\n",
     });

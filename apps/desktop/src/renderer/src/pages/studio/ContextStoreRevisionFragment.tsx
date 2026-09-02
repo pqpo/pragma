@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import type {
   ContextStore,
+  ContextStoreChangeSet,
   ContextStoreDraft,
   ContextStoreRevisionJob,
 } from "../../../../shared/contracts/index.ts";
@@ -371,7 +372,32 @@ export function ContextStoreRevisionDiffFragment(props: {
 }) {
   const { t, i18n } = useTranslation("studio");
   const [selection, setSelection] = useState<RevisionDiffSelection>({ kind: "summary" });
-  const operations = useMemo(() => draftOverlayOperations(props.draft), [props.draft]);
+  const [reviewChangeSet, setReviewChangeSet] = useState<ContextStoreChangeSet>();
+  useEffect(() => {
+    const api = desktopApi();
+    let active = true;
+    setReviewChangeSet(undefined);
+    if (api === undefined) {
+      return () => {
+        active = false;
+      };
+    }
+    void api
+      .getContextStoreDraftChangeSet(props.draft.id)
+      .then((changeSet) => {
+        if (active) setReviewChangeSet(changeSet);
+      })
+      .catch(() => {
+        if (active) setReviewChangeSet(undefined);
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.draft.id, props.draft.revision]);
+  const operations = useMemo(
+    () => draftOverlayOperations(props.draft, reviewChangeSet),
+    [props.draft, reviewChangeSet],
+  );
   const operation =
     selection.kind === "operation" ? (operations[selection.index] ?? operations[0]) : undefined;
   const diff = useMemo(
@@ -602,8 +628,8 @@ export function ContextStoreRevisionDiffFragment(props: {
                 <article className="revision-review-document">
                   <p>{props.draft.summary ?? props.draft.name}</p>
                 </article>
-              ) : operation === undefined ? null : operation.operation === "delete" &&
-                operation.previousContent === undefined ? (
+              ) : operation === undefined ? null : reviewChangeSet === undefined ||
+                (operation.operation === "delete" && operation.previousContent === undefined) ? (
                 <div className="revision-diff-unavailable">
                   <p>{t("revisionDiffUnavailable")}</p>
                 </div>
@@ -651,14 +677,27 @@ function operationIcon(operation: RevisionOperation) {
   return <FileText size={15} aria-hidden="true" />;
 }
 
-function draftOverlayOperations(draft: ContextStoreDraft): readonly RevisionOperation[] {
+export function draftOverlayOperations(
+  draft: ContextStoreDraft,
+  reviewChangeSet?: ContextStoreChangeSet,
+): readonly RevisionOperation[] {
+  const reviewedById = new Map(
+    (reviewChangeSet?.operations ?? [])
+      .filter((operation) => operation.operation !== "rename")
+      .map((operation) => [operation.id, operation] as const),
+  );
   return [
     ...draft.overlay.files.map((file) => ({
       operation: "upsert" as const,
       id: file.id,
       content: file.content,
+      previousContent: reviewedById.get(file.id)?.previousContent,
     })),
-    ...draft.overlay.deletedFiles.map((id) => ({ operation: "delete" as const, id })),
+    ...draft.overlay.deletedFiles.map((id) => ({
+      operation: "delete" as const,
+      id,
+      previousContent: reviewedById.get(id)?.previousContent,
+    })),
   ];
 }
 

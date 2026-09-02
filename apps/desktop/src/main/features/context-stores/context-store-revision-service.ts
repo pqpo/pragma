@@ -68,6 +68,7 @@ export interface ContextStoreRevisionService {
   }): Promise<ContextStoreDraft>;
   listDrafts(filter?: ListContextStoreDrafts): Promise<readonly ContextStoreDraft[]>;
   getDraft(draftId: string): Promise<ContextStoreDraft>;
+  getDraftChangeSet(draftId: string): Promise<ContextStoreChangeSet>;
   getDraftFile(input: GetContextStoreDraftFile): Promise<ContextStoreContent>;
   submitDraft(
     draftId: string,
@@ -558,6 +559,12 @@ export function createContextStoreRevisionService(options: {
 
     async getDraft(draftId) {
       return await readDraft(draftId);
+    },
+
+    async getDraftChangeSet(draftId) {
+      const draft = await readDraft(draftId);
+      const base = await options.contextStores.getSnapshot(draft.storeId, draft.baseRevision);
+      return attachContextStoreBaseContent(base, changeSetFromDraft(draft, base));
     },
 
     async getDraftFile(input) {

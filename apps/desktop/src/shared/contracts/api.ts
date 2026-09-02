@@ -34,6 +34,7 @@ import type {
   RenameContextStoreEntry,
   DeleteContextStoreEntry,
   ContextStoreRevisionRequest,
+  ContextStoreChangeSet,
   ContextStoreDraft,
   CreateContextStoreDraft,
   GetContextStoreDraftFile,
@@ -400,6 +401,7 @@ export interface PragmaDesktopAPI {
   createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraft>;
   listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraft[]>;
   getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraft>;
+  getContextStoreDraftChangeSet: (draftId: string) => Promise<ContextStoreChangeSet>;
   getContextStoreDraftFile: (input: GetContextStoreDraftFile) => Promise<ContextStoreContent>;
   submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraft>;
   updateContextStoreDraftFile: (input: UpdateContextStoreDraftFile) => Promise<ContextStoreDraft>;
