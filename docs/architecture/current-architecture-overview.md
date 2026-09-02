@@ -65,12 +65,9 @@ Detached mutation 的成功边界统一为 Inbox durable submit，queued receipt
 ```text
                                   ┌───────────────────────┐
                                   │      apps/web         │
-                                  │  Health 展示与 Client │
+                                  │ Health 展示与本地请求 │
                                   └───────────┬───────────┘
                                               │
-                                      @pragma/client
-                                              │
-                                              ▼
                                       @pragma/shared
 
 ┌───────────────────────┐           ┌───────────────────────┐
@@ -116,16 +113,16 @@ Detached mutation 的成功边界统一为 Inbox durable submit，queued receipt
 
 ### 尚未落地或仅为骨架
 
-- `apps/server` 只有 `/health`，`@pragma/server` 的 `DatabaseClient` 仍是无行为占位对象。
+- `apps/server` 只有 `/health`，尚无控制面服务或基础设施端口。
 - `apps/worker` 只注册 Runtime、创建一个 Expert 并输出 Ready，没有任务获取、调度、重试或治理循环。
-- `packages/server/src/runtime-gateway` 和 `packages/core/src/local-agent-bridge` 尚不存在。
+- `apps/server/src/runtime-gateway` 和 `packages/core/src/local-agent-bridge` 尚不存在。
 - Desktop 的 Gateway 和 Device 状态是离线快照，没有设备绑定、心跳、任务下发、事件回传或断线恢复。
 - Mission 已连接 ExpertSession / Flow Execution；v3 manifest 只保存有界元数据，跨轮用户消息和
   Execution 引用追加到 `messages.jsonl`，生成内容仍由 Execution Canonical Event Log 投影。
 - Desktop Home 是 Mission 新建入口，默认使用只读通用系统 Agent `expert:0000000000pragma`；即使没有
   创建任何项目 Expert，用户也可以直接让 Pragma 在授权工作区中完成任务。Studio 与任务执行器
   目录通过同一个 System Expert Registry 展示和解析 Pragma，不再维护独立 Home Chat。
-- Web 和 Client 仍只有健康检查路径，不代表控制面产品能力。
+- Web 仍只有健康检查路径，不代表控制面产品能力。
 
 ## 合理、应继续保持的设计
 
@@ -177,7 +174,7 @@ Core 的 Managed Tool approval 只能约束进入 Pragma Tool/MCP 层的调用�
 
 目前 Core 已有较复杂的 durable execution，而 Server/Worker 仍是启动骨架。这会诱导后续代码把租户、鉴权、配额、调度、重试和审计继续塞进 Core，或者直接塞进入口应用。
 
-**建议：** 下一阶段优先在 `@pragma/server` 建立控制面应用服务和基础设施端口，至少明确：
+**建议：** 下一阶段先在 `apps/server` 明确控制面用例和基础设施端口；只有出现多个真实消费者或独立发布边界时，再提取专用 package。至少明确：
 
 - Run / Session / Device / Lease Repository；
 - 调度队列、重试和 dead-letter 语义；

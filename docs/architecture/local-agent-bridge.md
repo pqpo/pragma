@@ -14,7 +14,7 @@ Desktop App 负责连接云端、注册本地能力、承载本地权限闸门�
 Cloud Pragma
 ├── apps/server
 ├── apps/worker
-├── packages/server/src/runtime-gateway
+├── apps/server/src/runtime-gateway
 └── packages/core
         │
         │ 双向安全连接，由 Desktop App 主动建立
@@ -133,12 +133,12 @@ run.cancelled
 ```text
 apps/
   desktop/
+  server/
+    src/runtime-gateway/
 
 packages/
   core/
     src/local-agent-bridge/
-  server/
-    src/runtime-gateway/
   runtime/
     antigravity/
     claude-code/
@@ -151,7 +151,7 @@ packages/
 
 - `apps/desktop` 是 Desktop App，不是 CLI runner。
 - `packages/core/src/local-agent-bridge` 只放协议、schema、类型和桥接抽象。
-- `packages/server/src/runtime-gateway` 放云端会话管理、任务下发和事件接收。
+- `apps/server/src/runtime-gateway` 放当前云端会话管理、任务下发和事件接收；出现真实复用边界后再提取 package。
 - `packages/core` 放 Runtime Adapter 合约、Runtime 选择公共协议和本地桥接协议。
 - 具体 Runtime Adapter 实现属于独立 `@pragma/runtime-*` 包或 Desktop App 后面的本地适配层。
 
@@ -170,7 +170,7 @@ packages/
 `A -> B` 表示 `A` 可以依赖 `B`：
 
 ```text
-apps/server -> packages/server/src/runtime-gateway -> packages/core/src/local-agent-bridge -> packages/core -> packages/shared
+apps/server/src/runtime-gateway -> packages/core/src/local-agent-bridge -> packages/core -> packages/shared
 apps/worker -> packages/core -> packages/shared
 apps/desktop    -> runtime-* / packages/core/src/local-agent-bridge -> packages/core -> packages/shared
 ```
@@ -178,8 +178,6 @@ apps/desktop    -> runtime-* / packages/core/src/local-agent-bridge -> packages/
 禁止：
 
 ```text
-packages/core -> packages/server
-packages/core -> packages/client
 packages/core -> apps/*
 apps/web -> packages/core
 ```

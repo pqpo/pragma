@@ -11,10 +11,9 @@ Pragma uses `pnpm workspace` with Turborepo as the monorepo foundation.
 The repository is layered by package family:
 
 - `shared` for runtime-neutral contracts, domain logic, and utilities.
-- `client` for browser/client SDK capabilities.
-- `server` for Node service infrastructure boundaries.
 - `core` for Expert Agent declarations, runtime contracts, directives, tools, plugins, and shared execution abstractions.
 - `interpreter` for Pragma DSL AST, parsing, validation, compilation, extension registries, and dump.
+- `local-host` for Node-only application services shared by Desktop Main and CLI, including Mission Board.
 - `runtime-*` for concrete runtime adapter implementations.
 - `plugins/*` for ExpertAgent extensions built on the `core` plugin API.
 - `apps` for application composition and startup only.
@@ -26,7 +25,8 @@ ESLint enforces illegal dependency directions, browser and Node environment sepa
 
 ## Consequences
 
-Applications stay thin and compose packages rather than becoming shared-code containers.
+Applications compose reusable domain packages, but application-specific HTTP clients and unimplemented
+future infrastructure do not receive placeholder packages.
 
 Shared packages remain portable across browser and Node environments.
 

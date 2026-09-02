@@ -377,7 +377,7 @@ Memory 的前置条件；已提交变化可以作为后续提炼的可选 Eviden
 
 ### 交付
 
-- `@pragma/mission-board` 只提供可复用 Context bindings，不依赖文件系统或具体 Host；
+- `@pragma/local-host` 提供可复用 Mission Board Context bindings；通用 binding 不依赖文件系统，Host composition 选择持久化 adapter；
 - 复用 Context System 的 `list/read/search/add/edit/delete`，不新增 Mission Board CRUD 或 handoff 方法；
 - `GUIDE.md` 说明 plan、TODO、progress、decision、handoff、process、大输出与 workspace 引用约定；
 - 私有视图在 Store 路由层使用可信 Runtime `contextId` 隔离，list、read 和精确 ID 读取规则一致；

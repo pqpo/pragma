@@ -12,10 +12,11 @@ managed-tool API duplicates the Context System and couples Core to one Host's pe
 
 ## Decision
 
-`@pragma/mission-board` is a reusable Host capability package. It exposes only Context Store
+Mission Board is a reusable capability exported by `@pragma/local-host`. It exposes Context Store
 bindings: `mission-board` for Mission-shared content and `mission-board-private` for content isolated
 by the trusted Runtime `contextId`. `GUIDE.md` describes plan, TODO, progress, decision, handoff, and
-large-output conventions. They are usage patterns, not distinct domain objects or tools.
+large-output conventions. They are usage patterns, not distinct domain objects or tools. Keeping it
+inside Local Host avoids a package whose only consumers are the two local Host compositions.
 
 Agents use the existing Context System list, read, search, add, edit, and delete operations. Mission
 Board adds no board-specific CRUD or handoff methods. Mutations retain Context revision/etag CAS.
@@ -38,7 +39,7 @@ Mission Board follows the Mission owner lifecycle and survives Host restarts.
 ## Consequences
 
 - Plan, TODO, progress, process, and handoff semantics evolve in `GUIDE.md`, not in Core APIs.
-- Future Hosts reuse the package and provide only persistence and authorization adapters.
+- Desktop Main and CLI reuse Local Host and provide only persistence and authorization adapters.
 - The old `register_handoff_file`, handoff visibility resolver, and Execution handoff store are
   removed from active execution paths.
 - Historical `pragma.handoff` records remain valid v8 migration input. Desktop mounts a bounded,
