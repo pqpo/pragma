@@ -1,4 +1,4 @@
-import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot } from "@phosphor-icons/react";
+import { ArrowLeft, CaretDown, Check, Clock, FolderOpen, Plus, Robot } from "@phosphor-icons/react";
 import { PRAGMA_DSL_WRITE_API_VERSION, PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -10,12 +10,14 @@ import { useTranslation } from "react-i18next";
 
 import type {
   AutomationSummary,
+  ContextStore,
   DesktopToolPermissionMode,
   MissionCreationDefaults,
   MissionExecutorOption,
   PragmaProjectSnapshot,
 } from "../../../../shared/contracts/index.ts";
 import { DateTimePicker } from "../../components/DateTimePicker.tsx";
+import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { MissionExecutorPicker } from "../../components/MissionExecutorPicker.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { Switch } from "../../components/Switch.tsx";
@@ -47,6 +49,7 @@ type EditorState = {
   readonly interaction: "reuse-session" | "new-mission";
   readonly workspace: string;
   readonly toolPermissionMode: DesktopToolPermissionMode;
+  readonly contextStoreIds: readonly string[];
   readonly triggerKind: "once" | "interval" | "calendar" | "cron";
   readonly onceAt: string;
   readonly intervalEvery: number;
@@ -81,6 +84,7 @@ export function createNewAutomationEditor(
     interaction: "reuse-session",
     workspace: defaults?.workspace.path ?? "",
     toolPermissionMode: defaults?.toolPermissionMode ?? "request-approval",
+    contextStoreIds: [],
     triggerKind: "calendar",
     onceAt: timestamp,
     intervalEvery: 1,
@@ -98,6 +102,7 @@ export function createNewAutomationEditor(
 
 export function AutomationDirectoryFragment(props: {
   readonly automations: readonly AutomationSummary[];
+  readonly contextStores: readonly ContextStore[];
   readonly project: PragmaProjectSnapshot;
   readonly onChanged: () => Promise<void>;
 }) {
@@ -115,6 +120,7 @@ export function AutomationDirectoryFragment(props: {
   const [error, setError] = useState<string | null>(null);
   const [touchedFields, setTouchedFields] = useState<ReadonlySet<AutomationField>>(new Set());
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
 
   useEffect(() => {
     const api = desktopApi();
@@ -159,6 +165,7 @@ export function AutomationDirectoryFragment(props: {
   };
 
   const closeEditor = () => {
+    setContextStorePickerOpen(false);
     setEditor(null);
   };
 
@@ -196,6 +203,10 @@ export function AutomationDirectoryFragment(props: {
       interaction: automation.resource.spec.interaction.mode,
       workspace: automation.binding?.workspace.path ?? "",
       toolPermissionMode: automation.binding?.toolPermissionMode ?? "request-approval",
+      contextStoreIds:
+        automation.binding?.contextMounts.flatMap((mount) =>
+          mount.kind === "context-store" ? [mount.storeId] : [],
+        ) ?? [],
       triggerKind: value["kind"] as EditorState["triggerKind"],
       onceAt: localDateTime(new Date(value["at"] === undefined ? Date.now() : String(value["at"]))),
       intervalEvery: Number(value["every"] ?? 1),
@@ -263,6 +274,10 @@ export function AutomationDirectoryFragment(props: {
         binding: {
           workspace: editor.workspace,
           toolPermissionMode: editor.toolPermissionMode,
+          contextMounts: editor.contextStoreIds.map((storeId) => ({
+            kind: "context-store" as const,
+            storeId,
+          })),
         },
       });
       setEditor(null);
@@ -456,6 +471,7 @@ export function AutomationDirectoryFragment(props: {
                             next?.kind === "flow" && next.inputSchema !== undefined
                               ? createSchemaInputValue(next.inputSchema)
                               : {},
+                          contextStoreIds: next?.kind === "flow" ? [] : editor.contextStoreIds,
                         });
                       }}
                     />
@@ -529,6 +545,28 @@ export function AutomationDirectoryFragment(props: {
                     />
                   </label>
                 )}
+                {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
+                  <div className="automation-knowledge-field">
+                    <span className="automation-field-label">{t("automationKnowledge")}</span>
+                    <button
+                      className="automation-knowledge-trigger"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => setContextStorePickerOpen(true)}
+                    >
+                      <FolderOpen size={18} aria-hidden="true" />
+                      <span>
+                        <strong>{t("automationKnowledge")}</strong>
+                        <small>{t("automationKnowledgeDescription")}</small>
+                      </span>
+                      <span className="automation-knowledge-count">
+                        {t("automationKnowledgeSelected", {
+                          count: editor.contextStoreIds.length,
+                        })}
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
                 {showError("flowInput") && validation.flowInput !== undefined ? (
                   <p
                     className="automation-field-error"
@@ -778,6 +816,18 @@ export function AutomationDirectoryFragment(props: {
               </button>
             </footer>
           </form>
+          {contextStorePickerOpen ? (
+            <ContextStorePickerDialog
+              stores={props.contextStores}
+              selectedStoreIds={editor.contextStoreIds}
+              description={t("automationKnowledgePickerDescription")}
+              footerHint={t("automationKnowledgeCreateHint")}
+              onSelectedStoreIdsChange={(contextStoreIds) =>
+                setEditor((current) => (current === null ? null : { ...current, contextStoreIds }))
+              }
+              onClose={() => setContextStorePickerOpen(false)}
+            />
+          ) : null}
         </StudioScreenFrame>
       </>
     );

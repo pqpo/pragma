@@ -10,6 +10,7 @@ import {
   MissionModelOverrideSchema,
   MissionWorkspaceSchema,
 } from "./mission-base.ts";
+import { MissionContextMountsSchema } from "./missions.ts";
 import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
 export const AutomationBindingSchema = z
@@ -22,6 +23,10 @@ export const AutomationBindingSchema = z
     placement: z.literal("desktop"),
     toolPermissionMode: DesktopToolPermissionModeSchema,
     modelOverride: MissionModelOverrideSchema.optional(),
+    contextMounts: MissionContextMountsSchema.refine(
+      (mounts) => mounts.every((mount) => mount.kind === "context-store"),
+      "Automation bindings may only mount published Context Stores.",
+    ).default([]),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
@@ -62,6 +67,10 @@ export const SaveAutomationSchema = z
         workspace: z.string().trim().min(1).max(2_000),
         toolPermissionMode: DesktopToolPermissionModeSchema,
         modelOverride: MissionModelOverrideSchema.optional(),
+        contextMounts: MissionContextMountsSchema.refine(
+          (mounts) => mounts.every((mount) => mount.kind === "context-store"),
+          "Automations may only mount published Context Stores.",
+        ).default([]),
       })
       .strict(),
   })

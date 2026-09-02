@@ -300,15 +300,9 @@ export function createAutomationService(options: {
   ) => {
     const existing = await getMission(missionId);
     if (existing !== undefined) return existing;
-    return await options.creator.create({
-      id: missionId,
-      workspace: binding.workspace.path,
-      executorRef: resource.spec.route.executor.ref,
-      missionInput: automationMissionInput(resource),
-      toolPermissionMode: binding.toolPermissionMode,
-      origin: { type: "automation", automationRef: canonicalPragmaResourceRef(resource) },
-      ...(binding.modelOverride === undefined ? {} : { modelOverride: binding.modelOverride }),
-    });
+    return await options.creator.create(
+      automationMissionCreationInput(resource, binding, missionId),
+    );
   };
 
   const markDispatched = async (
@@ -550,6 +544,7 @@ export function createAutomationService(options: {
             ...(input.binding.modelOverride === undefined
               ? { modelOverride: undefined }
               : { modelOverride: input.binding.modelOverride }),
+            contextMounts: input.binding.contextMounts,
           });
       if (rotateGeneration && previousBinding !== undefined) {
         await backfillMissionSourcesForBinding(ref, previousBinding);
@@ -567,6 +562,7 @@ export function createAutomationService(options: {
         ...(input.binding.modelOverride === undefined
           ? {}
           : { modelOverride: input.binding.modelOverride }),
+        contextMounts: input.binding.contextMounts,
       });
       await options.store.saveBinding(binding);
       if (rotateGeneration && previousBinding !== undefined) {
@@ -636,6 +632,7 @@ export function createAutomationService(options: {
         workspace: previous.workspace,
         toolPermissionMode: previous.toolPermissionMode,
         ...(previous.modelOverride === undefined ? {} : { modelOverride: previous.modelOverride }),
+        contextMounts: previous.contextMounts,
       });
       await options.store.saveBinding(binding);
       await moveOwnedStorageToTrash({
@@ -666,6 +663,23 @@ export function automationMissionInput(resource: PragmaAutomationResource) {
     : routeInput;
 }
 
+export function automationMissionCreationInput(
+  resource: PragmaAutomationResource,
+  binding: AutomationBinding,
+  missionId: string,
+): Parameters<MissionCreator["create"]>[0] {
+  return {
+    id: missionId,
+    workspace: binding.workspace.path,
+    executorRef: resource.spec.route.executor.ref,
+    missionInput: automationMissionInput(resource),
+    toolPermissionMode: binding.toolPermissionMode,
+    origin: { type: "automation", automationRef: canonicalPragmaResourceRef(resource) },
+    contextMounts: binding.contextMounts,
+    ...(binding.modelOverride === undefined ? {} : { modelOverride: binding.modelOverride }),
+  };
+}
+
 function promptFor(resource: PragmaAutomationResource): string {
   if (resource.spec.route.input.kind !== "prompt") {
     throw new Error("Only Expert and Team Automations can reuse a Mission.");
@@ -681,6 +695,7 @@ function executionIdentity(resource: PragmaAutomationResource, binding: Automati
     workspace: binding.workspace.path,
     permission: binding.toolPermissionMode,
     model: binding.modelOverride,
+    contextMounts: binding.contextMounts,
   });
 }
 

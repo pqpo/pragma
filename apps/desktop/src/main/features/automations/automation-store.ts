@@ -133,6 +133,7 @@ export function createAutomationBinding(input: {
   readonly workspace: AutomationBinding["workspace"];
   readonly toolPermissionMode: AutomationBinding["toolPermissionMode"];
   readonly modelOverride?: AutomationBinding["modelOverride"] | undefined;
+  readonly contextMounts?: AutomationBinding["contextMounts"] | undefined;
 }): AutomationBinding {
   const now = new Date().toISOString();
   return AutomationBindingSchema.parse({
@@ -147,6 +148,7 @@ export function createAutomationBinding(input: {
     placement: "desktop",
     toolPermissionMode: input.toolPermissionMode,
     ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
+    contextMounts: input.contextMounts ?? [],
     createdAt: input.previous?.createdAt ?? now,
     updatedAt: now,
   });

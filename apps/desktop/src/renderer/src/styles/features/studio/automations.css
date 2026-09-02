@@ -182,6 +182,55 @@
   line-height: 1.5;
 }
 
+.automation-knowledge-field {
+  display: grid;
+  gap: 8px;
+}
+
+.automation-knowledge-trigger {
+  display: grid;
+  min-height: 64px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.automation-knowledge-trigger:hover,
+.automation-knowledge-trigger:focus-visible {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.automation-knowledge-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.automation-knowledge-trigger > span:nth-child(2) {
+  display: grid;
+  gap: 3px;
+}
+
+.automation-knowledge-trigger small {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.automation-knowledge-count {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .automation-flow-input-form > header {
   padding: 0;
 }

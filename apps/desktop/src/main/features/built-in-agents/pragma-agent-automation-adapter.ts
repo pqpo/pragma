@@ -57,6 +57,7 @@ export function createDesktopPragmaAgentAutomationPort(options: {
               binding: {
                 workspace: input.workspaceId,
                 toolPermissionMode: input.toolPermissionMode,
+                contextMounts: [],
               },
             }),
           );

@@ -71,6 +71,7 @@ describe("AutomationDirectoryFragment", () => {
       executorRef: "",
       prompt: "",
       flowInput: {},
+      contextStoreIds: [],
       workspace: "/work/review",
       toolPermissionMode: "request-approval",
     });
@@ -85,6 +86,7 @@ describe("AutomationDirectoryFragment", () => {
     const html = renderToStaticMarkup(
       <AutomationDirectoryFragment
         automations={[automation]}
+        contextStores={[]}
         project={{ revision: 3 } as PragmaProjectSnapshot}
         onChanged={async () => undefined}
       />,
@@ -195,6 +197,7 @@ describe("AutomationDirectoryFragment", () => {
       interaction: "reuse-session" as const,
       workspace: "/work/review",
       toolPermissionMode: "request-approval" as const,
+      contextStoreIds: [],
       triggerKind: "calendar" as const,
       onceAt: "2026-07-24T09:00",
       intervalEvery: 1,
@@ -245,6 +248,7 @@ describe("AutomationDirectoryFragment", () => {
       interaction: "reuse-session" as const,
       workspace: "/work/review",
       toolPermissionMode: "request-approval" as const,
+      contextStoreIds: [],
       triggerKind: "calendar" as const,
       onceAt: "2026-07-24T09:00",
       intervalEvery: 1,

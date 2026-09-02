@@ -974,6 +974,7 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "integrations" && project !== null ? (
           <AutomationDirectoryFragment
             automations={automations}
+            contextStores={contextStores}
             project={project}
             onChanged={async () => {
               const api = desktopApi();

@@ -223,6 +223,13 @@ export const studio = {
   automationExecutorPickerDescription:
     "Search for the Expert, Expert Team, or Flow this automation should run.",
   selectExecutorFirst: "Choose an Expert, Expert Team, or Flow before configuring its input.",
+  automationKnowledge: "Knowledge bases",
+  automationKnowledgeDescription: "Mount knowledge for every Mission started by this automation.",
+  automationKnowledgeSelected_one: "{{count}} selected",
+  automationKnowledgeSelected_other: "{{count}} selected",
+  automationKnowledgePickerDescription:
+    "Choose the knowledge bases available to this automation's Expert or Expert Team.",
+  automationKnowledgeCreateHint: "Selected knowledge bases are mounted when the Mission starts.",
   sessionPolicy: "Mission policy",
   reuseMission: "Reuse one Mission (FIFO)",
   newMissionEveryRun: "Create a new Mission for every event",

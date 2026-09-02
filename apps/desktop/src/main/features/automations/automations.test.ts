@@ -5,7 +5,11 @@ import { PragmaPaths } from "@pragma/core";
 import { PragmaAutomationResourceSchema } from "@pragma/interpreter/ast";
 
 import { previewScheduleOccurrences } from "./automation-schedule.ts";
-import { automationMissionInput, createAutomationService } from "./automation-service.ts";
+import {
+  automationMissionCreationInput,
+  automationMissionInput,
+  createAutomationService,
+} from "./automation-service.ts";
 import {
   createAutomationBinding,
   type AutomationState,
@@ -88,6 +92,59 @@ describe("Automation Schedules", () => {
 });
 
 describe("Automation Service", () => {
+  it("keeps selected knowledge bases in the durable Automation binding", () => {
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const binding = createAutomationBinding({
+      automationRef: "automation:m9a8n9nxvvyb4j01",
+      rotateGeneration: true,
+      workspace: { path: "/tmp", basename: "tmp" },
+      toolPermissionMode: "request-approval",
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+
+    expect(binding.contextMounts).toEqual([{ kind: "context-store", storeId: contextStoreId }]);
+  });
+
+  it("mounts Automation knowledge bases when creating a Mission", () => {
+    const contextStoreId = "10000000-0000-4000-8000-000000000001";
+    const resource = PragmaAutomationResourceSchema.parse({
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "Automation",
+      metadata: {
+        id: "m9a8n9nxvvyb4j01",
+        name: "Knowledge review",
+        description: "Runs with selected knowledge",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.automation.schedule@v1",
+        binding: "binding:desktop-automation",
+        config: {
+          trigger: { kind: "calendar", frequency: "daily", time: "09:00", timezone: "UTC" },
+        },
+        enabled: true,
+        route: {
+          executor: { ref: "expert:t9ne4d8njvvxv2ea" },
+          input: { kind: "prompt", value: "Review the release." },
+        },
+        interaction: { mode: "new-mission" },
+        delivery: { adapter: "pragma.automation.delivery.local@v1" },
+      },
+    });
+    const binding = createAutomationBinding({
+      automationRef: "automation:m9a8n9nxvvyb4j01",
+      rotateGeneration: true,
+      workspace: { path: "/tmp", basename: "tmp" },
+      toolPermissionMode: "request-approval",
+      contextMounts: [{ kind: "context-store", storeId: contextStoreId }],
+    });
+
+    expect(
+      automationMissionCreationInput(resource, binding, "2ad8b3f3-76d5-42f7-aad0-072b9c89f430")
+        .contextMounts,
+    ).toEqual([{ kind: "context-store", storeId: contextStoreId }]);
+  });
+
   it("can retry startup reconciliation after a project revision is temporarily unavailable", async () => {
     const get = vi
       .fn<PragmaProjectStore["get"]>()
