@@ -13,8 +13,10 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 1. Discuss missing intent before changing definitions.
 2. Call `list_dsl_resources`, then read every project resource that will be changed or referenced.
    Before creating an ExpertTeam, read every existing coordinator or member and include any new
-   ones in the same change-set. A Host Runtime or Capability option that is not yet a project
-   resource cannot be read and is the only exception.
+   ones in the same change-set. Read reusable system Experts listed in
+   `list_expert_options.builtinExperts` through `read_dsl_resource`; they are valid read-only Team
+   coordinators or members and must not be recreated. A Host Runtime or Capability option that is
+   not yet a project resource cannot be read and is the only exception.
 3. Before creating or changing an Expert, call `list_expert_options`. Confirm a listed Runtime
    model, recommend only listed capabilities that match the user's intent, and select only a listed
    avatar persona. When the user has not specified an avatar, either recommend the persona whose
@@ -23,6 +25,9 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    recommendation, customize it, or enable no capabilities. Reuse an existing project
    RuntimeProfile when its Runtime, provider, model, and thinking level match the selection;
    otherwise use the option's `runtimeProfileRef`. Never author a duplicate RuntimeProfile.
+   Before creating an Expert for a Team role, reuse a matching `builtinExperts` entry when one
+   already provides the requested behavior. Do not ask for model, avatar, or capability choices for
+   that read-only system Expert.
 4. Read the relevant reference file below before drafting YAML.
 5. Before authoring a new resource, allocate only the IDs needed for the user's current confirmed
    request. Use the returned Host-generated IDs and exact references. Preserve IDs when editing;

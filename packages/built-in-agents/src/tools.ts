@@ -244,13 +244,13 @@ export function createPragmaAgentTools(options: {
     ),
     tool(
       "read_dsl_resource",
-      "Read one current Pragma resource as canonical YAML.",
+      "Read one current project resource or read-only built-in system Expert as canonical YAML.",
       objectSchema({ ref: { type: "string" } }, ["ref"]),
       async (args) => ok(await options.project.read(RefInput.parse(args).ref)),
     ),
     tool(
       "list_expert_options",
-      "List host-provided Runtime models, ready capabilities, and named avatar personas that can be assigned to an Expert.",
+      "List host-provided Runtime models, ready capabilities, named avatar personas, and read-only built-in Experts. Built-in Experts can be referenced directly as an ExpertTeam coordinator or member.",
       {},
       async () => ok(await options.project.listExpertOptions()),
     ),

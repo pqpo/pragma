@@ -418,7 +418,12 @@ function projectPort(
 ): PragmaAgentDslProjectPort {
   return {
     list: async () => ({ projectRevision: 0, resources: [] }),
-    listExpertOptions: async () => ({ runtimeModels: [], capabilities: [], avatars: [] }),
+    listExpertOptions: async () => ({
+      runtimeModels: [],
+      capabilities: [],
+      avatars: [],
+      builtinExperts: [],
+    }),
     allocateResourceIds: async (requests) =>
       requests.map((request) => ({
         key: request.key,

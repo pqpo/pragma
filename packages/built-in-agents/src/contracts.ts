@@ -39,6 +39,8 @@ export const PragmaAgentResourceSummarySchema = z.object({
 
 export const PragmaAgentDslDocumentSchema = PragmaAgentResourceSummarySchema.extend({
   projectRevision: z.number().int().nonnegative(),
+  origin: z.enum(["project", "system"]),
+  readOnly: z.boolean(),
   source: z.string().min(1),
 });
 
@@ -62,10 +64,31 @@ export const PragmaAgentCapabilityOptionSchema = z.object({
   toolNames: z.array(z.string().min(1).max(128)).max(500),
 });
 
+export const PragmaAgentBuiltinExpertOptionSchema = z.object({
+  ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("expert:")),
+  name: z.string().min(1).max(200),
+  description: z.string().max(2_000),
+  model: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("system-default") }).strict(),
+    z
+      .object({
+        mode: z.literal("pinned"),
+        runtimeId: z.string().min(1).max(200),
+        providerId: z.string().min(1).max(200),
+        modelId: z.string().min(1).max(500),
+      })
+      .strict(),
+  ]),
+  assignableAs: z.array(z.enum(["team-member", "coordinator"])).min(1),
+  origin: z.literal("system"),
+  readOnly: z.literal(true),
+});
+
 export const PragmaAgentExpertOptionCatalogSchema = z.object({
   runtimeModels: z.array(PragmaAgentRuntimeModelOptionSchema),
   capabilities: z.array(PragmaAgentCapabilityOptionSchema),
   avatars: z.array(PragmaExpertAvatarProfileSchema),
+  builtinExperts: z.array(PragmaAgentBuiltinExpertOptionSchema),
 });
 
 export const PragmaAgentDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });
@@ -322,6 +345,7 @@ export type PragmaAgentResourceSummary = z.infer<typeof PragmaAgentResourceSumma
 export type PragmaAgentDslDocument = z.infer<typeof PragmaAgentDslDocumentSchema>;
 export type PragmaAgentRuntimeModelOption = z.infer<typeof PragmaAgentRuntimeModelOptionSchema>;
 export type PragmaAgentCapabilityOption = z.infer<typeof PragmaAgentCapabilityOptionSchema>;
+export type PragmaAgentBuiltinExpertOption = z.infer<typeof PragmaAgentBuiltinExpertOptionSchema>;
 export type PragmaAgentExpertOptionCatalog = z.infer<typeof PragmaAgentExpertOptionCatalogSchema>;
 export type PragmaAgentDslChange = z.infer<typeof PragmaAgentDslChangeSchema>;
 export type PragmaAgentChangeSet = z.infer<typeof PragmaAgentChangeSetSchema>;

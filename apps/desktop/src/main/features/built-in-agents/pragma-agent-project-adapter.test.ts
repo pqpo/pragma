@@ -149,6 +149,43 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       gender: "woman",
       personality: ["analytical", "calm", "perceptive"],
     });
+    expect(options.builtinExperts).toEqual([
+      expect.objectContaining({
+        ref: "expert:0000000000pragma",
+        name: "Pragma",
+        model: { mode: "system-default" },
+        assignableAs: ["team-member", "coordinator"],
+        origin: "system",
+        readOnly: true,
+      }),
+      expect.objectContaining({
+        ref: "expert:0000000000st0rev",
+        name: "Store Revision Agent",
+        model: { mode: "system-default" },
+        assignableAs: ["team-member", "coordinator"],
+        origin: "system",
+        readOnly: true,
+      }),
+    ]);
+  });
+
+  it("reads built-in Experts through the DSL port without exposing them as project resources", async () => {
+    const root = await temporaryRoot("pragma-default-agent-system-expert-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+
+    await expect(adapter.list()).resolves.toEqual({ projectRevision: 0, resources: [] });
+    await expect(adapter.read("expert:0000000000st0rev")).resolves.toMatchObject({
+      ref: "expert:0000000000st0rev",
+      kind: "Expert",
+      name: "Store Revision Agent",
+      projectRevision: 0,
+      origin: "system",
+      readOnly: true,
+      source: expect.stringContaining("id: 0000000000st0rev"),
+    });
   });
 
   it("reuses an existing compatible project RuntimeProfile without creating a duplicate", async () => {
@@ -943,7 +980,13 @@ function adapterOptions(
       },
     ],
   } as unknown as RuntimeEnvironmentService;
-  return { project, stateRoot, capabilities, runtimes };
+  return {
+    project,
+    stateRoot,
+    capabilities,
+    runtimes,
+    systemExperts: createDesktopSystemExpertRegistry(),
+  };
 }
 
 function capability(id: string, status: "ready" | "needs_attention"): Capability {

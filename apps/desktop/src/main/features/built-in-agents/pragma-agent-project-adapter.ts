@@ -51,6 +51,7 @@ import { listCapabilitiesWithBuiltIns } from "../capabilities/built-in-capabilit
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
+import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 
 const CandidateRecordSchema = z.object({
   changeSet: PragmaAgentChangeSetSchema,
@@ -62,6 +63,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
   readonly stateRoot: string;
   readonly capabilities: CapabilityStore;
   readonly runtimes: RuntimeEnvironmentService;
+  readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list" | "get" | "getResource">;
 }): PragmaAgentDslProjectPort {
   const candidatePath = (id: string) =>
     join(options.stateRoot, "change-sets", `${encodePragmaPathSegment(id)}.json`);
@@ -267,14 +269,19 @@ export function createDesktopPragmaAgentProjectPort(options: {
       const resource = snapshot.resources.find(
         (candidate) => canonicalPragmaResourceRef(candidate) === ref,
       );
-      if (resource === undefined) throw new Error(`Pragma resource not found: ${ref}`);
+      const systemResource =
+        resource === undefined ? options.systemExperts.getResource(ref) : undefined;
+      const resolved = resource ?? systemResource;
+      if (resolved === undefined) throw new Error(`Pragma resource not found: ${ref}`);
       return {
-        ref: canonicalPragmaResourceRef(resource),
-        kind: resource.kind,
-        name: resource.metadata.name,
-        description: resource.metadata.description,
+        ref: canonicalPragmaResourceRef(resolved),
+        kind: resolved.kind,
+        name: resolved.metadata.name,
+        description: resolved.metadata.description,
         projectRevision: snapshot.revision,
-        source: formatPragmaYaml(resource),
+        origin: systemResource === undefined ? "project" : "system",
+        readOnly: systemResource !== undefined,
+        source: formatPragmaYaml(resolved),
       };
     },
     async listExpertOptions() {
@@ -606,6 +613,7 @@ interface DesktopExpertCatalog {
 async function buildExpertCatalog(options: {
   readonly capabilities: CapabilityStore;
   readonly runtimes: RuntimeEnvironmentService;
+  readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list" | "get">;
 }): Promise<DesktopExpertCatalog> {
   const [availability, capabilities] = await Promise.all([
     getRuntimeAvailability(options.runtimes),
@@ -657,6 +665,24 @@ async function buildExpertCatalog(options: {
       runtimeModels,
       capabilities: capabilityOptions,
       avatars: BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES,
+      builtinExperts: options.systemExperts.list().map((summary) => {
+        const definition = options.systemExperts.get(summary.ref);
+        if (definition === undefined) {
+          throw new Error(`Built-in Expert definition not found: ${summary.ref}`);
+        }
+        return {
+          ref: summary.ref,
+          name: summary.name,
+          description: summary.description,
+          model:
+            definition.executionProfile.mode === "system-default"
+              ? { mode: "system-default" as const }
+              : { mode: "pinned" as const, ...definition.executionProfile.model },
+          assignableAs: ["team-member", "coordinator"] as const,
+          origin: "system" as const,
+          readOnly: true as const,
+        };
+      }),
     }),
     resources,
     availableModels: new Set(

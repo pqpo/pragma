@@ -857,6 +857,7 @@ export async function createDesktopApplicationContainer(
     stateRoot: defaultAgentStateRoot,
     capabilities: capabilityStore,
     runtimes,
+    systemExperts,
   });
   const pragmaAgentToolsRef: { current?: ReturnType<typeof createPragmaAgentTools> } = {};
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};

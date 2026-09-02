@@ -39,6 +39,8 @@ spec:
 ```
 
 - The coordinator and every member must already exist or be included in the same change-set.
+- Reuse a matching read-only system Expert from `list_expert_options.builtinExperts` when available.
+  Its canonical ref is valid directly and it remains outside the editable project resource list.
 - `avatarId` remains part of the `pragma/v5` portable resource protocol. Desktop displays the
   coordinator's current Expert avatar and adds the Team badge in the UI.
 - Text limits use Unicode characters after trimming: name 50, description 500, and optional team
