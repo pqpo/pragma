@@ -588,3 +588,137 @@
     max-width: 180px;
   }
 }
+.team-mention-editor,
+.team-mention-editor:focus,
+.team-mention-editor:focus-visible {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text);
+  cursor: text;
+  font: inherit;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.team-mention-editor.is-home {
+  min-height: 80px;
+  padding: 14px 20px;
+  font-size: 16px;
+  overflow-y: auto;
+}
+
+.team-mention-editor.is-mission {
+  min-height: 52px;
+  max-height: 130px;
+  padding: 18px 18px 8px;
+  overflow-y: auto;
+}
+
+.team-mention-editor[data-empty="true"]::before {
+  color: var(--ui-text-disabled);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.team-mention-editor[data-disabled="true"] {
+  color: var(--ui-text-secondary);
+  cursor: not-allowed;
+}
+
+.team-mention-chip,
+.mission-inline-mention {
+  display: inline-flex;
+  max-width: min(280px, 80%);
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px 1px 2px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+  font-weight: 500;
+  line-height: 1.4;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.team-mention-chip > span:last-child,
+.mission-inline-mention > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mission-mentioned-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  white-space: pre-wrap;
+}
+
+.mission-mentioned-content > span {
+  min-width: 0;
+}
+
+.team-mention-menu {
+  position: fixed;
+  z-index: 90;
+  display: grid;
+  max-height: 260px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-overlay);
+}
+
+.team-mention-menu > button {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+}
+
+.team-mention-menu > button:hover,
+.team-mention-menu > button.is-active {
+  background: var(--ui-selection);
+}
+
+.team-mention-menu strong,
+.team-mention-menu small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-mention-menu strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.team-mention-menu small,
+.team-mention-menu > p {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.team-mention-menu small {
+  padding-inline-start: 4px;
+}
+
+.team-mention-menu > p {
+  margin: 0;
+  padding: 12px;
+}

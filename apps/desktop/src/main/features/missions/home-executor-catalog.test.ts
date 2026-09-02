@@ -207,7 +207,7 @@ function option(
     return { ...base, kind, avatarId: DEFAULT_PRAGMA_EXPERT_AVATAR_ID };
   }
   if (kind === "team") {
-    return { ...base, kind, avatarId: DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID };
+    return { ...base, kind, avatarId: DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID, members: [] };
   }
   return { ...base, kind };
 }

@@ -26,6 +26,7 @@ import {
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOptionsRequestSchema,
+  MissionMentionCandidatesSchema,
   MissionQueuePromptActionSchema,
   PickMissionAttachmentsResultSchema,
   PickMissionAttachmentsSchema,
@@ -43,10 +44,14 @@ import {
   type PickMissionAttachmentsResult,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
+import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 import type { MissionCommandOutcomeNotification, MissionRunner } from "./mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
+import {
+  expertTeamMentionCandidates,
+  type MissionExecutorCatalog,
+} from "./mission-executor-catalog.ts";
 import type { MissionCreator } from "./mission-creator.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 import { publishMissionUpdate } from "./mission-update-publisher.ts";
@@ -248,6 +253,25 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:get", (_event, id: unknown) =>
     runDesktopMutation(async () => await getManagedMission(MissionIdSchema.parse(id))),
   );
+  ipcMain.handle("missions:mentions:get", async (_event, id: unknown) => {
+    const mission = await getManagedMission(MissionIdSchema.parse(id));
+    if (mission.executor.kind !== "team") {
+      throw new MissionStoreError("config_invalid", "Only ExpertTeam Missions have mentions.");
+    }
+    const project = await options.project.getRevision(mission.project.revision);
+    const team = project.resources.find(
+      (resource): resource is PragmaExpertTeamResource =>
+        resource.kind === "ExpertTeam" &&
+        canonicalPragmaResourceRef(resource) === mission.executor.ref,
+    );
+    if (team === undefined) {
+      throw new MissionStoreError("config_invalid", "Mission ExpertTeam was not found.");
+    }
+    return MissionMentionCandidatesSchema.parse({
+      teamRef: mission.executor.ref,
+      members: expertTeamMentionCandidates(team, project.resources),
+    });
+  });
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.localHost.listExecutors()),
   );

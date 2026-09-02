@@ -49,6 +49,7 @@ import {
 } from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
+import { TeamMentionComposer } from "../../components/TeamMentionComposer.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
@@ -742,26 +743,49 @@ export function HomePage(props: {
           />
           {flowInputSchema === undefined ? (
             <div className="mission-goal-field">
-              <textarea
-                id="mission-goal"
-                aria-label={t("goalPlaceholder")}
-                value={goal}
-                onChange={(event) => setGoal(event.target.value)}
-                onPaste={(event) => {
-                  const file = clipboardImageFile(event.clipboardData);
-                  if (file === undefined || selectedExecutor?.kind === "flow" || saving) return;
-                  event.preventDefault();
-                  void pasteImage(file);
-                }}
-                onKeyDown={(event) => {
-                  if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+              {selectedExecutor?.kind === "team" ? (
+                <TeamMentionComposer
+                  value={goal}
+                  candidates={selectedExecutor.members}
+                  onChange={setGoal}
+                  onSubmit={() => void submit()}
+                  onPaste={(event) => {
+                    const file = clipboardImageFile(event.clipboardData);
+                    if (file === undefined || saving) return;
                     event.preventDefault();
-                    void submit();
-                  }
-                }}
-                placeholder={t("goalPlaceholder")}
-                autoFocus
-              />
+                    void pasteImage(file);
+                  }}
+                  disabled={saving}
+                  placeholder={t("goalPlaceholder")}
+                  ariaLabel={t("goalPlaceholder")}
+                  menuLabel={t("mentionMembers")}
+                  emptyLabel={t("mentionNoMatches")}
+                  unavailableLabel={t("mentionUnavailable")}
+                  variant="home"
+                  autoFocus
+                />
+              ) : (
+                <textarea
+                  id="mission-goal"
+                  aria-label={t("goalPlaceholder")}
+                  value={goal}
+                  onChange={(event) => setGoal(event.target.value)}
+                  onPaste={(event) => {
+                    const file = clipboardImageFile(event.clipboardData);
+                    if (file === undefined || selectedExecutor?.kind === "flow" || saving) return;
+                    event.preventDefault();
+                    void pasteImage(file);
+                  }}
+                  onKeyDown={(event) => {
+                    if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+                      event.preventDefault();
+                      void submit();
+                    }
+                  }}
+                  placeholder={t("goalPlaceholder")}
+                  autoFocus
+                />
+              )}
             </div>
           ) : (
             <SchemaInputForm

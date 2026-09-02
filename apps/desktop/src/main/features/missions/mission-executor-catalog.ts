@@ -3,6 +3,7 @@ import type { RuntimeEnvironmentBinding } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
+  type PragmaExpertTeamResource,
   type PragmaInvocableResource,
   type PragmaResource,
   type PragmaRuntimeProfileResource,
@@ -21,6 +22,7 @@ import {
   type MissionExecutorOption,
   type MissionModelOptions,
   type MissionModelOverride,
+  type ExpertMentionCandidate,
   type PragmaProjectSnapshot,
 } from "../../../shared/contracts/index.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -304,7 +306,10 @@ function projectExecutorOption(
     ...(resource.kind === "Expert"
       ? { avatarId: resource.metadata.avatarId }
       : resource.kind === "ExpertTeam"
-        ? { avatarId: expertTeamCoordinatorAvatarId(resource, resources) }
+        ? {
+            avatarId: expertTeamCoordinatorAvatarId(resource, resources),
+            members: expertTeamMentionCandidates(resource, resources),
+          }
         : {}),
     origin: "project",
     readOnly: false,
@@ -312,5 +317,28 @@ function projectExecutorOption(
     ...(resource.kind === "Flow" && resource.spec.input?.schema !== undefined
       ? { inputSchema: resource.spec.input.schema }
       : {}),
+  });
+}
+
+export function expertTeamMentionCandidates(
+  team: PragmaExpertTeamResource,
+  resources: readonly PragmaResource[],
+): readonly ExpertMentionCandidate[] {
+  const experts = new Map(
+    resources
+      .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
+      .map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+  );
+  return team.spec.members.map((member) => {
+    const expert = experts.get(member.ref);
+    if (expert === undefined) {
+      throw new Error(`ExpertTeam member not found: ${member.ref}.`);
+    }
+    return {
+      ref: member.ref,
+      name: expert.metadata.name,
+      description: expert.metadata.description,
+      avatarId: expert.metadata.avatarId,
+    };
   });
 }

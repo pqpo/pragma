@@ -14,7 +14,7 @@ import {
   WarningCircle,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { ExpertPromptAttachment } from "@pragma/shared";
+import { parseExpertMentionSegments, type ExpertPromptAttachment } from "@pragma/shared";
 
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { MissionImagePreviewDialog } from "../../components/MissionAttachments.tsx";
@@ -23,6 +23,7 @@ import { i18n } from "../../i18n/index.ts";
 import {
   missionAttachmentOriginalUrl,
   missionAttachmentPreviewUrl,
+  type ExpertMentionCandidate,
   type MissionChatEntry,
 } from "../../../../shared/contracts/index.ts";
 import type { LocalMissionUserMessage } from "./mission-command-delivery.ts";
@@ -46,6 +47,7 @@ export function LocalMissionUserMessageView(props: {
   readonly missionId: string;
   readonly retryDisabled?: boolean | undefined;
   readonly onRetry?: ((message: LocalMissionUserMessage) => void) | undefined;
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
 }) {
   const { t } = useTranslation("missions");
   return (
@@ -61,7 +63,10 @@ export function LocalMissionUserMessageView(props: {
           attachments={props.message.attachments}
           missionId={props.missionId}
         />
-        <MissionMessageContent source={props.message.content} />
+        <MissionUserMessageContent
+          source={props.message.content}
+          mentionCandidates={props.mentionCandidates}
+        />
         {props.message.status === "failed" ? (
           <small>
             {t("messageSendFailed")}
@@ -148,6 +153,7 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
   readonly showBranch?: boolean | undefined;
   readonly onBranch?:
     ((entry: Extract<MissionChatEntry, { kind: "assistant" }>) => void) | undefined;
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
 }) {
   const { t } = useTranslation("missions");
   const entry = useMissionLiveEntry(props.liveEntryStore, props.entry);
@@ -193,7 +199,10 @@ export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
             attachments={entry.attachments ?? []}
             missionId={props.missionId}
           />
-          <MissionMessageContent source={entry.content} />
+          <MissionUserMessageContent
+            source={entry.content}
+            mentionCandidates={props.mentionCandidates}
+          />
         </div>
       </div>
     );
@@ -431,16 +440,23 @@ export function MissionThinkingEntry(props: {
 export const MissionToolCallBlock = memo(function MissionToolCallBlock(props: {
   readonly collapsed: boolean;
   readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
 }) {
   const { t } = useTranslation("missions");
   if (props.entries.length === 1) {
-    return <MissionToolCallEntry entry={props.entries[0]!} />;
+    return (
+      <MissionToolCallEntry entry={props.entries[0]!} mentionCandidates={props.mentionCandidates} />
+    );
   }
   if (!props.collapsed) {
     return (
       <div className="mission-tool-run">
         {props.entries.map((entry) => (
-          <MissionToolCallEntry entry={entry} key={entry.id} />
+          <MissionToolCallEntry
+            entry={entry}
+            key={entry.id}
+            mentionCandidates={props.mentionCandidates}
+          />
         ))}
       </div>
     );
@@ -456,7 +472,11 @@ export const MissionToolCallBlock = memo(function MissionToolCallBlock(props: {
       </summary>
       <div className="mission-tool-group-items">
         {props.entries.map((entry) => (
-          <MissionToolCallEntry entry={entry} key={entry.id} />
+          <MissionToolCallEntry
+            entry={entry}
+            key={entry.id}
+            mentionCandidates={props.mentionCandidates}
+          />
         ))}
       </div>
     </details>
@@ -467,14 +487,17 @@ function sameMissionToolCallBlockProps(
   previous: {
     readonly collapsed: boolean;
     readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+    readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
   },
   next: {
     readonly collapsed: boolean;
     readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+    readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
   },
 ): boolean {
   return (
     previous.collapsed === next.collapsed &&
+    previous.mentionCandidates === next.mentionCandidates &&
     previous.entries.length === next.entries.length &&
     previous.entries.every((entry, index) => entry === next.entries[index])
   );
@@ -482,6 +505,7 @@ function sameMissionToolCallBlockProps(
 
 function MissionToolCallEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "tool" }>;
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
 }) {
   const { t } = useTranslation("missions");
   const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}`;
@@ -514,13 +538,25 @@ function MissionToolCallEntry(props: {
         {props.entry.inputPreview !== undefined ? (
           <section>
             <strong>{t("input")}</strong>
-            <pre>{props.entry.inputPreview}</pre>
+            <pre>
+              {formatExpertMentionDisplayText(
+                props.entry.inputPreview,
+                props.mentionCandidates,
+                t("mentionUnavailable"),
+              )}
+            </pre>
           </section>
         ) : null}
         {props.entry.outputPreview !== undefined ? (
           <section>
             <strong>{t("output")}</strong>
-            <pre>{props.entry.outputPreview}</pre>
+            <pre>
+              {formatExpertMentionDisplayText(
+                props.entry.outputPreview,
+                props.mentionCandidates,
+                t("mentionUnavailable"),
+              )}
+            </pre>
           </section>
         ) : null}
         {props.entry.error !== undefined ? <p>{props.entry.error}</p> : null}
@@ -543,6 +579,62 @@ export const MissionMessageContent = memo(function MissionMessageContent(props: 
     </div>
   );
 });
+
+export const MissionUserMessageContent = memo(function MissionUserMessageContent(props: {
+  readonly source: string;
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
+  readonly inline?: boolean | undefined;
+}) {
+  const { t } = useTranslation("missions");
+  const segments = parseExpertMentionSegments(props.source);
+  if (!segments.some((segment) => segment.kind === "mention")) {
+    return props.inline ? (
+      <span>{props.source}</span>
+    ) : (
+      <MissionMessageContent source={props.source} />
+    );
+  }
+  const candidates = new Map(
+    (props.mentionCandidates ?? []).map((candidate) => [candidate.ref, candidate]),
+  );
+  const Container = props.inline ? "span" : "div";
+  return (
+    <Container className="mission-markdown mission-mentioned-content">
+      {segments.map((segment, index) => {
+        if (segment.kind === "text") return <span key={`text-${index}`}>{segment.text}</span>;
+        const candidate = candidates.get(segment.ref);
+        const label = candidate?.name ?? t("mentionUnavailable");
+        return (
+          <span
+            className="mission-inline-mention"
+            aria-label={`@${label}`}
+            key={`mention-${index}`}
+          >
+            <ExpertAvatar avatarId={candidate?.avatarId} size="xs" />
+            <span>@{label}</span>
+          </span>
+        );
+      })}
+    </Container>
+  );
+});
+
+export function formatExpertMentionDisplayText(
+  source: string,
+  mentionCandidates: readonly ExpertMentionCandidate[] | undefined,
+  unavailableLabel: string,
+): string {
+  const candidates = new Map(
+    (mentionCandidates ?? []).map((candidate) => [candidate.ref, candidate] as const),
+  );
+  return parseExpertMentionSegments(source)
+    .map((segment) =>
+      segment.kind === "text"
+        ? segment.text
+        : `@${candidates.get(segment.ref)?.name ?? unavailableLabel}`,
+    )
+    .join("");
+}
 
 function missionChatEntryExecutorLabel(entry: MissionChatEntry): string | undefined {
   return entry.executorName ?? entry.executorId;

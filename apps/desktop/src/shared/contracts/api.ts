@@ -81,6 +81,7 @@ import type {
   MissionSummary,
   MissionUpdate,
   MissionExecutorOption,
+  MissionMentionCandidates,
   HomeMissionExecutorCatalog,
   HomeExecutorPreference,
   UpdateHomeExecutorPreference,
@@ -516,6 +517,7 @@ export interface PragmaDesktopAPI {
   subscribeRuntimeModelCatalog: (listener: (runtimeId: string) => void) => () => void;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
+  getMissionMentionCandidates: (id: string) => Promise<MissionMentionCandidates>;
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
   subscribeMissionCommandOutcomes: (
     listener: (outcome: MissionCommandOutcome) => void,

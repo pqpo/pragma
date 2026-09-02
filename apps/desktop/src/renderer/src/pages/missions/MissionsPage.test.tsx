@@ -14,6 +14,7 @@ import {
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
   DEFAULT_MISSION_MEMORY_VIEW,
+  formatMissionListTitle,
   formatMissionHumanQuestionNotes,
   hasValidMissionHumanAnswer,
   hasValidMissionHumanAnswers,
@@ -63,6 +64,30 @@ import {
 } from "./mission-conversation-model.ts";
 
 describe("MissionsPage", () => {
+  it("renders canonical mention markers as member names in Mission list titles", () => {
+    expect(
+      formatMissionListTitle(
+        "<@expert:1xddvess309a6gme>请检查实现",
+        [
+          {
+            ref: "expert:1xddvess309a6gme",
+            name: "评审专家",
+            description: "检查实现",
+            avatarId: "pragma.avatar.expert.01",
+          },
+        ],
+        "不可用成员",
+      ),
+    ).toBe("@评审专家请检查实现");
+    expect(
+      formatMissionListTitle(
+        "<@expert:1xddvess309a6gme>请检查实现",
+        [],
+        "不可用成员",
+      ),
+    ).toBe("@不可用成员请检查实现");
+  });
+
   it("uses bounded initial pages for Mission conversations", () => {
     expect(MISSION_CHAT_PAGE_SIZE).toBe(200);
     expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);

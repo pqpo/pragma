@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import {
   AgentMessageSchema,
+  ExpertMentionRefSchema,
+  formatExpertMentionToken,
   InvocationOutputSchema,
   isTerminalExecutionStatus,
   type AgentInstance,
@@ -2182,6 +2184,18 @@ function withTeamDelegationTools(
     ],
     enumerable: true,
   });
+  const mentionRoutingInstructions =
+    team !== undefined && expert.id === team.coordinator.id
+      ? formatTeamMentionRoutingInstructions(team)
+      : undefined;
+  if (mentionRoutingInstructions !== undefined) {
+    Object.defineProperty(clone, "instructions", {
+      value: [expert.instructions, mentionRoutingInstructions]
+        .filter((instruction) => instruction !== undefined && instruction.length > 0)
+        .join("\n\n"),
+      enumerable: true,
+    });
+  }
   const teamContextStores = (team?.contextStores ?? []).filter((binding) =>
     binding.visibility.mode === "all"
       ? true
@@ -2235,8 +2249,32 @@ function withTeamDelegationTools(
     Object.defineProperty(clone, "contextManager", {
       value: new ContextManager({ agent: clone, contextSystem }),
     });
+  } else if (mentionRoutingInstructions !== undefined) {
+    Object.defineProperty(clone, "contextManager", {
+      value: new ContextManager({ agent: clone, contextSystem: expert.contextSystem }),
+    });
   }
   return clone;
+}
+
+export function formatTeamMentionRoutingInstructions(team: ExpertTeam): string | undefined {
+  const mentionableMembers = team.members.flatMap((member) => {
+    const parsed = ExpertMentionRefSchema.safeParse(`expert:${member.id}`);
+    return parsed.success ? [{ member, ref: parsed.data }] : [];
+  });
+  if (mentionableMembers.length === 0) return undefined;
+  const directory = mentionableMembers
+    .map(({ member, ref }) => `- ${formatExpertMentionToken(ref)}: ${member.name}`)
+    .join("\n");
+  return [
+    "ExpertTeam mention routing",
+    "The user may include canonical <@expert:ID> markers to express a strong routing intent for a specific teammate. Only the exact markers in the directory below are valid mentions:",
+    directory,
+    "Treat the user's wording associated with a valid mention as the named teammate's primary task. By default, preserve and forward the relevant original text after the marker verbatim or as close to verbatim as the lifecycle tool input permits. Preserve every constraint, example, requested output, and qualification.",
+    "Use the complete user message only to identify the mentioned task's boundary, dependencies, and ordering. Do not reinterpret the goal, broaden or narrow its scope, add unsolicited requirements, or replace it with your own version. Add only the minimum context needed for the teammate to act. When the boundary is ambiguous, forward the complete original user message instead of guessing or summarizing it.",
+    "Honor a valid mention by using the existing Expert lifecycle tools for that teammate. Choose spawn_expert for fresh work and continue_expert when a related reusable Context exists; coordinate dependencies and synthesize the final response yourself.",
+    "Plain @text and unknown markers are ordinary user content. Mentions never bypass Team permissions, concurrency, depth, or other execution policy.",
+  ].join("\n\n");
 }
 
 function readExpertDelegationDefinition(expert: Expert): AgentDelegationDefinition | undefined {

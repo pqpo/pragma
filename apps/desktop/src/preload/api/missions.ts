@@ -6,6 +6,7 @@ import {
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionIdSchema,
+  MissionMentionCandidatesSchema,
   UpdateHomeExecutorPreferenceSchema,
 } from "../../shared/contracts/mission-base.ts";
 import {
@@ -79,6 +80,10 @@ export const missionsApi = {
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
     MissionSchema.parse(await invokeMutation("missions:get", MissionIdSchema.parse(id))),
+  getMissionMentionCandidates: async (id) =>
+    MissionMentionCandidatesSchema.parse(
+      await ipcRenderer.invoke("missions:mentions:get", MissionIdSchema.parse(id)),
+    ),
   getMissionContextStore: async (input) =>
     MissionContextStoreDescriptorSchema.parse(
       await ipcRenderer.invoke(
@@ -245,6 +250,7 @@ export const missionsApi = {
   | "getMissionModelOptions"
   | "getMissionCreationDefaults"
   | "getMission"
+  | "getMissionMentionCandidates"
   | "getMissionContextStore"
   | "listMissionContextStoreEntries"
   | "readMissionContextStoreEntry"

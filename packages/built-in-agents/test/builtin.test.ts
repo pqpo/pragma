@@ -464,6 +464,9 @@ describe("built-in Pragma Agent DSL", () => {
     const resource = builtInAgentResource(STORE_REVISION_EXPERT_REF);
     expect(resource.metadata.avatarId).toBe("pragma.avatar.expert.22");
     expect(resource.metadata.description).not.toContain("Hidden");
+    expect(resource.spec.scope).toContain("Create, continue, rebase, verify, and submit");
+    expect(resource.spec.scope).toContain("controls discovery, loading, and context-budget precedence");
+    expect(resource.spec.scope).toContain("Never edit, publish, approve, or reject");
     expect(resource.spec.contextStores).toEqual([]);
     expect(resource.spec.capabilities).toEqual([
       expect.objectContaining({
@@ -481,22 +484,24 @@ describe("built-in Pragma Agent DSL", () => {
       }),
     ]);
     expect(resource.spec.instructions).toContain("edit_expert_context");
-    expect(resource.spec.instructions).toContain(
-      "result directly contains draftId and writableNamespace",
-    );
-    expect(resource.spec.instructions).toContain(
-      "list_expert_context with namespace=writableNamespace",
-    );
-    expect(resource.spec.instructions).toContain("do not\ncall knowledge_revision_start again");
-    expect(resource.spec.instructions).toContain("Both return writableNamespace");
+    expect(resource.spec.instructions).toContain("draftId and writableNamespace; copy both");
+    expect(resource.spec.instructions).toContain("Inspect and edit only writableNamespace");
+    expect(resource.spec.instructions).toContain("do not call knowledge_revision_start again");
+    expect(resource.spec.instructions).toContain("when this Mission owns the draft");
     expect(resource.spec.instructions).toContain("Never reuse a token");
-    expect(resource.spec.instructions).toContain("Read every changed or added effective file");
-    expect(resource.spec.instructions).toContain(
-      "repeat the entire final check after the last fix",
-    );
-    expect(resource.spec.instructions).toContain(
-      "draft enters human review and can no longer be edited",
-    );
+    expect(resource.spec.instructions).toContain("description is a concise retrieval label");
+    expect(resource.spec.instructions).toContain("trigger is the loading behavior");
+    expect(resource.spec.instructions).toContain("always_on injects the complete body");
+    expect(resource.spec.instructions).toContain("advertises only id and description at startup");
+    expect(resource.spec.instructions).toContain("neither preloads nor advertises the body");
+    expect(resource.spec.instructions).toContain("priority is context-budget precedence");
+    expect(resource.spec.instructions).toContain("It does not change loading, authority, trust");
+    expect(resource.spec.instructions).toContain("mark everything high or critical");
+    expect(resource.spec.instructions).toContain("added effective file and affected link target");
+    expect(resource.spec.instructions).toContain("Repeat the entire");
+    expect(resource.spec.instructions).toContain("final check after the last fix");
+    expect(resource.spec.instructions).toContain("moves the draft to human review");
+    expect(resource.spec.instructions).toContain("can no longer be edited");
     expect(resource.spec.instructions).toContain("latest draft.revision");
     expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
   });

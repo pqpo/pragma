@@ -365,6 +365,7 @@ describe("mission executor search", () => {
         ...executors[1]!,
         ref: "team:0000000000000001" as const,
         kind: "team" as const,
+        members: [],
         name: "First team",
         preference: { favoriteScope: "workspace", hidden: false, favoriteRank: 0 },
       },

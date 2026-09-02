@@ -39,10 +39,11 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type {
-  ExpertPromptAttachment,
-  ExpertPromptAttachmentKind,
-  HumanInteractionResponse,
+import {
+  parseExpertMentionSegments,
+  type ExpertPromptAttachment,
+  type ExpertPromptAttachmentKind,
+  type HumanInteractionResponse,
 } from "@pragma/shared";
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
@@ -59,6 +60,7 @@ import {
   type MissionWorkRecord,
   type DesktopMissionMemoryActivity,
   type DesktopToolPermissionMode,
+  type ExpertMentionCandidate,
   type MissionModelOverride,
   type PragmaDesktopAPI,
   latestMissionBranchableReply,
@@ -102,6 +104,8 @@ import {
   MissionContextOperationEntry,
   MissionThinkingPlaceholder,
   MissionToolCallBlock,
+  MissionUserMessageContent,
+  formatExpertMentionDisplayText,
 } from "./mission-chat-presentation.tsx";
 export {
   MISSION_CHAT_PAGE_SIZE,
@@ -123,6 +127,7 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/ContextStoreBrowser.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import { TeamMentionComposer } from "../../components/TeamMentionComposer.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -227,6 +232,9 @@ export function MissionsPage(props: {
   const initialState = initialStateRef.current;
   const [railWidth, setRailWidth] = usePersistentSidebarWidth(SIDEBAR_WIDTH_PREFERENCES.missions);
   const [missions, setMissions] = useState<readonly MissionSummary[]>(initialState.missions);
+  const [mentionCandidatesByMissionId, setMentionCandidatesByMissionId] = useState<
+    Readonly<Record<string, readonly ExpertMentionCandidate[]>>
+  >({});
   const [selectedMission, setSelectedMission] = useState<Mission | null>(
     initialState.selectedMission,
   );
@@ -488,9 +496,43 @@ export function MissionsPage(props: {
     };
   }, [openMission]);
 
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    const teamMissions = missions.filter((mission) => mission.executor.kind === "team");
+    let cancelled = false;
+    void Promise.all(
+      teamMissions.map(async (mission) => {
+        try {
+          return [mission.id, (await api.getMissionMentionCandidates(mission.id)).members] as const;
+        } catch {
+          return [mission.id, []] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (!cancelled) setMentionCandidatesByMissionId(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [missions]);
+
+  const presentedMissions = useMemo(
+    () =>
+      missions.map((mission) => ({
+        ...mission,
+        title: formatMissionListTitle(
+          mission.title,
+          mentionCandidatesByMissionId[mission.id] ?? [],
+          t("mentionUnavailable", { ns: "missions" }),
+        ),
+      })),
+    [mentionCandidatesByMissionId, missions, t],
+  );
+
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
-    const sourceMissions = missions.filter(
+    const sourceMissions = presentedMissions.filter(
       (mission) => missionListSourceForSummary(mission) === activeSource,
     );
     if (query === "") return sourceMissions;
@@ -499,7 +541,7 @@ export function MissionsPage(props: {
         value.toLocaleLowerCase().includes(query),
       ),
     );
-  }, [activeSource, missions, search]);
+  }, [activeSource, presentedMissions, search]);
 
   const changeSource = useCallback(
     (nextSource: MissionListSource) => {
@@ -1400,6 +1442,7 @@ export function MissionDetailFragment(props: {
     () => new Set(),
   );
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [mentionCandidates, setMentionCandidates] = useState<readonly ExpertMentionCandidate[]>([]);
   const {
     records: workRecords,
     loading: workLoading,
@@ -1491,7 +1534,7 @@ export function MissionDetailFragment(props: {
   const chatListRef = useRef<HTMLDivElement | null>(null);
   const chatBottomRef = useRef<HTMLSpanElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerInputRef = useRef<HTMLTextAreaElement | HTMLDivElement | null>(null);
   const queuedMessageActionsRef = useRef<Set<string>>(new Set());
   const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
@@ -1506,6 +1549,27 @@ export function MissionDetailFragment(props: {
       );
     }
   }, [contextStorePickerOpen, contextStoresSaving, props.mission.contextMounts]);
+
+  useEffect(() => {
+    if (props.mission.executor.kind !== "team") {
+      setMentionCandidates([]);
+      return;
+    }
+    const api = desktopApi();
+    if (api === undefined) return;
+    let cancelled = false;
+    void api
+      .getMissionMentionCandidates(props.mission.id)
+      .then((result) => {
+        if (!cancelled) setMentionCandidates(result.members);
+      })
+      .catch(() => {
+        if (!cancelled) setMentionCandidates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.mission.executor.kind, props.mission.id, props.mission.project.revision]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1710,10 +1774,10 @@ export function MissionDetailFragment(props: {
   }, [props.mission.id]);
 
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea === null) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 130)}px`;
+    const input = composerInputRef.current;
+    if (input === null) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 130)}px`;
   }, [draft]);
 
   useEffect(() => {
@@ -1881,7 +1945,7 @@ export function MissionDetailFragment(props: {
         discardAttachments(sentAttachmentIds);
       }
       finishClientOperation(operationToken);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => composerInputRef.current?.focus());
     }
   };
 
@@ -1956,7 +2020,7 @@ export function MissionDetailFragment(props: {
       });
       setDraft(content);
       await refreshLatestChat();
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => composerInputRef.current?.focus());
     } catch (removeError) {
       setOptionsError(missionError(removeError));
     } finally {
@@ -2368,6 +2432,7 @@ export function MissionDetailFragment(props: {
                         collapsed={block.collapsed}
                         entries={block.entries}
                         key={`tools:${block.entries[0]!.id}`}
+                        mentionCandidates={mentionCandidates}
                       />
                     );
                   }
@@ -2375,6 +2440,7 @@ export function MissionDetailFragment(props: {
                     <LocalMissionUserMessageView
                       message={block.item.entry}
                       missionId={props.mission.id}
+                      mentionCandidates={mentionCandidates}
                       key={block.item.entry.id}
                       retryDisabled={clientOperationBusy}
                       onRetry={
@@ -2398,6 +2464,7 @@ export function MissionDetailFragment(props: {
                       key={block.item.entry.id}
                       liveEntryStore={liveEntryStore}
                       missionId={props.mission.id}
+                      mentionCandidates={mentionCandidates}
                       onVisibleContent={observeFirstTokenPaint}
                       paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
                       showExecutorLabel
@@ -2577,7 +2644,11 @@ export function MissionDetailFragment(props: {
                                 <ArrowBendUpLeft size={16} />
                               </span>
                               <strong>{t("queuedMessage", { ns: "missions" })}</strong>
-                              <span title={item.content}>{item.content}</span>
+                              <MissionUserMessageContent
+                                source={item.content}
+                                mentionCandidates={mentionCandidates}
+                                inline
+                              />
                               <div className="mission-prompt-queue-actions">
                                 {chat.queue?.supportsSteer === true &&
                                 interruptible &&
@@ -2630,7 +2701,11 @@ export function MissionDetailFragment(props: {
                               <ArrowBendUpLeft size={16} />
                             </span>
                             <strong>{t("queuedMessage", { ns: "missions" })}</strong>
-                            <span title={item.content}>{item.content}</span>
+                            <MissionUserMessageContent
+                              source={item.content}
+                              mentionCandidates={mentionCandidates}
+                              inline
+                            />
                             <div className="mission-prompt-queue-actions">
                               {chat?.queue?.supportsSteer === true &&
                               interruptible &&
@@ -2666,56 +2741,105 @@ export function MissionDetailFragment(props: {
                         imageUnsupported={imageUnsupported}
                         onRemove={removeAttachment}
                       />
-                      <textarea
-                        ref={textareaRef}
-                        rows={1}
-                        value={draft}
-                        disabled={
-                          isFlow ||
-                          clientOperationBusy ||
-                          compactingContext ||
-                          props.mission.lifecycleStatus === "completed"
-                        }
-                        placeholder={
-                          compactingContext
-                            ? t("contextCompactionInputDisabled", { ns: "missions" })
-                            : props.mission.lifecycleStatus === "completed"
-                              ? t("reopenToContinue", { ns: "missions" })
-                              : isFlow
-                                ? t("flowContinues", { ns: "missions" })
+                      {isTeam ? (
+                        <TeamMentionComposer
+                          inputRef={(element) => {
+                            composerInputRef.current = element;
+                          }}
+                          value={draft}
+                          candidates={mentionCandidates}
+                          onChange={setDraft}
+                          onSubmit={() => void send()}
+                          disabled={
+                            clientOperationBusy ||
+                            compactingContext ||
+                            props.mission.lifecycleStatus === "completed"
+                          }
+                          placeholder={
+                            compactingContext
+                              ? t("contextCompactionInputDisabled", { ns: "missions" })
+                              : props.mission.lifecycleStatus === "completed"
+                                ? t("reopenToContinue", { ns: "missions" })
                                 : t("messageExecutor", {
                                     ns: "missions",
                                     name: props.mission.executor.name,
                                   })
-                        }
-                        aria-label={t("messageExecutor", {
-                          ns: "missions",
-                          name: props.mission.executor.name,
-                        })}
-                        aria-describedby={
-                          compactingContext ? "mission-context-compaction-status" : undefined
-                        }
-                        onChange={(event) => setDraft(event.target.value)}
-                        onPaste={(event) => {
-                          const file = clipboardImageFile(event.clipboardData);
-                          if (
-                            file === undefined ||
+                          }
+                          ariaLabel={t("messageExecutor", {
+                            ns: "missions",
+                            name: props.mission.executor.name,
+                          })}
+                          menuLabel={t("mentionMembers", { ns: "missions" })}
+                          emptyLabel={t("mentionNoMatches", { ns: "missions" })}
+                          unavailableLabel={t("mentionUnavailable", { ns: "missions" })}
+                          onPaste={(event) => {
+                            const file = clipboardImageFile(event.clipboardData);
+                            if (
+                              file === undefined ||
+                              clientOperationBusy ||
+                              compactingContext ||
+                              props.mission.lifecycleStatus === "completed"
+                            )
+                              return;
+                            event.preventDefault();
+                            void pasteImage(file);
+                          }}
+                          variant="mission"
+                        />
+                      ) : (
+                        <textarea
+                          ref={(element) => {
+                            composerInputRef.current = element;
+                          }}
+                          rows={1}
+                          value={draft}
+                          disabled={
                             isFlow ||
                             clientOperationBusy ||
                             compactingContext ||
                             props.mission.lifecycleStatus === "completed"
-                          )
-                            return;
-                          event.preventDefault();
-                          void pasteImage(file);
-                        }}
-                        onKeyDown={(event) => {
-                          if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
-                            event.preventDefault();
-                            void send();
                           }
-                        }}
-                      />
+                          placeholder={
+                            compactingContext
+                              ? t("contextCompactionInputDisabled", { ns: "missions" })
+                              : props.mission.lifecycleStatus === "completed"
+                                ? t("reopenToContinue", { ns: "missions" })
+                                : isFlow
+                                  ? t("flowContinues", { ns: "missions" })
+                                  : t("messageExecutor", {
+                                      ns: "missions",
+                                      name: props.mission.executor.name,
+                                    })
+                          }
+                          aria-label={t("messageExecutor", {
+                            ns: "missions",
+                            name: props.mission.executor.name,
+                          })}
+                          aria-describedby={
+                            compactingContext ? "mission-context-compaction-status" : undefined
+                          }
+                          onChange={(event) => setDraft(event.target.value)}
+                          onPaste={(event) => {
+                            const file = clipboardImageFile(event.clipboardData);
+                            if (
+                              file === undefined ||
+                              isFlow ||
+                              clientOperationBusy ||
+                              compactingContext ||
+                              props.mission.lifecycleStatus === "completed"
+                            )
+                              return;
+                            event.preventDefault();
+                            void pasteImage(file);
+                          }}
+                          onKeyDown={(event) => {
+                            if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
+                              event.preventDefault();
+                              void send();
+                            }
+                          }}
+                        />
+                      )}
                       <div className="mission-chat-composer-toolbar">
                         <div className="mission-chat-options" aria-label={t("missionOptions")}>
                           <MissionAttachmentPicker
@@ -2893,13 +3017,18 @@ export function MissionDetailFragment(props: {
             </p>
           </div>
         ) : (
-          <MissionWorkGrid records={workRecords} onSelect={selectWorkRecord} />
+          <MissionWorkGrid
+            records={workRecords}
+            mentionCandidates={mentionCandidates}
+            onSelect={selectWorkRecord}
+          />
         )}
       </div>
       {selectedWorkRecord === undefined ? null : (
         <MissionWorkDrawer
           record={selectedWorkRecord}
           inputSenderName={selectedWorkInputSenderName}
+          mentionCandidates={mentionCandidates}
           entries={
             workConversation?.recordId === selectedWorkRecord.recordId
               ? workConversation.entries
@@ -3049,6 +3178,7 @@ export function missionWorkGridEdgePath(input: {
 
 export function MissionWorkGrid(props: {
   readonly records: readonly MissionWorkRecord[];
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
   readonly onSelect: (recordId: string) => void;
 }) {
   const { t } = useTranslation("missions");
@@ -3255,7 +3385,13 @@ export function MissionWorkGrid(props: {
                         : ""}
                     </small>
                     {density === "single" ? (
-                      <p className="mission-work-card-summary">{record.summary}</p>
+                      <p className="mission-work-card-summary">
+                        {formatExpertMentionDisplayText(
+                          record.summary,
+                          props.mentionCandidates,
+                          t("mentionUnavailable"),
+                        )}
+                      </p>
                     ) : null}
                   </button>
                 </div>
@@ -3749,6 +3885,7 @@ export function unavailableMcpToolName(error: string): string | undefined {
 export function MissionWorkDrawer(props: {
   readonly record: MissionWorkRecord;
   readonly inputSenderName: string;
+  readonly mentionCandidates?: readonly ExpertMentionCandidate[] | undefined;
   readonly entries: readonly MissionChatEntry[];
   readonly loading: boolean;
   readonly onLoadEarlier?: (() => void | Promise<void>) | undefined;
@@ -3888,6 +4025,7 @@ export function MissionWorkDrawer(props: {
                         collapsed={block.collapsed}
                         entries={block.entries}
                         key={`tools:${block.entries[0]!.id}`}
+                        mentionCandidates={props.mentionCandidates}
                       />
                     );
                   }
@@ -3895,6 +4033,7 @@ export function MissionWorkDrawer(props: {
                     <MissionChatEntryView
                       entry={block.item.entry}
                       key={block.item.entry.id}
+                      mentionCandidates={props.mentionCandidates}
                       userLabel={props.inputSenderName}
                     />
                   ) : null;
@@ -4451,6 +4590,23 @@ function missionListSourceForMission(mission: Mission): MissionListSource {
 
 export function missionListSourceForSummary(mission: MissionSummary): MissionListSource {
   return mission.source.type === "task" ? "task" : "automation";
+}
+
+export function formatMissionListTitle(
+  title: string,
+  mentionCandidates: readonly ExpertMentionCandidate[],
+  unavailableLabel: string,
+): string {
+  const candidateByRef = new Map(
+    mentionCandidates.map((candidate) => [candidate.ref, candidate] as const),
+  );
+  return parseExpertMentionSegments(title)
+    .map((segment) =>
+      segment.kind === "text"
+        ? segment.text
+        : `@${candidateByRef.get(segment.ref)?.name ?? unavailableLabel}`,
+    )
+    .join("");
 }
 
 function missionToSummary(

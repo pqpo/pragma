@@ -241,6 +241,10 @@
   background: #f7f9f8;
 }
 
+.mission-chat-composer:has(.team-mention-editor[data-disabled="true"]) {
+  background: #f7f9f8;
+}
+
 .mission-chat-composer textarea {
   width: 100%;
   min-height: 52px;

@@ -34,6 +34,13 @@ const MissionExecutorOptionBaseSchema = z.object({
   customized: z.boolean(),
 });
 
+export const ExpertMentionCandidateSchema = z.object({
+  ref: ExpertRefSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2_000),
+  avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_AVATAR_ID),
+});
+
 export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
   MissionExecutorOptionBaseSchema.extend({
     kind: z.literal("expert"),
@@ -42,6 +49,7 @@ export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
   MissionExecutorOptionBaseSchema.extend({
     kind: z.literal("team"),
     avatarId: PragmaAvatarIdSchema.default(DEFAULT_PRAGMA_EXPERT_TEAM_AVATAR_ID),
+    members: z.array(ExpertMentionCandidateSchema),
   }),
   MissionExecutorOptionBaseSchema.extend({
     kind: z.literal("flow"),
@@ -87,6 +95,11 @@ export const MissionCreationDefaultsSchema = z.object({
 export const HomeMissionExecutorCatalogSchema = z.object({
   executors: z.array(HomeMissionExecutorOptionSchema),
   defaults: MissionCreationDefaultsSchema,
+});
+
+export const MissionMentionCandidatesSchema = z.object({
+  teamRef: MissionExecutorRefSchema,
+  members: z.array(ExpertMentionCandidateSchema),
 });
 
 export const UpdateHomeExecutorPreferenceSchema = z

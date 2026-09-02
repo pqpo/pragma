@@ -3,6 +3,7 @@ export * from "./avatar.ts";
 export * from "./bounded-lru-cache.ts";
 export * from "./bundle-source.schema.ts";
 export * from "./control-flow-graph.ts";
+export * from "./expert-mention.ts";
 export * from "./context/context-metadata.schema.ts";
 export * from "./health.schema.ts";
 export * from "./logging/log.schema.ts";
