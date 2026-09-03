@@ -152,14 +152,14 @@ async function createFixture(store: ExecutionStore): Promise<{
   const timestamp = new Date().toISOString();
   const definition = { id: "checkpoint-expert", kind: "expert" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v10",
+    schemaVersion: "pragma.execution/v11",
     executionId,
     version: 0,
     kind: "expert-turn",
     definition,
     rootInvocationId: invocationId,
     status: "running",
-    input: "hello",
+    input: { text: "hello", attachments: [] },
     state: {},
     lastAppliedSequence: 0,
     createdAt: timestamp,
@@ -173,7 +173,7 @@ async function createFixture(store: ExecutionStore): Promise<{
     contextId: "checkpoint-context",
     status: "running",
     pendingExpertMessages: [],
-    input: "hello",
+    input: { text: "hello", attachments: [] },
     createdAt: timestamp,
     updatedAt: timestamp,
   };

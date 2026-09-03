@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
+import { withFileLock, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
   SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
@@ -10,7 +10,6 @@ import {
   compileBuiltInAgent,
   createBuiltInSkillAgents,
 } from "@pragma/built-in-agents";
-import { withFileLock } from "@pragma/context-filesystem";
 import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import type { SkillPackage } from "@pragma/shared";
 import { z } from "zod";

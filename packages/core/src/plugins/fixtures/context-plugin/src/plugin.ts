@@ -2,7 +2,7 @@ import {
   createInMemoryContextStore,
   definePluginEntry,
   readExpertAgentPluginManifest,
-} from "@pragma/core";
+} from "../../../../index.ts";
 
 export const contextPlugin = definePluginEntry({
   manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),

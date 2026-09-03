@@ -3,14 +3,16 @@ import { ExpertSessionRecordSchema, type ExpertSessionRecord } from "@pragma/sha
 import { defineStateMigrationChain } from "../../state-migration.ts";
 import { expertSessionV4ToV5Step } from "./steps/v4-to-v5.ts";
 import { expertSessionV5ToV6Step } from "./steps/v5-to-v6.ts";
+import { expertSessionV6ToV7Step } from "./steps/v6-to-v7.ts";
 
 export { ExpertSessionRecordV4Schema } from "./schemas/v4.ts";
 export { ExpertSessionRecordV5Schema } from "./schemas/v5.ts";
 export { ExpertSessionRecordV6Schema } from "./schemas/v6.ts";
+export { ExpertSessionRecordV7Schema } from "./schemas/v7.ts";
 
 export const expertSessionRecordMigrationChain = defineStateMigrationChain<ExpertSessionRecord>({
   family: "pragma.expert-session",
-  currentVersion: 6,
+  currentVersion: 7,
   currentSchema: ExpertSessionRecordSchema,
-  steps: [expertSessionV4ToV5Step, expertSessionV5ToV6Step],
+  steps: [expertSessionV4ToV5Step, expertSessionV5ToV6Step, expertSessionV6ToV7Step],
 });

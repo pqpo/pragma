@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/context-filesystem";
+import { withFileLock } from "@pragma/core";
 import type {
   ExistingMemorySkillTarget,
   MemorySubjectRef,

@@ -20,7 +20,7 @@ import {
   withFileLock,
   type ExpertSession,
   type ExecutionOutputItem,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -68,6 +68,21 @@ import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
+
+async function appendExecutionEvent(
+  store: ReturnType<typeof createFileExecutionStore>,
+  executionId: string,
+  invocationId: string,
+  type: string,
+  data: unknown,
+  eventId: string = crypto.randomUUID(),
+): Promise<void> {
+  await store.commit({
+    commitId: `event:${eventId}`,
+    executionId,
+    events: [{ eventId, invocationId, type, data }],
+  });
+}
 const memoryBindingReopenTimeoutMs = 20_000;
 const trackedRunners = new Set<{
   readonly runner: MissionRunner;
@@ -755,7 +770,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     let memoryEnabled = true;
     const observedReads: string[] = [];
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       restoreSession: (context) => ({ context }),
@@ -845,8 +860,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       finishFirstTurn = resolve;
     });
     const observedReads: string[] = [];
-    const restoreSession = vi.fn((context: RuntimeDriverSessionContext) => ({ context }));
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const restoreSession = vi.fn((context: RuntimeNativeSessionContext) => ({ context }));
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => {
         createSessionCount += 1;
@@ -946,7 +961,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ),
       contextMounts: [{ kind: "context-store", storeId: firstStore.id }],
     });
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       restoreSession: (context) => ({ context }),
@@ -1107,8 +1122,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       contextMounts: [{ kind: "context-store", storeId: firstStore.id }],
     });
     let createSessionCount = 0;
-    const restoreSession = vi.fn((context: RuntimeDriverSessionContext) => ({ context }));
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const restoreSession = vi.fn((context: RuntimeNativeSessionContext) => ({ context }));
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => {
         createSessionCount += 1;
@@ -1221,7 +1236,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     });
     const createdDraftIds = new Map<string, string>();
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       readSession: () => ({ runtimeSessionId: "runtime" }),
@@ -1416,7 +1431,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const historicalBoardOutput: { id: string | undefined } = { id: undefined };
     const runtime = defineRuntimeTestDriver<
       never,
-      { id: string; context: RuntimeDriverSessionContext }
+      { id: string; context: RuntimeNativeSessionContext }
     >({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ id: `runtime-${context.systemSessionId}`, context }),
@@ -2221,7 +2236,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const flowMission = await missionFor(flow, "Run review flow");
     const runtime = defineRuntimeTestDriver<
       never,
-      { context: RuntimeDriverSessionContext; id: string }
+      { context: RuntimeNativeSessionContext; id: string }
     >({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context, id: `runtime:${context.systemSessionId}` }),
@@ -2376,7 +2391,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const reviewerAgentIds: string[] = [];
     const runtime = defineRuntimeTestDriver<
       never,
-      { context: RuntimeDriverSessionContext; id: string }
+      { context: RuntimeNativeSessionContext; id: string }
     >({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context, id: `runtime:${context.systemSessionId}` }),
@@ -2936,7 +2951,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const startTurn = vi.fn(
       (
         session: {
-          context: RuntimeDriverSessionContext;
+          context: RuntimeNativeSessionContext;
           id: string;
           toolPermissionMode: DesktopToolPermissionMode;
         },
@@ -2947,7 +2962,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       }),
     );
     const openedSessionModes: DesktopToolPermissionMode[] = [];
-    const createSession = vi.fn((context: RuntimeDriverSessionContext) => {
+    const createSession = vi.fn((context: RuntimeNativeSessionContext) => {
       openedSessionModes.push("request-approval");
       return {
         context,
@@ -2959,7 +2974,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       defineRuntimeTestDriver<
         never,
         {
-          context: RuntimeDriverSessionContext;
+          context: RuntimeNativeSessionContext;
           id: string;
           toolPermissionMode: DesktopToolPermissionMode;
         }
@@ -3131,7 +3146,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const store = createFileExecutionStore({ pragmaHome: join(root, "state") });
     const childConversationStartedAt = Date.now();
     const emittedAt = new Date(childConversationStartedAt).toISOString();
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "root-output-diagnostic",
       sequence: 99,
@@ -3179,7 +3194,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       displayName: "Researcher",
       path: [],
     };
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "spawn-child",
       sequence: 100,
@@ -3201,7 +3216,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         prompt: "Inspect the repository and report complete findings",
       },
     });
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "child-started",
       sequence: 101,
@@ -3212,7 +3227,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       type: "run.started",
       payload: { task: "Inspect repository" },
     });
-    await store.appendEvent(executionId, executionId, "invocation.message.appended", {
+    await appendExecutionEvent(store, executionId, executionId, "invocation.message.appended", {
       runId: "child-turn",
       parentRunId: "root-run",
       source: childSource,
@@ -3239,7 +3254,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ...childSource,
       runId: "child-followup-turn",
     };
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "steer-child",
       sequence: 102,
@@ -3262,7 +3277,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         prompt: "Focus on the test failures",
       },
     });
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "followup-child",
       sequence: 103,
@@ -3285,7 +3300,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         prompt: "Refine the findings",
       },
     });
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "child-followup-started",
       sequence: 104,
@@ -3296,7 +3311,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       type: "run.started",
       payload: { task: "Refine the findings" },
     });
-    await store.appendEvent(executionId, executionId, "invocation.message.appended", {
+    await appendExecutionEvent(store, executionId, executionId, "invocation.message.appended", {
       runId: "child-followup-turn",
       parentRunId: "root-run",
       source: followupSource,
@@ -3351,7 +3366,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(runtimeAgentAvatarIds).not.toContain("pragma.avatar.expert.11");
     expect(subagent).not.toHaveProperty("fallbackOrdinal");
 
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "child-a-started",
       sequence: 103,
@@ -3368,7 +3383,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       type: "run.started",
       payload: { task: "Design the system" },
     });
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "child-b-started",
       sequence: 104,
@@ -3402,7 +3417,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       sessionId: "root-thread",
       path: [],
     };
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "compaction-started",
       sequence: 105,
@@ -3419,7 +3434,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
       },
     });
-    await store.appendEvent(executionId, "nested-invocation", "runtime.event", {
+    await appendExecutionEvent(store, executionId, "nested-invocation", "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "nested-invocation-compaction-started",
       sequence: 108,
@@ -3437,7 +3452,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
       },
     });
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "compaction-completed",
       sequence: 106,
@@ -3454,7 +3469,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
       },
     });
-    await store.appendEvent(executionId, executionId, "runtime.event", {
+    await appendExecutionEvent(store, executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "child-compaction-started",
       sequence: 107,
@@ -3700,7 +3715,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     };
     let runtimeStarts = 0;
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       readSession: () => ({ runtimeSessionId: "recovered-runtime-session" }),
@@ -3743,7 +3758,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const startedAt = new Date().toISOString();
     const definition = { id: expert.id, kind: "expert" as const };
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: expert.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
@@ -3770,14 +3785,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v10",
+        schemaVersion: "pragma.execution/v11",
         executionId,
         version: 0,
         kind: "expert-turn",
         definition,
         rootInvocationId: executionId,
         status: "running",
-        input: mission.goal,
+        input: { text: mission.goal, attachments: [] },
         state: {},
         lastAppliedSequence: 0,
         createdAt: startedAt,
@@ -3791,7 +3806,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         contextId,
         status: "running",
         pendingExpertMessages: [],
-        input: mission.goal,
+        input: { text: mission.goal, attachments: [] },
         createdAt: startedAt,
         updatedAt: startedAt,
       },
@@ -3813,29 +3828,36 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         },
       ],
     }));
-    await executions.appendEvent(executionId, executionId, "invocation.message.appended", {
-      runId: "persisted-before-restart",
-      source: { kind: "agent", runId: "persisted-before-restart", path: [] },
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "Choose the environment to continue." }],
-        api: "test",
-        provider: "test",
-        model: "test-model",
-        usage: {
-          measurement: "reported",
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    await appendExecutionEvent(
+      executions,
+      executionId,
+      executionId,
+      "invocation.message.appended",
+      {
+        runId: "persisted-before-restart",
+        source: { kind: "agent", runId: "persisted-before-restart", path: [] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Choose the environment to continue." }],
+          api: "test",
+          provider: "test",
+          model: "test-model",
+          usage: {
+            measurement: "reported",
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: Date.parse(startedAt) + 1,
         },
-        stopReason: "toolUse",
-        timestamp: Date.parse(startedAt) + 1,
       },
-    });
-    await executions.appendEvent(
+    );
+    await appendExecutionEvent(
+      executions,
       executionId,
       executionId,
       "human.requested",
@@ -3996,7 +4018,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     };
     let runtimeStarts = 0;
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       restoreSession: (context) => ({ context }),
@@ -4142,7 +4164,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     };
     let runtimeStarts = 0;
-    const runtime = defineRuntimeTestDriver<never, { context: RuntimeDriverSessionContext }>({
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
       restoreSession: (context) => ({ context }),
@@ -4422,13 +4444,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const waitingMission = await missions.get(mission.id);
     const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
     const execution = (await executionStore.get(waitingMission.execution!.id))!;
-    await executionStore.update(execution.executionId, {
-      state: {
-        ...execution.state,
-        __recoveryClaim: {
-          claimId: "exited-desktop-process",
-          processId: 2_147_483_647,
-          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+    await executionStore.commit({
+      commitId: `seed-recovery-claim:${execution.executionId}`,
+      executionId: execution.executionId,
+      executionPatch: {
+        state: {
+          ...execution.state,
+          __recoveryClaim: {
+            claimId: "exited-desktop-process",
+            processId: 2_147_483_647,
+            expiresAt: new Date(Date.now() + 30_000).toISOString(),
+          },
         },
       },
     });
@@ -4531,7 +4557,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const now = new Date().toISOString();
     const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: "issue_reporter",
       definitionFingerprint: "c".repeat(64),
@@ -4633,7 +4659,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
     const definition = { id: expertResource.metadata.id, kind: "expert" as const };
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: expertResource.metadata.id,
       definitionFingerprint: "b".repeat(64),
@@ -4660,14 +4686,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v10",
+        schemaVersion: "pragma.execution/v11",
         executionId,
         version: 0,
         kind: "expert-turn",
         definition,
         rootInvocationId: executionId,
         status: "running",
-        input: mission.goal,
+        input: { text: mission.goal, attachments: [] },
         state: {},
         lastAppliedSequence: 0,
         createdAt: now,
@@ -4681,7 +4707,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         contextId,
         status: "running",
         pendingExpertMessages: [],
-        input: mission.goal,
+        input: { text: mission.goal, attachments: [] },
         createdAt: now,
         updatedAt: now,
       },
@@ -4895,7 +4921,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const now = new Date().toISOString();
     const runtimeBinding = (await availableRuntimes.bind({ runtimeId: "fake" })).binding;
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: expertResource.metadata.id,
       definitionFingerprint: "c".repeat(64),

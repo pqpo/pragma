@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { StaticContextStore } from "@pragma/core";
 
 import {
   createDefaultPragmaResourceAdapterRegistry,
@@ -17,6 +18,7 @@ import {
 import type {
   PragmaArtifactSource,
   PragmaCapabilityResource,
+  PragmaContextStoreResource,
   PragmaRuntimeProfileResource,
 } from "../src/ast/index.ts";
 
@@ -185,6 +187,54 @@ describe("Pragma resource adapters", () => {
     expect(project.createLock().artifacts).toEqual([
       { source: "artifact.bin", contentHash: sha256(bytes) },
     ]);
+  });
+
+  it("requires the Host file Context factory and uses it when provided", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "pragma-host-file-context-"));
+    const source = { type: "project" as const, path: "contexts" };
+    const resource = {
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "ContextStore",
+      metadata: {
+        id: "w01fppfxrn31gf7v",
+        name: "Files",
+        description: "Host-owned file contexts",
+        tags: [],
+      },
+      spec: { adapter: "pragma.context.file@v1", config: { source } },
+    } satisfies PragmaContextStoreResource;
+    const artifact = { source, path: rootDir, contentHash: "a".repeat(64), verified: true };
+    const registry = createDefaultPragmaResourceAdapterRegistry();
+
+    const unavailable = await registry.inspect(
+      resource,
+      host(async () => artifact),
+    );
+    expect(unavailable.contribution).toBeUndefined();
+    expect(unavailable).toMatchObject({
+      health: {
+        status: "needs_attention",
+        issues: [
+          {
+            code: "environment.resource_unavailable",
+            message: "File context store factory is unavailable in this environment.",
+          },
+        ],
+      },
+    });
+
+    const store = new StaticContextStore([]);
+    const available = await registry.inspect(resource, {
+      ...host(async () => artifact),
+      openFileContextStore: ({ rootDir }) => {
+        expect(rootDir).toBe(artifact.path);
+        return store;
+      },
+    });
+    expect(available).toMatchObject({
+      contribution: { store, storeName: "Files" },
+      health: { status: "ready" },
+    });
   });
 
   it("only records artifact dependencies explicitly declared by an adapter", () => {

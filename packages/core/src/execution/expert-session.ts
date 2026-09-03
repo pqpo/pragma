@@ -222,6 +222,8 @@ export interface ExpertSessionManagerDependencies {
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
   readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
+  readonly nestedFlowExecutor?:
+    import("./expert-runner.ts").NestedFlowInvocationExecutor | undefined;
 }
 
 type SteerClaim =
@@ -241,9 +243,6 @@ interface ValidDefinitionMigration {
 
 const EXPERT_SESSION_LEASE_MS = 30_000;
 const EXPERT_SESSION_LEASE_RENEWAL_MS = 10_000;
-// Read-only compatibility for queue-steer reservations written before the
-// explicit deliveryAttempt record was introduced. New writes never use it.
-const QUEUE_STEER_PENDING_PREFIX = "__pragma_queue_steer_pending__:";
 
 interface QueuedSteerClaim {
   readonly requestId: string;
@@ -375,7 +374,7 @@ export class ExpertSessionManager {
       now,
     });
     await this.dependencies.sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: expert.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
@@ -481,21 +480,21 @@ export class ExpertSessionManager {
         if (recoverPendingInteraction) {
           recoveredExecutionId = execution.executionId;
           recoveredHumanInteractionIds = pendingHumanInteractionIds;
-          await this.dependencies.executions.update(execution.executionId, {
-            status: "waiting",
-          });
-          for (const invocation of await this.dependencies.executions.listInvocations(
+          const invocations = await this.dependencies.executions.listInvocations(
             execution.executionId,
-          )) {
-            if (!isFinal(invocation.status)) {
-              await this.dependencies.executions.putInvocation(execution.executionId, {
-                ...invocation,
-                status: "waiting",
-                waitReason: "human_input",
-                updatedAt: new Date().toISOString(),
-              });
-            }
-          }
+          );
+          await this.dependencies.executions.commit({
+            commitId: `human-recovery-waiting:${execution.executionId}:${execution.version}`,
+            executionId: execution.executionId,
+            expectedVersion: execution.version,
+            executionPatch: { status: "waiting" },
+            invocationPatches: invocations
+              .filter((invocation) => !isFinal(invocation.status))
+              .map((invocation) => ({
+                invocationId: invocation.invocationId,
+                patch: { status: "waiting", waitReason: "human_input" },
+              })),
+          });
           await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
             result: undefined,
             session: {
@@ -802,11 +801,10 @@ class ExpertSessionImpl implements ExpertSession {
     const attachments = ExpertPromptAttachmentSchema.array()
       .max(20)
       .parse(options.attachments ?? []);
-    const storedInput =
-      attachments.length === 0 ? content : createExpertPromptInput(content, attachments);
+    const storedInput = createExpertPromptInput(content, attachments);
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v10",
+      schemaVersion: "pragma.execution/v11",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -1483,23 +1481,15 @@ class ExpertSessionImpl implements ExpertSession {
         ),
       }));
     }
-    const marked = allPrompts.filter(
-      (prompt) =>
-        prompt.deliveryAttempt?.kind === "queue_steer" ||
-        parseQueueSteerMarker(prompt.error) !== undefined,
-    );
+    const marked = allPrompts.filter((prompt) => prompt.deliveryAttempt?.kind === "queue_steer");
     for (const prompt of marked) {
-      const replacedExecutionId =
-        prompt.deliveryAttempt?.sourceExecutionId ?? parseQueueSteerMarker(prompt.error);
+      const replacedExecutionId = prompt.deliveryAttempt?.sourceExecutionId;
       if (replacedExecutionId === undefined) continue;
       if (prompt.status === "succeeded" || prompt.deliveryAttempt?.state === "confirmed") {
         await this.cancelPersistedExecution(
           replacedExecutionId,
           "Moved from the prompt queue to steer the active turn.",
         );
-        if (prompt.deliveryAttempt === undefined) {
-          await this.clearQueueSteerAttempt(prompt.requestId, undefined);
-        }
         continue;
       }
       await this.markQueueSteerUncertain(prompt, replacedExecutionId);
@@ -1523,7 +1513,7 @@ class ExpertSessionImpl implements ExpertSession {
       prompt.executionId,
       prompt.executionId,
     );
-    if (readExpertPromptInput(invocation?.input, prompt.content).attachments.length > 0) {
+    if (readExpertPromptInput(invocation?.input).attachments.length > 0) {
       return { outcome: "retained", reason: "attachments_not_supported" };
     }
     const state = await this.getState();
@@ -1572,7 +1562,7 @@ class ExpertSessionImpl implements ExpertSession {
         prompt.executionId,
         prompt.executionId,
       );
-      if (readExpertPromptInput(invocation?.input, prompt.content).attachments.length > 0) {
+      if (readExpertPromptInput(invocation?.input).attachments.length > 0) {
         throw new Error("A queued prompt with attachments cannot be steered.");
       }
 
@@ -2136,7 +2126,7 @@ class ExpertSessionImpl implements ExpertSession {
       prompt.executionId,
       prompt.executionId,
     );
-    const promptInput = readExpertPromptInput(rootInvocation?.input, prompt.content);
+    const promptInput = readExpertPromptInput(rootInvocation?.input);
     const controller = new ExecutionController(
       prompt.executionId,
       this.dependencies.executions,
@@ -2178,6 +2168,7 @@ class ExpertSessionImpl implements ExpertSession {
           usageSink: this.dependencies.usageSink,
           hostContextBindings: this.dependencies.hostContextBindings,
           resolveHostContextBindings: this.dependencies.resolveHostContextBindings,
+          nestedFlowExecutor: this.dependencies.nestedFlowExecutor,
           ...(this.recoveredExecutionId === prompt.executionId
             ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
             : {}),
@@ -2238,7 +2229,11 @@ class ExpertSessionImpl implements ExpertSession {
     const currentExecution = await this.dependencies.executions.get(prompt.executionId);
     if (currentExecution !== undefined && isFinal(currentExecution.status)) {
       if (usage !== undefined) {
-        await this.dependencies.executions.update(prompt.executionId, { usage });
+        await this.dependencies.executions.commit({
+          commitId: `expert-terminal-usage:${prompt.executionId}:${currentExecution.version}`,
+          executionId: prompt.executionId,
+          executionPatch: { usage },
+        });
       }
       if (
         currentExecution.status === "succeeded" ||
@@ -2461,12 +2456,6 @@ function readErrorMessage(error: unknown): string {
     return String(error.message);
   }
   return String(error);
-}
-
-function parseQueueSteerMarker(error: string | undefined): string | undefined {
-  if (error === undefined || !error.startsWith(QUEUE_STEER_PENDING_PREFIX)) return undefined;
-  const executionId = error.slice(QUEUE_STEER_PENDING_PREFIX.length);
-  return executionId === "" ? undefined : executionId;
 }
 
 function throwCollectedErrors(errors: readonly unknown[], message: string): void {

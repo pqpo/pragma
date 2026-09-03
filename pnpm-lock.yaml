@@ -406,6 +406,12 @@ importers:
       '@pragma/core':
         specifier: workspace:*
         version: link:../core
+      '@pragma/shared':
+        specifier: workspace:*
+        version: link:../shared
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
       zod:
         specifier: latest
         version: 4.4.3
@@ -443,9 +449,6 @@ importers:
       gpt-tokenizer:
         specifier: ^3.4.0
         version: 3.4.0
-      gray-matter:
-        specifier: ^4.0.3
-        version: 4.0.3
       quickjs-emscripten-core:
         specifier: ^0.32.0
         version: 0.32.0

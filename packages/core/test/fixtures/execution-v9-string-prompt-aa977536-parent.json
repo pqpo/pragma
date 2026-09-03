@@ -1,0 +1,33 @@
+{
+  "execution": {
+    "schemaVersion": "pragma.execution/v9",
+    "executionId": "historical-v9-string-prompt",
+    "version": 0,
+    "kind": "expert-turn",
+    "definition": { "id": "expert", "kind": "expert" },
+    "rootInvocationId": "historical-v9-string-prompt",
+    "status": "queued",
+    "input": "prompt written by aa977536^",
+    "state": {},
+    "lastAppliedSequence": 0,
+    "createdAt": "2026-08-01T08:00:00.000Z",
+    "updatedAt": "2026-08-01T08:00:00.000Z"
+  },
+  "invocations": [
+    {
+      "invocationId": "historical-v9-string-prompt",
+      "rootInvocationId": "historical-v9-string-prompt",
+      "definition": { "id": "expert", "kind": "expert" },
+      "executorId": "expert",
+      "contextId": "context",
+      "status": "queued",
+      "input": "prompt written by aa977536^",
+      "createdAt": "2026-08-01T08:00:00.000Z",
+      "updatedAt": "2026-08-01T08:00:00.000Z"
+    }
+  ],
+  "agents": [],
+  "contexts": [],
+  "commits": [],
+  "events": []
+}

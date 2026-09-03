@@ -13,6 +13,7 @@ import {
   PragmaPaths,
   StoredExecutionView,
 } from "../src/index.ts";
+import { appendExecutionEvent, putExecutionInvocation } from "./execution-store-test-helpers.ts";
 
 const temporaryHomes: string[] = [];
 
@@ -27,15 +28,17 @@ afterEach(async () => {
 describe("Execution canonical event log", { timeout: 30_000 }, () => {
   it("uses one Execution sequence and projects durable message history", async () => {
     const { store } = await fixture();
-    await store.appendEvent("execution", "root", "invocation.started", {});
-    await store.appendEvent(
+    await appendExecutionEvent(store, "execution", "root", "invocation.started", {});
+    await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "invocation.message.appended",
       { message: { role: "user", content: "hello", timestamp: 1 } },
       "runtime-message",
     );
-    await store.appendEvent(
+    await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "invocation.succeeded",
@@ -76,7 +79,7 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       scope: { kind: "executor", executorId: "child" },
     });
     const now = new Date().toISOString();
-    await store.putInvocation("execution", {
+    await putExecutionInvocation(store, "execution", {
       invocationId: "child",
       rootInvocationId: "root",
       parentInvocationId: "root",
@@ -113,14 +116,16 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
 
   it("deduplicates producer events and rejects conflicting reuse", async () => {
     const { store } = await fixture();
-    const first = await store.appendEvent(
+    const first = await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "invocation.progress",
       { value: "hello" },
       "same-event",
     );
-    const duplicate = await store.appendEvent(
+    const duplicate = await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "invocation.progress",
@@ -131,14 +136,15 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
     expect(duplicate.cursor).toEqual(first.cursor);
     expect(await store.readEvents("execution")).toHaveLength(1);
     await expect(
-      store.appendEvent(
+      appendExecutionEvent(
+        store,
         "execution",
         "root",
         "invocation.progress",
         { value: "different" },
         "same-event",
       ),
-    ).rejects.toThrow("event idempotency conflict");
+    ).rejects.toThrow("Execution commit idempotency conflict");
   });
 
   it("replays active output published before a subscriber attaches", async () => {
@@ -271,11 +277,29 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
     });
   });
 
+  it("grants only one recovery owner when claims race", async () => {
+    const { store } = await fixture();
+
+    const results = await Promise.all([
+      store.claimRecovery("execution", "recovery-a", 30_000),
+      store.claimRecovery("execution", "recovery-b", 30_000),
+    ]);
+
+    expect(results.toSorted()).toEqual([false, true]);
+    await expect(store.get("execution")).resolves.toMatchObject({
+      state: {
+        __recoveryClaim: {
+          claimId: expect.stringMatching(/^recovery-[ab]$/u),
+        },
+      },
+    });
+  });
+
   it("rejects non-JSON-safe commit values before writing state", async () => {
     const { store } = await fixture();
 
     await expect(
-      store.appendEvent("execution", "root", "custom", { createdAt: new Date() }),
+      appendExecutionEvent(store, "execution", "root", "custom", { createdAt: new Date() }),
     ).rejects.toThrow("must be JSON-safe");
     await expect(store.readEvents("execution")).resolves.toEqual([]);
     await expect(store.get("execution")).resolves.toMatchObject({ version: 0 });
@@ -384,14 +408,14 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       const rootDefinition = { id: "coordinator", kind: "expert" as const };
       await store.create(
         {
-          schemaVersion: "pragma.execution/v10",
+          schemaVersion: "pragma.execution/v11",
           executionId: input.executionId,
           version: 0,
           kind: "expert-turn",
           definition: rootDefinition,
           rootInvocationId: input.rootInvocationId,
           status: "running",
-          input: null,
+          input: { text: input.prompt, attachments: [] },
           state: {},
           lastAppliedSequence: 0,
           createdAt: input.createdAt,
@@ -405,7 +429,7 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
           contextId: input.rootContextId,
           status: "running",
           pendingExpertMessages: [],
-          input: null,
+          input: { text: input.prompt, attachments: [] },
           createdAt: input.createdAt,
           updatedAt: input.createdAt,
         },
@@ -556,7 +580,8 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
   it("groups runtime subagent turns by native session and isolates their output", async () => {
     const { store } = await fixture();
     const emittedAt = new Date().toISOString();
-    await store.appendEvent(
+    await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "runtime.event",
@@ -604,7 +629,8 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       ["child-b", "turn-b-1"],
     ] as const;
     for (const [index, [sessionId, runId]] of childRuns.entries()) {
-      await store.appendEvent(
+      await appendExecutionEvent(
+        store,
         "execution",
         "root",
         "runtime.event",
@@ -640,13 +666,13 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       stopReason: "stop" as const,
       timestamp,
     });
-    await store.appendEvent("execution", "root", "invocation.message.appended", {
+    await appendExecutionEvent(store, "execution", "root", "invocation.message.appended", {
       runId: "turn-a-1",
       parentRunId: "root-run",
       source: source("child-a", "turn-a-1"),
       message: message("output-a", 1),
     });
-    await store.appendEvent("execution", "root", "invocation.message.appended", {
+    await appendExecutionEvent(store, "execution", "root", "invocation.message.appended", {
       runId: "turn-b-1",
       parentRunId: "root-run",
       source: source("child-b", "turn-b-1"),
@@ -693,7 +719,7 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       event: Omit<Event, "schemaVersion" | "eventId" | "sequence" | "emittedAt">,
     ) => {
       sequence += 1;
-      await store.appendEvent("execution", "root", "runtime.event", {
+      await appendExecutionEvent(store, "execution", "root", "runtime.event", {
         schemaVersion: "pragma.stream/v1",
         eventId: `runtime-${sequence}`,
         sequence,
@@ -906,7 +932,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v10",
+    schemaVersion: "pragma.execution/v11",
     executionId: "execution",
     version: 0,
     kind: "flow",

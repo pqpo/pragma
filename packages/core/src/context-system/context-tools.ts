@@ -987,7 +987,7 @@ function paginateContextIndex(
     };
   }
   const sorted = [...index.items].sort(compareContextSummary);
-  const stores = boundContextStoreSummaries(index.stores ?? [], 512);
+  const stores = boundContextStoreSummaries(index.stores, 512);
   const storeHeaderBytes =
     stores.length === 0
       ? 0

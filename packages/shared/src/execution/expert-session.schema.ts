@@ -57,7 +57,7 @@ export const PromptRequestSchema = z.object({
 
 export const ExpertSessionRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.expert-session/v6"),
+    schemaVersion: z.literal("pragma.expert-session/v7"),
     sessionId: z.string().min(1),
     expertId: z.string().min(1),
     definitionFingerprint: z.string().length(64),

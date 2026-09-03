@@ -48,7 +48,6 @@
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "gpt-tokenizer": "^3.4.0",
-    "gray-matter": "^4.0.3",
     "quickjs-emscripten-core": "^0.32.0",
     "zod": "latest"
   }

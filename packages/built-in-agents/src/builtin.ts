@@ -339,6 +339,9 @@ function builtInAgentAdapterHost(
     async resolveSecret(ref) {
       return await external?.resolveSecret(ref);
     },
+    ...(external?.openFileContextStore === undefined
+      ? {}
+      : { openFileContextStore: external.openFileContextStore }),
   };
 }
 

@@ -9,12 +9,14 @@ import {
   createTeamDelegationTools,
   readAgentDelegationDefinition,
 } from "../src/agent/agent-launcher.ts";
+import { appendExecutionEvent, updateExecution } from "./execution-store-test-helpers.ts";
 
 import {
   createAgentLauncher,
   createPragma,
   createFileExecutionStore,
   createFileExpertSessionStore,
+  createNoopLoggerProvider,
   createRuntimeSessionRecord,
   createStaticRuntimeResolver,
   ContextSystem,
@@ -24,6 +26,7 @@ import {
   defineContextIdResolver,
   defineFlow,
   defineRuntimeDriver,
+  ExpertSessionManager,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   EXECUTION_CURRENT_TEAM_ID_ATTR,
   EXECUTION_CONTEXT_ID_ATTR,
@@ -38,7 +41,7 @@ import {
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
   type FlowExecution,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
   type RuntimeModelSelection,
   type RuntimeUsageObservation,
   type UsageSink,
@@ -105,7 +108,7 @@ async function waitForTemporaryHomesToQuiesce(): Promise<void> {
 }
 
 interface FakeSession {
-  readonly context: RuntimeDriverSessionContext;
+  readonly context: RuntimeNativeSessionContext;
   readonly id: string;
 }
 
@@ -119,7 +122,7 @@ interface FakeRuntimeStats {
   turnModelSelections: Array<RuntimeModelSelection | undefined>;
   turnAttachmentPaths: string[][];
   waitSteers: string[];
-  sessionContexts: RuntimeDriverSessionContext[];
+  sessionContexts: RuntimeNativeSessionContext[];
 }
 
 function createFakeRuntimeStats(): FakeRuntimeStats {
@@ -1357,7 +1360,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId: "leased-session",
       expertId: "expert",
       definitionFingerprint: "a".repeat(64),
@@ -1416,7 +1419,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const original = team(3);
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId: "fingerprint-session",
       expertId: original.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(original),
@@ -1480,7 +1483,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       },
     };
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: "legacy-expert",
       definitionFingerprint: "b".repeat(64),
@@ -2487,7 +2490,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v10",
+        schemaVersion: "pragma.expert-session-transaction/v11",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -2524,14 +2527,14 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v10",
+          schemaVersion: "pragma.execution/v11",
           executionId,
           version: 0,
           kind: "expert-turn",
           definition,
           rootInvocationId: executionId,
           status: "queued",
-          input: "recover me",
+          input: { text: "recover me", attachments: [] },
           state: {},
           lastAppliedSequence: 0,
           createdAt: now,
@@ -2544,7 +2547,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           executorId: expert.id,
           contextId: current.rootContextId,
           status: "queued",
-          input: "recover me",
+          input: { text: "recover me", attachments: [] },
           createdAt: now,
           updatedAt: now,
         },
@@ -2553,7 +2556,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     );
     expect((await session.getState()).executionIds).toContain(executionId);
     expect(await executions.get(executionId)).toMatchObject({
-      schemaVersion: "pragma.execution/v10",
+      schemaVersion: "pragma.execution/v11",
     });
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
     expect((await session.listEvents()).items.map((event) => event.type)).toContain(
@@ -2571,7 +2574,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId: "atomic-session",
       expertId: "expert",
       definitionFingerprint: "a".repeat(64),
@@ -2597,7 +2600,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v10",
+        schemaVersion: "pragma.expert-session-transaction/v11",
         session: {
           ...current,
           status: "closed",
@@ -3053,6 +3056,57 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
     const turn = await session.prompt("run", { requestId: "concurrent-nested-flows" });
     await turn.result;
     expect((await turn.getState()).state).toMatchObject({ first: "first", second: "second" });
+    await session.close();
+  });
+
+  it("fails explicitly when an Expert invokes a Flow without an injected executor", async () => {
+    const home = await createTemporaryHome("pragma-missing-nested-flow-executor-");
+    const nested = defineFlow({ id: "nested-without-executor" });
+    const task = nested.task({ id: "work", handler: () => "done" });
+    nested.compose(({ start, end }) => start(task).next(end()));
+    const target = nested.compile();
+    const tool: ExpertAgentManagedTool<string, ExpertAgentToolCallResult> = {
+      name: "call_nested_without_executor",
+      description: "Invoke a nested Flow",
+      inputSchema: {},
+      async call(input, signal, context) {
+        const execution = context?.execution;
+        if (!execution?.invokeResource) {
+          throw new Error("Execution context is unavailable.");
+        }
+        const output = await execution.invokeResource({ target, input, signal });
+        return { text: String(output) };
+      },
+    };
+    const runtime = createFakeRuntime({
+      runtimeId: "missing-nested-flow-executor",
+      concurrentToolNames: [tool.name],
+    });
+    const runtimes = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: runtime.descriptor.id,
+    });
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const manager = new ExpertSessionManager({
+      sessions,
+      executions,
+      runtimes,
+      loggerProvider: createNoopLoggerProvider(),
+    });
+    const expert = await defineExpert({
+      id: "caller-without-flow-executor",
+      name: "Caller",
+      description: "Calls a nested Flow",
+      tags: [],
+      scope: "test",
+      workspace: home,
+      tools: [tool],
+    });
+    const session = await manager.createSession(expert);
+    const turn = await session.prompt("run", { requestId: "missing-flow-executor" });
+
+    await expect(turn.result).rejects.toThrow("Nested Flow executor is unavailable");
     await session.close();
   });
 
@@ -3592,7 +3646,7 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
     const store = createFileExecutionStore({ pragmaHome: home });
     const stored = (await store.get(execution.executionId))!;
     const internal = stored.state["__pragma"] as { readonly deadlines?: Record<string, unknown> };
-    await store.update(execution.executionId, {
+    await updateExecution(store, execution.executionId, {
       state: {
         ...stored.state,
         __pragma: {
@@ -3679,7 +3733,7 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
     delete internal.flowControl.transitions[expertInvocation.invocationId];
     const stateWithoutReduction = { ...stored.state };
     delete stateWithoutReduction["expertOutput"];
-    await store.update(execution.executionId, {
+    await updateExecution(store, execution.executionId, {
       state: {
         ...stateWithoutReduction,
         __pragma: internal,
@@ -3757,7 +3811,7 @@ describe("Execution observation", { timeout: 30_000 }, () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v10",
+        schemaVersion: "pragma.execution/v11",
         executionId: "cross-process",
         version: 0,
         kind: "flow",
@@ -3782,7 +3836,7 @@ describe("Execution observation", { timeout: 30_000 }, () => {
         updatedAt: now,
       },
     );
-    await writer.appendEvent("cross-process", "root", "external.event", {});
+    await appendExecutionEvent(writer, "cross-process", "root", "external.event", {});
     await expect(reader.readEvents("cross-process")).resolves.toMatchObject([
       { type: "external.event" },
     ]);

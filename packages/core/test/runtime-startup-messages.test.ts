@@ -17,7 +17,7 @@ import {
   StaticContextStore,
   type ExpertAgentStartupMessage,
   type RuntimeContextWindowUsage,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
   type RuntimeTurnContext,
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
@@ -233,7 +233,7 @@ interface TestNativeEvent {
 }
 
 interface TestNativeSession {
-  readonly context: RuntimeDriverSessionContext;
+  readonly context: RuntimeNativeSessionContext;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
 }
 
