@@ -211,7 +211,132 @@ describe("Mission executor model options", () => {
     ).resolves.toMatchObject({ runtime: { id: "pinned-runtime" } });
     expect(boundRuntimeIds).toEqual(["pinned-runtime"]);
   });
+
+  it("uses a built-in Team coordinator's configured Runtime defaults", async () => {
+    const runtimeIds: string[] = [];
+    const runtimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => "default-runtime",
+      bind: async (request) => {
+        runtimeIds.push(request?.runtimeId ?? "missing");
+        return {
+          binding: {
+            runtimeId: request?.runtimeId ?? "missing",
+            revision: 1,
+            fingerprint: "a".repeat(64),
+          },
+          adapter: {
+            features: snapshotRuntimeFeatures(
+              createRuntimeTestFeatures({ enabled: ["availability", "modelDiscovery"] }),
+            ),
+            descriptor: { id: "codex", kind: "test", displayName: "Codex" },
+            canUse: async () => ({ usable: true }),
+            listModels: async () => [],
+            createSession: async () => {
+              throw new Error("unused");
+            },
+          },
+        };
+      },
+      resolve: async () => {
+        throw new Error("unused");
+      },
+    };
+    const coordinator = expertResource("0000000000st0rev", "Store Revision Agent");
+    const team = teamResource("p8cbn3cg2avyksn4", coordinator.metadata.id);
+    const project = {
+      get: async () => ({ resources: [team] }),
+    } as unknown as PragmaProjectStore;
+    const systemExperts = {
+      get: (ref: string) =>
+        ref === "expert:0000000000st0rev"
+          ? {
+              executionProfile: {
+                mode: "pinned",
+                model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-5" },
+              },
+            }
+          : undefined,
+      getResource: (ref: string) => (ref === "expert:0000000000st0rev" ? coordinator : undefined),
+      getExecutor: () => undefined,
+      listExecutors: () => [],
+    } as unknown as DesktopSystemExpertRegistry;
+    const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
+
+    await expect(catalog.getModelOptions("team:p8cbn3cg2avyksn4")).resolves.toMatchObject({
+      runtime: { id: "codex" },
+    });
+    expect(runtimeIds).toEqual(["codex"]);
+  });
 });
+
+describe("Mission executor catalog presentation", () => {
+  it("resolves built-in Team members and coordinator metadata", async () => {
+    const coordinator = expertResource("0000000000st0rev", "Store Revision Agent");
+    const team = teamResource("p8cbn3cg2avyksn4", coordinator.metadata.id);
+    const catalog = createMissionExecutorCatalog({
+      project: { get: async () => ({ resources: [team] }) } as unknown as PragmaProjectStore,
+      systemExperts: {
+        getResource: (ref: string) => (ref === "expert:0000000000st0rev" ? coordinator : undefined),
+        listExecutors: () => [],
+      } as unknown as DesktopSystemExpertRegistry,
+      runtimes: {} as RuntimeResolver,
+    });
+
+    await expect(catalog.list()).resolves.toMatchObject([
+      {
+        ref: "team:p8cbn3cg2avyksn4",
+        avatarId: coordinator.metadata.avatarId,
+        members: [{ ref: "expert:0000000000st0rev", name: "Store Revision Agent" }],
+      },
+    ]);
+  });
+
+  it("isolates an invalid Team instead of failing the whole catalog", async () => {
+    const warnings: string[] = [];
+    const team = teamResource("p8cbn3cg2avyksn4", "0000000000st0rev");
+    const catalog = createMissionExecutorCatalog({
+      project: { get: async () => ({ resources: [team] }) } as unknown as PragmaProjectStore,
+      systemExperts: {
+        getResource: () => undefined,
+        listExecutors: () => [],
+      } as unknown as DesktopSystemExpertRegistry,
+      runtimes: {} as RuntimeResolver,
+      warn: (message) => warnings.push(message),
+    });
+
+    await expect(catalog.list()).resolves.toEqual([]);
+    expect(warnings).toEqual([
+      "Mission executor presentation could not be resolved: team:p8cbn3cg2avyksn4.",
+    ]);
+  });
+});
+
+function expertResource(id: string, name: string) {
+  return {
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Expert",
+    metadata: {
+      id,
+      name,
+      description: `${name} description`,
+      tags: [],
+      avatarId: "pragma.avatar.expert.18",
+    },
+    spec: {},
+  } as unknown as Extract<PragmaResource, { kind: "Expert" }>;
+}
+
+function teamResource(id: string, expertId: string) {
+  return {
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "ExpertTeam",
+    metadata: { id, name: "Revision Team", description: "Revises", tags: [] },
+    spec: {
+      coordinator: { ref: `expert:${expertId}` },
+      members: [{ ref: `expert:${expertId}` }],
+    },
+  } as unknown as Extract<PragmaResource, { kind: "ExpertTeam" }>;
+}
 
 function createCatalog(
   listModels: () => Promise<readonly RuntimeModel[]>,

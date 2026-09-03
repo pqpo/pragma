@@ -459,6 +459,8 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     runtimes,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.mission_executor_presentation_failed", message, { error }),
   });
   const homeExecutors = createHomeExecutorCatalog({
     project: pragmaProjectStore,
@@ -1327,6 +1329,7 @@ export async function createDesktopApplicationContainer(
     executors: missionExecutors,
     homeExecutors,
     project: pragmaProjectStore,
+    systemExperts,
     getWindow: options.getWindow,
     runner: missionRunner,
     getAutomationMissionSources: () => automationService.listMissionSources(),

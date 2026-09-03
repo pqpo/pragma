@@ -39,6 +39,43 @@ describe("Mission mention candidates", () => {
       },
     ]);
   });
+
+  it("resolves built-in members outside the project resource snapshot", () => {
+    const systemExpert = expert(
+      "0000000000st0rev",
+      "Store Revision Agent",
+      "pragma.avatar.expert.18",
+    );
+    const team = {
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "ExpertTeam",
+      metadata: {
+        id: "vyv9pwwzaksth2dd",
+        name: "Revision team",
+        description: "Revises the store",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:0000000000st0rev" },
+        members: [{ ref: "expert:0000000000st0rev" }],
+      },
+    } as unknown as PragmaExpertTeamResource;
+
+    expect(
+      expertTeamMentionCandidates(team, [team], (ref) =>
+        ref === "expert:0000000000st0rev"
+          ? (systemExpert as Extract<PragmaResource, { kind: "Expert" }>)
+          : undefined,
+      ),
+    ).toEqual([
+      {
+        ref: "expert:0000000000st0rev",
+        name: "Store Revision Agent",
+        description: "Store Revision Agent description",
+        avatarId: "pragma.avatar.expert.18",
+      },
+    ]);
+  });
 });
 
 function expert(id: string, name: string, avatarId: string): PragmaResource {

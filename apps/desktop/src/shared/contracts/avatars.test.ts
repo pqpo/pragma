@@ -62,4 +62,10 @@ describe("expertTeamCoordinatorAvatarId", () => {
   it("uses the compatibility default when the coordinator cannot be found", () => {
     expect(expertTeamCoordinatorAvatarId(team, [team])).toBe("pragma.avatar.expert.default");
   });
+
+  it("resolves a coordinator supplied by the system Expert registry", () => {
+    expect(expertTeamCoordinatorAvatarId(team, [team], () => expert)).toBe(
+      "pragma.avatar.expert.07",
+    );
+  });
 });

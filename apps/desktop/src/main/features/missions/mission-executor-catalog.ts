@@ -49,6 +49,7 @@ export function createMissionExecutorCatalog(options: {
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
   readonly runtimes: RuntimeResolver;
+  readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): MissionExecutorCatalog {
   const resolveRuntimeDefaults = async (
     ref: string,
@@ -84,18 +85,17 @@ export function createMissionExecutorCatalog(options: {
       .filter(isMissionExecutorResource)
       .find((candidate) => missionExecutorRef(candidate) === ref);
     if (resource === undefined || resource.kind === "Flow") return undefined;
-    const expert =
-      resource.kind === "Expert"
-        ? resource
-        : resources.find(
-            (candidate): candidate is PragmaExpertResource =>
-              candidate.kind === "Expert" &&
-              canonicalPragmaResourceRef(candidate) === resource.spec.coordinator.ref,
-          );
-    if (expert === undefined) {
+    if (resource.kind === "Expert") {
+      return await projectExpertRuntimeDefaults(resource, resources, options.runtimes);
+    }
+    if (
+      resolveExpertResource(resource.spec.coordinator.ref, resources, (expertRef) =>
+        options.systemExperts.getResource(expertRef),
+      ) === undefined
+    ) {
       throw new Error(`Mission executor coordinator not found: ${ref}.`);
     }
-    return await projectExpertRuntimeDefaults(expert, resources, options.runtimes);
+    return await resolveRuntimeDefaults(resource.spec.coordinator.ref, resources);
   };
 
   const bindRuntimeDefaults = async (
@@ -140,7 +140,21 @@ export function createMissionExecutorCatalog(options: {
       const snapshot = await options.project.get();
       const projectOptions = snapshot.resources
         .filter(isMissionExecutorResource)
-        .map((resource) => projectExecutorOption(resource, snapshot.resources));
+        .flatMap((resource) => {
+          try {
+            return [
+              projectExecutorOption(resource, snapshot.resources, (expertRef) =>
+                options.systemExperts.getResource(expertRef),
+              ),
+            ];
+          } catch (error) {
+            options.warn?.(
+              `Mission executor presentation could not be resolved: ${missionExecutorRef(resource)}.`,
+              error,
+            );
+            return [];
+          }
+        });
       return [...options.systemExperts.listExecutors(), ...projectOptions].toSorted((left, right) =>
         left.name.localeCompare(right.name),
       );
@@ -299,6 +313,7 @@ function projectExecutor(resource: PragmaInvocableResource): MissionExecutor {
 function projectExecutorOption(
   resource: PragmaInvocableResource,
   resources: readonly PragmaResource[],
+  resolveExternalExpert?: ((ref: string) => PragmaExpertResource | undefined) | undefined,
 ): MissionExecutorOption {
   return MissionExecutorOptionSchema.parse({
     ...projectExecutor(resource),
@@ -307,8 +322,8 @@ function projectExecutorOption(
       ? { avatarId: resource.metadata.avatarId }
       : resource.kind === "ExpertTeam"
         ? {
-            avatarId: expertTeamCoordinatorAvatarId(resource, resources),
-            members: expertTeamMentionCandidates(resource, resources),
+            avatarId: expertTeamCoordinatorAvatarId(resource, resources, resolveExternalExpert),
+            members: expertTeamMentionCandidates(resource, resources, resolveExternalExpert),
           }
         : {}),
     origin: "project",
@@ -323,14 +338,10 @@ function projectExecutorOption(
 export function expertTeamMentionCandidates(
   team: PragmaExpertTeamResource,
   resources: readonly PragmaResource[],
+  resolveExternalExpert?: ((ref: string) => PragmaExpertResource | undefined) | undefined,
 ): readonly ExpertMentionCandidate[] {
-  const experts = new Map(
-    resources
-      .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
-      .map((resource) => [canonicalPragmaResourceRef(resource), resource]),
-  );
   return team.spec.members.map((member) => {
-    const expert = experts.get(member.ref);
+    const expert = resolveExpertResource(member.ref, resources, resolveExternalExpert);
     if (expert === undefined) {
       throw new Error(`ExpertTeam member not found: ${member.ref}.`);
     }
@@ -341,4 +352,17 @@ export function expertTeamMentionCandidates(
       avatarId: expert.metadata.avatarId,
     };
   });
+}
+
+function resolveExpertResource(
+  ref: string,
+  resources: readonly PragmaResource[],
+  resolveExternalExpert?: ((ref: string) => PragmaExpertResource | undefined) | undefined,
+): PragmaExpertResource | undefined {
+  return (
+    resources.find(
+      (resource): resource is PragmaExpertResource =>
+        resource.kind === "Expert" && canonicalPragmaResourceRef(resource) === ref,
+    ) ?? resolveExternalExpert?.(ref)
+  );
 }

@@ -48,6 +48,7 @@ import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@prag
 import type { MissionCommandOutcomeNotification, MissionRunner } from "./mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {
   expertTeamMentionCandidates,
   type MissionExecutorCatalog,
@@ -87,6 +88,7 @@ export function installMissionHandlers(options: {
   readonly executors: MissionExecutorCatalog;
   readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
+  readonly systemExperts: DesktopSystemExpertRegistry;
   readonly runner: MissionRunner;
   readonly getAutomationMissionSources: () => Promise<ReadonlyMap<string, string>>;
   readonly getWindow: () => BrowserWindow | null;
@@ -269,7 +271,9 @@ export function installMissionHandlers(options: {
     }
     return MissionMentionCandidatesSchema.parse({
       teamRef: mission.executor.ref,
-      members: expertTeamMentionCandidates(team, project.resources),
+      members: expertTeamMentionCandidates(team, project.resources, (ref) =>
+        options.systemExperts.getResource(ref),
+      ),
     });
   });
   ipcMain.handle("missions:executors:list", async () =>
