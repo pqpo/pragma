@@ -1,91 +1,61 @@
-# ADR 016: Local storage lifecycle and content addressing
+# ADR 016: Local Storage Lifecycle and Content Addressing
 
 ## Status
 
-Accepted; the Codex cache-base decision is superseded by ADR 026.
+Accepted. Current storage version constants and adjacent migrations are owned by their authoritative storage modules;
+this ADR defines the stable layout and lifecycle rules.
 
 ## Context
 
-Runtime Sessions copied complete Codex homes, Studio revisions copied complete projects, Execution
-event logs were never archived, and Agent plugin caches repeated identical package bytes. Closing a
-Runtime process or deleting a Mission did not establish a storage deletion boundary.
+Authoritative resources, recoverable execution state, diagnostic archives, rebuildable caches, temporary files and
+Agent workspaces require different retention rules. Project revisions and plugin packages also contain repeated bytes
+that should be content-addressed rather than copied per owner.
 
 ## Decision
 
-Pragma storage uses the breaking `pragma.storage/v3` layout. `data/` contains authoritative Mission,
-Project, content-addressed object, plugin, and credential data. `state/` contains owner-scoped active
-and recoverable state. `archives/` contains bounded compressed diagnostics. `cache/` is rebuildable,
-TTL/LRU managed data. `tmp/` and `trash/` have short retention windows. Filesystem manifests are the
-reference graph's source of truth; `state/storage/catalog.sqlite` is a rebuildable size and owner
-index. Desktop's built-in default Agent workspace is `~/.pragma/workspace`, directly below the
-Pragma root rather than inside `data/`; it contains only task-scoped repositories, inputs,
-artifacts, and Agent-authored files.
+Pragma separates local storage by purpose:
 
-Project revisions are permanent immutable manifests. A revision references one SHA-256 Merkle tree;
-trees reference immutable blob or child-tree objects. Unchanged files are therefore stored once
-across every revision and project. All revision manifests are GC roots until their Project is
-explicitly deleted. Checkout directories are rebuildable hard-link views and never constitute
-authoritative project data.
+```text
+~/.pragma/workspace/   # task repositories, inputs, artifacts and Agent-authored files
+~/.pragma/data/        # authoritative resources and content-addressed objects
+~/.pragma/state/       # active and recoverable runtime state
+~/.pragma/archives/    # bounded diagnostic archives
+~/.pragma/cache/       # rebuildable TTL/LRU-managed content
+~/.pragma/tmp/         # short-lived staging
+~/.pragma/trash/       # journaled recoverable deletion
+```
 
-Codex Runtime Context storage originally used one Pragma-managed immutable cache base per
-fingerprint and a private overlay. ADR 026 replaces that cache-base portion with a minimal
-per-Context Home projection. Generated configuration, copied Agent Skills, native sessions, logs,
-temporary files, and `CODEX_SQLITE_HOME` remain private. Authentication continues to use one Pragma
-credential projection. Mission-owned native sessions are retained until Mission deletion; stopping
-a process is not a storage deletion operation.
+Filesystem manifests are the reference graph authority. Rebuildable indexes live under state or cache according to
+their recovery role and never replace those manifests.
 
-Terminal Executions first materialize a Mission conversation projection, then move their canonical
-JSONL events into a gzip archive. The archive is readable through `ExecutionStore` while retained,
-but is diagnostic rather than the durable Mission chat source. Plugin packages are expanded once at
-`cache/plugins/sha256/<fingerprint>`; Agent directories contain binding metadata only.
+Project Revision manifests are immutable GC roots until Project deletion. Each revision references a SHA-256 Merkle
+tree whose tree and blob objects are globally deduplicated. Checkout directories are rebuildable views and do not own
+Project data.
 
-Mission deletion is an owner-graph operation. It writes a deletion journal and moves uniquely owned
-ExpertSession, Execution, Runtime Session, ownership-claim, and archive data to the managed trash
-area. Completed trash entries are retained until the first of three fixed limits: seven days,
-300 MiB total, or ten entries. Incomplete and invalid deletion journals are never removed by this
-retention pass. Desktop schedules targeted trash maintenance after its first window is available and
-after successful owner deletions; startup does not scan or upgrade unrelated owners. GC uses
-mark-sweep plus a grace period instead of mutable reference counts. Leased or referenced objects
-cannot be collected.
+Runtime Session state is private to its owning ExpertSession context or FlowExecution Invocation. Generated config,
+native sessions, logs and writable homes are not stored in the Agent workspace. Adapter-specific shared caches may be
+projected only from the designated rebuildable runtime cache and must preserve each Runtime's authentication and
+session isolation rules.
 
-New Qoder CLI Runtime Sessions project one shared rebuildable external-command cache at
-`cache/runtimes/qodercli/external-commands` into their otherwise private Qoder configuration. Existing
-session-local `external-commands` directories are left untouched and are not discovered or migrated
-at startup. Qoder remains responsible for command installation and atomic `current` replacement;
-Pragma removes completed `download-*` archives and stale `.tmp-*` staging directories after Runtime
-use while respecting a live command lock.
+Terminal Executions materialize their bounded Mission-visible projection before Canonical Event data moves to bounded
+diagnostic archives. Mission deletion is an owner-graph transaction: it writes a stable journal and moves uniquely
+owned ExpertSession, Execution, Runtime Session, ownership claim and archive data to managed trash.
 
-Every Antigravity CLI Runtime Session owns a complete private `HOME`. Its `.gemini/config` custom
-agent, hook, MCP and Skill files and `.gemini/antigravity-cli` settings, logs, caches and native
-conversation state remain inside the Runtime Session directory. Pragma does not copy or link the
-host `.gemini` tree. Authentication may resolve through the operating-system keyring or explicit
-Host-provided authentication environment, but native configuration and session files are not shared.
+Completed trash entries are retained until the first configured age, total-size or entry-count bound is reached.
+Incomplete or invalid deletion journals are retained for recovery. Desktop performs targeted maintenance after the
+first window exists and after successful owner deletion; startup does not scan every owner.
 
-Default limits are 4 GiB soft and 6 GiB hard globally, 1 GiB for rebuildable cache, and 512 MiB or 90
-days for Execution archives. Persistent data is never silently evicted. At the hard limit Pragma
-allows completion, deletion, export, and GC, but rejects new executions, project publications, and
-plugin installations.
+Storage capacity uses separate soft and hard bounds. Rebuildable cache and diagnostic archives are eligible for their
+defined retention policy; authoritative data is removed only through explicit owner deletion. At the write gate, the
+hard bound permits completion, deletion, export and GC while rejecting new capacity-growing work.
 
-The first v3 Desktop launch atomically renames an existing unversioned Pragma root to a dated sibling
-backup and starts empty. There is no old-format reader or dual-write path. The backup is offered for
-seven days before the Desktop asks the operating system to move it to trash. A sibling bootstrap
-journal bridges the rename, v3 marker creation, and backup-manifest write so startup can resume after
-a process or machine failure without orphaning the legacy backup.
+Storage schema upgrades run on first access to the smallest owner. Each supported step uses a static adjacent migration,
+backup, aggregate lock, stable journal and atomic replacement. The business parser reads only the current schema.
 
 ## Consequences
 
-- One small project change adds one blob, its ancestor trees, and a revision manifest instead of a
-  complete project directory.
-- Mutable Codex session data remains isolated; ADR 026 defines how rebuildable native caches are
-  projected without a Pragma-owned full cache snapshot.
-- Qoder authentication, project state, logs, and native session data remain private while new
-  sessions reuse downloaded external commands. Legacy active sessions keep their existing layout.
-- Antigravity configuration, skills, hooks, logs, and native conversations are private to one
-  Runtime Session; stopping the `agy` process does not delete them.
-- Trash retention is bounded without introducing a settings surface; an unfinished deletion journal
-  remains recoverable even when completed entries are pruned.
-- Keeping all Missions and all revisions can still consume the configured persistent capacity; the
-  hard limit makes this bounded and requires an explicit owner deletion decision.
-- Mission chat remains readable after Execution diagnostic archives expire.
-- `RuntimeSessionRecord.processState` and `retentionState` replace the ambiguous persisted `status`.
-- Storage v1/v2 data is not migrated into v3.
+- Small Project changes add only new blobs, ancestor trees and a revision manifest.
+- Mission-visible history remains available independently from bounded diagnostic archives.
+- Stopping a Runtime process never implies deletion of its recoverable Session.
+- Owner deletion remains crash-recoverable and bounded retention never removes an unfinished journal.
+- Runtime caches can be reused without sharing writable Session state.

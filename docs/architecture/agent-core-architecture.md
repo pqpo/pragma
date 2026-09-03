@@ -78,7 +78,7 @@ Mission-scoped Context binding 注入，因此 successor Session、Flow 与应�
 当前 Core 是进程内异步执行：Invocation 可靠落盘后由 `ExpertOrchestrator` 调度，不恢复旧
 Directive/Workflow 的通用 Mailbox、TaskManager 或工作流运行器。
 
-未来 Server/Worker 或 Desktop Runtime Gateway 需要分布式派发时，只在 queued 提交之后增加窄接口：
+Server/Worker 或 Desktop Runtime Gateway 通过 queued 提交之后的窄接口接入分布式派发：
 
 ```text
 InvocationService.ensureQueued()

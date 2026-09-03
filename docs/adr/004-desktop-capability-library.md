@@ -17,11 +17,11 @@ Desktop owns a device-local, versioned Capability Library under `~/.pragma/capab
 - a manually described JSON HTTP service exposed through an in-process MCP adapter.
 - a single-tool JavaScript Code Service exposed through an in-process MCP adapter.
 
-Capability definitions are immutable revisions. Health is mutable operational state, and credentials are encrypted separately with Electron `safeStorage`. Expert schema `pragma.expert/v2` stores pinned capability revision references and explicit tool allowlists instead of embedding Skill and MCP definitions.
+Capability definitions are immutable revisions. Health is mutable operational state, and credentials are encrypted separately. Expert resources store pinned capability revision references and explicit tool allowlists instead of embedding Skill and MCP definitions.
 
 `@pragma/core` owns runtime-neutral MCP configuration, MCP discovery/calls, SSE transport support, and the HTTP-to-MCP adapter. Desktop owns file selection, persistence, encrypted credentials, health reporting, and resolving Expert references before `defineExpert()`.
 
-HTTP v1 intentionally supports only GET/POST JSON APIs with scalar path/query parameters and optional POST JSON object bodies. It does not import OpenAPI or support file, multipart, form, cookie, custom-header, or streaming operations.
+The HTTP Service adapter exposes GET/POST JSON APIs with scalar path/query parameters and optional POST JSON object bodies through the managed-tool boundary.
 
 Code Service v1 is a pure-computation boundary. The author defines recursive object/array input and
 output contracts, then implements a synchronous `function main(input)` that receives and returns
@@ -52,4 +52,3 @@ or replace their source through the tool call itself.
   Execution MCP Gateway defined by ADR 008.
 - Code Services use the same managed-tool and Execution MCP Gateway path, publish both MCP input and
   output schemas, and return validated structured content.
-- `pragma.expert/v1` Desktop definitions are not read through a compatibility adapter.

@@ -28,7 +28,7 @@
 
 Pragma is a cross-harness platform for turning AI-native working methods into runnable, reusable agent teams. A team can combine Experts, ExpertTeams, Flows, tools, Skills, shared context, memory, permissions, and human checkpoints—not just a prompt.
 
-Unlike a single chat product or Coding Agent, Pragma treats the Agent Team and its working method as the portable unit. Define it as YAML DSL and build it in Desktop. The CLI integration is currently in development and will support direct invocation plus export as MCP or Skills. Or embed the same team in your own application with the SDK.
+Unlike a single chat product or Coding Agent, Pragma treats the Agent Team and its working method as the portable unit. Define it as YAML DSL and build it in Desktop, run it from the terminal through the CLI, or embed the same team in your own application with the SDK.
 
 During a Mission, work can move between specialists without losing decisions, artifacts, or accumulated experience. The same team can coordinate different models and harnesses for different steps while keeping context, permissions, handoffs, and execution under one governance model.
 
@@ -43,7 +43,7 @@ During a Mission, work can move between specialists without losing decisions, ar
 </p>
 
 > [!IMPORTANT]
-> Pragma is currently a preview. The latest Desktop release provides unsigned builds for macOS Apple Silicon and Intel. See [Current status](#current-status) before adopting it for critical work.
+> Pragma is currently a preview. The latest Desktop release provides builds for macOS Apple Silicon and Intel. Verify that a package comes from the official release before installing it.
 
 ## Quick start
 
@@ -56,7 +56,7 @@ Download the package for your Mac from [GitHub Releases](https://github.com/pqpo
 3. Talk with Pragma to create your own Expert, ExpertTeam, or Flow.
 4. Start a task with the result and use it as much as you like. As Missions accumulate, cross-harness memory turns repeated experience into stable knowledge and reusable Skills.
 
-The current app is not code-signed. To open a Desktop release, use this order:
+To open a Desktop release, use this order:
 
 1. Try opening **Pragma** normally.
 2. If macOS blocks it, open **System Settings → Privacy & Security** and choose **Open Anyway**.
@@ -66,9 +66,9 @@ The current app is not code-signed. To open a Desktop release, use this order:
 sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
 ```
 
-You do not need to change the global **Allow apps downloaded from** setting for this unsigned release.
+You do not need to change the global **Allow apps downloaded from** setting.
 
-The [Desktop distribution guide](./docs/usage/desktop-distribution.md) explains the release contents, checksums, and limitations.
+The [Desktop distribution guide](./docs/usage/desktop-distribution.md) explains the release contents, checksums, and installation process.
 
 ### Build Desktop from source
 
@@ -155,26 +155,25 @@ Use Pragma Desktop as the most intuitive and configurable way to build and run t
 
 ### CLI — call teams directly from the terminal
 
-Call an Agent Team directly from the terminal and connect it to scripts, local workflows, and automation. CLI support is currently in development. The CLI will also be able to expose a team as MCP or Skills, bringing its full capabilities—including experts, shared context, tools, memory, workflows, and governance—to the AI tools you already use, such as Codex, Claude Code, or a system you build yourself.
+Install `@pqpo/pragma` to discover Experts, run or resume Missions, inspect results and events, answer HumanTask interactions, and manage Mission queues from the terminal. JSON and JSONL output provide stable envelopes for scripts and other Agent tools, while the CLI and Desktop share the same Local Host application semantics.
 
 ### SDK — integrate teams into your own system
 
 Save an Agent Team as versioned YAML DSL, load and compile it with `@pragma/interpreter`, and invoke the compiled team directly from your own application through `@pragma/core`. This path lets you embed Agent Team execution into a product or AI system while keeping the team definition portable and reviewable. Start with the [portable bundle example](./examples/projects/bundle-transfer/pragma.yaml) and the [DSL architecture guide](./docs/architecture/pragma-yaml-dsl.md); runnable integrations live in [`examples/src`](./examples/src/README.md).
 
-## Current status
+## Available capabilities
 
-| Area                    | Current status                                                                                            |
-| ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| Project maturity        | Preview; breaking changes are still possible                                                              |
-| Desktop release         | macOS Apple Silicon and Intel; unsigned                                                                   |
-| Windows / Linux Desktop | Not included in the current public release                                                                |
-| Runtime adapters        | Claude Code, Codex, PI, and Qoder CLI packages are implemented                                            |
-| Composition             | Expert, ExpertTeam, Flow, SubFlow, and HumanTask                                                          |
-| Context                 | Host contract plus in-memory, JSON, filesystem, Mission Board, and Memory-backed stores                   |
-| Memory                  | Evidence pipeline with episodic and semantic modules; knowledge and Skill refinement are preview features |
-| Evaluation              | Versioned evaluations and Flow Run Dry execution                                                          |
-| Portability             | `.pragma` bundle import, export, validation, binding, and compilation                                     |
-| Distribution            | No code signing or automatic updates yet                                                                  |
+| Area             | Capabilities                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| Desktop          | macOS Apple Silicon and Intel packages                                                        |
+| CLI              | macOS and Windows npm package with human-readable, JSON, and JSONL output                      |
+| Runtime adapters | Claude Code, Codex, PI, Qoder CLI, and Antigravity                                            |
+| Composition      | Expert, ExpertTeam, Flow, SubFlow, HumanTask, and governed delegation                         |
+| Context          | In-memory, JSON, filesystem, Mission Board, and Memory-backed stores                          |
+| Memory           | Evidence pipeline, episodic and semantic modules, Knowledge, and Skill refinement             |
+| Evaluation       | Versioned Evaluation resources and Flow Run Dry                                               |
+| Portability      | `.pragma` bundle import, export, validation, binding, compilation, and Git bundle sources     |
+| Recovery         | Durable Mission commands, Execution events, Runtime Session ownership, and schema migrations |
 
 For detailed implementation boundaries, see the [current architecture overview](./docs/architecture/current-architecture-overview.md).
 

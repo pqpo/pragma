@@ -30,7 +30,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `runtime-*`       | Concrete Runtime Adapter implementations                                                             |
 | `local-host`      | Node-only device-local application services and Mission Board shared by Desktop Main and the CLI     |
 | `plugins/*`       | Expert extensions built on the core plugin API                                                       |
-| `apps`            | Composition and process entry points, including future Desktop App local bridge                      |
+| `apps`            | Composition and process entry points, including the Desktop-owned local bridge boundary              |
 | `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                        |
 
 ## Dependency Matrix
@@ -122,8 +122,8 @@ Applications compose the package with their own DSL project persistence and task
 the package exposes runtime-neutral project/task schemas through `@pragma/built-in-agents/contracts`.
 Automation maintenance follows the same boundary: Core owns trigger/delivery contracts, Interpreter
 owns the portable `Automation` resource, Built-in Agents owns an application-neutral maintenance
-port, and Desktop owns schedule lifecycle, host bindings, queues, and Mission dispatch. Future
-webhook or IM credentials belong to host Connections and never to DSL or Core.
+port, and Desktop owns schedule lifecycle, host bindings, queues, and Mission dispatch. Webhook or
+IM credentials belong to Host Connections and never to DSL or Core.
 
 Desktop Home is a Mission creation entry, not a separate chat runtime. Desktop's System Expert
 Registry projects `expert:0000000000pragma` as the read-only default Expert and resolves it for both
@@ -133,7 +133,7 @@ selected Runtime and authorized workspace. Mission storage, Execution events, ch
 approvals, and recovery are shared by every executor. System refs are reserved by the application;
 resource tags never grant immutability.
 
-Future local bridge directories:
+Local bridge placement:
 
 ```text
 apps/desktop

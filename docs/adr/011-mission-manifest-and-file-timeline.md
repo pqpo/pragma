@@ -1,67 +1,46 @@
-# ADR 011: Mission Manifest and File Timeline
+# ADR 011: Mission Manifest and Durable Timeline
 
 ## Status
 
-Accepted.
-
-Amended by ADR 016: terminal generated output is materialized into an immutable per-Execution
-Mission projection before the canonical event log moves to bounded diagnostic storage.
+Accepted. Storage versions and migration chains are owned by the current Mission storage schemas; this ADR defines
+the stable separation of responsibilities without duplicating a version literal.
 
 ## Context
 
-Desktop originally stored Mission identity, lifecycle, current execution, and every top-level chat
-message in one `pragma.mission/v2` YAML document. Every message or status update therefore parsed,
-validated, and rewrote the complete conversation. Mission listing also loaded and transferred all
-message bodies even though the rail only needs summary fields. Assistant text duplicated the
-canonical Execution event log.
+Mission identity, user messages, execution events and UI projections have different update frequency, retention and
+recovery semantics. Keeping them in one aggregate document would make every message rewrite the complete Mission and
+would duplicate the canonical Execution history.
 
 ## Decision
 
-Desktop uses the breaking `pragma.mission/v3` format without a v2 migration path. Each Mission
-directory contains a bounded `mission.yaml` manifest and an append-oriented `messages.jsonl`
-timeline. The manifest owns Mission identity, pinned project and executor, immutable workspace
-path, lifecycle, mutable next-turn model and permission options, and the current
-ExpertSession/Execution references. It does not own chat content or a second aggregate environment
-recovery fingerprint.
+Each Mission directory separates four concerns:
 
-The timeline stores versioned, monotonically sequenced user-message and execution-reference
-records. It does not duplicate assistant output inline. Active output is projected from the
-Execution canonical event log; after terminal settlement, a separate immutable Execution projection
-preserves Mission-visible assistant, thinking, tool-summary, and activity entries. If neither the
-Execution nor its projection is available, chat displays an explicit unavailable-history entry.
+- a bounded manifest owns Mission identity, pinned Project/executor binding, workspace, lifecycle and current
+  ExpertSession/Execution references;
+- an append-oriented timeline owns user messages and Execution references with monotonic sequence numbers;
+- Core Execution storage owns recoverable Invocation state and the Canonical Event Log;
+- an immutable per-Execution projection preserves the bounded Mission-visible terminal history.
 
-The projection is a durable, Mission-owned UI read model, not an Execution recovery source or audit
-log. It is stored as one `execution-projections/<executionId>.jsonl` file per terminal Execution,
-which is also its natural rotation boundary. JSONL records are written sequentially to an atomic
-temporary file and flushed before publication; readers process records line by line and ignore only
-an incomplete final line. Each projection is limited to 1,000 newest entries and 4 MiB, assistant
-and thinking content is limited to 32,000 characters per entry, and tool or activity errors are
-limited to 4,000 characters. The header records omitted-entry and truncated-field counts. Existing
-`pragma.mission-execution-projection/v1` JSON files are validated and migrated on first read.
+The manifest does not embed chat content or a second Runtime environment fingerprint. The timeline does not duplicate
+assistant output. Active output is projected from the Execution event/output channels; after terminal settlement, the
+Mission projection preserves assistant, thinking, tool-summary and activity entries required by the UI.
 
-Projections intentionally survive the bounded diagnostic Execution archive because they are the
-Mission's durable visible history. They have no independent time-based retention: deleting the
-owning Mission removes its projections through the existing owner-graph deletion lifecycle. This
-avoids retaining a second unbounded copy while also avoiding silent expiration of Mission chat.
+The terminal projection is a Mission-owned read model, not an Execution recovery source. It uses one JSONL file per
+Execution as the rotation boundary, is written to an atomic temporary file and flushed before publication, and records
+truncation metadata whenever configured entry, byte or field bounds apply. Deleting the owning Mission removes these
+projections through the owner-graph deletion lifecycle.
 
-Timeline appends use a per-Mission cross-process file lock and a recoverable transaction journal.
-Only a torn final JSONL record associated with that journal may be truncated and replayed;
-corruption in committed records fails closed. The initial file adapter may scan and cache the full
-timeline while exposing cursor-based pages to IPC and the renderer. An index or database is deferred
-until measured file I/O requires it.
+Timeline appends use a per-Mission cross-process lock and recoverable transaction journal. Only a torn final record
+associated with that journal may be truncated and replayed; corruption in committed records fails closed. Mission
+listing reads only bounded manifest data, while chat and events use cursor-based pagination.
 
-Mission listing returns a bounded summary and does not read the timeline. Chat initially returns the
-latest 50 logical turns and supports loading older turns by sequence cursor, with a maximum page
-size of 100.
+Every historical Mission schema in the support window lives in a static adjacent migration chain. The Host upgrades
+the smallest owner on first access using a backup, stable journal and atomic replacement before business reads begin.
+Current code consumes only the current schema exported by the authoritative storage module.
 
 ## Consequences
 
-- YAML remains readable and bounded while long conversations grow only in `messages.jsonl`.
-- Execution events remain canonical during execution; terminal Mission projections survive bounded
-  diagnostic archive expiry.
-- Long Executions cannot grow a projection beyond the documented per-Execution limits; older detail
-  may be omitted while the newest output remains available.
-- IPC and renderer memory scale with loaded pages rather than total conversation size.
-- Local timeline reads are still linear until a later index or storage adapter is justified.
-- Existing `pragma.mission/v2` directories report an actionable unsupported-schema error and are
-  neither migrated nor deleted automatically.
+- Mission listing cost is independent of conversation length.
+- User input, recoverable execution state and terminal UI history each have one authority.
+- Cursor-based readers and bounded projections keep renderer and IPC memory predictable.
+- Crash recovery can replay the exact journaled append or migration without scanning unrelated Missions.

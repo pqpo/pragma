@@ -19,7 +19,8 @@
 optimizer 生成候选，evaluator 输出 accepted/revise。accepted 结束；revise 使用具名 repeat 回到
 optimizer。Loop 必须声明正整数 maxIterations，onLimit 必须离开循环区域。
 
-## 暂不支持的范式
+## 并行协作的选择
 
-Parallel 和 Orchestrator Workers 需要 fork/join、并发 Invocation、合并、取消与恢复协议。当前
-调度器逐节点推进，不能把普通分支描述为并行执行；在相应 ADR 和运行时能力完成前不提供这两类模板。
+Flow 用于持久、可恢复的确定性控制流；动态并行协作由 ExpertTeam 和
+`spawn_expert` 委派机制承载。这两种表达共用 Execution / Invocation 语义：Flow 保留稳定路由与
+恢复边界，ExpertTeam 负责按任务状态分解、并行委派和汇总。

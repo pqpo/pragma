@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-02
-- Supersedes: the Desktop-owned wire format in ADR 026; Desktop installation transactions remain Host-owned
+- Replaces the earlier Desktop-owned wire format; Desktop installation transactions remain Host-owned
 
 ## Context
 

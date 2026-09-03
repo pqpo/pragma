@@ -18,8 +18,8 @@ execution choices rather than onboarding requirements.
 
 ## Decision
 
-Rename the built-in product Agent to `Pragma` and give it the canonical ref
-`expert:pragma@1.0.0`. Pragma is the application's general-purpose default Agent:
+Name the built-in product Agent `Pragma` and give it the canonical ref
+`expert:0000000000pragma`. Pragma is the application's general-purpose default Agent:
 
 - Home selects it by default and it is always available independently of editable project resources.
 - Its primary goal is to complete the user's request with the selected Runtime, authorized workspace,
@@ -35,14 +35,9 @@ Rename the built-in product Agent to `Pragma` and give it the canonical ref
   changing its canonical DSL or execution fingerprint. Customized built-in metadata and user-authored
   Expert metadata remain authored content and are displayed without translation.
 
-Rename the reusable package from `@pragma/steward` to `@pragma/default-agent`. The package owns the
-portable Pragma DSL, bundled authoring Skill, application-neutral project and Mission ports, managed
-tools, and compiler helper. Desktop continues to own persistence, Runtime selection, permissions,
-system-expert registration, and Mission execution.
-
-This is an intentional breaking change. No `expert:steward@1.0.0` alias or package compatibility
-layer is retained. Persisted data that explicitly references the former system ref is not migrated by
-the default-agent package.
+`@pragma/built-in-agents` owns the portable Pragma DSL, bundled authoring Skill, application-neutral
+Host ports, managed tools and compiler helper. Desktop continues to own persistence, Runtime
+selection, permissions, System Expert registration and Mission execution.
 
 ## Consequences
 
@@ -51,4 +46,4 @@ the default-agent package.
   entry path.
 - Specialized executors remain first-class and can be selected per Mission.
 - Runtime and permission boundaries continue to determine what “general-purpose” can actually do.
-- The old Steward name remains only in superseded ADR history.
+- Product surfaces and stable resource references use the Pragma name consistently.

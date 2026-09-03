@@ -60,7 +60,7 @@ and preserves the hard-limit cleanup behavior.
 
 ### Runtime reuse
 
-Superseded in detail by ADR 028. Desktop owns one reference-counted MCP connection pool shared by
+As defined by ADR 028, Desktop owns one reference-counted MCP connection pool shared by
 compiler live checks, Capability workflows, and all four Runtime adapters. Pooling is per server
 connection so consumer-specific server IDs, tool projections, and approval policies do not prevent
 reuse. External connections use a stable, redacted fingerprint; in-process connections use object

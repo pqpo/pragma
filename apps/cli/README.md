@@ -60,7 +60,8 @@ a durable `nextCursor`; copy it into the printed continuation command.
 projection. `chat` and `work` deliberately fail with `INVALID_ARGUMENT` until
 their contracts are ready; use `--view events` or `mission watch` meanwhile.
 The text renderers use stable Mission/queue columns, while JSON and JSONL stay
-pure `pragma.cli-result/v2` and `pragma.cli-event/v2` protocol output.
+pure `pragma.cli-result/v2` and `pragma.cli-event/v2` protocol output. Use the
+views printed by `pragma mission get --help` for the installed CLI version.
 
 Runs wait for a terminal result by default. `--detach` returns after the durable
 command is persisted (it may still be queued), and `--request-id` is optional
@@ -75,11 +76,9 @@ Command-specific help includes usage, defaults, output format, idempotency,
 and a copyable example, for example `pragma mission get --help` or
 `pragma expert discover --help`.
 
-For scripts and other AI tools, use `--format=json` or `--format=jsonl` and
-inspect the process exit code. The P1 `--log-level` /
-`PRAGMA_LOG_LEVEL` contract will use `silent|fatal|error|warn|info|debug` with
-priority CLI > environment > default `info`; the current release may not yet
-include this option.
+For scripts and other AI tools, use `--format=json` or `--format=jsonl`, inspect
+the process exit code, and treat `pragma --help` as the command-line capability
+contract for the installed version.
 
 The three documents have separate jobs: this README is the npm installation
 and entry-point guide, the human guide explains interactive CLI/Mission
@@ -108,4 +107,4 @@ before loading the main bundle. Install Node.js 22 or later instead.
 
 ## License
 
-Pragma CLI is distributed under the [Pragma Source Available License 1.0](./LICENSE).
+Pragma CLI is distributed under the [Pragma Source Available License 1.0](../../LICENSE).

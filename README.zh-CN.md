@@ -21,7 +21,7 @@
 
 Pragma 是一个跨模型、跨 Agent Harness 的 AI-native 工作方式平台，用来把一套工作方式构建成可运行、可复用的 Agent Team。一个团队不只是 Prompt，还可以组合 Expert、ExpertTeam、Flow、工具、Skill、共享 Context、Memory、权限和人工确认。
 
-与单一聊天工具或 Coding Agent 不同，Pragma 把 Agent Team 及其工作方式作为可移植单元。你可以用 YAML DSL 定义它，在 Desktop 中构建；CLI 集成正在实现中，未来支持直接调用并导出为 MCP 或 Skills；也可以通过 SDK 将同一团队嵌入自己的应用。
+与单一聊天工具或 Coding Agent 不同，Pragma 把 Agent Team 及其工作方式作为可移植单元。你可以用 YAML DSL 定义它，在 Desktop 中构建，通过 CLI 从终端运行，也可以使用 SDK 将同一团队嵌入自己的应用。
 
 在一次 Mission 中，工作可以在不同专家之间持续推进，同时保留决策、产物和积累的经验。同一套团队可以为不同步骤协调不同模型与 Harness，并在统一的治理模型下管理 Context、权限、交接和执行。
 
@@ -44,7 +44,7 @@ Pragma 是一个跨模型、跨 Agent Harness 的 AI-native 工作方式平台�
 
 
 > [!IMPORTANT]
-> Pragma 当前仍处于预览阶段。最新 Desktop Release 提供未签名的 macOS Apple Silicon 与 Intel 安装包。将其用于关键工作前，请先阅读[当前状态](#当前状态)。
+> Pragma 当前处于预览阶段。最新 Desktop Release 提供 macOS Apple Silicon 与 Intel 安装包；安装前请确认安装包来自官方 Release。
 
 ## 快速开始
 
@@ -57,7 +57,7 @@ Pragma 是一个跨模型、跨 Agent Harness 的 AI-native 工作方式平台�
 3. 与 Pragma 对话，创建属于自己的 Expert、ExpertTeam 或 Flow。
 4. 使用刚刚创建的专家、专家团或 Flow 开始任务，然后尽情使用。随着 Mission 不断积累，跨 Harness 动态记忆会把反复出现的经验沉淀为稳定知识与可复用 Skill。
 
-当前应用尚未进行代码签名。启动 Desktop Release 时，请按以下顺序操作：
+启动 Desktop Release 时，请按以下顺序操作：
 
 1. 先正常打开 **Pragma**。
 2. 如果 macOS 阻止打开，请进入**系统设置 → 隐私与安全性**并选择**仍要打开**。
@@ -67,9 +67,9 @@ Pragma 是一个跨模型、跨 Agent Harness 的 AI-native 工作方式平台�
 sudo xattr -r -d com.apple.quarantine /Applications/Pragma.app
 ```
 
-对于这个未签名的 Release，无需修改系统全局的“允许从以下位置下载的 App”设置。
+无需修改系统全局的“允许从以下位置下载的 App”设置。
 
-[桌面发行说明](./docs/usage/desktop-distribution.md)记录了发行产物、校验和与当前限制。
+[桌面发行说明](./docs/usage/desktop-distribution.md)记录了发行产物、校验和与安装流程。
 
 ### 从源码运行 Desktop
 
@@ -152,26 +152,25 @@ Pragma 提供三种使用层次：功能完整的 Desktop、从终端直接调�
 
 ### CLI：从终端直接调用 Agent Team
 
-通过 CLI 直接调用 Agent Team，将它接入脚本、本地工作流与自动化任务。CLI 当前正在实现中，后续还将支持通过 CLI 将 Agent Team 导出为 MCP 或 Skill，把团队的完整能力——包括 Expert、共享 Context、工具、Memory、工作流与治理——带给你已经在使用的 AI 工具，例如 Codex、Claude Code，或者你自己开发的 AI 系统。
+安装 `@pqpo/pragma` 后，可以从终端发现 Expert、运行或恢复 Mission、查看结果与事件、回答 HumanTask，以及管理 Mission 队列。JSON 与 JSONL 输出为脚本和其他 Agent 工具提供稳定协议，CLI 与 Desktop 共用同一套 Local Host 应用语义。
 
 ### SDK：集成到自己的系统
 
 将 Agent Team 保存为版本化 YAML DSL，通过 `@pragma/interpreter` 加载和编译，再在自己的应用中使用 `@pragma/core` 直接调用编译后的团队。这样可以把 Agent Team 嵌入自己的产品或 AI 系统，同时保留定义的可移植性与可审阅性。可以从[可移植 Bundle 示例](./examples/projects/bundle-transfer/pragma.yaml)和 [DSL 架构说明](./docs/architecture/pragma-yaml-dsl.md)开始；可运行的集成示例位于 [`examples/src`](./examples/src/README.md)。
 
-## 当前状态
+## 可用能力
 
-| 领域                    | 当前状态                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| 项目成熟度              | Preview，仍可能发生 Breaking Change                                             |
-| Desktop Release         | macOS Apple Silicon 与 Intel，未签名                                            |
-| Windows / Linux Desktop | 当前公开 Release 不提供                                                         |
-| Runtime Adapter         | 已实现 Claude Code、Codex、PI 与 Qoder CLI Package                              |
-| 组合能力                | Expert、ExpertTeam、Flow、子 Flow 与 HumanTask                                  |
-| Context                 | Host 合约，以及 In-memory、JSON、文件系统、Mission Board 与 Memory-backed Store |
-| Memory                  | Evidence Pipeline、Episodic 与 Semantic Module；知识和 Skill 提炼仍是预览能力   |
-| Evaluation              | 版本化 Evaluation 与 Flow Run Dry 执行                                          |
-| 可移植性                | `.pragma` Bundle 导入、导出、校验、Binding 与编译                               |
-| 发行能力                | 尚无代码签名与自动更新                                                          |
+| 领域            | 能力                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------- |
+| Desktop         | macOS Apple Silicon 与 Intel 安装包                                                   |
+| CLI             | macOS 与 Windows npm package，支持人类可读、JSON 与 JSONL 输出                        |
+| Runtime Adapter | Claude Code、Codex、PI、Qoder CLI 与 Antigravity                                     |
+| 组合能力        | Expert、ExpertTeam、Flow、子 Flow、HumanTask 与受治理委派                         |
+| Context         | In-memory、JSON、文件系统、Mission Board 与 Memory-backed Store                          |
+| Memory          | Evidence Pipeline、Episodic、Semantic、Knowledge 与 Skill refinement                     |
+| Evaluation      | 版本化 Evaluation 资源与 Flow Run Dry                                                 |
+| 可移植性        | `.pragma` Bundle 导入、导出、校验、Binding、编译与 Git bundle source                    |
+| 可恢复性        | 持久 Mission command、Execution event、Runtime Session ownership 与 Schema migration |
 
 实现边界详见[当前架构概览](./docs/architecture/current-architecture-overview.md)。
 

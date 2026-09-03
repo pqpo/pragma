@@ -7,7 +7,7 @@ Pragma 使用 `electron-vite` 编译应用代码，使用 `electron-builder` 生
 
 ## 1. 默认方式：GitHub Actions 自动 Release（推荐）
 
-GitHub Actions 自动化流水线位于 [.github/workflows/desktop-release.yml](file:///Users/linminqiu/Workspace/expert-mesh/.github/workflows/desktop-release.yml)。
+GitHub Actions 自动化流水线位于 [.github/workflows/desktop-release.yml](../../.github/workflows/desktop-release.yml)。
 
 ### 触发条件
 
@@ -178,14 +178,11 @@ SHA256SUMS.txt
 本地脚本只负责 GitHub Release 上传，不自动镜像到阿里云 OSS。若未来仍需 OSS 镜像，应使用独立的、受控的
 短期凭证流程；不得在仓库或脚本中保存长期 AccessKey。
 
-## 未签名安装提示
+## macOS Gatekeeper 安装
 
-当前产物没有系统代码签名：
-
-- macOS Gatekeeper 可能阻止常规双击启动。用户需要在系统设置的“隐私与安全性”中选择仍要打开。
-- SHA-256 校验只能验证下载完整性，不能替代代码签名。
-
-当前 ZIP 只是人工分发产物，不用于自动更新。接入 macOS 签名、公证后，才会开始实现 `electron-updater` 和稳定 Release。
+从官方 GitHub Release 下载后，先使用 `SHA256SUMS.txt` 校验文件完整性。如果 macOS
+Gatekeeper 显示安全提示，请在“系统设置 → 隐私与安全性”中核对应用名称与来源后选择
+“仍要打开”。不需要修改系统的全局应用来源设置。
 
 ## 发布后验证
 
@@ -199,6 +196,5 @@ SHA256SUMS.txt
 
 相关资料：
 
-- [Pragma 桌面发行方案](../architecture/desktop-release-and-online-update.md)
 - [electron-builder architecture](https://www.electron.build/docs/architecture/)
 - [electron-builder macOS](https://www.electron.build/docs/mac/)

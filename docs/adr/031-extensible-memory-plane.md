@@ -2,8 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-01
-- Supersedes: ADR 002 and ADR 003
-- Implementation plan: [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
+- Consolidates the Memory Plane into the current Host-owned architecture.
 - Durable delivery decision: [ADR 032](./032-durable-canonical-event-feed.md)
 - Layered projection and Episodic decision: [ADR 033](./033-layered-episodic-memory.md)
 - Semantic conflict and governance decision: [ADR 034](./034-conservative-semantic-memory.md)
