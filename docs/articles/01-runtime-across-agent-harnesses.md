@@ -122,13 +122,12 @@ Pragma 支持在不同 Expert、Team 成员和 Flow step 上选择不同 Runtime
 
 可移植的 Expert 或 Flow 只声明语义需求和 RuntimeProfile 引用；真正的本机路径、凭据和安装状态由 Host Binding 解决。工作方式因此不会被某台机器上的 CLI 路径绑死。
 
-## 统一不等于安全边界已经完成
+## 权限边界的分层
 
-Runtime Adapter 可以映射每个 Harness 自己的权限模式，但这不等于 Pragma 已经拥有跨 Runtime 的统一 Local Permission Guard。
-
-截至当前实现，不同 Adapter 仍依赖各自的权限机制，Claude Code 也仍存在默认 `bypassPermissions` 的路径。Desktop 虽然已经管理工具权限策略和工作区选择，但覆盖文件、Shell、网络、Secret 与 Git 的统一本地闸门尚未闭合。
-
-因此，Runtime 抽象解决的是“如何接入和治理不同 Harness 的运行语义”，安全闸门则是必须继续完成的 Host 边界。两者不能混为一谈，更不能因为 Adapter 有一个 permission 字段就宣称整个系统已经安全。
+Pragma 将权限责任分为两层：进入 Pragma Tool / MCP 的调用使用 Host approval policy；
+Runtime 原生的文件、Shell、网络与 Git 能力使用对应 Adapter 的原生权限模式和 Host binding。
+Runtime Feature 诊断展示最终生效的配置，Host 据此在运行前选择符合任务信任边界的 Runtime。
+这一分层让上层执行语义保持一致，同时保留每个 Harness 的完整权限能力。
 
 ## 结语
 

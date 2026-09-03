@@ -49,4 +49,4 @@ Mission，也不升级 Core Execution 协议。
 - 当前事实具有可解释冲突和完整 revision history，不以自动覆盖换取表面简洁；
 - local User 是安装级身份，跨设备账户合并必须由后续显式迁移解决；
 - Repository subject、主动排序和管理中心 UI 继续属于后续阶段；
-- Renderer 可通过类型化 IPC 查询和治理事实，但阶段 3 不提供管理页面。
+- Renderer 通过类型化 IPC 查询和治理事实。

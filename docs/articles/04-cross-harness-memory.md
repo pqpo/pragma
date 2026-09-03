@@ -182,7 +182,7 @@ Mission Board 中的 plan、decision 和 handoff 可以发布 Evidence，但 Mem
 ## 延伸阅读
 
 - [Memory 使用指南](../usage/memory.md)
-- [Memory Plane 实施计划](../architecture/memory-plane-implementation-plan.md)
+- [ADR 索引](../adr/README.md)
 - [可扩展 Memory Plane ADR](../adr/031-extensible-memory-plane.md)
 - [Agent 驱动召回与治理 ADR](../adr/035-agent-driven-memory-recall-and-governance.md)
 - [知识升级与 Store Revision ADR](../adr/039-promoted-knowledge-stores-and-agent-revision.md)

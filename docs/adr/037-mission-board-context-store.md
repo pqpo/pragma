@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Supersedes ADR 018 for new executions.
+Accepted.
 
 ## Context
 

@@ -550,50 +550,7 @@ and included optional artifacts. Execution archives and Runtime-native logs are 
 environment values, prompts, responses, tool payloads, workspace contents, and Runtime session
 databases are always excluded.
 
-## 11. Rollout plan
-
-### Phase 1: Protocol and local sink
-
-- Add shared schemas and types.
-- Replace the narrow Core logger model with the new provider, child scope, normalizer, and
-  in-memory/console sinks.
-- Add rotating JSONL sink, reader, `PragmaPaths`, and `StoragePolicy` integration.
-- Unit test schema invariants, error causes, redaction, bounds, routing, concurrency, rotation,
-  partial final lines, retention, and sink failure fallback.
-
-Exit gate: an in-memory test can follow one synthetic Execution across components, and local files
-route normal and failure records correctly without secrets.
-
-### Phase 2: Core, Interpreter, and Runtime coverage
-
-- Add provider injection to `createPragma()` and Interpreter compile paths.
-- Bind Session/Execution/Invocation/Context/Agent/Runtime identifiers.
-- Replace duplicate error serializers where no persisted schema migration is required.
-- Instrument terminal orchestration, storage, managed-tool, and Runtime Adapter boundaries.
-- Add contract tests requiring every Runtime Adapter to report native create/restore/turn failure.
-
-Exit gate: a failed delegated Expert produces one linked failure chain and a safe durable failure
-summary with a diagnostic id.
-
-### Phase 3: Desktop coverage
-
-- Create the provider before bootstrap and remove production main-process `console.*`.
-- Add renderer-to-main reporting and Electron crash/process handlers.
-- Add diagnostic query IPC, "open logs", diagnostic-id display, and support-bundle export.
-- Visually verify fatal renderer and startup error pages.
-
-Exit gate: forced preload, renderer, compile, Runtime, tool, and persistence failures are findable by
-diagnostic id after Desktop restart.
-
-### Phase 4: Server/Worker and remote sinks
-
-- Adapt Fastify/Pino and Worker stdout.
-- Add deployment-configured OTLP/remote sinks after redaction.
-- Define tenant-aware retention and access control with the control-plane design.
-
-Exit gate: local protocol compatibility is preserved and remote export cannot bypass redaction.
-
-## 12. Verification matrix
+## 11. Verification matrix
 
 | Failure injection          | Expected owner         | Required evidence                                 |
 | -------------------------- | ---------------------- | ------------------------------------------------- |

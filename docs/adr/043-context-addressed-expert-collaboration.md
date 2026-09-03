@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-25
-- Supersedes: ADR 042 tool decisions
+- Refines Expert collaboration around Context-addressed messages.
 
 ## Context
 

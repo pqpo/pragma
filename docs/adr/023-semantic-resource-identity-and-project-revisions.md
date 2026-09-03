@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Supersedes the resource-version identity decisions in ADR 010 and ADR 022. External
+Accepted. Defines the authoritative resource-identity model. External
 package and adapter versioning remains unchanged.
 
 ## Context

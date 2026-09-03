@@ -134,9 +134,3 @@ profile 不变。模型编辑器允许用户通过 `inputOverride` 显式开启�
 - 文件夹不递归计算大小、不复制、不在启动时扫描。
 - Runtime 只在发送原生视觉输入时读取 Mission-owned 图片；Renderer 和跨进程协议不传 base64。
 - 附件路径写入模型上下文，因此沿用 Mission 的本地访问权限和审计边界。
-
-## 后续扩展
-
-- 为 Mission 后续消息增加附件时，应新增带版本的消息附件协议和相邻迁移，不能直接修改 `pragma.mission-message/v1`。
-- 若需要离线、跨设备或云端 Mission，应把文件/目录引用升级为显式 artifact 上传协议；当前绝对路径语义只适用于 Desktop 本机 Runtime。
-- UI 后续可消费已标准化的 `inputModalities`，在发送前展示“原生视觉”或“路径上下文”提示。

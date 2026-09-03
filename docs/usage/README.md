@@ -15,5 +15,5 @@
 11. [Pragma CLI 分发与发布运维手册](./cli-release.md)
 
 核心架构见 [Agent Core Architecture](../architecture/agent-core-architecture.md) 与
-[Execution SDK Design](../Execution-SDK-Design.md)。桌面安装包与后续在线更新规划见
-[Pragma 桌面发行方案](../architecture/desktop-release-and-online-update.md)。
+[Execution SDK Design](../Execution-SDK-Design.md)。桌面安装包与发行流程见
+[Pragma 桌面安装包](./desktop-distribution.md)。

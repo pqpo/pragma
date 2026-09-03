@@ -1,8 +1,7 @@
 # Memory 使用指南
 
 Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需要环境变量，也不需要给 Expert 安装
-插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)，分阶段范围见
-[Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)。
+插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)。
 
 > [ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md) 与
 > [ADR 044](../adr/044-sparse-context-store-revision-drafts.md) 已调整并落实 Knowledge 最终边界：
@@ -59,9 +58,9 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
 - 生成脚本仅允许 Node 22 ESM，并在无网络、无子进程、无 Worker、无 native addon、只能访问临时技能包
   目录的 Permission Model 子进程中执行 `node:test` 覆盖。
 
-当前已实现独立的内置 Mission Board；尚未实现跨设备同步。CodeGraph Module 是最后的可选扩展，
-不作为 Memory 重构完成条件。旧插件与其 Task/Experience/Fact/Skill 数据已经 hard cut，不属于新版
-Memory Plane，也不会被读取或导入。
+内置 Mission Board 提供 Mission-scoped 协作与大输出交接。CodeGraph 作为可选 Module
+扩展接入同一 SPI。旧插件与其 Task/Experience/Fact/Skill 数据不属于当前 Memory Plane
+的读取和导入协议。
 
 Episodic 与 Semantic 的 data Store 当前为 user version 4，job Store 为 version 3。data v3→v4 增加
 binding-scoped hot/archive 索引与召回统计；相邻 v2→v3 迁移将提炼生命周期
@@ -245,7 +244,5 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 - [ADR 035: Agent-driven Memory Recall and Host Governance](../adr/035-agent-driven-memory-recall-and-governance.md)
 - [ADR 036: Memory Storage Retention and Recovery](../adr/036-memory-storage-retention-and-recovery.md)
 - [ADR 037: Mission Board as a Host-bound Context Store](../adr/037-mission-board-context-store.md)
-- [ADR 038: Reviewed Knowledge Memory and Explicit Bundle Sharing](../adr/038-reviewed-knowledge-memory-and-bundle-sharing.md)
 - [ADR 039: Promoted Knowledge Stores and Agent-driven Store Revision](../adr/039-promoted-knowledge-stores-and-agent-revision.md)
-- [Memory Plane 落地计划](../architecture/memory-plane-implementation-plan.md)
-- [旧 Memory System ADR（已被替代）](../adr/002-memory-system.md)
+- [ADR 索引](../adr/README.md)

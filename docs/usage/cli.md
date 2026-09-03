@@ -75,8 +75,8 @@ selector 跨 kind 会立即返回 `INVALID_ARGUMENT`，canonical selector 无结
 `mission get` 的 `summary` 是不含完整事件的紧凑摘要，`result` 只表示最新一次
 `run.started`/`execution.started` 对应的执行状态，`events` 按 durable sequence 分页。事件页的
 `nextCursor` 可直接复制到下一次 `--cursor`；cursor 由 Local Host controller 校验，过期或跨
-Mission cursor 会返回 `CURSOR_EXPIRED`/`CURSOR_INVALID`。`chat` 与 `work` 尚未就绪，会明确
-提示使用 `--view events` 或 `mission watch`。
+Mission cursor 会返回 `CURSOR_EXPIRED`/`CURSOR_INVALID`。安装版本支持的 view 以
+`pragma mission get --help` 为准。
 
 文本模式的 `mission list` 列出 `MISSION ID/STATUS/EXECUTOR/UPDATED/WORKSPACE`；`queue list`
 先列出 `state/pendingCount/supportsSteer`，再列出完整 REQUEST ID 和内容预览。所有文本分页
@@ -110,14 +110,6 @@ pragma completion powershell
 
 CLI 不会把 secret、Runtime 环境或 Desktop 私有状态写入 stdout；诊断和错误信息按协议输出，
 并将人类可读错误写入 stderr。
-
-### stderr 日志级别（P1）
-
---log-level 与 PRAGMA_LOG_LEVEL 是 P1 设计契约，当前代码尚未合入，当前发布版本可能
-尚未支持。落地后的值域为 silent|fatal|error|warn|info|debug，优先级为
-CLI --log-level > 环境变量 PRAGMA_LOG_LEVEL > 默认 info。silent 只控制
-pragma.log/v1 诊断行，不隐藏 stdout 结果、协议错误、text renderer 的必要输出或
-bootstrap 纯文本异常。format 与 interactive 不会自动改变日志级别。
 
 ## 脚本与 Agent
 
