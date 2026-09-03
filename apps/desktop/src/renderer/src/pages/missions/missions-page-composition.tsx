@@ -135,6 +135,13 @@ import {
 } from "../../lib/sidebar-width-preference.ts";
 import { pruneMissionDrafts, writeMissionDraft } from "../../lib/mission-draft.ts";
 import {
+  markMissionOutputReadIds,
+  missionChatUpdateHasUserVisibleOutput,
+  readUnreadMissionOutputIds,
+  recordMissionOutputIds,
+  writeUnreadMissionOutputIds,
+} from "../../lib/mission-unread-output.ts";
+import {
   clipboardImageFile,
   missionImageSupport,
   stageClipboardImage,
@@ -249,6 +256,9 @@ export function MissionsPage(props: {
   const [pinnedMissionIds, setPinnedMissionIds] = useState<readonly string[]>(() =>
     readPinnedMissionIds(typeof window === "undefined" ? undefined : window.localStorage),
   );
+  const [unreadMissionOutputIds, setUnreadMissionOutputIds] = useState<readonly string[]>(() =>
+    readUnreadMissionOutputIds(typeof window === "undefined" ? undefined : window.localStorage),
+  );
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
@@ -312,6 +322,28 @@ export function MissionsPage(props: {
     });
   }, []);
 
+  const updateUnreadMissionOutputIds = useCallback(
+    (update: (current: readonly string[]) => readonly string[]) => {
+      setUnreadMissionOutputIds((current) => {
+        const next = update(current);
+        if (next === current) return current;
+        writeUnreadMissionOutputIds(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          next,
+        );
+        return next;
+      });
+    },
+    [],
+  );
+
+  const markMissionOutputRead = useCallback(
+    (missionId: string) => {
+      updateUnreadMissionOutputIds((current) => markMissionOutputReadIds(current, missionId));
+    },
+    [updateUnreadMissionOutputIds],
+  );
+
   const openMission = useCallback(
     async (
       id: string,
@@ -320,6 +352,7 @@ export function MissionsPage(props: {
       const source = options?.source ?? activeSourceRef.current;
       selectedMissionIdsRef.current = { ...selectedMissionIdsRef.current, [source]: id };
       selectedMissionIdRef.current = id;
+      markMissionOutputRead(id);
       setSelectedMissionId(id);
       setSelectedMission((current) => (current?.id === id ? current : null));
       setLoadingMissionId(id);
@@ -345,7 +378,7 @@ export function MissionsPage(props: {
         setLoadingMissionId((current) => (current === id ? null : current));
       }
     },
-    [missionError],
+    [markMissionOutputRead, missionError],
   );
 
   useEffect(() => {
@@ -369,6 +402,17 @@ export function MissionsPage(props: {
   useEffect(() => {
     const api = desktopApi();
     if (api === undefined) return;
+    return api.subscribeMissionChatUpdates((update) => {
+      if (!missionChatUpdateHasUserVisibleOutput(update)) return;
+      updateUnreadMissionOutputIds((current) =>
+        recordMissionOutputIds(current, update.missionId, selectedMissionIdRef.current),
+      );
+    });
+  }, [updateUnreadMissionOutputIds]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
     return api.subscribeMissionUpdates((update) => {
       if (update.kind === "upsert") {
         if (removedMissionIdsRef.current.has(update.mission.id)) return;
@@ -386,6 +430,11 @@ export function MissionsPage(props: {
       );
       missionUpdatesDuringRefreshRef.current.set(update.missionId, null);
       removedMissionIdsRef.current.add(update.missionId);
+      updateUnreadMissionOutputIds((current) =>
+        current.includes(update.missionId)
+          ? current.filter((missionId) => missionId !== update.missionId)
+          : current,
+      );
       setMissions((current) => current.filter((mission) => mission.id !== update.missionId));
       if (selectedMissionIdRef.current === update.missionId) {
         selectedMissionIdRef.current = null;
@@ -393,7 +442,7 @@ export function MissionsPage(props: {
         setSelectedMission(null);
       }
     });
-  }, [replaceMission]);
+  }, [replaceMission, updateUnreadMissionOutputIds]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -447,6 +496,12 @@ export function MissionsPage(props: {
           ),
         );
         setMissions(refreshedMissions);
+        updateUnreadMissionOutputIds((current) => {
+          const retained = current.filter((missionId) =>
+            refreshedMissions.some((mission) => mission.id === missionId),
+          );
+          return retained.length === current.length ? current : retained;
+        });
         pruneMissionDrafts(
           typeof window === "undefined" ? undefined : window.localStorage,
           new Set(
@@ -494,7 +549,7 @@ export function MissionsPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [openMission]);
+  }, [openMission, updateUnreadMissionOutputIds]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -581,6 +636,7 @@ export function MissionsPage(props: {
         search={search}
         now={now}
         pinnedMissionIds={pinnedMissionIds}
+        unreadMissionOutputIds={unreadMissionOutputIds}
         selectedMissionId={selectedMissionId}
         onSearch={setSearch}
         onSourceChange={changeSource}
@@ -930,6 +986,7 @@ function MissionRail(props: {
   readonly search: string;
   readonly now: number;
   readonly pinnedMissionIds: readonly string[];
+  readonly unreadMissionOutputIds: readonly string[];
   readonly selectedMissionId: string | null;
   readonly onSearch: (value: string) => void;
   readonly onSourceChange: (source: MissionListSource) => void;
@@ -951,6 +1008,10 @@ function MissionRail(props: {
   const pinnedMissionIdSet = useMemo(
     () => new Set(props.pinnedMissionIds),
     [props.pinnedMissionIds],
+  );
+  const unreadMissionOutputIdSet = useMemo(
+    () => new Set(props.unreadMissionOutputIds),
+    [props.unreadMissionOutputIds],
   );
   const missionGroups = useMemo(
     () =>
@@ -1077,6 +1138,7 @@ function MissionRail(props: {
           hiddenCount={missionGroups.waitingInput.hiddenCount}
           now={props.now}
           pinnedMissionIds={pinnedMissionIdSet}
+          unreadMissionOutputIds={unreadMissionOutputIdSet}
           selectedMissionId={props.selectedMissionId}
           onOpen={props.onOpen}
           onTogglePin={props.onTogglePin}
@@ -1092,6 +1154,7 @@ function MissionRail(props: {
         hiddenCount={missionGroups.active.hiddenCount}
         now={props.now}
         pinnedMissionIds={pinnedMissionIdSet}
+        unreadMissionOutputIds={unreadMissionOutputIdSet}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
         onTogglePin={props.onTogglePin}
@@ -1107,6 +1170,7 @@ function MissionRail(props: {
         hiddenCount={missionGroups.completed.hiddenCount}
         now={props.now}
         pinnedMissionIds={pinnedMissionIdSet}
+        unreadMissionOutputIds={unreadMissionOutputIdSet}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
         onTogglePin={props.onTogglePin}
@@ -1213,6 +1277,7 @@ function MissionRailGroup(props: {
   readonly hiddenCount: number;
   readonly now: number;
   readonly pinnedMissionIds: ReadonlySet<string>;
+  readonly unreadMissionOutputIds: ReadonlySet<string>;
   readonly selectedMissionId: string | null;
   readonly onOpen: (mission: MissionSummary) => void;
   readonly onTogglePin: (mission: MissionSummary) => void;
@@ -1235,7 +1300,7 @@ function MissionRailGroup(props: {
               ["queued", "running", "waiting"].includes(mission.execution.status);
             const isActiveMission = mission.lifecycleStatus === "active";
             const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
-            const showStatusDot = isActiveMission;
+            const showStatusDot = props.unreadMissionOutputIds.has(mission.id);
             return (
               <div
                 className={[

@@ -185,6 +185,13 @@ export const missionsApi = {
     MissionContextCompactionResultSchema.parse(
       await invokeMutation("missions:context:compact", MissionActionSchema.parse({ id })),
     ),
+  subscribeMissionChatUpdates: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(MissionChatUpdateSchema.parse(value));
+    };
+    ipcRenderer.on("missions:chat:updated", handler);
+    return () => ipcRenderer.removeListener("missions:chat:updated", handler);
+  },
   subscribeMissionChat: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);
     const handler = (_event: IpcRendererEvent, value: unknown) => {
@@ -270,6 +277,7 @@ export const missionsApi = {
   | "removeQueuedMissionMessage"
   | "getMissionChat"
   | "compactMissionContext"
+  | "subscribeMissionChatUpdates"
   | "subscribeMissionChat"
   | "interruptMission"
   | "resumeMissionQueue"

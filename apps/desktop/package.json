@@ -1,6 +1,6 @@
 {
   "name": "@pragma/desktop",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "private": true,
   "type": "module",
   "productName": "Pragma",

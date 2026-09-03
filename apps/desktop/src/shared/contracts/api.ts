@@ -539,6 +539,7 @@ export interface PragmaDesktopAPI {
   removeQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   compactMissionContext: (id: string) => Promise<MissionContextCompactionResult>;
+  subscribeMissionChatUpdates: (listener: (update: MissionChatUpdate) => void) => () => void;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   resumeMissionQueue: (id: string) => Promise<Mission>;
