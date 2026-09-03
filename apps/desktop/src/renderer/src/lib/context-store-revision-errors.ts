@@ -47,9 +47,19 @@ export function localizedContextStoreRevisionError(
   if (
     details.code === "apply_failed" ||
     details.code === "apply_recovery_failed" ||
-    details.code === "apply_recovery_invalid"
+    details.code === "apply_recovery_invalid" ||
+    details.code === "merge_failed"
   ) {
     return translate("revisionErrorApplyFailed");
+  }
+  if (details.code === "draft_not_submitted") {
+    return translate("revisionErrorDraftNotSubmitted");
+  }
+  if (details.code === "validation_failed") {
+    return translate("revisionErrorValidationFailed");
+  }
+  if (details.code === "generation_failed") {
+    return translate("revisionErrorGenerationFailed");
   }
   return translate("revisionErrorGeneric");
 }

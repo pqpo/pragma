@@ -249,6 +249,7 @@ export function ContextStoreRevisionFragment(props: {
                 );
                 const draft = drafts.find((candidate) => candidate.id === job.draftId);
                 const canOpen = draft !== undefined;
+                const awaitingConfirmation = isDraftAwaitingConfirmation(job);
                 const openLabel =
                   job.state === "needs_rebase"
                     ? t("handleRevisionRebase")
@@ -272,11 +273,17 @@ export function ContextStoreRevisionFragment(props: {
                       <span className="revision-task-result">
                         <span
                           className={`revision-task-state is-${job.state}`}
-                          title={t(`revisionState.${job.state}`)}
+                          title={
+                            awaitingConfirmation
+                              ? t("revisionDraftAwaitingConfirmation")
+                              : t(`revisionState.${job.state}`)
+                          }
                         >
-                          {t(`revisionState.${job.state}`)}
+                          {awaitingConfirmation
+                            ? t("revisionDraftAwaitingConfirmation")
+                            : t(`revisionState.${job.state}`)}
                         </span>
-                        {job.error !== undefined ? (
+                        {job.error !== undefined && !awaitingConfirmation ? (
                           <span
                             className="form-error"
                             role="alert"
@@ -308,7 +315,8 @@ export function ContextStoreRevisionFragment(props: {
                           <ArrowRight size={14} aria-hidden="true" />
                         </button>
                       ) : null}
-                      {job.state === "needs_attention" || job.state === "rejected" ? (
+                      {(job.state === "needs_attention" && !awaitingConfirmation) ||
+                      job.state === "rejected" ? (
                         <button
                           className="revision-task-icon-button"
                           type="button"
@@ -406,6 +414,7 @@ export function ContextStoreRevisionDiffFragment(props: {
   );
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
+  const awaitingConfirmation = isDraftAwaitingConfirmation(props.job);
   const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${t(
     "baseRevision",
     {
@@ -444,7 +453,9 @@ export function ContextStoreRevisionDiffFragment(props: {
             </div>
             <div className="revision-diff-actions">
               <span className={`revision-task-state is-${props.job.state}`}>
-                {t(`revisionState.${props.job.state}`)}
+                {awaitingConfirmation
+                  ? t("revisionDraftAwaitingConfirmation")
+                  : t(`revisionState.${props.job.state}`)}
               </span>
               {props.job.state === "pending_review" ? (
                 <>
@@ -468,7 +479,8 @@ export function ContextStoreRevisionDiffFragment(props: {
                   </button>
                 </>
               ) : null}
-              {props.job.state === "needs_attention" || props.job.state === "rejected" ? (
+              {(props.job.state === "needs_attention" && !awaitingConfirmation) ||
+              props.job.state === "rejected" ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -480,6 +492,7 @@ export function ContextStoreRevisionDiffFragment(props: {
                 </button>
               ) : null}
               {props.job.state !== "needs_rebase" &&
+              !awaitingConfirmation &&
               props.job.missionId !== undefined &&
               props.onOpenMission !== undefined ? (
                 <button
@@ -533,6 +546,25 @@ export function ContextStoreRevisionDiffFragment(props: {
                     {t("revisionNeedsRebaseNoMission")}
                   </p>
                 )}
+              </div>
+            </aside>
+          ) : null}
+          {awaitingConfirmation ? (
+            <aside className="revision-rebase-guidance is-draft-paused">
+              <FileText className="revision-rebase-guidance-icon" size={22} aria-hidden="true" />
+              <div className="revision-rebase-guidance-body">
+                <h2>{t("revisionDraftAwaitingConfirmationTitle")}</h2>
+                <p>{t("revisionDraftAwaitingConfirmationDescription")}</p>
+                {props.job.missionId !== undefined && props.onOpenMission !== undefined ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={() => props.onOpenMission?.(props.job.missionId!)}
+                  >
+                    {t("openRevisionMissionToContinue")}
+                  </button>
+                ) : null}
               </div>
             </aside>
           ) : null}
@@ -657,6 +689,13 @@ export function ContextStoreRevisionDiffFragment(props: {
         {props.error !== null ? <p className="form-error">{props.error}</p> : null}
       </div>
     </StudioScreenFrame>
+  );
+}
+
+function isDraftAwaitingConfirmation(job: ContextStoreRevisionJob): boolean {
+  return (
+    (job.state === "editing" && job.missionId !== undefined) ||
+    (job.state === "needs_attention" && job.error?.code === "draft_not_submitted")
   );
 }
 

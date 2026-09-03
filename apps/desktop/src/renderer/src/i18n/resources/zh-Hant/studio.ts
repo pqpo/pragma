@@ -456,7 +456,11 @@ export const studio = {
   revisionErrorStateChanged: "此任務狀態已變更，請重新整理頁面後重試。",
   revisionErrorProfileConflict: "修訂模型設定已變更，請重新整理頁面後重試。",
   revisionErrorApplyFailed: "變更套用失敗，知識庫尚未完成更新，請重新整理後重試。",
-  revisionErrorGeneric: "修訂任務暫時無法完成，請稍後重試。",
+  revisionErrorDraftNotSubmitted:
+    "草稿仍可編輯，尚未提交審批。請先檢視變更，確認後開啟關聯任務繼續修改或提交。",
+  revisionErrorValidationFailed: "草稿未通過結構驗證，請開啟關聯任務修正後重新提交。",
+  revisionErrorGenerationFailed: "修訂產生未完成，請開啟關聯任務查看執行詳情後重試。",
+  revisionErrorGeneric: "修訂任務未完成，請查看任務狀態或執行詳情後重試。",
   revisionSource: {
     user: "使用者",
     "memory-learning": "記憶學習",
@@ -500,7 +504,12 @@ export const studio = {
     "概括 Agent 為本次任務產生的變更方案，協助快速瞭解修改範圍，不會進入 Memory。",
   revisionDiffUnavailable: "這個較早的任務沒有保留變更前的檔案內容。",
   openRevisionMission: "開啟任務",
+  openRevisionMissionToContinue: "繼續修改或提交",
   openRevisionMissionToRebase: "開啟任務並變基",
+  revisionDraftAwaitingConfirmation: "草稿待確認",
+  revisionDraftAwaitingConfirmationTitle: "草稿仍可修改",
+  revisionDraftAwaitingConfirmationDescription:
+    "Agent 已暫停且尚未提交草稿。你可以先審核目前變更；需要調整時開啟原任務繼續修改，確認無誤後再讓 Agent 提交審批。",
   revisionNeedsRebaseTitle: "知識庫已更新，需要先變基",
   revisionNeedsRebaseDescription:
     "這份草稿基於較早的知識庫版本，不能直接套用。請繼續關聯任務，讓修訂 Agent 將草稿變基到最新版本。已發佈的知識庫不會被修改。",

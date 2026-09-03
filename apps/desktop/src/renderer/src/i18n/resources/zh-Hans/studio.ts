@@ -456,7 +456,11 @@ export const studio = {
   revisionErrorStateChanged: "任务状态已变化，请刷新页面后重试。",
   revisionErrorProfileConflict: "修订模型设置已变化，请刷新页面后重试。",
   revisionErrorApplyFailed: "变更应用失败，知识库未完成更新，请刷新后重试。",
-  revisionErrorGeneric: "修订任务暂时无法完成，请稍后重试。",
+  revisionErrorDraftNotSubmitted:
+    "草稿仍可编辑，尚未提交审批。请先查看变更，确认后打开关联任务继续修改或提交。",
+  revisionErrorValidationFailed: "草稿未通过结构校验，请打开关联任务修正后重新提交。",
+  revisionErrorGenerationFailed: "修订生成未完成，请打开关联任务查看运行详情后重试。",
+  revisionErrorGeneric: "修订任务未完成，请查看任务状态或运行详情后重试。",
   revisionSource: {
     user: "用户",
     "memory-learning": "记忆学习",
@@ -500,7 +504,12 @@ export const studio = {
     "概括 Agent 为本次任务生成的变更方案，帮助快速了解修改范围，不会进入 Memory。",
   revisionDiffUnavailable: "这个较早的任务没有保留变更前的文件内容。",
   openRevisionMission: "打开任务",
+  openRevisionMissionToContinue: "继续修改或提交",
   openRevisionMissionToRebase: "打开任务并变基",
+  revisionDraftAwaitingConfirmation: "草稿待确认",
+  revisionDraftAwaitingConfirmationTitle: "草稿仍可修改",
+  revisionDraftAwaitingConfirmationDescription:
+    "Agent 已暂停且尚未提交草稿。你可以先审核当前变更；需要调整时打开原任务继续修改，确认无误后再让 Agent 提交审批。",
   revisionNeedsRebaseTitle: "知识库已更新，需要先变基",
   revisionNeedsRebaseDescription:
     "这份草稿基于较早的知识库版本，不能直接应用。请继续关联任务，让修订 Agent 把草稿变基到最新版本。已发布的知识库不会被修改。",

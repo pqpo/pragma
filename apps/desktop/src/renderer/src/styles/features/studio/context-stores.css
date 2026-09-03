@@ -1195,6 +1195,15 @@
   color: var(--ui-warning);
 }
 
+.revision-rebase-guidance.is-draft-paused {
+  border-color: var(--ui-line);
+  background: var(--ui-surface-subtle);
+}
+
+.revision-rebase-guidance.is-draft-paused .revision-rebase-guidance-icon {
+  color: var(--ui-text-secondary);
+}
+
 .revision-rebase-guidance-body {
   display: grid;
   min-width: 0;

@@ -164,6 +164,62 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("工作室 → 知识库 → 修订任务");
   });
 
+  it("presents an intentionally unsubmitted draft as editable instead of failed", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const html = renderToStaticMarkup(
+      <ContextStoreRevisionDiffFragment
+        job={{
+          schemaVersion: "pragma.context-store-revision-job/v2",
+          id: "10000000-0000-4000-8000-000000000003",
+          revision: 4,
+          draftId: "20000000-0000-4000-8000-000000000003",
+          missionId: "30000000-0000-4000-8000-000000000003",
+          request: {
+            schemaVersion: "pragma.context-store-revision-request/v1",
+            storeId: "00000000-0000-4000-8000-000000000003",
+            prompt: "先审核草稿，不要提交",
+            source: "user",
+          },
+          state: "editing",
+          createdAt: "2026-08-05T07:24:00.000Z",
+          updatedAt: "2026-08-05T07:29:00.000Z",
+        }}
+        draft={{
+          schemaVersion: "pragma.context-store-draft/v1",
+          id: "20000000-0000-4000-8000-000000000003",
+          revision: 3,
+          name: "先审核草稿",
+          storeId: "00000000-0000-4000-8000-000000000003",
+          baseRevision: 4,
+          baseSnapshotHash: "0".repeat(64),
+          state: "editing",
+          overlay: {
+            files: [],
+            deletedFiles: [],
+            directories: [],
+            deletedDirectories: [],
+          },
+          createdAt: "2026-08-05T07:24:00.000Z",
+          updatedAt: "2026-08-05T07:29:00.000Z",
+        }}
+        busy={false}
+        error={null}
+        onBack={() => undefined}
+        onApprove={() => undefined}
+        onReject={() => undefined}
+        onRetry={() => undefined}
+        onOpenMission={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("草稿待确认");
+    expect(html).toContain("草稿仍可修改");
+    expect(html).toContain("Agent 已暂停且尚未提交草稿");
+    expect(html).toContain("继续修改或提交");
+    expect(html).not.toContain(">重试<");
+    expect(html).not.toContain("修订任务暂时无法完成");
+  });
+
   it("builds stable line-level additions and deletions", () => {
     expect(buildRevisionLineDiff("first\nold", "first\nnew")).toEqual([
       { kind: "context", content: "first", oldLine: 1, newLine: 1 },

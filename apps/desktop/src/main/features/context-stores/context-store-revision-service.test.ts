@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createContextStoreRevisionService } from "./context-store-revision-service.ts";
+import {
+  createContextStoreRevisionService,
+  type ContextStoreRevisionGenerator,
+  type ContextStoreRevisionService,
+} from "./context-store-revision-service.ts";
 import { createContextStoreStore } from "./context-store-store.ts";
 
 const directories: string[] = [];
@@ -23,6 +27,7 @@ async function fixture(
           readonly storeId: string;
         }) => Promise<void>)
       | undefined;
+    readonly generator?: ContextStoreRevisionGenerator | undefined;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-store-revisions-"));
@@ -35,7 +40,7 @@ async function fixture(
     statePath: join(directory, "state", "context-store-revisions"),
     draftsPath,
     contextStores,
-    generator: {
+    generator: options.generator ?? {
       async generate({ request, snapshot }) {
         return {
           schemaVersion: "pragma.context-store-change-set/v1" as const,
@@ -65,6 +70,58 @@ async function fixture(
 }
 
 describe("context store sparse draft revisions", () => {
+  it("keeps an intentionally unsubmitted Agent draft editable and attached", async () => {
+    const missionId = "22222222-2222-4222-8222-222222222226";
+    const serviceRef: { current?: ContextStoreRevisionService } = {};
+    const generate = vi.fn<ContextStoreRevisionGenerator["generate"]>(async (input) => {
+      if (serviceRef.current === undefined) throw new Error("revision_service_unavailable");
+      await serviceRef.current.attachMission(input.jobId, missionId);
+      const resolved = await serviceRef.current.resolveDraft(input.draftId);
+      await resolved.store.addContext({ id: "items/review-first.md", content: "# Review first\n" });
+      return undefined;
+    });
+    const fixtureResult = await fixture({ generator: { generate } });
+    serviceRef.current = fixtureResult.service;
+    const activeService = serviceRef.current;
+    const job = await activeService.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: fixtureResult.store.id,
+      prompt: "Let me inspect the editable draft before submission",
+      source: "user",
+    });
+
+    await activeService.processPending();
+
+    const paused = await activeService.get(job.id);
+    expect(paused).toMatchObject({
+      state: "editing",
+      missionId,
+    });
+    expect(paused.error).toBeUndefined();
+    await expect(activeService.getDraft(job.draftId)).resolves.toMatchObject({
+      state: "editing",
+      activeMissionId: missionId,
+    });
+
+    await writeFile(
+      join(fixtureResult.directory, "state", "context-store-revisions", "jobs", `${job.id}.json`),
+      `${JSON.stringify({
+        ...paused,
+        state: "needs_attention",
+        error: {
+          code: "draft_not_submitted",
+          message: "The Store Revision Agent finished without submitting its draft.",
+        },
+      })}\n`,
+    );
+    await activeService.processPending();
+    await expect(activeService.get(job.id)).resolves.toMatchObject({
+      state: "editing",
+      missionId,
+    });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it("deduplicates machine submissions and persists only an overlay before approval", async () => {
     const { draftsPath, contextStores, service, store } = await fixture();
     const request = {

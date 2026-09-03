@@ -72,7 +72,10 @@ spec:
     - Fix every issue. Repeat the entire final check after the last fix.
     - Copy the latest draft.revision to expectedRevision. Call knowledge_revision_submit_draft once
       with an accurate review summary. A successful submission moves the draft to human review and it
-      can no longer be edited. Finishing without successful submission means the task needs attention.
+      can no longer be edited.
+    - If the user explicitly asks to inspect the editable draft before submission, do not submit it.
+      Leave the draft editable and tell the user to resume this Mission when they want changes or are
+      ready to submit it for formal review.
   capabilities:
     - ref: capability:0000000000manage
       kind: tools

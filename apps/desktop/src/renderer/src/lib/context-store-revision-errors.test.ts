@@ -31,7 +31,25 @@ describe("localizedContextStoreRevisionError", () => {
       (key, options) => i18n.t(key, { ns: "studio", ...options }),
     );
 
-    expect(message).toBe("The revision task could not be completed. Try again later.");
+    expect(message).toBe(
+      "Revision generation did not finish. Open the related task to inspect the run details, then retry.",
+    );
     expect(message).not.toContain("internal-only diagnostic");
+  });
+
+  it("explains that an unsubmitted draft is still editable", async () => {
+    await i18n.changeLanguage("zh-Hans");
+
+    const message = localizedContextStoreRevisionError(
+      {
+        code: "draft_not_submitted",
+        message: "The Store Revision Agent finished without submitting its draft.",
+      },
+      (key, options) => i18n.t(key, { ns: "studio", ...options }),
+    );
+
+    expect(message).toBe(
+      "草稿仍可编辑，尚未提交审批。请先查看变更，确认后打开关联任务继续修改或提交。",
+    );
   });
 });

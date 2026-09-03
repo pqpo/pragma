@@ -798,6 +798,18 @@ export function createContextStoreRevisionService(options: {
     async processPending() {
       if (processing !== undefined) return await processing;
       const run = (async () => {
+        const pausedDrafts = (await api.list()).filter(
+          (job) =>
+            job.state === "needs_attention" &&
+            job.error?.code === "draft_not_submitted" &&
+            job.missionId !== undefined,
+        );
+        for (const paused of pausedDrafts) {
+          await mutateJob(paused.id, paused.revision, () => ({
+            state: "editing",
+            error: undefined,
+          }));
+        }
         const interruptedMerges = (await api.list()).filter((job) => job.state === "merging");
         for (const interrupted of interruptedMerges) {
           const draft = await readDraft(interrupted.draftId);
@@ -873,11 +885,8 @@ export function createContextStoreRevisionService(options: {
             const completedByAgent = await api.get(running.id);
             if (completedByAgent.state !== "pending_review") {
               await mutateJob(completedByAgent.id, completedByAgent.revision, () => ({
-                state: "needs_attention",
-                error: {
-                  code: "draft_not_submitted",
-                  message: "The Store Revision Agent finished without submitting its draft.",
-                },
+                state: "editing",
+                error: undefined,
               }));
             }
           } catch (error) {
