@@ -24,6 +24,30 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("rejects a new imported snapshot whose declared hash does not match its contents", async () => {
+    const { storesPath, store } = await createStore();
+    const id = "00000000-0000-4000-8000-000000000019";
+
+    await expect(
+      store.createFromSnapshot({
+        id,
+        name: "Tampered import",
+        description: "",
+        author: "import",
+        summary: "Import snapshot.",
+        expectedSnapshotHash: "0".repeat(64),
+        files: [
+          {
+            id: "guide.md",
+            content: "# Guide\n",
+            metadata: { trigger: "manual", priority: "normal" },
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(stat(join(storesPath, id))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("creates an empty managed Markdown knowledge base", async () => {
     const { storesPath, store } = await createStore();
 

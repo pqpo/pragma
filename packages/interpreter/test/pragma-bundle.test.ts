@@ -1,4 +1,4 @@
-import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
+import { PRAGMA_DSL_WRITE_API_VERSION, PragmaBundleV1ManifestSchema } from "../src/ast/index.ts";
 import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -55,6 +55,24 @@ describe("portable .pragma bundles", () => {
         }),
       }),
     ).rejects.toMatchObject({ code: "manifest.fingerprint_invalid" });
+  });
+
+  it("applies complete manifest invariants before migrating v1 bundles", async () => {
+    const fixtureRoot = join(import.meta.dirname, "fixtures", "pragma-bundle-v1");
+    const legacy = JSON.parse(await readFile(join(fixtureRoot, "bundle.json"), "utf8"));
+
+    expect(
+      PragmaBundleV1ManifestSchema.safeParse({
+        ...legacy,
+        roots: [legacy.roots[0], legacy.roots[0]],
+      }).success,
+    ).toBe(false);
+    expect(
+      PragmaBundleV1ManifestSchema.safeParse({
+        ...legacy,
+        project: { ...legacy.project, entry: "project/missing.yaml" },
+      }).success,
+    ).toBe(false);
   });
 
   it("round-trips a ContextStore as a v2 Bundle root", async () => {

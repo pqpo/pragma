@@ -98,7 +98,8 @@ export const PragmaBundleV1ManifestSchema = z
     ...PragmaBundleManifestShape,
     roots: z.array(PragmaInvocableResourceRefSchema).min(1),
   })
-  .strict();
+  .strict()
+  .superRefine(refineBundleManifest);
 
 export const PragmaBundleManifestSchema = z
   .object({
@@ -107,52 +108,68 @@ export const PragmaBundleManifestSchema = z
     roots: z.array(PragmaBundleRootRefSchema).min(1),
   })
   .strict()
-  .superRefine((manifest, context) => {
-    reportDuplicates(manifest.roots, "roots", "bundle root", context);
-    reportDuplicates(
-      manifest.requirements.map((requirement) => requirement.id),
-      "requirements",
-      "requirement id",
-      context,
-    );
-    reportDuplicates(
-      manifest.extensions.map((extension) => `${extension.id}@${extension.version}`),
-      "extensions",
-      "extension id and version",
-      context,
-    );
-    const files = new Set<string>();
-    for (const [index, file] of manifest.files.entries()) {
-      if (files.has(file.path)) {
-        context.addIssue({
-          code: "custom",
-          message: `Duplicate bundle file: ${file.path}`,
-          path: ["files", index, "path"],
-        });
-      }
-      files.add(file.path);
-    }
-    if (!files.has(manifest.project.entry)) {
-      context.addIssue({
-        code: "custom",
-        message: "Project entry is not declared in the bundle file index.",
-        path: ["project", "entry"],
-      });
-    }
-    for (const [index, extension] of manifest.extensions.entries()) {
-      if (
-        ![...files].some((path) => path === extension.root || path.startsWith(`${extension.root}/`))
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: `Extension root has no files: ${extension.root}`,
-          path: ["extensions", index, "root"],
-        });
-      }
-    }
-  });
+  .superRefine(refineBundleManifest);
 
 export type PragmaBundleRootRef = z.infer<typeof PragmaBundleRootRefSchema>;
+export type PragmaBundleV1Manifest = z.infer<typeof PragmaBundleV1ManifestSchema>;
+
+function refineBundleManifest(
+  manifest: {
+    readonly roots: readonly string[];
+    readonly requirements: readonly { readonly id: string }[];
+    readonly extensions: readonly {
+      readonly id: string;
+      readonly version: string;
+      readonly root: string;
+    }[];
+    readonly files: readonly { readonly path: string }[];
+    readonly project: { readonly entry: string };
+  },
+  context: z.RefinementCtx,
+): void {
+  reportDuplicates(manifest.roots, "roots", "bundle root", context);
+  reportDuplicates(
+    manifest.requirements.map((requirement) => requirement.id),
+    "requirements",
+    "requirement id",
+    context,
+  );
+  reportDuplicates(
+    manifest.extensions.map((extension) => `${extension.id}@${extension.version}`),
+    "extensions",
+    "extension id and version",
+    context,
+  );
+  const files = new Set<string>();
+  for (const [index, file] of manifest.files.entries()) {
+    if (files.has(file.path)) {
+      context.addIssue({
+        code: "custom",
+        message: `Duplicate bundle file: ${file.path}`,
+        path: ["files", index, "path"],
+      });
+    }
+    files.add(file.path);
+  }
+  if (!files.has(manifest.project.entry)) {
+    context.addIssue({
+      code: "custom",
+      message: "Project entry is not declared in the bundle file index.",
+      path: ["project", "entry"],
+    });
+  }
+  for (const [index, extension] of manifest.extensions.entries()) {
+    if (
+      ![...files].some((path) => path === extension.root || path.startsWith(`${extension.root}/`))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: `Extension root has no files: ${extension.root}`,
+        path: ["extensions", index, "root"],
+      });
+    }
+  }
+}
 
 function reportDuplicates(
   values: readonly string[],

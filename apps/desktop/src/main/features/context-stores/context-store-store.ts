@@ -166,6 +166,7 @@ export interface ContextStoreStore {
     readonly files: ContextStoreSnapshot["files"];
     readonly author: ContextStoreRevisionRecord["author"];
     readonly summary: string;
+    readonly expectedSnapshotHash?: string | undefined;
   }): Promise<ContextStore>;
   getSnapshot(storeId: string, revision?: number): Promise<ContextStoreSnapshot>;
   applyChangeSet(
@@ -1196,6 +1197,15 @@ export function createContextStoreStore(options: {
       try {
         await materializeSnapshot(temporaryFiles, { directories, files });
         const snapshot = await buildSnapshot(id, 1, temporaryFiles, timestamp);
+        if (
+          input.expectedSnapshotHash !== undefined &&
+          snapshot.snapshotHash !== input.expectedSnapshotHash
+        ) {
+          throw new ContextStoreStoreError(
+            "config_invalid",
+            "The imported knowledge-base snapshot does not match its declared hash.",
+          );
+        }
         const store = ContextStoreSchema.parse({
           schemaVersion: "pragma.context-store/v4",
           id,

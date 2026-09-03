@@ -394,6 +394,7 @@ export function createPragmaBundleService(options: {
         files: dependency.snapshot.files,
         author: "import",
         summary: "Recover interrupted knowledge-base Bundle import.",
+        expectedSnapshotHash: dependency.snapshot.snapshotHash,
       });
     } else {
       const snapshot = await options.contextStores.getSnapshot(store.id);
@@ -1693,6 +1694,7 @@ export function createPragmaBundleService(options: {
                   files: dependency.snapshot.files,
                   author: "import",
                   summary: "Import current knowledge-base snapshot from a Pragma Bundle.",
+                  expectedSnapshotHash: dependency.snapshot.snapshotHash,
                 });
                 await updateInstallation(initial.id, (record) => ({
                   ...record,

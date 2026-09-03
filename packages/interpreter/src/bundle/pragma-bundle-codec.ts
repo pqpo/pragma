@@ -6,10 +6,11 @@ import {
   PRAGMA_BUNDLE_DIRECT_READ_VERSIONS,
   PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS,
   PragmaBundleManifestSchema,
-  PragmaBundleV1ManifestSchema,
   type PragmaBundleManifest,
 } from "../ast/pragma-bundle.schema.ts";
 import { sha256, stableStringify } from "../compiler/compiler-hash.ts";
+import { migratePragmaBundleManifestToCurrent } from "./migrations/index.ts";
+import type { PragmaBundleSchemaVersion } from "./migrations/types.ts";
 
 export const DEFAULT_PRAGMA_BUNDLE_LIMITS = {
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -233,17 +234,20 @@ export async function decodePragmaBundle(
       `Unsupported .pragma bundle version: ${String(version)}.`,
     );
   }
-  const parsed =
-    version === "pragma.bundle/v1"
-      ? PragmaBundleV1ManifestSchema.safeParse(manifestValue)
-      : PragmaBundleManifestSchema.safeParse(manifestValue);
-  if (!parsed.success) {
+  let migratedManifest: ReturnType<typeof migratePragmaBundleManifestToCurrent>;
+  try {
+    migratedManifest = migratePragmaBundleManifestToCurrent(
+      manifestValue,
+      version as PragmaBundleSchemaVersion,
+    );
+  } catch (error) {
     throw new PragmaBundleFormatError(
       "manifest.invalid",
-      `Invalid bundle.json: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      `Invalid bundle.json: ${formatManifestMigrationError(error)}`,
+      { cause: error },
     );
   }
-  const sourceManifest = parsed.data;
+  const sourceManifest = migratedManifest.sourceManifest;
   const expectedFiles = new Set(sourceManifest.files.map((file) => file.path));
   const actualFiles = new Set([...files.keys()].filter((path) => path !== "bundle.json"));
   if (
@@ -274,10 +278,7 @@ export async function decodePragmaBundle(
       "The bundle manifest fingerprint is invalid.",
     );
   }
-  const manifest = PragmaBundleManifestSchema.parse({
-    ...sourceManifest,
-    schemaVersion: "pragma.bundle/v2",
-  });
+  const manifest = migratedManifest.manifest;
   for (const requirement of manifest.requirements) {
     if (requirement.payload === undefined) continue;
     verifyPayloadRoot(files, requirement.payload.root, requirement.payload.fingerprint);
@@ -310,6 +311,24 @@ export async function decodePragmaBundle(
     }
   }
   return { manifest, files, archiveBytes: raw.byteLength };
+}
+
+function formatManifestMigrationError(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "issues" in error &&
+    Array.isArray(error.issues)
+  ) {
+    return error.issues
+      .map((issue) =>
+        typeof issue === "object" && issue !== null && "message" in issue
+          ? String(issue.message)
+          : String(issue),
+      )
+      .join("; ");
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function resolveBundleLimits(configured: PragmaBundleLimits = {}): ResolvedPragmaBundleLimits {
