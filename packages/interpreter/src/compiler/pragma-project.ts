@@ -29,6 +29,7 @@ import {
   type IExpertAgentMcpConfig,
   type IExpertAgentSkillsConfig,
 } from "@pragma/core";
+import { PRAGMA_TEXT_LIMITS, pragmaUnicodeLength } from "@pragma/shared";
 import { parseDocument, stringify } from "yaml";
 import { z } from "zod";
 
@@ -2704,7 +2705,28 @@ function validatePortableSemantics(
       path,
     });
   };
+  const warn = (code: string, message: string, path: (string | number)[]): void => {
+    diagnostics.push({
+      severity: "warning",
+      code,
+      message,
+      source: indexed.source,
+      path,
+    });
+  };
   const resource = indexed.resource;
+  if (
+    resource.kind === "ExpertTeam" &&
+    resource.spec.instructions !== undefined &&
+    pragmaUnicodeLength(resource.spec.instructions.trim()) >
+      PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring
+  ) {
+    warn(
+      "expert_team.instructions.authoring_limit",
+      `ExpertTeam instructions exceed the ${PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring}-character authoring limit. Keep TEAM.md concise and move operational knowledge into Context documents. Existing pragma/v5 resources remain readable up to ${PRAGMA_TEXT_LIMITS.expertTeam.instructions} characters.`,
+      ["spec", "instructions"],
+    );
+  }
   if (resource.kind === "Expert") {
     resource.spec.tools.forEach((binding, index) => {
       if (binding.adapter === "pragma.tool.call@v1") {

@@ -19,7 +19,7 @@ These paths are conventions, not special data types. Create only the items usefu
 
 - Omit \`trigger\` to keep a new item \`manual\`. Manual items are discovered with list or search and read only when relevant.
 - Use \`model_decision\` only for a concise current plan, progress summary, or handoff entry that Experts should be able to discover from the startup index. Its body is still loaded on demand.
-- Use \`always_on\` only for short, stable instructions that every Expert must read on every run. The complete body is preloaded into every applicable Expert context, so promotion requires explicit human approval.
+- Use \`always_on\` only for short, stable instructions that every Expert must see on every run. Every applicable item is exposed in the always-on manifest; its body can be full, partial, or deferred under the shared preload budget, so follow the manifest read hint when content is missing. Promotion still requires explicit human approval.
 - Build reports, test reports, review reports, judgments, detailed evidence, historical process notes, and Runtime-managed outputs should remain \`manual\`.
 
 Use \`mission-board\` for information that every Expert in the Mission may read. Use \`mission-board-private\` for notes that must remain isolated to the current Runtime Context. Private content must not be copied to shared items, handoffs, Memory, or exports without an explicit decision to broaden visibility.

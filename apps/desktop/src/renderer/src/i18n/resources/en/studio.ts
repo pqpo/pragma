@@ -429,7 +429,7 @@ export const studio = {
   teamInstructionsPlaceholder:
     "Describe collaboration principles, quality requirements, or shared working agreements.",
   teamInstructionsHint:
-    "Loaded into every coordinator and member context as an always-on TEAM.md document.",
+    "Exposed to every coordinator and member as an always-on TEAM.md document. Keep it concise.",
   teamKnowledgeBases: "Team knowledge bases",
   teamKnowledgeBasesDescription: "Knowledge mounted only while experts work through this team.",
   teamKnowledgeSelect: "Select team knowledge bases",

@@ -339,7 +339,7 @@ export interface ContextAssemblySelection {
   readonly excluded: readonly ExpertAgentContextItemReference[];
 }
 
-export interface ContextPreloadSelection extends ExpertAgentContextItemReference {
+export interface ContextPreloadSelection extends ExpertAgentContextItemSummary {
   readonly reasons: readonly ContextPreloadReason[];
 }
 
@@ -558,22 +558,14 @@ export class ContextSystem {
   }
 
   selectContext(summaries: readonly ExpertAgentContextItemSummary[]): ContextAssemblySelection {
-    if (this.roots.length === 0) {
-      return {
-        context: sortContextSummaries(
-          summaries.filter((summary) => summary.metadata.trigger === "model_decision"),
-        ),
-        preload: createAlwaysOnPreloadSelections(summaries),
-        excluded: [],
-      };
-    }
-
     const excluded = new Map<string, ExpertAgentContextItemReference>();
     const preload = new Map<string, ContextPreloadReason[]>();
     const allowed = new Map<string, ExpertAgentContextItemSummary>();
 
     for (const summary of summaries) {
       const key = createContextReferenceKey(summary);
+      let prioritized = summary;
+      let forbidden = false;
 
       for (const root of this.roots) {
         if (!matchesContextRoot(summary, root)) {
@@ -582,24 +574,25 @@ export class ContextSystem {
 
         if (matchesAnyPattern(summary.id, root.load.forbiddenLoad)) {
           excluded.set(key, toContextReference(summary));
-          allowed.delete(key);
-          preload.delete(key);
+          forbidden = true;
           break;
         }
 
-        const prioritized = applyPriorityRules(
-          allowed.get(key) ?? summary,
-          root.load.priorityRules,
-        );
-        allowed.set(key, prioritized);
+        prioritized = applyPriorityRules(prioritized, root.load.priorityRules);
 
         if (matchesAnyPattern(summary.id, root.load.preloadPaths)) {
           addPreloadReason(preload, key, "preload_path");
         }
+      }
 
-        if (prioritized.metadata.trigger === "always_on") {
-          addPreloadReason(preload, key, "always_on");
-        }
+      if (forbidden) {
+        preload.delete(key);
+        continue;
+      }
+
+      allowed.set(key, prioritized);
+      if (prioritized.metadata.trigger === "always_on") {
+        addPreloadReason(preload, key, "always_on");
       }
     }
 
@@ -1232,17 +1225,6 @@ function normalizeContextRoots(
   });
 }
 
-function createAlwaysOnPreloadSelections(
-  summaries: readonly ExpertAgentContextItemSummary[],
-): readonly ContextPreloadSelection[] {
-  return summaries
-    .filter((summary) => summary.metadata.trigger === "always_on")
-    .map((summary) => ({
-      ...toContextReference(summary),
-      reasons: ["always_on"],
-    }));
-}
-
 function addPreloadReason(
   preload: Map<string, ContextPreloadReason[]>,
   key: string,
@@ -1276,7 +1258,7 @@ function toPreloadSelection(
   }
 
   return {
-    ...toContextReference(summary),
+    ...summary,
     reasons: [...reasons],
   };
 }

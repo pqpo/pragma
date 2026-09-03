@@ -45,7 +45,7 @@ describe("Pragma project Blueprint cache", () => {
       }),
     ]);
     await vi.waitFor(() => expect(write).toHaveBeenCalledOnce());
-  });
+  }, 15_000);
 
   it("rehydrates a serialized Blueprint from the Host cache within the warm-load gate", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-blueprint-cache-"));

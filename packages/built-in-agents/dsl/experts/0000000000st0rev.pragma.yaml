@@ -52,8 +52,9 @@ spec:
     - description is a concise retrieval label. Say what the file contains and when to load it. Use
       searchable terms. Do not copy the body, use vague labels, or put instructions there. A
       model_decision description must make sense without the body.
-    - trigger is the loading behavior. always_on injects the complete body on every applicable run and
-      consumes preload budget. Reserve it for short information that is almost always needed.
+    - trigger is the loading behavior. always_on exposes every applicable item in the system prompt manifest;
+      its body can be full, partial, or deferred under the preload budget. Follow manifest read hints
+      before relying on missing content. Reserve it for short information that is almost always needed.
       model_decision advertises only id and description at startup; use it for most knowledge. manual
       neither preloads nor advertises the body; use it for explicit list, search, or read workflows.
       Importance alone is not a reason to use always_on.

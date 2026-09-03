@@ -745,6 +745,52 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
+  it("warns above the ExpertTeam authoring limit while preserving pragma/v5 compatibility", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-team-authoring-limit-"));
+    const entry = join(root, "pragma.yaml");
+    const instructions = "令".repeat(PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring + 1);
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          expertResource("mrvsehytqfmb814x", "Coordinates delivery"),
+          expertResource("3sfd30h5017wd17d", "Reviews delivery"),
+          {
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+            kind: "ExpertTeam",
+            metadata: {
+              id: "vyv9pwwzaksth2dd",
+              name: "Delivery",
+              description: "Coordinates delivery",
+              tags: [],
+            },
+            spec: {
+              coordinator: { ref: "expert:mrvsehytqfmb814x" },
+              members: [{ ref: "expert:3sfd30h5017wd17d" }],
+              instructions,
+              delegation: {},
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(PragmaExpertTeamInstructionsSchema.safeParse(instructions).success).toBe(true);
+    expect(await (await loadPragmaProject(entry)).validate()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          code: "expert_team.instructions.authoring_limit",
+          path: ["spec", "instructions"],
+        }),
+      ]),
+    );
+  });
+
   it("defaults Team ContextStore visibility to all and rejects empty or unknown visibility", () => {
     const base = {
       apiVersion: PRAGMA_DSL_WRITE_API_VERSION,

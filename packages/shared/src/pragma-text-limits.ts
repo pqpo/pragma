@@ -16,6 +16,8 @@ export const PRAGMA_TEXT_LIMITS = {
   expertTeam: {
     name: 50,
     description: 500,
+    // New authoring surfaces keep TEAM.md concise; the wider parser ceiling preserves pragma/v5.
+    instructionsAuthoring: 2_000,
     instructions: 5_000,
   },
   flow: {
@@ -42,12 +44,7 @@ export const PRAGMA_TEXT_LIMITS = {
 } as const;
 
 export type PragmaKnowledgeBaseEntryNameIssue =
-  | "empty"
-  | "too_long"
-  | "whitespace"
-  | "invalid_character"
-  | "dot_name"
-  | "reserved_name";
+  "empty" | "too_long" | "whitespace" | "invalid_character" | "dot_name" | "reserved_name";
 
 const KNOWLEDGE_BASE_ENTRY_INVALID_CHARACTER_PATTERN = /[<>:"/\\|?*\p{Cc}\p{Cf}]/u;
 const WINDOWS_RESERVED_ENTRY_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu;

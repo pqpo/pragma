@@ -18,7 +18,10 @@ describe("Pragma text limits", () => {
       scope: 1_000,
       instructions: 5_000,
     });
-    expect(PRAGMA_TEXT_LIMITS.expertTeam).toMatchObject({ instructions: 5_000 });
+    expect(PRAGMA_TEXT_LIMITS.expertTeam).toMatchObject({
+      instructionsAuthoring: 2_000,
+      instructions: 5_000,
+    });
     expect(PRAGMA_TEXT_LIMITS.flow).toMatchObject({ promptTextSegment: 5_000 });
     expect(PRAGMA_TEXT_LIMITS.automation).toMatchObject({
       promptAuthoring: 5_000,
