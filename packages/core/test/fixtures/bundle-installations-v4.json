@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "pragma.bundle-installations/v4",
+  "installations": [
+    {
+      "schemaVersion": "pragma.bundle-installation/v4",
+      "bundleVersion": "pragma.desktop-bundle/v1",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "bundleFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "projectId": "studio",
+      "projectRevision": 4,
+      "sourceRootRef": "expert:1xddvess309a6gme",
+      "rootRef": "expert:1xddvess309a6gme",
+      "rootName": "Writer",
+      "rootKind": "Expert",
+      "resourceRefs": ["expert:1xddvess309a6gme"],
+      "createdResourceRefs": ["expert:1xddvess309a6gme"],
+      "createdCapabilityIds": [],
+      "createdContextStoreIds": [],
+      "createdPluginRefs": [],
+      "conflictResolutions": [],
+      "resourceMappings": [],
+      "status": "needs_setup",
+      "pending": [
+        {
+          "id": "runtime:runtime-profile:zdkgs0fde4xt00vr",
+          "kind": "runtime",
+          "resourceRef": "runtime-profile:zdkgs0fde4xt00vr",
+          "name": "Writer Runtime",
+          "message": "Choose a compatible Runtime.",
+          "status": "action_required",
+          "code": "legacy_pending",
+          "action": "restore_or_replace"
+        }
+      ],
+      "readiness": [
+        {
+          "id": "runtime:runtime-profile:zdkgs0fde4xt00vr",
+          "kind": "runtime",
+          "resourceRef": "runtime-profile:zdkgs0fde4xt00vr",
+          "name": "Writer Runtime",
+          "status": "action_required",
+          "code": "legacy_pending",
+          "action": "restore_or_replace",
+          "message": "Choose a compatible Runtime."
+        }
+      ],
+      "createdAt": "2026-07-29T08:00:00.000Z",
+      "updatedAt": "2026-07-29T08:00:00.000Z"
+    }
+  ]
+}

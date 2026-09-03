@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   ArrowsClockwise,
+  Database,
   DownloadSimple,
   MagnifyingGlass,
   SealCheck,
@@ -23,10 +24,10 @@ import { desktopApi } from "./studio-model.ts";
 type SquareKind = DesktopSquareCatalog["items"][number]["kind"];
 type SquareSort = "latest" | "name";
 
-const KINDS: readonly SquareKind[] = ["expert", "expert-team", "flow"];
+const KINDS: readonly SquareKind[] = ["expert", "expert-team", "flow", "knowledge-base"];
 
 export function SquareDirectoryFragment(props: {
-  readonly onInstall: (sourcePath: string) => void;
+  readonly onInstall: (sourcePath: string, rootRef: string) => void;
 }) {
   const { t, i18n } = useTranslation("studio");
   const [catalog, setCatalog] = useState<DesktopSquareCatalog>({
@@ -133,7 +134,7 @@ export function SquareDirectoryFragment(props: {
         itemId: selected.item.id,
         version,
       });
-      props.onInstall(result.path);
+      props.onInstall(result.path, result.rootRef);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -309,9 +310,13 @@ export function SquareDirectoryFragment(props: {
               key={`${item.sourceId}:${item.kind}:${item.id}`}
               onClick={() => void open(item)}
             >
-              {item.kind === "flow" ? (
+              {item.kind === "flow" || item.kind === "knowledge-base" ? (
                 <span className="square-card-icon">
-                  <Storefront size={22} />
+                  {item.kind === "knowledge-base" ? (
+                    <Database size={22} />
+                  ) : (
+                    <Storefront size={22} />
+                  )}
                 </span>
               ) : (
                 <ExpertAvatar

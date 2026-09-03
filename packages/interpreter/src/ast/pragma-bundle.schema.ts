@@ -1,13 +1,19 @@
 import { z } from "zod";
 
 import {
+  PragmaContextStoreRefSchema,
   PragmaInvocableResourceRefSchema,
   PragmaSemanticResourceRefSchema,
 } from "./pragma-dsl.schema.ts";
 
-export const PRAGMA_BUNDLE_WRITE_VERSION = "pragma.bundle/v1" as const;
+export const PRAGMA_BUNDLE_WRITE_VERSION = "pragma.bundle/v2" as const;
 export const PRAGMA_BUNDLE_DIRECT_READ_VERSIONS = [PRAGMA_BUNDLE_WRITE_VERSION] as const;
-export const PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS = [] as const;
+export const PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS = ["pragma.bundle/v1"] as const;
+
+export const PragmaBundleRootRefSchema = z.union([
+  PragmaInvocableResourceRefSchema,
+  PragmaContextStoreRefSchema,
+]);
 
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const BundlePathSchema = z
@@ -71,22 +77,34 @@ export const PragmaBundleExtensionSchema = z
   })
   .strict();
 
+const PragmaBundleManifestShape = {
+  createdAt: z.string().datetime({ offset: true }),
+  bundleFingerprint: Sha256Schema,
+  project: z
+    .object({
+      entry: BundlePathSchema,
+      compilerVersion: z.string().trim().min(1),
+      projectFingerprint: Sha256Schema,
+    })
+    .strict(),
+  requirements: z.array(PragmaBundleRequirementSchema).default([]),
+  extensions: z.array(PragmaBundleExtensionSchema).default([]),
+  files: z.array(PragmaBundleFileSchema),
+} as const;
+
+export const PragmaBundleV1ManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle/v1"),
+    ...PragmaBundleManifestShape,
+    roots: z.array(PragmaInvocableResourceRefSchema).min(1),
+  })
+  .strict();
+
 export const PragmaBundleManifestSchema = z
   .object({
     schemaVersion: z.literal(PRAGMA_BUNDLE_WRITE_VERSION),
-    createdAt: z.string().datetime({ offset: true }),
-    bundleFingerprint: Sha256Schema,
-    roots: z.array(PragmaInvocableResourceRefSchema).min(1),
-    project: z
-      .object({
-        entry: BundlePathSchema,
-        compilerVersion: z.string().trim().min(1),
-        projectFingerprint: Sha256Schema,
-      })
-      .strict(),
-    requirements: z.array(PragmaBundleRequirementSchema).default([]),
-    extensions: z.array(PragmaBundleExtensionSchema).default([]),
-    files: z.array(PragmaBundleFileSchema),
+    ...PragmaBundleManifestShape,
+    roots: z.array(PragmaBundleRootRefSchema).min(1),
   })
   .strict()
   .superRefine((manifest, context) => {
@@ -133,6 +151,8 @@ export const PragmaBundleManifestSchema = z
       }
     }
   });
+
+export type PragmaBundleRootRef = z.infer<typeof PragmaBundleRootRefSchema>;
 
 function reportDuplicates(
   values: readonly string[],

@@ -1,5 +1,5 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "../src/ast/index.ts";
-import { access, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -26,6 +26,82 @@ import { sha256, stableStringify } from "../src/compiler/compiler-hash.ts";
 import { PragmaCompilerV6ResourceSchema } from "../src/compiler-migrations/schemas/v6.ts";
 
 describe("portable .pragma bundles", () => {
+  it("verifies a real v1 fingerprint before upgrading the manifest to v2", async () => {
+    const fixtureRoot = join(import.meta.dirname, "fixtures", "pragma-bundle-v1");
+    const legacy = JSON.parse(await readFile(join(fixtureRoot, "bundle.json"), "utf8"));
+    const decoded = await decodePragmaBundle({
+      kind: "bytes",
+      bytes: zipSync({
+        "bundle.json": strToU8(`${JSON.stringify(legacy, undefined, 2)}\n`),
+        "project/pragma.yaml": new Uint8Array(
+          await readFile(join(fixtureRoot, "project", "pragma.yaml")),
+        ),
+      }),
+    });
+    expect(decoded.manifest).toMatchObject({
+      schemaVersion: "pragma.bundle/v2",
+      bundleFingerprint: legacy.bundleFingerprint,
+    });
+
+    const tampered = { ...legacy, bundleFingerprint: "0".repeat(64) };
+    await expect(
+      decodePragmaBundle({
+        kind: "bytes",
+        bytes: zipSync({
+          "bundle.json": strToU8(`${JSON.stringify(tampered, undefined, 2)}\n`),
+          "project/pragma.yaml": new Uint8Array(
+            await readFile(join(fixtureRoot, "project", "pragma.yaml")),
+          ),
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "manifest.fingerprint_invalid" });
+  });
+
+  it("round-trips a ContextStore as a v2 Bundle root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-context-bundle-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(join(root, "handbook.md"), "# Team handbook\n");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Bundle",
+        resources: [
+          {
+            apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+            kind: "ContextStore",
+            metadata: {
+              id: "w01fppfxrn31gf7v",
+              name: "Team handbook",
+              description: "Shared knowledge",
+              tags: ["handbook"],
+            },
+            spec: {
+              adapter: "pragma.context.file@v1",
+              config: { source: { type: "project", path: "handbook.md" } },
+            },
+          },
+        ],
+      }),
+    );
+    const project = await loadPragmaProject(entry);
+    const exported = await project.exportBundle({ roots: ["context-store:w01fppfxrn31gf7v"] });
+    const decoded = await decodePragmaBundle({ kind: "bytes", bytes: exported.bytes });
+    expect(decoded.manifest).toMatchObject({
+      schemaVersion: "pragma.bundle/v2",
+      roots: ["context-store:w01fppfxrn31gf7v"],
+    });
+    const loaded = await loadPragmaProject({ kind: "decoded-bundle", bundle: decoded });
+    expect(loaded.listResources()).toEqual([
+      expect.objectContaining({
+        kind: "ContextStore",
+        metadata: expect.objectContaining({ name: "Team handbook" }),
+      }),
+    ]);
+    await loaded.dispose();
+    await project.dispose();
+  });
+
   it("exports a target dependency closure and loads it directly through the Interpreter", async () => {
     const source = await createProject();
     const project = await loadPragmaProject(source.entry);
@@ -36,7 +112,7 @@ describe("portable .pragma bundles", () => {
     });
 
     expect(exported.manifest).toMatchObject({
-      schemaVersion: "pragma.bundle/v1",
+      schemaVersion: "pragma.bundle/v2",
       roots: ["expert:1xddvess309a6gme"],
       project: { entry: "project/pragma.yaml" },
     });
@@ -110,7 +186,7 @@ describe("portable .pragma bundles", () => {
     );
     const historical = await encodePragmaBundle({
       manifest: {
-        schemaVersion: "pragma.bundle/v1",
+        schemaVersion: "pragma.bundle/v2",
         createdAt: "2026-08-11T00:00:00.000Z",
         roots: ["expert:1xddvess309a6gme"],
         project: {

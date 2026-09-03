@@ -8,11 +8,11 @@ Host objects / compiled objects
   -> Interpreter selects the root dependency closure
   -> canonical portable YAML + lock + project artifacts
   -> typed asset requirements + optional Host payloads
-  -> pragma.bundle/v1 ZIP
+  -> pragma.bundle/v2 ZIP
   -> Interpreter verifies and loads
   -> Host explicitly binds requirements into an overlay
   -> target-scoped validate + compile
-  -> Core Expert / ExpertTeam / Flow
+  -> Core Expert / ExpertTeam / Flow or a managed ContextStore
 ```
 
 ## API example
@@ -92,6 +92,11 @@ Host-owned:
 
 The bundle never makes the Host's storage identifier authoritative. The portable requirement is the
 contract; each Host decides how it satisfies that contract.
+
+Bundle roots are limited to `Expert`, `ExpertTeam`, `Flow`, and `ContextStore`. Version 2 adds the
+fourth root kind. The decoder preserves the historical v1 schema, verifies a v1 archive against its
+original fingerprint, and then upgrades the manifest in memory. Unknown future versions fail
+closed.
 
 ## Exported project layout
 

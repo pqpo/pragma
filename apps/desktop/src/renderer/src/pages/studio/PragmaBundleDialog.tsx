@@ -2,6 +2,7 @@ import {
   Archive,
   ArrowsClockwise,
   Check,
+  Database,
   DownloadSimple,
   GitBranch,
   MagnifyingGlass,
@@ -33,7 +34,7 @@ type BundleMode = "export" | "import";
 type ExportStep = "select" | "modules" | "result";
 type BundleExportRoot = Extract<
   PragmaProjectSnapshot["resources"][number],
-  { kind: "Expert" | "ExpertTeam" | "Flow" }
+  { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" }
 >;
 type ImportStep = "select" | "conflicts" | "bindings" | "review" | "result";
 type BindingRequirement = PragmaBundleImportInspection["requirements"][number];
@@ -61,7 +62,12 @@ export const BUNDLE_EXPORT_LIST_PAGE_SIZE = 20;
 function isBundleExportRoot(
   resource: PragmaProjectSnapshot["resources"][number],
 ): resource is BundleExportRoot {
-  return resource.kind === "Expert" || resource.kind === "ExpertTeam" || resource.kind === "Flow";
+  return (
+    resource.kind === "Expert" ||
+    resource.kind === "ExpertTeam" ||
+    resource.kind === "Flow" ||
+    resource.kind === "ContextStore"
+  );
 }
 
 function compareBundleExportRoots(left: BundleExportRoot, right: BundleExportRoot): number {
@@ -114,6 +120,7 @@ export function PragmaBundleDialog(props: {
   readonly contextStores: readonly ContextStore[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly initialSourcePath?: string | undefined;
+  readonly initialRootRef?: string | undefined;
   readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
@@ -128,11 +135,21 @@ export function PragmaBundleDialog(props: {
 
 function BundleExportDialog(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly initialRootRef?: string | undefined;
   readonly onClose: () => void;
 }) {
   const { t } = useTranslation("studio");
-  const [step, setStep] = useState<ExportStep>("select");
-  const [rootRef, setRootRef] = useState("");
+  const requestedRootRef = props.initialRootRef;
+  const initialRootRef =
+    requestedRootRef !== undefined &&
+    props.project.resources.some(
+      (resource) =>
+        isBundleExportRoot(resource) && canonicalPragmaResourceRef(resource) === requestedRootRef,
+    )
+      ? requestedRootRef
+      : "";
+  const [step, setStep] = useState<ExportStep>(initialRootRef === "" ? "select" : "modules");
+  const [rootRef, setRootRef] = useState(initialRootRef);
   const [modules, setModules] = useState<PragmaBundleModuleOptions>({
     capabilities: true,
     plugins: true,
@@ -255,30 +272,41 @@ function BundleExportDialog(props: {
           </header>
           <fieldset className="pragma-bundle-modules">
             <legend id="bundle-modules-title">{t("bundleModules")}</legend>
-            <BundleToggle
-              label={t("bundleCapabilities")}
-              description={t("bundleCapabilitiesHint")}
-              checked={modules.capabilities}
-              onChange={(capabilities) => setModules({ ...modules, capabilities })}
-            />
-            <BundleToggle
-              label={t("bundlePlugins")}
-              description={t("bundlePluginsHint")}
-              checked={modules.plugins}
-              onChange={(plugins) => setModules({ ...modules, plugins })}
-            />
+            {selected.kind !== "ContextStore" ? (
+              <>
+                <BundleToggle
+                  label={t("bundleCapabilities")}
+                  description={t("bundleCapabilitiesHint")}
+                  checked={modules.capabilities}
+                  onChange={(capabilities) => setModules({ ...modules, capabilities })}
+                />
+                <BundleToggle
+                  label={t("bundlePlugins")}
+                  description={t("bundlePluginsHint")}
+                  checked={modules.plugins}
+                  onChange={(plugins) => setModules({ ...modules, plugins })}
+                />
+              </>
+            ) : null}
             <BundleToggle
               label={t("bundleKnowledgeBases")}
-              description={t("bundleKnowledgeBasesHint")}
-              checked={modules.knowledgeBases}
+              description={t(
+                selected.kind === "ContextStore"
+                  ? "bundleKnowledgeBaseRequiredHint"
+                  : "bundleKnowledgeBasesHint",
+              )}
+              checked={selected.kind === "ContextStore" || modules.knowledgeBases}
+              disabled={selected.kind === "ContextStore"}
               onChange={(knowledgeBases) => setModules({ ...modules, knowledgeBases })}
             />
-            <BundleToggle
-              label={t("bundleFlowLayouts")}
-              description={t("bundleFlowLayoutsHint")}
-              checked={modules.flowLayouts}
-              onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
-            />
+            {selected.kind !== "ContextStore" ? (
+              <BundleToggle
+                label={t("bundleFlowLayouts")}
+                description={t("bundleFlowLayoutsHint")}
+                checked={modules.flowLayouts}
+                onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
+              />
+            ) : null}
           </fieldset>
           <p className="pragma-bundle-safety">{t("bundleSafetyHint")}</p>
         </section>
@@ -302,6 +330,7 @@ function BundleImportDialog(props: {
   readonly contextStores: readonly ContextStore[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly initialSourcePath?: string | undefined;
+  readonly initialRootRef?: string | undefined;
   readonly onRefreshRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly onClose: () => void;
   readonly onChanged: () => void | Promise<void>;
@@ -420,11 +449,14 @@ function BundleImportDialog(props: {
     setBusy(true);
     setError(null);
     void api
-      .inspectPragmaBundle({ sourcePath: props.initialSourcePath })
+      .inspectPragmaBundle({
+        sourcePath: props.initialSourcePath,
+        ...(props.initialRootRef === undefined ? {} : { rootRef: props.initialRootRef }),
+      })
       .then(resetForInspection)
       .catch((cause: unknown) => setError(displayError(cause)))
       .finally(() => setBusy(false));
-  }, [props.initialSourcePath, resetForInspection]);
+  }, [props.initialRootRef, props.initialSourcePath, resetForInspection]);
 
   const inspectPickedBundle = async () => {
     const api = desktopApi();
@@ -620,6 +652,12 @@ function BundleImportDialog(props: {
               conflicts: inspection.conflicts.map((conflict) => ({
                 resourceRef: conflict.ref,
                 action: conflicts[conflict.ref] ?? "copy",
+                ...(conflict.targetRevision === undefined
+                  ? {}
+                  : { expectedTargetRevision: conflict.targetRevision }),
+                ...(conflict.targetSnapshotHash === undefined
+                  ? {}
+                  : { expectedTargetSnapshotHash: conflict.targetSnapshotHash }),
               })),
               runtimes,
               capabilities,
@@ -1239,10 +1277,16 @@ function BundleConflictStep(props: {
                 className={props.selections[conflict.ref] === "update" ? "is-selected" : ""}
                 onClick={() => props.onChange(conflict.ref, "update")}
               >
-                <strong>{t("bundleUpdateExisting")}</strong>
+                <strong>
+                  {conflict.resourceKind === "ContextStore"
+                    ? t("bundleAppendKnowledgeRevision")
+                    : t("bundleUpdateExisting")}
+                </strong>
                 <small>
                   {conflict.updateAllowed
-                    ? t("bundleUpdateExistingShortHint")
+                    ? conflict.resourceKind === "ContextStore"
+                      ? t("bundleAppendKnowledgeRevisionHint")
+                      : t("bundleUpdateExistingShortHint")
                     : t("bundleUpdateBlocked")}
                 </small>
               </button>
@@ -1665,6 +1709,7 @@ function BundleExportObjectStep(props: {
     { id: "Expert", label: t("bundleFilterExperts") },
     { id: "ExpertTeam", label: t("bundleFilterTeams") },
     { id: "Flow", label: t("bundleFilterFlows") },
+    { id: "ContextStore", label: t("bundleFilterKnowledgeBases") },
   ];
   const filtered = filterBundleExportRoots(props.roots, search, (resourceKind) =>
     bundleRootLabel(resourceKind, t),
@@ -1803,6 +1848,14 @@ function BundleExportRootVisual(props: {
       />
     );
   }
+  if (props.resource.kind === "ContextStore") {
+    return (
+      <Database
+        size={props.size === "picker" ? 28 : props.size === "sm" ? 19 : 22}
+        aria-hidden="true"
+      />
+    );
+  }
   return (
     <GitBranch
       size={props.size === "picker" ? 28 : props.size === "sm" ? 19 : 22}
@@ -1816,13 +1869,16 @@ function bundleRootLabel(kind: BundleExportRoot["kind"], t: (key: string) => str
     ? t("bundleRootExpert")
     : kind === "ExpertTeam"
       ? t("bundleRootExpertTeam")
-      : t("bundleRootFlow");
+      : kind === "Flow"
+        ? t("bundleRootFlow")
+        : t("bundleRootKnowledgeBase");
 }
 
 function BundleToggle(props: {
   readonly label: string;
   readonly description: string;
   readonly checked: boolean;
+  readonly disabled?: boolean | undefined;
   readonly onChange: (checked: boolean) => void;
 }) {
   return (
@@ -1834,6 +1890,7 @@ function BundleToggle(props: {
       <input
         type="checkbox"
         checked={props.checked}
+        disabled={props.disabled}
         onChange={(event) => props.onChange(event.target.checked)}
       />
     </label>

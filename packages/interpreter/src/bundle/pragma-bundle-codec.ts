@@ -4,7 +4,9 @@ import { strFromU8, strToU8, unzip, zip, type AsyncUnzipOptions } from "fflate";
 
 import {
   PRAGMA_BUNDLE_DIRECT_READ_VERSIONS,
+  PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS,
   PragmaBundleManifestSchema,
+  PragmaBundleV1ManifestSchema,
   type PragmaBundleManifest,
 } from "../ast/pragma-bundle.schema.ts";
 import { sha256, stableStringify } from "../compiler/compiler-hash.ts";
@@ -61,9 +63,15 @@ export class PragmaBundleFormatError extends Error {
   }
 }
 
-export function createPragmaBundleFingerprint(
-  manifest: Omit<PragmaBundleManifest, "bundleFingerprint"> | PragmaBundleManifest,
-): string {
+export function createPragmaBundleFingerprint(manifest: {
+  readonly schemaVersion: string;
+  readonly createdAt: string;
+  readonly roots: readonly string[];
+  readonly project: unknown;
+  readonly requirements: readonly unknown[];
+  readonly extensions: readonly unknown[];
+  readonly files: readonly unknown[];
+}): string {
   return sha256(
     stableStringify({
       schemaVersion: manifest.schemaVersion,
@@ -216,21 +224,27 @@ export async function decodePragmaBundle(
     typeof manifestValue === "object" && manifestValue !== null
       ? (manifestValue as Record<string, unknown>)["schemaVersion"]
       : undefined;
-  if (!(PRAGMA_BUNDLE_DIRECT_READ_VERSIONS as readonly unknown[]).includes(version)) {
+  if (
+    !(PRAGMA_BUNDLE_DIRECT_READ_VERSIONS as readonly unknown[]).includes(version) &&
+    !(PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS as readonly unknown[]).includes(version)
+  ) {
     throw new PragmaBundleFormatError(
       "manifest.version_unsupported",
       `Unsupported .pragma bundle version: ${String(version)}.`,
     );
   }
-  const parsed = PragmaBundleManifestSchema.safeParse(manifestValue);
+  const parsed =
+    version === "pragma.bundle/v1"
+      ? PragmaBundleV1ManifestSchema.safeParse(manifestValue)
+      : PragmaBundleManifestSchema.safeParse(manifestValue);
   if (!parsed.success) {
     throw new PragmaBundleFormatError(
       "manifest.invalid",
       `Invalid bundle.json: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
     );
   }
-  const manifest = parsed.data;
-  const expectedFiles = new Set(manifest.files.map((file) => file.path));
+  const sourceManifest = parsed.data;
+  const expectedFiles = new Set(sourceManifest.files.map((file) => file.path));
   const actualFiles = new Set([...files.keys()].filter((path) => path !== "bundle.json"));
   if (
     expectedFiles.size !== actualFiles.size ||
@@ -241,7 +255,7 @@ export async function decodePragmaBundle(
       "The bundle file index does not match the archive.",
     );
   }
-  for (const indexed of manifest.files) {
+  for (const indexed of sourceManifest.files) {
     const contents = files.get(indexed.path);
     if (
       contents === undefined ||
@@ -254,12 +268,16 @@ export async function decodePragmaBundle(
       );
     }
   }
-  if (createPragmaBundleFingerprint(manifest) !== manifest.bundleFingerprint) {
+  if (createPragmaBundleFingerprint(sourceManifest) !== sourceManifest.bundleFingerprint) {
     throw new PragmaBundleFormatError(
       "manifest.fingerprint_invalid",
       "The bundle manifest fingerprint is invalid.",
     );
   }
+  const manifest = PragmaBundleManifestSchema.parse({
+    ...sourceManifest,
+    schemaVersion: "pragma.bundle/v2",
+  });
   for (const requirement of manifest.requirements) {
     if (requirement.payload === undefined) continue;
     verifyPayloadRoot(files, requirement.payload.root, requirement.payload.fingerprint);

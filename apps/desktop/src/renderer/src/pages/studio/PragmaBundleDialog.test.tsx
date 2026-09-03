@@ -17,7 +17,7 @@ import {
 
 type ExportRoot = Extract<
   PragmaProjectSnapshot["resources"][number],
-  { kind: "Expert" | "ExpertTeam" | "Flow" }
+  { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" }
 >;
 
 function exportRoot(index: number): ExportRoot {
@@ -38,7 +38,13 @@ function exportRoot(index: number): ExportRoot {
 describe("Bundle export root search", () => {
   const roots = Array.from({ length: 50 }, (_, index) => exportRoot(index));
   const kindLabel = (kind: ExportRoot["kind"]): string =>
-    kind === "Expert" ? "专家" : kind === "ExpertTeam" ? "专家团" : "Flow";
+    kind === "Expert"
+      ? "专家"
+      : kind === "ExpertTeam"
+        ? "专家团"
+        : kind === "ContextStore"
+          ? "知识库"
+          : "Flow";
 
   it("shows export objects in pages of twenty and keeps the rest available", () => {
     const initial = filterBundleExportRoots(roots, "", kindLabel);
@@ -100,6 +106,49 @@ describe("Bundle export root search", () => {
     expect(html).toContain('class="primary-button" type="button" disabled=""');
     expect(html).toContain("<strong>Resource 0</strong>");
     expect(html).toContain("Configure bundle contents");
+  });
+
+  it("opens the confirmation step for a preselected knowledge base", () => {
+    const knowledgeBase = {
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "ContextStore" as const,
+      metadata: {
+        id: "kqh4nx7rx26mb3e7",
+        name: "Release handbook",
+        description: "Current release guidance.",
+        tags: ["desktop-managed"],
+      },
+      spec: {
+        adapter: "pragma.context.host@v1" as const,
+        binding: "binding:desktop-context:00000000-0000-4000-8000-000000000001",
+        config: { key: "00000000-0000-4000-8000-000000000001" },
+      },
+    };
+    const project: PragmaProjectSnapshot = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "studio",
+      revision: 1,
+      resources: [knowledgeBase],
+      diagnostics: [],
+    };
+    const html = renderToStaticMarkup(
+      <PragmaBundleDialog
+        mode="export"
+        project={project}
+        capabilities={[]}
+        contextStores={[]}
+        runtimes={[]}
+        initialRootRef="context-store:kqh4nx7rx26mb3e7"
+        onRefreshRuntimes={async () => []}
+        onClose={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Modules to include");
+    expect(html).toContain("Knowledge base content");
+    expect(html).toContain("The current published snapshot is required for this export.");
+    expect(html).toContain('class="is-active" aria-current="step"');
   });
 });
 

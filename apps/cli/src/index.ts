@@ -473,6 +473,8 @@ function commandName(command: ParsedCommand): string {
       return "source.init";
     case "source-add":
       return "source.add";
+    case "source-upgrade":
+      return "source.upgrade";
     case "executor-discover":
       return `${command.executorKind}.discover`;
     case "executor-describe":

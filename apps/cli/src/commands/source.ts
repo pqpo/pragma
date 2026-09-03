@@ -3,6 +3,7 @@ import {
   initializeBundleSource,
   inspectBundleSourceBundle,
   readBundleSourceManifest,
+  upgradeBundleSource,
 } from "@pragma/local-host";
 import { BundleSourceSlugSchema, type JsonValue } from "@pragma/shared";
 
@@ -18,6 +19,9 @@ export async function executeSourceCommand(
 ): Promise<JsonValue> {
   if (command.kind === "source-init") {
     return asJsonValue(await initializeBundleSource(command));
+  }
+  if (command.kind === "source-upgrade") {
+    return asJsonValue(await upgradeBundleSource(command.directory));
   }
   if (context.interactive === "never" || !context.terminal.isControllingTerminal()) {
     throw new Error("source add requires an interactive controlling terminal.");

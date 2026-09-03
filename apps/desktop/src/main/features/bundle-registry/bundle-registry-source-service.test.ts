@@ -10,6 +10,7 @@ import {
   AddDesktopBundleRegistrySourceSchema,
   DesktopBundleRegistrySnapshotSchema,
   DesktopBundleRegistryRemoteSchema,
+  DesktopSquareBundleDownloadSchema,
   DownloadDesktopSquareBundleSchema,
 } from "../../../shared/contracts/index.ts";
 import { createDesktopBundleRegistrySourceService } from "./bundle-registry-source-service.ts";
@@ -92,6 +93,14 @@ describe("Desktop Bundle Registry sources", () => {
         version: "1.0.0",
       }),
     ).toMatchObject({ kind: "expert-team", itemId: "product-team" });
+    expect(
+      DesktopSquareBundleDownloadSchema.parse({
+        path: "/tmp/handbook.pragma",
+        rootRef: "context-store:kqh4nx7rx26mb3e7",
+        sha256: "a".repeat(64),
+        cached: false,
+      }),
+    ).toMatchObject({ rootRef: "context-store:kqh4nx7rx26mb3e7" });
   });
 
   it("discovers configs without decoding Bundles and falls back to a stale snapshot", async () => {
@@ -99,6 +108,9 @@ describe("Desktop Bundle Registry sources", () => {
     temporaryRoots.push(root);
     const remote = join(root, "remote");
     await mkdir(join(remote, "experts/general/reviewer/versions/1.0.0"), { recursive: true });
+    await mkdir(join(remote, "knowledge-bases/general/handbook/versions/1.0.0"), {
+      recursive: true,
+    });
     await writeFile(join(remote, "pragma-source.yaml"), sourceManifest(), "utf8");
     await writeFile(
       join(remote, "experts/general/reviewer/config.yaml"),
@@ -107,6 +119,15 @@ describe("Desktop Bundle Registry sources", () => {
     );
     await writeFile(
       join(remote, "experts/general/reviewer/versions/1.0.0/bundle.pragma"),
+      "intentionally-not-a-bundle",
+    );
+    await writeFile(
+      join(remote, "knowledge-bases/general/handbook/config.yaml"),
+      knowledgeBaseSourceItemConfig(),
+      "utf8",
+    );
+    await writeFile(
+      join(remote, "knowledge-bases/general/handbook/versions/1.0.0/bundle.pragma"),
       "intentionally-not-a-bundle",
     );
     await execFileAsync("git", ["-C", remote, "init"]);
@@ -129,9 +150,12 @@ describe("Desktop Bundle Registry sources", () => {
         name: "Local Source",
         remote: `https://pragma-source.test${remote}`,
       });
-      expect(status).toMatchObject({ status: "ready", itemCount: 1 });
+      expect(status).toMatchObject({ status: "ready", itemCount: 2 });
       await expect(service.getCatalog()).resolves.toMatchObject({
-        items: [expect.objectContaining({ id: "reviewer", kind: "expert" })],
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: "reviewer", kind: "expert" }),
+          expect.objectContaining({ id: "handbook", kind: "knowledge-base" }),
+        ]),
       });
       await expect(
         service.downloadBundle({
@@ -150,10 +174,13 @@ describe("Desktop Bundle Registry sources", () => {
       await commitAll(remote, "Invalid source");
       await expect(service.refreshSource(status.id)).resolves.toMatchObject({
         status: "stale",
-        itemCount: 1,
+        itemCount: 2,
       });
       await expect(service.getCatalog()).resolves.toMatchObject({
-        items: [expect.objectContaining({ id: "reviewer" })],
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: "reviewer" }),
+          expect.objectContaining({ id: "handbook" }),
+        ]),
       });
 
       await writeFile(
@@ -196,7 +223,7 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 }
 
 function sourceManifest(): string {
-  return `schemaVersion: pragma.bundle-source/v1
+  return `schemaVersion: pragma.bundle-source/v2
 id: local-source
 name:
   default: Local Source
@@ -211,11 +238,13 @@ sections:
     categories: *categories
   flow:
     categories: *categories
+  knowledge-base:
+    categories: *categories
 `;
 }
 
 function sourceItemConfig(): string {
-  return `schemaVersion: pragma.bundle-source-item/v1
+  return `schemaVersion: pragma.bundle-source-item/v2
 id: reviewer
 rootRef: expert:1234567890abcdef
 name:
@@ -229,6 +258,27 @@ author:
 license: MIT
 tags:
   - review
+latestVersion: 1.0.0
+createdAt: 2026-08-31T00:00:00.000Z
+updatedAt: 2026-08-31T00:00:00.000Z
+`;
+}
+
+function knowledgeBaseSourceItemConfig(): string {
+  return `schemaVersion: pragma.bundle-source-item/v2
+id: handbook
+rootRef: context-store:kqh4nx7rx26mb3e7
+name:
+  default: Handbook
+summary:
+  default: Shared handbook
+description:
+  default: Shared knowledge-base content.
+author:
+  name: Pragma
+license: MIT
+tags:
+  - handbook
 latestVersion: 1.0.0
 createdAt: 2026-08-31T00:00:00.000Z
 updatedAt: 2026-08-31T00:00:00.000Z

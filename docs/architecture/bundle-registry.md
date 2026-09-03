@@ -20,16 +20,20 @@ expert-teams/<category>/<item>/
 flows/<category>/<item>/
   config.yaml
   versions/<semver>/bundle.pragma
+
+knowledge-bases/<category>/<item>/
+  config.yaml
+  versions/<semver>/bundle.pragma
 ```
 
-Source 根目录可以保留 README、许可证和 `.github/`。三种类型目录内只允许上述条目文件：不放
+Source 根目录可以保留 README、许可证和 `.github/`。四种类型目录内只允许上述条目文件：不放
 README、图片、截图、catalog 或对象索引。路径是条目类型和唯一主分类的权威来源，`config.yaml`
 不重复声明。tags 只用于长尾搜索。
 
 ## 根清单
 
-`pragma-source.yaml` 的 `schemaVersion` 固定为 `pragma.bundle-source/v1`，包含 Source ID、多语言
-名称和描述、`maxBundleBytes`，以及 `expert`、`expert-team`、`flow` 三个 section。每个 section
+`pragma-source.yaml` 的当前 `schemaVersion` 为 `pragma.bundle-source/v2`，包含 Source ID、多语言
+名称和描述、`maxBundleBytes`，以及 `expert`、`expert-team`、`flow`、`knowledge-base` 四个 section。每个 section
 分别维护一层分类的 ID、多语言名称、说明和排序。推荐初始分类为：
 
 - `general`
@@ -44,7 +48,7 @@ README、图片、截图、catalog 或对象索引。路径是条目类型和唯
 
 ## 条目配置
 
-`config.yaml` 使用 `pragma.bundle-source-item/v1`，包含 `id`、`rootRef`、多语言 name/summary、
+`config.yaml` 使用 `pragma.bundle-source-item/v2`，包含 `id`、`rootRef`、多语言 name/summary、
 Markdown description、author、license、可选 homepage、tags、可选内置 avatarId、latestVersion、
 createdAt 和 updatedAt。
 
@@ -68,6 +72,15 @@ pragma source add ./my-expert.pragma --directory ./awesome-pragma
 
 交互流程会选择可调用根、类型分类并收集元数据。新增条目写 config 和版本；已有条目只增加版本并
 更新 latestVersion/updatedAt。命令不 clone、commit、push 或创建 PR，也绝不覆盖已有版本。
+
+v1 Source 必须先显式升级；`source add` 会拒绝直接修改旧协议并给出指引：
+
+```bash
+pragma source upgrade ./awesome-pragma
+```
+
+升级命令备份 v1 manifest/config，写入稳定 journal，并通过原子替换升级为 v2；重复执行可恢复
+中断的升级。知识库分类初始复制专家分类，原有三类条目语义不变。
 
 维护者和 CI 使用内部只读验证入口：
 

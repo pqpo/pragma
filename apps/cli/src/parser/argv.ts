@@ -29,6 +29,7 @@ export type ParsedCommand =
       readonly directory: string;
       readonly bundlePath: string;
     }
+  | { readonly kind: "source-upgrade"; readonly directory: string }
   | {
       readonly kind: "executor-discover";
       readonly executorKind: ExecutorKind;
@@ -193,7 +194,7 @@ Commands:
   version
   doctor
   completion <bash|zsh|fish|powershell>
-  source init|add ...
+  source init|add|upgrade ...
   team discover [SELECTOR] | describe <REF>
   expert discover [SELECTOR] | describe <REF>
   flow discover [SELECTOR] | describe <REF>
@@ -269,9 +270,11 @@ Prints a shell completion script. Evaluate or install the returned script in the
 Commands:
   init [DIR] --id SOURCE_ID --name NAME
   add BUNDLE [--directory DIR]
+  upgrade [DIR]
 
 init creates the readable Bundle Source directory format without initializing Git.
-add interactively validates and copies one exported .pragma Bundle into a local Source Git work tree.`;
+add interactively validates and copies one exported .pragma Bundle into a local Source Git work tree.
+upgrade atomically upgrades a v1 Source to v2 and keeps a local backup.`;
   }
   if (command === "team" || command === "expert" || command === "flow") {
     if (subcommand === undefined) {
@@ -497,7 +500,7 @@ function createCliProgram(setCommand: ParsedCommandSink): Command {
   configureCommand(program.command("doctor")).action(() => setCommand({ kind: "doctor" }));
   addLeaf(program, "completion", [], (positionals) => parseCompletion(positionals), setCommand);
 
-  const source = addCommandGroup(program, "source", "source requires init or add.");
+  const source = addCommandGroup(program, "source", "source requires init, add, or upgrade.");
   addLeaf(
     source,
     "init",
@@ -510,6 +513,13 @@ function createCliProgram(setCommand: ParsedCommandSink): Command {
     "add",
     [{ flags: "--directory <directory>" }],
     (positionals, values) => parseSourceCommand("add", positionals, values),
+    setCommand,
+  );
+  addLeaf(
+    source,
+    "upgrade",
+    [],
+    (positionals) => parseSourceCommand("upgrade", positionals, new Map()),
     setCommand,
   );
 
@@ -914,7 +924,7 @@ function collectValueOptions(command: Command, target: Set<string>): void {
 function unknownCommandMessage(argv: readonly string[]): string {
   const path = commandPathForHelp(argv);
   const [command, subcommand, nestedCommand] = path;
-  if (command === "source") return "source requires init or add.";
+  if (command === "source") return "source requires init, add, or upgrade.";
   if (command === "team" || command === "expert" || command === "flow") {
     return `${command} requires discover, describe, or run.`;
   }
@@ -950,10 +960,14 @@ function commandPathForHelp(argv: readonly string[]): readonly string[] {
 }
 
 function parseSourceCommand(
-  subcommand: "init" | "add",
+  subcommand: "init" | "add" | "upgrade",
   positionals: readonly string[],
   values: ReadonlyMap<string, OptionValue>,
 ): ParsedCommand {
+  if (subcommand === "upgrade") {
+    if (positionals.length > 1) throw new Error("source upgrade accepts at most one directory.");
+    return { kind: "source-upgrade", directory: positionals[0] ?? "." };
+  }
   if (subcommand === "init") {
     if (positionals.length > 1) throw new Error("source init accepts at most one directory.");
     return {

@@ -27,10 +27,21 @@ describe("Bundle Source CLI parser", () => {
     });
   });
 
+  it("parses an explicit Source protocol upgrade", () => {
+    expect(parseCliArgv(["source", "upgrade", "./source"]).command).toEqual({
+      kind: "source-upgrade",
+      directory: "./source",
+    });
+    expect(parseCliArgv(["source", "upgrade"]).command).toEqual({
+      kind: "source-upgrade",
+      directory: ".",
+    });
+  });
+
   it("does not expose the generated Registry workflow", () => {
     expect(() => parseCliArgv(["registry", "build", "."])).toThrow(/unknown command/iu);
     expect(() => parseCliArgv(["source", "publish", "bundle.pragma"])).toThrow(
-      /requires init or add/u,
+      /requires init, add, or upgrade/u,
     );
   });
 
