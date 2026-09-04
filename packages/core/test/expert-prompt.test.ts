@@ -43,13 +43,10 @@ describe("expert prompt attachments", () => {
 
   it("round-trips structured invocation input and keeps legacy string input readable", () => {
     const input = createExpertPromptInput("Review these inputs.", attachments);
-    expect(readExpertPromptInput(input, "fallback")).toEqual(input);
-    expect(readExpertPromptInput("legacy prompt", "legacy prompt")).toEqual({
-      text: "legacy prompt",
-      attachments: [],
-    });
-    expect(() =>
-      readExpertPromptInput({ text: "broken", attachments: "invalid" }, "fallback"),
-    ).toThrow("Expert prompt input is invalid");
+    expect(readExpertPromptInput(input)).toEqual(input);
+    expect(() => readExpertPromptInput("legacy prompt")).toThrow("Expert prompt input is invalid");
+    expect(() => readExpertPromptInput({ text: "broken", attachments: "invalid" })).toThrow(
+      "Expert prompt input is invalid",
+    );
   });
 });

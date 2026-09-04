@@ -418,7 +418,7 @@ async function createFixture(input: {
   const execution =
     input.kind === "flow"
       ? ExecutionRecordSchema.parse({
-          schemaVersion: "pragma.execution/v10",
+          schemaVersion: "pragma.execution/v11",
           executionId: reservation.missionId,
           version: 1,
           kind: "flow",

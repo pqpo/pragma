@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "pragma.expert-session-transaction/v9",
+  "session": {
+    "schemaVersion": "pragma.expert-session/v5",
+    "sessionId": "queue-marker-session",
+    "expertId": "expert",
+    "definitionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "open",
+    "activeExecutionId": "active-execution",
+    "queuedRequestIds": ["queued-request"],
+    "executionIds": ["active-execution", "queued-execution"],
+    "rootContextId": "context",
+    "contexts": {
+      "context": {
+        "schemaVersion": "pragma.runtime-context/v5",
+        "contextId": "context",
+        "owner": { "type": "expert-session", "ownerId": "queue-marker-session" },
+        "origin": { "type": "expert-session", "sessionId": "queue-marker-session" },
+        "expert": { "id": "expert" },
+        "runtime": {
+          "runtimeId": "fake",
+          "revision": 1,
+          "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "lifecycle": "open",
+        "createdAt": "2026-08-01T08:00:00.000Z",
+        "updatedAt": "2026-08-01T08:00:00.000Z"
+      }
+    },
+    "createdAt": "2026-08-01T08:00:00.000Z",
+    "updatedAt": "2026-08-01T08:00:00.000Z"
+  },
+  "prompts": [
+    {
+      "requestId": "queued-request",
+      "sessionId": "queue-marker-session",
+      "content": "steer the active turn",
+      "mode": "steer",
+      "executionId": "active-execution",
+      "status": "running",
+      "error": "__pragma_queue_steer_pending__:queued-execution",
+      "createdAt": "2026-08-01T08:00:00.000Z",
+      "updatedAt": "2026-08-01T08:00:00.000Z"
+    }
+  ],
+  "events": []
+}

@@ -10,13 +10,18 @@ import {
   createStaticRuntimeResolver,
   registerExpertToolsMcpSession,
   snapshotRuntimeFeatures,
+  StaticContextStore,
   type Expert,
 } from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { loadPragmaProject, parsePragmaYaml } from "@pragma/interpreter";
-import { PragmaCapabilityResourceSchema, PragmaResourceSchema } from "@pragma/interpreter/ast";
+import {
+  PragmaCapabilityResourceSchema,
+  PragmaExpertResourceSchema,
+  PragmaResourceSchema,
+} from "@pragma/interpreter/ast";
 import { MEMORY_CURATOR_REF as MEMORY_PLANE_CURATOR_REF } from "@pragma/memory";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { BUILT_IN_AGENT_FILES } from "../src/builtin.generated.ts";
 import {
@@ -569,6 +574,81 @@ describe("built-in Pragma Agent DSL", () => {
       });
       expect(compiled.value.id).toBe(ref.slice("expert:".length));
     }
+  });
+
+  it("preserves the Host file Context factory while wrapping a built-in Agent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-built-in-file-context-"));
+    const contextId = "0123456789abcdef";
+    const contextRef = `context-store:${contextId}` as const;
+    const source = {
+      type: "uri" as const,
+      uri: "test://built-in-context",
+      integrity: `sha256:${"a".repeat(64)}`,
+    };
+    const contextResource = PragmaResourceSchema.parse({
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "ContextStore",
+      metadata: {
+        id: contextId,
+        name: "Built-in Context",
+        description: "Host-backed Context used to verify Adapter Host composition.",
+        tags: [],
+      },
+      spec: { adapter: "pragma.context.file@v1", config: { source } },
+    });
+    const baseExpert = builtInAgentResource(BUILT_IN_PRAGMA_REF);
+    const expertResource = PragmaExpertResourceSchema.parse({
+      ...baseExpert,
+      spec: {
+        ...baseExpert.spec,
+        contextStores: [{ ref: contextRef, namespace: "host_files", required: true }],
+      },
+    });
+    const openFileContextStore = vi.fn(() => new StaticContextStore([]));
+    const runtimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "test-runtime",
+      runtimes: [
+        {
+          features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
+          descriptor: { id: "test-runtime", kind: "test", displayName: "Test Runtime" },
+          canUse: () => ({ usable: true }),
+        },
+      ],
+    });
+
+    const compiled = await compileBuiltInAgent({
+      ref: BUILT_IN_PRAGMA_REF,
+      environmentId: "test-host",
+      definitionStateRoot: join(root, "definitions"),
+      workspace: root,
+      pragmaHome: root,
+      runtimes,
+      expertResource,
+      additionalResources: [contextResource],
+      adapterHost: {
+        environmentId: "test-host",
+        projectRoot: root,
+        async resolveBinding() {
+          return undefined;
+        },
+        async resolveArtifact(requestedSource) {
+          expect(requestedSource).toEqual(source);
+          return {
+            source,
+            path: root,
+            contentHash: "a".repeat(64),
+            verified: true,
+          };
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+        openFileContextStore,
+      },
+    });
+
+    expect(compiled.value.id).toBe(BUILT_IN_PRAGMA_REF.slice("expert:".length));
+    expect(openFileContextStore).toHaveBeenCalledWith({ rootDir: root });
   });
 
   it("reuses a completed immutable materialization across concurrent callers", async () => {

@@ -27,6 +27,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createLocalHostProjectCatalogFromHome,
+  createLocalHostAdapterHost,
   LOCAL_HOST_DEFAULT_PROJECT_ID,
 } from "../src/index.ts";
 import {
@@ -46,6 +47,18 @@ afterEach(async () => {
 });
 
 describe("Local Host project catalog", { timeout: 10_000 }, () => {
+  it("opens a real file Context store at the CLI composition boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-local-host-file-context-"));
+    temporaryRoots.push(root);
+    await writeFile(join(root, "rules.md"), "# Rules\nPrefer explicit ports.\n", "utf8");
+
+    const store = createLocalHostAdapterHost(root).openFileContextStore?.({ rootDir: root });
+    await expect(store?.readContext({ id: "rules.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: "# Rules\nPrefer explicit ports.\n" },
+    });
+  });
+
   it("reads a published revision and compiles exact Team and Flow refs with stable pins", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-local-host-project-"));
     temporaryRoots.push(home);

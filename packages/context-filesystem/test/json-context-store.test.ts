@@ -1,14 +1,27 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { JsonContextStore, StaticContextStore } from "../src/index.ts";
+import { StaticContextStore } from "@pragma/core";
+
+import { JsonContextStore } from "../src/index.ts";
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map(async (root) => {
+      await rm(root, { recursive: true, force: true });
+    }),
+  );
+});
 
 describe("JsonContextStore", () => {
   it("persists mutations across instances and enforces optimistic revisions", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-json-context-"));
+    temporaryRoots.push(directory);
     const path = join(directory, "contexts.json");
     const first = new JsonContextStore({ filePath: path });
     const added = await first.addContext({
@@ -63,6 +76,7 @@ describe("JsonContextStore", () => {
 
   it("enforces byte limits and etag concurrency", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-json-context-"));
+    temporaryRoots.push(directory);
     const store = new JsonContextStore({
       filePath: join(directory, "contexts.json"),
       maxContextBytes: 4,
@@ -102,6 +116,7 @@ describe("JsonContextStore", () => {
 
   it("prepends and appends content with explicit separators and optimistic concurrency", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-json-context-"));
+    temporaryRoots.push(directory);
     const store = new JsonContextStore({
       filePath: join(directory, "contexts.json"),
       maxContextBytes: 16,
@@ -165,6 +180,7 @@ describe("JsonContextStore", () => {
 
   it("serializes concurrent writers and never overwrites corrupt JSON", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-json-context-"));
+    temporaryRoots.push(directory);
     const path = join(directory, "contexts.json");
     const stores = [
       new JsonContextStore({ filePath: path }),

@@ -5,14 +5,15 @@
  */
 export {
   FileSystemContextStore,
-  JsonContextStore,
-  withFileLock,
   type FileSystemContextStoreAuthorizer,
   type FileSystemContextStoreCommandResult,
   type FileSystemContextStoreCommandRunner,
   type FileSystemContextStoreOperation,
   type FileSystemContextStoreOptions,
+} from "./file-system-context-store.ts";
+export {
+  JsonContextStore,
   type JsonContextStoreMetadata,
   type JsonContextStoreOptions,
-} from "@pragma/core";
+} from "./json-context-store.ts";
 export * from "./legacy-execution-output-context-store.ts";

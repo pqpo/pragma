@@ -17,6 +17,7 @@ import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition
 import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 import { summarizeRuntimeInput } from "../runtime/output.ts";
 import type { ExecutionStore } from "./execution-store.ts";
+import { commitExecutionEvent } from "./execution-commit.ts";
 import {
   ExecutionFinalStatusConflictError,
   ExecutionVersionConflictError,
@@ -769,19 +770,19 @@ export class ExpertOrchestrator {
       };
     }
     const requestId = randomUUID();
-    await this.options.store.appendEvent(
-      this.options.executionId,
-      active.invocationId,
-      "agent.steer.requested",
-      {
+    await commitExecutionEvent(this.options.store, {
+      executionId: this.options.executionId,
+      invocationId: active.invocationId,
+      type: "agent.steer.requested",
+      data: {
         requestId,
         callerInvocationId: access.callerInvocationId,
         callerAgentId: access.callerAgentId,
         agentId: agent.agentId,
         message: request.instruction,
       },
-      `agent-steer-requested:${requestId}`,
-    );
+      eventId: `agent-steer-requested:${requestId}`,
+    });
     const outcome = await this.options.interruptController.steerInvocation({
       invocationId: active.invocationId,
       contextId: agent.contextId,
@@ -789,13 +790,13 @@ export class ExpertOrchestrator {
       content: request.instruction,
     });
     if (outcome === "steered" || outcome === "waiting_continuation") {
-      await this.options.store.appendEvent(
-        this.options.executionId,
-        active.invocationId,
-        "agent.steer.applied",
-        { requestId, agentId: agent.agentId, mode: outcome, content: request.instruction },
-        `agent-steer-applied:${requestId}`,
-      );
+      await commitExecutionEvent(this.options.store, {
+        executionId: this.options.executionId,
+        invocationId: active.invocationId,
+        type: "agent.steer.applied",
+        data: { requestId, agentId: agent.agentId, mode: outcome, content: request.instruction },
+        eventId: `agent-steer-applied:${requestId}`,
+      });
       return {
         outcome: "steered",
         mode: outcome === "steered" ? "runtime" : "waiting_continuation",
@@ -806,13 +807,13 @@ export class ExpertOrchestrator {
       };
     }
     const reason = outcome === "unsupported" ? "runtime_unsupported" : "turn_not_active";
-    await this.options.store.appendEvent(
-      this.options.executionId,
-      active.invocationId,
-      "agent.steer.rejected",
-      { requestId, agentId: agent.agentId, reason },
-      `agent-steer-rejected:${requestId}`,
-    );
+    await commitExecutionEvent(this.options.store, {
+      executionId: this.options.executionId,
+      invocationId: active.invocationId,
+      type: "agent.steer.rejected",
+      data: { requestId, agentId: agent.agentId, reason },
+      eventId: `agent-steer-rejected:${requestId}`,
+    });
     throw new Error(`Expert steering rejected: ${reason}.`);
   }
 

@@ -492,14 +492,14 @@ function createOrchestrator(
 
 function executionRecord(executionId: string) {
   return {
-    schemaVersion: "pragma.execution/v10" as const,
+    schemaVersion: "pragma.execution/v11" as const,
     executionId,
     version: 0,
     kind: "expert-turn" as const,
     definition: { id: "worker", kind: "expert" as const },
     rootInvocationId: "root",
     status: "running" as const,
-    input: "work",
+    input: { text: "work", attachments: [] },
     state: {},
     lastAppliedSequence: 0,
     createdAt: now,
@@ -516,7 +516,7 @@ function invocationRecord() {
     contextId: "context",
     status: "queued" as const,
     pendingExpertMessages: [],
-    input: "work",
+    input: { text: "work", attachments: [] },
     createdAt: now,
     updatedAt: now,
   };

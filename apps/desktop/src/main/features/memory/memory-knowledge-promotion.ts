@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/context-filesystem";
+import { withFileLock } from "@pragma/core";
 import type {
   KnowledgeContent,
   KnowledgeExtractionCandidate,

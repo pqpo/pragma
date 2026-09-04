@@ -1,4 +1,4 @@
-import { definePluginEntry, readExpertAgentPluginManifest } from "@pragma/core";
+import { definePluginEntry, readExpertAgentPluginManifest } from "../../../../index.ts";
 
 export const events: string[] = [];
 

@@ -131,9 +131,11 @@ Desktop currently binds `pragma.automation.schedule@v1`; local workspace, permis
 override, credentials, and future IM Connection secrets remain host state. Expert and ExpertTeam
 may reuse one Mission FIFO or create a Mission per event. Flow always creates a new Mission.
 
-Host Context bindings expose the six-method Context Store contract. Core supplies
-`JsonContextStore` for durable local notes and `StaticContextStore` for DSL-defined read-only
-entries. The JSON store uses one `contexts.json` payload, optimistic item revisions/etags,
+Host Context bindings expose the six-method Context Store contract. Core supplies only the
+contract, composition, authorization, and in-memory/read-only implementations. Filesystem-aware
+Hosts opt into `@pragma/context-filesystem`, which supplies `FileSystemContextStore` and
+`JsonContextStore`; the Interpreter reaches file Context only through `PragmaAdapterHost`'s
+factory port. The JSON store uses one `contexts.json` payload, optimistic item revisions/etags,
 cross-process locking, and atomic replacement. Dynamic Context content is deliberately excluded
 from environment fingerprints; only store identity and connection configuration are pinned.
 

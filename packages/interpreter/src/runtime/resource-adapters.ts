@@ -13,7 +13,6 @@ import {
   type IExpertAgentMcpConfig,
   type IExpertAgentModelsConfig,
   type IExpertAgentSkillsConfig,
-  FileSystemContextStore,
 } from "@pragma/core";
 import { z } from "zod";
 
@@ -59,6 +58,8 @@ export interface PragmaAdapterHost {
   readonly resolveBinding: (ref: PragmaBindingRef) => Promise<PragmaBindingRecord | undefined>;
   readonly resolveArtifact: (source: PragmaArtifactSource) => Promise<PragmaArtifactRecord>;
   readonly resolveSecret: (ref: string) => Promise<string | undefined>;
+  readonly openFileContextStore?:
+    ((input: { readonly rootDir: string }) => ExpertAgentContextStore) | undefined;
 }
 
 export interface PragmaCapabilityContribution {
@@ -641,10 +642,13 @@ function fileContextAdapter(): PragmaResourceAdapter<PragmaContextStoreResource>
       const parsed = FileContextConfigSchema.parse(config);
       const artifact = await verifiedArtifact(host, parsed.source);
       if (artifact.path === undefined) throw new Error("File context must materialize to a path.");
+      if (host.openFileContextStore === undefined) {
+        throw new Error("File context store factory is unavailable in this environment.");
+      }
       return {
         fingerprint: artifact.contentHash,
         contribution: {
-          store: new FileSystemContextStore({ rootDir: artifact.path }),
+          store: host.openFileContextStore({ rootDir: artifact.path }),
           storeName: resource.metadata.name,
         },
       };

@@ -9,6 +9,7 @@ import {
   CanonicalEventEnvelopeSchema,
   ExecutionEventSchema,
   ExecutionRecordSchema,
+  ExpertPromptInputSchema,
   InvocationSchema,
   RuntimeContextRecordSchema,
   isTerminalExecutionStatus,
@@ -34,6 +35,7 @@ import {
   executionRecordMigrationChain,
   migrateExecutionInvocationsV5ToV6,
   migrateExecutionInvocationsV9ToV10,
+  migrateExecutionInvocationsV10ToV11,
   migrateInvocationUsageV7ToV8,
 } from "../storage/migrations/execution/index.ts";
 import { encodePragmaPathSegment, PragmaPaths } from "../storage/pragma-paths.ts";
@@ -49,6 +51,7 @@ import {
 } from "./canonical-event-handoff.ts";
 
 export const EXECUTION_RECOVERY_CLAIM_STATE_KEY = "__recoveryClaim";
+const MAX_RECOVERY_CLAIM_ATTEMPTS = 8;
 const MAX_WAITING_HUMAN_RECOVERY_RELEASE_ATTEMPTS = 8;
 
 export interface NewExecutionEvent {
@@ -121,7 +124,6 @@ export class ExecutionHistoryUnavailableError extends Error {
 export interface ExecutionStore {
   create(record: ExecutionRecord, root: Invocation): Promise<void>;
   get(executionId: string): Promise<ExecutionRecord | undefined>;
-  update(executionId: string, patch: Partial<ExecutionRecord>): Promise<ExecutionRecord>;
   commit(request: ExecutionCommitRequest): Promise<ExecutionCommitResult>;
   claimRecovery(executionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   /** Release only a recovery claim whose execution is durably waiting for human input. */
@@ -132,15 +134,7 @@ export interface ExecutionStore {
   listAgents(executionId: string): Promise<readonly AgentInstance[]>;
   getContext(executionId: string, contextId: string): Promise<RuntimeContextRecord | undefined>;
   listContexts(executionId: string): Promise<readonly RuntimeContextRecord[]>;
-  putInvocation(executionId: string, invocation: Invocation): Promise<void>;
   getTree(executionId: string): Promise<InvocationTree | undefined>;
-  appendEvent(
-    executionId: string,
-    invocationId: string,
-    type: string,
-    data: unknown,
-    eventId?: string,
-  ): Promise<ExecutionEvent>;
   readEvents(executionId: string, after?: ExecutionCursor): Promise<readonly ExecutionEvent[]>;
   delete(executionId: string): Promise<void>;
   archive(executionId: string): Promise<void>;
@@ -305,13 +299,13 @@ export function createFileExecutionStore(
           throw new Error(`Execution already exists: ${record.executionId}`);
         }
         const parsedRecord = ExecutionRecordSchema.parse(record);
+        const parsedRoot = InvocationSchema.parse(root);
         if (parsedRecord.version !== 0 || parsedRecord.lastAppliedSequence !== 0) {
           throw new Error("A new Execution must start at version 0 and sequence 0.");
         }
+        assertExpertTurnRootPrompt(parsedRecord, [parsedRoot]);
         await writeJsonAtomic(paths.executionState(record.executionId), parsedRecord);
-        await writeJsonAtomic(paths.executionInvocations(record.executionId), [
-          InvocationSchema.parse(root),
-        ]);
+        await writeJsonAtomic(paths.executionInvocations(record.executionId), [parsedRoot]);
         await writeJsonAtomic(paths.executionAgents(record.executionId), []);
         await writeJsonAtomic(paths.executionContexts(record.executionId), []);
         await writeJsonAtomic(paths.executionCommits(record.executionId), []);
@@ -327,15 +321,6 @@ export function createFileExecutionStore(
         if (!parsed.success) throw unsupportedState(executionId, parsed.error);
         return parsed.data;
       });
-    },
-
-    async update(executionId, patch) {
-      const result = await store.commit({
-        commitId: randomUUID(),
-        executionId,
-        executionPatch: patch,
-      });
-      return result.execution;
     },
 
     async commit(request) {
@@ -398,14 +383,15 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v10",
+          schemaVersion: "pragma.execution/v11",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
+        assertExpertTurnRootPrompt(nextExecution, nextInvocations);
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v11",
+          schemaVersion: "pragma.execution-transaction/v12",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
@@ -456,9 +442,9 @@ export function createFileExecutionStore(
     },
 
     async claimRecovery(executionId, claimId, leaseMs) {
-      return await withExecutionLock(executionId, "claim-recovery", async () => {
-        await prepareExecution(paths, executionId, options.canonicalEventFeed);
-        const current = await requireExecution(paths, executionId);
+      for (let attempt = 0; attempt < MAX_RECOVERY_CLAIM_ATTEMPTS; attempt += 1) {
+        const current = await this.get(executionId);
+        if (current === undefined) throw new Error(`Execution not found: ${executionId}`);
         const value = current.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
         if (typeof value === "object" && value !== null) {
           const existingClaimId = (value as { claimId?: unknown }).claimId;
@@ -473,22 +459,31 @@ export function createFileExecutionStore(
             return false;
           }
         }
-        const updated = ExecutionRecordSchema.parse({
-          ...current,
-          version: current.version + 1,
-          state: {
-            ...current.state,
-            [EXECUTION_RECOVERY_CLAIM_STATE_KEY]: {
-              claimId,
-              processId: process.pid,
-              expiresAt: new Date(Date.now() + leaseMs).toISOString(),
+        try {
+          await this.commit({
+            commitId: `claim-recovery:${claimId}:${current.version}`,
+            executionId,
+            expectedVersion: current.version,
+            executionPatch: {
+              state: {
+                ...current.state,
+                [EXECUTION_RECOVERY_CLAIM_STATE_KEY]: {
+                  claimId,
+                  processId: process.pid,
+                  expiresAt: new Date(Date.now() + leaseMs).toISOString(),
+                },
+              },
             },
-          },
-          updatedAt: new Date().toISOString(),
-        });
-        await writeJsonAtomic(paths.executionState(executionId), updated);
-        return true;
-      });
+          });
+          return true;
+        } catch (error) {
+          if (!(error instanceof ExecutionVersionConflictError)) throw error;
+          if (attempt + 1 === MAX_RECOVERY_CLAIM_ATTEMPTS) throw error;
+        }
+      }
+      throw new Error(
+        `Execution recovery claim contention exceeded the retry limit: ${executionId}`,
+      );
     },
 
     async releaseWaitingHumanRecovery(executionId, claimId) {
@@ -574,14 +569,6 @@ export function createFileExecutionStore(
       });
     },
 
-    async putInvocation(executionId, invocation) {
-      await store.commit({
-        commitId: randomUUID(),
-        executionId,
-        invocationPuts: [invocation],
-      });
-    },
-
     async getTree(executionId) {
       return await withExecutionLock(executionId, "get-tree", async () => {
         await prepareExecution(paths, executionId, options.canonicalEventFeed);
@@ -590,17 +577,6 @@ export function createFileExecutionStore(
         const record = ExecutionRecordSchema.parse(value);
         return buildTree(record.rootInvocationId, await readInvocations(paths, executionId));
       });
-    },
-
-    async appendEvent(executionId, invocationId, type, data, eventId = randomUUID()) {
-      const result = await store.commit({
-        commitId: randomUUID(),
-        executionId,
-        events: [{ eventId, invocationId, type, data }],
-      });
-      const event = result.events.find((candidate) => candidate.eventId === eventId);
-      if (event === undefined) throw new Error(`Execution event was not committed: ${eventId}`);
-      return event;
     },
 
     async readEvents(executionId, after) {
@@ -1180,10 +1156,14 @@ async function migrateExecutionState(paths: PragmaPaths, executionId: string): P
     upgraded.fromVersion === 5
       ? migrateExecutionInvocationsV5ToV6(usageMigratedInvocations)
       : usageMigratedInvocations;
-  const invocations =
+  const handoffInvocations =
     upgraded.fromVersion <= 9
       ? migrateExecutionInvocationsV9ToV10(handoffMigratedInvocations)
       : InvocationSchema.array().parse(handoffMigratedInvocations);
+  const invocations =
+    upgraded.fromVersion <= 10
+      ? migrateExecutionInvocationsV10ToV11(upgraded.value, handoffInvocations)
+      : handoffInvocations;
   await applyAtomicStateMigration({
     aggregateRoot: paths.executionRoot(executionId),
     journalFile: paths.executionMigration(executionId),
@@ -1203,8 +1183,25 @@ function validateExecutionMigrationDocuments(documents: Readonly<Record<string, 
   if (keys.length !== 2 || keys[0] !== "execution.json" || keys[1] !== "invocations.json") {
     throw new Error("Execution migration journal contains unexpected documents.");
   }
-  ExecutionRecordSchema.parse(documents["execution.json"]);
-  InvocationSchema.array().parse(documents["invocations.json"]);
+  const execution = ExecutionRecordSchema.parse(documents["execution.json"]);
+  const invocations = InvocationSchema.array().parse(documents["invocations.json"]);
+  assertExpertTurnRootPrompt(execution, invocations);
+}
+
+function assertExpertTurnRootPrompt(
+  execution: ExecutionRecord,
+  invocations: readonly Invocation[],
+): void {
+  if (execution.kind !== "expert-turn") return;
+  const root = invocations.find(
+    (invocation) => invocation.invocationId === execution.rootInvocationId,
+  );
+  if (root === undefined) {
+    throw new Error(`Execution root Invocation is missing: ${execution.rootInvocationId}`);
+  }
+  if (!ExpertPromptInputSchema.safeParse(root.input).success) {
+    throw new Error("Expert turn root Invocation input must be a structured Expert prompt.");
+  }
 }
 
 async function applyTransaction(
