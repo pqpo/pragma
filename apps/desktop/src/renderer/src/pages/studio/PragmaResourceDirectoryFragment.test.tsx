@@ -106,6 +106,7 @@ describe("expert team editor", () => {
     expect(html).toContain('class="secondary-button"');
     expect(html).toContain('class="primary-button studio-primary-action"');
     expect(html).toContain("Validate &amp; publish");
+    expect(html).toContain('maxLength="4000"');
   });
 
   it("keeps unselected knowledge bases out of the team form until the picker opens", () => {
@@ -326,6 +327,48 @@ describe("expert team editor", () => {
     expect(html).not.toContain("Version");
     expect(html).toContain("pragma-resource-editor-header");
     expect(html).not.toContain("canonical Pragma YAML");
+  });
+
+  it("preserves the pragma/v5 editing ceiling for existing over-limit Team instructions", () => {
+    const instructions = "x".repeat(2_001);
+    const initial = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "ExpertTeam",
+      metadata: {
+        id: "cccvf3nab91n2wja",
+        name: "Legacy team",
+        description: "Imported compatible team",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:0000000000000001" },
+        members: [{ ref: "expert:0000000000000002" }],
+        instructions,
+        delegation: {},
+      },
+    });
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v3",
+      projectId: "test-project",
+      revision: 0,
+      resources: [expert(1), expert(2), initial],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <TeamEditor
+        project={project}
+        initial={initial}
+        mode="edit"
+        error={null}
+        onCancel={() => undefined}
+        onSave={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('maxLength="10000"');
+    expect(html).toContain("2001/2000");
+    expect(html).toContain(instructions);
   });
 });
 

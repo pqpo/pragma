@@ -43,7 +43,7 @@ ContextSystem 不会把所有 Store 的正文都拼进系统 Prompt。它先构�
 
 Pragma 使用三种主要触发语义：
 
-- `always_on`：短小、稳定、每次都必须读取的关键指令；
+- `always_on`：短小、稳定、每次都必须暴露的关键指令；完整 Manifest 始终可见，正文按预算完整、部分或延迟加载；
 - `model_decision`：进入启动索引，由模型判断是否继续读取正文；
 - `manual`：默认不注入，只有在 list、search 或明确读取时才加载。
 

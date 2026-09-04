@@ -1086,6 +1086,11 @@ export function TeamEditor(props: {
   const [name, setName] = useState(props.initial?.metadata.name ?? "");
   const [description, setDescription] = useState(props.initial?.metadata.description ?? "");
   const [instructions, setInstructions] = useState(props.initial?.spec.instructions ?? "");
+  const instructionsInputLimit =
+    pragmaUnicodeLength((props.initial?.spec.instructions ?? "").trim()) >
+    PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring
+      ? PRAGMA_TEXT_LIMITS.expertTeam.instructions
+      : PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring;
   const initialCoordinator = props.initial?.spec.coordinator.ref ?? "";
   const [coordinator, setCoordinator] = useState(initialCoordinator);
   const [members, setMembers] = useState<readonly string[]>(
@@ -1242,19 +1247,17 @@ export function TeamEditor(props: {
           value={instructions}
           onChange={(event) =>
             setInstructions(
-              truncatePragmaTrimmedUnicode(
-                event.target.value,
-                PRAGMA_TEXT_LIMITS.expertTeam.instructions,
-              ),
+              truncatePragmaTrimmedUnicode(event.target.value, instructionsInputLimit),
             )
           }
-          maxLength={PRAGMA_TEXT_LIMITS.expertTeam.instructions * 2}
+          maxLength={instructionsInputLimit * 2}
           placeholder={t("teamInstructionsPlaceholder")}
         />
         <span className="team-instructions-hint">
           <span>{t("teamInstructionsHint")}</span>
           <span>
-            {pragmaUnicodeLength(instructions.trim())}/{PRAGMA_TEXT_LIMITS.expertTeam.instructions}
+            {pragmaUnicodeLength(instructions.trim())}/
+            {PRAGMA_TEXT_LIMITS.expertTeam.instructionsAuthoring}
           </span>
         </span>
       </label>

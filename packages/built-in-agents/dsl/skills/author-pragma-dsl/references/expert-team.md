@@ -43,11 +43,12 @@ spec:
   Its canonical ref is valid directly and it remains outside the editable project resource list.
 - `avatarId` remains part of the `pragma/v5` portable resource protocol. Desktop displays the
   coordinator's current Expert avatar and adds the Team badge in the UI.
-- Text limits use Unicode characters after trimming: name 50, description 500, and optional team
-  instructions 5,000.
+- Text limits use Unicode characters after trimming: name 50, description 500, and newly authored
+  team instructions 2,000. Existing pragma/v5 resources remain readable up to 5,000 characters.
 - `instructions` is optional. When present, it is loaded into the coordinator and every delegated
   member as an always-on `TEAM.md` Context System document. Use it for shared collaboration
   principles, quality requirements, and working agreements rather than role-specific behavior.
+  Keep operational knowledge in Context documents.
 - `contextStores` mounts knowledge only while Experts run through this Team. Each namespace and
   ContextStore ref must be unique. Visibility defaults to `all`; `blacklist` excludes the listed
   Expert IDs and `whitelist` includes only the listed IDs. Lists may reference only the coordinator

@@ -498,7 +498,9 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("Never reuse a token");
     expect(resource.spec.instructions).toContain("description is a concise retrieval label");
     expect(resource.spec.instructions).toContain("trigger is the loading behavior");
-    expect(resource.spec.instructions).toContain("always_on injects the complete body");
+    expect(resource.spec.instructions).toContain(
+      "always_on exposes every applicable item in the system prompt manifest",
+    );
     expect(resource.spec.instructions).toContain("advertises only id and description at startup");
     expect(resource.spec.instructions).toContain("neither preloads nor advertises the body");
     expect(resource.spec.instructions).toContain("priority is context-budget precedence");

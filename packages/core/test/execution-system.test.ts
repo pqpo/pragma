@@ -5302,9 +5302,28 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
     const home = await createTemporaryHome("pragma-team-instructions-");
     const stats = createFakeRuntimeStats();
     const runtime = createFakeRuntime({ stats });
+    const missionBoard = new InMemoryContextStore({
+      context: [
+        {
+          id: "GUIDE.md",
+          content: "Mission Board guide.",
+          metadata: { trigger: "always_on", priority: "critical" },
+        },
+        {
+          id: "plan.md",
+          content: "Current plan.",
+          metadata: {
+            description: "Current Mission plan",
+            trigger: "model_decision",
+            priority: "normal",
+          },
+        },
+      ],
+    });
     const app = createPragma({
       pragmaHome: home,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      hostContextBindings: [{ namespace: "mission-board", store: missionBoard }],
     });
     const projectContext = new ContextSystem({
       stores: {
@@ -5384,11 +5403,14 @@ describe("Expert delegation declarations", { timeout: 30_000 }, () => {
       expect(context.agentContext.startupMessages[0]?.content).toContain(
         "Existing project context.",
       );
+      expect(context.agentContext.startupMessages[0]?.content).toContain("Mission Board guide.");
+      expect(context.agentContext.systemPrompt).toContain("namespace: mission-board");
+      expect(context.agentContext.systemPrompt).toContain("id: plan.md");
       expect(context.agentContext.startupMessages[0]?.content).toContain(
         "do not include this block in the generated summary",
       );
       expect(context.agentContext.startupMessages[0]?.content).toContain(
-        "supersedes any summary, paraphrase, or older copy",
+        "included portions supersede any summary, paraphrase, or older copy",
       );
       expect(context.agentContext.systemPrompt).toContain(
         "use read_expert_context to reload the relevant context id",

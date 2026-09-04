@@ -405,7 +405,7 @@ export const studio = {
   selectionAppliedToTeam: "所選專家會立即套用到目前團隊表單。",
   teamInstructions: "團隊指示（選填）",
   teamInstructionsPlaceholder: "編寫協作原則、品質要求或團隊共同遵循的工作約定。",
-  teamInstructionsHint: "將作為 always-on 的 TEAM.md 文件載入協調者與每位成員的上下文。",
+  teamInstructionsHint: "將作為 always-on 的 TEAM.md 文件向協調者與每位成員公開，請保持簡潔。",
   teamKnowledgeBases: "團隊知識庫",
   teamKnowledgeBasesDescription: "僅在專家透過此團隊工作時掛載的知識庫。",
   teamKnowledgeSelect: "選擇團隊知識庫",

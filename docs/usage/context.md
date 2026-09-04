@@ -32,14 +32,15 @@ priority: normal
 
 当前支持的 `trigger`：
 
-- `always_on`：每次运行都预加载正文
+- `always_on`：每次运行都进入不可省略的 Always-on Manifest；正文按预算完整、部分或延迟加载
 - `model_decision`：Expert 启动时把 context ID 和 description 加入可用索引，但不加载正文
 - `manual`：默认值；不向 system prompt 自动注入 ID、description 或正文
 
 所有 Store 在没有声明 `trigger` 时都必须归一化为 `manual`。模型可以把
 `list_expert_context` 当作 `ls` 发现 ID 和 description，也可以通过
 `search_expert_context` 按路径或正文搜索；知道 ID 后使用 `read_expert_context` 读取正文。
-`ContextSystem` 只为 `model_decision` context 注入 ID 和 description 索引。
+`ContextSystem` 为 `always_on` context 注入包含加载状态和续读提示的 Manifest，并为
+`model_decision` context 注入 ID 和 description 索引。
 
 `list_expert_context` 默认每页 20 条，可通过 `limit` 调整到最多 50 条；返回 `nextCursor` 时使用该
 `cursor` 继续下一页。Search 结果受数量和字节预算约束，结果被省略时应缩小 query；搜索片段被截断时，
@@ -189,13 +190,15 @@ const contextSystem = new ContextSystem({
 - 不要把所有重要文档都标成 `always_on`
 - 优先让文档通过 `trigger` 表达默认行为，只有专家装配需要覆盖时才用 `preloadPaths`
 - `AGENTS.md`、安全规则等重要内容使用通用 preload 和 priority 配置，不依赖文件名隐式语义
+- root 只覆盖其 namespace/path 命中的文档；没有匹配 root 的已注册 Store 仍按文档自身 `trigger` 装配
 
 ## Store、预算与失败语义
 
 - `ContextStore` 决定 ID 的实际含义和授权策略；数据库 Store 可以在查询或事务中使用 run context 做租户与权限裁决。
 - `FileSystemContextStore` 默认发现 Markdown，可通过 `include` / `exclude` 显式开放其他 UTF-8 文本，并拒绝 root 外真实路径和 symlink 逃逸。
-- 只有 `model_decision` context 的 ID 和 description 自动进入 Agent prompt；其他 context 通过 list/search 发现，通过 read 按 ID 读取。
-- `systemPromptCharacterBudget` 限制身份和 Context System 使用规则；`preloadByteBudget` 限制全部 preload 正文的 UTF-8 字节总量。
+- 每个适用的 `always_on` context 都进入 Agent prompt 的 Manifest；`model_decision` context 进入 ID 和 description 索引；其他 context 通过 list/search 发现。
+- `systemPromptCharacterBudget` 限制身份、Context System 使用规则和完整 Always-on Manifest；默认 16,000-byte 的 `preloadByteBudget` 只限制 preload 正文。
+- Manifest 无法完整装入 system prompt 时装配显式失败；正文为 partial/deferred 时按其中的 `read_expert_context` 提示续读。
 - required Store 索引失败或任何已选 preload 读取失败会终止 session 创建；optional Store 失败进入 Context Snapshot issues。
 - Context 写工具默认需要显式人工审批，Store 授权仍是独立且不可替代的边界。
 
