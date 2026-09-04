@@ -3,7 +3,12 @@ import { access, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { createStaticRuntimeResolver, snapshotRuntimeFeatures, type Expert } from "@pragma/core";
+import {
+  createStaticRuntimeResolver,
+  snapshotRuntimeFeatures,
+  StaticContextStore,
+  type Expert,
+} from "@pragma/core";
 import { createRuntimeTestFeatures } from "@pragma/core/testing";
 import { strFromU8, strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
@@ -12,6 +17,8 @@ import {
   PragmaBundleFormatError,
   decodePragmaBundle,
   DefinitionSerializerRegistry,
+  applyPragmaEnvironmentBindingOverlay,
+  createEmptyPragmaEnvironmentBindingOverlay,
   exportPragmaBundle,
   encodePragmaBundle,
   formatPragmaYaml,
@@ -26,6 +33,34 @@ import { sha256, stableStringify } from "../src/compiler/compiler-hash.ts";
 import { PragmaCompilerV6ResourceSchema } from "../src/compiler-migrations/schemas/v6.ts";
 
 describe("portable .pragma bundles", () => {
+  it("preserves the Host file Context factory through a binding overlay", () => {
+    const store = new StaticContextStore([]);
+    const host = applyPragmaEnvironmentBindingOverlay(
+      {
+        workspace: "/workspace",
+        adapterHost: {
+          environmentId: "test",
+          projectRoot: "/project",
+          async resolveBinding() {
+            return undefined;
+          },
+          async resolveArtifact(source) {
+            throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+          },
+          async resolveSecret() {
+            return undefined;
+          },
+          openFileContextStore() {
+            return store;
+          },
+        },
+      },
+      createEmptyPragmaEnvironmentBindingOverlay(),
+    );
+
+    expect(host.adapterHost?.openFileContextStore?.({ rootDir: "/contexts" })).toBe(store);
+  });
+
   it("exports a target dependency closure and loads it directly through the Interpreter", async () => {
     const source = await createProject();
     const project = await loadPragmaProject(source.entry);

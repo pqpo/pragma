@@ -9,7 +9,7 @@ import type {
   DefineRuntimeDriverOptions,
   McpToolRegistryPool,
   RuntimeDriver,
-  RuntimeDriverSessionContext,
+  RuntimeNativeSessionContext,
   RuntimeFeatureSessionPrepareContext,
   RuntimeSessionReadContext,
 } from "@pragma/core";
@@ -304,7 +304,7 @@ function createSessionContext(
   restoredRuntimeSessionId?: string,
   workspace = "/workspace/project",
   processEnvironment: NodeJS.ProcessEnv = { API_KEY: "preserved" },
-): RuntimeDriverSessionContext {
+): RuntimeNativeSessionContext {
   const agent = {
     id: "expert-1",
     name: "Review Expert",
@@ -354,7 +354,7 @@ function createSessionContext(
     features: {} as never,
     steps: { get: () => undefined } as never,
     sessionInfo: {},
-  } as unknown as RuntimeDriverSessionContext;
+  } as unknown as RuntimeNativeSessionContext;
 }
 
 interface PreparedSession<TSession> {
@@ -365,7 +365,7 @@ interface PreparedSession<TSession> {
 
 async function createPreparedSession<TSession>(
   driver: RuntimeDriver<unknown, TSession>,
-  baseContext: RuntimeDriverSessionContext,
+  baseContext: RuntimeNativeSessionContext,
 ): Promise<PreparedSession<TSession>> {
   const resources = new RuntimeResourceScope("antigravity-adapter-test");
   const featureOutputs: Record<string, unknown> = {};

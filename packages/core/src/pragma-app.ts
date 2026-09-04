@@ -11,9 +11,11 @@ import {
   type ExpertSessionStore,
 } from "./execution/expert-session-store.ts";
 import { createFileExecutionStore, type ExecutionStore } from "./execution/execution-store.ts";
+import type { NestedFlowInvocationExecutor } from "./execution/expert-runner.ts";
 import type { Flow, FlowSpec } from "./flow/flow.ts";
 import {
   FlowExecutionManager,
+  runNestedFlowInvocation,
   type FlowExecution,
   type FlowExecutionView,
   type StartFlowRequest,
@@ -83,6 +85,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
         : { executions, pragmaHome: options.pragmaHome },
     );
   const runtimes = options.runtimes;
+  const nestedFlowExecutor: NestedFlowInvocationExecutor = runNestedFlowInvocation;
   const experts = new ExpertSessionManager({
     sessions,
     executions,
@@ -93,6 +96,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     usageSink: options.usageSink,
     hostContextBindings: options.hostContextBindings,
     resolveHostContextBindings: options.resolveHostContextBindings,
+    nestedFlowExecutor,
   });
   const flows = new FlowExecutionManager(
     executions,

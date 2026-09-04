@@ -135,6 +135,9 @@ export function applyPragmaEnvironmentBindingOverlay(
         }
         return await baseAdapterHost.resolveArtifact(source);
       },
+      ...(baseAdapterHost?.openFileContextStore === undefined
+        ? {}
+        : { openFileContextStore: baseAdapterHost.openFileContextStore }),
     },
   };
 }

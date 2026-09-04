@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type {
   DefineRuntimeDriverOptions,
   RuntimeDriver,
-  RuntimeDriverSessionContext,
+  RuntimeNativeSessionContext,
   RuntimeModel,
   RuntimeModelSelection,
   RuntimeTurnContext,
@@ -138,7 +138,7 @@ function modelCatalog(): readonly RuntimeModel[] {
 function createSessionContext(
   root: string,
   modelSelection: RuntimeModelSelection,
-): RuntimeDriverSessionContext {
+): RuntimeNativeSessionContext {
   const sessionDir = join(root, "session");
   const agent = { id: "expert-1", workspace: "/workspace" };
   const owner = { type: "expert-session" as const, ownerId: "owner-1", contextId: "context-1" };
@@ -196,7 +196,7 @@ function createSessionContext(
     } as never,
     steps: { get: () => undefined } as never,
     sessionInfo: {},
-  } as unknown as RuntimeDriverSessionContext;
+  } as unknown as RuntimeNativeSessionContext;
 }
 
 async function temporaryRoot(): Promise<string> {

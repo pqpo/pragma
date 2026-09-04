@@ -6,13 +6,13 @@ import {
   defineExpert,
   defineRuntimeDriver,
   PragmaPaths,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
   withFileLock,
 } from "../../src/index.ts";
 import { createRuntimeTestFeatures } from "../../src/testing/index.ts";
 
 interface FixtureSession {
-  readonly context: RuntimeDriverSessionContext;
+  readonly context: RuntimeNativeSessionContext;
   readonly id: string;
 }
 

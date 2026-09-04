@@ -32,6 +32,21 @@ import {
 } from "../src/index.ts";
 import { createProbeMemoryModule } from "../src/testing/index.ts";
 
+async function appendExecutionEvent(
+  store: ReturnType<typeof createFileExecutionStore>,
+  executionId: string,
+  invocationId: string,
+  type: string,
+  data: unknown,
+  eventId: string = crypto.randomUUID(),
+): Promise<void> {
+  await store.commit({
+    commitId: `event:${eventId}`,
+    executionId,
+    events: [{ eventId, invocationId, type, data }],
+  });
+}
+
 describe("Memory Plane phase one", () => {
   it("keeps a useful fragment when a module summary is one oversized line", async () => {
     const registry = new MemoryModuleRegistry();
@@ -80,7 +95,8 @@ describe("Memory Plane phase one", () => {
       canonicalEventFeed: canonical,
     });
     await createExecution(executions);
-    await executions.appendEvent(
+    await appendExecutionEvent(
+      executions,
       "execution",
       "root",
       "invocation.message.appended",
@@ -240,7 +256,8 @@ describe("Memory Plane phase one", () => {
       },
     });
     await createExecution(executions);
-    await executions.appendEvent(
+    await appendExecutionEvent(
+      executions,
       "execution",
       "root",
       "invocation.message.appended",
@@ -516,7 +533,7 @@ async function createExecution(store: ReturnType<typeof createFileExecutionStore
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v10",
+    schemaVersion: "pragma.execution/v11",
     executionId: "execution",
     version: 0,
     kind: "flow",

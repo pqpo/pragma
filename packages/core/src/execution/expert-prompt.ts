@@ -11,13 +11,7 @@ export function createExpertPromptInput(
   return ExpertPromptInputSchema.parse({ text, attachments });
 }
 
-export function readExpertPromptInput(input: unknown, fallbackText: string): ExpertPromptInput {
-  if (input === undefined) {
-    return ExpertPromptInputSchema.parse({ text: fallbackText, attachments: [] });
-  }
-  if (typeof input === "string") {
-    return ExpertPromptInputSchema.parse({ text: input, attachments: [] });
-  }
+export function readExpertPromptInput(input: unknown): ExpertPromptInput {
   const parsed = ExpertPromptInputSchema.safeParse(input);
   if (parsed.success) return parsed.data;
   throw new Error(`Expert prompt input is invalid: ${parsed.error.message}`);

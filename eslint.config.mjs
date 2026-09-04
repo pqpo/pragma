@@ -409,6 +409,50 @@ const config = tseslint.config(
     },
   },
   {
+    files: ["packages/core/src/execution/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportDeclaration[source.value=/^\\.\\.\\/flow\\//][importKind!='type']",
+          message:
+            "Core execution may reference Flow contracts with import type, but must receive Flow executors through injection.",
+        },
+        {
+          selector: "ImportExpression[source.value=/^\\.\\.\\/flow\\//]",
+          message:
+            "Core execution must not dynamically import Flow implementations; inject Flow executors instead.",
+        },
+        {
+          selector:
+            "ExportNamedDeclaration[source.value=/^\\.\\.\\/flow\\//][exportKind!='type'], ExportAllDeclaration[source.value=/^\\.\\.\\/flow\\//]",
+          message:
+            "Core execution must not re-export Flow implementations across the execution boundary.",
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/core/src/context-system/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "ImportDeclaration[source.value=/^(?:node:)?(?:fs|path|child_process)(?:\\/|$)/]",
+          message:
+            "Core context-system must stay independent of filesystem and child-process APIs; inject Host adapters instead.",
+        },
+        {
+          selector:
+            "ImportExpression[source.value=/^(?:node:)?(?:fs|path|child_process)(?:\\/|$)/]",
+          message:
+            "Core context-system must not dynamically load filesystem or child-process APIs; inject Host adapters instead.",
+        },
+      ],
+    },
+  },
+  {
     files: ["packages/evaluation/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [

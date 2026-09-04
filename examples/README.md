@@ -119,7 +119,7 @@ Context 示例不调用模型，可直接运行：
 pnpm --filter @pragma/examples example:context
 ```
 
-它使用 `FileSystemContextStore` 演示 preload、检索、CRUD 和基于
+它从 Host Adapter 包 `@pragma/context-filesystem` 使用 `FileSystemContextStore`，演示 preload、检索、CRUD 和基于
 `ExpertAgentRunContext` 的 member/admin 授权。示例数据写入仓库根目录的
 `workspace/context-example/`。
 

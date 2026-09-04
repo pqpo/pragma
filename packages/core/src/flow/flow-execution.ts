@@ -52,6 +52,7 @@ import {
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "../execution/execution-store.ts";
+import { commitExecutionEvent } from "../execution/execution-commit.ts";
 import { InvocationService } from "../execution/invocation-service.ts";
 import {
   StoredExecutionView,
@@ -116,7 +117,7 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v10",
+      schemaVersion: "pragma.execution/v11",
       executionId,
       version: 0,
       kind: "flow",
@@ -363,7 +364,13 @@ export class FlowExecutionManager {
       const usage = controller.getUsage();
       const current = await this.executions.get(executionId);
       if (current !== undefined && isFinal(current.status)) {
-        if (usage !== undefined) await this.executions.update(executionId, { usage });
+        if (usage !== undefined) {
+          await this.executions.commit({
+            commitId: `flow-terminal-usage:${executionId}:${current.version}`,
+            executionId,
+            executionPatch: { usage },
+          });
+        }
       } else {
         const closure = await prepareExecutionContextClosure(this.executions, executionId);
         await this.executions.commit({
@@ -582,12 +589,12 @@ async function runStep(
             invocationId: invocation.invocationId,
             signal,
             emitOutput: async (value) => {
-              await options.store.appendEvent(
-                options.executionId,
-                invocation.invocationId,
-                "invocation.progress",
-                { value },
-              );
+              await commitExecutionEvent(options.store, {
+                executionId: options.executionId,
+                invocationId: invocation.invocationId,
+                type: "invocation.progress",
+                data: { value },
+              });
             },
           } as FlowTaskContext),
         ),
@@ -663,6 +670,7 @@ async function runStep(
       usageSink: options.usageSink,
       hostContextBindings: options.hostContextBindings,
       resolveHostContextBindings: options.resolveHostContextBindings,
+      nestedFlowExecutor: runNestedFlowInvocation,
     });
     return unwrapInvocationOutput(InvocationOutputSchema.parse(invocationOutput));
   } catch (error) {
@@ -712,12 +720,12 @@ async function runHumanTask(
       options.flowInvocationId,
     ),
     emitOutput: async (value) => {
-      await options.store.appendEvent(
-        options.executionId,
-        invocation.invocationId,
-        "invocation.progress",
-        { value },
-      );
+      await commitExecutionEvent(options.store, {
+        executionId: options.executionId,
+        invocationId: invocation.invocationId,
+        type: "invocation.progress",
+        data: { value },
+      });
     },
   };
   const request: HumanInteractionRequest =

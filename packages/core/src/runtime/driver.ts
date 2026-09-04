@@ -168,10 +168,6 @@ export interface RuntimeNativeSessionContext<
   readonly steps: RuntimePreparedSteps<"session">;
 }
 
-/** @deprecated Use RuntimeNativeSessionContext. */
-export type RuntimeDriverSessionContext<TFeatures extends RuntimeFeatureSet = RuntimeFeatureSet> =
-  RuntimeNativeSessionContext<TFeatures>;
-
 export interface RuntimeSessionReadContext {
   readonly agent: Expert;
   readonly runContext: ExpertAgentRunContext;

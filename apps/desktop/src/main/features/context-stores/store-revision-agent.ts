@@ -2,8 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/context-filesystem";
-import { type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
+import { withFileLock, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
   STORE_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
@@ -158,6 +157,9 @@ export function createDesktopStoreRevisionAgent(options: {
           async resolveSecret(binding) {
             return await input.adapterHost?.resolveSecret(binding);
           },
+          ...(input.adapterHost?.openFileContextStore === undefined
+            ? {}
+            : { openFileContextStore: input.adapterHost.openFileContextStore }),
         },
       });
     },

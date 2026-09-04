@@ -13,7 +13,7 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 
 interface FixtureSession {
-  readonly context: RuntimeDriverSessionContext;
+  readonly context: RuntimeNativeSessionContext;
   readonly id: string;
 }
 
