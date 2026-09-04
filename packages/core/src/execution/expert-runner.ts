@@ -38,7 +38,6 @@ import {
 import { freshContextIdResolver } from "./context-id-resolver.ts";
 import { SteerNotDispatchedError } from "./steer-delivery-error.ts";
 import type { Flow } from "../flow/flow.ts";
-import { runNestedFlowInvocation } from "../flow/flow-execution.ts";
 import type {
   RuntimeAgentSession,
   RuntimeModelSelection,
@@ -71,6 +70,7 @@ import {
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "./execution-store.ts";
+import { commitExecutionEvent } from "./execution-commit.ts";
 import {
   ExpertOrchestrator,
   type DelegationPermit,
@@ -484,26 +484,26 @@ export class ExecutionController {
       }
     } else {
       await this.options.onHumanInteractionRequested?.();
-      await this.store.appendEvent(
-        this.executionId,
+      await commitExecutionEvent(this.store, {
+        executionId: this.executionId,
         invocationId,
-        "human.requested",
-        { interactionId, request: parsedRequest },
-        `human-request:${interactionId}`,
-      );
+        type: "human.requested",
+        data: { interactionId, request: parsedRequest },
+        eventId: `human-request:${interactionId}`,
+      });
     }
     if (this.cancelled) throw new Error("Execution was cancelled.");
     if (signal.aborted) throw signal.reason ?? new Error("Invocation was aborted.");
     const automaticResponse = await this.options.automaticHumanInteractionHandler?.(request);
     if (automaticResponse !== undefined) {
       const requestId = `automatic-human-response:${interactionId}`;
-      await this.store.appendEvent(
-        this.executionId,
+      await commitExecutionEvent(this.store, {
+        executionId: this.executionId,
         invocationId,
-        "human.responded",
-        { interactionId, requestId, response: automaticResponse },
-        requestId,
-      );
+        type: "human.responded",
+        data: { interactionId, requestId, response: automaticResponse },
+        eventId: requestId,
+      });
       return automaticResponse;
     }
     await this.store.commit({
@@ -843,13 +843,13 @@ export async function persistHumanInteractionResponse(
     throw new Error(`Human interaction is not pending: ${interactionId}`);
   }
   const parsedResponse = ExpertAgentHumanResponseSchema.parse(response);
-  await store.appendEvent(
+  await commitExecutionEvent(store, {
     executionId,
-    requested.invocationId,
-    "human.responded",
-    { interactionId, requestId, response: parsedResponse },
-    requestId,
-  );
+    invocationId: requested.invocationId,
+    type: "human.responded",
+    data: { interactionId, requestId, response: parsedResponse },
+    eventId: requestId,
+  });
   return parsedResponse;
 }
 
@@ -941,7 +941,29 @@ export interface RunExpertInvocationOptions {
   readonly contextOutputs?: ContextOutputService | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
   readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
+  readonly nestedFlowExecutor?: NestedFlowInvocationExecutor | undefined;
 }
+
+export interface NestedFlowInvocationOptions {
+  readonly flow: Flow;
+  readonly executionId: string;
+  readonly flowInvocationId: string;
+  readonly input: unknown;
+  readonly owner: RunExpertInvocationOptions["owner"];
+  readonly controller: ExecutionController;
+  readonly store: ExecutionStore;
+  readonly runtimes: RuntimeResolver;
+  readonly runtime?: string | undefined;
+  readonly contextOutputs: ContextOutputService;
+  readonly loggerProvider?: PragmaLoggerProvider | undefined;
+  readonly usageSink?: UsageSink | undefined;
+  readonly hostContextBindings?: HostContextBindings | undefined;
+  readonly resolveHostContextBindings?: HostContextBindingsResolver | undefined;
+}
+
+export type NestedFlowInvocationExecutor = (
+  options: NestedFlowInvocationOptions,
+) => Promise<unknown>;
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
   const execution = await requireExecution(options.store, options.executionId);
@@ -1544,6 +1566,8 @@ async function executeAgentJob(
     delegationPermit: job.permit,
     contextOutputs: parent.contextOutputs,
     hostContextBindings: parent.hostContextBindings,
+    resolveHostContextBindings: parent.resolveHostContextBindings,
+    nestedFlowExecutor: parent.nestedFlowExecutor,
     ...(parent.runtimeByExpert === undefined ? {} : { runtimeByExpert: parent.runtimeByExpert }),
     ...(parent.readContextScope === undefined ? {} : { readContextScope: parent.readContextScope }),
     ...(parent.persistContext === undefined ? {} : { persistContext: parent.persistContext }),
@@ -1702,7 +1726,10 @@ async function invokeResourceFromExpert(
           options.executionId,
           withHostContextBindings(caller, options.hostContextBindings).contextSystem,
         );
-      const output = await runNestedFlowInvocation({
+      if (options.nestedFlowExecutor === undefined) {
+        throw new Error("Nested Flow executor is unavailable.");
+      }
+      const output = await options.nestedFlowExecutor({
         flow: target,
         executionId: options.executionId,
         flowInvocationId: invocationId,
@@ -1714,6 +1741,7 @@ async function invokeResourceFromExpert(
         runtime: parentRuntimeId,
         contextOutputs,
         hostContextBindings: options.hostContextBindings,
+        resolveHostContextBindings: options.resolveHostContextBindings,
         usageSink: options.usageSink,
         loggerProvider: options.loggerProvider,
       });
@@ -1835,8 +1863,10 @@ async function invokeResourceFromExpert(
           depth: depth + 1,
           contextOutputs: options.contextOutputs,
           hostContextBindings: options.hostContextBindings,
+          resolveHostContextBindings: options.resolveHostContextBindings,
           usageSink: options.usageSink,
           loggerProvider: options.loggerProvider,
+          nestedFlowExecutor: options.nestedFlowExecutor,
           ...(options.readContextScope === undefined
             ? {}
             : { readContextScope: options.readContextScope }),
@@ -1980,27 +2010,27 @@ async function submitRuntimeTurn(options: {
           completedRootAssistant = message;
           continue;
         }
-        await options.options.store.appendEvent(
-          options.options.executionId,
-          options.options.invocationId,
-          "invocation.message.appended",
-          {
+        await commitExecutionEvent(options.options.store, {
+          executionId: options.options.executionId,
+          invocationId: options.options.invocationId,
+          type: "invocation.message.appended",
+          data: {
             message,
             runId: event.runId,
             ...(event.parentRunId === undefined ? {} : { parentRunId: event.parentRunId }),
             source: event.source,
           },
-          `invocation-message:${event.eventId}:${message.timestamp}`,
-        );
+          eventId: `invocation-message:${event.eventId}:${message.timestamp}`,
+        });
       }
       if (!isLiveOnlyRuntimeEvent(event) && event.type !== "message.completed") {
-        await options.options.store.appendEvent(
-          options.options.executionId,
-          options.options.invocationId,
-          "runtime.event",
-          event,
-          event.eventId,
-        );
+        await commitExecutionEvent(options.options.store, {
+          executionId: options.options.executionId,
+          invocationId: options.options.invocationId,
+          type: "runtime.event",
+          data: event,
+          eventId: event.eventId,
+        });
       }
     }
   })();
@@ -2320,11 +2350,11 @@ async function appendInvocationFinalMessage(
           ],
         })
       : message;
-  await options.store.appendEvent(
-    options.executionId,
-    options.invocationId,
-    "invocation.message.appended",
-    {
+  await commitExecutionEvent(options.store, {
+    executionId: options.executionId,
+    invocationId: options.invocationId,
+    type: "invocation.message.appended",
+    data: {
       message: persisted,
       runId,
       source: {
@@ -2334,8 +2364,8 @@ async function appendInvocationFinalMessage(
         path: [],
       },
     },
-    `invocation-final-message:${runId}`,
-  );
+    eventId: `invocation-final-message:${runId}`,
+  });
 }
 
 async function appendUserMessage(
@@ -2344,13 +2374,13 @@ async function appendUserMessage(
   eventId: string,
   timestamp = Date.now(),
 ): Promise<void> {
-  await options.store.appendEvent(
-    options.executionId,
-    options.invocationId,
-    "invocation.message.appended",
-    { message: { role: "user", content, timestamp } satisfies AgentMessage },
+  await commitExecutionEvent(options.store, {
+    executionId: options.executionId,
+    invocationId: options.invocationId,
+    type: "invocation.message.appended",
+    data: { message: { role: "user", content, timestamp } satisfies AgentMessage },
     eventId,
-  );
+  });
 }
 
 function expertMessageBatchId(messages: Invocation["pendingExpertMessages"]): string {

@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@pragma/core": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "gray-matter": "^4.0.3",
     "zod": "latest"
   },
   "devDependencies": {

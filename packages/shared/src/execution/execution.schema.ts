@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentMessageSchema, AgentMessageUsageSchema } from "../agent-message.schema.ts";
 import { ExpertAgentStreamSourceSchema } from "../stream-event.schema.ts";
+import { ExpertPromptInputSchema } from "../expert-prompt.schema.ts";
 import { InvocationOutputSchema } from "./invocation-output.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
@@ -216,23 +217,36 @@ export const ExecutionOutputItemSchema = z.object({
   occurredAt: z.string().datetime(),
 });
 
-export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v10"),
-  executionId: z.string().min(1),
-  version: z.number().int().nonnegative(),
-  kind: ExecutionKindSchema,
-  definition: DefinitionReferenceSchema,
-  rootInvocationId: z.string().min(1),
-  status: ExecutionStatusSchema,
-  input: z.unknown(),
-  state: z.record(z.string(), z.unknown()).default({}),
-  output: InvocationOutputSchema.optional(),
-  usage: AgentMessageUsageSchema.optional(),
-  error: z.unknown().optional(),
-  lastAppliedSequence: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
+export const ExecutionRecordSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.execution/v11"),
+    executionId: z.string().min(1),
+    version: z.number().int().nonnegative(),
+    kind: ExecutionKindSchema,
+    definition: DefinitionReferenceSchema,
+    rootInvocationId: z.string().min(1),
+    status: ExecutionStatusSchema,
+    input: z.unknown(),
+    state: z.record(z.string(), z.unknown()).default({}),
+    output: InvocationOutputSchema.optional(),
+    usage: AgentMessageUsageSchema.optional(),
+    error: z.unknown().optional(),
+    lastAppliedSequence: z.number().int().nonnegative(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .superRefine((execution, context) => {
+    if (
+      execution.kind === "expert-turn" &&
+      !ExpertPromptInputSchema.safeParse(execution.input).success
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["input"],
+        message: "Expert turn root input must be a structured Expert prompt.",
+      });
+    }
+  });
 
 export interface InvocationTree {
   readonly invocation: z.infer<typeof InvocationSchema>;

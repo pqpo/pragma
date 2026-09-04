@@ -17,6 +17,7 @@ import {
   type CanonicalEventFeed,
 } from "../src/index.ts";
 import { CANONICAL_EVENT_FEED_V1_SCHEMA_SQL } from "../src/storage/migrations/canonical-event-feed/index.ts";
+import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
 describe("Canonical Event Feed", () => {
   it("relays committed Execution events with stable idempotency", async () => {
@@ -25,14 +26,16 @@ describe("Canonical Event Feed", () => {
     const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
 
-    await store.appendEvent(
+    await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "invocation.message.appended",
       { message: { role: "user", content: "remember this", timestamp: 1 } },
       "message-one",
     );
-    await store.appendEvent(
+    await appendExecutionEvent(
+      store,
       "execution",
       "root",
       "invocation.message.appended",
@@ -67,9 +70,23 @@ describe("Canonical Event Feed", () => {
     const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
     await expect(
-      store.appendEvent("execution", "root", "invocation.progress", { value: 1 }, "event-one"),
+      appendExecutionEvent(
+        store,
+        "execution",
+        "root",
+        "invocation.progress",
+        { value: 1 },
+        "event-one",
+      ),
     ).resolves.toMatchObject({ eventId: "event-one" });
-    await store.appendEvent("execution", "root", "invocation.progress", { value: 2 }, "event-two");
+    await appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 2 },
+      "event-two",
+    );
     await expect(store.readEvents("execution")).resolves.toHaveLength(2);
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 0, eventCount: 0 });
 
@@ -106,8 +123,22 @@ describe("Canonical Event Feed", () => {
     };
     const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
-    await store.appendEvent("execution", "root", "invocation.progress", { value: 1 }, "event-one");
-    await store.appendEvent("execution", "root", "invocation.progress", { value: 2 }, "event-two");
+    await appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "event-one",
+    );
+    await appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 2 },
+      "event-two",
+    );
 
     unavailable = false;
     failNextRecovery = true;
@@ -188,7 +219,7 @@ describe("Canonical Event Feed", () => {
     };
     const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
-    await store.appendEvent("execution", "root", "invocation.progress", {}, "event-one");
+    await appendExecutionEvent(store, "execution", "root", "invocation.progress", {}, "event-one");
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 1, eventCount: 1 });
 
     interruptAcknowledgement = false;
@@ -202,8 +233,22 @@ describe("Canonical Event Feed", () => {
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
     const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
-    await store.appendEvent("execution", "root", "invocation.progress", { value: 1 }, "one");
-    await store.appendEvent("execution", "root", "invocation.progress", { value: 2 }, "two");
+    await appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "one",
+    );
+    await appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 2 },
+      "two",
+    );
     const original = await feed.read({ limit: 10 });
     const first = original.items[0];
     expect(first?.kind).toBe("event");
@@ -231,7 +276,7 @@ describe("Canonical Event Feed", () => {
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
     const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
     await createExecution(store);
-    await store.appendEvent("execution", "root", "invocation.progress", {}, "pinned");
+    await appendExecutionEvent(store, "execution", "root", "invocation.progress", {}, "pinned");
     const result = await feed.maintain({
       safeThrough: { sequence: 0 },
       retainAfter: "9999-01-01T00:00:00.000Z",
@@ -289,7 +334,7 @@ async function createExecution(store: ReturnType<typeof createFileExecutionStore
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v10",
+    schemaVersion: "pragma.execution/v11",
     executionId: "execution",
     version: 0,
     kind: "flow",

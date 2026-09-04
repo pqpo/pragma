@@ -12,7 +12,7 @@ import {
   PragmaPaths,
   readRuntimeSessionRecord,
   type ExpertAgentPluginManifest,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
@@ -269,7 +269,7 @@ async function expert(root: string, id: string, token: string) {
 }
 
 function fakeRuntime(captured: Readonly<NodeJS.ProcessEnv>[]) {
-  return defineRuntimeDriver<never, { readonly context: RuntimeDriverSessionContext }>(
+  return defineRuntimeDriver<never, { readonly context: RuntimeNativeSessionContext }>(
     {
       features: createRuntimeTestFeatures(),
       descriptor: { id: "environment-test", kind: "environment-test", displayName: "Test" },

@@ -3402,6 +3402,9 @@ function createAdapterHost(
     async resolveSecret(ref: string) {
       return await external?.resolveSecret(ref);
     },
+    ...(external?.openFileContextStore === undefined
+      ? {}
+      : { openFileContextStore: external.openFileContextStore }),
   };
 }
 

@@ -6,7 +6,7 @@ import type {
   DefineRuntimeDriverOptions,
   McpToolRegistryPool,
   RuntimeDriver,
-  RuntimeDriverSessionContext,
+  RuntimeNativeSessionContext,
   RuntimeSessionReadContext,
 } from "@pragma/core";
 import { assertRuntimeConformance, RuntimeResourceScope } from "@pragma/core";
@@ -137,7 +137,7 @@ function createMcpToolRegistryPool(): McpToolRegistryPool {
 function createSessionContext(
   sessionDir: string,
   restoredRuntimeSessionId?: string,
-): RuntimeDriverSessionContext {
+): RuntimeNativeSessionContext {
   const agent = {
     id: "expert-1",
     workspace: "/workspace",
@@ -201,5 +201,5 @@ function createSessionContext(
     } as never,
     steps: { get: () => undefined } as never,
     sessionInfo: {},
-  } as unknown as RuntimeDriverSessionContext;
+  } as unknown as RuntimeNativeSessionContext;
 }

@@ -1,8 +1,10 @@
 import { PragmaPaths, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
+import { FileSystemContextStore } from "@pragma/context-filesystem";
 import {
   canonicalPragmaResourceRef,
   PragmaInvocableResourceRefSchema,
   type InvocableResource,
+  type PragmaAdapterHost,
   type PragmaResource,
 } from "@pragma/interpreter";
 import {
@@ -137,6 +139,7 @@ export function createLocalHostProjectCatalog(options: {
         environmentId: options.environmentId ?? "cli",
         runtimes: options.runtimes,
         loggerProvider: options.loggerProvider,
+        adapterHost: createLocalHostAdapterHost(location.rootDir, options.environmentId ?? "cli"),
       });
       const expectedCompiledFingerprint =
         location.derivedProjectFingerprint ?? location.projectFingerprint;
@@ -191,6 +194,32 @@ export function createLocalHostProjectCatalog(options: {
           fingerprint: loaded.location.projectFingerprint!,
         }),
       );
+    },
+  };
+}
+
+export function createLocalHostAdapterHost(
+  projectRoot: string,
+  environmentId = "cli",
+): PragmaAdapterHost {
+  return {
+    environmentId,
+    projectRoot,
+    async resolveBinding() {
+      return undefined;
+    },
+    async resolveArtifact(source) {
+      throw new Error(
+        `Local Host has no external artifact resolver for: ${
+          source.type === "project" ? source.path : source.uri
+        }`,
+      );
+    },
+    async resolveSecret() {
+      return undefined;
+    },
+    openFileContextStore({ rootDir }) {
+      return new FileSystemContextStore({ rootDir });
     },
   };
 }

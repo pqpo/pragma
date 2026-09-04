@@ -6,6 +6,7 @@ import {
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
 import type { McpToolRegistryPool } from "@pragma/core";
+import { FileSystemContextStore } from "@pragma/context-filesystem";
 import type { PragmaAdapterHost, PragmaBindingRecord } from "@pragma/interpreter";
 
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
@@ -113,6 +114,9 @@ export function createDesktopAdapterHost(
     },
     async resolveSecret() {
       return undefined;
+    },
+    openFileContextStore({ rootDir }) {
+      return new FileSystemContextStore({ rootDir });
     },
   };
 }

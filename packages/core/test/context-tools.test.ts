@@ -368,7 +368,7 @@ describe("Expert context tools", () => {
   it("normalizes blank optional filters, modes, and concurrency tokens", async () => {
     const listContext = vi.fn(async () => ({
       ok: true as const,
-      value: { items: [], issues: [] },
+      value: { items: [], issues: [], stores: [] },
     }));
     const searchContext = vi.fn(async () => ({ ok: true as const, value: [] }));
     const editContext = vi.fn(async () => ({
@@ -554,7 +554,7 @@ describe("Expert context tools", () => {
   it("overlays the active submission identity onto a reused Runtime context", async () => {
     const listContext = vi.fn(async () => ({
       ok: true as const,
-      value: { items: [], issues: [] },
+      value: { items: [], issues: [], stores: [] },
     }));
     const unsupported = vi.fn(async () => {
       throw new Error("not used");
@@ -613,6 +613,7 @@ describe("Expert context tools", () => {
             metadata: { trigger: "model_decision" as const, priority: "normal" as const },
           })),
           issues: [],
+          stores: [],
         },
       })),
       readContext: unsupported,
@@ -668,6 +669,7 @@ describe("Expert context tools", () => {
               }))
             : [],
         issues: [],
+        stores: [],
       },
     }));
     const operations: ExpertAgentContextItemOperations = {
@@ -783,6 +785,7 @@ describe("Expert context tools", () => {
             },
           ],
           issues: [],
+          stores: [],
         },
       })),
       readContext: unsupported,

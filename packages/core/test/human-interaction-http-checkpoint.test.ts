@@ -15,7 +15,7 @@ import {
   PragmaPaths,
   registerExpertToolsMcpSession,
   type ExpertToolsMcpSessionRegistration,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 
@@ -114,7 +114,7 @@ describe("Human interaction checkpoint across the HTTP MCP boundary", { timeout:
 });
 
 interface HttpMcpRuntimeSession {
-  readonly context: RuntimeDriverSessionContext;
+  readonly context: RuntimeNativeSessionContext;
   readonly registration: ExpertToolsMcpSessionRegistration;
 }
 

@@ -16,10 +16,11 @@ import {
   type ExecutionStore,
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
-  type RuntimeDriverSessionContext,
+  type RuntimeNativeSessionContext,
 } from "../src/index.ts";
 import { ExecutionController } from "../src/execution/expert-runner.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
+import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
 const tempDirs: string[] = [];
 
@@ -45,14 +46,14 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
       const definition = { id: "retry-expert", kind: "expert" as const };
       await executions.create(
         {
-          schemaVersion: "pragma.execution/v10",
+          schemaVersion: "pragma.execution/v11",
           executionId,
           version: 0,
           kind: "expert-turn",
           definition,
           rootInvocationId: invocationId,
           status: "running",
-          input: "Wait for a human response.",
+          input: { text: "Wait for a human response.", attachments: [] },
           state: {},
           lastAppliedSequence: 0,
           createdAt: now,
@@ -66,7 +67,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
           contextId: "context-response-retry",
           status: "running",
           pendingExpertMessages: [],
-          input: "Wait for a human response.",
+          input: { text: "Wait for a human response.", attachments: [] },
           createdAt: now,
           updatedAt: now,
         },
@@ -74,14 +75,15 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
       let failurePending = true;
       const store: ExecutionStore = {
         ...executions,
-        async appendEvent(executionId, invocationId, type, data, eventId) {
-          if (type === "human.responded" && failureStage === "response-event" && failurePending) {
+        async commit(request) {
+          if (
+            request.events?.some((event) => event.type === "human.responded") === true &&
+            failureStage === "response-event" &&
+            failurePending
+          ) {
             failurePending = false;
             throw new Error("Simulated human response persistence failure.");
           }
-          return await executions.appendEvent(executionId, invocationId, type, data, eventId);
-        },
-        async commit(request) {
           if (
             request.commitId === `human-resumed:${interactionId}` &&
             failureStage === "resume-commit" &&
@@ -146,7 +148,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId: "stale-lease-session",
       expertId: "expert",
       definitionFingerprint: "a".repeat(64),
@@ -282,7 +284,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
       kind: "expert" as const,
     };
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v6",
+      schemaVersion: "pragma.expert-session/v7",
       sessionId,
       expertId: expert.id,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
@@ -309,14 +311,14 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v10",
+        schemaVersion: "pragma.execution/v11",
         executionId,
         version: 0,
         kind: "expert-turn",
         definition,
         rootInvocationId: executionId,
         status: "running",
-        input: "Continue after the human response.",
+        input: { text: "Continue after the human response.", attachments: [] },
         state: {},
         lastAppliedSequence: 0,
         createdAt: now,
@@ -330,7 +332,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
         contextId,
         status: "running",
         pendingExpertMessages: [],
-        input: "Continue after the human response.",
+        input: { text: "Continue after the human response.", attachments: [] },
         createdAt: now,
         updatedAt: now,
       },
@@ -352,7 +354,8 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
         },
       ],
     }));
-    await executions.appendEvent(
+    await appendExecutionEvent(
+      executions,
       executionId,
       executionId,
       "human.requested",
@@ -360,14 +363,34 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
       `human-request:${interactionId}`,
     );
 
+    const recoveryCommits: Parameters<ExecutionStore["commit"]>[0][] = [];
+    const recordingExecutions: ExecutionStore = {
+      ...executions,
+      async commit(request) {
+        recoveryCommits.push(request);
+        return await executions.commit(request);
+      },
+    };
+
     const app = createPragma({
       pragmaHome: home,
       runtimes,
-      executionStore: executions,
+      executionStore: recordingExecutions,
       expertSessionStore: sessions,
     });
     const resumed = await app.experts.resumeSession(expert, { sessionId });
     const turn = (await resumed.listTurns())[0]!;
+
+    expect(
+      recoveryCommits.filter((commit) => commit.commitId.startsWith("human-recovery-waiting:")),
+    ).toMatchObject([
+      {
+        executionPatch: { status: "waiting" },
+        invocationPatches: [
+          { invocationId: executionId, patch: { status: "waiting", waitReason: "human_input" } },
+        ],
+      },
+    ]);
 
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     expect(runtimeStarts).toBe(0);
@@ -402,7 +425,7 @@ async function waitForExecutionEvent(
 
 function createRecoveryRuntime(request: ExpertAgentHumanRequest, onStart: () => void) {
   interface RecoverySession {
-    readonly context: RuntimeDriverSessionContext;
+    readonly context: RuntimeNativeSessionContext;
   }
 
   return defineRuntimeDriver<never, RecoverySession>({

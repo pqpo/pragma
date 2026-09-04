@@ -116,7 +116,8 @@ trigger: manual
 代码：
 
 ```ts
-import { ContextSystem, FileSystemContextStore, HOST_CONTEXT_NAMESPACE } from "@pragma/core";
+import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "@pragma/core";
+import { FileSystemContextStore } from "@pragma/context-filesystem";
 
 const contextSystem = new ContextSystem({
   store: new FileSystemContextStore({

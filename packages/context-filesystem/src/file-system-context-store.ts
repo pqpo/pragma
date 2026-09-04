@@ -34,7 +34,7 @@ import type {
   ExpertAgentStoredContextItemEditInput,
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemSearchInput,
-} from "./context-system.ts";
+} from "@pragma/core";
 import {
   error,
   matchContextPattern,
@@ -42,7 +42,7 @@ import {
   normalizePriority,
   normalizeTrigger,
   ok,
-} from "./context-system.ts";
+} from "@pragma/core";
 
 const execFileAsync = promisify(execFile);
 

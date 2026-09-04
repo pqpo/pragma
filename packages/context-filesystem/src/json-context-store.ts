@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { ContextTriggerSchema } from "@pragma/shared";
 
-import { withFileLock } from "../storage/file-lock.ts";
+import { withFileLock } from "@pragma/core";
 import type {
   ExpertAgentContextItemListInput,
   ExpertAgentContextItemSearchMatch,
@@ -21,9 +21,8 @@ import type {
   ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextRegisterInput,
   ExpertAgentContextItemSummary,
-} from "./context-system.ts";
-import { error } from "./context-system.ts";
-import { InMemoryContextStore } from "./in-memory-context-store.ts";
+} from "@pragma/core";
+import { error, InMemoryContextStore } from "@pragma/core";
 
 const ContextMetadataSchema = z.object({
   description: z.string().optional(),

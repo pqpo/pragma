@@ -359,8 +359,7 @@ export interface ContextStoreIndexSummary {
 export interface ContextIndex {
   readonly items: readonly ExpertAgentContextItemSummary[];
   readonly issues: readonly ContextStoreIssue[];
-  /** Optional for source compatibility with custom Context index providers. */
-  readonly stores?: readonly ContextStoreIndexSummary[] | undefined;
+  readonly stores: readonly ContextStoreIndexSummary[];
 }
 
 export interface ExpertAgentContextStore {
