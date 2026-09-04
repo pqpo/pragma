@@ -179,7 +179,7 @@ async function prepareMigration(directory: string): Promise<{
   );
   const categories = migrateCategories(legacy.categories);
   const manifest = BundleSourceManifestSchema.parse({
-    schemaVersion: "pragma.bundle-source/v1",
+    schemaVersion: "pragma.bundle-source/v2",
     id: legacy.id,
     name: legacy.name,
     ...(legacy.description === undefined ? {} : { description: legacy.description }),
@@ -188,6 +188,7 @@ async function prepareMigration(directory: string): Promise<{
       expert: { categories },
       "expert-team": { categories },
       flow: { categories },
+      "knowledge-base": { categories },
     },
   });
   const staging = join(directory, STAGING);
@@ -223,7 +224,7 @@ async function prepareMigration(directory: string): Promise<{
     const released = legacyItem.versions.map((version) => version.releasedAt).toSorted();
     const description = await readFile(resolveRepositoryPath(directory, legacyItem.readme), "utf8");
     const item = BundleSourceItemSchema.parse({
-      schemaVersion: "pragma.bundle-source-item/v1",
+      schemaVersion: "pragma.bundle-source-item/v2",
       id: legacyItem.id,
       rootRef: stable.bundle.root.ref,
       name: legacyItem.name,

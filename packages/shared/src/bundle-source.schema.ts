@@ -15,12 +15,13 @@ export const BundleSourceSemverSchema = z
   )
   .max(100);
 
-export const BundleSourceKindSchema = z.enum(["expert", "expert-team", "flow"]);
+export const BundleSourceKindSchema = z.enum(["expert", "expert-team", "flow", "knowledge-base"]);
 
 export const BUNDLE_SOURCE_KIND_DIRECTORIES = {
   expert: "experts",
   "expert-team": "expert-teams",
   flow: "flows",
+  "knowledge-base": "knowledge-bases",
 } as const satisfies Readonly<Record<z.infer<typeof BundleSourceKindSchema>, string>>;
 
 export const BundleSourceLocalizedTextSchema = z
@@ -79,18 +80,22 @@ const BundleSourceSectionSchema = z
     }
   });
 
-export const BundleSourceManifestSchema = z
+const BundleSourceManifestCommonShape = {
+  id: BundleSourceSlugSchema,
+  name: BundleSourceLocalizedTextSchema,
+  description: BundleSourceLocalizedDescriptionSchema.optional(),
+  maxBundleBytes: z
+    .number()
+    .int()
+    .positive()
+    .max(512 * 1024 * 1024)
+    .default(100 * 1024 * 1024),
+} as const;
+
+export const BundleSourceV1ManifestSchema = z
   .object({
     schemaVersion: z.literal("pragma.bundle-source/v1"),
-    id: BundleSourceSlugSchema,
-    name: BundleSourceLocalizedTextSchema,
-    description: BundleSourceLocalizedDescriptionSchema.optional(),
-    maxBundleBytes: z
-      .number()
-      .int()
-      .positive()
-      .max(512 * 1024 * 1024)
-      .default(100 * 1024 * 1024),
+    ...BundleSourceManifestCommonShape,
     sections: z
       .object({
         expert: BundleSourceSectionSchema,
@@ -101,43 +106,79 @@ export const BundleSourceManifestSchema = z
   })
   .strict();
 
+export const BundleSourceManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle-source/v2"),
+    ...BundleSourceManifestCommonShape,
+    sections: z
+      .object({
+        expert: BundleSourceSectionSchema,
+        "expert-team": BundleSourceSectionSchema,
+        flow: BundleSourceSectionSchema,
+        "knowledge-base": BundleSourceSectionSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export const BundleSourceRootRefSchema = z
   .string()
-  .regex(/^(expert|team|flow):[0-9a-hjkmnp-tv-z]{16}$/u)
+  .regex(/^(expert|team|flow|context-store):[0-9a-hjkmnp-tv-z]{16}$/u)
   .max(100);
+
+const BundleSourceItemCommonShape = {
+  id: BundleSourceSlugSchema,
+  rootRef: BundleSourceRootRefSchema,
+  name: BundleSourceLocalizedTextSchema,
+  summary: BundleSourceLocalizedTextSchema,
+  description: BundleSourceLocalizedDescriptionSchema,
+  author: z
+    .object({
+      name: z.string().trim().min(1).max(200),
+      url: z.string().url().max(2_000).optional(),
+    })
+    .strict(),
+  license: z.string().trim().min(1).max(100),
+  homepage: z.string().url().max(2_000).optional(),
+  tags: z.array(BundleSourceSlugSchema).max(30).default([]),
+  avatarId: PragmaAvatarIdSchema.optional(),
+  latestVersion: BundleSourceSemverSchema,
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true }),
+} as const;
+
+function validateBundleSourceItemTimestamps(
+  item: { readonly createdAt: string; readonly updatedAt: string },
+  context: z.RefinementCtx,
+): void {
+  if (Date.parse(item.updatedAt) < Date.parse(item.createdAt)) {
+    context.addIssue({
+      code: "custom",
+      message: "updatedAt cannot be earlier than createdAt.",
+      path: ["updatedAt"],
+    });
+  }
+}
+
+export const BundleSourceV1ItemSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle-source-item/v1"),
+    ...BundleSourceItemCommonShape,
+    rootRef: z
+      .string()
+      .regex(/^(expert|team|flow):[0-9a-hjkmnp-tv-z]{16}$/u)
+      .max(100),
+  })
+  .strict()
+  .superRefine(validateBundleSourceItemTimestamps);
 
 export const BundleSourceItemSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-source-item/v1"),
-    id: BundleSourceSlugSchema,
-    rootRef: BundleSourceRootRefSchema,
-    name: BundleSourceLocalizedTextSchema,
-    summary: BundleSourceLocalizedTextSchema,
-    description: BundleSourceLocalizedDescriptionSchema,
-    author: z
-      .object({
-        name: z.string().trim().min(1).max(200),
-        url: z.string().url().max(2_000).optional(),
-      })
-      .strict(),
-    license: z.string().trim().min(1).max(100),
-    homepage: z.string().url().max(2_000).optional(),
-    tags: z.array(BundleSourceSlugSchema).max(30).default([]),
-    avatarId: PragmaAvatarIdSchema.optional(),
-    latestVersion: BundleSourceSemverSchema,
-    createdAt: z.string().datetime({ offset: true }),
-    updatedAt: z.string().datetime({ offset: true }),
+    schemaVersion: z.literal("pragma.bundle-source-item/v2"),
+    ...BundleSourceItemCommonShape,
   })
   .strict()
-  .superRefine((item, context) => {
-    if (Date.parse(item.updatedAt) < Date.parse(item.createdAt)) {
-      context.addIssue({
-        code: "custom",
-        message: "updatedAt cannot be earlier than createdAt.",
-        path: ["updatedAt"],
-      });
-    }
-  });
+  .superRefine(validateBundleSourceItemTimestamps);
 
 export const BundleSourceItemSummarySchema = BundleSourceItemSchema.extend({
   kind: BundleSourceKindSchema,
@@ -152,8 +193,44 @@ export type BundleSourceCategory = z.infer<typeof BundleSourceCategorySchema>;
 export type BundleSourceItem = z.infer<typeof BundleSourceItemSchema>;
 export type BundleSourceItemSummary = z.infer<typeof BundleSourceItemSummarySchema>;
 
-export function bundleSourceRootPrefix(kind: BundleSourceKind): "expert" | "team" | "flow" {
-  return kind === "expert-team" ? "team" : kind;
+export function bundleSourceRootPrefix(
+  kind: BundleSourceKind,
+): "expert" | "team" | "flow" | "context-store" {
+  return kind === "expert-team" ? "team" : kind === "knowledge-base" ? "context-store" : kind;
+}
+
+export function parseBundleSourceManifest(value: unknown): BundleSourceManifest {
+  const current = BundleSourceManifestSchema.safeParse(value);
+  if (current.success) return current.data;
+  const legacy = BundleSourceV1ManifestSchema.parse(value);
+  return BundleSourceManifestSchema.parse({
+    ...legacy,
+    schemaVersion: "pragma.bundle-source/v2",
+    sections: {
+      ...legacy.sections,
+      "knowledge-base": {
+        categories: legacy.sections.expert.categories.map((category) => ({
+          ...category,
+          name: {
+            ...category.name,
+            ...(category.name.translations === undefined
+              ? {}
+              : { translations: { ...category.name.translations } }),
+          },
+        })),
+      },
+    },
+  });
+}
+
+export function parseBundleSourceItem(value: unknown): BundleSourceItem {
+  const current = BundleSourceItemSchema.safeParse(value);
+  if (current.success) return current.data;
+  const legacy = BundleSourceV1ItemSchema.parse(value);
+  return BundleSourceItemSchema.parse({
+    ...legacy,
+    schemaVersion: "pragma.bundle-source-item/v2",
+  });
 }
 
 export function bundleSourceItemDirectory(input: {

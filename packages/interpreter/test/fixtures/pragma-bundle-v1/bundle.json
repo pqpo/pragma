@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "pragma.bundle/v1",
+  "createdAt": "2026-08-11T00:00:00.000Z",
+  "roots": ["expert:1xddvess309a6gme"],
+  "project": {
+    "entry": "project/pragma.yaml",
+    "compilerVersion": "pragma.compiler/v8",
+    "projectFingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "requirements": [],
+  "extensions": [],
+  "files": [
+    {
+      "path": "project/pragma.yaml",
+      "sha256": "a605dad4fc4c89c0129f33e5e4597e3c71e7a7e97d45f973ceecb9e47c9048a2",
+      "size": 49
+    }
+  ],
+  "bundleFingerprint": "8a77910397c3235642f5527c806013cd9f6082717ecc3a2d9b4e30ce8798681d"
+}

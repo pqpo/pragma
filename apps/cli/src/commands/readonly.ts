@@ -39,6 +39,7 @@ export async function executeReadOnlyCommand(
       throw new Error("doctor must be handled by the doctor command.");
     case "source-init":
     case "source-add":
+    case "source-upgrade":
       throw new Error("Source commands must be handled by the Source command.");
     case "executor-discover":
       return await discoverExecutors(command, context);

@@ -3,6 +3,7 @@ import {
   BundleSourceItemSummarySchema,
   BundleSourceKindSchema,
   BundleSourceManifestSchema,
+  BundleSourceRootRefSchema,
   BundleSourceSemverSchema,
   BundleSourceSlugSchema,
 } from "@pragma/shared";
@@ -139,6 +140,7 @@ export const DownloadDesktopSquareBundleSchema = z
 export const DesktopSquareBundleDownloadSchema = z
   .object({
     path: z.string().trim().min(1).max(2_000),
+    rootRef: BundleSourceRootRefSchema,
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     cached: z.boolean(),
   })
@@ -146,7 +148,7 @@ export const DesktopSquareBundleDownloadSchema = z
 
 export const DesktopBundleRegistrySnapshotSchema = z
   .object({
-    schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v2"),
+    schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v3"),
     commit: z.string().regex(/^[a-f0-9]{40,64}$/),
     syncedAt: z.string().datetime(),
     manifest: BundleSourceManifestSchema,

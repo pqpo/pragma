@@ -1,4 +1,8 @@
-import { PragmaInvocableResourceRefSchema, PragmaResourceRefSchema } from "@pragma/interpreter/ast";
+import {
+  PragmaBundleRootRefSchema,
+  PragmaContextStoreRefSchema,
+  PragmaResourceRefSchema,
+} from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 export const PragmaBundleModuleOptionsSchema = z
@@ -12,7 +16,7 @@ export const PragmaBundleModuleOptionsSchema = z
 
 export const PreparePragmaBundleExportSchema = z
   .object({
-    rootRef: PragmaInvocableResourceRefSchema,
+    rootRef: PragmaBundleRootRefSchema,
     projectRevision: z.number().int().positive(),
   })
   .strict();
@@ -21,8 +25,8 @@ export const PragmaBundleExportPreviewSchema = z
   .object({
     root: z
       .object({
-        ref: PragmaInvocableResourceRefSchema,
-        kind: z.enum(["Expert", "ExpertTeam", "Flow"]),
+        ref: PragmaBundleRootRefSchema,
+        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
         name: z.string().trim().min(1).max(200),
       })
       .strict(),
@@ -58,7 +62,7 @@ export const PragmaBundleExportResultSchema = z
 export const InspectPragmaBundleSchema = z
   .object({
     sourcePath: z.string().trim().min(1).max(2_000),
-    rootRef: PragmaInvocableResourceRefSchema.optional(),
+    rootRef: PragmaBundleRootRefSchema.optional(),
   })
   .strict();
 
@@ -95,8 +99,22 @@ export const PragmaBundleConflictSchema = z
     matches: z.array(PragmaBundleConflictMatchSchema).min(1).max(2),
     updateAllowed: z.boolean(),
     updateBlockedReason: z.string().trim().min(1).max(2_000).optional(),
+    targetRevision: z.number().int().positive().optional(),
+    targetSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((conflict, context) => {
+    if ((conflict.targetRevision === undefined) !== (conflict.targetSnapshotHash === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetRevision"],
+        message: "Knowledge-base target revision and snapshot hash must be provided together.",
+      });
+    }
+  });
 
 export const PragmaBundleDependencySummarySchema = z
   .object({
@@ -150,8 +168,8 @@ export const PragmaBundleImportInspectionSchema = z
     projectRevision: z.number().int().nonnegative(),
     root: z
       .object({
-        ref: PragmaInvocableResourceRefSchema,
-        kind: z.enum(["Expert", "ExpertTeam", "Flow"]),
+        ref: PragmaBundleRootRefSchema,
+        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
         name: z.string().trim().min(1).max(200),
       })
       .strict(),
@@ -159,8 +177,8 @@ export const PragmaBundleImportInspectionSchema = z
       .array(
         z
           .object({
-            ref: PragmaInvocableResourceRefSchema,
-            kind: z.enum(["Expert", "ExpertTeam", "Flow"]),
+            ref: PragmaBundleRootRefSchema,
+            kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
             name: z.string().trim().min(1).max(200),
           })
           .strict(),
@@ -207,8 +225,49 @@ export const PragmaBundleConflictResolutionSchema = z
   .object({
     resourceRef: PragmaResourceRefSchema,
     action: z.enum(["update", "copy"]),
+    expectedTargetRevision: z.number().int().positive().optional(),
+    expectedTargetSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((resolution, context) => {
+    if (
+      (resolution.expectedTargetRevision === undefined) !==
+      (resolution.expectedTargetSnapshotHash === undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedTargetRevision"],
+        message: "Knowledge-base CAS revision and snapshot hash must be provided together.",
+      });
+    }
+  });
+
+const PragmaBundleKnowledgeBaseUpdateSchema = z
+  .object({
+    sourceRef: PragmaContextStoreRefSchema,
+    targetRef: PragmaContextStoreRefSchema,
+    storeId: z.string().uuid(),
+    baseRevision: z.number().int().positive().optional(),
+    baseSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    importedSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    phase: z.enum(["prepared", "applied"]),
+  })
+  .strict()
+  .superRefine((update, context) => {
+    if ((update.baseRevision === undefined) !== (update.baseSnapshotHash === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["baseRevision"],
+        message: "Knowledge-base update baseline revision and snapshot hash must be paired.",
+      });
+    }
+  });
 
 export const BundleRuntimeResolutionSchema = z
   .object({
@@ -241,7 +300,7 @@ export const BundleContextStoreResolutionSchema = z
 export const StartPragmaBundleImportSchema = z
   .object({
     sourcePath: z.string().trim().min(1).max(2_000),
-    rootRef: PragmaInvocableResourceRefSchema,
+    rootRef: PragmaBundleRootRefSchema,
     expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     expectedProjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     expectedProjectRevision: z.number().int().nonnegative(),
@@ -270,8 +329,8 @@ export const PragmaBundlePendingDependencySchema = z
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v4"),
-    bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1"]),
+    schemaVersion: z.literal("pragma.bundle-installation/v5"),
+    bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1", "pragma.bundle/v2"]),
     sourceProjectFingerprint: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -280,10 +339,10 @@ export const PragmaBundleInstallationSchema = z
     bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     projectId: z.string().trim().min(1).max(120),
     projectRevision: z.number().int().nonnegative(),
-    sourceRootRef: PragmaInvocableResourceRefSchema,
-    rootRef: PragmaInvocableResourceRefSchema,
+    sourceRootRef: PragmaBundleRootRefSchema,
+    rootRef: PragmaBundleRootRefSchema,
     rootName: z.string().trim().min(1).max(200),
-    rootKind: z.enum(["Expert", "ExpertTeam", "Flow"]),
+    rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
     resourceRefs: z.array(PragmaResourceRefSchema),
     createdResourceRefs: z.array(PragmaResourceRefSchema),
     createdCapabilityIds: z.array(z.string().uuid()).default([]),
@@ -300,6 +359,7 @@ export const PragmaBundleInstallationSchema = z
           .strict(),
       )
       .default([]),
+    knowledgeBaseUpdate: PragmaBundleKnowledgeBaseUpdateSchema.optional(),
     status: z.enum(["installing", "needs_setup", "ready", "failed"]),
     pending: z.array(PragmaBundlePendingDependencySchema),
     readiness: z.array(PragmaBundleDependencyReadinessSchema).default([]),
@@ -307,7 +367,22 @@ export const PragmaBundleInstallationSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .superRefine((installation, context) => {
+    const update = installation.knowledgeBaseUpdate;
+    if (update === undefined) return;
+    if (
+      installation.rootKind !== "ContextStore" ||
+      update.sourceRef !== installation.sourceRootRef ||
+      update.targetRef !== installation.rootRef
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBaseUpdate"],
+        message: "Knowledge-base update journal must describe the installation root.",
+      });
+    }
+  });
 
 export const ResolvePragmaBundleInstallationSchema = z
   .object({

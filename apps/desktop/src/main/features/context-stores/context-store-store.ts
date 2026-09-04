@@ -162,15 +162,29 @@ export interface ContextStoreStore {
     readonly id?: string | undefined;
     readonly name: string;
     readonly description: string;
+    readonly directories?: readonly string[] | undefined;
     readonly files: ContextStoreSnapshot["files"];
     readonly author: ContextStoreRevisionRecord["author"];
     readonly summary: string;
+    readonly expectedSnapshotHash?: string | undefined;
   }): Promise<ContextStore>;
   getSnapshot(storeId: string, revision?: number): Promise<ContextStoreSnapshot>;
   applyChangeSet(
     changeSet: ContextStoreChangeSet,
     author: ContextStoreRevisionRecord["author"],
     revisionJobId?: string | undefined,
+  ): Promise<ContextStore>;
+  appendSnapshot(
+    input: {
+      readonly storeId: string;
+      readonly baseRevision: number;
+      readonly baseSnapshotHash: string;
+      readonly snapshotHash: string;
+      readonly directories: readonly string[];
+      readonly files: ContextStoreSnapshot["files"];
+      readonly summary: string;
+    },
+    author: ContextStoreRevisionRecord["author"],
   ): Promise<ContextStore>;
   history(storeId: string): Promise<readonly ContextStoreRevisionRecord[]>;
   withRevisionLock<T>(storeId: string, operation: () => Promise<T>): Promise<T>;
@@ -653,6 +667,76 @@ export function createContextStoreStore(options: {
     return pending.targetManifest;
   };
 
+  const commitSnapshotRevision = async (input: {
+    readonly current: ContextStore;
+    readonly directories: ContextStoreSnapshot["directories"];
+    readonly files: ContextStoreSnapshot["files"];
+    readonly author: ContextStoreRevisionRecord["author"];
+    readonly summary: string;
+    readonly revisionJobId?: string | undefined;
+    readonly expectedSnapshotHash?: string | undefined;
+  }): Promise<ContextStore> => {
+    const id = input.current.id;
+    const timestamp = new Date().toISOString();
+    const stagedFilesPath = join(storePath(id), `.files.staged.${randomUUID()}`);
+    const previousFilesPath = join(storePath(id), `.files.previous.${randomUUID()}`);
+    await mkdir(stagedFilesPath, { recursive: true, mode: 0o700 });
+    try {
+      await materializeSnapshot(stagedFilesPath, {
+        directories: input.directories,
+        files: input.files,
+      });
+      const snapshot = await buildSnapshot(
+        id,
+        input.current.contentRevision + 1,
+        stagedFilesPath,
+        timestamp,
+      );
+      if (
+        input.expectedSnapshotHash !== undefined &&
+        snapshot.snapshotHash !== input.expectedSnapshotHash
+      ) {
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          "The imported knowledge-base snapshot does not match its declared hash.",
+        );
+      }
+      const targetManifest = ContextStoreSchema.parse({
+        ...input.current,
+        contentRevision: snapshot.revision,
+        snapshotHash: snapshot.snapshotHash,
+        updatedAt: timestamp,
+      });
+      const record = ContextStoreRevisionRecordSchema.parse({
+        schemaVersion: "pragma.context-store-revision-record/v1",
+        storeId: id,
+        revision: snapshot.revision,
+        snapshotHash: snapshot.snapshotHash,
+        parentRevision: input.current.contentRevision,
+        author: input.author,
+        ...(input.revisionJobId === undefined ? {} : { revisionJobId: input.revisionJobId }),
+        summary: input.summary,
+        createdAt: timestamp,
+      });
+      const pending = ContextStoreRevisionJournalSchema.parse({
+        schemaVersion: "pragma.context-store-revision-journal/v1",
+        storeId: id,
+        previousFilesPath,
+        stagedFilesPath,
+        targetManifest,
+        snapshot,
+        record,
+      });
+      await writeJsonAtomic(join(storePath(id), "revision.json"), pending);
+      return await finalizeRevisionTransaction(id, pending);
+    } catch (error) {
+      if (!(await pathExists(join(storePath(id), "revision.json")))) {
+        await rm(stagedFilesPath, { recursive: true, force: true });
+      }
+      throw error;
+    }
+  };
+
   async function recoverRevisionTransaction(id: string): Promise<void> {
     const journalPath = join(storePath(id), "revision.json");
     let raw: unknown;
@@ -1103,13 +1187,25 @@ export function createContextStoreStore(options: {
       const timestamp = new Date().toISOString();
       const id = input.id === undefined ? randomUUID() : z.string().uuid().parse(input.id);
       const files = ContextStoreSnapshotSchema.shape.files.parse(input.files);
+      const directories = ContextStoreSnapshotSchema.shape.directories.parse(
+        input.directories ?? [],
+      );
       const targetPath = storePath(id);
       const temporaryPath = join(options.storesPath, `.${id}.${randomUUID()}.tmp`);
       const temporaryFiles = join(temporaryPath, "files");
       await mkdir(temporaryFiles, { recursive: true, mode: 0o700 });
       try {
-        await materializeSnapshot(temporaryFiles, { directories: [], files });
+        await materializeSnapshot(temporaryFiles, { directories, files });
         const snapshot = await buildSnapshot(id, 1, temporaryFiles, timestamp);
+        if (
+          input.expectedSnapshotHash !== undefined &&
+          snapshot.snapshotHash !== input.expectedSnapshotHash
+        ) {
+          throw new ContextStoreStoreError(
+            "config_invalid",
+            "The imported knowledge-base snapshot does not match its declared hash.",
+          );
+        }
         const store = ContextStoreSchema.parse({
           schemaVersion: "pragma.context-store/v4",
           id,
@@ -1242,56 +1338,48 @@ export function createContextStoreStore(options: {
             });
           }
         }
-        const id = changeSet.storeId;
-        const timestamp = new Date().toISOString();
-        const stagedFilesPath = join(storePath(id), `.files.staged.${randomUUID()}`);
-        const previousFilesPath = join(storePath(id), `.files.previous.${randomUUID()}`);
-        await mkdir(stagedFilesPath, { recursive: true, mode: 0o700 });
-        try {
-          await materializeSnapshot(stagedFilesPath, {
-            directories: base.directories,
-            files: [...files.values()].toSorted((left, right) => left.id.localeCompare(right.id)),
-          });
-          const snapshot = await buildSnapshot(
-            id,
-            current.contentRevision + 1,
-            stagedFilesPath,
-            timestamp,
+        return await commitSnapshotRevision({
+          current,
+          directories: base.directories,
+          files: [...files.values()].toSorted((left, right) => left.id.localeCompare(right.id)),
+          author,
+          summary: changeSet.summary,
+          revisionJobId,
+        });
+      });
+    },
+
+    async appendSnapshot(input, author) {
+      const storeId = z.string().uuid().parse(input.storeId);
+      const baseRevision = z.number().int().positive().parse(input.baseRevision);
+      const baseSnapshotHash = z
+        .string()
+        .regex(/^[a-f0-9]{64}$/u)
+        .parse(input.baseSnapshotHash);
+      const expectedSnapshotHash = z
+        .string()
+        .regex(/^[a-f0-9]{64}$/u)
+        .parse(input.snapshotHash);
+      const directories = ContextStoreSnapshotSchema.shape.directories.parse(input.directories);
+      const files = ContextStoreSnapshotSchema.shape.files.parse(input.files);
+      const summary = z.string().trim().min(1).max(2_000).parse(input.summary);
+      return await withRevisionLock(storeId, async () => {
+        const current = await readStore(storeId);
+        if (current.contentRevision !== baseRevision || current.snapshotHash !== baseSnapshotHash) {
+          throw new ContextStoreStoreError(
+            "revision_conflict",
+            "The knowledge base changed after this revision was prepared.",
           );
-          const targetManifest = ContextStoreSchema.parse({
-            ...current,
-            contentRevision: snapshot.revision,
-            snapshotHash: snapshot.snapshotHash,
-            updatedAt: timestamp,
-          });
-          const record = ContextStoreRevisionRecordSchema.parse({
-            schemaVersion: "pragma.context-store-revision-record/v1",
-            storeId: id,
-            revision: snapshot.revision,
-            snapshotHash: snapshot.snapshotHash,
-            parentRevision: current.contentRevision,
-            author,
-            ...(revisionJobId === undefined ? {} : { revisionJobId }),
-            summary: changeSet.summary,
-            createdAt: timestamp,
-          });
-          const pending = ContextStoreRevisionJournalSchema.parse({
-            schemaVersion: "pragma.context-store-revision-journal/v1",
-            storeId: id,
-            previousFilesPath,
-            stagedFilesPath,
-            targetManifest,
-            snapshot,
-            record,
-          });
-          await writeJsonAtomic(join(storePath(id), "revision.json"), pending);
-          return await finalizeRevisionTransaction(id, pending);
-        } catch (error) {
-          if (!(await pathExists(join(storePath(id), "revision.json")))) {
-            await rm(stagedFilesPath, { recursive: true, force: true });
-          }
-          throw error;
         }
+        if (current.snapshotHash === expectedSnapshotHash) return current;
+        return await commitSnapshotRevision({
+          current,
+          directories,
+          files,
+          author,
+          summary,
+          expectedSnapshotHash,
+        });
       });
     },
 

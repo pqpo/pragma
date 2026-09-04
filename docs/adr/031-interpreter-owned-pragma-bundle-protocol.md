@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-02
 - Replaces the earlier Desktop-owned wire format; Desktop installation transactions remain Host-owned
+- Amended by: ADR 048 for `pragma.bundle/v2` and `ContextStore` roots
 
 ## Context
 

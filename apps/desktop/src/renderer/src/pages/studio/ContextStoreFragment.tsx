@@ -19,6 +19,7 @@ import {
   SpinnerGap,
   TextAa,
   Trash,
+  UploadSimple,
   X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -299,6 +300,7 @@ export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
   readonly onBack: () => void;
   readonly onOpenRevisions?: (() => void) | undefined;
+  readonly onExport?: (() => Promise<void>) | undefined;
   readonly onSubmitRevision?: ((prompt: string) => Promise<void>) | undefined;
   readonly onRevisionSubmitted?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
@@ -816,6 +818,19 @@ export function ContextStoreDetailFragment(props: {
             </div>
           </div>
           <div className="knowledge-base-editor-actions">
+            {props.onExport !== undefined ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
+                }}
+              >
+                <UploadSimple size={17} aria-hidden="true" />
+                {t("exportKnowledgeBase")}
+              </button>
+            ) : null}
             {props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
                 <ListBullets size={17} aria-hidden="true" />

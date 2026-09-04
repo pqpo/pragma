@@ -4,10 +4,13 @@ import { strFromU8, strToU8, unzip, zip, type AsyncUnzipOptions } from "fflate";
 
 import {
   PRAGMA_BUNDLE_DIRECT_READ_VERSIONS,
+  PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS,
   PragmaBundleManifestSchema,
   type PragmaBundleManifest,
 } from "../ast/pragma-bundle.schema.ts";
 import { sha256, stableStringify } from "../compiler/compiler-hash.ts";
+import { migratePragmaBundleManifestToCurrent } from "./migrations/index.ts";
+import type { PragmaBundleSchemaVersion } from "./migrations/types.ts";
 
 export const DEFAULT_PRAGMA_BUNDLE_LIMITS = {
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -61,9 +64,15 @@ export class PragmaBundleFormatError extends Error {
   }
 }
 
-export function createPragmaBundleFingerprint(
-  manifest: Omit<PragmaBundleManifest, "bundleFingerprint"> | PragmaBundleManifest,
-): string {
+export function createPragmaBundleFingerprint(manifest: {
+  readonly schemaVersion: string;
+  readonly createdAt: string;
+  readonly roots: readonly string[];
+  readonly project: unknown;
+  readonly requirements: readonly unknown[];
+  readonly extensions: readonly unknown[];
+  readonly files: readonly unknown[];
+}): string {
   return sha256(
     stableStringify({
       schemaVersion: manifest.schemaVersion,
@@ -216,21 +225,30 @@ export async function decodePragmaBundle(
     typeof manifestValue === "object" && manifestValue !== null
       ? (manifestValue as Record<string, unknown>)["schemaVersion"]
       : undefined;
-  if (!(PRAGMA_BUNDLE_DIRECT_READ_VERSIONS as readonly unknown[]).includes(version)) {
+  if (
+    !(PRAGMA_BUNDLE_DIRECT_READ_VERSIONS as readonly unknown[]).includes(version) &&
+    !(PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS as readonly unknown[]).includes(version)
+  ) {
     throw new PragmaBundleFormatError(
       "manifest.version_unsupported",
       `Unsupported .pragma bundle version: ${String(version)}.`,
     );
   }
-  const parsed = PragmaBundleManifestSchema.safeParse(manifestValue);
-  if (!parsed.success) {
+  let migratedManifest: ReturnType<typeof migratePragmaBundleManifestToCurrent>;
+  try {
+    migratedManifest = migratePragmaBundleManifestToCurrent(
+      manifestValue,
+      version as PragmaBundleSchemaVersion,
+    );
+  } catch (error) {
     throw new PragmaBundleFormatError(
       "manifest.invalid",
-      `Invalid bundle.json: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+      `Invalid bundle.json: ${formatManifestMigrationError(error)}`,
+      { cause: error },
     );
   }
-  const manifest = parsed.data;
-  const expectedFiles = new Set(manifest.files.map((file) => file.path));
+  const sourceManifest = migratedManifest.sourceManifest;
+  const expectedFiles = new Set(sourceManifest.files.map((file) => file.path));
   const actualFiles = new Set([...files.keys()].filter((path) => path !== "bundle.json"));
   if (
     expectedFiles.size !== actualFiles.size ||
@@ -241,7 +259,7 @@ export async function decodePragmaBundle(
       "The bundle file index does not match the archive.",
     );
   }
-  for (const indexed of manifest.files) {
+  for (const indexed of sourceManifest.files) {
     const contents = files.get(indexed.path);
     if (
       contents === undefined ||
@@ -254,12 +272,13 @@ export async function decodePragmaBundle(
       );
     }
   }
-  if (createPragmaBundleFingerprint(manifest) !== manifest.bundleFingerprint) {
+  if (createPragmaBundleFingerprint(sourceManifest) !== sourceManifest.bundleFingerprint) {
     throw new PragmaBundleFormatError(
       "manifest.fingerprint_invalid",
       "The bundle manifest fingerprint is invalid.",
     );
   }
+  const manifest = migratedManifest.manifest;
   for (const requirement of manifest.requirements) {
     if (requirement.payload === undefined) continue;
     verifyPayloadRoot(files, requirement.payload.root, requirement.payload.fingerprint);
@@ -292,6 +311,24 @@ export async function decodePragmaBundle(
     }
   }
   return { manifest, files, archiveBytes: raw.byteLength };
+}
+
+function formatManifestMigrationError(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "issues" in error &&
+    Array.isArray(error.issues)
+  ) {
+    return error.issues
+      .map((issue) =>
+        typeof issue === "object" && issue !== null && "message" in issue
+          ? String(issue.message)
+          : String(issue),
+      )
+      .join("; ");
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 function resolveBundleLimits(configured: PragmaBundleLimits = {}): ResolvedPragmaBundleLimits {

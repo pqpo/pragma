@@ -4,6 +4,9 @@
 
 Accepted
 
+Bundle Source v2 与知识库第四种类型由 ADR 048 修订；本 ADR 的轻量 Git 仓库、精确 commit 快照和
+Square 身份模型继续有效。
+
 ## 背景
 
 早期的生成式 Registry 方案引入了 catalog 分片、内容寻址对象库、channel 和发布流水线。

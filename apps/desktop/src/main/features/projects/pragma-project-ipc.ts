@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import { isDeepStrictEqual } from "node:util";
 import { generatePragmaResourceId } from "@pragma/core";
 import { runPragmaEvaluation } from "@pragma/interpreter";
 import { parsePragmaReference } from "@pragma/interpreter/ast";
@@ -15,6 +16,7 @@ import {
   UpsertPragmaResourceSchema,
   UpsertPragmaExpertTeamSchema,
   DesktopPragmaContextStoreBindingSchema,
+  EnsurePragmaContextStoreBindingSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../../../shared/contracts/index.ts";
@@ -24,6 +26,7 @@ import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.t
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import {
   classifyDesktopContextResource,
+  bindExistingDesktopContextResource,
   resolveDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
@@ -60,6 +63,30 @@ export function installPragmaProjectHandlers(
             : [{ storeId, resourceRef: canonicalPragmaResourceRef(resource) }];
         }),
       );
+    }),
+  );
+  ipcMain.handle("pragma-project:ensure-context-store-binding", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const { storeId } = EnsurePragmaContextStoreBindingSchema.parse(input);
+      const managedStore = (await contextStores.list()).find(
+        (candidate) => candidate.id === storeId,
+      );
+      if (managedStore === undefined) throw new Error(`Knowledge base is unavailable: ${storeId}`);
+      await contextStores.resolve(storeId);
+      const snapshot = await store.get();
+      const resource = bindExistingDesktopContextResource(
+        resolveDesktopContextResource({ storeId, resources: snapshot.resources }),
+        storeId,
+        { name: managedStore.name, description: managedStore.description },
+      );
+      const resourceRef = canonicalPragmaResourceRef(resource);
+      const existing = snapshot.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === resourceRef,
+      );
+      if (existing === undefined || !isDeepStrictEqual(existing, resource)) {
+        await store.upsert({ baseRevision: snapshot.revision, resource });
+      }
+      return DesktopPragmaContextStoreBindingSchema.parse({ storeId, resourceRef });
     }),
   );
   ipcMain.handle("pragma-project:upsert-team", (_event, input: unknown) =>

@@ -1,10 +1,11 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
 import { pragmaManagementCapabilityResource } from "@pragma/built-in-agents";
+import { createPragmaBundleFingerprint } from "@pragma/interpreter";
 import { resolvePragmaAvatarId } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
@@ -24,7 +25,10 @@ import type {
   DesktopRuntimeAvailability,
   PragmaBundleInstallation,
 } from "../../../shared/contracts/index.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import {
+  createContextStoreStore,
+  type ContextStoreStore,
+} from "../context-stores/context-store-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createWorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
@@ -52,6 +56,278 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it("round-trips only the current knowledge-base snapshot as revision 1", async () => {
+    const source = await createFixture("knowledge-source", { realContextStores: true });
+    const sourceStore = await source.contextStores.createFromSnapshot({
+      name: "Release handbook",
+      description: "Current release guidance.",
+      author: "user",
+      summary: "Initial content.",
+      directories: ["guides"],
+      files: [knowledgeFile("guides/release.md", "# Release v1\n")],
+    });
+    const first = await source.contextStores.getSnapshot(sourceStore.id);
+    await source.contextStores.applyChangeSet(
+      {
+        schemaVersion: "pragma.context-store-change-set/v1",
+        storeId: sourceStore.id,
+        baseRevision: first.revision,
+        baseSnapshotHash: first.snapshotHash,
+        summary: "Publish v2.",
+        operations: [
+          {
+            operation: "upsert",
+            id: "guides/release.md",
+            previousContent: "# Release v1\n",
+            content: "# Release v2\n",
+            metadata: knowledgeFile("guides/release.md", "").metadata,
+          },
+        ],
+      },
+      "user",
+    );
+    const published = await publishKnowledgeResource(source, sourceStore.id);
+    const path = join(source.root, "knowledge.pragma");
+    const exported = await source.service.exportTo(
+      {
+        rootRef: "context-store:kqh4nx7rx26mb3e7",
+        projectRevision: published,
+        modules: {
+          capabilities: false,
+          plugins: false,
+          knowledgeBases: false,
+          flowLayouts: false,
+        },
+      },
+      path,
+    );
+    const archive = unzipSync(new Uint8Array(await readFile(path)));
+    expect(Object.keys(archive)).toContainEqual(
+      expect.stringMatching(/assets\/req-.+\/descriptor\.json/u),
+    );
+
+    const target = await createFixture("knowledge-target", { realContextStores: true });
+    await target.contextStores.createFromSnapshot({
+      name: "Existing identical content",
+      description: "This Store must not be reused for a first-class root.",
+      author: "user",
+      summary: "Existing content.",
+      directories: ["guides"],
+      files: [knowledgeFile("guides/release.md", "# Release v2\n")],
+    });
+    const inspection = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    const installation = await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: inspection.projectRevision,
+      conflicts: [],
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    const importedStore = (await target.contextStores.list()).find(
+      (store) => store.name === "Release handbook",
+    )!;
+    expect(await target.contextStores.list()).toHaveLength(2);
+    expect(installation).toMatchObject({ rootKind: "ContextStore", status: "ready" });
+    await expect(target.contextStores.getSnapshot(importedStore.id)).resolves.toMatchObject({
+      revision: 1,
+      directories: ["guides"],
+      files: [expect.objectContaining({ id: "guides/release.md", content: "# Release v2\n" })],
+    });
+    await expect(target.contextStores.history(importedStore.id)).resolves.toEqual([
+      expect.objectContaining({ revision: 1, author: "import", parentRevision: null }),
+    ]);
+  });
+
+  it("rejects a knowledge-base root without its mandatory snapshot payload", async () => {
+    const source = await createFixture("knowledge-missing-payload", { realContextStores: true });
+    const store = await source.contextStores.createFromSnapshot({
+      name: "Release handbook",
+      description: "Current release guidance.",
+      author: "user",
+      summary: "Initial content.",
+      files: [knowledgeFile("release.md", "# Release\n")],
+    });
+    const revision = await publishKnowledgeResource(source, store.id);
+    const path = join(source.root, "knowledge-missing-payload.pragma");
+    await source.service.exportTo(knowledgeExportInput(revision), path);
+    const archive = unzipSync(new Uint8Array(await readFile(path)));
+    const manifest = JSON.parse(strFromU8(archive["bundle.json"]!));
+    for (const key of Object.keys(archive)) {
+      if (key.startsWith("assets/")) delete archive[key];
+    }
+    manifest.requirements = manifest.requirements.map((requirement: Record<string, unknown>) => {
+      const withoutPayload = { ...requirement };
+      delete withoutPayload.payload;
+      return withoutPayload;
+    });
+    manifest.files = manifest.files.filter(
+      (file: { path: string }) => !file.path.startsWith("assets/"),
+    );
+    const withoutFingerprint = { ...manifest };
+    delete withoutFingerprint.bundleFingerprint;
+    manifest.bundleFingerprint = createPragmaBundleFingerprint(withoutFingerprint);
+    archive["bundle.json"] = strToU8(`${JSON.stringify(manifest, undefined, 2)}\n`);
+    await writeFile(path, zipSync(archive));
+
+    await expect(source.service.inspect(path, "context-store:kqh4nx7rx26mb3e7")).rejects.toThrow(
+      "must include its current managed snapshot",
+    );
+  });
+
+  it("appends knowledge conflicts with snapshot CAS and makes identical imports a no-op", async () => {
+    const source = await createFixture("knowledge-update-source", { realContextStores: true });
+    const sourceStore = await source.contextStores.createFromSnapshot({
+      name: "Release handbook",
+      description: "Imported description.",
+      author: "user",
+      summary: "Imported content.",
+      directories: ["imported-empty"],
+      files: [knowledgeFile("release.md", "# Imported\n")],
+    });
+    const sourceRevision = await publishKnowledgeResource(source, sourceStore.id);
+    const path = join(source.root, "knowledge-update.pragma");
+    const exported = await source.service.exportTo(knowledgeExportInput(sourceRevision), path);
+
+    const target = await createFixture("knowledge-update-target", { realContextStores: true });
+    const targetStore = await target.contextStores.createFromSnapshot({
+      name: "Local handbook",
+      description: "Keep local identity and name.",
+      author: "user",
+      summary: "Local content.",
+      directories: ["local-empty"],
+      files: [knowledgeFile("release.md", "# Local\n")],
+    });
+    await publishKnowledgeResource(target, targetStore.id);
+    const inspection = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    const conflict = inspection.conflicts.find(
+      (candidate) => candidate.ref === "context-store:kqh4nx7rx26mb3e7",
+    )!;
+    expect(conflict).toMatchObject({ updateAllowed: true, targetRevision: 1 });
+    const updateConflict = {
+      resourceRef: conflict.ref,
+      action: "update" as const,
+      expectedTargetRevision: conflict.targetRevision,
+      expectedTargetSnapshotHash: conflict.targetSnapshotHash,
+    };
+    const appended = await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: inspection.projectRevision,
+      conflicts: [updateConflict],
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    await expect(target.contextStores.getSnapshot(targetStore.id)).resolves.toMatchObject({
+      revision: 2,
+      directories: ["imported-empty"],
+      files: [expect.objectContaining({ content: "# Imported\n" })],
+    });
+    await copyFile(path, target.paths.bundleInstallationArchive(appended.id));
+    const catalog = JSON.parse(
+      await readFile(target.paths.bundleInstallationsCatalog(), "utf8"),
+    ) as { installations: Record<string, unknown>[] };
+    catalog.installations = catalog.installations.map((record) =>
+      record["id"] === appended.id
+        ? {
+            ...record,
+            status: "installing",
+            knowledgeBaseUpdate: {
+              ...(record["knowledgeBaseUpdate"] as Record<string, unknown>),
+              phase: "prepared",
+            },
+          }
+        : record,
+    );
+    await writeFile(
+      target.paths.bundleInstallationsCatalog(),
+      `${JSON.stringify(catalog, undefined, 2)}\n`,
+    );
+    await expect(target.restartService().listInstallations()).resolves.toContainEqual(
+      expect.objectContaining({ id: appended.id, status: "ready" }),
+    );
+    expect((await target.contextStores.getSnapshot(targetStore.id)).revision).toBe(2);
+    const repeated = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    const repeatedConflict = repeated.conflicts[0]!;
+    await target.service.startImport({
+      sourcePath: path,
+      rootRef: repeated.root.ref,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: repeated.projectRevision,
+      conflicts: [
+        {
+          resourceRef: repeatedConflict.ref,
+          action: "update",
+          expectedTargetRevision: repeatedConflict.targetRevision,
+          expectedTargetSnapshotHash: repeatedConflict.targetSnapshotHash,
+        },
+      ],
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect((await target.contextStores.getSnapshot(targetStore.id)).revision).toBe(2);
+
+    const copiedInspection = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    const copied = await target.service.startImport({
+      sourcePath: path,
+      rootRef: copiedInspection.root.ref,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: copiedInspection.projectRevision,
+      conflicts: copiedInspection.conflicts.map((candidate) => ({
+        resourceRef: candidate.ref,
+        action: "copy" as const,
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(copied.rootRef).not.toBe("context-store:kqh4nx7rx26mb3e7");
+    expect(copied.createdContextStoreIds).toHaveLength(1);
+    await expect(
+      target.contextStores.getSnapshot(copied.createdContextStoreIds[0]!),
+    ).resolves.toMatchObject({ revision: 1 });
+
+    const stale = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    await target.contextStores.createFile(targetStore.id, "local.md", "# Concurrent\n");
+    await expect(
+      target.service.startImport({
+        sourcePath: path,
+        rootRef: stale.root.ref,
+        expectedFingerprint: exported.bundleFingerprint,
+        expectedProjectFingerprint: exported.projectFingerprint,
+        expectedProjectRevision: stale.projectRevision,
+        conflicts: [
+          {
+            resourceRef: stale.conflicts[0]!.ref,
+            action: "update",
+            expectedTargetRevision: stale.conflicts[0]!.targetRevision,
+            expectedTargetSnapshotHash: stale.conflicts[0]!.targetSnapshotHash,
+          },
+        ],
+        runtimes: [],
+        capabilities: [],
+        contextStores: [],
+        secrets: {},
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("target knowledge base changed"),
+    });
+  });
+
   it("recognizes the built-in Pragma management Capability without an installed payload", async () => {
     await expect(
       inspectBundleReadiness([pragmaManagementCapabilityResource()], {
@@ -148,7 +424,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v4",
+      "pragma.bundle-installations/v5",
     );
   });
 
@@ -160,7 +436,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v5",
+      schemaVersion: "pragma.bundle-installations/v6",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
@@ -1067,6 +1343,7 @@ async function createFixture(
     readonly avatarId?: string;
     readonly runtimes?: DesktopRuntimeAvailability[];
     readonly contextStores?: ContextStoreStore;
+    readonly realContextStores?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), `pragma-bundle-${name}-`));
@@ -1090,17 +1367,18 @@ async function createFixture(
       runtime(overrides.runtimeId ?? "codex", overrides.runtimeResourceId),
     ],
   });
-  const service = createPragmaBundleService({
+  const contextStores =
+    overrides.contextStores ??
+    (overrides.realContextStores
+      ? createContextStoreStore({ storesPath: join(root, "context-stores") })
+      : ({ list: async () => [] } as unknown as ContextStoreStore));
+  const serviceOptions = {
     paths,
     project,
     capabilities: {
       list: async () => [],
     } as unknown as CapabilityStore,
-    contextStores:
-      overrides.contextStores ??
-      ({
-        list: async () => [],
-      } as unknown as ContextStoreStore),
+    contextStores,
     plugins: {
       list: async () => [],
     } as unknown as PluginStore,
@@ -1122,8 +1400,57 @@ async function createFixture(
           ],
         },
       ],
+  } as const;
+  const service = createPragmaBundleService(serviceOptions);
+  return {
+    root,
+    paths,
+    project,
+    projectRevision: published.revision,
+    service,
+    contextStores,
+    restartService: () => createPragmaBundleService(serviceOptions),
+  };
+}
+
+function knowledgeFile(id: string, content: string) {
+  return {
+    id,
+    content,
+    metadata: {
+      description: "Release guidance",
+      trigger: "always_on" as const,
+      priority: "high" as const,
+    },
+  };
+}
+
+function knowledgeExportInput(projectRevision: number) {
+  return {
+    rootRef: "context-store:kqh4nx7rx26mb3e7" as const,
+    projectRevision,
+    modules: {
+      capabilities: false,
+      plugins: false,
+      knowledgeBases: true,
+      flowLayouts: false,
+    },
+  };
+}
+
+async function publishKnowledgeResource(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  storeId: string,
+): Promise<number> {
+  const snapshot = await fixture.project.get();
+  const published = await fixture.project.publish({
+    expectedRevision: snapshot.revision,
+    resources: [
+      ...snapshot.resources.filter((resource) => resource.kind !== "ContextStore"),
+      contextStore(storeId),
+    ],
   });
-  return { root, paths, project, projectRevision: published.revision, service };
+  return published.revision;
 }
 
 function exportInput(projectRevision: number) {
@@ -1205,7 +1532,9 @@ function runtime(runtimeId: string, resourceId = "zdkgs0fde4xt00vr"): PragmaRunt
   };
 }
 
-function contextStore(): PragmaContextStoreResource {
+function contextStore(
+  storeId = "00000000-0000-4000-8000-000000000191",
+): PragmaContextStoreResource {
   return {
     apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "ContextStore",
@@ -1217,8 +1546,8 @@ function contextStore(): PragmaContextStoreResource {
     },
     spec: {
       adapter: "pragma.context.host@v1",
-      binding: desktopContextBindingRef("00000000-0000-4000-8000-000000000191"),
-      config: { key: "00000000-0000-4000-8000-000000000191" },
+      binding: desktopContextBindingRef(storeId),
+      config: { key: storeId },
     },
   };
 }

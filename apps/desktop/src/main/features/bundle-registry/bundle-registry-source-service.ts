@@ -12,11 +12,12 @@ import { decodePragmaBundle, loadPragmaProject } from "@pragma/interpreter";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import {
   BUNDLE_SOURCE_KIND_DIRECTORIES,
-  BundleSourceItemSchema,
   BundleSourceItemSummarySchema,
   BundleSourceManifestSchema,
   bundleSourceItemDirectory,
   bundleSourceRootPrefix,
+  parseBundleSourceItem,
+  parseBundleSourceManifest,
   parseBundleSourceRepositoryEntry,
   type BundleSourceItemSummary,
   type BundleSourceKind,
@@ -148,7 +149,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         source.ref ?? "HEAD",
       ]);
       const commit = (await runGit(repositoryPath, ["rev-parse", "FETCH_HEAD"])).trim();
-      const manifest = BundleSourceManifestSchema.parse(
+      const manifest = parseBundleSourceManifest(
         parse(await readGitBlob(repositoryPath, commit, "pragma-source.yaml", CONFIG_BLOB_LIMIT)),
       );
       const tree = await readGitTree(repositoryPath, commit);
@@ -166,7 +167,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       }
       const items = await loadSourceItems(repositoryPath, manifest, tree);
       const snapshot = DesktopBundleRegistrySnapshotSchema.parse({
-        schemaVersion: "pragma.desktop-bundle-source-snapshot/v2",
+        schemaVersion: "pragma.desktop-bundle-source-snapshot/v3",
         commit,
         syncedAt: new Date().toISOString(),
         manifest,
@@ -330,7 +331,7 @@ export function createDesktopBundleRegistrySourceService(options: {
             commit: snapshot.commit,
           })),
         );
-        for (const kind of ["expert", "expert-team", "flow"] as const) {
+        for (const kind of ["expert", "expert-team", "flow", "knowledge-base"] as const) {
           for (const category of snapshot.manifest.sections[kind].categories) {
             const key = `${kind}:${category.id}`;
             if (seenCategories.has(key)) continue;
@@ -394,7 +395,12 @@ export function createDesktopBundleRegistrySourceService(options: {
             (await hashFile(destination)) === result.sha256
           ) {
             await rm(temporary, { force: true });
-            return { path: destination, sha256: result.sha256, cached: true };
+            return {
+              path: destination,
+              rootRef: item.rootRef,
+              sha256: result.sha256,
+              cached: true,
+            };
           }
         } catch (error) {
           if (!isNodeError(error, "ENOENT")) throw error;
@@ -402,7 +408,12 @@ export function createDesktopBundleRegistrySourceService(options: {
         await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
         await rm(destination, { force: true });
         await rename(temporary, destination);
-        return { path: destination, sha256: result.sha256, cached: false };
+        return {
+          path: destination,
+          rootRef: item.rootRef,
+          sha256: result.sha256,
+          cached: false,
+        };
       } catch (error) {
         await rm(temporary, { force: true });
         throw error;
@@ -453,7 +464,7 @@ async function loadSourceItems(
     if (Buffer.byteLength(configText, "utf8") > CONFIG_BLOB_LIMIT) {
       throw new Error(`Bundle Source config is too large: ${config.entry.path}`);
     }
-    const item = BundleSourceItemSchema.parse(parse(configText));
+    const item = parseBundleSourceItem(parse(configText));
     if (item.id !== config.value.itemId)
       throw new Error(`Bundle Source item id does not match its directory: ${config.entry.path}`);
     if (!item.rootRef.startsWith(`${bundleSourceRootPrefix(config.value.sourceKind)}:`)) {
@@ -528,7 +539,13 @@ async function validateDownloadedBundle(
       .listResources()
       .find((resource) => canonicalPragmaResourceRef(resource) === item.rootRef);
     const expectedKind =
-      item.kind === "expert" ? "Expert" : item.kind === "expert-team" ? "ExpertTeam" : "Flow";
+      item.kind === "expert"
+        ? "Expert"
+        : item.kind === "expert-team"
+          ? "ExpertTeam"
+          : item.kind === "flow"
+            ? "Flow"
+            : "ContextStore";
     if (root?.kind !== expectedKind) {
       throw new Error(`Downloaded Bundle root type does not match ${item.kind}.`);
     }

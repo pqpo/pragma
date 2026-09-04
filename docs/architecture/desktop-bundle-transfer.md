@@ -1,8 +1,8 @@
 # Desktop Bundle Transfer
 
 The Pragma desktop app is the Host Adapter for the `@pragma/interpreter` Bundle protocol. It can
-export one custom Expert, Expert Team, or Flow from Studio as a `.pragma`. The file is an ordinary
-`pragma.bundle/v1` ZIP archive intended for transfer between computers; Desktop does not own a
+export one custom Expert, Expert Team, Flow, or managed Markdown knowledge base from Studio as a
+`.pragma`. The file is an ordinary `pragma.bundle/v2` ZIP archive intended for transfer between computers; Desktop does not own a
 second Bundle Schema or codec.
 
 ## Export
@@ -12,7 +12,8 @@ travel with it:
 
 - **Capabilities** includes portable Skills and service definitions.
 - **Plugins** includes user-installed plugin packages when available.
-- **Knowledge bases** includes their Markdown content and is off by default.
+- **Knowledge bases** includes their Markdown content and is off by default for callable roots.
+  For a knowledge-base root, its current published snapshot is mandatory and cannot be disabled.
 - **Flow layouts** includes canvas positions and viewport state.
 
 Interpreter selects the root's transitive DSL closure and emits canonical YAML, lock, requirements,
@@ -20,7 +21,8 @@ payload indexes, and both archive and portable-project fingerprints. Turning a m
 Host payload, not the DSL dependency, so the destination can guide the user through binding it.
 
 Secrets, local sessions, Missions, usage data, workspace files, provider accounts, and absolute
-local paths are excluded.
+local paths are excluded. A knowledge-base export includes only its current snapshot and file
+metadata; revision history, drafts, revision jobs, and Memory Evidence are excluded.
 
 ## Import
 
@@ -48,15 +50,21 @@ The imported object remains visible and persisted while setup is incomplete, but
 or run a Mission. This gate also applies when another Flow reaches the pending object indirectly.
 Save all required bindings and secrets to move the installation to `ready`.
 
+For a knowledge-base conflict, update means append the imported snapshot as the next local revision
+while retaining the local ID, name, and history. Identical content is a no-op. Copy creates a new
+semantic resource and a new managed Store at revision 1. Inspection records the matched Store's
+revision and snapshot hash; import applies changes with snapshot CAS and asks for a fresh inspection
+if the target changed.
+
 If Desktop closes during import, the installation is marked failed at the next startup. Selecting
 the same archive and root again performs a fresh validated retry. Incomplete copy imports can also be
 discarded from the import dialog; update imports are not automatically rolled back because doing so
 could overwrite later project work.
 
-Desktop stores installation state as `pragma.bundle-installation/v3`. Archive identity
+Desktop stores installation state as `pragma.bundle-installation/v5`. Archive identity
 (`bundleFingerprint`) and portable content identity (`sourceProjectFingerprint`) are distinct: the
 former protects the inspected bytes and retry transaction, while the latter supports advisory
 content comparison without silently merging installations.
 
 Legacy `pragma.desktop-bundle/v1` archives are deliberately not accepted. Import them with Pragma
-Desktop v0.1.0, upgrade the application, and export them again as `pragma.bundle/v1`.
+Desktop v0.1.0, upgrade the application, and export them again as `pragma.bundle/v2`.

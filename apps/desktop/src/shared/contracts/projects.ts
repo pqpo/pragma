@@ -50,6 +50,10 @@ export const DesktopPragmaContextStoreBindingSchema = z
   })
   .strict();
 
+export const EnsurePragmaContextStoreBindingSchema = z
+  .object({ storeId: z.string().uuid() })
+  .strict();
+
 export const UpsertPragmaExpertTeamSchema = z
   .object({
     baseRevision: z.number().int().nonnegative(),

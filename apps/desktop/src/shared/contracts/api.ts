@@ -439,6 +439,9 @@ export interface PragmaDesktopAPI {
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
   upsertPragmaExpertTeam: (input: UpsertPragmaExpertTeam) => Promise<PragmaProjectSnapshot>;
   listPragmaContextStoreBindings: () => Promise<DesktopPragmaContextStoreBinding[]>;
+  ensurePragmaContextStoreBinding: (input: {
+    readonly storeId: string;
+  }) => Promise<DesktopPragmaContextStoreBinding>;
   applyPragmaProjectChanges: (input: PragmaProjectChanges) => Promise<PragmaProjectSnapshot>;
   deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
   validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;

@@ -151,6 +151,7 @@ export function StudioPage(props: {
   } | null>(null);
   const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
   const [squareBundlePath, setSquareBundlePath] = useState<string | undefined>();
+  const [bundleRootRef, setBundleRootRef] = useState<string | undefined>();
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const openedInitialResourceRef = useRef<string | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
@@ -741,6 +742,7 @@ export function StudioPage(props: {
               type="button"
               onClick={() => {
                 setSquareBundlePath(undefined);
+                setBundleRootRef(undefined);
                 setBundleMode("import");
               }}
             >
@@ -750,7 +752,10 @@ export function StudioPage(props: {
             <button
               type="button"
               disabled={project === null}
-              onClick={() => setBundleMode("export")}
+              onClick={() => {
+                setBundleRootRef(undefined);
+                setBundleMode("export");
+              }}
             >
               <UploadSimple size={18} aria-hidden="true" />
               <span>{t("exportBundle")}</span>
@@ -768,8 +773,9 @@ export function StudioPage(props: {
       <div className="studio-content">
         {screen === "directory" && activeView === "square" ? (
           <SquareDirectoryFragment
-            onInstall={(sourcePath) => {
+            onInstall={(sourcePath, rootRef) => {
               setSquareBundlePath(sourcePath);
+              setBundleRootRef(rootRef);
               setBundleMode("import");
             }}
           />
@@ -875,6 +881,26 @@ export function StudioPage(props: {
         {screen === "context-store-detail" && selectedContextStore !== null ? (
           <ContextStoreDetailFragment
             store={selectedContextStore}
+            onExport={async () => {
+              let binding = contextStoreBindings.find(
+                (candidate) => candidate.storeId === selectedContextStore.id,
+              );
+              const api = desktopApi();
+              if (api !== undefined) {
+                binding = await api.ensurePragmaContextStoreBinding({
+                  storeId: selectedContextStore.id,
+                });
+                const ensuredBinding = binding;
+                setContextStoreBindings((current) => [
+                  ...current.filter((candidate) => candidate.storeId !== ensuredBinding.storeId),
+                  ensuredBinding,
+                ]);
+                setProject(await api.getPragmaProject());
+              }
+              if (binding === undefined) throw new Error("Knowledge-base binding is unavailable.");
+              setBundleRootRef(binding.resourceRef);
+              setBundleMode("export");
+            }}
             onBack={() => {
               if (contextStoreDetailReturn === "expert-detail") {
                 setContextStoreDetailReturn(null);
@@ -1145,15 +1171,18 @@ export function StudioPage(props: {
           contextStores={contextStores}
           runtimes={runtimes}
           initialSourcePath={squareBundlePath}
+          initialRootRef={bundleRootRef}
           onRefreshRuntimes={refreshRuntimeAvailability}
           onClose={() => {
             setBundleMode(null);
             setSquareBundlePath(undefined);
+            setBundleRootRef(undefined);
           }}
           onChanged={refreshBundleData}
           onOpenCapability={(capabilityId) => {
             setBundleMode(null);
             setSquareBundlePath(undefined);
+            setBundleRootRef(undefined);
             setActiveView("capabilities");
             setSelectedCapabilityId(capabilityId);
             setScreen("capability-detail");

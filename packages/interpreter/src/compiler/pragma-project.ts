@@ -95,7 +95,11 @@ import {
   isPragmaCompilerVersionDirectlyReadable,
   isPragmaCompilerVersionUpgradeable,
 } from "../ast/compiler-compatibility.ts";
-import type { PragmaBundleManifest, PragmaBundleRequirement } from "../ast/pragma-bundle.schema.ts";
+import {
+  PRAGMA_BUNDLE_WRITE_VERSION,
+  type PragmaBundleManifest,
+  type PragmaBundleRequirement,
+} from "../ast/pragma-bundle.schema.ts";
 import {
   encodePragmaBundle,
   decodePragmaBundle,
@@ -2191,7 +2195,7 @@ class PragmaProjectImpl implements PragmaProject {
     });
     return await encodePragmaBundle({
       manifest: {
-        schemaVersion: "pragma.bundle/v1",
+        schemaVersion: PRAGMA_BUNDLE_WRITE_VERSION,
         createdAt: options.createdAt ?? new Date().toISOString(),
         roots: roots.map((root) => canonicalRef(root.resource)),
         project: {
