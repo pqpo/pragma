@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { accessSync, constants, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
@@ -9,23 +8,20 @@ export interface CodexExecutableResolutionOptions {
   readonly homeDirectory?: string | undefined;
   readonly platform?: NodeJS.Platform | undefined;
   readonly isExecutable?: ((path: string) => boolean) | undefined;
-  readonly windowsAppPackageRoots?: (() => readonly string[]) | undefined;
   readonly macApplicationsDirectories?: readonly string[] | undefined;
   readonly readDirectoryNames?: ((path: string) => readonly string[]) | undefined;
 }
-
-const WINDOWS_APP_PACKAGE_REPOSITORY =
-  "HKCU\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages";
 
 /**
  * Resolves the local Codex CLI without relying exclusively on the host process PATH.
  *
  * Desktop apps launched by Finder, VS Code, or a login service can inherit a narrower
  * PATH than an interactive shell. The standalone Codex installer places its command in
- * ~/.local/bin or an NVM-managed Node installation, Codex Desktop on Windows keeps
- * it inside the AppX package, and ChatGPT/Codex apps on macOS bundle the executable
- * in their application resources. Check these known locations when PATH lookup
- * cannot find it.
+ * a user-local bin directory, and Codex may also be installed through NVM. Windows
+ * Store packages expose launchable commands through the user's App Execution Alias
+ * directory; their internal files under Program Files/WindowsApps must not be spawned directly.
+ * ChatGPT/Codex apps on macOS bundle the executable in their application resources.
+ * Check these known locations when PATH lookup cannot find it.
  */
 export function resolveCodexExecutablePath(options: CodexExecutableResolutionOptions = {}): string {
   if (options.executablePath !== undefined) {
@@ -36,6 +32,7 @@ export function resolveCodexExecutablePath(options: CodexExecutableResolutionOpt
   const canExecute = options.isExecutable ?? isExecutable;
   const platform = options.platform ?? process.platform;
   const path = platform === "win32" ? win32 : posix;
+  const homeDirectory = options.homeDirectory ?? env["HOME"] ?? homedir();
   const executableNames = createExecutableNames("codex", platform, env["PATHEXT"]);
   const fromPath = findExecutableInPath(
     executableNames,
@@ -49,8 +46,26 @@ export function resolveCodexExecutablePath(options: CodexExecutableResolutionOpt
     return fromPath;
   }
 
+  if (platform === "win32") {
+    const localAppData = env["LOCALAPPDATA"] ?? path.join(homeDirectory, "AppData", "Local");
+    for (const directory of [
+      path.join(localAppData, "Programs", "OpenAI", "Codex", "bin"),
+      path.join(localAppData, "Microsoft", "WindowsApps"),
+    ]) {
+      const executable = findExecutableInDirectory(
+        directory,
+        executableNames,
+        path.join,
+        canExecute,
+      );
+      if (executable !== undefined) {
+        return executable;
+      }
+    }
+  }
+
   const nvmExecutable = findNvmExecutable({
-    homeDirectory: options.homeDirectory ?? env["HOME"] ?? homedir(),
+    homeDirectory,
     nvmDirectory: env["NVM_DIR"],
     nvmBinDirectory: env["NVM_BIN"],
     executableNames,
@@ -62,20 +77,10 @@ export function resolveCodexExecutablePath(options: CodexExecutableResolutionOpt
     return nvmExecutable;
   }
 
-  if (platform === "win32") {
-    const packageRoots = options.windowsAppPackageRoots?.() ?? findWindowsCodexAppPackageRoots();
-    for (const packageRoot of packageRoots) {
-      const appExecutable = path.join(packageRoot, "app", "resources", "codex.exe");
-      if (canExecute(appExecutable)) {
-        return appExecutable;
-      }
-    }
-  }
-
   if (platform === "darwin") {
     const applicationDirectories = options.macApplicationsDirectories ?? [
       "/Applications",
-      path.join(options.homeDirectory ?? env["HOME"] ?? homedir(), "Applications"),
+      path.join(homeDirectory, "Applications"),
     ];
     for (const applicationDirectory of applicationDirectories) {
       for (const applicationName of ["ChatGPT.app", "Codex.app"] as const) {
@@ -92,7 +97,7 @@ export function resolveCodexExecutablePath(options: CodexExecutableResolutionOpt
   }
 
   const standaloneDirectory = path.join(
-    options.homeDirectory ?? env["HOME"] ?? homedir(),
+    homeDirectory,
     ".local",
     "bin",
   );
@@ -216,45 +221,6 @@ function createExecutableNames(
     .filter((extension) => extension === ".com" || extension === ".exe");
 
   return [command, ...new Set(binaryExtensions.map((extension) => `${command}${extension}`))];
-}
-
-function findWindowsCodexAppPackageRoots(): readonly string[] {
-  try {
-    const packageQuery = spawnSync(
-      "reg.exe",
-      ["query", WINDOWS_APP_PACKAGE_REPOSITORY, "/f", "OpenAI.Codex_", "/k"],
-      {
-        encoding: "utf8",
-        timeout: 2_000,
-        windowsHide: true,
-      },
-    );
-    if (packageQuery.status !== 0 || packageQuery.error !== undefined) {
-      return [];
-    }
-
-    const packageKeys = packageQuery.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("HKEY_") && /\\OpenAI\.Codex_[^\\]+$/i.test(line));
-
-    return packageKeys.flatMap((packageKey) => {
-      const rootQuery = spawnSync("reg.exe", ["query", packageKey, "/v", "PackageRootFolder"], {
-        encoding: "utf8",
-        timeout: 2_000,
-        windowsHide: true,
-      });
-      if (rootQuery.status !== 0 || rootQuery.error !== undefined) {
-        return [];
-      }
-
-      const match = /^\s*PackageRootFolder\s+REG_SZ\s+(.+)$/m.exec(rootQuery.stdout);
-      const packageRoot = match?.[1]?.trim();
-      return packageRoot === undefined || packageRoot === "" ? [] : [packageRoot];
-    });
-  } catch {
-    return [];
-  }
 }
 
 function isExecutable(path: string): boolean {

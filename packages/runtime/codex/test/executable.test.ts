@@ -22,24 +22,71 @@ describe("Codex executable resolution", () => {
     ).toBe(executablePath);
   });
 
-  it("resolves the Codex Desktop AppX executable when it is absent from PATH", () => {
-    const packageRoot = win32.join(
+  it("resolves the Codex App Execution Alias when it is absent from PATH", () => {
+    const localAppData = win32.join("C:\\", "Users", "test", "AppData", "Local");
+    const executablePath = win32.join(
+      localAppData,
+      "Microsoft",
+      "WindowsApps",
+      "codex.exe",
+    );
+
+    expect(
+      resolveCodexExecutablePath({
+        env: {
+          LOCALAPPDATA: localAppData,
+          PATH: win32.join("C:\\", "Windows", "System32"),
+        },
+        homeDirectory: win32.join("C:\\", "Users", "test"),
+        platform: "win32",
+        isExecutable: (candidate) => candidate.toLowerCase() === executablePath.toLowerCase(),
+      }),
+    ).toBe(executablePath);
+  });
+
+  it("resolves the standalone Windows CLI when the desktop process has a narrow PATH", () => {
+    const localAppData = win32.join("C:\\", "Users", "test", "AppData", "Local");
+    const executablePath = win32.join(
+      localAppData,
+      "Programs",
+      "OpenAI",
+      "Codex",
+      "bin",
+      "codex.exe",
+    );
+
+    expect(
+      resolveCodexExecutablePath({
+        env: {
+          LOCALAPPDATA: localAppData,
+          PATH: win32.join("C:\\", "Windows", "System32"),
+        },
+        homeDirectory: win32.join("C:\\", "Users", "test"),
+        platform: "win32",
+        isExecutable: (candidate) => candidate.toLowerCase() === executablePath.toLowerCase(),
+      }),
+    ).toBe(executablePath);
+  });
+
+  it("does not resolve the protected executable inside a Windows AppX package", () => {
+    const packageExecutable = win32.join(
       "C:\\",
       "Program Files",
       "WindowsApps",
       "OpenAI.Codex_1.0.0.0_x64__test",
+      "app",
+      "resources",
+      "codex.exe",
     );
-    const executablePath = win32.join(packageRoot, "app", "resources", "codex.exe");
 
     expect(
       resolveCodexExecutablePath({
         env: { PATH: win32.join("C:\\", "Windows", "System32") },
         homeDirectory: win32.join("C:\\", "Users", "test"),
         platform: "win32",
-        windowsAppPackageRoots: () => [packageRoot],
-        isExecutable: (candidate) => candidate.toLowerCase() === executablePath.toLowerCase(),
+        isExecutable: (candidate) => candidate.toLowerCase() === packageExecutable.toLowerCase(),
       }),
-    ).toBe(executablePath);
+    ).toBe("codex");
   });
 
   it("keeps extensionless executable resolution for Unix and managed launchers", () => {
