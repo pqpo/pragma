@@ -88,6 +88,7 @@ export function Dialog(props: {
 export function ConfirmationDialog(props: {
   readonly title: string;
   readonly description: string;
+  readonly className?: string | undefined;
   readonly cancelLabel: string;
   readonly confirmLabel: string;
   readonly busyLabel: string;
@@ -100,6 +101,7 @@ export function ConfirmationDialog(props: {
     <Dialog
       title={props.title}
       description={props.description}
+      className={props.className}
       role="alertdialog"
       busy={props.busy}
       onCancel={props.onCancel}

@@ -22,8 +22,8 @@ export function installPragmaBundleHandlers(
   ipcMain.handle("pragma-bundles:export", (_event, input: unknown) =>
     runDesktopMutation(async () => {
       const parsed = ExportPragmaBundleSchema.parse(input);
-      const prepared = await service.prepareExport(parsed);
-      const result = await showSaveBundleDialog(getWindow(), `${prepared.root.name}.pragma`);
+      const suggestedFilename = await service.suggestExportFilename(parsed);
+      const result = await showSaveBundleDialog(getWindow(), suggestedFilename);
       if (result.canceled || result.filePath === undefined) return { cancelled: true };
       const path = withBundleExtension(result.filePath);
       return {

@@ -4,6 +4,7 @@ import { CharacterCount } from "../../components/CharacterCount.tsx";
 export function StudioConfirmationDialog(props: {
   readonly title: string;
   readonly description: string;
+  readonly className?: string | undefined;
   readonly cancelLabel: string;
   readonly confirmLabel: string;
   readonly busyLabel: string;
@@ -16,6 +17,7 @@ export function StudioConfirmationDialog(props: {
     <ConfirmationDialog
       title={props.title}
       description={props.description}
+      className={props.className}
       cancelLabel={props.cancelLabel}
       confirmLabel={props.confirmLabel}
       busyLabel={props.busyLabel}

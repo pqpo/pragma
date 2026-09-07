@@ -349,6 +349,7 @@ export function ContextStoreRevisionFragment(props: {
       </div>
       {pendingDelete !== null ? (
         <StudioConfirmationDialog
+          className="revision-task-delete-dialog"
           title={t("deleteRevisionTaskTitle")}
           description={t("deleteRevisionTaskDescription", {
             name: pendingDelete.request.prompt,

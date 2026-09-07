@@ -191,6 +191,38 @@ const DesktopContextPayloadDescriptorV3Schema = z
     }
   });
 
+const DesktopContextPayloadSnapshotV4Schema = z
+  .object({
+    schemaVersion: ContextStoreSnapshotSchema.shape.schemaVersion,
+    storeId: ContextStoreSnapshotSchema.shape.storeId,
+    revision: ContextStoreSnapshotSchema.shape.revision,
+    snapshotHash: ContextStoreSnapshotSchema.shape.snapshotHash,
+    createdAt: ContextStoreSnapshotSchema.shape.createdAt,
+    directories: ContextStoreSnapshotSchema.shape.directories,
+    files: z.array(ContextStoreSnapshotSchema.shape.files.element.omit({ content: true })),
+  })
+  .strict();
+
+const DesktopContextPayloadDescriptorV4Schema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop.context-store-descriptor/v4"),
+    name: z.string().min(1),
+    description: z.string(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    contentIncluded: z.boolean(),
+    snapshot: DesktopContextPayloadSnapshotV4Schema.optional(),
+  })
+  .strict()
+  .superRefine((descriptor, context) => {
+    if (descriptor.contentIncluded !== (descriptor.snapshot !== undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Knowledge-base snapshot presence must match contentIncluded.",
+        path: ["snapshot"],
+      });
+    }
+  });
+
 function findIncompleteInstallation(
   installations: readonly PragmaBundleInstallation[],
   bundleFingerprint: string,
@@ -262,6 +294,10 @@ function throwBundleExportValidationError(error: unknown): never {
 
 export interface PragmaBundleService {
   initialize(): Promise<void>;
+  suggestExportFilename(input: {
+    readonly rootRef: string;
+    readonly projectRevision: number;
+  }): Promise<string>;
   prepareExport(input: {
     readonly rootRef: string;
     readonly projectRevision: number;
@@ -752,6 +788,28 @@ export function createPragmaBundleService(options: {
       await ensureInitialized();
     },
 
+    async suggestExportFilename(input) {
+      const snapshot = await options.project.get();
+      if (snapshot.revision !== input.projectRevision) {
+        throw new Error(
+          `Project revision changed from ${input.projectRevision} to ${snapshot.revision}. Reopen the export dialog.`,
+        );
+      }
+      const root = snapshot.resources.find(
+        (resource) => canonicalPragmaResourceRef(resource) === input.rootRef,
+      );
+      if (
+        root === undefined ||
+        (root.kind !== "Expert" &&
+          root.kind !== "ExpertTeam" &&
+          root.kind !== "Flow" &&
+          root.kind !== "ContextStore")
+      ) {
+        throw new Error(`Bundle root not found: ${input.rootRef}`);
+      }
+      return `${root.metadata.name}.pragma`;
+    },
+
     async prepareExport(input) {
       const prepared = await prepare(input.rootRef, input.projectRevision);
       try {
@@ -899,21 +957,34 @@ export function createPragmaBundleService(options: {
                   const entry = contextByRef.get(requirement.ownerRef);
                   if (entry?.store === undefined || originalBindingRef === undefined)
                     return undefined;
-                  const snapshot = includeKnowledgeBases
-                    ? await options.contextStores.getSnapshot(entry.store.id)
-                    : undefined;
+                  const [snapshot, fingerprint] = await Promise.all([
+                    includeKnowledgeBases
+                      ? options.contextStores.getSnapshot(entry.store.id)
+                      : Promise.resolve(undefined),
+                    options.contextStores.fingerprint(entry.store.id),
+                  ]);
                   const files = new Map<string, Uint8Array>([
                     [
                       "descriptor.json",
                       new TextEncoder().encode(
                         `${JSON.stringify(
                           {
-                            schemaVersion: "pragma.desktop.context-store-descriptor/v3",
+                            schemaVersion: "pragma.desktop.context-store-descriptor/v4",
                             name: entry.store.name,
                             description: entry.store.description,
-                            fingerprint: await options.contextStores.fingerprint(entry.store.id),
+                            fingerprint,
                             contentIncluded: includeKnowledgeBases,
-                            ...(snapshot === undefined ? {} : { snapshot }),
+                            ...(snapshot === undefined
+                              ? {}
+                              : {
+                                  snapshot: {
+                                    ...snapshot,
+                                    files: snapshot.files.map(({ id, metadata }) => ({
+                                      id,
+                                      metadata,
+                                    })),
+                                  },
+                                }),
                           },
                           null,
                           2,
@@ -921,7 +992,10 @@ export function createPragmaBundleService(options: {
                       ),
                     ],
                   ]);
-                  return { codec: "pragma.desktop.context-store@v3", files };
+                  for (const file of snapshot?.files ?? []) {
+                    files.set(`files/${file.id}`, new TextEncoder().encode(file.content));
+                  }
+                  return { codec: "pragma.desktop.context-store@v4", files };
                 }
                 return undefined;
               }
@@ -2433,6 +2507,14 @@ async function readDesktopBundle(
           ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
         });
       } else if (requirement.kind === "binding" && owner?.kind === "ContextStore") {
+        const v4 =
+          requirement.payload?.codec === "pragma.desktop.context-store@v4"
+            ? parseBundlePayloadJson(
+                requiredBundlePayloadFile(payloadFiles, "descriptor.json", requirement.id),
+                DesktopContextPayloadDescriptorV4Schema,
+                `ContextStore descriptor ${requirement.id}`,
+              )
+            : undefined;
         const v3 =
           requirement.payload?.codec === "pragma.desktop.context-store@v3"
             ? parseBundlePayloadJson(
@@ -2450,6 +2532,7 @@ async function readDesktopBundle(
               )
             : undefined;
         const metadata =
+          v4 ??
           v3 ??
           v2 ??
           (requirement.payload?.codec === "pragma.desktop.context-store@v1"
@@ -2462,7 +2545,30 @@ async function readDesktopBundle(
         const included =
           requirement.payload?.codec === "pragma.desktop.context-store@v1" ||
           (v2?.contentIncluded ?? false) ||
-          (v3?.contentIncluded ?? false);
+          (v3?.contentIncluded ?? false) ||
+          (v4?.contentIncluded ?? false);
+        const snapshot =
+          v4?.snapshot === undefined
+            ? v3?.snapshot
+            : ContextStoreSnapshotSchema.parse({
+                ...v4.snapshot,
+                files: v4.snapshot.files.map((file) => ({
+                  ...file,
+                  content: new TextDecoder().decode(
+                    requiredBundlePayloadFile(payloadFiles, `files/${file.id}`, requirement.id),
+                  ),
+                })),
+              });
+        if (v4?.snapshot !== undefined) {
+          const declaredFiles = new Set(v4.snapshot.files.map((file) => `files/${file.id}`));
+          for (const path of payloadFiles.keys()) {
+            if (path !== "descriptor.json" && !declaredFiles.has(path)) {
+              throw new Error(
+                `ContextStore payload ${requirement.id} contains an undeclared file: ${path}.`,
+              );
+            }
+          }
+        }
         contextStores.push({
           requirementId: requirement.id,
           resourceRef: requirement.ownerRef,
@@ -2472,10 +2578,14 @@ async function readDesktopBundle(
           ...(v2 === undefined
             ? {}
             : { sourceId: v2.sourceId, contentIncluded: v2.contentIncluded }),
-          ...(v3 === undefined ? {} : { contentIncluded: v3.contentIncluded }),
-          ...(v3?.snapshot === undefined ? {} : { snapshot: v3.snapshot }),
+          ...(v4 !== undefined
+            ? { contentIncluded: v4.contentIncluded }
+            : v3 === undefined
+              ? {}
+              : { contentIncluded: v3.contentIncluded }),
+          ...(snapshot === undefined ? {} : { snapshot }),
           included,
-          ...(requirement.payload === undefined || !included || v3 !== undefined
+          ...(requirement.payload === undefined || !included || v3 !== undefined || v4 !== undefined
             ? {}
             : { payloadRoot: `${requirement.payload.root}/files` }),
         });

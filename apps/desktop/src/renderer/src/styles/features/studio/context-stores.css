@@ -1126,6 +1126,16 @@
   opacity: 0.5;
 }
 
+.revision-task-delete-dialog .ui-dialog-header p {
+  display: -webkit-box;
+  max-height: calc(1.5em * 4);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
 /* Knowledge-base revision diff */
 .studio-content:has(> .context-store-revision-detail) {
   padding-bottom: 48px;

@@ -886,7 +886,7 @@ export function StudioPage(props: {
                 (candidate) => candidate.storeId === selectedContextStore.id,
               );
               const api = desktopApi();
-              if (api !== undefined) {
+              if (api !== undefined && binding === undefined) {
                 binding = await api.ensurePragmaContextStoreBinding({
                   storeId: selectedContextStore.id,
                 });

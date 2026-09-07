@@ -9,6 +9,7 @@ describe("Studio dialogs", () => {
       <StudioConfirmationDialog
         title="Delete this Expert?"
         description="This cannot be undone."
+        className="revision-task-delete-dialog"
         cancelLabel="Cancel"
         confirmLabel="Delete Expert"
         busyLabel="Deleting…"
@@ -20,6 +21,7 @@ describe("Studio dialogs", () => {
 
     expect(html).toContain('role="alertdialog"');
     expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('class="ui-dialog revision-task-delete-dialog"');
     expect(html).toContain("Cancel");
     expect(html).toContain("Delete Expert");
   });

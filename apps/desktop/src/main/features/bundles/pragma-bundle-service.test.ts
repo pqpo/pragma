@@ -102,9 +102,21 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       path,
     );
     const archive = unzipSync(new Uint8Array(await readFile(path)));
-    expect(Object.keys(archive)).toContainEqual(
-      expect.stringMatching(/assets\/req-.+\/descriptor\.json/u),
+    const descriptorPath = Object.keys(archive).find((entry) =>
+      /assets\/req-.+\/descriptor\.json/u.test(entry),
     );
+    expect(descriptorPath).toBeDefined();
+    const payloadRoot = descriptorPath!.slice(0, descriptorPath!.lastIndexOf("descriptor.json"));
+    expect(strFromU8(archive[`${payloadRoot}files/guides/release.md`]!)).toBe("# Release v2\n");
+    const descriptor = JSON.parse(strFromU8(archive[descriptorPath!]!)) as {
+      schemaVersion: string;
+      snapshot: { files: readonly Record<string, unknown>[] };
+    };
+    expect(descriptor.schemaVersion).toBe("pragma.desktop.context-store-descriptor/v4");
+    expect(descriptor.snapshot.files).toEqual([
+      expect.objectContaining({ id: "guides/release.md" }),
+    ]);
+    expect(descriptor.snapshot.files[0]).not.toHaveProperty("content");
 
     const target = await createFixture("knowledge-target", { realContextStores: true });
     await target.contextStores.createFromSnapshot({
