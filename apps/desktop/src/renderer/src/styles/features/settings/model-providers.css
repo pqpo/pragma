@@ -17,10 +17,6 @@
   padding: 27px 29px;
 }
 
-.provider-card.is-expanded {
-  min-height: 270px;
-}
-
 .provider-editor {
   display: grid;
   gap: 17px;
@@ -157,13 +153,37 @@
   gap: 24px;
 }
 
+.provider-editor-back {
+  margin-bottom: 24px;
+}
+
+.provider-editor-heading {
+  padding-bottom: 0;
+}
+
+.provider-editor-page-body {
+  width: min(940px, 100%);
+  padding-bottom: 48px;
+}
+
+.provider-editor-surface {
+  padding: 28px 30px 24px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
 .provider-wizard-steps {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.provider-wizard-steps.is-edit {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .provider-wizard-steps li {
@@ -446,13 +466,22 @@
   margin-right: auto;
 }
 
+.provider-wizard-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 -4px -2px;
+  padding: 18px 4px 2px;
+  background: linear-gradient(to bottom, transparent, var(--ui-surface) 18px);
+}
+
 .provider-summary-card {
   display: grid;
   gap: 16px;
 }
 
 .provider-summary-card .card-header {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .provider-summary-card .card-title-group p {
@@ -507,6 +536,7 @@
 }
 
 .provider-card-actions {
+  flex-wrap: wrap;
   justify-content: flex-end;
   padding-top: 12px;
   border-top: 1px solid var(--border);
@@ -524,6 +554,10 @@
 }
 
 @media (max-width: 820px) {
+  .provider-editor-surface {
+    padding: 22px 20px 20px;
+  }
+
   .provider-connection-grid {
     grid-template-columns: 1fr;
   }
@@ -547,6 +581,30 @@
   .provider-summary-card .verification-badge {
     grid-column: 2;
     justify-self: start;
+  }
+}
+
+@media (max-width: 620px) {
+  .provider-wizard-step-label {
+    display: none;
+  }
+
+  .provider-wizard-steps li {
+    grid-template-columns: 26px minmax(12px, 1fr);
+  }
+
+  .provider-wizard-steps li:not(:last-child)::after {
+    grid-column: 2;
+  }
+
+  .manual-model-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-card-actions > button {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }
 

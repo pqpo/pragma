@@ -2,9 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  ModelProviderEditorPage,
   ProviderEditor,
   reconcileDiscoveredModelInputs,
-  reconcileDraftAfterProviderRemoval,
   supportedThinkingLevels,
 } from "./ModelProvidersFragment.tsx";
 
@@ -12,7 +12,9 @@ describe("ProviderEditor", () => {
   it("renders configured models as removable cards in a responsive grid", () => {
     const html = renderToStaticMarkup(
       <ProviderEditor
+        mode="edit"
         initialValue={{
+          id: "00000000-0000-4000-8000-000000000001",
           presetId: "deepseek",
           name: "DeepSeek",
           protocol: "openai-completions",
@@ -30,6 +32,76 @@ describe("ProviderEditor", () => {
     expect(html).toContain("provider-wizard-steps");
     expect(html).toContain("Configure connection");
     expect(html).toContain("https://api.deepseek.com/v1");
+  });
+
+  it("uses a three-step flow for creation and a two-step flow for editing", () => {
+    const createHtml = renderToStaticMarkup(
+      <ProviderEditor
+        mode="create"
+        initialValue={{
+          presetId: "",
+          name: "",
+          protocol: "openai-completions",
+          baseUrl: "",
+          apiKey: "",
+          requiresApiKey: true,
+          compatibilityProfileId: "",
+          models: [],
+        }}
+        onCancel={() => undefined}
+        onSaved={() => undefined}
+      />,
+    );
+    const editHtml = renderToStaticMarkup(
+      <ProviderEditor
+        mode="edit"
+        initialValue={{
+          id: "00000000-0000-4000-8000-000000000001",
+          presetId: "deepseek",
+          name: "DeepSeek",
+          protocol: "openai-completions",
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: "",
+          requiresApiKey: true,
+          compatibilityProfileId: "",
+          models: [model("deepseek-v4-flash")],
+        }}
+        onCancel={() => undefined}
+        onSaved={() => undefined}
+      />,
+    );
+
+    expect(createHtml.match(/provider-wizard-step-index/g)).toHaveLength(3);
+    expect(createHtml).toContain("Choose a provider");
+    expect(editHtml.match(/provider-wizard-step-index/g)).toHaveLength(2);
+    expect(editHtml).toContain("Configure connection");
+    expect(editHtml).not.toContain("Choose a provider");
+  });
+
+  it("renders create and edit flows as dedicated settings pages", () => {
+    const html = renderToStaticMarkup(
+      <ModelProviderEditorPage
+        mode="edit"
+        draft={{
+          id: "00000000-0000-4000-8000-000000000001",
+          presetId: "deepseek",
+          name: "DeepSeek",
+          protocol: "openai-completions",
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: "",
+          requiresApiKey: true,
+          compatibilityProfileId: "",
+          models: [model("deepseek-v4-flash")],
+        }}
+        onBack={() => undefined}
+        onSaved={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="settings-panel settings-screen provider-editor-screen"');
+    expect(html).toContain("Back to Models &amp; Providers");
+    expect(html).toContain("Edit DeepSeek");
+    expect(html).toContain('class="provider-editor-surface"');
   });
 
   it("uses the runtime-neutral declared thinking levels", () => {
@@ -58,26 +130,6 @@ describe("ProviderEditor", () => {
         [discovered],
       ),
     ).toEqual([expect.objectContaining({ input: ["text"], inputOverride: ["text"] })]);
-  });
-
-  it("closes a stale editor when its provider is removed", () => {
-    const providerId = "00000000-0000-4000-8000-000000000001";
-    const draft: Parameters<typeof ProviderEditor>[0]["initialValue"] = {
-      id: providerId,
-      presetId: "deepseek",
-      name: "DeepSeek",
-      protocol: "openai-completions",
-      baseUrl: "https://api.deepseek.com/v1",
-      apiKey: "",
-      requiresApiKey: true,
-      compatibilityProfileId: "",
-      models: [model("deepseek-v4-flash")],
-    };
-
-    expect(reconcileDraftAfterProviderRemoval(draft, providerId)).toBeNull();
-    expect(reconcileDraftAfterProviderRemoval(draft, "00000000-0000-4000-8000-000000000002")).toBe(
-      draft,
-    );
   });
 });
 

@@ -5,6 +5,7 @@ import {
   CheckCircle,
   Key,
   MagnifyingGlass,
+  PencilSimple,
   Plus,
   Robot,
   Trash,
@@ -44,12 +45,8 @@ export type ProviderDraft = {
   readonly models: readonly ModelProviderModel[];
 };
 
-export function reconcileDraftAfterProviderRemoval(
-  draft: ProviderDraft | null,
-  providerId: string,
-): ProviderDraft | null {
-  return draft?.id === providerId ? null : draft;
-}
+type ProviderEditorMode = "create" | "edit";
+type ProviderEditorStep = "provider" | "connection" | "models";
 
 const emptyProviderDraft = (): ProviderDraft => ({
   presetId: "",
@@ -63,13 +60,16 @@ const emptyProviderDraft = (): ProviderDraft => ({
 });
 
 export function ProviderEditor(props: {
+  readonly mode: ProviderEditorMode;
   readonly initialValue: ProviderDraft;
   readonly onCancel: () => void;
   readonly onSaved: (provider: ModelProvider) => void;
 }) {
   const { t } = useTranslation(["settings", "common"]);
   const [draft, setDraft] = useState(props.initialValue);
-  const [step, setStep] = useState<1 | 2 | 3>(props.initialValue.presetId === "" ? 1 : 2);
+  const [step, setStep] = useState<ProviderEditorStep>(
+    props.mode === "create" ? "provider" : "connection",
+  );
   const [availableModels, setAvailableModels] = useState<readonly ModelProviderModel[]>(
     props.initialValue.models,
   );
@@ -81,7 +81,20 @@ export function ProviderEditor(props: {
   const [compatibilityProfiles, setCompatibilityProfiles] = useState<
     readonly ModelCompatibilityProfileDescriptor[]
   >([]);
-  const isEditing = draft.id !== undefined;
+  const isEditing = props.mode === "edit" && draft.id !== undefined;
+  const wizardSteps = (
+    props.mode === "create"
+      ? [
+          { id: "provider", label: t("models.step1", { ns: "settings" }) },
+          { id: "connection", label: t("models.step2", { ns: "settings" }) },
+          { id: "models", label: t("models.step3", { ns: "settings" }) },
+        ]
+      : [
+          { id: "connection", label: t("models.step2", { ns: "settings" }) },
+          { id: "models", label: t("models.step3", { ns: "settings" }) },
+        ]
+  ) satisfies readonly { readonly id: ProviderEditorStep; readonly label: string }[];
+  const currentStepIndex = wizardSteps.findIndex((candidate) => candidate.id === step);
   const compatibleProfiles = useMemo(
     () => compatibilityProfiles.filter((profile) => profile.api === draft.protocol),
     [compatibilityProfiles, draft.protocol],
@@ -115,7 +128,7 @@ export function ProviderEditor(props: {
       models: [],
     });
     setAvailableModels([]);
-    setStep(2);
+    setStep("connection");
   };
 
   const discover = async () => {
@@ -142,11 +155,11 @@ export function ProviderEditor(props: {
       } else if (refreshedModels !== draft.models) {
         setDraft({ ...draft, models: refreshedModels });
       }
-      setStep(3);
+      setStep("models");
     } catch (discoveryError) {
       setAvailableModels(draft.models);
       setDiscoveryMessage(errorMessage(discoveryError));
-      setStep(3);
+      setStep("models");
     } finally {
       setBusy(false);
     }
@@ -212,25 +225,31 @@ export function ProviderEditor(props: {
   return (
     <div className="provider-editor provider-wizard">
       <ol
-        className="provider-wizard-steps"
+        className={
+          props.mode === "edit" ? "provider-wizard-steps is-edit" : "provider-wizard-steps"
+        }
         aria-label={t("models.setupProgress", { ns: "settings" })}
       >
-        {[1, 2, 3].map((number) => (
+        {wizardSteps.map((wizardStep, index) => (
           <li
-            className={number === step ? "is-current" : number < step ? "is-complete" : ""}
-            key={number}
+            className={
+              index === currentStepIndex
+                ? "is-current"
+                : index < currentStepIndex
+                  ? "is-complete"
+                  : ""
+            }
+            key={wizardStep.id}
           >
             <span className="provider-wizard-step-index">
-              {number < step ? <Check size={13} weight="bold" /> : number}
+              {index < currentStepIndex ? <Check size={13} weight="bold" /> : index + 1}
             </span>
-            <span className="provider-wizard-step-label">
-              {t(`models.step${number}` as "models.step1", { ns: "settings" })}
-            </span>
+            <span className="provider-wizard-step-label">{wizardStep.label}</span>
           </li>
         ))}
       </ol>
 
-      {step === 1 ? (
+      {step === "provider" ? (
         <section className="provider-wizard-panel">
           <div className="wizard-heading">
             <h3>{t("models.chooseProvider", { ns: "settings" })}</h3>
@@ -274,7 +293,7 @@ export function ProviderEditor(props: {
         </section>
       ) : null}
 
-      {step === 2 ? (
+      {step === "connection" ? (
         <section className="provider-wizard-panel">
           <div className="wizard-heading">
             <h3>{t("models.configureConnection", { ns: "settings" })}</h3>
@@ -374,7 +393,7 @@ export function ProviderEditor(props: {
         </section>
       ) : null}
 
-      {step === 3 ? (
+      {step === "models" ? (
         <section className="provider-wizard-panel">
           <div className="wizard-heading">
             <h3>{t("models.chooseModels", { ns: "settings" })}</h3>
@@ -489,15 +508,19 @@ export function ProviderEditor(props: {
         <button
           className="secondary-button"
           type="button"
-          onClick={step === 1 ? props.onCancel : () => setStep((step - 1) as 1 | 2)}
+          onClick={
+            currentStepIndex === 0
+              ? props.onCancel
+              : () => setStep(wizardSteps[currentStepIndex - 1]!.id)
+          }
           disabled={busy}
         >
           <ArrowLeft size={16} />
-          {step === 1
+          {currentStepIndex === 0
             ? t("models.cancel", { ns: "settings" })
             : t("models.back", { ns: "settings" })}
         </button>
-        {step === 2 ? (
+        {step === "connection" ? (
           <button
             className="primary-button"
             type="button"
@@ -510,7 +533,7 @@ export function ProviderEditor(props: {
             <ArrowRight size={16} />
           </button>
         ) : null}
-        {step === 3 ? (
+        {step === "models" ? (
           <>
             <button
               className="secondary-button"
@@ -534,6 +557,57 @@ export function ProviderEditor(props: {
         ) : null}
       </div>
     </div>
+  );
+}
+
+export function ModelProviderEditorPage(props: {
+  readonly mode: ProviderEditorMode;
+  readonly draft: ProviderDraft;
+  readonly onBack: () => void;
+  readonly onSaved: (provider: ModelProvider) => void;
+}) {
+  const { t } = useTranslation("settings");
+  const isEditing = props.mode === "edit";
+
+  return (
+    <SettingsScreenFrame
+      id="models-panel"
+      labelledBy="provider-editor-heading"
+      className="provider-editor-screen"
+      header={
+        <>
+          <button className="back-link provider-editor-back" type="button" onClick={props.onBack}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("models.backToProviders")}
+          </button>
+          <header className="panel-heading provider-editor-heading">
+            <div>
+              <h2 id="provider-editor-heading">
+                {isEditing
+                  ? t("models.editProviderTitle", { name: props.draft.name })
+                  : t("models.addProviderTitle")}
+              </h2>
+              <p>
+                {isEditing
+                  ? t("models.editProviderPageDescription")
+                  : t("models.addProviderPageDescription")}
+              </p>
+            </div>
+          </header>
+        </>
+      }
+    >
+      <div className="provider-editor-page-body">
+        <div className="provider-editor-surface">
+          <ProviderEditor
+            mode={props.mode}
+            initialValue={props.draft}
+            onCancel={props.onBack}
+            onSaved={props.onSaved}
+          />
+        </div>
+      </div>
+    </SettingsScreenFrame>
   );
 }
 
@@ -756,9 +830,6 @@ function ProviderCard(props: {
           </p>
         </div>
         <VerificationBadge verification={verification} />
-        <button className="text-button" type="button" onClick={props.onEdit}>
-          {t("models.edit")}
-        </button>
       </header>
       <div className="provider-summary-meta">
         <code>{props.provider.baseUrl}</code>
@@ -800,6 +871,10 @@ function ProviderCard(props: {
           disabled={testing}
         >
           {testing ? t("models.testing") : t("models.testConnection")}
+        </button>
+        <button className="secondary-button" type="button" onClick={props.onEdit}>
+          <PencilSimple size={16} />
+          {t("models.edit")}
         </button>
         <button
           className="danger-button"
@@ -849,7 +924,10 @@ function VerificationBadge({
 export function ModelProvidersFragment() {
   const { t } = useTranslation("settings");
   const [providers, setProviders] = useState<readonly ModelProvider[]>([]);
-  const [draft, setDraft] = useState<ProviderDraft | null>(null);
+  const [editor, setEditor] = useState<{
+    readonly mode: ProviderEditorMode;
+    readonly draft: ProviderDraft;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [resetRequired, setResetRequired] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -879,8 +957,20 @@ export function ModelProvidersFragment() {
         ? current.map((item) => (item.id === provider.id ? provider : item))
         : [...current, provider],
     );
-    setDraft(null);
+    setEditor(null);
   };
+
+  if (editor !== null) {
+    return (
+      <ModelProviderEditorPage
+        mode={editor.mode}
+        draft={editor.draft}
+        onBack={() => setEditor(null)}
+        onSaved={saveProvider}
+      />
+    );
+  }
+
   return (
     <SettingsScreenFrame
       id="models-panel"
@@ -891,11 +981,11 @@ export function ModelProvidersFragment() {
             <h2 id="models-panel-heading">{t("models.title")}</h2>
             <p>{t("models.description")}</p>
           </div>
-          {draft || resetRequired ? null : (
+          {resetRequired ? null : (
             <button
               className="primary-button"
               type="button"
-              onClick={() => setDraft(emptyProviderDraft())}
+              onClick={() => setEditor({ mode: "create", draft: emptyProviderDraft() })}
             >
               <Plus size={17} />
               {t("models.addProvider")}
@@ -927,17 +1017,8 @@ export function ModelProvidersFragment() {
             </button>
           </div>
         ) : null}
-        {draft ? (
-          <article className="provider-card is-expanded">
-            <ProviderEditor
-              initialValue={draft}
-              onCancel={() => setDraft(null)}
-              onSaved={saveProvider}
-            />
-          </article>
-        ) : null}
         {loading ? <p className="empty-state">{t("models.loading")}</p> : null}
-        {!loading && !draft && !resetRequired && providers.length === 0 ? (
+        {!loading && !resetRequired && providers.length === 0 ? (
           <div className="empty-state">
             <Robot size={28} />
             <h3>{t("models.empty")}</h3>
@@ -949,21 +1030,23 @@ export function ModelProvidersFragment() {
             key={provider.id}
             provider={provider}
             onEdit={() =>
-              setDraft({
-                id: provider.id,
-                presetId: provider.presetId,
-                name: provider.name,
-                protocol: provider.protocol,
-                baseUrl: provider.baseUrl,
-                apiKey: "",
-                requiresApiKey: provider.requiresApiKey,
-                compatibilityProfileId: provider.compatibilityProfileId ?? "",
-                models: provider.models,
+              setEditor({
+                mode: "edit",
+                draft: {
+                  id: provider.id,
+                  presetId: provider.presetId,
+                  name: provider.name,
+                  protocol: provider.protocol,
+                  baseUrl: provider.baseUrl,
+                  apiKey: "",
+                  requiresApiKey: provider.requiresApiKey,
+                  compatibilityProfileId: provider.compatibilityProfileId ?? "",
+                  models: provider.models,
+                },
               })
             }
             onDelete={() => {
               setProviders((current) => current.filter((item) => item.id !== provider.id));
-              setDraft((current) => reconcileDraftAfterProviderRemoval(current, provider.id));
             }}
             onRefresh={(next) =>
               setProviders((current) => current.map((item) => (item.id === next.id ? next : item)))
