@@ -62,6 +62,14 @@ export const ModelCostSchema = ModelCostRatesSchema.extend({
     .optional(),
 });
 
+export const ModelCapabilityValueSourceSchema = z.enum([
+  "provider",
+  "catalog",
+  "manual",
+  "default",
+  "legacy",
+]);
+
 export const ProviderModelDefinitionSchema = z
   .object({
     id: z.string().trim().min(1).max(200),
@@ -75,6 +83,8 @@ export const ProviderModelDefinitionSchema = z
     cost: ModelCostSchema,
     contextWindow: z.number().int().positive(),
     maxTokens: z.number().int().positive(),
+    contextWindowSource: ModelCapabilityValueSourceSchema.optional(),
+    maxTokensSource: ModelCapabilityValueSourceSchema.optional(),
   })
   .superRefine((value, context) => {
     if (!value.reasoning && value.thinking !== undefined) {
@@ -91,4 +101,5 @@ export type ModelThinkingLevel = z.infer<typeof ModelThinkingLevelSchema>;
 export type ModelThinkingCapability = z.infer<typeof ModelThinkingCapabilitySchema>;
 export type ModelCompatibilityProfileId = z.infer<typeof ModelCompatibilityProfileIdSchema>;
 export type ModelCost = z.infer<typeof ModelCostSchema>;
+export type ModelCapabilityValueSource = z.infer<typeof ModelCapabilityValueSourceSchema>;
 export type ProviderModelDefinition = z.infer<typeof ProviderModelDefinitionSchema>;

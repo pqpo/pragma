@@ -36,9 +36,71 @@ describe("model provider drivers", () => {
       source: "provider",
       models: [
         expect.objectContaining({ id: "o4-mini-deep-research", reasoning: true }),
-        expect.objectContaining({ id: "vendor/model", reasoning: false }),
+        expect.objectContaining({
+          id: "vendor/model",
+          reasoning: false,
+          contextWindow: 128_000,
+          maxTokens: 16_384,
+          contextWindowSource: "default",
+          maxTokensSource: "default",
+        }),
       ],
     });
+  });
+
+  it("prefers provider-reported token limits over catalog values", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "model-with-limits",
+              context_length: 1_000_000,
+              top_provider: { max_completion_tokens: 131_072 },
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await discoverModelProviderModels({
+      request: {
+        catalogId: "provider",
+        api: "openai-completions",
+        baseUrl: "https://models.example.com/v1",
+        apiKey: "secret",
+        supportsDiscovery: true,
+      },
+      drivers: createBuiltInModelProviderDriverRegistry({ fetch: fetchImpl }),
+      directory: testDirectory({ provider: [testModel("model-with-limits", false)] }),
+    });
+
+    expect(result.models[0]).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 131_072,
+      contextWindowSource: "provider",
+      maxTokensSource: "provider",
+    });
+  });
+
+  it("ignores empty model identities returned by a provider", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: "" }, { id: "usable-model" }] })),
+      );
+    const result = await discoverModelProviderModels({
+      request: {
+        catalogId: "provider",
+        api: "openai-completions",
+        baseUrl: "https://models.example.com/v1",
+        apiKey: "secret",
+        supportsDiscovery: true,
+      },
+      drivers: createBuiltInModelProviderDriverRegistry({ fetch: fetchImpl }),
+      directory: testDirectory({}),
+    });
+
+    expect(result.models.map((model) => model.id)).toEqual(["usable-model"]);
   });
 
   it("uses the neutral catalog when a provider has no discovery endpoint", async () => {

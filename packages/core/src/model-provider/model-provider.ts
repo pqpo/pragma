@@ -67,13 +67,20 @@ export interface ModelProviderDriver {
     readonly baseUrl: string;
     readonly apiKey: string;
     readonly signal: AbortSignal;
-  }): Promise<readonly string[]>;
+  }): Promise<readonly ModelProviderDiscoveryCandidate[]>;
   probe(options: {
     readonly baseUrl: string;
     readonly apiKey: string;
     readonly model: ProviderModelDefinition;
     readonly signal: AbortSignal;
   }): Promise<ModelProviderProbeResult>;
+}
+
+export interface ModelProviderDiscoveryCandidate {
+  readonly id: string;
+  readonly name?: string | undefined;
+  readonly contextWindow?: number | undefined;
+  readonly maxTokens?: number | undefined;
 }
 
 export interface ModelProviderDriverRegistry {

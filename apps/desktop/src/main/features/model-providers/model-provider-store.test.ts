@@ -1,11 +1,12 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createModelProviderStore, ModelProviderStoreError } from "./model-provider-store.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
+import { ModelProvidersV5Schema, modelProvidersV5ToV6Step } from "./migrations/index.ts";
 
 const directories: string[] = [];
 
@@ -81,6 +82,22 @@ describe("model provider store", () => {
     expect(rawConfig).toContain("apiKeySecretRef");
   });
 
+  it("treats legacy credential migration as a no-op for current v6 configuration", async () => {
+    const { store } = await createStore();
+    await store.create({
+      presetId: "openai",
+      name: "OpenAI",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "secret",
+      requiresApiKey: true,
+      models: [model("gpt-4.1")],
+    });
+
+    await expect(store.migrateLegacy!()).resolves.toBe(false);
+    await expect(store.list()).resolves.toHaveLength(1);
+  });
+
   it("retains the encrypted API key when updating provider metadata", async () => {
     const { store } = await createStore();
     const created = await store.create({
@@ -142,6 +159,116 @@ describe("model provider store", () => {
     expect(runtimeModel).not.toHaveProperty("inputOverride");
   });
 
+  it("migrates v5 limits, correcting known Qwen defaults and preserving unknown models", async () => {
+    const { configPath, store } = await createStore();
+    await store.create({
+      presetId: "qwen",
+      name: "Qwen / Bailian",
+      protocol: "openai-completions",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "secret",
+      requiresApiKey: true,
+      models: [
+        model("qwen3.8-max", "Qwen3.8 Max", true, "openai-completions"),
+        model("future-qwen", "Future Qwen", false, "openai-completions"),
+      ],
+    });
+    const current = JSON.parse(await readFile(configPath, "utf8")) as {
+      schemaVersion: number;
+      providers: (Record<string, unknown> & { models: Record<string, unknown>[] })[];
+      futureRoot?: unknown;
+    };
+    current.schemaVersion = 5;
+    current.futureRoot = { retained: true };
+    current.providers[0]!.futureProvider = { retained: true };
+    current.providers[0]!.models[0]!.futureModel = { retained: true };
+    for (const configuredModel of current.providers[0]!.models) {
+      delete configuredModel["contextWindowSource"];
+      delete configuredModel["maxTokensSource"];
+    }
+    await writeFile(configPath, JSON.stringify(current));
+
+    const snapshot = await store.getSnapshot();
+
+    expect(snapshot.providers[0]?.models).toEqual([
+      expect.objectContaining({
+        id: "qwen3.8-max",
+        contextWindow: 1_000_000,
+        maxTokens: 131_072,
+        contextWindowSource: "catalog",
+        maxTokensSource: "catalog",
+      }),
+      expect.objectContaining({
+        id: "future-qwen",
+        contextWindow: 128_000,
+        maxTokens: 16_384,
+        contextWindowSource: "legacy",
+        maxTokensSource: "legacy",
+      }),
+    ]);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
+      schemaVersion: 6,
+      futureRoot: { retained: true },
+      providers: [
+        expect.objectContaining({
+          futureProvider: { retained: true },
+          models: expect.arrayContaining([
+            expect.objectContaining({ futureModel: { retained: true } }),
+          ]),
+        }),
+      ],
+    });
+    await expect(readdir(join(dirname(configPath), "migrations", "backups"))).resolves.toHaveLength(
+      1,
+    );
+  });
+
+  it("replays an interrupted v5-to-v6 journal before reading providers", async () => {
+    const { configPath, store } = await createStore();
+    await store.create({
+      presetId: "qwen",
+      name: "Qwen / Bailian",
+      protocol: "openai-completions",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "secret",
+      requiresApiKey: true,
+      models: [model("qwen3.8-max", "Qwen3.8 Max", true, "openai-completions")],
+    });
+    const current = JSON.parse(await readFile(configPath, "utf8")) as {
+      schemaVersion: number;
+      providers: { models: Record<string, unknown>[] }[];
+    };
+    current.schemaVersion = 5;
+    for (const configuredModel of current.providers[0]!.models) {
+      delete configuredModel["contextWindowSource"];
+      delete configuredModel["maxTokensSource"];
+    }
+    const source = ModelProvidersV5Schema.parse(current);
+    const target = modelProvidersV5ToV6Step.migrate(source);
+    await writeFile(configPath, JSON.stringify(source));
+    const journalPath = `${configPath}.state-migration.json`;
+    await writeFile(
+      journalPath,
+      JSON.stringify({
+        schemaVersion: "pragma.state-migration/v1",
+        resource: { family: "pragma.model-providers", id: "model-providers.json" },
+        fromVersion: 5,
+        toVersion: 6,
+        documents: { "model-providers.json": target },
+      }),
+    );
+
+    await expect(store.getSnapshot()).resolves.toMatchObject({
+      status: "ready",
+      providers: [
+        {
+          models: [expect.objectContaining({ id: "qwen3.8-max", contextWindow: 1_000_000 })],
+        },
+      ],
+    });
+    await expect(access(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects duplicate model IDs and unavailable keychain writes", async () => {
     const { configPath, store } = await createStore();
 
@@ -159,7 +286,10 @@ describe("model provider store", () => {
 
     const unavailable = createTestSecretStore(join(configPath, "unavailable"));
     unavailable.keychain.health = { status: "unavailable", backend: "macos-keychain" };
-    const unavailableStore = createModelProviderStore({ configPath, secretStore: unavailable.secretStore });
+    const unavailableStore = createModelProviderStore({
+      configPath,
+      secretStore: unavailable.secretStore,
+    });
     await expect(
       unavailableStore.create({
         presetId: "openai",
@@ -189,12 +319,34 @@ describe("model provider store", () => {
     await expect(store.getSnapshot()).resolves.toEqual({ status: "ready", providers: [] });
   });
 
+  it("archives a pending state migration journal when resetting configuration", async () => {
+    const { configPath, store } = await createStore();
+    await store.create({
+      presetId: "openai",
+      name: "OpenAI",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "secret",
+      requiresApiKey: true,
+      models: [model("gpt-4.1")],
+    });
+    const journalPath = `${configPath}.state-migration.json`;
+    await writeFile(journalPath, JSON.stringify({ interrupted: true }));
+
+    await expect(store.reset()).resolves.toMatchObject({ status: "ready", providers: [] });
+    await expect(access(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.getSnapshot()).resolves.toEqual({ status: "ready", providers: [] });
+    expect(
+      (await readdir(dirname(configPath))).some((entry) => entry.endsWith(".state-migration.json")),
+    ).toBe(true);
+  });
+
   it("offers archive and reset when a current-version provider has invalid nested data", async () => {
     const { configPath, store } = await createStore();
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 5,
+        schemaVersion: 6,
         providers: [
           {
             id: "00000000-0000-4000-8000-000000000001",

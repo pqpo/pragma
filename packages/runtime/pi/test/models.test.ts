@@ -10,8 +10,26 @@ import {
   resolvePiThinkingLevel,
   resolveRequiredRuntimeModel,
 } from "../src/models.ts";
+import { createPiModelProviderDirectory } from "../src/catalog.ts";
 
 describe("PI runtime model resolution", () => {
+  it("exposes the one-million-token Qwen Max catalog limits", () => {
+    const models = createPiModelProviderDirectory().listModels("qwen-token-plan-cn");
+
+    expect(models.filter((model) => ["qwen3.7-max", "qwen3.8-max"].includes(model.id))).toEqual([
+      expect.objectContaining({
+        id: "qwen3.7-max",
+        contextWindow: 1_000_000,
+        maxTokens: 131_072,
+      }),
+      expect.objectContaining({
+        id: "qwen3.8-max",
+        contextWindow: 1_000_000,
+        maxTokens: 131_072,
+      }),
+    ]);
+  });
+
   it("uses provider and model as the canonical identity", async () => {
     const provider = {
       id: "configured-provider",

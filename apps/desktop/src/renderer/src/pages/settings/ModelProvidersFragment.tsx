@@ -146,7 +146,7 @@ export function ProviderEditor(props: {
         ...(draft.apiKey.trim() === "" ? {} : { apiKey: draft.apiKey }),
         ...(draft.id === undefined ? {} : { providerId: draft.id }),
       });
-      const refreshedModels = reconcileDiscoveredModelInputs(draft.models, result.models);
+      const refreshedModels = reconcileDiscoveredModels(draft.models, result.models);
       const merged = mergeModels(refreshedModels, result.models);
       setAvailableModels(merged);
       setDiscoveryMessage(result.message);
@@ -645,6 +645,44 @@ function ModelCapabilityEditor(props: {
         <small>{props.model.id}</small>
       </div>
       <div className="model-capability-controls">
+        <label className="model-token-limit-field">
+          <span>{t("models.contextWindow")}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={props.model.contextWindow}
+            onChange={(event) => {
+              const value = Number.parseInt(event.target.value, 10);
+              if (!Number.isSafeInteger(value) || value <= 0) return;
+              props.onChange({
+                ...props.model,
+                contextWindow: value,
+                contextWindowSource: "manual",
+              });
+            }}
+          />
+          {props.model.contextWindowSource === "default" ? (
+            <small>{t("models.conservativeDefault")}</small>
+          ) : null}
+        </label>
+        <label className="model-token-limit-field">
+          <span>{t("models.maxOutputTokens")}</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={props.model.maxTokens}
+            onChange={(event) => {
+              const value = Number.parseInt(event.target.value, 10);
+              if (!Number.isSafeInteger(value) || value <= 0) return;
+              props.onChange({ ...props.model, maxTokens: value, maxTokensSource: "manual" });
+            }}
+          />
+          {props.model.maxTokensSource === "default" ? (
+            <small>{t("models.conservativeDefault")}</small>
+          ) : null}
+        </label>
         <label className="compact-check">
           <input
             type="checkbox"
@@ -1072,7 +1110,7 @@ function mergeModels(
   return [...map.values()];
 }
 
-export function reconcileDiscoveredModelInputs(
+export function reconcileDiscoveredModels(
   current: readonly ModelProviderModel[],
   discovered: readonly ModelProviderModel[],
 ): readonly ModelProviderModel[] {
@@ -1082,10 +1120,18 @@ export function reconcileDiscoveredModelInputs(
     const fresh = discoveredById.get(model.id);
     if (fresh === undefined) return model;
     const input = model.inputOverride ?? fresh.input;
+    const contextWindowIsManual = model.contextWindowSource === "manual";
+    const maxTokensIsManual = model.maxTokensSource === "manual";
+    const contextWindow = contextWindowIsManual ? model.contextWindow : fresh.contextWindow;
+    const maxTokens = maxTokensIsManual ? model.maxTokens : fresh.maxTokens;
     if (
       model.capabilitiesSource === fresh.capabilitiesSource &&
       input.length === model.input.length &&
-      input.every((modality, index) => modality === model.input[index])
+      input.every((modality, index) => modality === model.input[index]) &&
+      contextWindow === model.contextWindow &&
+      maxTokens === model.maxTokens &&
+      (contextWindowIsManual || model.contextWindowSource === fresh.contextWindowSource) &&
+      (maxTokensIsManual || model.maxTokensSource === fresh.maxTokensSource)
     ) {
       return model;
     }
@@ -1094,6 +1140,10 @@ export function reconcileDiscoveredModelInputs(
       ...model,
       input: [...input],
       capabilitiesSource: fresh.capabilitiesSource,
+      contextWindow,
+      maxTokens,
+      contextWindowSource: contextWindowIsManual ? "manual" : fresh.contextWindowSource,
+      maxTokensSource: maxTokensIsManual ? "manual" : fresh.maxTokensSource,
     };
   });
   return changed ? reconciled : current;
@@ -1122,6 +1172,8 @@ function addManualModel(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 16_384,
+    contextWindowSource: "default",
+    maxTokensSource: "default",
     capabilitiesSource: "manual",
   };
   setDraft({ ...draft, models: [...draft.models, model] });

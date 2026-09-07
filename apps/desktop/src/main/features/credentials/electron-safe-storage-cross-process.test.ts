@@ -110,7 +110,7 @@ describe.runIf(process.platform === "darwin")("real Electron safeStorage migrati
         providers: currentProviders.schemaVersion,
         capabilities: currentCapabilities.schemaVersion,
         plugins: currentPlugins.schemaVersion,
-      }).toEqual({ providers: 5, capabilities: 2, plugins: 2 });
+      }).toEqual({ providers: 6, capabilities: 2, plugins: 2 });
       for (const path of [
         join(root, "data", "model-providers.json"),
         join(root, "data", "credentials", "capability-credentials.json"),

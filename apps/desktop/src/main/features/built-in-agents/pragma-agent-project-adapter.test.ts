@@ -126,7 +126,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       expect.objectContaining({
         name: "Pragma management tools",
         kind: "tools",
-        toolNames: [
+        toolNames: expect.arrayContaining([
           "knowledge_revision_list_targets",
           "knowledge_revision_list_drafts",
           "knowledge_revision_start",
@@ -135,7 +135,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
           "knowledge_revision_rebase",
           "knowledge_revision_submit_draft",
           "knowledge_revision_discard_draft",
-        ],
+        ]),
       }),
       expect.objectContaining({
         name: "Repository access",

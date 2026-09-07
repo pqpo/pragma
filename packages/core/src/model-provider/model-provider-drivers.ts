@@ -2,6 +2,7 @@ import type { ModelApi, ProviderModelDefinition } from "@pragma/shared";
 
 import type {
   ModelProviderDirectory,
+  ModelProviderDiscoveryCandidate,
   ModelProviderDiscoveryRequest,
   ModelProviderDiscoveryResult,
   ModelProviderDriver,
@@ -48,14 +49,14 @@ export async function discoverModelProviderModels(options: {
   }
 
   try {
-    const ids = await driver.discover({
+    const discovered = await driver.discover({
       baseUrl: options.request.baseUrl,
       apiKey: options.request.apiKey,
       signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
     });
     const suggestedById = new Map(suggested.map((model) => [model.id, model]));
-    const models = ids.map(
-      (id) => suggestedById.get(id) ?? createUnknownProviderModel(id, options.request.api),
+    const models = discovered.map((candidate) =>
+      mergeDiscoveredModel(candidate, suggestedById.get(candidate.id), options.request.api),
     );
     return models.length > 0
       ? { ok: true, models, source: "provider", message: `Found ${models.length} models.` }
@@ -120,6 +121,30 @@ export function createUnknownProviderModel(id: string, api: ModelApi): ProviderM
     cost: DEFAULT_COST,
     contextWindow: 128_000,
     maxTokens: 16_384,
+    contextWindowSource: "default",
+    maxTokensSource: "default",
+  };
+}
+
+function mergeDiscoveredModel(
+  candidate: ModelProviderDiscoveryCandidate,
+  catalog: ProviderModelDefinition | undefined,
+  api: ModelApi,
+): ProviderModelDefinition {
+  const base = catalog ?? createUnknownProviderModel(candidate.id, api);
+  return {
+    ...base,
+    name: candidate.name ?? base.name,
+    contextWindow: candidate.contextWindow ?? base.contextWindow,
+    maxTokens: candidate.maxTokens ?? base.maxTokens,
+    contextWindowSource:
+      candidate.contextWindow === undefined
+        ? (catalog?.contextWindowSource ?? (catalog === undefined ? "default" : "catalog"))
+        : "provider",
+    maxTokensSource:
+      candidate.maxTokens === undefined
+        ? (catalog?.maxTokensSource ?? (catalog === undefined ? "default" : "catalog"))
+        : "provider",
   };
 }
 
@@ -139,7 +164,7 @@ function createDriver(api: ModelApi, fetchImpl: typeof fetch): ModelProviderDriv
         signal: options.signal,
       });
       if (!response.ok) throw new Error(`The provider returned HTTP ${response.status}.`);
-      return extractModelIds(await response.json(), api);
+      return extractModels(await response.json(), api);
     },
     async probe(options) {
       const startedAt = Date.now();
@@ -248,24 +273,77 @@ function anthropicEndpointUrl(baseUrl: string, path: string): URL {
   return endpointUrl(baseUrl, basePath.endsWith("/v1") ? path : `v1/${path}`);
 }
 
-function extractModelIds(body: unknown, api: ModelApi): string[] {
+function extractModels(
+  body: unknown,
+  api: ModelApi,
+): { id: string; name?: string; contextWindow?: number; maxTokens?: number }[] {
   if (!body || typeof body !== "object") return [];
   const candidates = Array.isArray((body as { data?: unknown }).data)
     ? (body as { data: unknown[] }).data
     : Array.isArray((body as { models?: unknown }).models)
       ? (body as { models: unknown[] }).models
       : [];
-  const ids = candidates
+  const models = candidates
     .map((candidate) => {
       if (!candidate || typeof candidate !== "object") return undefined;
-      const value =
+      const rawId =
         (candidate as { id?: unknown; name?: unknown }).id ??
         (candidate as { name?: unknown }).name;
-      if (typeof value !== "string") return undefined;
-      return api === "google-generative-ai" ? value.replace(/^models\//, "") : value;
+      if (typeof rawId !== "string") return undefined;
+      const id = api === "google-generative-ai" ? rawId.replace(/^models\//, "") : rawId;
+      if (id.trim() === "") return undefined;
+      const displayName = readString(candidate, ["displayName", "display_name"]);
+      const contextWindow = readPositiveInteger(candidate, [
+        "inputTokenLimit",
+        "context_window",
+        "context_length",
+      ]);
+      const maxTokens =
+        readPositiveInteger(candidate, [
+          "outputTokenLimit",
+          "max_output_tokens",
+          "max_completion_tokens",
+        ]) ?? readNestedPositiveInteger(candidate, "top_provider", "max_completion_tokens");
+      return {
+        id,
+        ...(displayName === undefined ? {} : { name: displayName }),
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+        ...(maxTokens === undefined ? {} : { maxTokens }),
+      };
     })
-    .filter((id): id is string => Boolean(id));
-  return [...new Set(ids)].sort((left, right) => left.localeCompare(right));
+    .filter((model): model is NonNullable<typeof model> => model !== undefined);
+  return [...new Map(models.map((model) => [model.id, model])).values()].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  );
+}
+
+function readString(value: object, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const candidate = (value as Record<string, unknown>)[key];
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+  }
+  return undefined;
+}
+
+function readPositiveInteger(value: object, keys: readonly string[]): number | undefined {
+  for (const key of keys) {
+    const candidate = (value as Record<string, unknown>)[key];
+    if (typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function readNestedPositiveInteger(
+  value: object,
+  parentKey: string,
+  key: string,
+): number | undefined {
+  const parent = (value as Record<string, unknown>)[parentKey];
+  return parent !== null && typeof parent === "object"
+    ? readPositiveInteger(parent, [key])
+    : undefined;
 }
 
 function isValidProbeResponse(api: ModelApi, body: unknown): boolean {

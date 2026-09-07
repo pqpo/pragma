@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ModelProviderEditorPage,
   ProviderEditor,
-  reconcileDiscoveredModelInputs,
+  reconcileDiscoveredModels,
   supportedThinkingLevels,
 } from "./ModelProvidersFragment.tsx";
 
@@ -121,15 +121,47 @@ describe("ProviderEditor", () => {
       input: ["text", "image"] as ("text" | "image")[],
       capabilitiesSource: "provider" as const,
     };
-    expect(reconcileDiscoveredModelInputs([model("qwen3.7-plus")], [discovered])).toEqual([
+    expect(reconcileDiscoveredModels([model("qwen3.7-plus")], [discovered])).toEqual([
       expect.objectContaining({ input: ["text", "image"], capabilitiesSource: "provider" }),
     ]);
     expect(
-      reconcileDiscoveredModelInputs(
+      reconcileDiscoveredModels(
         [{ ...model("qwen3.7-plus"), inputOverride: ["text"] }],
         [discovered],
       ),
     ).toEqual([expect.objectContaining({ input: ["text"], inputOverride: ["text"] })]);
+  });
+
+  it("refreshes discovered token limits but preserves manual values", () => {
+    const discovered = {
+      ...model("qwen3.8-max"),
+      contextWindow: 1_000_000,
+      maxTokens: 131_072,
+      contextWindowSource: "catalog" as const,
+      maxTokensSource: "catalog" as const,
+    };
+
+    expect(reconcileDiscoveredModels([model("qwen3.8-max")], [discovered])).toEqual([
+      expect.objectContaining({ contextWindow: 1_000_000, maxTokens: 131_072 }),
+    ]);
+    expect(
+      reconcileDiscoveredModels(
+        [
+          {
+            ...model("qwen3.8-max"),
+            contextWindow: 256_000,
+            contextWindowSource: "manual",
+          },
+        ],
+        [discovered],
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        contextWindow: 256_000,
+        contextWindowSource: "manual",
+        maxTokens: 131_072,
+      }),
+    ]);
   });
 });
 

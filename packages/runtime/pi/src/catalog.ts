@@ -43,5 +43,7 @@ function toProviderModelDefinition(model: Model<Api>): ProviderModelDefinition {
     },
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
+    contextWindowSource: "catalog",
+    maxTokensSource: "catalog",
   };
 }

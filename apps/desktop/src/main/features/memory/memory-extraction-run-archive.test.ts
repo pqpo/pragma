@@ -21,6 +21,8 @@ describe("Memory extraction run archive", () => {
     const archive = createMemoryExtractionRunArchive(root);
     const runId = "d5f1da5e-9201-49e8-9018-16779707ed1c";
     const missionId = "39ed3fdf-0f0a-437e-8cd8-d059a96761e8";
+    const finishedAt = new Date();
+    const startedAt = new Date(finishedAt.getTime() - 30_000);
     await archive.save({
       schemaVersion: "pragma.desktop-memory-extraction-run/v1",
       runId,
@@ -28,8 +30,8 @@ describe("Memory extraction run archive", () => {
       module: "skill",
       jobId: "skill-job",
       status: "failed",
-      startedAt: "2026-08-05T08:00:00.000Z",
-      finishedAt: "2026-08-05T08:00:30.000Z",
+      startedAt: startedAt.toISOString(),
+      finishedAt: finishedAt.toISOString(),
       runtimeId: "runtime-a",
       providerId: "provider-a",
       modelId: "model-a",
@@ -38,7 +40,7 @@ describe("Memory extraction run archive", () => {
         code: "rate_limit_exceeded",
         message: "429 rate limit exceeded",
         phase: "curator_run",
-        failedAt: "2026-08-05T08:00:30.000Z",
+        failedAt: finishedAt.toISOString(),
         transport: { httpStatus: 429 },
       },
       chat: {
@@ -50,7 +52,7 @@ describe("Memory extraction run archive", () => {
             kind: "assistant",
             content: "The provider returned a rate limit response.",
             streaming: false,
-            createdAt: "2026-08-05T08:00:30.000Z",
+            createdAt: finishedAt.toISOString(),
           },
         ],
         page: { oldestSequence: 1, newestSequence: 1 },
@@ -126,12 +128,13 @@ function runRecord(input: {
   readonly module: "skill" | "knowledge";
   readonly jobId: string;
 }) {
+  const finishedAt = new Date();
   return {
     schemaVersion: "pragma.desktop-memory-extraction-run/v1" as const,
     ...input,
     status: "succeeded" as const,
-    startedAt: "2026-08-05T08:00:00.000Z",
-    finishedAt: "2026-08-05T08:00:30.000Z",
+    startedAt: new Date(finishedAt.getTime() - 30_000).toISOString(),
+    finishedAt: finishedAt.toISOString(),
     runtimeId: "runtime-a",
   };
 }

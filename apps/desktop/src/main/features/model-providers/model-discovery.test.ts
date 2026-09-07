@@ -27,6 +27,10 @@ describe("model discovery", () => {
           reasoning: false,
           input: ["text"],
           capabilitiesSource: "manual",
+          contextWindow: 128_000,
+          maxTokens: 16_384,
+          contextWindowSource: "default",
+          maxTokensSource: "default",
         }),
       ],
     });
@@ -44,11 +48,19 @@ describe("model discovery", () => {
       protocol: "google-generative-ai",
       baseUrl: "https://generativelanguage.googleapis.com/v1beta",
       apiKey: "gemini-key",
-      fetchImpl: vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(
-          new Response(JSON.stringify({ models: [{ name: "models/gemini-test" }] })),
+      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: "models/gemini-test",
+                inputTokenLimit: 1_000_000,
+                outputTokenLimit: 65_536,
+              },
+            ],
+          }),
         ),
+      ),
     });
     const failure = await discoverProviderModels({
       presetId: "custom-openai",
@@ -59,6 +71,12 @@ describe("model discovery", () => {
     });
 
     expect(success.models[0]?.id).toBe("gemini-test");
+    expect(success.models[0]).toMatchObject({
+      contextWindow: 1_000_000,
+      maxTokens: 65_536,
+      contextWindowSource: "provider",
+      maxTokensSource: "provider",
+    });
     expect(failure).toMatchObject({ ok: false, source: "manual", models: [] });
   });
 
@@ -71,14 +89,17 @@ describe("model discovery", () => {
       fetchImpl: vi
         .fn<typeof fetch>()
         .mockResolvedValue(
-          new Response(JSON.stringify({ data: [{ id: "qwen3.7-plus" }] }), { status: 200 }),
+          new Response(JSON.stringify({ data: [{ id: "qwen3.8-max" }] }), { status: 200 }),
         ),
     });
 
     expect(result.models).toEqual([
       expect.objectContaining({
-        id: "qwen3.7-plus",
-        input: ["text", "image"],
+        id: "qwen3.8-max",
+        contextWindow: 1_000_000,
+        maxTokens: 131_072,
+        contextWindowSource: "catalog",
+        maxTokensSource: "catalog",
         capabilitiesSource: "provider",
       }),
     ]);

@@ -134,7 +134,7 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
         learning: "local-candidates",
       },
     });
-    const now = new Date("2026-08-04T00:00:00.000Z");
+    const now = new Date();
     await plane.episodicStore.ingest([
       MemoryEvidenceEnvelopeSchema.parse({
         schemaVersion: "pragma.memory-evidence/v1",

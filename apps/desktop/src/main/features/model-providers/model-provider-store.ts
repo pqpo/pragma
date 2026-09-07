@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import type {
   ModelProviderDefinition,
   ModelProviderRegistry,
   ResolvedModelProvider,
 } from "@pragma/core";
-import { withFileLock } from "@pragma/core";
+import { applyAtomicStateMigration, recoverAtomicStateMigration, withFileLock } from "@pragma/core";
 import {
   SecretStoreError,
   type LegacyCredentialDecryptor,
@@ -38,9 +38,15 @@ import {
   migrateLegacyCredentialAggregate,
   type LegacySecretRecord,
 } from "../credentials/legacy-credential-migration.ts";
-import { ModelProvidersV4Schema, modelProvidersV4ToV5Step } from "./migrations/index.ts";
+import {
+  ModelProvidersV4Schema,
+  ModelProvidersV5Schema,
+  modelProvidersV4ToV5Step,
+  modelProvidersV5ToV6Step,
+} from "./migrations/index.ts";
+import type { ModelProvidersV5 } from "./migrations/schemas/v5.ts";
 
-const CONFIG_SCHEMA_VERSION = 5;
+const CONFIG_SCHEMA_VERSION = 6;
 
 interface StoredModelProvider {
   readonly id: string;
@@ -232,6 +238,10 @@ function parseLegacyConfig(value: unknown): LegacyStoredModelProviderConfig {
   return ModelProvidersV4Schema.parse(value) as unknown as LegacyStoredModelProviderConfig;
 }
 
+function parseV5Config(value: unknown): ModelProvidersV5 {
+  return ModelProvidersV5Schema.parse(value);
+}
+
 function isSecretRef(value: unknown): value is SecretRef {
   return SecretRefSchema.safeParse(value).success;
 }
@@ -260,12 +270,16 @@ export function createModelProviderStore(options: {
   readonly secretStore: SecretStore;
   readonly legacyDecryptor?: LegacyCredentialDecryptor | undefined;
 }): ModelProviderStore {
-  const migrateLegacy = async (): Promise<boolean> =>
-    (
-      await migrateLegacyCredentialAggregate<
-        LegacyStoredModelProviderConfig,
-        StoredModelProviderConfig
-      >({
+  const migrateLegacy = async (): Promise<boolean> => {
+    const credentialJournalPath = `${options.configPath}.migration-journal.json`;
+    if (!(await fileExists(credentialJournalPath))) {
+      const currentVersion = await readConfigVersion(options.configPath);
+      if (currentVersion === undefined || currentVersion >= modelProvidersV4ToV5Step.toVersion) {
+        return false;
+      }
+    }
+    return (
+      await migrateLegacyCredentialAggregate<LegacyStoredModelProviderConfig, ModelProvidersV5>({
         configPath: options.configPath,
         family: "pragma.model-providers",
         sourceVersion: modelProvidersV4ToV5Step.fromVersion,
@@ -273,7 +287,7 @@ export function createModelProviderStore(options: {
         secretStore: options.secretStore,
         decryptor: options.legacyDecryptor,
         parseLegacy: parseLegacyConfig,
-        parseCurrent: parseCurrentConfig,
+        parseCurrent: parseV5Config,
         collect: (legacy) =>
           legacy.providers
             .filter((provider) => provider.encryptedApiKey !== "")
@@ -285,14 +299,19 @@ export function createModelProviderStore(options: {
                   owner: { kind: "model-provider", providerId: provider.id },
                 }) satisfies LegacySecretRecord,
             ),
-        target: (legacy, refs) => ({
-          schemaVersion: 5,
-          providers: legacy.providers.map((provider) => toMigratedProvider(provider, refs)),
-        }),
+        target: (legacy, refs) =>
+          parseV5Config({
+            schemaVersion: 5,
+            providers: legacy.providers.map((provider) => toMigratedProvider(provider, refs)),
+          }),
       })
     ).migrated;
+  };
   const readConfig = async (): Promise<StoredModelProviderConfig> => {
     try {
+      if (await fileExists(`${options.configPath}.state-migration.json`)) {
+        await migrateV5ToV6();
+      }
       const raw = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
       if ((raw as { schemaVersion?: unknown }).schemaVersion === 4) {
         if (options.legacyDecryptor === undefined)
@@ -303,13 +322,60 @@ export function createModelProviderStore(options: {
         await migrateLegacy();
         return await readConfig();
       }
+      if ((raw as { schemaVersion?: unknown }).schemaVersion === 5) {
+        await migrateV5ToV6();
+        return await readConfig();
+      }
       return parseCurrentConfig(raw);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { schemaVersion: CONFIG_SCHEMA_VERSION, providers: [] };
       }
+      if (error instanceof z.ZodError) invalidStoredProvider();
       throw error;
     }
+  };
+
+  const migrateV5ToV6 = async (): Promise<void> => {
+    await withFileLock(
+      `${options.configPath}.lock`,
+      async () => {
+        const aggregateRoot = dirname(options.configPath);
+        const journalFile = `${options.configPath}.state-migration.json`;
+        const resource = { family: "pragma.model-providers", id: basename(options.configPath) };
+        const validateDocuments = (documents: Readonly<Record<string, unknown>>): void => {
+          parseCurrentConfig(documents[basename(options.configPath)]);
+        };
+        await recoverAtomicStateMigration({
+          aggregateRoot,
+          journalFile,
+          resource,
+          validateDocuments,
+        });
+        const current = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
+        if ((current as { schemaVersion?: unknown }).schemaVersion !== 5) return;
+        const source = parseV5Config(current);
+        const target = modelProvidersV5ToV6Step.migrate(source);
+        parseCurrentConfig(target);
+        const backupRoot = join(aggregateRoot, "migrations", "backups");
+        await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+        const sourceHash = createHash("sha256").update(JSON.stringify(source)).digest("hex");
+        await copyFile(
+          options.configPath,
+          join(backupRoot, `${sourceHash}.model-providers.v5.json`),
+        );
+        await applyAtomicStateMigration({
+          aggregateRoot,
+          journalFile,
+          resource,
+          fromVersion: 5,
+          toVersion: 6,
+          documents: { [basename(options.configPath)]: target },
+          validateDocuments,
+        });
+      },
+      { operation: "pragma.model-providers.state-migration" },
+    );
   };
 
   const writeConfig = async (config: StoredModelProviderConfig): Promise<void> => {
@@ -321,7 +387,8 @@ export function createModelProviderStore(options: {
     await chmod(options.configPath, 0o600).catch(() => undefined);
   };
 
-  const mutate = async <T>(operation: () => Promise<T>): Promise<T> => {
+  const mutate = async <T>(operation: () => Promise<T>, ensureCurrent = true): Promise<T> => {
+    if (ensureCurrent) await readConfig();
     return await withFileLock(`${options.configPath}.lock`, operation);
   };
 
@@ -534,8 +601,16 @@ export function createModelProviderStore(options: {
     async reset(): Promise<ResetModelProvidersResult> {
       return await mutate(async () => {
         let backupPath: string | undefined;
+        const timestamp = new Date().toISOString().replaceAll(":", "-");
+        const stateMigrationJournalPath = `${options.configPath}.state-migration.json`;
+        if (await fileExists(stateMigrationJournalPath)) {
+          await rename(
+            stateMigrationJournalPath,
+            `${options.configPath}.backup-${timestamp}.state-migration.json`,
+          );
+        }
         try {
-          backupPath = `${options.configPath}.backup-${new Date().toISOString().replaceAll(":", "-")}`;
+          backupPath = `${options.configPath}.backup-${timestamp}`;
           await rename(options.configPath, backupPath);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -547,7 +622,7 @@ export function createModelProviderStore(options: {
           providers: [],
           ...(backupPath === undefined ? {} : { backupPath }),
         };
-      });
+      }, false);
     },
 
     async resolveDiscoveryApiKey(id, connection): Promise<string> {
@@ -602,6 +677,33 @@ export function createModelProviderStore(options: {
       return await resolveStoredProvider(await requireProvider(id));
     },
   };
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function readConfigVersion(path: string): Promise<number | undefined> {
+  try {
+    const value = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      Number.isInteger((value as { schemaVersion?: unknown }).schemaVersion)
+    ) {
+      return (value as { schemaVersion: number }).schemaVersion;
+    }
+    return undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 function toProviderModelDefinition(model: ModelProviderModel) {
