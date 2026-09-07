@@ -46,7 +46,19 @@ describe("PI assistant turn validation", () => {
           stopReason: "length",
         },
       ]),
-    ).toThrow("response was truncated");
+    ).toThrow("response was truncated before completion. Partial output was preserved");
+  });
+
+  it("does not claim partial output was preserved when a truncated response is empty", () => {
+    expect(() =>
+      assertAssistantTurnCompleted([
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "length",
+        },
+      ]),
+    ).toThrow("response was truncated before completion. Retry with a smaller request");
   });
 });
 

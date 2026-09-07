@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  collectPiUsage,
   consumePiStartupMessages,
   createPiNativeSession,
   startPiTurn,
@@ -31,6 +32,102 @@ describe("PI startup messages", () => {
     await startPiTurn(native, createTurn(startupMessages));
 
     expect(native.session.prompt).toHaveBeenCalledWith("always-on context\n\nuser prompt");
+  });
+
+  it("waits for PI to finish an overflow compaction retry before completing the turn", async () => {
+    const native = createNativeSession();
+    for (let index = 0; index < 5; index += 1) {
+      native.session.messages.push({
+        role: "user",
+        content: [{ type: "text", text: `existing message ${index}` }],
+        timestamp: index,
+      });
+    }
+    let publish: Parameters<AgentSession["subscribe"]>[0] | undefined;
+    vi.mocked(native.session.subscribe).mockImplementation((listener) => {
+      publish = listener;
+      return () => undefined;
+    });
+    vi.mocked(native.session.prompt).mockImplementation(async () => {
+      const truncated = createAssistantMessage("truncated", "length", 100);
+      publish?.({ type: "message_end", message: truncated });
+      publish?.({ type: "compaction_start", reason: "overflow" });
+      publish?.({
+        type: "compaction_end",
+        reason: "overflow",
+        result: {
+          summary: "summary",
+          firstKeptEntryId: "entry-1",
+          tokensBefore: 128_000,
+          estimatedTokensAfter: 20_000,
+          usage: createPiUsage(50),
+        },
+        aborted: false,
+        willRetry: true,
+      });
+      const completed = createAssistantMessage("done after retry", "stop", 100);
+      native.session.messages.splice(0, native.session.messages.length, completed);
+      publish?.({ type: "message_end", message: completed });
+    });
+    const turn = createTurn([]);
+
+    await expect(startPiTurn(native, turn)).resolves.toEqual({
+      runtimeSessionId: native.session.sessionId,
+    });
+
+    expect(turn.stream.writeNative).toHaveBeenCalledTimes(4);
+    expect(turn.stream.writeNative).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "compaction_end",
+          willRetry: true,
+        }),
+        operationId: expect.any(String),
+        trigger: "overflow",
+      }),
+    );
+    expect(native.pendingCompactionOperationId).toBeUndefined();
+    expect(native.session.messages).toHaveLength(1);
+    expect(native.messageCountBeforeRun).toBe(5);
+    expect(native.assistantMessagesSinceRunStart).toHaveLength(2);
+    expect(native.usageObservationsSinceRunStart).toHaveLength(3);
+    expect(collectPiUsage(native)).toMatchObject({ output: 250, totalTokens: 60_250 });
+    expect(turn.stream.writeNative).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ type: "message_end" }),
+        usage: expect.objectContaining({ output: 250, totalTokens: 60_250 }),
+      }),
+    );
+  });
+
+  it("reports per-attempt streaming usage while retaining run-wide fallback usage", async () => {
+    const native = createNativeSession();
+    let publish: Parameters<AgentSession["subscribe"]>[0] | undefined;
+    let response = createAssistantMessage("invalid structured output", "stop", 100);
+    vi.mocked(native.session.subscribe).mockImplementation((listener) => {
+      publish = listener;
+      return () => undefined;
+    });
+    vi.mocked(native.session.prompt).mockImplementation(async () => {
+      native.session.messages.push(response);
+      publish?.({ type: "message_end", message: response });
+    });
+
+    await startPiTurn(native, createTurn([]));
+    response = createAssistantMessage("valid structured output", "stop", 50);
+    const retryTurn = {
+      ...createTurn([]),
+      attempt: 2,
+      isRetry: true,
+    } satisfies RuntimeTurnContext<PiNativeEvent>;
+    await startPiTurn(native, retryTurn);
+
+    expect(retryTurn.stream.writeNative).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        usage: expect.objectContaining({ output: 50, totalTokens: 20_050 }),
+      }),
+    );
+    expect(collectPiUsage(native)).toMatchObject({ output: 150, totalTokens: 40_150 });
   });
 
   it("fails an unfinished compaction when the turn ends", async () => {
@@ -184,6 +281,42 @@ function createNativeSession(input?: ("text" | "image")[]) {
     compactionKeepRecentTokens: 20_000,
     startupMessages: [{ role: "user", content: "always-on context" }],
   });
+}
+
+function createAssistantMessage(
+  text: string,
+  stopReason: "stop" | "length",
+  output: number,
+): Extract<AgentSession["messages"][number], { role: "assistant" }> {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "openai-responses",
+    provider: "test",
+    model: "test-model",
+    usage: createPiUsage(output),
+    stopReason,
+    timestamp: Date.now(),
+  };
+}
+
+function createPiUsage(
+  output: number,
+): Extract<AgentSession["messages"][number], { role: "assistant" }>["usage"] {
+  return {
+    input: 20_000,
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 20_000 + output,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
 }
 
 function createTurn(

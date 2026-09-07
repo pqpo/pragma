@@ -13,11 +13,12 @@ import {
   Key,
   matchesKey,
   ProcessTerminal,
+  TuiMainScreen,
   truncateToWidth,
-  TUI,
   type Component,
   type Focusable,
   type Terminal,
+  type TUI,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
@@ -520,7 +521,7 @@ export class FlowConsoleTui {
     this.options = options;
     this.model = new FlowConsoleModel(options.definition);
     this.terminal = options.terminal ?? new ProcessTerminal();
-    this.tui = new TUI(this.terminal, true);
+    this.tui = new TuiMainScreen(this.terminal, true);
     this.view = new FlowConsoleView({
       model: this.model,
       interactions: this.interactions,

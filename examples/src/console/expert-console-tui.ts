@@ -12,11 +12,12 @@ import {
   Key,
   matchesKey,
   ProcessTerminal,
+  TuiMainScreen,
   truncateToWidth,
-  TUI,
   type Component,
   type Focusable,
   type Terminal,
+  type TUI,
   wrapTextWithAnsi,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -245,7 +246,7 @@ export class ExpertConsoleTui {
     this.options = options;
     this.model = new ExpertConsoleModel(options.agents);
     this.terminal = options.terminal ?? new ProcessTerminal();
-    this.tui = new TUI(this.terminal, true);
+    this.tui = new TuiMainScreen(this.terminal, true);
     this.view = new ExpertConsoleView({
       model: this.model,
       terminal: this.terminal,

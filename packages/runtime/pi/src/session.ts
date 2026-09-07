@@ -10,7 +10,7 @@ import {
   getLastAssistantUsage,
   sessionEntryToContextMessages,
 } from "@earendil-works/pi-coding-agent";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
@@ -66,6 +66,8 @@ export interface PiNativeSession {
   readonly tokenCounter: RuntimeTokenCounter;
   tokenModelIdentity: RuntimeTokenModelIdentity;
   messageCountBeforeRun: number;
+  assistantMessagesSinceRunStart: AssistantMessage[];
+  usageObservationsSinceRunStart: AgentMessageUsage[];
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   pendingCompactionOperationId?: string | undefined;
   pendingCompactionTrigger?: RuntimeContextCompactionTrigger | undefined;
@@ -74,6 +76,7 @@ export interface PiNativeSession {
 
 export interface PiNativeEvent {
   readonly event: AgentSessionEvent;
+  readonly usage?: AgentMessageUsage | undefined;
   readonly operationId?: string | undefined;
   readonly trigger?: RuntimeContextCompactionTrigger | undefined;
 }
@@ -97,6 +100,8 @@ export function createPiNativeSession(options: {
     tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
     tokenModelIdentity: options.tokenModelIdentity ?? { runtimeKind: "cloud-pi-agent" },
     messageCountBeforeRun: options.session.messages.length,
+    assistantMessagesSinceRunStart: [],
+    usageObservationsSinceRunStart: [],
     pendingStartupMessages: options.startupMessages ?? [],
   };
 }
@@ -136,9 +141,26 @@ export async function startPiTurn(
   };
   if (turn.attempt === 1) {
     nativeSession.messageCountBeforeRun = nativeSession.session.messages.length;
+    nativeSession.assistantMessagesSinceRunStart = [];
+    nativeSession.usageObservationsSinceRunStart = [];
   }
+  const usageObservationCountBeforeTurn = nativeSession.usageObservationsSinceRunStart.length;
 
   const unsubscribe = nativeSession.session.subscribe((event) => {
+    const assistantMessage = readAssistantMessage(event);
+    if (assistantMessage !== undefined) {
+      nativeSession.assistantMessagesSinceRunStart.push(assistantMessage);
+    }
+    const usageObservation = readPiEventUsage(event);
+    if (usageObservation !== undefined) {
+      nativeSession.usageObservationsSinceRunStart.push(usageObservation);
+    }
+    const cumulativeUsage =
+      usageObservation === undefined
+        ? undefined
+        : aggregateUsageObservations(
+            nativeSession.usageObservationsSinceRunStart.slice(usageObservationCountBeforeTurn),
+          );
     const trigger =
       event.type === "compaction_start" || event.type === "compaction_end"
         ? (nativeSession.compactionTriggerOverride ?? mapPiCompactionTrigger(event.reason))
@@ -153,6 +175,7 @@ export async function startPiTurn(
         : undefined;
     turn.stream.writeNative({
       event,
+      ...(cumulativeUsage === undefined ? {} : { usage: cumulativeUsage }),
       ...(operationId === undefined ? {} : { operationId }),
       ...(event.type !== "compaction_start" && event.type !== "compaction_end"
         ? {}
@@ -186,9 +209,7 @@ export async function startPiTurn(
     );
     if (images.length === 0) await nativeSession.session.prompt(prompt);
     else await nativeSession.session.prompt(prompt, { images });
-    assertAssistantTurnCompleted(
-      nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
-    );
+    assertAssistantTurnCompleted(readPiRunAssistantMessages(nativeSession));
   } finally {
     const incompleteCompactionId = nativeSession.pendingCompactionOperationId;
     try {
@@ -309,6 +330,7 @@ export function mapPiAgentEvent(
     events,
     ...(delta === undefined ? {} : { outputDelta: delta }),
     ...(completedMessageText === undefined ? {} : { completedText: completedMessageText }),
+    ...(input.usage === undefined ? {} : { usage: input.usage }),
   };
 }
 
@@ -350,7 +372,16 @@ function readErrorMessage(error: unknown): string {
 }
 
 export function collectPiUsage(session: PiNativeSession): AgentMessageUsage | undefined {
-  return aggregateAssistantUsage(session.session.messages.slice(session.messageCountBeforeRun));
+  if (session.usageObservationsSinceRunStart.length > 0) {
+    return aggregateUsageObservations(session.usageObservationsSinceRunStart);
+  }
+  return aggregateAssistantUsage(readPiRunAssistantMessages(session));
+}
+
+function readPiRunAssistantMessages(session: PiNativeSession): readonly unknown[] {
+  return session.assistantMessagesSinceRunStart.length > 0
+    ? session.assistantMessagesSinceRunStart
+    : session.session.messages.slice(session.messageCountBeforeRun);
 }
 
 export function readPiContextWindow(
@@ -527,6 +558,12 @@ function aggregateAssistantUsage(messages: readonly unknown[]): AgentMessageUsag
     .map((message) => readAssistantUsage(message))
     .filter((usage): usage is AgentMessageUsage => usage !== undefined);
 
+  return aggregateUsageObservations(usages);
+}
+
+function aggregateUsageObservations(
+  usages: readonly AgentMessageUsage[],
+): AgentMessageUsage | undefined {
   if (usages.length === 0) {
     return undefined;
   }
@@ -554,14 +591,28 @@ function aggregateAssistantUsage(messages: readonly unknown[]): AgentMessageUsag
   );
 }
 
+function readPiEventUsage(event: AgentSessionEvent): AgentMessageUsage | undefined {
+  if (event.type === "message_end" && event.message.role === "assistant") {
+    return readAssistantUsage(event.message);
+  }
+  if (event.type === "compaction_end") {
+    return readReportedUsage(event.result?.usage);
+  }
+  return undefined;
+}
+
 function readAssistantUsage(message: unknown): AgentMessageUsage | undefined {
   if (!isRecord(message) || message["role"] !== "assistant") {
     return undefined;
   }
 
+  return readReportedUsage(message["usage"]);
+}
+
+function readReportedUsage(usage: unknown): AgentMessageUsage | undefined {
   const result = AgentMessageUsageSchema.safeParse({
     measurement: "reported",
-    ...(isRecord(message["usage"]) ? message["usage"] : {}),
+    ...(isRecord(usage) ? usage : {}),
   });
   return result.success ? result.data : undefined;
 }

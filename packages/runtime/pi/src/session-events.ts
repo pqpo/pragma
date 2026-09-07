@@ -1,4 +1,5 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 export function readAssistantTextDelta(event: AgentSessionEvent): string | undefined {
   if (event.type !== "message_update") {
@@ -36,11 +37,11 @@ export function readAssistantMessageText(event: AgentSessionEvent): string | und
   return readMessageText(event.message);
 }
 
-export function readAssistantMessage(event: AgentSessionEvent): unknown | undefined {
+export function readAssistantMessage(event: AgentSessionEvent): AssistantMessage | undefined {
   return event.type === "message_end" &&
     isRecord(event.message) &&
     event.message["role"] === "assistant"
-    ? event.message
+    ? (event.message as AssistantMessage)
     : undefined;
 }
 
@@ -54,8 +55,10 @@ export function assertAssistantTurnCompleted(messages: readonly unknown[]): void
 
   const stopReason = assistant["stopReason"];
   if (stopReason === "length") {
+    const preservedOutput =
+      readMessageText(assistant) === undefined ? "" : " Partial output was preserved;";
     throw new Error(
-      "PI Runtime response was truncated because the context or output token limit was reached. Context compaction could not provide enough room; retry the request.",
+      `PI Runtime response was truncated before completion.${preservedOutput} Retry with a smaller request or a larger context/output limit.`,
     );
   }
   if (stopReason === "error" || stopReason === "aborted") {
