@@ -7,18 +7,18 @@ import type {
   PragmaAgentTaskPort,
 } from "../src/ports.ts";
 import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
-import { createPragmaAgentTools } from "../src/tools.ts";
+import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
-describe("PragmaAgent managed tools", () => {
+describe("Pragma Host management tools", () => {
   it("keeps read tools open and gates durable writes", async () => {
-    const tools = createPragmaAgentTools({ project: projectPort(), tasks: taskPort() });
-    expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval).toBeUndefined();
-    expect(tools.find((tool) => tool.name === "list_expert_options")?.approval).toBeUndefined();
+    const tools = createPragmaManagementTools({ project: projectPort(), tasks: taskPort() });
+    expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval?.mode).toBe("none");
+    expect(tools.find((tool) => tool.name === "list_expert_options")?.approval?.mode).toBe("none");
     expect(tools.find((tool) => tool.name === "commit_dsl_changes")?.approval?.mode).toBe(
       "required",
     );
     expect(tools.find((tool) => tool.name === "submit_task")?.approval?.mode).toBe("required");
-    expect(tools.find((tool) => tool.name === "interrupt_task")?.approval).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "interrupt_task")?.approval?.mode).toBe("none");
   });
 
   it("injects the runtime toolCallId as the write operation id", async () => {
@@ -29,7 +29,7 @@ describe("PragmaAgent managed tools", () => {
         return { projectId: "studio", projectRevision: 2, changedRefs: [] };
       },
     });
-    const tool = createPragmaAgentTools({ project, tasks: taskPort() }).find(
+    const tool = createPragmaManagementTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "commit_dsl_changes",
     )!;
     await tool.call({ changeSetId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" }, undefined, {
@@ -44,7 +44,7 @@ describe("PragmaAgent managed tools", () => {
         return {} as never;
       },
     });
-    const tools = createPragmaAgentTools({ project, tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project, tasks: taskPort() });
     expect(tools.some((candidate) => candidate.name === "run_evaluation")).toBe(false);
     const tool = tools.find((candidate) => candidate.name === "run_evaluation_draft")!;
 
@@ -71,7 +71,7 @@ describe("PragmaAgent managed tools", () => {
   });
 
   it("exposes independent Flow and Evaluation prepare-and-save paths", () => {
-    const tools = createPragmaAgentTools({ project: projectPort(), tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project: projectPort(), tasks: taskPort() });
     const createEvaluation = tools.find(
       (candidate) => candidate.name === "create_evaluation_draft",
     )!;
@@ -110,7 +110,7 @@ describe("PragmaAgent managed tools", () => {
         return evaluationDraft();
       },
     });
-    const tool = createPragmaAgentTools({ project, tasks: taskPort() }).find(
+    const tool = createPragmaManagementTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "create_evaluation_draft",
     )!;
 
@@ -183,7 +183,7 @@ describe("PragmaAgent managed tools", () => {
         return evaluationDraft();
       },
     });
-    const tools = createPragmaAgentTools({ project, tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project, tasks: taskPort() });
     const get = tools.find((candidate) => candidate.name === "get_evaluation_draft")!;
     const summary = await get.call(
       { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
@@ -257,7 +257,7 @@ describe("PragmaAgent managed tools", () => {
         return flowDraft();
       },
     });
-    const tools = createPragmaAgentTools({ project, tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project, tasks: taskPort() });
     const update = tools.find((candidate) => candidate.name === "update_flow_draft")!;
     const get = tools.find((candidate) => candidate.name === "get_flow_draft")!;
 
@@ -351,7 +351,7 @@ describe("PragmaAgent managed tools", () => {
         return flowDraft();
       },
     });
-    const update = createPragmaAgentTools({ project, tasks: taskPort() }).find(
+    const update = createPragmaManagementTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "update_flow_draft",
     )!;
     const base = {
@@ -394,13 +394,13 @@ describe("PragmaAgent managed tools", () => {
         return automationSummary();
       },
     });
-    const tools = createPragmaAgentTools({
+    const tools = createPragmaManagementTools({
       project: projectPort(),
       tasks: taskPort(),
       automations,
     });
 
-    expect(tools.find((tool) => tool.name === "list_automations")?.approval).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "list_automations")?.approval?.mode).toBe("none");
     expect(tools.find((tool) => tool.name === "save_automation")?.approval?.mode).toBe("required");
     expect(tools.find((tool) => tool.name === "delete_automation")?.approval?.mode).toBe(
       "required",

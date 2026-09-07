@@ -1,5 +1,8 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
+import {
+  PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
+  PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+} from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -27,13 +30,13 @@ describe("desktop bound resource policy", () => {
     const resource = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-      revision: 1,
+      revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
     });
 
     expect(canonicalPragmaResourceRef(resource)).toBe("capability:0000000000manage");
     expect(classifyDesktopCapabilityResource(resource)).toEqual({
       id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-      revision: 1,
+      revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
     });
   });
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
+  PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
   createPragmaManagementTools,
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
@@ -39,13 +40,18 @@ export function createDesktopAdapterHost(
         const fingerprint = createHash("sha256")
           .update(
             JSON.stringify(
-              tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema })),
+              tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+                approval: tool.approval,
+              })),
             ),
           )
           .digest("hex");
         return {
           ref,
-          revision: "1",
+          revision: String(PRAGMA_MANAGEMENT_CAPABILITY_REVISION),
           fingerprint,
           value: { contribution: { tools } },
         };

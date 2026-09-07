@@ -19,8 +19,8 @@ import {
   STORE_REVISION_EXPERT_REF,
   compileBuiltInAgent,
   builtInAgentFingerprint,
-  createPragmaAgentTools,
   pragmaManagementCapabilityResource,
+  type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
@@ -611,16 +611,19 @@ export async function createDesktopApplicationContainer(
     systemExperts,
   });
   storeRevisionsRef.current = storeRevisions;
-  installCapabilityHandlers(
-    capabilityStore,
-    options.getWindow,
-    createDesktopKnowledgeRevisionSubmissionPort({
-      project: pragmaProjectStore,
-      contextStores,
-      revisions: storeRevisions,
-      additionalMountResources: systemExpertKnowledgeRevisionMountResources,
-    }),
-  );
+  const pragmaManagementPortsRef: {
+    current?: Omit<PragmaManagementToolPorts, "knowledgeRevisions">;
+  } = {};
+  const pragmaManagementKnowledgeRevisions = createDesktopKnowledgeRevisionSubmissionPort({
+    project: pragmaProjectStore,
+    contextStores,
+    revisions: storeRevisions,
+    additionalMountResources: systemExpertKnowledgeRevisionMountResources,
+  });
+  installCapabilityHandlers(capabilityStore, options.getWindow, () => ({
+    ...pragmaManagementPortsRef.current,
+    knowledgeRevisions: pragmaManagementKnowledgeRevisions,
+  }));
   const skillAgentsRef: { current?: DesktopSkillAgents } = {};
   const skillEvaluationProfiles = createSkillEvaluationProfileStore(
     join(pragmaPaths.stateRoot(), "skill-evaluation", "profile.json"),
@@ -861,7 +864,6 @@ export async function createDesktopApplicationContainer(
     runtimes,
     systemExperts,
   });
-  const pragmaAgentToolsRef: { current?: ReturnType<typeof createPragmaAgentTools> } = {};
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
     missions: guardedMissionStore,
@@ -892,6 +894,12 @@ export async function createDesktopApplicationContainer(
     adapterHostForMission: (mission, fallback) => evaluationMocks.forMission(mission, fallback),
     ownerScope,
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
+    pragmaManagementPorts: () => {
+      if (pragmaManagementPortsRef.current === undefined) {
+        throw new Error("The Pragma management ports have not been initialized.");
+      }
+      return pragmaManagementPortsRef.current;
+    },
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onOwnerDeleting: async ({ executionIds }) => {
       await memoryPlane.deleteExecutionState(executionIds);
@@ -1047,8 +1055,8 @@ export async function createDesktopApplicationContainer(
         });
       }
       if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
-      if (pragmaAgentToolsRef.current === undefined) {
-        throw new Error("The built-in Pragma tools have not been initialized.");
+      if (pragmaManagementPortsRef.current === undefined) {
+        throw new Error("The Pragma management ports have not been initialized.");
       }
       const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
       if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
@@ -1079,7 +1087,6 @@ export async function createDesktopApplicationContainer(
             ? {}
             : { modelSelection: defaults.modelSelection }),
         },
-        tools: pragmaAgentToolsRef.current,
         blueprintCache,
         ...(definition.customized
           ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
@@ -1093,12 +1100,8 @@ export async function createDesktopApplicationContainer(
             mcpToolRegistryPool,
             contextStores,
             pragmaManagement: {
-              knowledgeRevisions: createDesktopKnowledgeRevisionSubmissionPort({
-                project: pragmaProjectStore,
-                contextStores,
-                revisions: storeRevisions,
-                additionalMountResources: systemExpertKnowledgeRevisionMountResources,
-              }),
+              ...pragmaManagementPortsRef.current,
+              knowledgeRevisions: pragmaManagementKnowledgeRevisions,
             },
           },
           mission.workspace.path,
@@ -1212,7 +1215,7 @@ export async function createDesktopApplicationContainer(
     creator: missionCreator,
     stateRoot: defaultAgentStateRoot,
   });
-  pragmaAgentToolsRef.current = createPragmaAgentTools({
+  pragmaManagementPortsRef.current = {
     project: pragmaAgentProject,
     tasks: pragmaAgentTasks,
     automations: createDesktopPragmaAgentAutomationPort({
@@ -1220,7 +1223,7 @@ export async function createDesktopApplicationContainer(
       project: pragmaProjectStore,
       stateRoot: defaultAgentStateRoot,
     }),
-  });
+  };
   const missionContextStoreBrowser = createMissionContextStoreBrowserService({
     missions: missionStore,
     project: pragmaProjectStore,

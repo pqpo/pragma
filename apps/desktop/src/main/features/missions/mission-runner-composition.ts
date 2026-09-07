@@ -340,6 +340,8 @@ export function createMissionRunner(options: {
   readonly getSystemExecutorMetadata?:
     (() => readonly MissionExecutorPresentationMetadata[]) | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
+  readonly pragmaManagementPorts?:
+    (() => Omit<PragmaManagementToolPorts, "knowledgeRevisions">) | undefined;
   readonly assertExecutorReady?: ((ref: string) => void | Promise<void>) | undefined;
   readonly onStorageTrashed?: (() => void) | undefined;
   readonly onOwnerDeleting?:
@@ -1125,12 +1127,14 @@ export function createMissionRunner(options: {
           });
     const system = await options.compileSystemExecutor?.({ mission, runtimes, knowledgeRevisions });
     if (system !== undefined) return system;
+    const pragmaManagement = {
+      ...options.pragmaManagementPorts?.(),
+      ...(knowledgeRevisions === undefined ? {} : { knowledgeRevisions }),
+    } satisfies PragmaManagementToolPorts;
     const desktopAdapterHost = createDesktopAdapterHost(
       {
         ...options,
-        ...(knowledgeRevisions === undefined
-          ? {}
-          : { pragmaManagement: { knowledgeRevisions } satisfies PragmaManagementToolPorts }),
+        ...(Object.keys(pragmaManagement).length === 0 ? {} : { pragmaManagement }),
       },
       mission.workspace.path,
     );

@@ -7,9 +7,48 @@ import {
   INVOCATION_ID_ATTR,
 } from "@pragma/core";
 
-import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
+import {
+  PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
+  createPragmaManagementTools,
+} from "../src/pragma-management-tools.ts";
 
 describe("Pragma management tools", () => {
+  it("combines Host and knowledge tools through one factory", () => {
+    const tools = createPragmaManagementTools({
+      project: definitionOnlyPort(),
+      tasks: definitionOnlyPort(),
+      automations: definitionOnlyPort(),
+      knowledgeRevisions: revisionPort(),
+    });
+
+    expect(tools).toHaveLength(36);
+    expect(new Set(tools.map(({ name }) => name)).size).toBe(36);
+    expect(
+      tools.map(({ name, description, inputSchema, approval }) => ({
+        name,
+        description,
+        inputSchema,
+        approval,
+      })),
+    ).toEqual(
+      PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema, approval }) => ({
+        name,
+        description,
+        inputSchema,
+        approval,
+      })),
+    );
+  });
+
+  it("rejects partial Host port groups instead of silently dropping tools", () => {
+    expect(() => createPragmaManagementTools({ project: definitionOnlyPort() })).toThrow(
+      "must be provided together",
+    );
+    expect(() => createPragmaManagementTools({ automations: definitionOnlyPort() })).toThrow(
+      "must be provided together",
+    );
+  });
+
   it("lists knowledge without approval and requires approval for starting or discarding a draft", async () => {
     const target = {
       targetRef: "context-store:0000000000000001",
@@ -110,4 +149,13 @@ function revisionPort(overrides: Record<string, unknown> = {}) {
     discardDraft: vi.fn(),
     ...overrides,
   };
+}
+
+function definitionOnlyPort() {
+  return new Proxy(
+    {},
+    {
+      get: () => vi.fn(),
+    },
+  ) as never;
 }

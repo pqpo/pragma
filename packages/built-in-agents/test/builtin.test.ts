@@ -39,7 +39,10 @@ import {
   materializeBuiltInAgentBundle,
 } from "../src/builtin.ts";
 import { PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
-import { createPragmaAgentTools } from "../src/tools.ts";
+import {
+  PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
+  createPragmaManagementTools,
+} from "../src/pragma-management-tools.ts";
 
 describe("built-in Pragma Agent DSL", () => {
   it("defines all six built-in Agents as canonical DSL Experts", () => {
@@ -65,7 +68,6 @@ describe("built-in Pragma Agent DSL", () => {
       "Capability",
       "Capability",
       "Capability",
-      "Capability",
       "Expert",
       "Expert",
       "Expert",
@@ -78,7 +80,7 @@ describe("built-in Pragma Agent DSL", () => {
       throw new Error("This compile-only test does not execute Pragma tools.");
     };
     let updatedOperationCount = 0;
-    const tools = createPragmaAgentTools({
+    const tools = createPragmaManagementTools({
       project: {
         list: unavailable,
         listExpertOptions: unavailable,
@@ -111,6 +113,12 @@ describe("built-in Pragma Agent DSL", () => {
         listWorkItems: unavailable,
         interrupt: unavailable,
       },
+      automations: {
+        list: unavailable,
+        save: unavailable,
+        delete: unavailable,
+        resetSession: unavailable,
+      },
     });
     const compiled = await project.compile<Expert>("expert:0000000000pragma", {
       workspace: root,
@@ -119,7 +127,7 @@ describe("built-in Pragma Agent DSL", () => {
         environmentId: "test",
         projectRoot: dirname(entry),
         async resolveBinding(ref) {
-          return ref === "binding:pragma.default-agent-host"
+          return ref === "binding:pragma.management"
             ? {
                 ref,
                 revision: "1",
@@ -136,7 +144,7 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(24);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(28);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
@@ -449,7 +457,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
     expect(await project.validate()).toEqual([]);
   });
 
@@ -631,8 +639,15 @@ describe("built-in Pragma Agent DSL", () => {
       adapterHost: {
         environmentId: "test-host",
         projectRoot: root,
-        async resolveBinding() {
-          return undefined;
+        async resolveBinding(ref) {
+          return ref === "binding:pragma.management"
+            ? {
+                ref,
+                revision: "1",
+                fingerprint: "a".repeat(64),
+                value: { contribution: { tools: definitionOnlyManagementTools() } },
+              }
+            : undefined;
         },
         async resolveArtifact(requestedSource) {
           expect(requestedSource).toEqual(source);
@@ -725,6 +740,16 @@ async function filesAt(path: string): Promise<string[]> {
 
 function normalizeLineEndings(source: string): string {
   return source.replaceAll("\r\n", "\n");
+}
+
+function definitionOnlyManagementTools() {
+  return PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema, approval }) => ({
+    name,
+    description,
+    inputSchema,
+    approval,
+    call: async () => ({ text: "unavailable" }),
+  }));
 }
 
 function flowDraft() {

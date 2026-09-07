@@ -2,13 +2,7 @@ import { createHash } from "node:crypto";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type {
-  Expert,
-  ExpertAgentManagedTool,
-  ExpertAgentToolCallResult,
-  RuntimeResolver,
-  RuntimeModelSelection,
-} from "@pragma/core";
+import type { Expert, RuntimeResolver, RuntimeModelSelection } from "@pragma/core";
 import { withFileLock } from "@pragma/core";
 import {
   loadPragmaProject,
@@ -47,6 +41,7 @@ export const PRAGMA_MANAGEMENT_CAPABILITY_ID = PragmaSemanticResourceIdSchema.pa
 ) as "0000000000manage";
 export const PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID =
   "00000000-0000-4000-8000-000000000101" as const;
+export const PRAGMA_MANAGEMENT_CAPABILITY_REVISION = 2 as const;
 export const STORE_REVISION_EXPERT_ID = PragmaExpertIdSchema.parse(
   "0000000000st0rev",
 ) as "0000000000st0rev";
@@ -120,7 +115,7 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
   [BUILT_IN_PRAGMA_REF]: [
     BUILT_IN_AGENT_PATHS[BUILT_IN_PRAGMA_REF],
     "capabilities/1h2j3k4m5n6p7q8r.pragma.yaml",
-    "capabilities/2h3j4k5m6n7p8q9r.pragma.yaml",
+    "capabilities/0000000000manage.pragma.yaml",
     ...Object.keys(BUILT_IN_AGENT_FILES).filter((path) => path.startsWith(PRAGMA_SKILL_PREFIX)),
   ],
   [MEMORY_CURATOR_REF]: [
@@ -201,7 +196,6 @@ export async function compileBuiltInAgent(options: {
   readonly rootExecutionOverride?: PragmaCompileOptions["rootExecutionOverride"];
   readonly plugins?: PragmaCompileOptions["plugins"];
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
-  readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly loggerProvider?: PragmaCompileOptions["loggerProvider"];
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
 }): Promise<CompiledResource<Expert>> {
@@ -249,7 +243,6 @@ export async function compileBuiltInAgent(options: {
     adapterHost: builtInAgentAdapterHost(
       options.environmentId,
       dirname(entry),
-      options.tools ?? [],
       options.adapterHost,
     ),
   });
@@ -308,29 +301,13 @@ async function exists(path: string): Promise<boolean> {
 function builtInAgentAdapterHost(
   environmentId: string,
   projectRoot: string,
-  tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
   external?: PragmaCompileOptions["adapterHost"],
 ): PragmaAdapterHost {
-  const fingerprint = createHash("sha256")
-    .update(
-      JSON.stringify(
-        tools.map((tool) => ({
-          name: tool.name,
-          inputSchema: tool.inputSchema,
-          approval: tool.approval?.mode,
-        })),
-      ),
-    )
-    .digest("hex");
   return {
     environmentId,
     projectRoot,
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
-      const builtIn =
-        ref === "binding:pragma.default-agent-host"
-          ? { ref, revision: "1", fingerprint, value: { contribution: { tools } } }
-          : undefined;
-      return builtIn ?? (await external?.resolveBinding(ref));
+      return await external?.resolveBinding(ref);
     },
     async resolveArtifact(source) {
       if (external !== undefined) return await external.resolveArtifact(source);

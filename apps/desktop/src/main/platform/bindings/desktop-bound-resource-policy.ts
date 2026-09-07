@@ -1,6 +1,7 @@
 import { derivePragmaResourceId } from "@pragma/core";
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
+  PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
   PRAGMA_MANAGEMENT_CAPABILITY_REF,
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
   pragmaManagementCapabilityResource,
@@ -77,7 +78,10 @@ export function classifyDesktopCapabilityResource(
     canonicalPragmaResourceRef(resource) === PRAGMA_MANAGEMENT_CAPABILITY_REF &&
     resource.spec.binding === PRAGMA_MANAGEMENT_BINDING_REF
   ) {
-    return { id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID, revision: 1 };
+    return {
+      id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
+      revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
+    };
   }
   if (
     resource?.kind !== "Capability" ||
@@ -110,8 +114,11 @@ export function createDesktopCapabilityResource(input: {
   readonly description?: string | undefined;
 }): PragmaCapabilityResource {
   if (input.capabilityId === PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID) {
-    if (input.revision !== 1)
-      throw new Error("Built-in Pragma management Capability is revision 1.");
+    if (input.revision !== PRAGMA_MANAGEMENT_CAPABILITY_REVISION) {
+      throw new Error(
+        `Built-in Pragma management Capability is revision ${PRAGMA_MANAGEMENT_CAPABILITY_REVISION}.`,
+      );
+    }
     return PragmaCapabilityResourceSchema.parse(pragmaManagementCapabilityResource());
   }
   const option = input.owner === "default-agent-option";

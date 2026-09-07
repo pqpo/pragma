@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { basename } from "node:path";
 
-import type { KnowledgeRevisionSubmissionPort } from "@pragma/built-in-agents";
+import type { PragmaManagementToolPorts } from "@pragma/built-in-agents";
 
 import {
   CapabilityActionSchema,
@@ -28,7 +28,7 @@ import {
 export function installCapabilityHandlers(
   store: CapabilityStore,
   windowGetter: () => BrowserWindow | null,
-  builtInKnowledgeRevisions: KnowledgeRevisionSubmissionPort,
+  builtInManagementPorts: () => PragmaManagementToolPorts,
 ): void {
   ipcMain.handle("capabilities:list", () => listCapabilitiesWithBuiltIns(store));
   ipcMain.handle("capabilities:get", (_event, id: unknown, revision: unknown) => {
@@ -65,13 +65,13 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:test", async (_event, input: unknown) => {
     const parsed = CapabilityTestRequestSchema.parse(input);
     if (!isBuiltInCapabilityId(parsed.id)) return await store.test(parsed);
-    return await testBuiltInCapability(parsed, builtInKnowledgeRevisions, async ({ targetRef }) => {
+    return await testBuiltInCapability(parsed, builtInManagementPorts(), async (approval) => {
       const options = {
         type: "warning" as const,
-        title: "Submit knowledge revision request?",
-        message: "This test will create a real knowledge revision review task.",
-        detail: `Target: ${targetRef}`,
-        buttons: ["Submit", "Cancel"],
+        title: "Run Pragma management tool?",
+        message: `This test will execute ${approval.toolName} against live Desktop data.`,
+        detail: managementApprovalDetail(approval.reason, approval.toolInput),
+        buttons: ["Run", "Cancel"],
         defaultId: 1,
         cancelId: 1,
         noLink: true,
@@ -117,4 +117,19 @@ export function installCapabilityHandlers(
       };
     }
   });
+}
+
+function managementApprovalDetail(reason: string, input: unknown): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(input ?? {}, null, 2) ?? "{}";
+  } catch {
+    serialized = "[Input could not be serialized]";
+  }
+  const maxInputLength = 4_000;
+  const visibleInput =
+    serialized.length <= maxInputLength
+      ? serialized
+      : `${serialized.slice(0, maxInputLength)}\n… input truncated`;
+  return `${reason}\n\nInput:\n${visibleInput}`;
 }

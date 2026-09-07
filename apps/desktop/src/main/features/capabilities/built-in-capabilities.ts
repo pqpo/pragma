@@ -1,13 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
-  KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME,
-  KNOWLEDGE_REVISION_START_TOOL_NAME,
+  PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
-  PRAGMA_MANAGEMENT_TOOL_NAMES,
-  type KnowledgeRevisionSubmissionPort,
+  createPragmaManagementTools,
+  type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
+import {
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  EXECUTION_ID_ATTR,
+  INVOCATION_ID_ATTR,
+} from "@pragma/core";
+import { z } from "zod";
 
 import {
   CapabilitySchema,
@@ -31,16 +36,20 @@ export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchem
     runtimeKey: "pragma_management",
     name: "Pragma management tools",
     kind: "mcp_server",
-    latestRevision: 1,
+    latestRevision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
     createdAt: BUILT_IN_TIMESTAMP,
     updatedAt: BUILT_IN_TIMESTAMP,
   },
-  health: { revision: 1, status: "ready", checkedAt: BUILT_IN_TIMESTAMP },
+  health: {
+    revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
+    status: "ready",
+    checkedAt: BUILT_IN_TIMESTAMP,
+  },
   definition: {
     kind: "mcp_server",
     name: "Pragma management tools",
     description:
-      "Built-in Host tools for managing Pragma resources, reviewable knowledge revisions, and draft cleanup.",
+      "Built-in Host tools for managing Pragma resources, evaluations, tasks, Automations, and reviewable knowledge revisions.",
     connection: { transport: "streamable-http", url: "http://pragma.invalid/builtin" },
     timeoutMs: 30_000,
     tools: PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema }) => ({
@@ -64,58 +73,49 @@ export function isBuiltInCapabilityId(id: string): boolean {
 
 export async function testBuiltInCapability(
   input: CapabilityTestRequest,
-  port: KnowledgeRevisionSubmissionPort,
-  approveSubmission: (input: {
-    readonly targetRef: string;
-    readonly prompt: string;
+  ports: PragmaManagementToolPorts,
+  approve: (input: {
+    readonly toolName: string;
+    readonly reason: string;
+    readonly toolInput: unknown;
   }) => Promise<boolean>,
 ): Promise<CapabilityTestResult> {
   const toolName = input.toolName;
-  if (toolName === undefined || !PRAGMA_MANAGEMENT_TOOL_NAMES.some((name) => name === toolName)) {
+  const tool =
+    toolName === undefined
+      ? undefined
+      : createPragmaManagementTools(ports).find((candidate) => candidate.name === toolName);
+  if (tool === undefined) {
     return testFailure("tool_unavailable", "Choose an available built-in tool to test.");
   }
-  const invocation = {
-    executionId: `capability-test:${randomUUID()}`,
-    invocationId: `capability-test:${randomUUID()}`,
-    expertId: "capability-page",
-    operationId: `capability-test:${randomUUID()}`,
-  };
-  if (toolName === KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME) {
-    return testSuccess("The built-in tool test succeeded.", await port.listTargets(invocation));
+  if (
+    tool.approval?.mode === "required" &&
+    !(await approve({
+      toolName: tool.name,
+      reason: tool.approval.reason ?? "This management tool can change Desktop data.",
+      toolInput: input.input,
+    }))
+  ) {
+    return testFailure("approval_denied", "The management tool test was not run.");
   }
-  if (toolName !== KNOWLEDGE_REVISION_START_TOOL_NAME) {
-    return testFailure(
-      "invalid_input",
-      "This revision tool requires a live draft selected by an Agent execution.",
-    );
+  const executionId = `capability-test:${randomUUID()}`;
+  const invocationId = `capability-test:${randomUUID()}`;
+  try {
+    const result = await tool.call(input.input ?? {}, undefined, {
+      toolCallId: `capability-test:${randomUUID()}`,
+      runContext: {
+        attributes: {
+          [EXECUTION_ID_ATTR]: executionId,
+          [INVOCATION_ID_ATTR]: invocationId,
+          [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "capability-page",
+        },
+      },
+    });
+    return testSuccess("The built-in tool test succeeded.", result.details ?? result.text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The management tool test failed.";
+    return testFailure(error instanceof z.ZodError ? "invalid_input" : "request_failed", message);
   }
-
-  const parsed = parseSubmitTestInput(input.input);
-  if (!parsed.ok) return testFailure("invalid_input", parsed.message);
-  if (!(await approveSubmission(parsed.value))) {
-    return testFailure("approval_denied", "The revision request was not submitted.");
-  }
-  return testSuccess(
-    "The built-in tool test succeeded.",
-    await port.start({ ...invocation, ...parsed.value }),
-  );
-}
-
-function parseSubmitTestInput(
-  input: unknown,
-):
-  | { readonly ok: true; readonly value: { readonly targetRef: string; readonly prompt: string } }
-  | { readonly ok: false; readonly message: string } {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return { ok: false, message: "Test input must contain targetRef and prompt." };
-  }
-  const value = input as Record<string, unknown>;
-  const targetRef = typeof value["targetRef"] === "string" ? value["targetRef"].trim() : "";
-  const prompt = typeof value["prompt"] === "string" ? value["prompt"].trim() : "";
-  if (targetRef.length === 0 || prompt.length === 0 || prompt.length > 50_000) {
-    return { ok: false, message: "Test input must contain a targetRef and a non-empty prompt." };
-  }
-  return { ok: true, value: { targetRef, prompt } };
 }
 
 function testSuccess(message: string, output: unknown): CapabilityTestResult {

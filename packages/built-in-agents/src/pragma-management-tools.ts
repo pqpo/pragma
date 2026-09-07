@@ -8,6 +8,16 @@ import {
 } from "@pragma/core";
 import { z } from "zod";
 
+import type {
+  PragmaAgentAutomationPort,
+  PragmaAgentDslProjectPort,
+  PragmaAgentTaskPort,
+} from "./ports.ts";
+import {
+  PRAGMA_MANAGEMENT_HOST_TOOL_DEFINITIONS,
+  createPragmaManagementHostTools,
+} from "./pragma-host-management-tools.ts";
+
 import {
   ContextStoreDraftOverlaySchema,
   ContextStoreDraftRebaseInspectionSchema,
@@ -243,16 +253,33 @@ export interface KnowledgeRevisionSubmissionPort {
 }
 
 export interface PragmaManagementToolPorts {
-  readonly knowledgeRevisions: KnowledgeRevisionSubmissionPort;
+  readonly project?: PragmaAgentDslProjectPort | undefined;
+  readonly tasks?: PragmaAgentTaskPort | undefined;
+  readonly automations?: PragmaAgentAutomationPort | undefined;
+  readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
 }
 
 type PragmaManagementTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 
-function definition<TSchema extends z.ZodType>(name: string, description: string, schema: TSchema) {
-  return { name, description, schema, inputSchema: z.toJSONSchema(schema) } as const;
+function definition<TSchema extends z.ZodType>(
+  name: string,
+  description: string,
+  schema: TSchema,
+  approval: "none" | { readonly reason: string } = "none",
+) {
+  return {
+    name,
+    description,
+    schema,
+    inputSchema: z.toJSONSchema(schema),
+    approval:
+      approval === "none"
+        ? ({ mode: "none" } as const)
+        : ({ mode: "required", reason: approval.reason } as const),
+  } as const;
 }
 
-export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
+const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   definition(
     KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME,
     "List knowledge bases that may be revised, with their exact target refs and current revisions.",
@@ -267,6 +294,7 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
     KNOWLEDGE_REVISION_START_TOOL_NAME,
     "Start a revision in a new named draft or continue an existing draft by draftId, transferring an idle earlier Mission claim when necessary. Returns the writable Context namespace for immediate same-turn editing inside a Store Revision Mission; never changes formal knowledge.",
     KnowledgeRevisionStartInputSchema,
+    { reason: "Start a managed knowledge revision task." },
   ),
   definition(
     KNOWLEDGE_REVISION_GET_DRAFT_TOOL_NAME,
@@ -292,17 +320,34 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
     KNOWLEDGE_REVISION_DISCARD_DRAFT_TOOL_NAME,
     "Discard an obsolete unmerged knowledge draft. This also rejects its unfinished revision task and detaches its Mission; merged revision history cannot be discarded.",
     KnowledgeRevisionDiscardDraftInputSchema,
+    { reason: "Discard this knowledge draft and reject its unfinished revision task." },
   ),
 ] as const;
 
-export const PRAGMA_MANAGEMENT_TOOL_NAMES = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(
-  ({ name }) => name,
-);
+export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
+  ...PRAGMA_MANAGEMENT_HOST_TOOL_DEFINITIONS,
+  ...PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS,
+] as const;
 
 export function createPragmaManagementTools(
   ports: PragmaManagementToolPorts,
 ): readonly PragmaManagementTool[] {
+  if (
+    (ports.project === undefined) !== (ports.tasks === undefined) ||
+    (ports.automations !== undefined && ports.project === undefined)
+  ) {
+    throw new Error("Pragma project and task management ports must be provided together.");
+  }
+  const hostTools =
+    ports.project === undefined || ports.tasks === undefined
+      ? []
+      : createPragmaManagementHostTools({
+          project: ports.project,
+          tasks: ports.tasks,
+          ...(ports.automations === undefined ? {} : { automations: ports.automations }),
+        });
   const port = ports.knowledgeRevisions;
+  if (port === undefined) return hostTools;
   const [
     listTargets,
     listDrafts,
@@ -312,46 +357,30 @@ export function createPragmaManagementTools(
     rebase,
     submitDraft,
     discardDraft,
-  ] = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS;
+  ] = PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS;
   return [
-    tool(
-      listTargets,
-      "none",
-      async (_input, context) => await port.listTargets(invocation(context)),
-    ),
+    ...hostTools,
+    tool(listTargets, async (_input, context) => await port.listTargets(invocation(context))),
     tool(
       listDrafts,
-      "none",
       async (input, context) => await port.listDrafts({ ...invocation(context), ...input }),
     ),
-    tool(
-      start,
-      { reason: "Start a managed knowledge revision task." },
-      async (input, context) => await port.start({ ...invocation(context), ...input }),
-    ),
+    tool(start, async (input, context) => await port.start({ ...invocation(context), ...input })),
     tool(
       getDraft,
-      "none",
       async (input, context) => await port.getDraft({ ...invocation(context), ...input }),
     ),
     tool(
       inspectRebase,
-      "none",
       async (input, context) => await port.inspectRebase({ ...invocation(context), ...input }),
     ),
-    tool(
-      rebase,
-      "none",
-      async (input, context) => await port.rebase({ ...invocation(context), ...input }),
-    ),
+    tool(rebase, async (input, context) => await port.rebase({ ...invocation(context), ...input })),
     tool(
       submitDraft,
-      "none",
       async (input, context) => await port.submitDraft({ ...invocation(context), ...input }),
     ),
     tool(
       discardDraft,
-      { reason: "Discard this knowledge draft and reject its unfinished revision task." },
       async (input, context) => await port.discardDraft({ ...invocation(context), ...input }),
     ),
   ];
@@ -363,8 +392,8 @@ function tool<TSchema extends z.ZodType>(
     readonly description: string;
     readonly schema: TSchema;
     readonly inputSchema: PragmaManagementTool["inputSchema"];
+    readonly approval: NonNullable<PragmaManagementTool["approval"]>;
   },
-  approval: "none" | { readonly reason: string },
   call: (
     input: z.infer<TSchema>,
     context: ExpertAgentManagedToolCallContext | undefined,
@@ -374,8 +403,7 @@ function tool<TSchema extends z.ZodType>(
     name: toolDefinition.name,
     description: toolDefinition.description,
     inputSchema: toolDefinition.inputSchema,
-    approval:
-      approval === "none" ? { mode: "none" } : { mode: "required", reason: approval.reason },
+    approval: toolDefinition.approval,
     call: async (args, _signal, context) =>
       result(await call(toolDefinition.schema.parse(args), context)),
   };
