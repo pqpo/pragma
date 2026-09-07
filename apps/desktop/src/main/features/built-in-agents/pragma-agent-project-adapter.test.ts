@@ -134,6 +134,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
           "knowledge_revision_inspect_rebase",
           "knowledge_revision_rebase",
           "knowledge_revision_submit_draft",
+          "knowledge_revision_discard_draft",
         ],
       }),
       expect.objectContaining({

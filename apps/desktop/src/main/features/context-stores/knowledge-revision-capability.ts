@@ -289,6 +289,10 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
         input.summary,
       );
     },
+    async discardDraft(input) {
+      await options.revisions.discardDraft(input.draftId, input.expectedRevision);
+      return { draftId: input.draftId, discarded: true };
+    },
   };
 }
 

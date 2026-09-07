@@ -40,7 +40,7 @@ export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchem
     kind: "mcp_server",
     name: "Pragma management tools",
     description:
-      "Built-in Host tools for managing Pragma resources and work. Currently provides reviewable knowledge revision submission.",
+      "Built-in Host tools for managing Pragma resources, reviewable knowledge revisions, and draft cleanup.",
     connection: { transport: "streamable-http", url: "http://pragma.invalid/builtin" },
     timeoutMs: 30_000,
     tools: PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema }) => ({

@@ -24,6 +24,8 @@ export const KNOWLEDGE_REVISION_INSPECT_REBASE_TOOL_NAME =
   "knowledge_revision_inspect_rebase" as const;
 export const KNOWLEDGE_REVISION_REBASE_TOOL_NAME = "knowledge_revision_rebase" as const;
 export const KNOWLEDGE_REVISION_SUBMIT_DRAFT_TOOL_NAME = "knowledge_revision_submit_draft" as const;
+export const KNOWLEDGE_REVISION_DISCARD_DRAFT_TOOL_NAME =
+  "knowledge_revision_discard_draft" as const;
 
 export const KnowledgeRevisionTargetMountSchema = z
   .object({
@@ -191,6 +193,19 @@ export const KnowledgeRevisionSubmitDraftInputSchema = z
     summary: z.string().trim().min(1).max(2_000),
   })
   .strict();
+export const KnowledgeRevisionDiscardDraftInputSchema = z
+  .object({
+    draftId: DraftIdSchema,
+    expectedRevision: z.number().int().positive(),
+  })
+  .strict();
+
+export const KnowledgeRevisionDiscardDraftResultSchema = z
+  .object({
+    draftId: DraftIdSchema,
+    discarded: z.literal(true),
+  })
+  .strict();
 
 export interface KnowledgeRevisionToolInvocation {
   readonly executionId: string;
@@ -221,6 +236,10 @@ export interface KnowledgeRevisionSubmissionPort {
     input: KnowledgeRevisionToolInvocation &
       z.infer<typeof KnowledgeRevisionSubmitDraftInputSchema>,
   ): Promise<z.infer<typeof ContextStoreDraftSchema>>;
+  discardDraft(
+    input: KnowledgeRevisionToolInvocation &
+      z.infer<typeof KnowledgeRevisionDiscardDraftInputSchema>,
+  ): Promise<z.infer<typeof KnowledgeRevisionDiscardDraftResultSchema>>;
 }
 
 export interface PragmaManagementToolPorts {
@@ -269,6 +288,11 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
     "Submit a non-empty validated knowledge draft for human review. Submission makes the draft non-editable; it does not merge or publish it.",
     KnowledgeRevisionSubmitDraftInputSchema,
   ),
+  definition(
+    KNOWLEDGE_REVISION_DISCARD_DRAFT_TOOL_NAME,
+    "Discard an obsolete unmerged knowledge draft. This also rejects its unfinished revision task and detaches its Mission; merged revision history cannot be discarded.",
+    KnowledgeRevisionDiscardDraftInputSchema,
+  ),
 ] as const;
 
 export const PRAGMA_MANAGEMENT_TOOL_NAMES = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(
@@ -279,8 +303,16 @@ export function createPragmaManagementTools(
   ports: PragmaManagementToolPorts,
 ): readonly PragmaManagementTool[] {
   const port = ports.knowledgeRevisions;
-  const [listTargets, listDrafts, start, getDraft, inspectRebase, rebase, submitDraft] =
-    PRAGMA_MANAGEMENT_TOOL_DEFINITIONS;
+  const [
+    listTargets,
+    listDrafts,
+    start,
+    getDraft,
+    inspectRebase,
+    rebase,
+    submitDraft,
+    discardDraft,
+  ] = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS;
   return [
     tool(
       listTargets,
@@ -294,7 +326,7 @@ export function createPragmaManagementTools(
     ),
     tool(
       start,
-      "required",
+      { reason: "Start a managed knowledge revision task." },
       async (input, context) => await port.start({ ...invocation(context), ...input }),
     ),
     tool(
@@ -317,6 +349,11 @@ export function createPragmaManagementTools(
       "none",
       async (input, context) => await port.submitDraft({ ...invocation(context), ...input }),
     ),
+    tool(
+      discardDraft,
+      { reason: "Discard this knowledge draft and reject its unfinished revision task." },
+      async (input, context) => await port.discardDraft({ ...invocation(context), ...input }),
+    ),
   ];
 }
 
@@ -327,7 +364,7 @@ function tool<TSchema extends z.ZodType>(
     readonly schema: TSchema;
     readonly inputSchema: PragmaManagementTool["inputSchema"];
   },
-  approval: "none" | "required",
+  approval: "none" | { readonly reason: string },
   call: (
     input: z.infer<TSchema>,
     context: ExpertAgentManagedToolCallContext | undefined,
@@ -338,9 +375,7 @@ function tool<TSchema extends z.ZodType>(
     description: toolDefinition.description,
     inputSchema: toolDefinition.inputSchema,
     approval:
-      approval === "none"
-        ? { mode: "none" }
-        : { mode: "required", reason: "Start a managed knowledge revision task." },
+      approval === "none" ? { mode: "none" } : { mode: "required", reason: approval.reason },
     call: async (args, _signal, context) =>
       result(await call(toolDefinition.schema.parse(args), context)),
   };

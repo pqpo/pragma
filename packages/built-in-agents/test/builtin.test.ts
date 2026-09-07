@@ -487,6 +487,7 @@ describe("built-in Pragma Agent DSL", () => {
           "knowledge_revision_inspect_rebase",
           "knowledge_revision_rebase",
           "knowledge_revision_submit_draft",
+          "knowledge_revision_discard_draft",
         ],
       }),
     ]);
@@ -513,6 +514,8 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("can no longer be edited");
     expect(resource.spec.instructions).toContain("latest draft.revision");
     expect(resource.spec.instructions).toContain("knowledge_revision_submit_draft");
+    expect(resource.spec.instructions).toContain("Submission is irreversible");
+    expect(resource.spec.instructions).toContain("knowledge_revision_discard_draft");
   });
 
   it("compiles every hidden Agent from its isolated dependency closure", async () => {

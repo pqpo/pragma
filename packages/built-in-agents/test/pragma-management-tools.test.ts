@@ -10,7 +10,7 @@ import {
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma management tools", () => {
-  it("lists knowledge without approval and requires approval for revision submission", async () => {
+  it("lists knowledge without approval and requires approval for starting or discarding a draft", async () => {
     const target = {
       targetRef: "context-store:0000000000000001",
       name: "Shared knowledge",
@@ -21,8 +21,12 @@ describe("Pragma management tools", () => {
     };
     const listTargets = vi.fn(async () => [target]);
     const start = vi.fn(async () => ({ jobId: "job-1", state: "editing", target }));
+    const discardDraft = vi.fn(async (input: { readonly draftId: string }) => ({
+      draftId: input.draftId,
+      discarded: true as const,
+    }));
     const tools = createPragmaManagementTools({
-      knowledgeRevisions: revisionPort({ listTargets, start }),
+      knowledgeRevisions: revisionPort({ listTargets, start, discardDraft }),
     });
     const context = {
       toolCallId: "call-1",
@@ -41,9 +45,21 @@ describe("Pragma management tools", () => {
       mode: "required",
       reason: "Start a managed knowledge revision task.",
     });
+    expect(tools[7]?.approval).toEqual({
+      mode: "required",
+      reason: "Discard this knowledge draft and reject its unfinished revision task.",
+    });
     await tools[0]!.call({}, undefined, context);
     await tools[2]!.call(
       { targetRef: target.targetRef, prompt: "Record the retry invariant." },
+      undefined,
+      context,
+    );
+    await tools[7]!.call(
+      {
+        draftId: "00000000-0000-4000-8000-000000000301",
+        expectedRevision: 5,
+      },
       undefined,
       context,
     );
@@ -61,6 +77,15 @@ describe("Pragma management tools", () => {
         prompt: "Record the retry invariant.",
       }),
     );
+    expect(discardDraft).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      invocationId: "invocation-1",
+      expertId: "0000000000000002",
+      teamId: "0000000000000003",
+      operationId: "call-1",
+      draftId: "00000000-0000-4000-8000-000000000301",
+      expectedRevision: 5,
+    });
   });
 
   it("fails closed outside an execution tool call", async () => {
@@ -82,6 +107,7 @@ function revisionPort(overrides: Record<string, unknown> = {}) {
     inspectRebase: vi.fn(),
     rebase: vi.fn(),
     submitDraft: vi.fn(),
+    discardDraft: vi.fn(),
     ...overrides,
   };
 }

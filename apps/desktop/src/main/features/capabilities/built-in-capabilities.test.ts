@@ -79,6 +79,7 @@ function revisionPort(overrides: Record<string, unknown> = {}) {
     inspectRebase: vi.fn(),
     rebase: vi.fn(),
     submitDraft: vi.fn(),
+    discardDraft: vi.fn(),
     ...overrides,
   };
 }

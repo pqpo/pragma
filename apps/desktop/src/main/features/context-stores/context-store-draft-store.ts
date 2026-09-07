@@ -72,9 +72,7 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextRegisterInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     const loaded = await this.load();
-    if (["merging", "merged"].includes(loaded.draft.state)) {
-      return error("permission_denied", "Merging and merged knowledge drafts are read-only.");
-    }
+    if (loaded.draft.state !== "editing") return readOnlyDraft();
     const effective = createEffectiveStore(loaded.base, loaded.draft.overlay);
     const result = await effective.addContext(input);
     if (!result.ok) return result;
@@ -93,9 +91,7 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
     const loaded = await this.load();
-    if (["merging", "merged"].includes(loaded.draft.state)) {
-      return error("permission_denied", "Merging and merged knowledge drafts are read-only.");
-    }
+    if (loaded.draft.state !== "editing") return readOnlyDraft();
     const effective = createEffectiveStore(loaded.base, loaded.draft.overlay);
     const result = await effective.editContext(input);
     if (!result.ok) return result;
@@ -114,9 +110,7 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemDeleteResult>> {
     const loaded = await this.load();
-    if (["merging", "merged"].includes(loaded.draft.state)) {
-      return error("permission_denied", "Merging and merged knowledge drafts are read-only.");
-    }
+    if (loaded.draft.state !== "editing") return readOnlyDraft();
     const effective = createEffectiveStore(loaded.base, loaded.draft.overlay);
     const result = await effective.deleteContext(input);
     if (!result.ok) return result;
@@ -153,9 +147,7 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
     readonly expectedRevision: string;
   }): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     const loaded = await this.load();
-    if (["merging", "merged"].includes(loaded.draft.state)) {
-      return error("permission_denied", "Merging and merged knowledge drafts are read-only.");
-    }
+    if (loaded.draft.state !== "editing") return readOnlyDraft();
     const effective = createEffectiveStore(loaded.base, loaded.draft.overlay);
     const result = await effective.editContext({
       id: input.id,
@@ -299,4 +291,11 @@ function conflict<T>(mutationError: unknown): ExpertAgentContextResult<T> {
   return error("context_conflict", "The knowledge draft changed. Read it again and retry.", {
     cause: mutationError instanceof Error ? mutationError.message : String(mutationError),
   });
+}
+
+function readOnlyDraft<T>(): ExpertAgentContextResult<T> {
+  return error(
+    "permission_denied",
+    "Only an editing knowledge draft can be changed; submitted and non-editable drafts are read-only.",
+  );
 }

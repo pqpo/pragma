@@ -246,7 +246,7 @@ describe("context store sparse draft revisions", () => {
     });
   });
 
-  it("invalidates a pending review and releases its completed Mission binding", async () => {
+  it("keeps a submitted draft immutable until review rejects it", async () => {
     const { service, store } = await fixture();
     const job = await service.start(
       {
@@ -264,15 +264,39 @@ describe("context store sparse draft revisions", () => {
     const edited = await service.getDraft(job.draftId);
     const submitted = await service.submitDraft(edited.id, edited.revision, "Add A");
     const again = await service.resolveDraft(submitted.id);
-    await again.store.addContext({ id: "items/b.md", content: "B" });
+    await expect(again.store.addContext({ id: "items/b.md", content: "B" })).resolves.toMatchObject(
+      {
+        ok: false,
+        error: {
+          code: "permission_denied",
+          message:
+            "Only an editing knowledge draft can be changed; submitted and non-editable drafts are read-only.",
+        },
+      },
+    );
+    await expect(
+      service.rebase({
+        draftId: submitted.id,
+        expectedRevision: submitted.revision,
+        resolutions: [],
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_state",
+      message: "Only an editable knowledge draft can be rebased.",
+    });
 
-    const invalidated = await service.getDraft(job.draftId);
-    expect(invalidated.state).toBe("editing");
-    expect(invalidated.submittedRevision).toBeUndefined();
-    expect(invalidated.activeMissionId).toBeUndefined();
-    const invalidatedJob = await service.get(job.id);
-    expect(invalidatedJob.state).toBe("editing");
-    expect(invalidatedJob.missionId).toBeUndefined();
+    await expect(service.getDraft(job.draftId)).resolves.toEqual(submitted);
+    await expect(service.get(job.id)).resolves.toMatchObject({
+      state: "pending_review",
+      missionId,
+    });
+
+    const pending = await service.get(job.id);
+    await service.reject(job.id, pending.revision);
+    const rejectedDraft = await service.resolveDraft(job.draftId);
+    await expect(
+      rejectedDraft.store.addContext({ id: "items/b.md", content: "B" }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it("makes repeated Mission attachment idempotent", async () => {
@@ -334,6 +358,113 @@ describe("context store sparse draft revisions", () => {
     const unchanged = await service.get(job.id);
     expect(unchanged.state).toBe("pending_review");
     expect(unchanged.missionId).toBeUndefined();
+  });
+
+  it("discards a submitted draft, rejects its revision job, and detaches its Mission", async () => {
+    const onRevisionDetached = vi.fn(async () => undefined);
+    const { service, store } = await fixture({ onRevisionDetached });
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Replace an obsolete submitted draft",
+      source: "user",
+    });
+    const missionId = "22222222-2222-4222-8222-222222222227";
+    await service.attachMission(job.id, missionId);
+    const resolved = await service.resolveDraft(job.draftId);
+    await resolved.store.addContext({ id: "items/replacement.md", content: "Ready" });
+    const edited = await service.getDraft(job.draftId);
+    const submitted = await service.submitDraft(job.draftId, edited.revision, "Ready for review");
+
+    await expect(service.discardDraft(submitted.id, submitted.revision - 1)).rejects.toMatchObject({
+      code: "revision_conflict",
+    });
+    await service.discardDraft(submitted.id, submitted.revision);
+
+    await expect(service.getDraft(submitted.id)).rejects.toMatchObject({
+      code: "draft_not_found",
+    });
+    const rejected = await service.get(job.id);
+    expect(rejected).toMatchObject({
+      state: "rejected",
+      error: { code: "draft_discarded" },
+    });
+    expect(rejected.missionId).toBeUndefined();
+    expect(onRevisionDetached).toHaveBeenCalledWith({
+      missionId,
+      jobId: job.id,
+      draftId: job.draftId,
+      storeId: store.id,
+    });
+  });
+
+  it("rejects and detaches every revision job associated with a discarded draft", async () => {
+    const onRevisionDetached = vi.fn(async () => undefined);
+    const { service, store } = await fixture({ onRevisionDetached });
+    const first = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "First revision attempt",
+      source: "user",
+    });
+    const firstStore = await service.resolveDraft(first.draftId);
+    await firstStore.store.addContext({ id: "items/shared.md", content: "First" });
+    const firstEdited = await service.getDraft(first.draftId);
+    await service.submitDraft(first.draftId, firstEdited.revision, "First attempt");
+    const firstPending = await service.get(first.id);
+    await service.reject(first.id, firstPending.revision);
+
+    const second = await service.start(
+      {
+        schemaVersion: "pragma.context-store-revision-request/v1",
+        storeId: store.id,
+        prompt: "Second revision attempt",
+        source: "user",
+      },
+      { draftId: first.draftId },
+    );
+    const missionId = "22222222-2222-4222-8222-222222222228";
+    await service.attachMission(second.id, missionId);
+    const current = await service.getDraft(first.draftId);
+
+    await service.discardDraft(current.id, current.revision);
+
+    await expect(service.get(first.id)).resolves.toMatchObject({ state: "rejected" });
+    const rejectedSecond = await service.get(second.id);
+    expect(rejectedSecond).toMatchObject({
+      state: "rejected",
+      error: { code: "draft_discarded" },
+    });
+    expect(rejectedSecond.missionId).toBeUndefined();
+    expect(onRevisionDetached).toHaveBeenCalledWith({
+      missionId,
+      jobId: second.id,
+      draftId: first.draftId,
+      storeId: store.id,
+    });
+  });
+
+  it("retains merged drafts as revision history", async () => {
+    const { service, store } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Keep merged history",
+      source: "user",
+    });
+    const resolved = await service.resolveDraft(job.draftId);
+    await resolved.store.addContext({ id: "items/history.md", content: "Keep" });
+    const edited = await service.getDraft(job.draftId);
+    await service.submitDraft(job.draftId, edited.revision, "Ready for approval");
+    const pending = await service.get(job.id);
+    await service.approve(job.id, pending.revision);
+    const merged = await service.getDraft(job.draftId);
+
+    await expect(service.discardDraft(merged.id, merged.revision)).rejects.toMatchObject({
+      code: "invalid_state",
+      message: "Merged drafts are retained as revision history.",
+    });
+    await expect(service.getDraft(merged.id)).resolves.toMatchObject({ state: "merged" });
   });
 
   it("merges list and search results, persists tombstones, and recovers after restart", async () => {

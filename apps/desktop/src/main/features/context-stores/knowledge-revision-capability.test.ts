@@ -114,6 +114,7 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
   const listDrafts = vi.fn<ContextStoreRevisionService["listDrafts"]>(async () => []);
   const getDraft = vi.fn<ContextStoreRevisionService["getDraft"]>();
   const getDraftFile = vi.fn<ContextStoreRevisionService["getDraftFile"]>();
+  const discardDraft = vi.fn<ContextStoreRevisionService["discardDraft"]>();
   const revisions = {
     start,
     listDrafts,
@@ -122,6 +123,7 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     inspectRebase: vi.fn(),
     rebase: vi.fn(),
     submitDraft: vi.fn(),
+    discardDraft,
     scheduleProcessing,
     attachMission,
     detachMission: vi.fn(async () => ({ id: "job-1" })),
@@ -160,6 +162,7 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     listDrafts,
     getDraft,
     getDraftFile,
+    discardDraft,
   };
 }
 
@@ -390,6 +393,16 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       {},
     );
     expect(scheduleProcessing).toHaveBeenCalledOnce();
+  });
+
+  it("discards an unmerged draft through the revision service", async () => {
+    const { port, discardDraft } = fixture();
+    const draftId = "00000000-0000-4000-8000-000000000301";
+
+    await expect(
+      port.discardDraft({ ...invocation, draftId, expectedRevision: 5 }),
+    ).resolves.toEqual({ draftId, discarded: true });
+    expect(discardDraft).toHaveBeenCalledWith(draftId, 5);
   });
 
   it("supports standalone Experts and rejects targets that are not in the current store list", async () => {

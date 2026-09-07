@@ -194,22 +194,12 @@ export function createContextStoreRevisionService(options: {
     expectedRevision: number,
     update: (draft: ContextStoreDraft) => ContextStoreDraftOverlay,
   ): Promise<ContextStoreDraft> => {
-    const next = await mutateDraftRecord(id, expectedRevision, (draft) => ({
-      overlay: update(draft),
-      state: draft.state === "pending_review" ? "editing" : draft.state,
-      submittedRevision: undefined,
-      ...(draft.state === "pending_review" ? { activeMissionId: undefined } : {}),
-    }));
-    const pendingReviewJob = (await readAllJobs()).find(
-      (job) => job.draftId === id && job.state === "pending_review",
-    );
-    if (pendingReviewJob !== undefined) {
-      await mutateJob(pendingReviewJob.id, pendingReviewJob.revision, () => ({
-        state: "editing",
-        missionId: undefined,
-      }));
-    }
-    return next;
+    return await mutateDraftRecord(id, expectedRevision, (draft) => {
+      if (draft.state !== "editing") {
+        throw invalidState("Only an editable knowledge draft can be changed.");
+      }
+      return { overlay: update(draft) };
+    });
   };
 
   const forceDraftState = async (
@@ -665,23 +655,26 @@ export function createContextStoreRevisionService(options: {
         if (draft.state === "merged") {
           throw invalidState("Merged drafts are retained as revision history.");
         }
-        let job = (await readAllJobs()).find((candidate) => candidate.draftId === draftId);
-        if (job !== undefined && job.state !== "merged" && job.state !== "rejected") {
-          job = await mutateJob(job.id, job.revision, () => ({
-            state: "rejected",
-            error: { code: "draft_discarded", message: "The knowledge draft was discarded." },
-          }));
-        }
-        if (
-          job?.missionId !== undefined &&
-          (await notifyRevisionDetached({
-            missionId: job.missionId,
-            jobId: job.id,
-            draftId,
-            storeId: draft.storeId,
-          }))
-        ) {
-          await mutateJob(job.id, job.revision, () => ({ missionId: undefined }));
+        const jobs = (await readAllJobs()).filter((candidate) => candidate.draftId === draftId);
+        for (const candidate of jobs) {
+          let job = candidate;
+          if (job.state !== "merged" && job.state !== "rejected") {
+            job = await mutateJob(job.id, job.revision, () => ({
+              state: "rejected",
+              error: { code: "draft_discarded", message: "The knowledge draft was discarded." },
+            }));
+          }
+          if (
+            job.missionId !== undefined &&
+            (await notifyRevisionDetached({
+              missionId: job.missionId,
+              jobId: job.id,
+              draftId,
+              storeId: draft.storeId,
+            }))
+          ) {
+            await mutateJob(job.id, job.revision, () => ({ missionId: undefined }));
+          }
         }
         await mkdir(draftsTrashPath, { recursive: true, mode: 0o700 });
         await rename(
@@ -699,6 +692,9 @@ export function createContextStoreRevisionService(options: {
       const parsed = RebaseContextStoreDraftSchema.parse(input);
       const draft = await readDraft(parsed.draftId);
       if (draft.revision !== parsed.expectedRevision) throw revisionConflict();
+      if (draft.state !== "editing" && draft.state !== "needs_rebase") {
+        throw invalidState("Only an editable knowledge draft can be rebased.");
+      }
       return await options.contextStores.withRevisionLock(draft.storeId, async () => {
         const inspection = await inspectRebase(draft, options.contextStores);
         const resolutions = new Map(

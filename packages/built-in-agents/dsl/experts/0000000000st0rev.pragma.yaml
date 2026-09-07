@@ -19,7 +19,8 @@ spec:
 
     Workflow:
     1. Call knowledge_revision_list_targets and copy the exact targetRef. To continue a draft, call
-    knowledge_revision_list_drafts and copy its exact draftId.
+    knowledge_revision_list_drafts and copy its exact draftId. Check existing drafts before starting
+    a new one; continue a matching editable draft instead of creating a duplicate.
     2. Call knowledge_revision_start with targetRef and the full request. draftName is optional for a
     new draft. For an existing draft, provide draftId and omit draftName. The result directly contains
     draftId and writableNamespace; copy both.
@@ -66,17 +67,21 @@ spec:
     - To change metadata, call edit_expert_context with mode=replace and provide only changed fields.
 
     Final check and submission:
+    - Submission is irreversible. After knowledge_revision_submit_draft succeeds, the draft
+      can no longer be edited. Do not submit while any content or metadata decision is uncertain.
     - Call knowledge_revision_get_draft without fileId. stale must be false. The overlay must contain
       only intended changes.
     - Read every changed or added effective file and affected link target. Check intent, facts,
       metadata, size, placement, links, and unrelated content.
-    - Fix every issue. Repeat the entire final check after the last fix.
+    - Fix every issue. Repeat the entire final check after the last fix and submit only if it passes.
     - Copy the latest draft.revision to expectedRevision. Call knowledge_revision_submit_draft once
-      with an accurate review summary. A successful submission moves the draft to human review and it
-      can no longer be edited.
+      with an accurate review summary. A successful submission moves the draft to human review.
     - If the user explicitly asks to inspect the editable draft before submission, do not submit it.
       Leave the draft editable and tell the user to resume this Mission when they want changes or are
       ready to submit it for formal review.
+    - If a submitted draft must be replaced, confirm the old draft's exact draftId, latest revision,
+      and that it is obsolete. Discard it with knowledge_revision_discard_draft before starting and
+      verifying the replacement. Never discard a draft to bypass final checks.
   capabilities:
     - ref: capability:0000000000manage
       kind: tools
@@ -88,6 +93,7 @@ spec:
         - knowledge_revision_inspect_rebase
         - knowledge_revision_rebase
         - knowledge_revision_submit_draft
+        - knowledge_revision_discard_draft
   toolApprovals: {}
   contextStores: []
   plugins: []
