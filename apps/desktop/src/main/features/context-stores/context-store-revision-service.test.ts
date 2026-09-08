@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createContextStoreRevisionService,
-  type ContextStoreRevisionGenerator,
+  type ContextStoreRevisionExecutor,
   type ContextStoreRevisionService,
 } from "./context-store-revision-service.ts";
 import { createContextStoreStore } from "./context-store-store.ts";
@@ -27,7 +27,7 @@ async function fixture(
           readonly storeId: string;
         }) => Promise<void>)
       | undefined;
-    readonly generator?: ContextStoreRevisionGenerator | undefined;
+    readonly executor?: ContextStoreRevisionExecutor | undefined;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-store-revisions-"));
@@ -36,34 +36,30 @@ async function fixture(
     storesPath: join(directory, "data", "context-stores"),
   });
   const draftsPath = join(directory, "data", "context-store-drafts");
+  const serviceRef: { current?: ContextStoreRevisionService } = {};
+  const executor: ContextStoreRevisionExecutor = options.executor ?? {
+    async execute({ draftId, request }) {
+      const service = serviceRef.current;
+      if (service === undefined) throw new Error("Revision service is not initialized.");
+      const resolved = await service.resolveDraft(draftId);
+      const added = await resolved.store.addContext({
+        id: "items/revised.md",
+        content: `# ${request.prompt}\n`,
+        metadata: { description: "Revised", trigger: "manual", priority: "normal" },
+      });
+      if (!added.ok) throw new Error(added.error.message);
+      const draft = await service.getDraft(draftId);
+      await service.submitDraft(draftId, draft.revision, request.prompt);
+    },
+  };
   const service = createContextStoreRevisionService({
     statePath: join(directory, "state", "context-store-revisions"),
     draftsPath,
     contextStores,
-    generator: options.generator ?? {
-      async generate({ request, snapshot }) {
-        return {
-          schemaVersion: "pragma.context-store-change-set/v2" as const,
-          storeId: request.storeId,
-          baseSnapshotHash: snapshot.snapshotHash,
-          summary: request.prompt,
-          operations: [
-            {
-              operation: "upsert" as const,
-              id: "items/revised.md",
-              content: `# ${request.prompt}\n`,
-              metadata: {
-                description: "Revised",
-                trigger: "manual" as const,
-                priority: "normal" as const,
-              },
-            },
-          ],
-        };
-      },
-    },
+    executor,
     onRevisionDetached: options.onRevisionDetached,
   });
+  serviceRef.current = service;
   const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
   return { directory, draftsPath, contextStores, service, store };
 }
@@ -72,14 +68,13 @@ describe("context store sparse draft revisions", () => {
   it("keeps an intentionally unsubmitted Agent draft editable and attached", async () => {
     const missionId = "22222222-2222-4222-8222-222222222226";
     const serviceRef: { current?: ContextStoreRevisionService } = {};
-    const generate = vi.fn<ContextStoreRevisionGenerator["generate"]>(async (input) => {
+    const execute = vi.fn<ContextStoreRevisionExecutor["execute"]>(async (input) => {
       if (serviceRef.current === undefined) throw new Error("revision_service_unavailable");
       await serviceRef.current.attachMission(input.jobId, missionId);
       const resolved = await serviceRef.current.resolveDraft(input.draftId);
       await resolved.store.addContext({ id: "items/review-first.md", content: "# Review first\n" });
-      return undefined;
     });
-    const fixtureResult = await fixture({ generator: { generate } });
+    const fixtureResult = await fixture({ executor: { execute } });
     serviceRef.current = fixtureResult.service;
     const activeService = serviceRef.current;
     const job = await activeService.start({
@@ -118,7 +113,42 @@ describe("context store sparse draft revisions", () => {
       state: "editing",
       missionId,
     });
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases stale Mission ownership before retrying a failed task", async () => {
+    const missionId = "22222222-2222-4222-8222-222222222226";
+    const serviceRef: { current?: ContextStoreRevisionService } = {};
+    const { service, store } = await fixture({
+      executor: {
+        async execute(input) {
+          if (serviceRef.current === undefined) throw new Error("revision_service_unavailable");
+          await serviceRef.current.attachMission(input.jobId, missionId);
+          throw new Error("mission failed");
+        },
+      },
+    });
+    serviceRef.current = service;
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Retry after Mission failure",
+      source: "user",
+    });
+
+    await service.processPending();
+    const failed = await service.get(job.id);
+    expect(failed).toMatchObject({ state: "needs_attention", missionId });
+    await expect(service.getDraft(job.draftId)).resolves.toMatchObject({
+      state: "editing",
+      activeMissionId: missionId,
+    });
+
+    const retried = await service.retry(failed.id, failed.revision);
+    expect(retried).toMatchObject({ state: "editing", missionId: undefined });
+    const retryDraft = await service.getDraft(job.draftId);
+    expect(retryDraft.state).toBe("editing");
+    expect(retryDraft.activeMissionId).toBeUndefined();
   });
 
   it("deduplicates machine submissions and persists only an overlay before approval", async () => {
@@ -491,11 +521,7 @@ describe("context store sparse draft revisions", () => {
       statePath: join(directory, "state", "context-store-revisions"),
       draftsPath,
       contextStores,
-      generator: {
-        async generate() {
-          return undefined;
-        },
-      },
+      executor: { async execute() {} },
     });
     const recovered = (await restarted.resolveDraft(draft.id)).store;
     const listed = await recovered.listContext();

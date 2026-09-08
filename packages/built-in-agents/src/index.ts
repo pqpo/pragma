@@ -4,7 +4,6 @@ export * from "./memory-curator.ts";
 export * from "./ports.ts";
 export * from "./revision-contracts.ts";
 export * from "./revision-state-machines.ts";
-export * from "./store-revision.ts";
 export * from "./structured-output.ts";
 export * from "./skill-validation.ts";
 export * from "./skill-draft.ts";

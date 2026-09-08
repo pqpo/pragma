@@ -392,6 +392,7 @@ export interface PragmaDesktopAPI {
   updateContextStoreRevisionProfile: (
     input: UpdateContextStoreRevisionProfile,
   ) => Promise<ContextStoreRevisionProfile>;
+  subscribeContextStoreRevisionChanges: (listener: () => void) => () => void;
   subscribeContextStoreChanges: (storeId: string, listener: () => void) => () => void;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;

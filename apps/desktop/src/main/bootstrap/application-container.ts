@@ -65,7 +65,7 @@ import { createCapabilityVerifier } from "../features/capabilities/capability-ve
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
 import {
   createContextStoreRevisionService,
-  type ContextStoreRevisionGenerator,
+  type ContextStoreRevisionExecutor,
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
 import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
@@ -580,12 +580,12 @@ export async function createDesktopApplicationContainer(
     },
   });
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
-  const revisionGenerator: ContextStoreRevisionGenerator = {
-    async generate(input) {
+  const revisionExecutor: ContextStoreRevisionExecutor = {
+    async execute(input) {
       if (storeRevisionAgentRef.current === undefined) {
         throw new Error("The Store Revision Agent has not been initialized.");
       }
-      return await storeRevisionAgentRef.current.generator.generate(input);
+      await storeRevisionAgentRef.current.executor.execute(input);
     },
   };
   const storeRevisions = createContextStoreRevisionService({
@@ -593,7 +593,19 @@ export async function createDesktopApplicationContainer(
     draftsPath: join(pragmaPaths.dataRoot(), "context-store-drafts"),
     draftsTrashPath: join(pragmaPaths.trashRoot(), "context-store-drafts"),
     contextStores,
-    generator: revisionGenerator,
+    executor: revisionExecutor,
+    onChanged: (storeId) => {
+      try {
+        const window = options.getWindow();
+        if (window !== null && !window.webContents.isDestroyed()) {
+          window.webContents.send("context-store-revisions:changed", {
+            ...(storeId === undefined ? {} : { storeId }),
+          });
+        }
+      } catch {
+        // The renderer can close between the state check and event delivery.
+      }
+    },
     onRevisionDetached: async ({ missionId, jobId, draftId, storeId }) => {
       try {
         await missionStore.restoreManagedRevisionStore({

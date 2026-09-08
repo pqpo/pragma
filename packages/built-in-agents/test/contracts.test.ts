@@ -6,7 +6,7 @@ import {
   ContextStoreChangeSetSchema,
   ContextStoreDraftSchema,
   ContextStoreDraftViewSchema,
-  ContextStoreRevisionSnapshotSchema,
+  ContextStoreSnapshotSchema,
   PragmaAgentEvaluationDraftOperationSchema,
   PragmaAgentEvaluationDraftSchema,
   PragmaAgentFlowDraftOperationSchema,
@@ -45,7 +45,7 @@ describe("revision contracts", () => {
         },
       ],
     };
-    expect(ContextStoreRevisionSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(ContextStoreSnapshotSchema.safeParse(snapshot).success).toBe(true);
     expect(
       ContextStoreChangeSetSchema.safeParse({
         schemaVersion: "pragma.context-store-change-set/v2",
@@ -71,7 +71,7 @@ describe("revision contracts", () => {
       metadata: { trigger: "model_decision" as const, priority: "normal" as const },
     };
     expect(
-      ContextStoreRevisionSnapshotSchema.safeParse({
+      ContextStoreSnapshotSchema.safeParse({
         schemaVersion: "pragma.context-store-snapshot/v2",
         storeId: "10000000-0000-4000-8000-000000000001",
         snapshotHash: "a".repeat(64),

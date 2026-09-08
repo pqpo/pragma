@@ -1276,13 +1276,13 @@ function BundleConflictStep(props: {
               >
                 <strong>
                   {conflict.resourceKind === "ContextStore"
-                    ? t("bundleAppendKnowledgeRevision")
+                    ? t("bundleReplaceKnowledgeSnapshot")
                     : t("bundleUpdateExisting")}
                 </strong>
                 <small>
                   {conflict.updateAllowed
                     ? conflict.resourceKind === "ContextStore"
-                      ? t("bundleAppendKnowledgeRevisionHint")
+                      ? t("bundleReplaceKnowledgeSnapshotHint")
                       : t("bundleUpdateExistingShortHint")
                     : t("bundleUpdateBlocked")}
                 </small>

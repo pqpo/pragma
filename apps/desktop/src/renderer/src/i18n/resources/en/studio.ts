@@ -478,6 +478,7 @@ export const studio = {
   contextStoreRevisions: "Update tasks",
   contextStoreRevisionsDescription:
     "Track generated changes, review proposals, and handle tasks that need attention.",
+  deletedKnowledgeBase: "Deleted knowledge base",
   revisionTaskCount: "{{count}} tasks",
   revisionTaskColumn: "Update request",
   revisionUpdatedAt: "Updated",
@@ -1405,8 +1406,8 @@ export const studio = {
   bundleKnowledgeBases: "Knowledge base content",
   bundleKnowledgeBasesHint: "Off by default because content may be large or sensitive.",
   bundleKnowledgeBaseRequiredHint: "The current published snapshot is required for this export.",
-  bundleAppendKnowledgeRevision: "Append revision",
-  bundleAppendKnowledgeRevisionHint:
+  bundleReplaceKnowledgeSnapshot: "Replace current content",
+  bundleReplaceKnowledgeSnapshotHint:
     "Replace the current snapshot after verifying it has not changed.",
   bundleFilterKnowledgeBases: "Knowledge bases",
   bundleKnowledgeMemory: "Published Knowledge Memory",

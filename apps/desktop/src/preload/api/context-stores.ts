@@ -20,6 +20,7 @@ import {
 } from "../../shared/contracts/context-stores.ts";
 import {
   ContextStoreRevisionJobRefSchema,
+  ContextStoreRevisionChangeSchema,
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,
   ContextStoreDraftViewSchema,
@@ -216,6 +217,14 @@ export const contextStoresApi = {
         UpdateContextStoreRevisionProfileSchema.parse(input),
       ),
     ),
+  subscribeContextStoreRevisionChanges: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: unknown) => {
+      ContextStoreRevisionChangeSchema.parse(payload);
+      listener();
+    };
+    ipcRenderer.on("context-store-revisions:changed", handler);
+    return () => ipcRenderer.removeListener("context-store-revisions:changed", handler);
+  },
   subscribeContextStoreChanges: (storeId, listener) => {
     const input = SubscribeContextStoreChangesSchema.parse({ storeId });
     const handler = (_event: IpcRendererEvent, payload: unknown) => {
@@ -263,6 +272,7 @@ export const contextStoresApi = {
   | "rebaseContextStoreDraft"
   | "getContextStoreRevisionProfile"
   | "updateContextStoreRevisionProfile"
+  | "subscribeContextStoreRevisionChanges"
   | "subscribeContextStoreChanges"
   | "pickContextStoreFolder"
 >;

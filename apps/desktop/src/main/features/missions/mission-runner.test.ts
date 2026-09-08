@@ -1218,7 +1218,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       statePath: join(root, "context-store-revisions"),
       draftsPath: join(root, "context-store-drafts"),
       contextStores,
-      generator: { generate: async () => undefined },
+      executor: { async execute() {} },
     });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
     const mission = await missions.create({

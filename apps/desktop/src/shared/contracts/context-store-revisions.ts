@@ -1,3 +1,9 @@
+import { z } from "zod";
+
+export const ContextStoreRevisionChangeSchema = z
+  .object({ storeId: z.string().uuid().optional() })
+  .strict();
+
 export {
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,

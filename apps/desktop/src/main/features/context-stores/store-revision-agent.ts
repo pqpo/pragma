@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdir, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { withFileLock, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
+import type { PragmaLoggerProvider, RuntimeResolver } from "@pragma/core";
 import {
   STORE_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
@@ -15,18 +15,17 @@ import type {
   PragmaExpertResource,
   PragmaResource,
 } from "@pragma/interpreter";
-import { z } from "zod";
 
 import type { ContextStoreRevisionProfile } from "../../../shared/contracts/index.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type { ContextStoreRevisionGenerator } from "./context-store-revision-service.ts";
+import type { ContextStoreRevisionExecutor } from "./context-store-revision-service.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 
 export interface DesktopStoreRevisionAgent {
-  readonly generator: ContextStoreRevisionGenerator;
+  readonly executor: ContextStoreRevisionExecutor;
   compile(input: {
     readonly profile: ContextStoreRevisionProfile;
     readonly runtimes?: RuntimeResolver | undefined;
@@ -51,7 +50,7 @@ export function createDesktopStoreRevisionAgent(options: {
   readonly isDraftSubmitted?: ((jobId: string) => Promise<boolean>) | undefined;
 }): DesktopStoreRevisionAgent {
   const isolatedWorkspace = join(options.pragmaHome, "tmp", "store-revision-agent");
-  const registryPath = join(
+  const legacyRegistryPath = join(
     options.pragmaHome,
     "state",
     "context-store-revisions",
@@ -73,8 +72,8 @@ export function createDesktopStoreRevisionAgent(options: {
     return defaults;
   };
 
-  const generator: ContextStoreRevisionGenerator = {
-    async generate(input) {
+  const executor: ContextStoreRevisionExecutor = {
+    async execute(input) {
       const project = await options.project.ensurePublished();
       await mkdir(isolatedWorkspace, { recursive: true, mode: 0o700 });
       const mission = await options.missions.create({
@@ -105,7 +104,6 @@ export function createDesktopStoreRevisionAgent(options: {
           },
         ],
       });
-      await registerAgentMission(registryPath, mission.id, input.jobId, input.request.storeId);
       await options.onMissionCreated?.({ jobId: input.jobId, missionId: mission.id });
       await options.runner.run(mission.id);
       await waitForMission(options.missions, mission.id);
@@ -116,7 +114,6 @@ export function createDesktopStoreRevisionAgent(options: {
       if ((await options.isDraftSubmitted?.(input.jobId)) === true) {
         await options.missions.markComplete(mission.id);
       }
-      return undefined;
     },
   };
 
@@ -177,9 +174,8 @@ export function createDesktopStoreRevisionAgent(options: {
     },
 
     async recoverOrphans() {
-      const entries = await readAgentMissionRegistry(registryPath);
       let recovered = 0;
-      for (const job of (await options.revisions.list()).slice(0, 100)) {
+      for (const job of await options.revisions.list()) {
         if (job.missionId === undefined) continue;
         try {
           const mission = await options.missions.get(job.missionId);
@@ -232,26 +228,43 @@ export function createDesktopStoreRevisionAgent(options: {
           throw error;
         }
       }
-      for (const entry of entries.slice(0, 100)) {
-        try {
-          await options.missions.get(entry.missionId);
-        } catch (error) {
-          if (error instanceof MissionStoreError && error.code === "mission_not_found") {
-            await unregisterAgentMission(registryPath, entry.missionId);
-            recovered += 1;
-            continue;
-          }
-          continue;
-        }
-        // A valid registered Mission is durable user-visible history. Recovery only removes
-        // registry entries whose Mission no longer exists.
-      }
+      await retireLegacyMissionRegistry(legacyRegistryPath);
       return recovered;
     },
 
-    generator,
+    executor,
   };
   return agent;
+}
+
+async function retireLegacyMissionRegistry(path: string): Promise<void> {
+  try {
+    await access(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const backupDirectory = join(dirname(path), "migration-backups");
+  await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
+  const backupPath = join(backupDirectory, "agent-missions.v1.json");
+  try {
+    await access(backupPath);
+    await rm(path, { force: true });
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    await rename(path, backupPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return;
+    if (code === "EEXIST") {
+      await rm(path, { force: true });
+      return;
+    }
+    throw error;
+  }
 }
 
 async function waitForMission(missions: MissionStore, id: string): Promise<void> {
@@ -267,78 +280,4 @@ async function waitForMission(missions: MissionStore, id: string): Promise<void>
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
   }
   throw new Error("store_revision_agent_timeout");
-}
-
-const AgentMissionRegistrySchema = z
-  .object({
-    schemaVersion: z.literal("pragma.store-revision-agent-missions/v1"),
-    entries: z
-      .array(
-        z.object({
-          missionId: z.string().uuid(),
-          jobId: z.string().uuid(),
-          storeId: z.string().uuid(),
-          createdAt: z.string().datetime(),
-        }),
-      )
-      .max(1_000),
-  })
-  .strict();
-
-type AgentMissionEntry = z.infer<typeof AgentMissionRegistrySchema>["entries"][number];
-
-async function readAgentMissionRegistry(path: string): Promise<readonly AgentMissionEntry[]> {
-  try {
-    return AgentMissionRegistrySchema.parse(JSON.parse(await readFile(path, "utf8"))).entries;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
-}
-
-async function updateAgentMissionRegistry(
-  path: string,
-  update: (entries: readonly AgentMissionEntry[]) => readonly AgentMissionEntry[],
-): Promise<void> {
-  await withFileLock(`${path}.lock`, async () => {
-    const entries = update(await readAgentMissionRegistry(path));
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(
-        temporary,
-        `${JSON.stringify(
-          AgentMissionRegistrySchema.parse({
-            schemaVersion: "pragma.store-revision-agent-missions/v1",
-            entries,
-          }),
-          null,
-          2,
-        )}\n`,
-        { mode: 0o600 },
-      );
-      await rename(temporary, path);
-    } catch (error) {
-      await rm(temporary, { force: true }).catch(() => undefined);
-      throw error;
-    }
-  });
-}
-
-async function registerAgentMission(
-  path: string,
-  missionId: string,
-  jobId: string,
-  storeId: string,
-): Promise<void> {
-  await updateAgentMissionRegistry(path, (entries) => [
-    ...entries.filter((entry) => entry.missionId !== missionId).slice(-999),
-    { missionId, jobId, storeId, createdAt: new Date().toISOString() },
-  ]);
-}
-
-async function unregisterAgentMission(path: string, missionId: string): Promise<void> {
-  await updateAgentMissionRegistry(path, (entries) =>
-    entries.filter((entry) => entry.missionId !== missionId),
-  );
 }

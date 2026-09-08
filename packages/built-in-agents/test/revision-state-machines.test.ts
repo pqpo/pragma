@@ -34,6 +34,41 @@ describe("built-in revision state machines", () => {
     expect(completed.revision).toBe(5);
   });
 
+  it("updates Mission ownership atomically with Store Revision state", () => {
+    const attached = transitionContextStoreRevisionJob(
+      contextJob(),
+      { type: "mission_attached", missionId: "30000000-0000-4000-8000-000000000003" },
+      timestamp,
+    );
+    const detached = transitionContextStoreRevisionJob(
+      attached,
+      { type: "mission_detached", missionId: attached.missionId! },
+      timestamp,
+    );
+
+    expect(attached).toMatchObject({ state: "running", revision: 2 });
+    expect(detached).toMatchObject({ state: "editing", revision: 3 });
+    expect(detached.missionId).toBeUndefined();
+  });
+
+  it("can detach a missing Mission while preserving interrupted merge recovery", () => {
+    const attached = transitionContextStoreRevisionJob(
+      contextJob(),
+      { type: "mission_attached", missionId: "30000000-0000-4000-8000-000000000003" },
+      timestamp,
+    );
+    const submitted = transitionContextStoreRevisionJob(attached, { type: "submitted" }, timestamp);
+    const merging = transitionContextStoreRevisionJob(submitted, { type: "approved" }, timestamp);
+    const detached = transitionContextStoreRevisionJob(
+      merging,
+      { type: "mission_detached", missionId: merging.missionId! },
+      timestamp,
+    );
+
+    expect(detached.state).toBe("merging");
+    expect(detached.missionId).toBeUndefined();
+  });
+
   it("keeps Skill evaluation failure review-safe", () => {
     const running = transitionSkillRevisionJob(
       skillJob(),

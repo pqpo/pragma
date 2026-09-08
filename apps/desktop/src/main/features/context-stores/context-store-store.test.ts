@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createContextStoreStore } from "./context-store-store.ts";
+import { createContextStoreStore, type ContextStoreStore } from "./context-store-store.ts";
 
 const directories: string[] = [];
 
@@ -42,6 +42,45 @@ async function createStore(
       migrateLegacyDraftReferences,
     }),
   };
+}
+
+async function prepareLegacyV4Store(
+  store: ContextStoreStore,
+  root: string,
+  id: string,
+): Promise<void> {
+  const snapshot = await store.getSnapshot(id);
+  const manifest = JSON.parse(await readFile(join(root, "store.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  await writeFile(
+    join(root, "store.json"),
+    `${JSON.stringify({
+      ...manifest,
+      schemaVersion: "pragma.context-store/v4",
+      contentRevision: 1,
+    })}\n`,
+  );
+  const revisionRoot = join(root, "revisions", "00000001");
+  await mkdir(revisionRoot, { recursive: true });
+  await writeFile(
+    join(revisionRoot, "snapshot.json"),
+    `${JSON.stringify({ ...snapshot, schemaVersion: "pragma.context-store-snapshot/v1", revision: 1 })}\n`,
+  );
+  await writeFile(
+    join(revisionRoot, "record.json"),
+    `${JSON.stringify({
+      schemaVersion: "pragma.context-store-revision-record/v1",
+      storeId: id,
+      revision: 1,
+      snapshotHash: snapshot.snapshotHash,
+      parentRevision: null,
+      author: "migration",
+      summary: "Historical v4 fixture",
+      createdAt: snapshot.createdAt,
+    })}\n`,
+  );
 }
 
 describe("managed context store", () => {
@@ -191,7 +230,7 @@ describe("managed context store", () => {
     );
   });
 
-  it("upgrades a historical v3 fixture and moves its generated revision history to trash", async () => {
+  it("upgrades a historical v3 fixture without generating obsolete revision history", async () => {
     let trashedHistory: string | undefined;
     let preservedDraftBase: unknown;
     const { directory, storesPath, store } = await createStore(
@@ -222,14 +261,46 @@ describe("managed context store", () => {
       "pragma.context-store/v5",
     );
     await expect(stat(join(root, "revisions"))).rejects.toMatchObject({ code: "ENOENT" });
-    expect(trashedHistory).toBe(join(directory, "trash", "legacy-revisions"));
+    expect(trashedHistory).toBeUndefined();
     expect(preservedDraftBase).toMatchObject({
       storeId: id,
       files: [expect.objectContaining({ id: "Architecture Notes.md" })],
     });
-    await expect(stat(join(trashedHistory!, "00000001", "snapshot.json"))).resolves.toMatchObject({
+  });
+
+  it("replays an interrupted v3 migration chain from its retained snapshot", async () => {
+    const { storesPath, store } = await createStore(undefined, undefined, async () => {
+      throw new Error("draft migration interrupted");
+    });
+    const id = "00000000-0000-4000-8000-000000000031";
+    const root = join(storesPath, id);
+    await mkdir(storesPath, { recursive: true });
+    await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+
+    await expect(store.getSnapshot(id)).rejects.toThrow("draft migration interrupted");
+    await expect(readFile(join(root, "store.json"), "utf8")).resolves.toContain(
+      "pragma.context-store/v3",
+    );
+    await expect(stat(join(root, "v3-migration-chain.json"))).resolves.toMatchObject({
       isFile: expect.any(Function),
     });
+
+    let recoveredSnapshot: unknown;
+    const restarted = createContextStoreStore({
+      storesPath,
+      migrateLegacyDraftReferences: async (_storeId, readLegacySnapshot) => {
+        recoveredSnapshot = await readLegacySnapshot(1);
+      },
+    });
+    await expect(restarted.getSnapshot(id)).resolves.toMatchObject({ storeId: id });
+    expect(recoveredSnapshot).toMatchObject({
+      storeId: id,
+      files: [expect.objectContaining({ id: "Architecture Notes.md" })],
+    });
+    await expect(stat(join(root, "v3-migration-chain.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(stat(join(root, "revisions"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("replays an interrupted v4-to-v5 history cleanup", async () => {
@@ -240,6 +311,7 @@ describe("managed context store", () => {
     const root = join(storesPath, id);
     await mkdir(storesPath, { recursive: true });
     await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+    await prepareLegacyV4Store(store, root, id);
 
     await expect(store.getSnapshot(id)).rejects.toThrow("trash temporarily unavailable");
     await expect(readFile(join(root, "store.json"), "utf8")).resolves.toContain(
@@ -272,6 +344,7 @@ describe("managed context store", () => {
     const root = join(storesPath, id);
     await mkdir(storesPath, { recursive: true });
     await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+    await prepareLegacyV4Store(store, root, id);
     await expect(store.getSnapshot(id)).rejects.toThrow("trash temporarily unavailable");
 
     const outside = join(directory, "must-not-be-trashed");

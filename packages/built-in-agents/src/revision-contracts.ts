@@ -148,22 +148,23 @@ const ManagedMarkdownPathSchema = z
     );
   }, "The file name is not portable or exceeds 100 characters.");
 
-export const ContextStoreRevisionSnapshotSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.context-store-snapshot/v2"),
-    storeId: z.string().uuid(),
-    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    createdAt: z.string().datetime(),
-    directories: z.array(StoredDirectoryPathSchema).default([]),
-    files: z.array(
-      z.object({
-        id: StoredMarkdownPathSchema,
-        content: z.string().max(1_000_000),
-        metadata: ContextStoreContentMetadataSchema,
-      }),
-    ),
-  })
-  .superRefine((snapshot, context) => {
+export const ContextStoreSnapshotFileSchema = z.object({
+  id: StoredMarkdownPathSchema,
+  content: z.string().max(1_000_000),
+  metadata: ContextStoreContentMetadataSchema,
+});
+
+export const ContextStoreSnapshotBaseSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store-snapshot/v2"),
+  storeId: z.string().uuid(),
+  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  createdAt: z.string().datetime(),
+  directories: z.array(StoredDirectoryPathSchema).default([]),
+  files: z.array(ContextStoreSnapshotFileSchema),
+});
+
+export const ContextStoreSnapshotSchema = ContextStoreSnapshotBaseSchema.superRefine(
+  (snapshot, context) => {
     const fileIds = new Set<string>();
     for (const [index, file] of snapshot.files.entries()) {
       if (fileIds.has(file.id)) {
@@ -186,9 +187,10 @@ export const ContextStoreRevisionSnapshotSchema = z
       }
       directoryIds.add(id);
     }
-  });
+  },
+);
 
-export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreRevisionSnapshotSchema.shape.files
+export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotSchema.shape.files
   .min(4)
   .max(1_000)
   .superRefine((files, context) => {
@@ -317,7 +319,7 @@ const ContextStoreDraftBaseSchema = z
     name: z.string().trim().min(1).max(120),
     storeId: z.string().uuid(),
     baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    baseSnapshot: ContextStoreRevisionSnapshotSchema,
+    baseSnapshot: ContextStoreSnapshotSchema,
     mergeTargetSnapshotHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/u)
@@ -656,7 +658,7 @@ export const SkillRevisionJobSchema = z
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
 export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
 export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
-export type ContextStoreRevisionSnapshot = z.infer<typeof ContextStoreRevisionSnapshotSchema>;
+export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
 export type ContextStoreDraftOverlay = z.infer<typeof ContextStoreDraftOverlaySchema>;
 export type ContextStoreDraftState = z.infer<typeof ContextStoreDraftStateSchema>;

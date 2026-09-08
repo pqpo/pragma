@@ -1,10 +1,23 @@
 import {
-  ContextTriggerSchema,
   PRAGMA_TEXT_LIMITS,
   pragmaKnowledgeBaseEntryNameIssue,
   pragmaUnicodeLength,
 } from "@pragma/shared";
+import {
+  ContextStoreChangeOperationSchema,
+  ContextStoreChangeSetSchema,
+  ContextStoreContentMetadataSchema,
+  ContextStoreSnapshotBaseSchema as CanonicalContextStoreSnapshotBaseSchema,
+  ContextStoreSnapshotFileSchema as CanonicalContextStoreSnapshotFileSchema,
+  ContextStoreSnapshotSchema as CanonicalContextStoreSnapshotSchema,
+} from "@pragma/built-in-agents/contracts";
 import { z } from "zod";
+
+export {
+  ContextStoreChangeOperationSchema,
+  ContextStoreChangeSetSchema,
+  ContextStoreContentMetadataSchema,
+};
 
 export const ContextStoreIdSchema = z.string().uuid();
 
@@ -41,22 +54,6 @@ function isSafeRelativeEntryId(value: string, kind: "file" | "directory"): boole
     (kind === "directory" || normalized.toLowerCase().endsWith(".md"))
   );
 }
-
-// Historical v3 imports accepted every safe Markdown path supported by the host filesystem.
-// Revision snapshots must remain able to describe that data even when a name is not portable for
-// newly-created entries.
-const StoredDirectoryIdSchema = z
-  .string()
-  .min(1)
-  .refine((id) => isSafeRelativeEntryId(id, "directory"), {
-    message: "Directory path must stay inside the knowledge base.",
-  });
-const StoredMarkdownFileIdSchema = z
-  .string()
-  .min(1)
-  .refine((id) => isSafeRelativeEntryId(id, "file"), {
-    message: "File path must be a relative Markdown path inside the knowledge base.",
-  });
 
 function entryNameFromId(id: string, kind: "file" | "directory"): string {
   const segment = id.replaceAll("\\", "/").replace(/\/+$/u, "").split("/").at(-1) ?? "";
@@ -96,81 +93,9 @@ export const FileContextStoreSchema = ContextStoreBaseSchema.extend({
 
 export const ContextStoreSchema = FileContextStoreSchema;
 
-export const ContextStoreSnapshotFileSchema = z.object({
-  id: StoredMarkdownFileIdSchema,
-  content: z.string().max(1_000_000),
-  metadata: z.lazy(() => ContextStoreContentMetadataSchema),
-});
-
-export const ContextStoreSnapshotBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-snapshot/v2"),
-  storeId: ContextStoreIdSchema,
-  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  createdAt: z.string().datetime(),
-  directories: StoredDirectoryIdSchema.array().default([]),
-  files: ContextStoreSnapshotFileSchema.array(),
-});
-
-export const ContextStoreSnapshotSchema = ContextStoreSnapshotBaseSchema.superRefine(
-  (snapshot, context) => {
-    const fileIds = new Set<string>();
-    for (const [index, file] of snapshot.files.entries()) {
-      if (fileIds.has(file.id)) {
-        context.addIssue({
-          code: "custom",
-          path: ["files", index, "id"],
-          message: `Duplicate snapshot file id: ${file.id}`,
-        });
-      }
-      fileIds.add(file.id);
-    }
-    const directoryIds = new Set<string>();
-    for (const [index, id] of snapshot.directories.entries()) {
-      if (directoryIds.has(id)) {
-        context.addIssue({
-          code: "custom",
-          path: ["directories", index],
-          message: `Duplicate snapshot directory id: ${id}`,
-        });
-      }
-      directoryIds.add(id);
-    }
-  },
-);
-
-const ContextStoreUpsertOperationSchema = z.object({
-  operation: z.literal("upsert"),
-  id: ManagedFileIdSchema,
-  previousContent: z.string().max(1_000_000).optional(),
-  content: z.string().max(1_000_000),
-  metadata: z.lazy(() => ContextStoreContentMetadataSchema),
-});
-
-const ContextStoreDeleteOperationSchema = z.object({
-  operation: z.literal("delete"),
-  id: StoredMarkdownFileIdSchema,
-  previousContent: z.string().max(1_000_000).optional(),
-});
-
-const ContextStoreRenameOperationSchema = z.object({
-  operation: z.literal("rename"),
-  id: StoredMarkdownFileIdSchema,
-  nextId: ManagedFileIdSchema,
-});
-
-export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation", [
-  ContextStoreUpsertOperationSchema,
-  ContextStoreDeleteOperationSchema,
-  ContextStoreRenameOperationSchema,
-]);
-
-export const ContextStoreChangeSetSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-change-set/v2"),
-  storeId: ContextStoreIdSchema,
-  baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  summary: z.string().trim().min(1).max(2_000),
-  operations: ContextStoreChangeOperationSchema.array().min(1).max(1_000),
-});
+export const ContextStoreSnapshotFileSchema = CanonicalContextStoreSnapshotFileSchema;
+export const ContextStoreSnapshotBaseSchema = CanonicalContextStoreSnapshotBaseSchema;
+export const ContextStoreSnapshotSchema = CanonicalContextStoreSnapshotSchema;
 
 const CreateContextStoreBaseShape = {
   name: KnowledgeBaseNameSchema,
@@ -202,14 +127,6 @@ export const ContextStoreImportInspectionSchema = z.object({
 
 export const DeleteContextStoreSchema = z.object({
   storeId: ContextStoreIdSchema,
-});
-
-export const ContextStoreContentMetadataSchema = z.object({
-  description: z.string().max(2_000).optional(),
-  trigger: ContextTriggerSchema,
-  trustLevel: z.enum(["system", "workspace", "user", "external"]).optional(),
-  sensitivity: z.enum(["public", "internal", "confidential", "restricted"]).optional(),
-  priority: z.enum(["critical", "high", "normal", "low"]),
 });
 
 export const ContextStoreContentSummarySchema = z.object({

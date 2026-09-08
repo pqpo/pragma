@@ -3,7 +3,7 @@ import {
   ContextStoreRevisionJobSchema,
   type ContextStoreDraftOverlay,
   type ContextStoreRevisionJob,
-  type ContextStoreRevisionSnapshot,
+  type ContextStoreSnapshot,
 } from "@pragma/built-in-agents/contracts";
 
 import type { ContextStoreRevisionJobV1 } from "../schemas/v1.ts";
@@ -27,7 +27,7 @@ export function migrateContextStoreRevisionJobV1ToV2(
 
 export function overlayFromV1Job(
   source: ContextStoreRevisionJobV1,
-  base?: ContextStoreRevisionSnapshot,
+  base?: ContextStoreSnapshot,
 ): ContextStoreDraftOverlay {
   const files = new Map<string, ContextStoreDraftOverlay["files"][number]>();
   const deletedFiles = new Set<string>();
