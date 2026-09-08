@@ -5,25 +5,14 @@ import { z } from "zod";
 import { CapabilityIdSchema } from "./capabilities.ts";
 
 export {
-  ListSkillRevisionJobsSchema,
   SkillEvaluationProfileSchema,
   SkillEvaluationSnapshotSchema,
-  SkillFileChangeOperationSchema,
-  SkillRevisionChangeSetSchema,
-  SkillRevisionJobRefSchema,
-  SkillRevisionJobSchema,
-  SkillRevisionJobStateSchema,
-  SkillRevisionRequestSchema,
   UpdateSkillEvaluationProfileSchema,
 } from "@pragma/built-in-agents/contracts";
 
 export type {
-  ListSkillRevisionJobs,
   SkillEvaluationProfile,
   SkillEvaluationSnapshot,
-  SkillRevisionChangeSet,
-  SkillRevisionJob,
-  SkillRevisionRequest,
   UpdateSkillEvaluationProfile,
 } from "@pragma/built-in-agents/contracts";
 

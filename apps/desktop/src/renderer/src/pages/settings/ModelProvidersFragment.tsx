@@ -123,6 +123,7 @@ export function ProviderEditor(props: {
       name: preset.name,
       protocol: preset.protocol,
       baseUrl: preset.baseUrl,
+      apiKey: "",
       requiresApiKey: preset.requiresApiKey,
       compatibilityProfileId: "",
       models: [],
@@ -240,11 +241,21 @@ export function ProviderEditor(props: {
                   : ""
             }
             key={wizardStep.id}
+            aria-current={index === currentStepIndex ? "step" : undefined}
           >
             <span className="provider-wizard-step-index">
               {index < currentStepIndex ? <Check size={13} weight="bold" /> : index + 1}
             </span>
-            <span className="provider-wizard-step-label">{wizardStep.label}</span>
+            <span className="provider-wizard-step-copy">
+              <span className="provider-wizard-step-label">{wizardStep.label}</span>
+              <small>
+                {index === currentStepIndex
+                  ? t("models.currentStep", { ns: "settings" })
+                  : index < currentStepIndex
+                    ? t("models.completedStep", { ns: "settings" })
+                    : t("models.upcomingStep", { ns: "settings" })}
+              </small>
+            </span>
           </li>
         ))}
       </ol>
@@ -395,18 +406,29 @@ export function ProviderEditor(props: {
 
       {step === "models" ? (
         <section className="provider-wizard-panel">
-          <div className="wizard-heading">
+          <div className="wizard-heading wizard-heading-with-summary">
             <h3>{t("models.chooseModels", { ns: "settings" })}</h3>
-            <p>{discoveryMessage ?? t("models.chooseModelsDescription", { ns: "settings" })}</p>
+            <div>
+              <p>{discoveryMessage ?? t("models.chooseModelsDescription", { ns: "settings" })}</p>
+              <span className="model-selection-summary">
+                <strong>{draft.models.length}</strong>
+                {t("models.selectedCountLabel", { ns: "settings" })}
+              </span>
+            </div>
           </div>
-          <label className="model-search-shell">
-            <MagnifyingGlass size={17} aria-hidden="true" />
-            <input
-              value={modelQuery}
-              onChange={(event) => setModelQuery(event.target.value)}
-              placeholder={t("models.searchModels", { ns: "settings" })}
-            />
-          </label>
+          <div className="model-discovery-toolbar">
+            <label className="model-search-shell">
+              <MagnifyingGlass size={17} aria-hidden="true" />
+              <input
+                value={modelQuery}
+                onChange={(event) => setModelQuery(event.target.value)}
+                placeholder={t("models.searchModels", { ns: "settings" })}
+              />
+            </label>
+            <span className="model-discovery-count">
+              {filteredModels.length} {t("models.availableModels", { ns: "settings" })}
+            </span>
+          </div>
           {filteredModels.length > 0 ? (
             <div className="model-picker-list" role="list">
               {filteredModels.map((model) => {
@@ -433,8 +455,12 @@ export function ProviderEditor(props: {
                       <small>{model.id}</small>
                     </span>
                     <span className="capability-tags">
-                      {model.input.includes("image") ? <em>Vision</em> : null}
-                      {model.reasoning ? <em>Reasoning</em> : null}
+                      {model.input.includes("image") ? (
+                        <em>{t("models.imageInput", { ns: "settings" })}</em>
+                      ) : null}
+                      {model.reasoning ? (
+                        <em>{t("models.reasoning", { ns: "settings" })}</em>
+                      ) : null}
                     </span>
                   </button>
                 );
@@ -472,28 +498,38 @@ export function ProviderEditor(props: {
           </div>
           {draft.models.length > 0 ? (
             <div className="selected-model-config">
-              <h4>{t("models.selectedModels", { ns: "settings", count: draft.models.length })}</h4>
-              {draft.models.map((model) => (
-                <ModelCapabilityEditor
-                  key={model.id}
-                  model={model}
-                  compatibilityProfiles={compatibleProfiles}
-                  onChange={(next) =>
-                    setDraft({
-                      ...draft,
-                      models: draft.models.map((candidate) =>
-                        candidate.id === next.id ? next : candidate,
-                      ),
-                    })
-                  }
-                  onRemove={() =>
-                    setDraft({
-                      ...draft,
-                      models: draft.models.filter((candidate) => candidate.id !== model.id),
-                    })
-                  }
-                />
-              ))}
+              <div className="selected-model-config-heading">
+                <div>
+                  <h4>
+                    {t("models.selectedModels", { ns: "settings", count: draft.models.length })}
+                  </h4>
+                  <p>{t("models.selectedModelsDescription", { ns: "settings" })}</p>
+                </div>
+                <span className="selected-model-config-count">{draft.models.length}</span>
+              </div>
+              <div className="selected-model-list">
+                {draft.models.map((model) => (
+                  <ModelCapabilityEditor
+                    key={model.id}
+                    model={model}
+                    compatibilityProfiles={compatibleProfiles}
+                    onChange={(next) =>
+                      setDraft({
+                        ...draft,
+                        models: draft.models.map((candidate) =>
+                          candidate.id === next.id ? next : candidate,
+                        ),
+                      })
+                    }
+                    onRemove={() =>
+                      setDraft({
+                        ...draft,
+                        models: draft.models.filter((candidate) => candidate.id !== model.id),
+                      })
+                    }
+                  />
+                ))}
+              </div>
             </div>
           ) : null}
         </section>
@@ -581,7 +617,17 @@ export function ModelProviderEditorPage(props: {
             {t("models.backToProviders")}
           </button>
           <header className="panel-heading provider-editor-heading">
-            <div>
+            <span className="provider-editor-title-icon" aria-hidden="true">
+              {props.draft.presetId ? (
+                <ModelProviderLogo presetId={props.draft.presetId} />
+              ) : (
+                <Robot size={23} weight="duotone" />
+              )}
+            </span>
+            <div className="provider-editor-heading-copy">
+              <span className="provider-editor-eyebrow">
+                {isEditing ? t("models.editProviderLabel") : t("models.addProviderLabel")}
+              </span>
               <h2 id="provider-editor-heading">
                 {isEditing
                   ? t("models.editProviderTitle", { name: props.draft.name })
@@ -639,78 +685,128 @@ function ModelCapabilityEditor(props: {
     });
   };
   return (
-    <div className="selected-model-row">
-      <div className="model-identity">
-        <strong>{props.model.name}</strong>
-        <small>{props.model.id}</small>
-      </div>
-      <div className="model-capability-controls">
-        <label className="model-token-limit-field">
-          <span>{t("models.contextWindow")}</span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={props.model.contextWindow}
-            onChange={(event) => {
-              const value = Number.parseInt(event.target.value, 10);
-              if (!Number.isSafeInteger(value) || value <= 0) return;
-              props.onChange({
-                ...props.model,
-                contextWindow: value,
-                contextWindowSource: "manual",
-              });
-            }}
-          />
-          {props.model.contextWindowSource === "default" ? (
-            <small>{t("models.conservativeDefault")}</small>
+    <article className="selected-model-row selected-model-card">
+      <header className="selected-model-card-header">
+        <div className="model-identity">
+          <span className="model-identity-mark" aria-hidden="true">
+            <Robot size={18} weight="duotone" />
+          </span>
+          <div className="model-identity-copy">
+            <strong>{props.model.name}</strong>
+            <small>{props.model.id}</small>
+          </div>
+        </div>
+        <div className="model-support-tags" aria-label={t("models.capabilities")}>
+          {props.model.input.includes("image") ? (
+            <span className="model-support-tag is-vision">{t("models.imageInput")}</span>
           ) : null}
-        </label>
-        <label className="model-token-limit-field">
-          <span>{t("models.maxOutputTokens")}</span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={props.model.maxTokens}
-            onChange={(event) => {
-              const value = Number.parseInt(event.target.value, 10);
-              if (!Number.isSafeInteger(value) || value <= 0) return;
-              props.onChange({ ...props.model, maxTokens: value, maxTokensSource: "manual" });
-            }}
-          />
-          {props.model.maxTokensSource === "default" ? (
-            <small>{t("models.conservativeDefault")}</small>
+          {props.model.reasoning ? (
+            <span className="model-support-tag is-reasoning">{t("models.reasoning")}</span>
           ) : null}
-        </label>
-        <label className="compact-check">
-          <input
-            type="checkbox"
-            checked={props.model.input.includes("image")}
-            onChange={(event) => setImageInput(event.target.checked)}
-          />
-          {t("models.imageInput")}
-        </label>
-        <label className="compact-check">
-          <input
-            type="checkbox"
-            checked={props.model.reasoning}
-            onChange={(event) => setReasoning(event.target.checked)}
-          />
-          {t("models.reasoning")}
-        </label>
-        {props.model.reasoning ? (
-          <>
-            <label className="compact-check">
+        </div>
+        <button
+          className="model-remove-button"
+          type="button"
+          onClick={props.onRemove}
+          aria-label={t("models.removeModel", { model: props.model.id })}
+        >
+          <X size={16} weight="bold" />
+        </button>
+      </header>
+
+      <div className="model-card-body">
+        <div className="model-token-grid">
+          <label className="model-token-limit-field">
+            <span>{t("models.contextWindow")}</span>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={props.model.contextWindow}
+              onChange={(event) => {
+                const value = Number.parseInt(event.target.value, 10);
+                if (!Number.isSafeInteger(value) || value <= 0) return;
+                props.onChange({
+                  ...props.model,
+                  contextWindow: value,
+                  contextWindowSource: "manual",
+                });
+              }}
+            />
+            {props.model.contextWindowSource === "default" ? (
+              <small>{t("models.conservativeDefault")}</small>
+            ) : null}
+          </label>
+          <label className="model-token-limit-field">
+            <span>{t("models.maxOutputTokens")}</span>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={props.model.maxTokens}
+              onChange={(event) => {
+                const value = Number.parseInt(event.target.value, 10);
+                if (!Number.isSafeInteger(value) || value <= 0) return;
+                props.onChange({ ...props.model, maxTokens: value, maxTokensSource: "manual" });
+              }}
+            />
+            {props.model.maxTokensSource === "default" ? (
+              <small>{t("models.conservativeDefault")}</small>
+            ) : null}
+          </label>
+        </div>
+
+        <fieldset className="model-capability-group">
+          <legend>{t("models.capabilities")}</legend>
+          <div className="capability-toggle-list">
+            <label className="capability-toggle">
               <input
                 type="checkbox"
-                checked={props.model.thinking !== undefined}
-                onChange={(event) => setAdjustableThinking(event.target.checked)}
+                checked={props.model.input.includes("image")}
+                onChange={(event) => setImageInput(event.target.checked)}
               />
-              {t("models.adjustableThinking")}
+              <span className="capability-toggle-indicator" aria-hidden="true" />
+              <span className="capability-toggle-copy">
+                <strong>{t("models.imageInput")}</strong>
+                <small>{t("models.imageInputDescription")}</small>
+              </span>
             </label>
+            <label className="capability-toggle">
+              <input
+                type="checkbox"
+                checked={props.model.reasoning}
+                onChange={(event) => setReasoning(event.target.checked)}
+              />
+              <span className="capability-toggle-indicator" aria-hidden="true" />
+              <span className="capability-toggle-copy">
+                <strong>{t("models.reasoning")}</strong>
+                <small>{t("models.reasoningDescription")}</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        {props.model.reasoning ? (
+          <div className="thinking-settings">
+            <div className="thinking-settings-header">
+              <div>
+                <strong>{t("models.thinkingLevels")}</strong>
+                <small>{t("models.thinkingLevelsDescription")}</small>
+              </div>
+              <label className="capability-toggle capability-toggle-compact">
+                <input
+                  type="checkbox"
+                  checked={props.model.thinking !== undefined}
+                  onChange={(event) => setAdjustableThinking(event.target.checked)}
+                />
+                <span className="capability-toggle-indicator" aria-hidden="true" />
+                <span className="capability-toggle-copy">
+                  <strong>{t("models.adjustableThinking")}</strong>
+                </span>
+              </label>
+            </div>
             {props.model.thinking === undefined ? (
-              <small className="fixed-thinking-note">{t("models.fixedThinking")}</small>
+              <p className="fixed-thinking-note">{t("models.fixedThinking")}</p>
             ) : (
               <div className="thinking-controls">
                 <div className="thinking-level-options" aria-label={t("models.thinkingLevels")}>
@@ -767,8 +863,9 @@ function ModelCapabilityEditor(props: {
                 </div>
               </div>
             )}
-          </>
+          </div>
         ) : null}
+
         {props.compatibilityProfiles.length > 0 ? (
           <div className="model-profile-field">
             <span>{t("models.modelCompatibilityOverride")}</span>
@@ -795,15 +892,7 @@ function ModelCapabilityEditor(props: {
           </div>
         ) : null}
       </div>
-      <button
-        className="model-remove-button"
-        type="button"
-        onClick={props.onRemove}
-        aria-label={t("models.removeModel", { model: props.model.id })}
-      >
-        <X size={15} weight="bold" />
-      </button>
-    </div>
+    </article>
   );
 }
 

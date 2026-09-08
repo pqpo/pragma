@@ -105,6 +105,31 @@ describe("CapabilityDetailFragment", () => {
     expect(html).not.toContain("Refresh tools");
   });
 
+  it("renders Skill content without the removed revision panel", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDetailFragment
+        capability={{
+          ...capability,
+          manifest: { ...capability.manifest, kind: "skill", name: "Review Skill" },
+          definition: {
+            kind: "skill",
+            name: "Review Skill",
+            description: "Review code.",
+            entryPath: "SKILL.md",
+            contentHash: "a".repeat(64),
+          },
+        }}
+        onBack={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("SKILL.md");
+    expect(html).not.toContain("Skill revisions");
+    expect(html).not.toContain("Prepare revision");
+    expect(html).not.toContain("skill-revisions-heading");
+  });
+
   it.each([
     {
       name: "MCP",

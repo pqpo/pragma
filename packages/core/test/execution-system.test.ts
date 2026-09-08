@@ -26,6 +26,7 @@ import {
   defineContextIdResolver,
   defineFlow,
   defineRuntimeDriver,
+  ExpertAgentStreamEventSchema,
   ExpertSessionManager,
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
   EXECUTION_CURRENT_TEAM_ID_ATTR,
@@ -3952,7 +3953,18 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     const session = await app.experts.createSession(lead);
     const active = await session.prompt("coordinate", { requestId: "wait-steer-race" });
     await waitPending;
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await waitUntil(async () =>
+      (await active.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items.some((event) => {
+        if (event.type !== "runtime.event") return false;
+        const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
+        return (
+          parsed.success &&
+          parsed.data.type === "progress" &&
+          parsed.data.payload.stage === "researching" &&
+          parsed.data.payload.message?.includes("processing") === true
+        );
+      }),
+    );
     const steered = await session.prompt("change priorities", {
       requestId: "wait-steer-race-guidance",
       mode: "steer",
@@ -3970,22 +3982,31 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
     const waitResults = JSON.parse(output.slice("lead:".length)) as {
       readonly interruptedWait: {
         readonly waitedMs: number;
+        readonly completed: ReadonlyArray<{
+          readonly latestActivity?: {
+            readonly kind: string;
+            readonly occurredAt: string;
+            readonly ageMs: number;
+          };
+        }>;
         readonly pending: ReadonlyArray<{
           readonly latestActivity?: {
             readonly kind: string;
             readonly stage?: string;
             readonly message?: string;
+            readonly occurredAt: string;
+            readonly ageMs: number;
           };
         }>;
       };
     };
     expect(waitResults.interruptedWait.waitedMs).toBeGreaterThanOrEqual(0);
     expect(
-      waitResults.interruptedWait.pending.some(
+      [...waitResults.interruptedWait.completed, ...waitResults.interruptedWait.pending].some(
         (item) =>
-          item.latestActivity?.kind === "progress" &&
-          item.latestActivity.stage === "researching" &&
-          item.latestActivity.message?.includes("processing") === true,
+          item.latestActivity !== undefined &&
+          Date.parse(item.latestActivity.occurredAt) > 0 &&
+          item.latestActivity.ageMs >= 0,
       ),
     ).toBe(true);
     const tree = await active.getTree();

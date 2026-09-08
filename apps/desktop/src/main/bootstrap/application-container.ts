@@ -770,7 +770,6 @@ export async function createDesktopApplicationContainer(
   skillPromotionRef.current = skillPromotion;
   installSkillLearningHandlers({
     promotion: skillPromotion,
-    revisions: skillRevisions,
     evaluationProfiles: skillEvaluationProfiles,
   });
   installContextStoreHandlers(contextStores, options.getWindow, storeRevisions);

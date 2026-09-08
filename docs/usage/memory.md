@@ -53,8 +53,9 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
   修订任务，多匹配时在 Memory 页面暂停并要求用户选择；
 - 新 Skill Candidate 必须通过至少 3 次来源回放、1 次边界用例、静态检查与脚本测试，随后在 Memory 页面
   人工批准才会创建普通 Skill Capability 并绑定 Expert；
-- 已有 Skill 由共用 Revision Agent 产生文件 diff，在独立 Evaluation Agent 评测通过后，仍需用户在
-  “工作室 → 能力 → Skill 详情 → 技能修订”批准才发布新 revision；Memory 不直接改写 Skill；
+- 已有 Skill 的 Memory learning 由共用 Revision Agent 产生文件 diff，并在独立 Evaluation Agent 中评测；
+  评测通过后由修订服务经 Capability revision coordinator 自动激活，技能详情页不再提供手动提交或审批修订入口；
+  Memory 不直接改写 Skill；
 - 生成脚本仅允许 Node 22 ESM，并在无网络、无子进程、无 Worker、无 native addon、只能访问临时技能包
   目录的 Permission Model 子进程中执行 `node:test` 覆盖。
 

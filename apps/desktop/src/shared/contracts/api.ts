@@ -225,8 +225,6 @@ import type {
   MemorySkillCandidateRef,
   ResolveMemorySkillTarget,
   SkillEvaluationProfile,
-  SkillRevisionJob,
-  SkillRevisionRequest,
   UpdateMemorySkillCandidate,
   UpdateSkillEvaluationProfile,
 } from "./skill-learning.ts";
@@ -298,27 +296,6 @@ export interface PragmaDesktopAPI {
   rejectMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   approveMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   retryMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
-  submitSkillRevision: (input: SkillRevisionRequest) => Promise<SkillRevisionJob>;
-  listSkillRevisions: (input?: {
-    readonly capabilityId?: string;
-    readonly state?: SkillRevisionJob["state"];
-  }) => Promise<SkillRevisionJob[]>;
-  approveSkillRevision: (input: {
-    readonly jobId: string;
-    readonly expectedRevision: number;
-  }) => Promise<SkillRevisionJob>;
-  rejectSkillRevision: (input: {
-    readonly jobId: string;
-    readonly expectedRevision: number;
-  }) => Promise<SkillRevisionJob>;
-  retrySkillRevision: (input: {
-    readonly jobId: string;
-    readonly expectedRevision: number;
-  }) => Promise<SkillRevisionJob>;
-  deleteSkillRevision: (input: {
-    readonly jobId: string;
-    readonly expectedRevision: number;
-  }) => Promise<void>;
   getSkillEvaluationProfile: () => Promise<SkillEvaluationProfile>;
   updateSkillEvaluationProfile: (
     input: UpdateSkillEvaluationProfile,

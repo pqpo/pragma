@@ -4,18 +4,17 @@ import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
 import { applySkillChangeSet, transitionSkillRevisionJob } from "@pragma/built-in-agents";
-import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
-
 import {
   SkillRevisionChangeSetSchema,
   SkillRevisionJobSchema,
   SkillRevisionRequestSchema,
-  type ListSkillRevisionJobs,
-  type SkillEvaluationSnapshot,
   type SkillRevisionChangeSet,
+  type SkillEvaluationSnapshot,
   type SkillRevisionJob,
   type SkillRevisionRequest,
-} from "../../../shared/contracts/index.ts";
+} from "@pragma/built-in-agents/contracts";
+import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+
 import type { CapabilityStore } from "./capability-store.ts";
 
 export interface SkillRevisionGenerator {
@@ -37,14 +36,16 @@ export interface SkillRevisionEvaluator {
 
 export interface SkillRevisionService {
   submit(request: SkillRevisionRequest): Promise<SkillRevisionJob>;
-  list(filter?: ListSkillRevisionJobs): Promise<readonly SkillRevisionJob[]>;
+  list(filter?: {
+    readonly capabilityId?: string;
+    readonly state?: SkillRevisionJob["state"];
+  }): Promise<readonly SkillRevisionJob[]>;
   approve(jobId: string, expectedRevision: number): Promise<SkillRevisionJob>;
   reject(jobId: string, expectedRevision: number): Promise<SkillRevisionJob>;
   retry(jobId: string, expectedRevision: number): Promise<SkillRevisionJob>;
   delete(jobId: string, expectedRevision: number): Promise<void>;
   processPending(): Promise<void>;
   scheduleProcessing(): void;
-  hasActiveJobs(capabilityId: string): Promise<boolean>;
 }
 
 export function createSkillRevisionService(options: {
@@ -140,9 +141,12 @@ export function createSkillRevisionService(options: {
         package: nextPackage,
         request: running.request,
       });
-      await mutate(running.id, running.revision, (job) =>
+      const evaluated = await mutate(running.id, running.revision, (job) =>
         transitionSkillRevisionJob(job, { type: "evaluation_succeeded", evaluation }),
       );
+      if (evaluated.state === "pending_review" && evaluated.request.source === "memory-learning") {
+        await service.approve(evaluated.id, evaluated.revision);
+      }
     } catch (error) {
       const current = await readJob(running.id);
       if (!["running", "evaluating"].includes(current.state)) return;
@@ -153,6 +157,65 @@ export function createSkillRevisionService(options: {
           message: errorMessage(error),
         }),
       );
+    }
+  };
+
+  const applyApprovedRevision = async (applying: SkillRevisionJob): Promise<SkillRevisionJob> => {
+    const changeSet = applying.changeSet!;
+    const current = await readSkillPackage(options.capabilities, applying.request.capabilityId);
+    const base = await readSkillPackage(
+      options.capabilities,
+      applying.request.capabilityId,
+      changeSet.baseRevision,
+    );
+    const nextPackage = applySkillChangeSet(base.package, changeSet);
+    if (
+      current.revision === changeSet.baseRevision + 1 &&
+      sameSkillPackage(current.package, nextPackage)
+    ) {
+      return await mutate(applying.id, applying.revision, (job) =>
+        transitionSkillRevisionJob(job, { type: "apply_succeeded" }),
+      );
+    }
+    if (
+      current.revision !== changeSet.baseRevision ||
+      current.contentHash !== changeSet.baseContentHash
+    ) {
+      return await withFileLock(lockPath, async () => {
+        const currentJob = await readJob(applying.id);
+        if (currentJob.revision !== applying.revision || currentJob.state !== "applying") {
+          throw Object.assign(new Error("skill_revision_conflict"), {
+            code: "revision_conflict",
+          });
+        }
+        const replacement = createJob(applying.request);
+        await writeJob(replacement);
+        const superseded = transitionSkillRevisionJob(currentJob, {
+          type: "superseded",
+          replacementId: replacement.id,
+        });
+        await writeJob(superseded);
+        service.scheduleProcessing();
+        return superseded;
+      });
+    }
+    try {
+      await options.capabilities.updateGeneratedSkill({
+        id: applying.request.capabilityId,
+        package: nextPackage,
+      });
+      return await mutate(applying.id, applying.revision, (job) =>
+        transitionSkillRevisionJob(job, { type: "apply_succeeded" }),
+      );
+    } catch (error) {
+      await mutate(applying.id, applying.revision, (job) =>
+        transitionSkillRevisionJob(job, {
+          type: "apply_failed",
+          code: "skill_revision_apply_failed",
+          message: errorMessage(error),
+        }),
+      );
+      throw error;
     }
   };
 
@@ -189,48 +252,7 @@ export function createSkillRevisionService(options: {
       const applying = await mutate(jobId, expectedRevision, (job) =>
         transitionSkillRevisionJob(job, { type: "approved" }),
       );
-      const changeSet = applying.changeSet!;
-      const current = await readSkillPackage(options.capabilities, applying.request.capabilityId);
-      if (
-        current.revision !== changeSet.baseRevision ||
-        current.contentHash !== changeSet.baseContentHash
-      ) {
-        return await withFileLock(lockPath, async () => {
-          const currentJob = await readJob(applying.id);
-          if (currentJob.revision !== applying.revision || currentJob.state !== "applying") {
-            throw Object.assign(new Error("skill_revision_conflict"), {
-              code: "revision_conflict",
-            });
-          }
-          const replacement = createJob(applying.request);
-          await writeJob(replacement);
-          const superseded = transitionSkillRevisionJob(currentJob, {
-            type: "superseded",
-            replacementId: replacement.id,
-          });
-          await writeJob(superseded);
-          service.scheduleProcessing();
-          return superseded;
-        });
-      }
-      try {
-        await options.capabilities.updateGeneratedSkill({
-          id: applying.request.capabilityId,
-          package: applySkillChangeSet(current.package, changeSet),
-        });
-        return await mutate(applying.id, applying.revision, (job) =>
-          transitionSkillRevisionJob(job, { type: "apply_succeeded" }),
-        );
-      } catch (error) {
-        await mutate(applying.id, applying.revision, (job) =>
-          transitionSkillRevisionJob(job, {
-            type: "apply_failed",
-            code: "skill_revision_apply_failed",
-            message: errorMessage(error),
-          }),
-        );
-        throw error;
-      }
+      return await applyApprovedRevision(applying);
     },
     async reject(id, revision) {
       return await mutate(id, revision, (job) =>
@@ -261,10 +283,17 @@ export function createSkillRevisionService(options: {
           processingRequested = false;
           for (;;) {
             const next = (await readAll())
-              .filter((job) => job.state === "pending")
+              .filter(
+                (job) =>
+                  job.state === "pending" ||
+                  job.state === "applying" ||
+                  (job.state === "pending_review" && job.request.source === "memory-learning"),
+              )
               .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
             if (next === undefined) break;
-            await processJob(next);
+            if (next.state === "pending") await processJob(next);
+            else if (next.state === "pending_review") await service.approve(next.id, next.revision);
+            else await applyApprovedRevision(next);
           }
         } while (processingRequested);
       })();
@@ -282,20 +311,6 @@ export function createSkillRevisionService(options: {
           .catch((error) => options.warn?.("Skill revision processing failed.", error));
       });
     },
-    async hasActiveJobs(capabilityId) {
-      return (await readAll()).some(
-        (job) =>
-          job.request.capabilityId === capabilityId &&
-          [
-            "pending",
-            "running",
-            "evaluating",
-            "pending_review",
-            "applying",
-            "needs_attention",
-          ].includes(job.state),
-      );
-    },
   };
   return service;
 }
@@ -303,14 +318,15 @@ export function createSkillRevisionService(options: {
 async function readSkillPackage(
   capabilities: CapabilityStore,
   id: string,
+  requestedRevision?: number,
 ): Promise<{
   readonly package: SkillPackage;
   readonly revision: number;
   readonly contentHash: string;
 }> {
-  const capability = await capabilities.get(id);
+  const capability = await capabilities.get(id, requestedRevision);
   if (capability.definition.kind !== "skill") throw new Error("skill_revision_target_invalid");
-  const revision = capability.manifest.latestRevision;
+  const revision = requestedRevision ?? capability.manifest.latestRevision;
   const entries = await capabilities.listSkillFiles({ id, revision });
   const files = [];
   for (const entry of entries) {
@@ -327,6 +343,15 @@ async function readSkillPackage(
     revision,
     contentHash: capability.definition.contentHash,
   };
+}
+
+function sameSkillPackage(left: SkillPackage, right: SkillPackage): boolean {
+  const canonicalize = (skill: SkillPackage) => ({
+    name: skill.name,
+    description: skill.description,
+    files: skill.files.toSorted((a, b) => a.path.localeCompare(b.path)),
+  });
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 }
 function errorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "skill_revision_failed";

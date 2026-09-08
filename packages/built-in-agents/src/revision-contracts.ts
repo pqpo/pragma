@@ -631,17 +631,6 @@ export const SkillRevisionJobSchema = z
   })
   .strict();
 
-export const SkillRevisionJobRefSchema = z
-  .object({ jobId: z.string().uuid(), expectedRevision: z.number().int().positive() })
-  .strict();
-
-export const ListSkillRevisionJobsSchema = z
-  .object({
-    capabilityId: z.string().uuid().optional(),
-    state: SkillRevisionJobStateSchema.optional(),
-  })
-  .strict();
-
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
 export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
 export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
@@ -670,7 +659,6 @@ export type UpdateContextStoreRevisionProfile = z.infer<
 export type SkillRevisionChangeSet = z.infer<typeof SkillRevisionChangeSetSchema>;
 export type SkillRevisionRequest = z.infer<typeof SkillRevisionRequestSchema>;
 export type SkillRevisionJob = z.infer<typeof SkillRevisionJobSchema>;
-export type ListSkillRevisionJobs = z.infer<typeof ListSkillRevisionJobsSchema>;
 export type SkillEvaluationSnapshot = z.infer<typeof SkillEvaluationSnapshotSchema>;
 export type SkillEvaluationProfile = z.infer<typeof SkillEvaluationProfileSchema>;
 export type UpdateSkillEvaluationProfile = z.infer<typeof UpdateSkillEvaluationProfileSchema>;

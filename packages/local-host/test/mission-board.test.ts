@@ -46,7 +46,7 @@ describe("Mission Board", () => {
       id: MISSION_BOARD_GUIDE_ID,
     });
     expect(guide.ok && guide.value.metadata.trigger).toBe("always_on");
-    expect(MISSION_BOARD_GUIDE).toContain("promotion requires explicit human approval");
+    expect(MISSION_BOARD_GUIDE).toContain("Promotion still requires explicit human approval.");
     const guideEdit = await system.edit({
       namespace: MISSION_BOARD_SHARED_NAMESPACE,
       id: MISSION_BOARD_GUIDE_ID,
