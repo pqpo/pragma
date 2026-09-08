@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { BundleInstallationV4Schema } from "./v4.ts";
 
-export const BundleInstallationV5Schema = BundleInstallationV4Schema.extend({
+export const BundleInstallationV5BaseSchema = BundleInstallationV4Schema.extend({
   schemaVersion: z.literal("pragma.bundle-installation/v5"),
   bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1", "pragma.bundle/v2"]),
   rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
@@ -30,21 +30,25 @@ export const BundleInstallationV5Schema = BundleInstallationV4Schema.extend({
       }
     })
     .optional(),
-}).superRefine((installation, context) => {
-  const update = installation.knowledgeBaseUpdate;
-  if (update === undefined) return;
-  if (
-    installation.rootKind !== "ContextStore" ||
-    update.sourceRef !== installation.sourceRootRef ||
-    update.targetRef !== installation.rootRef
-  ) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["knowledgeBaseUpdate"],
-      message: "Knowledge-base update journal must describe the installation root.",
-    });
-  }
 });
+
+export const BundleInstallationV5Schema = BundleInstallationV5BaseSchema.superRefine(
+  (installation, context) => {
+    const update = installation.knowledgeBaseUpdate;
+    if (update === undefined) return;
+    if (
+      installation.rootKind !== "ContextStore" ||
+      update.sourceRef !== installation.sourceRootRef ||
+      update.targetRef !== installation.rootRef
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBaseUpdate"],
+        message: "Knowledge-base update journal must describe the installation root.",
+      });
+    }
+  },
+);
 
 export const BundleInstallationsCatalogV5Schema = z.object({
   schemaVersion: z.literal("pragma.bundle-installations/v5"),

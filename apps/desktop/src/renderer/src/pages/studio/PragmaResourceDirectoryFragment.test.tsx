@@ -118,14 +118,13 @@ describe("expert team editor", () => {
       diagnostics: [],
     } satisfies PragmaProjectSnapshot;
     const contextStore: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",
       type: "file",
       status: "ready",
       source: { origin: "created" },
-      contentRevision: 1,
       snapshotHash: "0".repeat(64),
       createdAt: "2026-08-10T00:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",
@@ -172,14 +171,13 @@ describe("expert team editor", () => {
       },
     });
     const contextStore: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",
       type: "file",
       status: "ready",
       source: { origin: "created" },
-      contentRevision: 1,
       snapshotHash: "0".repeat(64),
       createdAt: "2026-08-10T00:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",
@@ -607,14 +605,13 @@ const complete = true;
       },
     });
     const contextStore: ContextStore = {
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
       id: "00000000-0000-4000-8000-000000000001",
       name: "Quality handbook",
       description: "Shared review guidance.",
       type: "file",
       status: "ready",
       source: { origin: "created" },
-      contentRevision: 1,
       snapshotHash: "0".repeat(64),
       createdAt: "2026-08-10T00:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",

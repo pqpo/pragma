@@ -570,8 +570,14 @@ export async function createDesktopApplicationContainer(
     onRemoved: async (storeId) => {
       await knowledgePromotionRef.current?.clearStoreBinding(storeId);
     },
-    hasActiveRevisions: async (storeId) =>
+    hasActiveDrafts: async (storeId) =>
       (await storeRevisionsRef.current?.hasActiveJobs(storeId)) ?? false,
+    migrateLegacyDraftReferences: async (storeId, readLegacySnapshot) => {
+      if (storeRevisionsRef.current === undefined) {
+        throw new Error("Knowledge revision storage is not ready for context-store migration.");
+      }
+      await storeRevisionsRef.current.migrateLegacyStoreReferences(storeId, readLegacySnapshot);
+    },
   });
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {
@@ -605,12 +611,12 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
   });
+  storeRevisionsRef.current = storeRevisions;
   await migrateLegacyStoreRevisionProfile({
     stateRoot: pragmaPaths.stateRoot(),
     revisions: storeRevisions,
     systemExperts,
   });
-  storeRevisionsRef.current = storeRevisions;
   const pragmaManagementPortsRef: {
     current?: Omit<PragmaManagementToolPorts, "knowledgeRevisions">;
   } = {};

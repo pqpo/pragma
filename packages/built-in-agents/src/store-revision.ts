@@ -52,13 +52,12 @@ export function renderStoreRevisionPrompt(input: {
   return [
     "Prepare a reviewable revision of the target Context Store.",
     `Store id: ${input.request.storeId}`,
-    `Base revision: ${input.snapshot.revision}`,
     `Base snapshot hash: ${input.snapshot.snapshotHash}`,
     "Use the mounted Mission Knowledge list/search/read tools to inspect only what is needed.",
     "Revision request:",
     input.request.prompt,
     "Required JSON shape:",
-    '{"schemaVersion":"pragma.context-store-change-set/v1","storeId":"...","baseRevision":1,"baseSnapshotHash":"64 hex","summary":"...","operations":[{"operation":"upsert","id":"items/example.md","content":"...","metadata":{"trigger":"model_decision","priority":"normal"}},{"operation":"rename","id":"old.md","nextId":"new.md"},{"operation":"delete","id":"obsolete.md"}]}',
+    '{"schemaVersion":"pragma.context-store-change-set/v2","storeId":"...","baseSnapshotHash":"64 hex","summary":"...","operations":[{"operation":"upsert","id":"items/example.md","content":"...","metadata":{"trigger":"model_decision","priority":"normal"}},{"operation":"rename","id":"old.md","nextId":"new.md"},{"operation":"delete","id":"obsolete.md"}]}',
   ].join("\n\n");
 }
 

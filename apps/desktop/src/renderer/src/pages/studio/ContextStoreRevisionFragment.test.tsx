@@ -37,9 +37,9 @@ describe("ContextStoreRevisionFragment", () => {
       <ContextStoreRevisionFragment stores={[]} onBack={() => undefined} />,
     );
 
-    expect(html).toContain("修订任务");
+    expect(html).toContain("更新任务");
     expect(html).toContain("全部知识库");
-    expect(html).toContain("暂无修订任务");
+    expect(html).toContain("暂无更新任务");
   });
 
   it("renders review-only documents before the changed files", async () => {
@@ -62,12 +62,11 @@ describe("ContextStoreRevisionFragment", () => {
           updatedAt: "2026-08-05T07:29:00.000Z",
         }}
         draft={{
-          schemaVersion: "pragma.context-store-draft/v1",
+          schemaVersion: "pragma.context-store-draft/v2",
           id: "20000000-0000-4000-8000-000000000001",
           revision: 2,
           name: "审批流程修订",
           storeId: "00000000-0000-4000-8000-000000000001",
-          baseRevision: 4,
           baseSnapshotHash: "0".repeat(64),
           state: "pending_review",
           submittedRevision: 2,
@@ -96,8 +95,8 @@ describe("ContextStoreRevisionFragment", () => {
       />,
     );
 
-    expect(html).toContain("修订结果");
-    expect(html).toContain("返回修订任务");
+    expect(html).toContain("更新结果");
+    expect(html).toContain("返回更新任务");
     expect(html).toContain("revision-request.md");
     expect(html).toContain("revision-summary.md");
     expect(html.indexOf("revision-summary.md")).toBeLessThan(html.indexOf("revision-request.md"));
@@ -131,12 +130,11 @@ describe("ContextStoreRevisionFragment", () => {
           updatedAt: "2026-08-05T07:29:00.000Z",
         }}
         draft={{
-          schemaVersion: "pragma.context-store-draft/v1",
+          schemaVersion: "pragma.context-store-draft/v2",
           id: "20000000-0000-4000-8000-000000000002",
           revision: 3,
           name: "同步最新知识库",
           storeId: "00000000-0000-4000-8000-000000000002",
-          baseRevision: 4,
           baseSnapshotHash: "0".repeat(64),
           state: "needs_rebase",
           overlay: {
@@ -161,7 +159,7 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("知识库已更新，需要先变基");
     expect(html).toContain("打开任务并变基");
     expect(html).toContain("请检查最新知识库");
-    expect(html).toContain("工作室 → 知识库 → 修订任务");
+    expect(html).toContain("工作室 → 知识库 → 更新任务");
   });
 
   it("presents an intentionally unsubmitted draft as editable instead of failed", async () => {
@@ -185,12 +183,11 @@ describe("ContextStoreRevisionFragment", () => {
           updatedAt: "2026-08-05T07:29:00.000Z",
         }}
         draft={{
-          schemaVersion: "pragma.context-store-draft/v1",
+          schemaVersion: "pragma.context-store-draft/v2",
           id: "20000000-0000-4000-8000-000000000003",
           revision: 3,
           name: "先审核草稿",
           storeId: "00000000-0000-4000-8000-000000000003",
-          baseRevision: 4,
           baseSnapshotHash: "0".repeat(64),
           state: "editing",
           overlay: {
@@ -230,12 +227,11 @@ describe("ContextStoreRevisionFragment", () => {
 
   it("uses fixed baseline content when reviewing an updated draft file", () => {
     const draft = {
-      schemaVersion: "pragma.context-store-draft/v1" as const,
+      schemaVersion: "pragma.context-store-draft/v2" as const,
       id: "20000000-0000-4000-8000-000000000003",
       revision: 2,
       name: "Update guide",
       storeId: "00000000-0000-4000-8000-000000000003",
-      baseRevision: 4,
       baseSnapshotHash: "0".repeat(64),
       state: "pending_review" as const,
       submittedRevision: 2,
@@ -255,9 +251,8 @@ describe("ContextStoreRevisionFragment", () => {
       updatedAt: "2026-08-05T07:29:00.000Z",
     };
     const [operation] = draftOverlayOperations(draft, {
-      schemaVersion: "pragma.context-store-change-set/v1",
+      schemaVersion: "pragma.context-store-change-set/v2",
       storeId: draft.storeId,
-      baseRevision: draft.baseRevision,
       baseSnapshotHash: draft.baseSnapshotHash,
       summary: "Update guide",
       operations: [

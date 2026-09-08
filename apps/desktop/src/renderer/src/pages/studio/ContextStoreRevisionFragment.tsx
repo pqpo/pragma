@@ -17,7 +17,7 @@ import { useTranslation } from "react-i18next";
 import type {
   ContextStore,
   ContextStoreChangeSet,
-  ContextStoreDraft,
+  ContextStoreDraftView,
   ContextStoreRevisionJob,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -112,7 +112,7 @@ export function ContextStoreRevisionFragment(props: {
     options === undefined ? t(key) : t(key, options);
   const [storeId, setStoreId] = useState(props.initialStoreId ?? "");
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
-  const [drafts, setDrafts] = useState<readonly ContextStoreDraft[]>([]);
+  const [drafts, setDrafts] = useState<readonly ContextStoreDraftView[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -369,7 +369,7 @@ export function ContextStoreRevisionFragment(props: {
 
 export function ContextStoreRevisionDiffFragment(props: {
   readonly job: ContextStoreRevisionJob;
-  readonly draft: ContextStoreDraft;
+  readonly draft: ContextStoreDraftView;
   readonly store?: ContextStore | undefined;
   readonly busy: boolean;
   readonly error: string | null;
@@ -416,12 +416,7 @@ export function ContextStoreRevisionDiffFragment(props: {
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
   const awaitingConfirmation = isDraftAwaitingConfirmation(props.job);
-  const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${t(
-    "baseRevision",
-    {
-      count: props.draft.baseRevision,
-    },
-  )} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
+  const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
 
   return (
     <StudioScreenFrame
@@ -718,7 +713,7 @@ function operationIcon(operation: RevisionOperation) {
 }
 
 export function draftOverlayOperations(
-  draft: ContextStoreDraft,
+  draft: ContextStoreDraftView,
   reviewChangeSet?: ContextStoreChangeSet,
 ): readonly RevisionOperation[] {
   const reviewedById = new Map(

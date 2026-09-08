@@ -2,6 +2,7 @@ export {
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,
   ContextStoreDraftSchema,
+  ContextStoreDraftViewSchema,
   ContextStoreDraftStateSchema,
   CreateContextStoreDraftSchema,
   GetContextStoreDraftFileSchema,

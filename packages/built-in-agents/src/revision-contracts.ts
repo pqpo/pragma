@@ -150,9 +150,8 @@ const ManagedMarkdownPathSchema = z
 
 export const ContextStoreRevisionSnapshotSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
+    schemaVersion: z.literal("pragma.context-store-snapshot/v2"),
     storeId: z.string().uuid(),
-    revision: z.number().int().positive(),
     snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     createdAt: z.string().datetime(),
     directories: z.array(StoredDirectoryPathSchema).default([]),
@@ -248,9 +247,8 @@ export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation
 ]);
 
 export const ContextStoreChangeSetSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
+  schemaVersion: z.literal("pragma.context-store-change-set/v2"),
   storeId: z.string().uuid(),
-  baseRevision: z.number().int().positive(),
   baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   summary: z.string().trim().min(1).max(2_000),
   operations: z.array(ContextStoreChangeOperationSchema).min(1).max(1_000),
@@ -262,7 +260,6 @@ export const ContextStoreDraftStateSchema = z.enum([
   "merging",
   "needs_rebase",
   "needs_attention",
-  "merged",
 ]);
 
 export const ContextStoreDraftOverlaySchema = z
@@ -312,15 +309,19 @@ export const ContextStoreDraftOverlaySchema = z
     }
   });
 
-export const ContextStoreDraftSchema = z
+const ContextStoreDraftBaseSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-draft/v1"),
+    schemaVersion: z.literal("pragma.context-store-draft/v2"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     name: z.string().trim().min(1).max(120),
     storeId: z.string().uuid(),
-    baseRevision: z.number().int().positive(),
     baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    baseSnapshot: ContextStoreRevisionSnapshotSchema,
+    mergeTargetSnapshotHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
     state: ContextStoreDraftStateSchema,
     overlay: ContextStoreDraftOverlaySchema,
     activeMissionId: z.string().uuid().optional(),
@@ -329,30 +330,52 @@ export const ContextStoreDraftSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
-  .strict()
-  .superRefine((draft, context) => {
-    if (
-      (draft.state === "pending_review" || draft.state === "merging") &&
-      draft.submittedRevision !== draft.revision
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["submittedRevision"],
-        message: "A pending review must pin the current draft revision.",
-      });
-    }
-    if (
-      draft.state !== "pending_review" &&
-      draft.state !== "merging" &&
-      draft.submittedRevision !== undefined
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["submittedRevision"],
-        message: "Only a pending review may pin a submitted revision.",
-      });
-    }
-  });
+  .strict();
+
+export const ContextStoreDraftSchema = ContextStoreDraftBaseSchema.superRefine((draft, context) => {
+  if (
+    (draft.state === "pending_review" || draft.state === "merging") &&
+    draft.submittedRevision !== draft.revision
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["submittedRevision"],
+      message: "A pending review must pin the current draft revision.",
+    });
+  }
+  if (
+    draft.state !== "pending_review" &&
+    draft.state !== "merging" &&
+    draft.submittedRevision !== undefined
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["submittedRevision"],
+      message: "Only a pending review may pin a submitted revision.",
+    });
+  }
+  if ((draft.state === "merging") !== (draft.mergeTargetSnapshotHash !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: ["mergeTargetSnapshotHash"],
+      message: "Only a merging draft must declare its target snapshot hash.",
+    });
+  }
+  if (
+    draft.baseSnapshot.storeId !== draft.storeId ||
+    draft.baseSnapshot.snapshotHash !== draft.baseSnapshotHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["baseSnapshot"],
+      message: "The draft base snapshot must match its target and base hash.",
+    });
+  }
+});
+
+export const ContextStoreDraftViewSchema = ContextStoreDraftBaseSchema.omit({
+  baseSnapshot: true,
+}).strip();
 
 export const CreateContextStoreDraftSchema = z
   .object({
@@ -423,7 +446,6 @@ export const ContextStoreDraftRebaseInspectionSchema = z
   .object({
     draftId: z.string().uuid(),
     draftRevision: z.number().int().positive(),
-    currentStoreRevision: z.number().int().positive(),
     currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     conflicts: z.array(ContextStoreDraftRebaseConflictSchema),
   })

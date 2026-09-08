@@ -4,6 +4,9 @@
 
 Accepted
 
+The knowledge-base history and append-import portions are superseded by
+[ADR 049](./049-current-state-only-knowledge-storage.md).
+
 ## 背景
 
 托管 Markdown `ContextStore` 已经是工作室的核心资产，但旧 Bundle 只能以专家、专家团或流程为根；
@@ -17,12 +20,12 @@ Portable Bundle 协议升级到 `pragma.bundle/v2`，根引用只允许 `Expert`
 fingerprint，再内存升级；未来版本继续拒绝。
 
 知识库导出只包含 DSL `ContextStore` 和当前已发布托管快照。payload 使用版本化 descriptor 保存名称、
-描述、snapshot hash、目录、Markdown 内容及文件元数据，不包含历史修订、草稿、修订任务或 Memory
+描述、snapshot hash、目录、Markdown 内容及文件元数据，不包含历史修订、草稿、更新任务或 Memory
 Evidence。知识库作为根时内容强制包含。
 
-无冲突导入创建新的托管 Store，快照成为 revision 1，author 为 `import`。冲突可追加或复制：追加
-保留本地身份、名称及历史，内容相同不创建修订；复制生成新语义 ID 和 Store。检查记录目标 revision
-和 snapshot hash，执行使用 Store revision lock 内的 CAS，目标变化时要求重新检查。
+无冲突导入创建新的托管 Store。冲突可更新或复制：更新保留本地身份和名称并替换当前快照，内容相同则
+no-op；复制生成新语义 ID 和 Store。检查记录目标 snapshot hash，执行使用 Store lock 内的 hash CAS，
+目标变化时要求重新检查。
 
 Bundle Source manifest 和 item 协议升级到 v2，新增 `knowledge-base` 类型和
 `knowledge-bases/<category>/<item>/`。公开 CLI 新增显式且幂等的 `pragma source upgrade [directory]`，
@@ -36,5 +39,5 @@ Bundle Source manifest 和 item 协议升级到 v2，新增 `knowledge-base` 类
 
 - 知识库可以独立导入、导出、Git 分发和从广场安装。
 - Bundle 与 Source 的持久/跨进程协议同步升级，并保留受支持的相邻迁移。
-- 历史与草稿不会随 Bundle 扩散；导入只建立目标 Host 的新修订历史。
-- 追加导入是并发安全的显式操作，不能静默覆盖检查后发生的本地编辑。
+- 草稿与更新任务不会随 Bundle 扩散；导入只携带当前快照。
+- 更新导入是并发安全的显式操作，不能静默覆盖检查后发生的本地编辑。

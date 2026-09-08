@@ -167,7 +167,7 @@ function entryOperationName(operation: EntryTextOperation, value = operation.val
 export function ContextStoreDirectoryFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly revisionTaskCount?: number | undefined;
-  readonly onOpenRevisions?: (() => void) | undefined;
+  readonly onOpenUpdateTasks?: (() => void) | undefined;
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
   readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onPickFolder: () => Promise<string | undefined>;
@@ -195,8 +195,8 @@ export function ContextStoreDirectoryFragment(props: {
             <p>{t("knowledgeBasesDescription")}</p>
           </div>
           <div className="knowledge-directory-actions">
-            {props.onOpenRevisions !== undefined ? (
-              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+            {props.onOpenUpdateTasks !== undefined ? (
+              <button className="secondary-button" type="button" onClick={props.onOpenUpdateTasks}>
                 <ClockCounterClockwise size={17} aria-hidden="true" />
                 {t("viewAllStoreRevisions")}
                 {(props.revisionTaskCount ?? 0) > 0 ? (
@@ -299,7 +299,7 @@ export function ContextStoreDirectoryFragment(props: {
 export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
   readonly onBack: () => void;
-  readonly onOpenRevisions?: (() => void) | undefined;
+  readonly onOpenUpdateTasks?: (() => void) | undefined;
   readonly onExport?: (() => Promise<void>) | undefined;
   readonly onSubmitRevision?: ((prompt: string) => Promise<void>) | undefined;
   readonly onRevisionSubmitted?: (() => void) | undefined;
@@ -824,17 +824,21 @@ export function ContextStoreDetailFragment(props: {
                 type="button"
                 onClick={() => {
                   setError(null);
-                  void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
+                  void save()
+                    .then(async (saved) => {
+                      if (saved) await props.onExport!();
+                    })
+                    .catch((cause: unknown) => setError(errorMessage(cause)));
                 }}
               >
                 <UploadSimple size={17} aria-hidden="true" />
                 {t("exportKnowledgeBase")}
               </button>
             ) : null}
-            {props.onOpenRevisions !== undefined ? (
-              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+            {props.onOpenUpdateTasks !== undefined ? (
+              <button className="secondary-button" type="button" onClick={props.onOpenUpdateTasks}>
                 <ListBullets size={17} aria-hidden="true" />
-                {t("viewStoreRevisions")}
+                {t("viewStoreUpdateTasks")}
               </button>
             ) : null}
             {props.onSubmitRevision !== undefined ? (

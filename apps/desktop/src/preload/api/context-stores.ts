@@ -22,7 +22,7 @@ import {
   ContextStoreRevisionJobRefSchema,
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,
-  ContextStoreDraftSchema,
+  ContextStoreDraftViewSchema,
   CreateContextStoreDraftSchema,
   GetContextStoreDraftFileSchema,
   ContextStoreRevisionJobSchema,
@@ -146,21 +146,23 @@ export const contextStoresApi = {
     );
   },
   createContextStoreDraft: async (input) =>
-    ContextStoreDraftSchema.parse(
+    ContextStoreDraftViewSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:create",
         CreateContextStoreDraftSchema.parse(input),
       ),
     ),
   listContextStoreDrafts: async (input = {}) =>
-    ContextStoreDraftSchema.array().parse(
+    ContextStoreDraftViewSchema.array().parse(
       await ipcRenderer.invoke(
         "context-store-drafts:list",
         ListContextStoreDraftsSchema.parse(input),
       ),
     ),
   getContextStoreDraft: async (draftId) =>
-    ContextStoreDraftSchema.parse(await ipcRenderer.invoke("context-store-drafts:get", draftId)),
+    ContextStoreDraftViewSchema.parse(
+      await ipcRenderer.invoke("context-store-drafts:get", draftId),
+    ),
   getContextStoreDraftChangeSet: async (draftId) =>
     ContextStoreChangeSetSchema.parse(
       await ipcRenderer.invoke("context-store-drafts:get-change-set", draftId),
@@ -173,14 +175,14 @@ export const contextStoresApi = {
       ),
     ),
   submitContextStoreDraft: async (input) =>
-    ContextStoreDraftSchema.parse(
+    ContextStoreDraftViewSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:submit",
         SubmitContextStoreDraftSchema.parse(input),
       ),
     ),
   updateContextStoreDraftFile: async (input) =>
-    ContextStoreDraftSchema.parse(
+    ContextStoreDraftViewSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:update-file",
         UpdateContextStoreDraftFileSchema.parse(input),
@@ -197,7 +199,7 @@ export const contextStoresApi = {
       await ipcRenderer.invoke("context-store-drafts:inspect-rebase", draftId),
     ),
   rebaseContextStoreDraft: async (input) =>
-    ContextStoreDraftSchema.parse(
+    ContextStoreDraftViewSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:rebase",
         RebaseContextStoreDraftSchema.parse(input),

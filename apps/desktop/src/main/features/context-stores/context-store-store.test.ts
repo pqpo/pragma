@@ -1,4 +1,14 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,14 +22,25 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
-async function createStore(isReferenced?: (storeId: string) => Promise<boolean>) {
+async function createStore(
+  isReferenced?: (storeId: string) => Promise<boolean>,
+  trashItem?: (path: string) => Promise<void>,
+  migrateLegacyDraftReferences?: Parameters<
+    typeof createContextStoreStore
+  >[0]["migrateLegacyDraftReferences"],
+) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-context-stores-"));
   directories.push(directory);
   const storesPath = join(directory, ".pragma", "data", "context-stores");
   return {
     directory,
     storesPath,
-    store: createContextStoreStore({ storesPath, isReferenced }),
+    store: createContextStoreStore({
+      storesPath,
+      isReferenced,
+      trashItem,
+      migrateLegacyDraftReferences,
+    }),
   };
 }
 
@@ -33,8 +54,6 @@ describe("managed context store", () => {
         id,
         name: "Tampered import",
         description: "",
-        author: "import",
-        summary: "Import snapshot.",
         expectedSnapshotHash: "0".repeat(64),
         files: [
           {
@@ -58,7 +77,7 @@ describe("managed context store", () => {
     });
 
     expect(created).toMatchObject({
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
       type: "file",
       status: "ready",
       source: { origin: "created" },
@@ -123,14 +142,14 @@ describe("managed context store", () => {
 
     await expect(store.listEntries(validId)).resolves.toEqual([]);
     await expect(readFile(join(storesPath, validId, "store.json"), "utf8")).resolves.toContain(
-      "pragma.context-store/v4",
+      "pragma.context-store/v5",
     );
     await expect(store.listEntries(invalidId)).rejects.toMatchObject({
       code: "config_invalid",
       message: expect.stringContaining("name"),
     });
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ id: validId, schemaVersion: "pragma.context-store/v4" }),
+      expect.objectContaining({ id: validId, schemaVersion: "pragma.context-store/v5" }),
     ]);
     await expect(readFile(join(storesPath, invalidId, "store.json"), "utf8")).resolves.toContain(
       "pragma.context-store/v2",
@@ -141,12 +160,7 @@ describe("managed context store", () => {
     const { storesPath, store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Recovery", description: "Test" });
     const root = join(storesPath, created.id);
-    const {
-      contentRevision: _contentRevision,
-      snapshotHash: _snapshotHash,
-      ...withoutRevision
-    } = created;
-    void _contentRevision;
+    const { snapshotHash: _snapshotHash, ...withoutRevision } = created;
     void _snapshotHash;
     const legacy = { ...withoutRevision, schemaVersion: "pragma.context-store/v2" };
     const targetManifest = { ...withoutRevision, schemaVersion: "pragma.context-store/v3" };
@@ -177,8 +191,21 @@ describe("managed context store", () => {
     );
   });
 
-  it("upgrades a historical v3 fixture with non-portable legacy names and replays its journal", async () => {
-    const { storesPath, store } = await createStore();
+  it("upgrades a historical v3 fixture and moves its generated revision history to trash", async () => {
+    let trashedHistory: string | undefined;
+    let preservedDraftBase: unknown;
+    const { directory, storesPath, store } = await createStore(
+      undefined,
+      async (path) => {
+        const target = join(directory, "trash", "legacy-revisions");
+        await mkdir(join(directory, "trash"), { recursive: true });
+        await rename(path, target);
+        trashedHistory = target;
+      },
+      async (_storeId, readLegacySnapshot) => {
+        preservedDraftBase = await readLegacySnapshot(1);
+      },
+    );
     const id = "00000000-0000-4000-8000-000000000031";
     const root = join(storesPath, id);
     const fixture = new URL("./fixtures/context-store-v3/", import.meta.url);
@@ -191,39 +218,81 @@ describe("managed context store", () => {
       await readFile(join(root, "migration-backups", "store.v3.json"), "utf8"),
     );
     expect(legacy).toMatchObject({ schemaVersion: "pragma.context-store/v3", id });
+    await expect(readFile(join(root, "store.json"), "utf8")).resolves.toContain(
+      "pragma.context-store/v5",
+    );
+    await expect(stat(join(root, "revisions"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(trashedHistory).toBe(join(directory, "trash", "legacy-revisions"));
+    expect(preservedDraftBase).toMatchObject({
+      storeId: id,
+      files: [expect.objectContaining({ id: "Architecture Notes.md" })],
+    });
+    await expect(stat(join(trashedHistory!, "00000001", "snapshot.json"))).resolves.toMatchObject({
+      isFile: expect.any(Function),
+    });
+  });
 
-    const targetManifest = JSON.parse(await readFile(join(root, "store.json"), "utf8"));
-    const snapshot = JSON.parse(
-      await readFile(join(root, "revisions", "00000001", "snapshot.json"), "utf8"),
+  it("replays an interrupted v4-to-v5 history cleanup", async () => {
+    const { directory, storesPath, store } = await createStore(undefined, async () => {
+      throw new Error("trash temporarily unavailable");
+    });
+    const id = "00000000-0000-4000-8000-000000000031";
+    const root = join(storesPath, id);
+    await mkdir(storesPath, { recursive: true });
+    await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+
+    await expect(store.getSnapshot(id)).rejects.toThrow("trash temporarily unavailable");
+    await expect(readFile(join(root, "store.json"), "utf8")).resolves.toContain(
+      "pragma.context-store/v5",
     );
-    const record = JSON.parse(
-      await readFile(join(root, "revisions", "00000001", "record.json"), "utf8"),
-    );
-    await writeFile(join(root, "store.json"), JSON.stringify(legacy), "utf8");
-    await rm(join(root, "revisions"), { recursive: true });
+    await expect(stat(join(root, "v4-to-v5.json"))).resolves.toMatchObject({
+      isFile: expect.any(Function),
+    });
+
+    const trashTarget = join(directory, "trash", "replayed-revisions");
+    const restarted = createContextStoreStore({
+      storesPath,
+      trashItem: async (path) => {
+        await mkdir(join(directory, "trash"), { recursive: true });
+        await rename(path, trashTarget);
+      },
+    });
+    await expect(restarted.getSnapshot(id)).resolves.toMatchObject({ storeId: id });
+    await expect(stat(join(root, "v4-to-v5.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(trashTarget, "00000001", "snapshot.json"))).resolves.toMatchObject({
+      isFile: expect.any(Function),
+    });
+  });
+
+  it("rejects a v5 cleanup journal that targets files outside its knowledge base", async () => {
+    const { directory, storesPath, store } = await createStore(undefined, async () => {
+      throw new Error("trash temporarily unavailable");
+    });
+    const id = "00000000-0000-4000-8000-000000000031";
+    const root = join(storesPath, id);
+    await mkdir(storesPath, { recursive: true });
+    await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+    await expect(store.getSnapshot(id)).rejects.toThrow("trash temporarily unavailable");
+
+    const outside = join(directory, "must-not-be-trashed");
+    await mkdir(outside);
+    const journalPath = join(root, "v4-to-v5.json");
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as Record<string, unknown>;
     await writeFile(
-      join(root, "v3-to-v4.json"),
-      JSON.stringify({
-        schemaVersion: "pragma.context-store-v4-migration/v1",
-        storeId: id,
-        sourceSchema: "pragma.context-store/v3",
-        targetSchema: "pragma.context-store/v4",
-        targetManifest,
-        snapshot,
-        record,
-      }),
-      "utf8",
+      journalPath,
+      `${JSON.stringify({ ...journal, legacyRevisionsPath: outside })}\n`,
     );
+    let trashCalled = false;
+    const restarted = createContextStoreStore({
+      storesPath,
+      trashItem: async () => {
+        trashCalled = true;
+      },
+    });
 
-    const recovered = createContextStoreStore({ storesPath });
-    await expect(recovered.getSnapshot(id)).resolves.toMatchObject({
-      revision: 1,
-      snapshotHash: snapshot.snapshotHash,
-    });
-    await expect(readFile(join(root, "v3-to-v4.json"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(recovered.history(id)).resolves.toHaveLength(1);
+    await expect(restarted.getSnapshot(id)).rejects.toMatchObject({ code: "config_invalid" });
+    expect(trashCalled).toBe(false);
+    await expect(stat(outside)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
   });
 
   it("creates, edits, renames, lists, and deletes managed entries", async () => {
@@ -304,7 +373,7 @@ describe("managed context store", () => {
 
     const [migrated] = await store.list();
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.context-store/v4",
+      schemaVersion: "pragma.context-store/v5",
       source: { origin: "migrated" },
     });
     await expect(readFile(join(storesPath, id, "files", "legacy.md"), "utf8")).resolves.toBe(
@@ -364,7 +433,7 @@ describe("managed context store", () => {
     );
 
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ schemaVersion: "pragma.context-store/v4" }),
+      expect.objectContaining({ schemaVersion: "pragma.context-store/v5" }),
     ]);
     await expect(store.getContent(id, "recovered.md")).resolves.toMatchObject({
       content: "Recovered",
@@ -426,7 +495,7 @@ describe("managed context store", () => {
     );
 
     await expect(store.list()).resolves.toEqual([
-      expect.objectContaining({ id, schemaVersion: "pragma.context-store/v4" }),
+      expect.objectContaining({ id, schemaVersion: "pragma.context-store/v5" }),
     ]);
     await expect(store.getContent(id, "staged.md")).resolves.toMatchObject({
       content: "Staged content",
@@ -577,13 +646,11 @@ describe("managed context store", () => {
     });
   });
 
-  it("records user edits and atomically applies agent changesets with snapshot CAS", async () => {
-    const { store } = await createStore();
+  it("keeps only current content while atomically applying agent changesets with snapshot CAS", async () => {
+    const { storesPath, store } = await createStore();
     const created = await store.createFromSnapshot({
       name: "Memory knowledge",
       description: "Progressively disclosed guidance.",
-      author: "memory-initialization",
-      summary: "Initialize Memory knowledge.",
       files: [
         {
           id: "guide.md",
@@ -596,62 +663,43 @@ describe("managed context store", () => {
     const added = await store.createFile(created.id, "overview.md", "# Overview\n");
     const afterUserEdit = await store.getSnapshot(created.id);
 
-    expect(afterUserEdit.revision).toBe(2);
-    await expect(store.history(created.id)).resolves.toEqual([
-      expect.objectContaining({ revision: 2, author: "user", parentRevision: 1 }),
-      expect.objectContaining({
-        revision: 1,
-        author: "memory-initialization",
-        parentRevision: null,
-      }),
-    ]);
+    expect(afterUserEdit.snapshotHash).not.toBe(original.snapshotHash);
+    await expect(stat(join(storesPath, created.id, "revisions"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     await expect(
-      store.applyChangeSet(
-        {
-          schemaVersion: "pragma.context-store-change-set/v1",
-          storeId: created.id,
-          baseRevision: original.revision,
-          baseSnapshotHash: original.snapshotHash,
-          summary: "Stale change.",
-          operations: [{ operation: "delete", id: "guide.md" }],
-        },
-        "store-revision-agent",
-      ),
+      store.applyChangeSet({
+        schemaVersion: "pragma.context-store-change-set/v2",
+        storeId: created.id,
+        baseSnapshotHash: original.snapshotHash,
+        summary: "Stale change.",
+        operations: [{ operation: "delete", id: "guide.md" }],
+      }),
     ).rejects.toMatchObject({ code: "revision_conflict" });
 
-    const revised = await store.applyChangeSet(
-      {
-        schemaVersion: "pragma.context-store-change-set/v1",
-        storeId: created.id,
-        baseRevision: afterUserEdit.revision,
-        baseSnapshotHash: afterUserEdit.snapshotHash,
-        summary: "Refine overview.",
-        operations: [
-          {
-            operation: "upsert",
-            id: "overview.md",
-            content: "# Revised overview\n",
-            metadata: added.metadata,
-          },
-        ],
-      },
-      "store-revision-agent",
-    );
+    const revised = await store.applyChangeSet({
+      schemaVersion: "pragma.context-store-change-set/v2",
+      storeId: created.id,
+      baseSnapshotHash: afterUserEdit.snapshotHash,
+      summary: "Refine overview.",
+      operations: [
+        {
+          operation: "upsert",
+          id: "overview.md",
+          content: "# Revised overview\n",
+          metadata: added.metadata,
+        },
+      ],
+    });
 
-    expect(revised.contentRevision).toBe(3);
+    expect(revised.snapshotHash).not.toBe(afterUserEdit.snapshotHash);
     await expect(store.getContent(created.id, "overview.md")).resolves.toMatchObject({
       content: "# Revised overview\n",
     });
-    await expect(store.history(created.id)).resolves.toEqual([
-      expect.objectContaining({ revision: 3, author: "store-revision-agent", parentRevision: 2 }),
-      expect.objectContaining({ revision: 2, author: "user", parentRevision: 1 }),
-      expect.objectContaining({
-        revision: 1,
-        author: "memory-initialization",
-        parentRevision: null,
-      }),
-    ]);
+    await expect(stat(join(storesPath, created.id, "revisions"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("preserves empty directories when an agent revision replaces the live tree", async () => {
@@ -660,24 +708,20 @@ describe("managed context store", () => {
     await store.createFolder(created.id, "items/empty");
     const base = await store.getSnapshot(created.id);
 
-    await store.applyChangeSet(
-      {
-        schemaVersion: "pragma.context-store-change-set/v1",
-        storeId: created.id,
-        baseRevision: base.revision,
-        baseSnapshotHash: base.snapshotHash,
-        summary: "Add detail",
-        operations: [
-          {
-            operation: "upsert",
-            id: "items/detail.md",
-            content: "# Detail\n",
-            metadata: { description: "Detail", trigger: "manual", priority: "normal" },
-          },
-        ],
-      },
-      "store-revision-agent",
-    );
+    await store.applyChangeSet({
+      schemaVersion: "pragma.context-store-change-set/v2",
+      storeId: created.id,
+      baseSnapshotHash: base.snapshotHash,
+      summary: "Add detail",
+      operations: [
+        {
+          operation: "upsert",
+          id: "items/detail.md",
+          content: "# Detail\n",
+          metadata: { description: "Detail", trigger: "manual", priority: "normal" },
+        },
+      ],
+    });
 
     await expect(store.listEntries(created.id)).resolves.toEqual(
       expect.arrayContaining([{ id: "items/empty", kind: "directory" }]),
@@ -690,24 +734,20 @@ describe("managed context store", () => {
     const base = await store.getSnapshot(created.id);
     const [userResult, agentResult] = await Promise.allSettled([
       store.createFile(created.id, "user.md", "# User\n"),
-      store.applyChangeSet(
-        {
-          schemaVersion: "pragma.context-store-change-set/v1",
-          storeId: created.id,
-          baseRevision: base.revision,
-          baseSnapshotHash: base.snapshotHash,
-          summary: "Agent edit",
-          operations: [
-            {
-              operation: "upsert",
-              id: "agent.md",
-              content: "# Agent\n",
-              metadata: { description: "Agent", trigger: "manual", priority: "normal" },
-            },
-          ],
-        },
-        "store-revision-agent",
-      ),
+      store.applyChangeSet({
+        schemaVersion: "pragma.context-store-change-set/v2",
+        storeId: created.id,
+        baseSnapshotHash: base.snapshotHash,
+        summary: "Agent edit",
+        operations: [
+          {
+            operation: "upsert",
+            id: "agent.md",
+            content: "# Agent\n",
+            metadata: { description: "Agent", trigger: "manual", priority: "normal" },
+          },
+        ],
+      }),
     ]);
 
     expect(userResult.status).toBe("fulfilled");
@@ -725,7 +765,7 @@ describe("managed context store", () => {
     const storesPath = join(directory, "stores");
     const store = createContextStoreStore({
       storesPath,
-      hasActiveRevisions: async () => true,
+      hasActiveDrafts: async () => true,
     });
     const created = await store.create({ mode: "blank", name: "Active", description: "" });
 
@@ -733,14 +773,13 @@ describe("managed context store", () => {
     await expect(stat(join(storesPath, created.id))).resolves.toBeDefined();
   });
 
-  it("rejects a persisted snapshot whose declared hash was tampered with", async () => {
+  it("rejects current files that no longer match the manifest hash", async () => {
     const { storesPath, store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Integrity", description: "" });
-    const path = join(storesPath, created.id, "revisions", "00000001", "snapshot.json");
-    const snapshot = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
-    await writeFile(path, JSON.stringify({ ...snapshot, snapshotHash: "0".repeat(64) }), "utf8");
+    await store.createFile(created.id, "guide.md", "# Guide\n");
+    await writeFile(join(storesPath, created.id, "files", "guide.md"), "tampered", "utf8");
 
-    await expect(store.getSnapshot(created.id, 1)).rejects.toMatchObject({
+    await expect(store.getSnapshot(created.id)).rejects.toMatchObject({
       code: "config_invalid",
     });
   });

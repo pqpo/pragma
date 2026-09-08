@@ -40,7 +40,7 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
 - Knowledge learning 从有效 Episode 与已验证/无冲突 Fact 提炼初始化 Candidate；每个 Expert 最多一个
   Memory Knowledge Store，ExpertTeam/Flow 按实际 producer Expert 路由；
 - 首次 Candidate 在 Memory 页面预览和编辑；确认后原子创建普通 Studio Context Store rev1 并自动挂载；
-- Store 已存在时，Memory 只能提交修订提示词。修订任务只在“工作室 → 知识库 → 修订任务”显示，由独立
+- Store 已存在时，Memory 只能提交更新提示词。更新任务只在“工作室 → 知识库 → 更新任务”显示，由独立
   Store Revision Agent 直接编辑稀疏草稿 Context Store；用户批准前不改正式 Store，批准时将 overlay
   转为最小 change set，并以 revision/hash CAS 原子激活；
 - Store 使用 `guide → overview → index/indexes → items` 渐进披露，不保存 Evidence、sourceRefs 或提炼提示词；
@@ -50,7 +50,7 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
   至少 2 条成功或成功恢复后运行；Memory Curator 仍必须确认它是完整、通用、可维护的工作流，而不是
   片段或一次性提示；
 - 相似目标只匹配该 Expert 先前由 Memory 创建并绑定的 Skill；无匹配生成新建 Candidate，唯一匹配提交
-  修订任务，多匹配时在 Memory 页面暂停并要求用户选择；
+  更新任务，多匹配时在 Memory 页面暂停并要求用户选择；
 - 新 Skill Candidate 必须通过至少 3 次来源回放、1 次边界用例、静态检查与脚本测试，随后在 Memory 页面
   人工批准才会创建普通 Skill Capability 并绑定 Expert；
 - 已有 Skill 的 Memory learning 由共用 Revision Agent 产生文件 diff，并在独立 Evaluation Agent 中评测；
@@ -167,7 +167,7 @@ Memory 管理中心的所有 mutation 都要求当前 revision 和变更原因�
 只能保持或收紧；当前页面不会授予新的主体或重新开放已拒绝的权限。更正、验证、失效和权限变更会生成
 新 revision，过期 revision 可在历史中核对。
 
-“忘记”与“失效”不同：失效保留内容和历史但停止默认召回；忘记会删除当前内容、全部 revision history、
+“忘记”与“失效”不同：失效保留当前内容但停止默认召回；忘记会删除当前内容、
 此前的 governance event 和不再被引用的 Evidence，只留下不含 Memory 内容和原始理由的 tombstone，以防
 后台 Evidence 重放恢复同一稳定 identity。该操作不可撤销。
 
@@ -218,9 +218,9 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 ~/.pragma/state/memory/modules/<semantic>/jobs.sqlite # Semantic Evidence, subjects and durable jobs
 ~/.pragma/data/memory/modules/<knowledge-learning>/knowledge.sqlite # Knowledge learning jobs；无 published authority
 ~/.pragma/data/memory/modules/<skill-learning>/skill-learning.sqlite # Skill learning jobs；无 published authority
-~/.pragma/data/context-stores/<storeId>/                 # promoted Knowledge 内容与 revision history
+~/.pragma/data/context-stores/<storeId>/                 # promoted Knowledge 当前内容
 ~/.pragma/data/context-store-drafts/<draftId>/            # 稀疏草稿 overlay 与固定基线
-~/.pragma/state/context-store-revisions/                  # v2 修订任务与持久 Mission registry
+~/.pragma/state/context-store-revisions/                  # v2 更新任务与持久 Mission registry
 ~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
 ~/.pragma/state/memory-skill-promotion/                  # Skill Candidate、content-free Expert binding 与 promotion journal
 ~/.pragma/state/skill-revisions/                         # Skill 修订任务与 change set

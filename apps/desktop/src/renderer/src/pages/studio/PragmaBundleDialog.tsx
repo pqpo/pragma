@@ -652,9 +652,6 @@ function BundleImportDialog(props: {
               conflicts: inspection.conflicts.map((conflict) => ({
                 resourceRef: conflict.ref,
                 action: conflicts[conflict.ref] ?? "copy",
-                ...(conflict.targetRevision === undefined
-                  ? {}
-                  : { expectedTargetRevision: conflict.targetRevision }),
                 ...(conflict.targetSnapshotHash === undefined
                   ? {}
                   : { expectedTargetSnapshotHash: conflict.targetSnapshotHash }),

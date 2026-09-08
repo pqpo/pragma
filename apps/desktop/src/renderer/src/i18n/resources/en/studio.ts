@@ -475,11 +475,11 @@ export const studio = {
   resourceId: "Resource ID",
   capabilities: "Capabilities",
   contextStores: "Knowledge bases",
-  contextStoreRevisions: "Revision tasks",
+  contextStoreRevisions: "Update tasks",
   contextStoreRevisionsDescription:
     "Track generated changes, review proposals, and handle tasks that need attention.",
   revisionTaskCount: "{{count}} tasks",
-  revisionTaskColumn: "Revision request",
+  revisionTaskColumn: "Update request",
   revisionUpdatedAt: "Updated",
   revisionErrorModelNotConfigured:
     "No revision model is configured. Configure one in Settings → Models & Providers, then retry.",
@@ -509,35 +509,35 @@ export const studio = {
   revisionReflectionProvenance: "Team {{teamId}} · Expert {{expertId}} · Execution {{executionId}}",
   revisionExpertProvenance: "Expert {{expertId}} · Execution {{executionId}}",
   revisionStoreFilter: "Knowledge base filter",
-  revisionPrompt: "Revision request",
+  revisionPrompt: "Update request",
   revisionPromptPlaceholder: "Describe what should be added, corrected, reorganized, or removed.",
   revisionPromptHint:
     "Be specific about the intended outcome. You can review changes before applying them.",
-  submitStoreRevision: "Submit revision",
+  submitStoreRevision: "Submit update",
   submitStoreRevisionDescription:
     "Describe the change you want Pragma to prepare for “{{name}}”. Nothing is applied without review.",
   submittingRevision: "Submitting…",
   allKnowledgeBases: "All knowledge bases",
-  noStoreRevisionTasks: "No revision tasks yet.",
+  noStoreRevisionTasks: "No update tasks yet.",
   noStoreRevisionTasksDescription:
     "Submitted tasks and changes waiting for review will appear here.",
   approveRevision: "Approve and apply",
   rejectRevision: "Reject",
   retryRevision: "Retry",
   deleteRevisionTask: "Delete task",
-  deleteRevisionTaskTitle: "Delete this revision task?",
+  deleteRevisionTaskTitle: "Delete this update task?",
   deleteRevisionTaskDescription:
-    "“{{name}}” will be removed from the revision task list. Deleting the task does not roll back changes that have already been applied or delete the knowledge base.",
-  viewAllStoreRevisions: "Revision tasks",
-  viewStoreRevisions: "Revision history",
+    "“{{name}}” will be removed from the update task list. Deleting the task does not roll back changes that have already been applied or delete the knowledge base.",
+  viewAllStoreRevisions: "Update tasks",
+  viewStoreUpdateTasks: "Update tasks",
   viewRevisionChanges: "View changes",
   handleRevisionRebase: "Handle rebase",
-  backRevisionTasks: "Back to revision tasks",
-  revisionResult: "Revision result",
-  revisionDiff: "Revision diff",
+  backRevisionTasks: "Back to update tasks",
+  revisionResult: "Update result",
+  revisionDiff: "Update diff",
   revisionReviewContents: "Review contents",
   revisionRequestFile: "revision-request.md",
-  revisionRequestFileLabel: "Revision request · Read-only",
+  revisionRequestFileLabel: "Update request · Read-only",
   revisionSummaryFile: "revision-summary.md",
   revisionSummaryFileLabel: "Change summary · Read-only",
   revisionRequestDocumentDescription:
@@ -554,7 +554,7 @@ export const studio = {
     "The agent paused without submitting the draft. Review the current changes first; open the original task to request adjustments, or ask the agent to submit it when you are ready for formal review.",
   revisionNeedsRebaseTitle: "The knowledge base changed — rebase first",
   revisionNeedsRebaseDescription:
-    "This draft is based on an older knowledge-base revision, so it cannot be applied directly. Continue the related Mission to rebase the draft onto the latest version. The published knowledge base is unchanged.",
+    "This draft is based on older knowledge-base content, so it cannot be applied directly. Continue the related Mission to rebase the draft onto the current content. The published knowledge base is unchanged.",
   revisionNeedsRebaseStepOpenMission:
     "Choose “Open task to rebase” below; the next instruction will be prefilled in the Mission composer.",
   revisionNeedsRebaseStepReopen:
@@ -564,11 +564,10 @@ export const studio = {
   revisionNeedsRebaseStepAskAgent:
     "Review the prefilled instruction in the Mission composer and send it to the revision Agent: “{{prompt}}”",
   revisionNeedsRebaseStepReview:
-    "Return to Studio → Knowledge bases → Revision tasks, review the new proposal, then choose Approve and apply.",
+    "Return to Studio → Knowledge bases → Update tasks, review the new proposal, then choose Approve and apply.",
   revisionNeedsRebaseNoMission:
     "This task has no related Mission to continue. Delete it, then go to Studio → Knowledge bases → the relevant knowledge base → Submit revision to start a new proposal.",
   filesChanged: "{{count}} files changed",
-  baseRevision: "Base revision {{count}}",
   revisionOperation: {
     upsert: "Updated",
     delete: "Deleted",
@@ -1407,7 +1406,8 @@ export const studio = {
   bundleKnowledgeBasesHint: "Off by default because content may be large or sensitive.",
   bundleKnowledgeBaseRequiredHint: "The current published snapshot is required for this export.",
   bundleAppendKnowledgeRevision: "Append revision",
-  bundleAppendKnowledgeRevisionHint: "Keep local history and append the imported snapshot.",
+  bundleAppendKnowledgeRevisionHint:
+    "Replace the current snapshot after verifying it has not changed.",
   bundleFilterKnowledgeBases: "Knowledge bases",
   bundleKnowledgeMemory: "Published Knowledge Memory",
   bundleKnowledgeMemoryHint:

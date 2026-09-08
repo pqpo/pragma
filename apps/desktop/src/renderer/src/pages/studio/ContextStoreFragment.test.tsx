@@ -14,8 +14,7 @@ import {
 } from "./ContextStoreFragment.tsx";
 
 const store: ContextStore = {
-  schemaVersion: "pragma.context-store/v4",
-  contentRevision: 1,
+  schemaVersion: "pragma.context-store/v5",
   snapshotHash: "0".repeat(64),
   id: "00000000-0000-4000-8000-000000000001",
   name: "Product docs",
@@ -39,7 +38,7 @@ describe("knowledge base UI", () => {
       <ContextStoreDirectoryFragment
         stores={[store]}
         revisionTaskCount={2}
-        onOpenRevisions={() => undefined}
+        onOpenUpdateTasks={() => undefined}
         onCreate={async () => store}
         onInspectImport={async (sourcePath) => ({
           sourcePath,
@@ -55,7 +54,7 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Knowledge bases");
     expect(html).toContain("Markdown");
     expect(html).toContain("Copied into Pragma");
-    expect(html).toContain("Revision tasks");
+    expect(html).toContain("Update tasks");
     expect(html).toContain('class="knowledge-revision-count">2</span>');
     expect(html).not.toContain("Context note");
     expect(html).not.toContain("/Users/");
@@ -116,7 +115,7 @@ describe("knowledge base UI", () => {
       <ContextStoreDetailFragment
         store={store}
         onBack={() => undefined}
-        onOpenRevisions={() => undefined}
+        onOpenUpdateTasks={() => undefined}
         onSubmitRevision={async () => undefined}
         onRevisionSubmitted={() => undefined}
         onDelete={async () => undefined}
@@ -142,8 +141,8 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
     expect(html).toContain('class="knowledge-base-editor-actions"');
-    expect(html).toContain("Revision history");
-    expect(html).toContain("Submit revision");
+    expect(html).toContain("Update tasks");
+    expect(html).toContain("Submit update");
     expect(html).toContain('aria-label="Resize file list"');
     expect(html).toContain('aria-valuemin="180"');
     expect(html).toContain('aria-valuemax="360"');

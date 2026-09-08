@@ -14,7 +14,7 @@ task observability.
 ## Decision
 
 Every Agent-driven knowledge revision targets a named sparse draft. A draft pins the published
-Store id, revision, and snapshot hash and persists only changed files and metadata, deletion
+Store id and snapshot hash and persists only changed files and metadata, deletion
 tombstones, and required directory changes under
 `~/.pragma/data/context-store-drafts/<draftId>/`. Reads, lists, and searches merge this overlay with
 the pinned base snapshot; the overlay wins and tombstones hide base entries. Unchanged published
@@ -28,7 +28,7 @@ the draft to `editing` and invalidates its prior review.
 The lifecycle is `editing -> pending_review -> merging -> merged`, with `needs_rebase` and
 `needs_attention` recovery states. Submission requires a non-empty overlay and validates progressive
 disclosure and internal Markdown links. Approval converts the overlay to a minimal change set and
-reuses the published Store journal, atomic replacement, revision record, and revision/hash CAS.
+reuses the published Store journal, atomic replacement, and snapshot-hash CAS.
 Published drift moves the task to `needs_rebase`; it never overwrites or creates a replacement task.
 Explicit three-way rebase detects path, delete/modify, rename-equivalent, and directory-ancestor
 conflicts and updates the base exactly once after every conflict has a resolution.
@@ -77,8 +77,9 @@ change sets become sparse overlays; active legacy work becomes a draft plus runn
 and recovery meaning is preserved. The host writes a backup and stable migration record before using
 the upgraded job, and rejects future versions.
 
-Discard moves an unmerged draft to recoverable trash. Published Store deletion is blocked only by
-unmerged, undiscarded drafts; deleting a Mission does not delete its draft.
+Discard moves an active draft to recoverable trash. Merged and rejected tasks retain their request
+metadata in the job record and move the complete draft to trash. Published Store deletion is blocked
+only by active, undiscarded drafts; deleting a Mission does not delete its draft.
 
 ## Consequences
 
@@ -86,4 +87,4 @@ unmerged, undiscarded drafts; deleting a Mission does not delete its draft.
 - Draft storage scales with changed content rather than Store size.
 - Human and Agent editing share one Context Store protocol and one conflict model.
 - Review, rebase, Mission history, and publication become independently observable stages.
-- Hosts must preserve pinned base snapshots while a live draft references them.
+- Hosts preserve pinned base snapshots only while an active draft references them.

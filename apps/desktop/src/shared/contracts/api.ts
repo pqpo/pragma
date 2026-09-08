@@ -35,7 +35,7 @@ import type {
   DeleteContextStoreEntry,
   ContextStoreRevisionRequest,
   ContextStoreChangeSet,
-  ContextStoreDraft,
+  ContextStoreDraftView,
   CreateContextStoreDraft,
   GetContextStoreDraftFile,
   ListContextStoreDrafts,
@@ -376,16 +376,18 @@ export interface PragmaDesktopAPI {
     input: ContextStoreRevisionJobRef,
   ) => Promise<ContextStoreRevisionJob>;
   deleteContextStoreRevision: (input: ContextStoreRevisionJobRef) => Promise<void>;
-  createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraft>;
-  listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraft[]>;
-  getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraft>;
+  createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraftView>;
+  listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraftView[]>;
+  getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraftView>;
   getContextStoreDraftChangeSet: (draftId: string) => Promise<ContextStoreChangeSet>;
   getContextStoreDraftFile: (input: GetContextStoreDraftFile) => Promise<ContextStoreContent>;
-  submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraft>;
-  updateContextStoreDraftFile: (input: UpdateContextStoreDraftFile) => Promise<ContextStoreDraft>;
+  submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraftView>;
+  updateContextStoreDraftFile: (
+    input: UpdateContextStoreDraftFile,
+  ) => Promise<ContextStoreDraftView>;
   discardContextStoreDraft: (input: ContextStoreDraftRef) => Promise<void>;
   inspectContextStoreDraftRebase: (draftId: string) => Promise<ContextStoreDraftRebaseInspection>;
-  rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraft>;
+  rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraftView>;
   getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
   updateContextStoreRevisionProfile: (
     input: UpdateContextStoreRevisionProfile,

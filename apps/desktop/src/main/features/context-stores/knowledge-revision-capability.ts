@@ -67,7 +67,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
             targetRef,
             name: store.name,
             description: store.description,
-            revision: store.contentRevision,
+            snapshotHash: store.snapshotHash,
             mounted: targetMounts.length > 0,
             mounts: targetMounts,
           },
@@ -103,7 +103,6 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           revision: draft.revision,
           name: draft.name,
           storeId: draft.storeId,
-          baseRevision: draft.baseRevision,
           state: draft.state,
           ...(draft.activeMissionId === undefined
             ? {}
@@ -241,7 +240,6 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           revision: draft.revision,
           name: draft.name,
           storeId: draft.storeId,
-          baseRevision: draft.baseRevision,
           baseSnapshotHash: draft.baseSnapshotHash,
           state: draft.state,
           activeMissionId: draft.activeMissionId,
@@ -251,11 +249,8 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           createdAt: draft.createdAt,
           updatedAt: draft.updatedAt,
         },
-        currentStoreRevision: current.revision,
         currentSnapshotHash: current.snapshotHash,
-        stale:
-          current.revision !== draft.baseRevision ||
-          current.snapshotHash !== draft.baseSnapshotHash,
+        stale: current.snapshotHash !== draft.baseSnapshotHash,
         overlay: {
           files: draft.overlay.files.map((file) => {
             const bytes = Buffer.from(file.content, "utf8");

@@ -63,7 +63,7 @@ export const KnowledgeRevisionTargetSchema = z
     targetRef: z.string().min(1).max(200),
     name: z.string().min(1).max(200),
     description: z.string().max(2_000),
-    revision: z.number().int().positive(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     mounted: z.boolean(),
     mounts: z.array(KnowledgeRevisionTargetMountSchema),
   })
@@ -92,7 +92,6 @@ export const KnowledgeRevisionDraftSummarySchema = z
     revision: ContextStoreDraftSchema.shape.revision,
     name: ContextStoreDraftSchema.shape.name,
     storeId: ContextStoreDraftSchema.shape.storeId,
-    baseRevision: ContextStoreDraftSchema.shape.baseRevision,
     state: ContextStoreDraftSchema.shape.state,
     activeMissionId: ContextStoreDraftSchema.shape.activeMissionId,
     writableNamespace: WritableNamespaceSchema.optional(),
@@ -153,7 +152,6 @@ export const KnowledgeRevisionDraftInspectionSchema = z
     draft: KnowledgeRevisionDraftSummarySchema.extend({
       baseSnapshotHash: ContextStoreDraftSchema.shape.baseSnapshotHash,
     }).strict(),
-    currentStoreRevision: z.number().int().positive(),
     currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     stale: z.boolean(),
     overlay: z
@@ -282,7 +280,7 @@ function definition<TSchema extends z.ZodType>(
 const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   definition(
     KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME,
-    "List knowledge bases that may be revised, with their exact target refs and current revisions.",
+    "List knowledge bases that may be updated, with their exact target refs and current snapshot hashes.",
     KnowledgeRevisionListTargetsInputSchema,
   ),
   definition(
@@ -318,7 +316,7 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_DISCARD_DRAFT_TOOL_NAME,
-    "Discard an obsolete unmerged knowledge draft. This also rejects its unfinished revision task and detaches its Mission; merged revision history cannot be discarded.",
+    "Discard an obsolete active knowledge draft. This also rejects its unfinished revision task and detaches its Mission; terminal task summaries cannot be discarded.",
     KnowledgeRevisionDiscardDraftInputSchema,
     { reason: "Discard this knowledge draft and reject its unfinished revision task." },
   ),

@@ -5,6 +5,11 @@ import {
   ContextStoreRevisionRequestSchema,
 } from "@pragma/built-in-agents/contracts";
 
+const ContextStoreChangeSetV1Schema = ContextStoreChangeSetSchema.extend({
+  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
+  baseRevision: z.number().int().positive(),
+});
+
 export const ContextStoreRevisionJobV1Schema = z
   .object({
     schemaVersion: z.literal("pragma.context-store-revision-job/v1"),
@@ -21,7 +26,7 @@ export const ContextStoreRevisionJobV1Schema = z
       "needs_attention",
       "superseded",
     ]),
-    changeSet: ContextStoreChangeSetSchema.optional(),
+    changeSet: ContextStoreChangeSetV1Schema.optional(),
     supersededBy: z.string().uuid().optional(),
     error: z
       .object({ code: z.string().min(1).max(100), message: z.string().min(1).max(2_000) })

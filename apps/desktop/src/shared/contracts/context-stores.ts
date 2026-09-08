@@ -77,11 +77,10 @@ const ManagedFileIdSchema = ContextStoreEntryIdSchema.refine(
 );
 
 const ContextStoreBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store/v4"),
+  schemaVersion: z.literal("pragma.context-store/v5"),
   id: ContextStoreIdSchema,
   name: KnowledgeBaseNameSchema,
   description: KnowledgeBaseDescriptionSchema,
-  contentRevision: z.number().int().positive(),
   snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -103,17 +102,17 @@ export const ContextStoreSnapshotFileSchema = z.object({
   metadata: z.lazy(() => ContextStoreContentMetadataSchema),
 });
 
-export const ContextStoreSnapshotSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
-    storeId: ContextStoreIdSchema,
-    revision: z.number().int().positive(),
-    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    createdAt: z.string().datetime(),
-    directories: StoredDirectoryIdSchema.array().default([]),
-    files: ContextStoreSnapshotFileSchema.array(),
-  })
-  .superRefine((snapshot, context) => {
+export const ContextStoreSnapshotBaseSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store-snapshot/v2"),
+  storeId: ContextStoreIdSchema,
+  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  createdAt: z.string().datetime(),
+  directories: StoredDirectoryIdSchema.array().default([]),
+  files: ContextStoreSnapshotFileSchema.array(),
+});
+
+export const ContextStoreSnapshotSchema = ContextStoreSnapshotBaseSchema.superRefine(
+  (snapshot, context) => {
     const fileIds = new Set<string>();
     for (const [index, file] of snapshot.files.entries()) {
       if (fileIds.has(file.id)) {
@@ -136,7 +135,8 @@ export const ContextStoreSnapshotSchema = z
       }
       directoryIds.add(id);
     }
-  });
+  },
+);
 
 const ContextStoreUpsertOperationSchema = z.object({
   operation: z.literal("upsert"),
@@ -165,24 +165,11 @@ export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation
 ]);
 
 export const ContextStoreChangeSetSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
+  schemaVersion: z.literal("pragma.context-store-change-set/v2"),
   storeId: ContextStoreIdSchema,
-  baseRevision: z.number().int().positive(),
   baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   summary: z.string().trim().min(1).max(2_000),
   operations: ContextStoreChangeOperationSchema.array().min(1).max(1_000),
-});
-
-export const ContextStoreRevisionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-revision-record/v1"),
-  storeId: ContextStoreIdSchema,
-  revision: z.number().int().positive(),
-  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  parentRevision: z.number().int().positive().nullable(),
-  author: z.enum(["user", "import", "memory-initialization", "store-revision-agent", "migration"]),
-  revisionJobId: z.string().uuid().optional(),
-  summary: z.string().trim().min(1).max(2_000),
-  createdAt: z.string().datetime(),
 });
 
 const CreateContextStoreBaseShape = {

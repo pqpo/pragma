@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "pragma.bundle-installations/v5",
+  "installations": [
+    {
+      "schemaVersion": "pragma.bundle-installation/v5",
+      "bundleVersion": "pragma.bundle/v2",
+      "id": "00000000-0000-4000-8000-000000000001",
+      "bundleFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "projectId": "studio",
+      "projectRevision": 4,
+      "sourceRootRef": "context-store:kqh4nx7rx26mb3e7",
+      "rootRef": "context-store:kqh4nx7rx26mb3e7",
+      "rootName": "Product knowledge",
+      "rootKind": "ContextStore",
+      "resourceRefs": ["context-store:kqh4nx7rx26mb3e7"],
+      "createdResourceRefs": [],
+      "createdCapabilityIds": [],
+      "createdContextStoreIds": [],
+      "createdPluginRefs": [],
+      "conflictResolutions": [],
+      "resourceMappings": [],
+      "knowledgeBaseUpdate": {
+        "sourceRef": "context-store:kqh4nx7rx26mb3e7",
+        "targetRef": "context-store:kqh4nx7rx26mb3e7",
+        "storeId": "00000000-0000-4000-8000-000000000001",
+        "baseRevision": 3,
+        "baseSnapshotHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "importedSnapshotHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "phase": "prepared"
+      },
+      "status": "installing",
+      "pending": [],
+      "readiness": [],
+      "createdAt": "2026-07-29T08:00:00.000Z",
+      "updatedAt": "2026-07-29T08:00:00.000Z"
+    }
+  ]
+}
