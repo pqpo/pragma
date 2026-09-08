@@ -9,6 +9,7 @@ import {
   File,
   FilePlus,
   FileText,
+  FloppyDisk,
   Folder,
   FolderPlus,
   ListBullets,
@@ -39,6 +40,7 @@ import type {
   ContextStoreImportInspection,
   CreateContextStore,
   ExpertContextStoreMount,
+  ContextStoreEditorDraft,
 } from "../../../../shared/contracts/index.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -59,7 +61,7 @@ import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
 type CreateStep = "intro" | "configure" | "review";
 type CreateMode = CreateContextStore["mode"];
-type SaveStatus = "idle" | "saving" | "saved" | "error";
+type SaveStatus = "idle" | "saving" | "saved" | "published" | "error";
 type EntryTextOperation =
   | {
       readonly kind: "create-file" | "create-folder" | "save-copy";
@@ -96,6 +98,8 @@ type LoadFileOptions = {
   readonly discardChanges?: boolean;
   readonly preservePreview?: boolean;
 };
+
+export type ContextStoreLeaveGuard = (action: () => void) => void;
 
 const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
@@ -332,6 +336,14 @@ export function ContextStoreDetailFragment(props: {
     kind: "file" | "directory",
   ) => Promise<void>;
   readonly onSubscribe: (storeId: string, listener: () => void) => () => void;
+  readonly onGetEditorDraft: (storeId: string) => Promise<ContextStoreEditorDraft | undefined>;
+  readonly onCommitEditorDraft: (
+    storeId: string,
+    expectedRevision: number,
+  ) => Promise<ContextStore>;
+  readonly onDiscardEditorDraft: (storeId: string, expectedRevision: number) => Promise<void>;
+  readonly onStoreChanged: (store: ContextStore) => void;
+  readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [entries, setEntries] = useState<readonly ContextStoreEntry[]>([]);
@@ -341,6 +353,7 @@ export function ContextStoreDetailFragment(props: {
   const [draft, setDraft] = useState("");
   const [metadata, setMetadata] = useState<ContextStoreContentMetadata>(DEFAULT_METADATA);
   const [dirty, setDirty] = useState(false);
+  const [draftDirty, setDraftDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [preview, setPreview] = useState(false);
   const [conflict, setConflict] = useState(false);
@@ -356,6 +369,8 @@ export function ContextStoreDetailFragment(props: {
   const [entryConfirmation, setEntryConfirmation] = useState<EntryConfirmation | null>(null);
   const [entryConfirmationBusy, setEntryConfirmationBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
+  const [leaving, setLeaving] = useState(false);
   const [draggedEntry, setDraggedEntry] = useState<ContextStoreEntry | null>(null);
   const [dropTargetDirectory, setDropTargetDirectory] = useState<string | null>(null);
   const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
@@ -525,6 +540,7 @@ export function ContextStoreDetailFragment(props: {
           setConflict(false);
           setSaveStatus(hasNewerChanges ? "idle" : "saved");
           setError(null);
+          setDraftDirty(true);
         },
         onFailed: (snapshot, cause) => {
           const latest = currentRef.current;
@@ -546,16 +562,45 @@ export function ContextStoreDetailFragment(props: {
     setLoading(true);
     void loadEntries();
     return props.onSubscribe(props.store.id, () => {
-      void loadEntries();
-      const current = currentRef.current;
-      if (current.selectedEntry?.kind !== "file") return;
-      if (current.dirty || saveCoordinatorRef.current.inFlight !== null) {
-        setConflict(true);
-        return;
-      }
-      void loadFile(current.selectedEntry, { preservePreview: true });
+      void (async () => {
+        try {
+          const editorDraft = await props.onGetEditorDraft(props.store.id);
+          const current = currentRef.current;
+          if (
+            editorDraft !== undefined ||
+            current.dirty ||
+            saveCoordinatorRef.current.inFlight !== null
+          ) {
+            setConflict(true);
+            return;
+          }
+          await loadEntries();
+          if (current.selectedEntry?.kind === "file") {
+            await loadFile(current.selectedEntry, { preservePreview: true });
+          }
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      })();
     });
-  }, [loadEntries, loadFile, props.onSubscribe, props.store.id]);
+  }, [loadEntries, loadFile, props.onGetEditorDraft, props.onSubscribe, props.store.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void props.onGetEditorDraft(props.store.id).then((editorDraft) => {
+      if (!cancelled) setDraftDirty(editorDraft !== undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.onGetEditorDraft, props.store.id]);
+
+  useEffect(() => {
+    if (!dirty && !draftDirty) return;
+    const preventUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [dirty, draftDirty]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -574,6 +619,98 @@ export function ContextStoreDetailFragment(props: {
     }
     if (selectedEntry?.id === entry.id) return;
     if (await save()) await loadFile(entry);
+  };
+
+  const commitDraft = useCallback(async (): Promise<boolean> => {
+    if (!(await save())) return false;
+    try {
+      const editorDraft = await props.onGetEditorDraft(props.store.id);
+      if (editorDraft === undefined) {
+        setDraftDirty(false);
+        return true;
+      }
+      setSaveStatus("saving");
+      const nextStore = await props.onCommitEditorDraft(props.store.id, editorDraft.revision);
+      props.onStoreChanged(nextStore);
+      setDraftDirty(false);
+      setSaveStatus("published");
+      await loadEntries();
+      const selected = currentRef.current.selectedEntry;
+      if (selected?.kind === "file") {
+        await loadFile(selected, { discardChanges: true, preservePreview: true });
+      }
+      return true;
+    } catch (cause) {
+      setSaveStatus("error");
+      setError(errorMessage(cause));
+      return false;
+    }
+  }, [
+    loadEntries,
+    loadFile,
+    props.onCommitEditorDraft,
+    props.onGetEditorDraft,
+    props.onStoreChanged,
+    props.store.id,
+    save,
+  ]);
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void commitDraft();
+      }
+    };
+    window.addEventListener("keydown", handleSaveShortcut);
+    return () => window.removeEventListener("keydown", handleSaveShortcut);
+  }, [commitDraft]);
+
+  const requestLeave = useCallback(
+    (action: () => void): void => {
+      if (!dirty && !draftDirty) {
+        action();
+        return;
+      }
+      setLeaveAction(() => action);
+    },
+    [dirty, draftDirty],
+  );
+
+  useEffect(() => {
+    props.onLeaveGuardChange?.(requestLeave);
+    return () => props.onLeaveGuardChange?.(null);
+  }, [props.onLeaveGuardChange, requestLeave]);
+
+  const discardAndLeave = async (): Promise<void> => {
+    if (leaveAction === null) return;
+    setLeaving(true);
+    try {
+      const editorDraft = await props.onGetEditorDraft(props.store.id);
+      if (editorDraft !== undefined) {
+        await props.onDiscardEditorDraft(props.store.id, editorDraft.revision);
+      }
+      const action = leaveAction;
+      setDraftDirty(false);
+      setDirty(false);
+      setLeaveAction(null);
+      action();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setLeaving(false);
+    }
+  };
+
+  const saveAndLeave = async (): Promise<void> => {
+    if (leaveAction === null) return;
+    setLeaving(true);
+    const action = leaveAction;
+    if (await commitDraft()) {
+      setLeaveAction(null);
+      action();
+    }
+    setLeaving(false);
   };
 
   const openEntryTextOperation = async (
@@ -668,6 +805,7 @@ export function ContextStoreDetailFragment(props: {
         await loadEntries();
         await loadFile({ id, kind: "file", revision: created.revision });
       }
+      setDraftDirty(true);
       setEntryTextOperation(null);
       setError(null);
     } catch (cause) {
@@ -736,6 +874,7 @@ export function ContextStoreDetailFragment(props: {
         }
       }
       await loadEntries(expectedSelection);
+      setDraftDirty(true);
       setEntryConfirmation(null);
       setError(null);
     } catch (cause) {
@@ -749,6 +888,10 @@ export function ContextStoreDetailFragment(props: {
   const removeStore = async () => {
     setDeleting(true);
     try {
+      const editorDraft = await props.onGetEditorDraft(props.store.id);
+      if (editorDraft !== undefined) {
+        await props.onDiscardEditorDraft(props.store.id, editorDraft.revision);
+      }
       await props.onDelete();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -802,11 +945,7 @@ export function ContextStoreDetailFragment(props: {
       labelledBy="context-store-name"
       header={
         <div className="knowledge-base-editor-header">
-          <button
-            className="back-link"
-            type="button"
-            onClick={() => void save().then((saved) => saved && props.onBack())}
-          >
+          <button className="back-link" type="button" onClick={() => requestLeave(props.onBack)}>
             <ArrowLeft size={18} aria-hidden="true" />
             {t("backKnowledgeBases")}
           </button>
@@ -818,6 +957,15 @@ export function ContextStoreDetailFragment(props: {
             </div>
           </div>
           <div className="knowledge-base-editor-actions">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={(!dirty && !draftDirty) || saveStatus === "saving"}
+              onClick={() => void commitDraft()}
+            >
+              <FloppyDisk size={17} aria-hidden="true" />
+              {saveStatus === "saving" ? t("saving") : t("saveKnowledgeBase")}
+            </button>
             {props.onExport !== undefined ? (
               <button
                 className="secondary-button"
@@ -832,19 +980,25 @@ export function ContextStoreDetailFragment(props: {
               </button>
             ) : null}
             {props.onOpenRevisions !== undefined ? (
-              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => requestLeave(props.onOpenRevisions!)}
+              >
                 <ListBullets size={17} aria-hidden="true" />
                 {t("viewStoreRevisions")}
               </button>
             ) : null}
             {props.onSubmitRevision !== undefined ? (
               <button
-                className="primary-button"
+                className="secondary-button"
                 type="button"
-                onClick={() => {
-                  setRevisionError(null);
-                  setRevisionDialogOpen(true);
-                }}
+                onClick={() =>
+                  requestLeave(() => {
+                    setRevisionError(null);
+                    setRevisionDialogOpen(true);
+                  })
+                }
               >
                 <PaperPlaneTilt size={17} aria-hidden="true" />
                 {t("submitStoreRevision")}
@@ -1019,10 +1173,12 @@ export function ContextStoreDetailFragment(props: {
                     {saveStatus === "saving"
                       ? t("saving")
                       : saveStatus === "saved"
-                        ? t("saved")
-                        : saveStatus === "error"
-                          ? t("saveFailed")
-                          : ""}
+                        ? t("draftBackedUp")
+                        : saveStatus === "published"
+                          ? t("saved")
+                          : saveStatus === "error"
+                            ? t("saveFailed")
+                            : ""}
                   </span>
                 </div>
                 <div>
@@ -1068,17 +1224,28 @@ export function ContextStoreDetailFragment(props: {
               {conflict ? (
                 <div className="knowledge-conflict" role="alert">
                   <p>{t("knowledgeConflict")}</p>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      selectedEntry && void loadFile(selectedEntry, { discardChanges: true })
-                    }
-                  >
-                    {t("reload")}
-                  </button>
-                  <button type="button" onClick={() => void openEntryTextOperation("save-copy")}>
-                    {t("saveCopy")}
-                  </button>
+                  {draftDirty ? (
+                    <button type="button" onClick={() => void commitDraft()}>
+                      {t("saveKnowledgeBase")}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          selectedEntry && void loadFile(selectedEntry, { discardChanges: true })
+                        }
+                      >
+                        {t("reload")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openEntryTextOperation("save-copy")}
+                      >
+                        {t("saveCopy")}
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : null}
               {preview ? (
@@ -1234,6 +1401,43 @@ export function ContextStoreDetailFragment(props: {
           }
           onCancel={() => setEntryTextOperation(null)}
           onConfirm={() => void submitEntryTextOperation()}
+        />
+      ) : null}
+      {leaveAction !== null ? (
+        <Dialog
+          title={t("unsavedKnowledgeChangesTitle")}
+          description={t("unsavedKnowledgeChangesDescription")}
+          role="alertdialog"
+          busy={leaving}
+          onCancel={() => setLeaveAction(null)}
+          footer={
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={leaving}
+                onClick={() => setLeaveAction(null)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={leaving}
+                onClick={() => void discardAndLeave()}
+              >
+                {t("discardAndLeave")}
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={leaving}
+                onClick={() => void saveAndLeave()}
+              >
+                {leaving ? t("saving") : t("saveAndLeave")}
+              </button>
+            </>
+          }
         />
       ) : null}
       {entryConfirmation !== null ? (

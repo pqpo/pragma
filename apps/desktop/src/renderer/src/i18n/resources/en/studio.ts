@@ -644,6 +644,13 @@ export const studio = {
   saveCopy: "Save a copy",
   saveCopyPrompt: "Enter a file name for the copy",
   saved: "Saved",
+  draftBackedUp: "Draft backed up",
+  saveKnowledgeBase: "Save",
+  unsavedKnowledgeChangesTitle: "Save changes before leaving?",
+  unsavedKnowledgeChangesDescription:
+    "This knowledge base contains changes that have not been published as a version.",
+  saveAndLeave: "Save and leave",
+  discardAndLeave: "Discard and leave",
   saveFailed: "Save failed",
   edit: "Edit",
   preview: "Preview",

@@ -204,6 +204,10 @@ export class PragmaPaths {
     return join(this.dataRoot(), "objects", "sha256");
   }
 
+  contextStoresRoot(): string {
+    return join(this.dataRoot(), "context-stores");
+  }
+
   projectsRoot(): string {
     return join(this.dataRoot(), "projects");
   }

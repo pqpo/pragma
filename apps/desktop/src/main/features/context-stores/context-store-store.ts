@@ -18,7 +18,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { z } from "zod";
 
 import { FileSystemContextStore } from "@pragma/context-filesystem";
-import { withFileLock, type ExpertAgentContextStore } from "@pragma/core";
+import { ContentAddressedStore, withFileLock, type ExpertAgentContextStore } from "@pragma/core";
 import { pragmaKnowledgeBaseEntryNameIssue } from "@pragma/shared";
 
 import {
@@ -41,6 +41,27 @@ import {
 
 const FILE_CONTENT_MAX_BYTES = 1_000_000;
 const MIGRATION_READY_FILE = ".pragma-migration-ready.json";
+const SNAPSHOT_STORAGE_MARKER = "snapshot-storage.json";
+
+const ContextStoreSnapshotManifestV2Schema = z.object({
+  schemaVersion: z.literal("pragma.context-store-snapshot-manifest/v2"),
+  storeId: z.string().uuid(),
+  revision: z.number().int().positive(),
+  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  objectTreeHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  createdAt: z.string().datetime(),
+  directories: z.array(z.string()),
+  fileCount: z.number().int().nonnegative(),
+  logicalBytes: z.number().int().nonnegative(),
+});
+
+const ContextStoreSnapshotStorageMarkerSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store-snapshot-storage/v2"),
+  storeId: z.string().uuid(),
+  migratedAt: z.string().datetime(),
+});
+
+type ContextStoreSnapshotManifestV2 = z.infer<typeof ContextStoreSnapshotManifestV2Schema>;
 
 const LegacyContextStoreV3Schema = z.object({
   schemaVersion: z.literal("pragma.context-store/v3"),
@@ -284,6 +305,10 @@ export function createContextStoreStore(options: {
     join(revisionRoot(id, revision), "snapshot.json");
   const revisionRecordPath = (id: string, revision: number) =>
     join(revisionRoot(id, revision), "record.json");
+  const snapshotStorageMarkerPath = (id: string) => join(storePath(id), SNAPSHOT_STORAGE_MARKER);
+  const snapshotObjects = new ContentAddressedStore(
+    join(dirname(options.storesPath), "objects", "sha256"),
+  );
   const revisionLockPath = (id: string) => join(options.storesPath, ".locks", `${id}.lock`);
   const fileStoreAt = (rootDir: string) =>
     new FileSystemContextStore({
@@ -496,6 +521,110 @@ export function createContextStoreStore(options: {
     });
   };
 
+  const persistSnapshotManifest = async (
+    id: string,
+    snapshot: ContextStoreSnapshot,
+    objects = snapshotObjects,
+  ): Promise<ContextStoreSnapshotManifestV2> => {
+    assertSnapshotInvariant(id, snapshot);
+    const files = new Map(
+      snapshot.files.map((file) => [
+        file.id,
+        Buffer.from(
+          `${JSON.stringify({ content: file.content, metadata: file.metadata })}\n`,
+          "utf8",
+        ),
+      ]),
+    );
+    const stored = await objects.putSnapshot(files);
+    return ContextStoreSnapshotManifestV2Schema.parse({
+      schemaVersion: "pragma.context-store-snapshot-manifest/v2",
+      storeId: id,
+      revision: snapshot.revision,
+      snapshotHash: snapshot.snapshotHash,
+      objectTreeHash: stored.root.hash,
+      createdAt: snapshot.createdAt,
+      directories: snapshot.directories,
+      fileCount: snapshot.files.length,
+      logicalBytes: snapshot.files.reduce(
+        (total, file) => total + Buffer.byteLength(file.content, "utf8"),
+        0,
+      ),
+    });
+  };
+
+  const materializeStoredSnapshot = async (
+    id: string,
+    manifest: ContextStoreSnapshotManifestV2,
+  ): Promise<ContextStoreSnapshot> => {
+    if (manifest.storeId !== id) {
+      throw new ContextStoreStoreError(
+        "config_invalid",
+        `Knowledge base ${id} snapshot identity mismatch.`,
+      );
+    }
+    const files: ContextStoreSnapshot["files"][number][] = [];
+    const visit = async (treeHash: string, prefix: string): Promise<void> => {
+      const tree = await snapshotObjects.readTree(treeHash);
+      for (const entry of tree.entries) {
+        const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+        if (entry.kind === "tree") {
+          await visit(entry.hash, path);
+          continue;
+        }
+        const raw = JSON.parse(
+          Buffer.from(await snapshotObjects.readBlob(entry.hash)).toString("utf8"),
+        ) as {
+          readonly content?: unknown;
+          readonly metadata?: unknown;
+        };
+        files.push(
+          ContextStoreSnapshotSchema.shape.files.element.parse({
+            id: path,
+            content: raw.content,
+            metadata: raw.metadata,
+          }),
+        );
+      }
+    };
+    await visit(manifest.objectTreeHash, "");
+    const snapshot = ContextStoreSnapshotSchema.parse({
+      schemaVersion: "pragma.context-store-snapshot/v1",
+      storeId: id,
+      revision: manifest.revision,
+      snapshotHash: manifest.snapshotHash,
+      createdAt: manifest.createdAt,
+      directories: manifest.directories,
+      files: files.toSorted((left, right) => left.id.localeCompare(right.id)),
+    });
+    assertSnapshotInvariant(id, snapshot, {
+      revision: manifest.revision,
+      snapshotHash: manifest.snapshotHash,
+    });
+    if (snapshot.files.length !== manifest.fileCount) {
+      throw new ContextStoreStoreError(
+        "config_invalid",
+        `Knowledge base ${id} snapshot file count mismatch.`,
+      );
+    }
+    return snapshot;
+  };
+
+  const readSnapshot = async (id: string, revision: number): Promise<ContextStoreSnapshot> => {
+    const raw = parseJson(
+      await readFile(snapshotPath(id, revision), "utf8"),
+      `${id}/revisions/${revision}/snapshot.json`,
+    );
+    const manifest = ContextStoreSnapshotManifestV2Schema.safeParse(raw);
+    if (!manifest.success) {
+      throw new ContextStoreStoreError(
+        "config_invalid",
+        `Knowledge base ${id} revision ${revision} has not completed its snapshot-storage upgrade.`,
+      );
+    }
+    return await materializeStoredSnapshot(id, manifest.data);
+  };
+
   const persistRevision = async (
     id: string,
     snapshot: ContextStoreSnapshot,
@@ -514,7 +643,10 @@ export function createContextStoreStore(options: {
         `Knowledge base ${id} has an inconsistent revision record.`,
       );
     }
-    await writeJsonAtomic(snapshotPath(id, snapshot.revision), snapshot);
+    await writeJsonAtomic(
+      snapshotPath(id, snapshot.revision),
+      await persistSnapshotManifest(id, snapshot),
+    );
     await writeJsonAtomic(revisionRecordPath(id, record.revision), record);
   };
 
@@ -588,6 +720,62 @@ export function createContextStoreStore(options: {
       return pending.targetManifest;
     });
 
+  const ensureSnapshotStorageV2 = async (id: string, current: ContextStore): Promise<void> => {
+    const marker = async (): Promise<boolean> => {
+      try {
+        const parsed = ContextStoreSnapshotStorageMarkerSchema.parse(
+          parseJson(await readFile(snapshotStorageMarkerPath(id), "utf8"), SNAPSHOT_STORAGE_MARKER),
+        );
+        return parsed.storeId === id;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    };
+    if (await marker()) return;
+    await withFileLock(join(storePath(id), ".snapshot-v2-migration.lock"), async () => {
+      if (await marker()) return;
+      const backupRoot = join(storePath(id), "migration-backups", "snapshot-storage-v1");
+      const backupRevisions = join(backupRoot, "revisions");
+      if (!(await pathExists(backupRevisions))) {
+        await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+        await cp(revisionsRoot(id), backupRevisions, {
+          recursive: true,
+          errorOnExist: true,
+          force: false,
+          preserveTimestamps: true,
+        });
+      }
+      for (let revision = 1; revision <= current.contentRevision; revision += 1) {
+        const path = snapshotPath(id, revision);
+        const raw = parseJson(
+          await readFile(path, "utf8"),
+          `${id}/revisions/${revision}/snapshot.json`,
+        );
+        const migrated = ContextStoreSnapshotManifestV2Schema.safeParse(raw);
+        if (migrated.success) {
+          await materializeStoredSnapshot(id, migrated.data);
+          continue;
+        }
+        const legacy = ContextStoreSnapshotSchema.parse(raw);
+        assertSnapshotInvariant(id, legacy, {
+          revision,
+          ...(revision === current.contentRevision ? { snapshotHash: current.snapshotHash } : {}),
+        });
+        await writeJsonAtomic(path, await persistSnapshotManifest(id, legacy));
+      }
+      await writeJsonAtomic(
+        snapshotStorageMarkerPath(id),
+        ContextStoreSnapshotStorageMarkerSchema.parse({
+          schemaVersion: "pragma.context-store-snapshot-storage/v2",
+          storeId: id,
+          migratedAt: new Date().toISOString(),
+        }),
+      );
+      if (options.trashItem !== undefined) await options.trashItem(backupRoot);
+    });
+  };
+
   const readStore = async (id: string): Promise<ContextStore> => {
     try {
       await recoverRevisionTransaction(id);
@@ -595,17 +783,27 @@ export function createContextStoreStore(options: {
       const current = ContextStoreSchema.safeParse(raw);
       if (current.success) {
         await rm(join(storePath(id), "v2-to-v3.json"), { force: true });
+        await ensureSnapshotStorageV2(id, current.data);
         return current.data;
       }
       const legacyV2 = LegacyContextStoreV2Schema.safeParse(raw);
       const legacyV3 = LegacyContextStoreV3Schema.safeParse(raw);
-      if (legacyV3.success) return await migrateV3Store(id, legacyV3.data);
-      if (legacyV2.success)
-        return await migrateV3Store(id, await migrateV2Store(id, legacyV2.data));
+      if (legacyV3.success) {
+        const migrated = await migrateV3Store(id, legacyV3.data);
+        await ensureSnapshotStorageV2(id, migrated);
+        return migrated;
+      }
+      if (legacyV2.success) {
+        const migrated = await migrateV3Store(id, await migrateV2Store(id, legacyV2.data));
+        await ensureSnapshotStorageV2(id, migrated);
+        return migrated;
+      }
       const legacy = LegacyContextStoreV1Schema.safeParse(raw);
       if (legacy.success) {
         const migrated = await migrateFileStore(id, legacy.data);
-        return await migrateV3Store(id, await migrateV2Store(id, migrated));
+        const current = await migrateV3Store(id, await migrateV2Store(id, migrated));
+        await ensureSnapshotStorageV2(id, current);
+        return current;
       }
       throw new ContextStoreStoreError(
         "config_invalid",
@@ -990,9 +1188,14 @@ export function createContextStoreStore(options: {
         });
         await writeJsonAtomic(
           join(temporaryPath, "revisions", "00000001", "snapshot.json"),
-          snapshot,
+          await persistSnapshotManifest(id, snapshot),
         );
         await writeJsonAtomic(join(temporaryPath, "revisions", "00000001", "record.json"), record);
+        await writeJsonAtomic(join(temporaryPath, SNAPSHOT_STORAGE_MARKER), {
+          schemaVersion: "pragma.context-store-snapshot-storage/v2",
+          storeId: id,
+          migratedAt: timestamp,
+        });
         await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
         return store;
@@ -1232,9 +1435,14 @@ export function createContextStoreStore(options: {
         await writeJsonAtomic(join(temporaryPath, "store.json"), store);
         await writeJsonAtomic(
           join(temporaryPath, "revisions", "00000001", "snapshot.json"),
-          snapshot,
+          await persistSnapshotManifest(id, snapshot),
         );
         await writeJsonAtomic(join(temporaryPath, "revisions", "00000001", "record.json"), record);
+        await writeJsonAtomic(join(temporaryPath, SNAPSHOT_STORAGE_MARKER), {
+          schemaVersion: "pragma.context-store-snapshot-storage/v2",
+          storeId: id,
+          migratedAt: timestamp,
+        });
         await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
         return store;
@@ -1248,12 +1456,7 @@ export function createContextStoreStore(options: {
       const current = await readStore(storeId);
       const targetRevision = revision ?? current.contentRevision;
       try {
-        const snapshot = ContextStoreSnapshotSchema.parse(
-          parseJson(
-            await readFile(snapshotPath(storeId, targetRevision), "utf8"),
-            `${storeId}/revisions/${targetRevision}/snapshot.json`,
-          ),
-        );
+        const snapshot = await readSnapshot(storeId, targetRevision);
         const record = ContextStoreRevisionRecordSchema.parse(
           parseJson(
             await readFile(revisionRecordPath(storeId, targetRevision), "utf8"),
@@ -1394,12 +1597,7 @@ export function createContextStoreStore(options: {
               `${storeId}/revisions/${revision}/record.json`,
             ),
           );
-          const snapshot = ContextStoreSnapshotSchema.parse(
-            parseJson(
-              await readFile(snapshotPath(storeId, revision), "utf8"),
-              `${storeId}/revisions/${revision}/snapshot.json`,
-            ),
-          );
+          const snapshot = await readSnapshot(storeId, revision);
           assertSnapshotInvariant(storeId, snapshot, {
             revision,
             ...(revision === current.contentRevision ? { snapshotHash: current.snapshotHash } : {}),
@@ -1643,7 +1841,7 @@ function toCoreMetadata(metadata: ContextStoreContentMetadata) {
   };
 }
 
-function hashSnapshotContent(
+export function hashSnapshotContent(
   files: ContextStoreSnapshot["files"],
   directories: ContextStoreSnapshot["directories"],
 ): string {

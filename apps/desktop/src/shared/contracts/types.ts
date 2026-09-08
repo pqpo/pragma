@@ -93,6 +93,10 @@ import {
   ContextStoreSchema,
   ContextStoreSnapshotSchema,
   ContextStoreRevisionRecordSchema,
+  ContextStoreEditorDraftSchema,
+  CommitContextStoreEditorDraftSchema,
+  DiscardContextStoreEditorDraftSchema,
+  GetContextStoreEditorDraftSchema,
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
@@ -443,6 +447,10 @@ export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
+export type ContextStoreEditorDraft = z.infer<typeof ContextStoreEditorDraftSchema>;
+export type GetContextStoreEditorDraft = z.infer<typeof GetContextStoreEditorDraftSchema>;
+export type CommitContextStoreEditorDraft = z.infer<typeof CommitContextStoreEditorDraftSchema>;
+export type DiscardContextStoreEditorDraft = z.infer<typeof DiscardContextStoreEditorDraftSchema>;
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
 export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
 export type CreateContextStoreDraft = z.infer<typeof CreateContextStoreDraftSchema>;

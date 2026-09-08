@@ -219,7 +219,9 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 ~/.pragma/data/memory/modules/<knowledge-learning>/knowledge.sqlite # Knowledge learning jobs；无 published authority
 ~/.pragma/data/memory/modules/<skill-learning>/skill-learning.sqlite # Skill learning jobs；无 published authority
 ~/.pragma/data/context-stores/<storeId>/                 # promoted Knowledge 内容与 revision history
+~/.pragma/data/objects/sha256/                           # Context Store Revision 全局去重的文件与 Merkle tree 对象
 ~/.pragma/data/context-store-drafts/<draftId>/            # 稀疏草稿 overlay 与固定基线
+~/.pragma/state/context-store-editor-drafts/<storeId>/    # Studio 未发布的可恢复稀疏编辑草稿
 ~/.pragma/state/context-store-revisions/                  # v2 修订任务与持久 Mission registry
 ~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
 ~/.pragma/state/memory-skill-promotion/                  # Skill Candidate、content-free Expert binding 与 promotion journal

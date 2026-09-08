@@ -69,6 +69,7 @@ import {
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
 import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
+import { createContextStoreEditorDraftService } from "../features/context-stores/context-store-editor-draft-service.ts";
 import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
@@ -573,6 +574,10 @@ export async function createDesktopApplicationContainer(
     hasActiveRevisions: async (storeId) =>
       (await storeRevisionsRef.current?.hasActiveJobs(storeId)) ?? false,
   });
+  const contextStoreEditorDrafts = createContextStoreEditorDraftService({
+    draftsPath: join(pragmaPaths.stateRoot(), "context-store-editor-drafts"),
+    stores: contextStores,
+  });
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {
     async generate(input) {
@@ -772,7 +777,12 @@ export async function createDesktopApplicationContainer(
     promotion: skillPromotion,
     evaluationProfiles: skillEvaluationProfiles,
   });
-  installContextStoreHandlers(contextStores, options.getWindow, storeRevisions);
+  installContextStoreHandlers(
+    contextStores,
+    options.getWindow,
+    storeRevisions,
+    contextStoreEditorDrafts,
+  );
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,

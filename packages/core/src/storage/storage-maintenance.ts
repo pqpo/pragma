@@ -196,7 +196,7 @@ export async function runStorageMaintenance(input: {
       ttlOnly: true,
     });
     const trash = await pruneCompletedTrash({ paths: input.paths, policy, now });
-    const roots = await readProjectSnapshotRoots(input.paths);
+    const roots = await readContentObjectRoots(input.paths);
     const content = await new ContentAddressedStore(
       input.paths.contentObjectsRoot(),
     ).collectGarbage({
@@ -498,6 +498,40 @@ async function readProjectSnapshotRoots(
     }
   }
   return roots;
+}
+
+async function readContextStoreSnapshotRoots(
+  paths: PragmaPaths,
+): Promise<readonly (ContentObjectRef & { readonly kind: "tree" })[]> {
+  const roots: (ContentObjectRef & { readonly kind: "tree" })[] = [];
+  for (const store of await childDirectories(paths.contextStoresRoot())) {
+    for (const revision of await childDirectories(join(store, "revisions"))) {
+      try {
+        const value = JSON.parse(await readFile(join(revision, "snapshot.json"), "utf8")) as {
+          readonly objectTreeHash?: unknown;
+        };
+        if (
+          typeof value.objectTreeHash === "string" &&
+          /^[a-f0-9]{64}$/.test(value.objectTreeHash)
+        ) {
+          roots.push({ kind: "tree", hash: value.objectTreeHash });
+        }
+      } catch (error) {
+        if (errorCode(error) !== "ENOENT") throw error;
+      }
+    }
+  }
+  return roots;
+}
+
+async function readContentObjectRoots(
+  paths: PragmaPaths,
+): Promise<readonly (ContentObjectRef & { readonly kind: "tree" })[]> {
+  const [projects, contextStores] = await Promise.all([
+    readProjectSnapshotRoots(paths),
+    readContextStoreSnapshotRoots(paths),
+  ]);
+  return [...projects, ...contextStores];
 }
 
 async function childDirectories(root: string): Promise<string[]> {

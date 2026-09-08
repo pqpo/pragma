@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { ContentAddressedStore } from "@pragma/core";
 
 import { createContextStoreStore } from "./context-store-store.ts";
 
@@ -193,9 +194,10 @@ describe("managed context store", () => {
     expect(legacy).toMatchObject({ schemaVersion: "pragma.context-store/v3", id });
 
     const targetManifest = JSON.parse(await readFile(join(root, "store.json"), "utf8"));
-    const snapshot = JSON.parse(
-      await readFile(join(root, "revisions", "00000001", "snapshot.json"), "utf8"),
-    );
+    // The v3 journal historically embedded the materialized v1 snapshot. The
+    // current on-disk snapshot is now a compact CAS manifest, so use the
+    // already reconstructed value to exercise legacy journal recovery.
+    const snapshot = migrated;
     const record = JSON.parse(
       await readFile(join(root, "revisions", "00000001", "record.json"), "utf8"),
     );
@@ -652,6 +654,95 @@ describe("managed context store", () => {
         parentRevision: null,
       }),
     ]);
+  });
+
+  it("stores revisions as Merkle roots and reuses every unchanged file object", async () => {
+    const { storesPath, store } = await createStore();
+    const created = await store.createFromSnapshot({
+      name: "Deduplicated",
+      description: "",
+      author: "import",
+      summary: "Import two files.",
+      files: [
+        { id: "a.md", content: "Alpha", metadata: { trigger: "manual", priority: "normal" } },
+        { id: "b.md", content: "Beta", metadata: { trigger: "manual", priority: "normal" } },
+      ],
+    });
+    const current = await store.getContent(created.id, "a.md");
+    await store.updateFile(created.id, "a.md", "Alpha!", current.metadata, current.revision!);
+
+    const readManifest = async (revision: number) =>
+      JSON.parse(
+        await readFile(
+          join(
+            storesPath,
+            created.id,
+            "revisions",
+            revision.toString().padStart(8, "0"),
+            "snapshot.json",
+          ),
+          "utf8",
+        ),
+      ) as { schemaVersion: string; objectTreeHash: string; files?: unknown };
+    const first = await readManifest(1);
+    const second = await readManifest(2);
+    expect(first).toMatchObject({ schemaVersion: "pragma.context-store-snapshot-manifest/v2" });
+    expect(second).toMatchObject({ schemaVersion: "pragma.context-store-snapshot-manifest/v2" });
+    expect(first.files).toBeUndefined();
+    expect(second.files).toBeUndefined();
+
+    const objects = new ContentAddressedStore(join(storesPath, "..", "objects", "sha256"));
+    const firstTree = await objects.readTree(first.objectTreeHash);
+    const secondTree = await objects.readTree(second.objectTreeHash);
+    const firstByName = new Map(firstTree.entries.map((entry) => [entry.name, entry]));
+    const secondByName = new Map(secondTree.entries.map((entry) => [entry.name, entry]));
+    expect(secondByName.get("b.md")?.hash).toBe(firstByName.get("b.md")?.hash);
+    expect(secondByName.get("a.md")?.hash).not.toBe(firstByName.get("a.md")?.hash);
+  });
+
+  it("upgrades full historical snapshots to compact manifests on first owner access", async () => {
+    const { storesPath, store } = await createStore();
+    const created = await store.createFromSnapshot({
+      name: "Legacy snapshots",
+      description: "",
+      author: "import",
+      summary: "Import legacy content.",
+      files: [
+        {
+          id: "legacy.md",
+          content: "Legacy full snapshot",
+          metadata: { trigger: "manual", priority: "normal" },
+        },
+      ],
+    });
+    const snapshot = await store.getSnapshot(created.id);
+    const root = join(storesPath, created.id);
+    const snapshotFile = join(root, "revisions", "00000001", "snapshot.json");
+    await writeFile(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    await rm(join(root, "snapshot-storage.json"));
+    await rm(join(storesPath, "..", "objects"), { recursive: true });
+
+    const reopened = createContextStoreStore({ storesPath });
+    await expect(reopened.getSnapshot(created.id)).resolves.toMatchObject({
+      snapshotHash: snapshot.snapshotHash,
+      files: [expect.objectContaining({ id: "legacy.md", content: "Legacy full snapshot" })],
+    });
+    await expect(readFile(snapshotFile, "utf8")).resolves.toContain(
+      "pragma.context-store-snapshot-manifest/v2",
+    );
+    await expect(
+      readFile(
+        join(
+          root,
+          "migration-backups",
+          "snapshot-storage-v1",
+          "revisions",
+          "00000001",
+          "snapshot.json",
+        ),
+        "utf8",
+      ),
+    ).resolves.toContain("pragma.context-store-snapshot/v1");
   });
 
   it("preserves empty directories when an agent revision replaces the live tree", async () => {

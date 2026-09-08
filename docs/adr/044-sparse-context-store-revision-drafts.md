@@ -20,6 +20,19 @@ tombstones, and required directory changes under
 the pinned base snapshot; the overlay wins and tombstones hide base entries. Unchanged published
 content is never copied.
 
+The Studio editor uses the same canonical overlay and materialization functions for one recoverable
+editor draft per Store under `~/.pragma/state/context-store-editor-drafts/`. Background backup only
+updates that sparse draft. It does not publish a Store revision. The explicit Save action atomically
+publishes all pending paths as one revision; leaving the editor requires Save, Discard, or Cancel.
+
+Published revision files contain only a compact immutable manifest and Merkle root. File payloads and
+tree objects are addressed by SHA-256 in the global `~/.pragma/data/objects/sha256/` pool, so an
+unchanged file references the same object across revisions and Stores. Historical full-snapshot
+files are upgraded lazily on first access to their owning Store, with a recoverable backup and a
+versioned completion marker. Object garbage collection scans every published revision root and is
+performed only by the globally locked storage-maintenance pass, never on the user-visible revision
+commit path.
+
 The draft implements `ExpertAgentContextStore`, so the mounted Store Revision Agent uses the normal
 `add_expert_context`, `edit_expert_context`, and `delete_expert_context` tools. Draft mutations do
 not require publication approval, but use draft and entry CAS. A mutation after submission returns
@@ -84,6 +97,7 @@ unmerged, undiscarded drafts; deleting a Mission does not delete its draft.
 
 - Published knowledge remains impossible for an Agent to mutate directly.
 - Draft storage scales with changed content rather than Store size.
+- Published revision storage scales with changed objects rather than full Store copies.
 - Human and Agent editing share one Context Store protocol and one conflict model.
 - Review, rebase, Mission history, and publication become independently observable stages.
 - Hosts must preserve pinned base snapshots while a live draft references them.

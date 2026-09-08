@@ -33,6 +33,7 @@ import {
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
   ExpertContextMountDrawer,
+  type ContextStoreLeaveGuard,
 } from "./ContextStoreFragment.tsx";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import {
@@ -84,11 +85,13 @@ export function StudioPage(props: {
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onTryExpert: (expert: ExpertRecord) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
+  readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.studio,
   );
+  const contextStoreLeaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
   const [activeView, setActiveView] = useState<StudioView>(
     props.initialMemoryState?.activeView ?? "experts",
   );
@@ -677,13 +680,18 @@ export function StudioPage(props: {
   }, []);
 
   const openStudioView = (view: StudioView) => {
-    setExpertDetailReturn(null);
-    setContextStoreDetailReturn(null);
-    setActiveView(view);
-    setScreen("directory");
-    setContextDrawerOpen(false);
-    setResourceEditor(null);
-    resourceSaveCompletedRef.current = false;
+    const navigate = () => {
+      setExpertDetailReturn(null);
+      setContextStoreDetailReturn(null);
+      setActiveView(view);
+      setScreen("directory");
+      setContextDrawerOpen(false);
+      setResourceEditor(null);
+      resourceSaveCompletedRef.current = false;
+    };
+    const guard = contextStoreLeaveGuardRef.current;
+    if (guard === null) navigate();
+    else guard(navigate);
   };
 
   return (
@@ -943,6 +951,30 @@ export function StudioPage(props: {
             onRenameEntry={renameContextStoreEntry}
             onDeleteEntry={deleteContextStoreEntry}
             onSubscribe={subscribeContextStoreChanges}
+            onGetEditorDraft={async (storeId) => {
+              const api = desktopApi();
+              if (api === undefined) return undefined;
+              return await api.getContextStoreEditorDraft({ storeId });
+            }}
+            onCommitEditorDraft={async (storeId, expectedRevision) => {
+              const api = desktopApi();
+              if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+              return await api.commitContextStoreEditorDraft({ storeId, expectedRevision });
+            }}
+            onDiscardEditorDraft={async (storeId, expectedRevision) => {
+              const api = desktopApi();
+              if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+              await api.discardContextStoreEditorDraft({ storeId, expectedRevision });
+            }}
+            onStoreChanged={(store) => {
+              setContextStores((current) =>
+                current.map((candidate) => (candidate.id === store.id ? store : candidate)),
+              );
+            }}
+            onLeaveGuardChange={(guard) => {
+              contextStoreLeaveGuardRef.current = guard;
+              props.onLeaveGuardChange?.(guard);
+            }}
             onDelete={async () => {
               const api = desktopApi();
               if (api !== undefined)

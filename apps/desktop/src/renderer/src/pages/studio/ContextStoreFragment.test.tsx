@@ -134,6 +134,10 @@ describe("knowledge base UI", () => {
         onRenameEntry={async () => undefined}
         onDeleteEntry={async () => undefined}
         onSubscribe={() => () => undefined}
+        onGetEditorDraft={async () => undefined}
+        onCommitEditorDraft={async () => store}
+        onDiscardEditorDraft={async () => undefined}
+        onStoreChanged={() => undefined}
       />,
     );
 

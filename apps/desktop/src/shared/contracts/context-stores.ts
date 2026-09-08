@@ -4,6 +4,7 @@ import {
   pragmaKnowledgeBaseEntryNameIssue,
   pragmaUnicodeLength,
 } from "@pragma/shared";
+import { ContextStoreDraftOverlaySchema } from "@pragma/built-in-agents/contracts";
 import { z } from "zod";
 
 export const ContextStoreIdSchema = z.string().uuid();
@@ -297,6 +298,28 @@ export const DeleteContextStoreEntrySchema = z.object({
   id: z.string().trim().min(1).max(2_000),
   kind: z.enum(["file", "directory"]),
 });
+
+export const ContextStoreEditorDraftSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-editor-draft/v1"),
+    revision: z.number().int().positive(),
+    storeId: ContextStoreIdSchema,
+    baseRevision: z.number().int().positive(),
+    baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    overlay: ContextStoreDraftOverlaySchema,
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const GetContextStoreEditorDraftSchema = z.object({ storeId: ContextStoreIdSchema });
+
+export const CommitContextStoreEditorDraftSchema = z.object({
+  storeId: ContextStoreIdSchema,
+  expectedRevision: z.number().int().positive(),
+});
+
+export const DiscardContextStoreEditorDraftSchema = CommitContextStoreEditorDraftSchema;
 
 export const SubscribeContextStoreChangesSchema = z.object({
   storeId: ContextStoreIdSchema,

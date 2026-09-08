@@ -187,7 +187,10 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
 }
 
 export function materializeDraftSnapshot(
-  draft: ContextStoreDraft,
+  draft: Pick<
+    ContextStoreDraft,
+    "storeId" | "baseRevision" | "baseSnapshotHash" | "overlay" | "updatedAt"
+  >,
   base: ContextStoreSnapshot,
 ): ContextStoreSnapshot {
   const deletedFiles = new Set(draft.overlay.deletedFiles);
@@ -217,6 +220,37 @@ export function materializeDraftSnapshot(
     directories: [...directories].toSorted(),
     files: [...byId.values()].toSorted((left, right) => left.id.localeCompare(right.id)),
   };
+}
+
+/**
+ * Produces the canonical sparse overlay between two materialized snapshots.
+ * Both the managed revision workflow and the interactive editor use this
+ * function so copy-on-write semantics cannot drift between the two paths.
+ */
+export function contextStoreOverlayBetween(
+  base: ContextStoreSnapshot,
+  effective: Pick<ContextStoreSnapshot, "files" | "directories">,
+): ContextStoreDraftOverlay {
+  const baseFiles = new Map(base.files.map((file) => [file.id, file]));
+  const effectiveFiles = new Map(effective.files.map((file) => [file.id, file]));
+  const files = [...effectiveFiles.values()].filter(
+    (file) => JSON.stringify(baseFiles.get(file.id)) !== JSON.stringify(file),
+  );
+  const deletedFiles = [...baseFiles.keys()].filter((id) => !effectiveFiles.has(id));
+  const baseDirectories = new Set(base.directories);
+  const effectiveDirectories = new Set(effective.directories);
+  return ContextStoreDraftOverlaySchema.parse({
+    files: files.toSorted((left, right) => left.id.localeCompare(right.id)),
+    deletedFiles: deletedFiles.toSorted(),
+    directories: [...effectiveDirectories].filter((id) => !baseDirectories.has(id)).toSorted(),
+    deletedDirectories: [...baseDirectories]
+      .filter((id) => !effectiveDirectories.has(id))
+      .toSorted(),
+  });
+}
+
+export function contextStoreDraftFileRevision(content: string, metadata: unknown): string {
+  return fileRevision(content, metadata);
 }
 
 function createEffectiveStore(

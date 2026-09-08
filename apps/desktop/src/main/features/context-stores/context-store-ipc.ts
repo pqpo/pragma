@@ -28,10 +28,14 @@ import {
   SubmitContextStoreDraftSchema,
   UpdateContextStoreRevisionProfileSchema,
   UpdateContextStoreDraftFileSchema,
+  GetContextStoreEditorDraftSchema,
+  CommitContextStoreEditorDraftSchema,
+  DiscardContextStoreEditorDraftSchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
 import type { ContextStoreStore } from "./context-store-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
+import type { ContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
 
 interface ContextStoreWatchSubscription {
   readonly sender: WebContents;
@@ -48,6 +52,7 @@ export function installContextStoreHandlers(
   store: ContextStoreStore,
   windowGetter: () => BrowserWindow | null,
   revisions?: ContextStoreRevisionService,
+  editorDrafts?: ContextStoreEditorDraftService,
 ): void {
   const watchers = new Map<string, ContextStoreWatchSubscription>();
   const watcherKey = (webContentsId: number, storeId: string) => `${webContentsId}:${storeId}`;
@@ -74,23 +79,28 @@ export function installContextStoreHandlers(
   });
   ipcMain.handle("context-stores:get-content", (_event, input: unknown) => {
     const parsed = GetContextStoreContentSchema.parse(input);
-    return store.getContent(parsed.storeId, parsed.contentId);
+    return (editorDrafts ?? store).getContent(parsed.storeId, parsed.contentId);
   });
   ipcMain.handle("context-stores:list-entries", (_event, input: unknown) => {
     const parsed = ListContextStoreEntriesSchema.parse(input);
-    return store.listEntries(parsed.storeId);
+    return (editorDrafts ?? store).listEntries(parsed.storeId);
   });
   ipcMain.handle("context-stores:create-folder", async (_event, input: unknown) => {
     const parsed = CreateContextStoreFolderSchema.parse(input);
-    await store.createFolder(parsed.storeId, parsed.id);
+    await (editorDrafts ?? store).createFolder(parsed.storeId, parsed.id);
   });
   ipcMain.handle("context-stores:create-file", (_event, input: unknown) => {
     const parsed = CreateContextStoreFileSchema.parse(input);
-    return store.createFile(parsed.storeId, parsed.id, parsed.content, parsed.metadata);
+    return (editorDrafts ?? store).createFile(
+      parsed.storeId,
+      parsed.id,
+      parsed.content,
+      parsed.metadata ?? { trigger: "manual", priority: "normal" },
+    );
   });
   ipcMain.handle("context-stores:update-file", (_event, input: unknown) => {
     const parsed = UpdateContextStoreFileSchema.parse(input);
-    return store.updateFile(
+    return (editorDrafts ?? store).updateFile(
       parsed.storeId,
       parsed.id,
       parsed.content,
@@ -100,12 +110,31 @@ export function installContextStoreHandlers(
   });
   ipcMain.handle("context-stores:rename-entry", async (_event, input: unknown) => {
     const parsed = RenameContextStoreEntrySchema.parse(input);
-    await store.renameEntry(parsed.storeId, parsed.id, parsed.nextId, parsed.kind);
+    await (editorDrafts ?? store).renameEntry(
+      parsed.storeId,
+      parsed.id,
+      parsed.nextId,
+      parsed.kind,
+    );
   });
   ipcMain.handle("context-stores:delete-entry", async (_event, input: unknown) => {
     const parsed = DeleteContextStoreEntrySchema.parse(input);
-    await store.deleteEntry(parsed.storeId, parsed.id, parsed.kind);
+    await (editorDrafts ?? store).deleteEntry(parsed.storeId, parsed.id, parsed.kind);
   });
+  if (editorDrafts !== undefined) {
+    ipcMain.handle("context-store-editor-drafts:get", (_event, input: unknown) => {
+      const parsed = GetContextStoreEditorDraftSchema.parse(input);
+      return editorDrafts.get(parsed.storeId);
+    });
+    ipcMain.handle("context-store-editor-drafts:commit", (_event, input: unknown) => {
+      const parsed = CommitContextStoreEditorDraftSchema.parse(input);
+      return editorDrafts.commit(parsed.storeId, parsed.expectedRevision);
+    });
+    ipcMain.handle("context-store-editor-drafts:discard", async (_event, input: unknown) => {
+      const parsed = DiscardContextStoreEditorDraftSchema.parse(input);
+      await editorDrafts.discard(parsed.storeId, parsed.expectedRevision);
+    });
+  }
   if (revisions !== undefined) {
     ipcMain.handle("context-store-revisions:submit", async (_event, input: unknown) => {
       const job = await revisions.submit(ContextStoreRevisionRequestSchema.parse(input));

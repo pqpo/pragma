@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ContentAddressedStore } from "../src/storage/content-addressed-store.ts";
 import { PragmaPaths } from "../src/storage/pragma-paths.ts";
 import { moveOwnedStorageToTrash } from "../src/storage/deletion-transaction.ts";
 import {
@@ -23,6 +24,42 @@ afterEach(async () => {
 });
 
 describe("runStorageMaintenance", () => {
+  it("keeps Context Store objects while collecting the shared content pool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-storage-context-roots-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const objects = new ContentAddressedStore(paths.contentObjectsRoot());
+    const snapshot = await objects.putSnapshot(
+      new Map([["guide.md", Buffer.from("Published knowledge")]]),
+    );
+    const orphan = await objects.putBlob(Buffer.from("orphan"));
+    const revision = join(
+      paths.contextStoresRoot(),
+      "00000000-0000-4000-8000-000000000001",
+      "revisions",
+      "00000001",
+    );
+    await mkdir(revision, { recursive: true });
+    await writeFile(
+      join(revision, "snapshot.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.context-store-snapshot-manifest/v2",
+        objectTreeHash: snapshot.root.hash,
+      }),
+    );
+
+    await runStorageMaintenance({
+      paths,
+      now: Date.now() + 1_000,
+      policy: { ...DEFAULT_STORAGE_POLICY, contentGcGraceMs: 0 },
+    });
+
+    const tree = await objects.readTree(snapshot.root.hash);
+    await expect(stat(objects.objectPath(snapshot.root))).resolves.toBeDefined();
+    await expect(stat(objects.objectPath(tree.entries[0]!))).resolves.toBeDefined();
+    await expect(stat(objects.objectPath(orphan))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("reuses a fresh startup overview for storage admission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-storage-capacity-guard-"));
     roots.push(root);

@@ -17,6 +17,10 @@ import {
   RenameContextStoreEntrySchema,
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
+  ContextStoreEditorDraftSchema,
+  GetContextStoreEditorDraftSchema,
+  CommitContextStoreEditorDraftSchema,
+  DiscardContextStoreEditorDraftSchema,
 } from "../../shared/contracts/context-stores.ts";
 import {
   ContextStoreRevisionJobRefSchema,
@@ -98,6 +102,26 @@ export const contextStoresApi = {
     await ipcRenderer.invoke(
       "context-stores:delete-entry",
       DeleteContextStoreEntrySchema.parse(input),
+    );
+  },
+  getContextStoreEditorDraft: async (input) => {
+    const value = await ipcRenderer.invoke(
+      "context-store-editor-drafts:get",
+      GetContextStoreEditorDraftSchema.parse(input),
+    );
+    return value === undefined ? undefined : ContextStoreEditorDraftSchema.parse(value);
+  },
+  commitContextStoreEditorDraft: async (input) =>
+    ContextStoreSchema.parse(
+      await ipcRenderer.invoke(
+        "context-store-editor-drafts:commit",
+        CommitContextStoreEditorDraftSchema.parse(input),
+      ),
+    ),
+  discardContextStoreEditorDraft: async (input) => {
+    await ipcRenderer.invoke(
+      "context-store-editor-drafts:discard",
+      DiscardContextStoreEditorDraftSchema.parse(input),
     );
   },
   submitContextStoreRevision: async (input) =>
@@ -242,6 +266,9 @@ export const contextStoresApi = {
   | "updateContextStoreFile"
   | "renameContextStoreEntry"
   | "deleteContextStoreEntry"
+  | "getContextStoreEditorDraft"
+  | "commitContextStoreEditorDraft"
+  | "discardContextStoreEditorDraft"
   | "submitContextStoreRevision"
   | "listContextStoreRevisions"
   | "getContextStoreRevision"

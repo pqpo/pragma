@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Sidebar, type AppView } from "./components/Sidebar.tsx";
@@ -11,6 +11,7 @@ import {
 import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.tsx";
 import { MissionsPage, type MissionsPageMemoryState } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage, type StudioPageMemoryState } from "./pages/studio/StudioPage.tsx";
+import type { ContextStoreLeaveGuard } from "./pages/studio/ContextStoreFragment.tsx";
 import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
@@ -37,6 +38,7 @@ export function App() {
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
+  const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -65,16 +67,21 @@ export function App() {
   }, [missionComposerDraftToOpen]);
 
   const navigate = (view: AppView) => {
-    setMissionExecutorRef(undefined);
-    setMissionComposerDraftToOpen(undefined);
-    setAutoRunMissionOnOpen(false);
-    setStudioExpertRef(undefined);
-    setStudioExpertStep(undefined);
-    setStudioResourceRef(undefined);
-    setStudioRevisionStoreId(undefined);
-    if (view === "missions") setMissionToOpen(undefined);
-    if (view === "settings") setSettingsView("general");
-    setActiveView(view);
+    const perform = () => {
+      setMissionExecutorRef(undefined);
+      setMissionComposerDraftToOpen(undefined);
+      setAutoRunMissionOnOpen(false);
+      setStudioExpertRef(undefined);
+      setStudioExpertStep(undefined);
+      setStudioResourceRef(undefined);
+      setStudioRevisionStoreId(undefined);
+      if (view === "missions") setMissionToOpen(undefined);
+      if (view === "settings") setSettingsView("general");
+      setActiveView(view);
+    };
+    const guard = leaveGuardRef.current;
+    if (guard === null) perform();
+    else guard(perform);
   };
 
   const toggleSidebar = () => {
@@ -195,6 +202,9 @@ export function App() {
           initialRevisionStoreId={studioRevisionStoreId}
           initialMemoryState={studioMemoryState}
           onMemoryStateChange={setStudioMemoryState}
+          onLeaveGuardChange={(guard) => {
+            leaveGuardRef.current = guard;
+          }}
           onTryExpert={(expert) => {
             setMissionExecutorRef(`expert:${expert.id}`);
             setMissionToOpen(undefined);
