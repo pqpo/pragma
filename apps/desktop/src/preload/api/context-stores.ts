@@ -20,10 +20,9 @@ import {
 } from "../../shared/contracts/context-stores.ts";
 import {
   ContextStoreRevisionJobRefSchema,
-  ContextStoreRevisionChangeSchema,
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,
-  ContextStoreDraftViewSchema,
+  ContextStoreDraftSchema,
   CreateContextStoreDraftSchema,
   GetContextStoreDraftFileSchema,
   ContextStoreRevisionJobSchema,
@@ -147,23 +146,21 @@ export const contextStoresApi = {
     );
   },
   createContextStoreDraft: async (input) =>
-    ContextStoreDraftViewSchema.parse(
+    ContextStoreDraftSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:create",
         CreateContextStoreDraftSchema.parse(input),
       ),
     ),
   listContextStoreDrafts: async (input = {}) =>
-    ContextStoreDraftViewSchema.array().parse(
+    ContextStoreDraftSchema.array().parse(
       await ipcRenderer.invoke(
         "context-store-drafts:list",
         ListContextStoreDraftsSchema.parse(input),
       ),
     ),
   getContextStoreDraft: async (draftId) =>
-    ContextStoreDraftViewSchema.parse(
-      await ipcRenderer.invoke("context-store-drafts:get", draftId),
-    ),
+    ContextStoreDraftSchema.parse(await ipcRenderer.invoke("context-store-drafts:get", draftId)),
   getContextStoreDraftChangeSet: async (draftId) =>
     ContextStoreChangeSetSchema.parse(
       await ipcRenderer.invoke("context-store-drafts:get-change-set", draftId),
@@ -176,14 +173,14 @@ export const contextStoresApi = {
       ),
     ),
   submitContextStoreDraft: async (input) =>
-    ContextStoreDraftViewSchema.parse(
+    ContextStoreDraftSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:submit",
         SubmitContextStoreDraftSchema.parse(input),
       ),
     ),
   updateContextStoreDraftFile: async (input) =>
-    ContextStoreDraftViewSchema.parse(
+    ContextStoreDraftSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:update-file",
         UpdateContextStoreDraftFileSchema.parse(input),
@@ -200,7 +197,7 @@ export const contextStoresApi = {
       await ipcRenderer.invoke("context-store-drafts:inspect-rebase", draftId),
     ),
   rebaseContextStoreDraft: async (input) =>
-    ContextStoreDraftViewSchema.parse(
+    ContextStoreDraftSchema.parse(
       await ipcRenderer.invoke(
         "context-store-drafts:rebase",
         RebaseContextStoreDraftSchema.parse(input),
@@ -217,14 +214,6 @@ export const contextStoresApi = {
         UpdateContextStoreRevisionProfileSchema.parse(input),
       ),
     ),
-  subscribeContextStoreRevisionChanges: (listener) => {
-    const handler = (_event: IpcRendererEvent, payload: unknown) => {
-      ContextStoreRevisionChangeSchema.parse(payload);
-      listener();
-    };
-    ipcRenderer.on("context-store-revisions:changed", handler);
-    return () => ipcRenderer.removeListener("context-store-revisions:changed", handler);
-  },
   subscribeContextStoreChanges: (storeId, listener) => {
     const input = SubscribeContextStoreChangesSchema.parse({ storeId });
     const handler = (_event: IpcRendererEvent, payload: unknown) => {
@@ -272,7 +261,6 @@ export const contextStoresApi = {
   | "rebaseContextStoreDraft"
   | "getContextStoreRevisionProfile"
   | "updateContextStoreRevisionProfile"
-  | "subscribeContextStoreRevisionChanges"
   | "subscribeContextStoreChanges"
   | "pickContextStoreFolder"
 >;

@@ -35,7 +35,7 @@ import type {
   DeleteContextStoreEntry,
   ContextStoreRevisionRequest,
   ContextStoreChangeSet,
-  ContextStoreDraftView,
+  ContextStoreDraft,
   CreateContextStoreDraft,
   GetContextStoreDraftFile,
   ListContextStoreDrafts,
@@ -376,23 +376,20 @@ export interface PragmaDesktopAPI {
     input: ContextStoreRevisionJobRef,
   ) => Promise<ContextStoreRevisionJob>;
   deleteContextStoreRevision: (input: ContextStoreRevisionJobRef) => Promise<void>;
-  createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraftView>;
-  listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraftView[]>;
-  getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraftView>;
+  createContextStoreDraft: (input: CreateContextStoreDraft) => Promise<ContextStoreDraft>;
+  listContextStoreDrafts: (input?: ListContextStoreDrafts) => Promise<ContextStoreDraft[]>;
+  getContextStoreDraft: (draftId: string) => Promise<ContextStoreDraft>;
   getContextStoreDraftChangeSet: (draftId: string) => Promise<ContextStoreChangeSet>;
   getContextStoreDraftFile: (input: GetContextStoreDraftFile) => Promise<ContextStoreContent>;
-  submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraftView>;
-  updateContextStoreDraftFile: (
-    input: UpdateContextStoreDraftFile,
-  ) => Promise<ContextStoreDraftView>;
+  submitContextStoreDraft: (input: SubmitContextStoreDraft) => Promise<ContextStoreDraft>;
+  updateContextStoreDraftFile: (input: UpdateContextStoreDraftFile) => Promise<ContextStoreDraft>;
   discardContextStoreDraft: (input: ContextStoreDraftRef) => Promise<void>;
   inspectContextStoreDraftRebase: (draftId: string) => Promise<ContextStoreDraftRebaseInspection>;
-  rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraftView>;
+  rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraft>;
   getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
   updateContextStoreRevisionProfile: (
     input: UpdateContextStoreRevisionProfile,
   ) => Promise<ContextStoreRevisionProfile>;
-  subscribeContextStoreRevisionChanges: (listener: () => void) => () => void;
   subscribeContextStoreChanges: (storeId: string, listener: () => void) => () => void;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;

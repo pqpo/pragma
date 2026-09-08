@@ -201,6 +201,8 @@ export function createMemoryKnowledgePromotionService(options: {
         name: candidate.name,
         description: candidate.description,
         files: candidate.files,
+        author: "memory-initialization",
+        summary: "Create Memory knowledge store from an approved initialization candidate.",
       });
     }
     await options.mountStore(journal.expertRef, journal.storeId);

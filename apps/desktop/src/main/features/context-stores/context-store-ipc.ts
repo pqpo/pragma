@@ -19,7 +19,6 @@ import {
   UpdateContextStoreFileSchema,
   ContextStoreRevisionJobRefSchema,
   ContextStoreDraftRefSchema,
-  ContextStoreDraftViewSchema,
   CreateContextStoreDraftSchema,
   GetContextStoreDraftFileSchema,
   ContextStoreRevisionRequestSchema,
@@ -141,18 +140,14 @@ export function installContextStoreHandlers(
       const parsed = ContextStoreRevisionJobRefSchema.parse(input);
       await revisions.delete(parsed.jobId, parsed.expectedRevision);
     });
-    ipcMain.handle("context-store-drafts:create", async (_event, input: unknown) =>
-      ContextStoreDraftViewSchema.parse(
-        await revisions.createDraft(CreateContextStoreDraftSchema.parse(input)),
-      ),
+    ipcMain.handle("context-store-drafts:create", (_event, input: unknown) =>
+      revisions.createDraft(CreateContextStoreDraftSchema.parse(input)),
     );
-    ipcMain.handle("context-store-drafts:list", async (_event, input: unknown) =>
-      ContextStoreDraftViewSchema.array().parse(
-        await revisions.listDrafts(ListContextStoreDraftsSchema.parse(input ?? {})),
-      ),
+    ipcMain.handle("context-store-drafts:list", (_event, input: unknown) =>
+      revisions.listDrafts(ListContextStoreDraftsSchema.parse(input ?? {})),
     );
-    ipcMain.handle("context-store-drafts:get", async (_event, draftId: unknown) =>
-      ContextStoreDraftViewSchema.parse(await revisions.getDraft(z.string().uuid().parse(draftId))),
+    ipcMain.handle("context-store-drafts:get", (_event, draftId: unknown) =>
+      revisions.getDraft(z.string().uuid().parse(draftId)),
     );
     ipcMain.handle("context-store-drafts:get-change-set", (_event, draftId: unknown) =>
       revisions.getDraftChangeSet(z.string().uuid().parse(draftId)),
@@ -160,16 +155,12 @@ export function installContextStoreHandlers(
     ipcMain.handle("context-store-drafts:get-file", (_event, input: unknown) =>
       revisions.getDraftFile(GetContextStoreDraftFileSchema.parse(input)),
     );
-    ipcMain.handle("context-store-drafts:submit", async (_event, input: unknown) => {
+    ipcMain.handle("context-store-drafts:submit", (_event, input: unknown) => {
       const parsed = SubmitContextStoreDraftSchema.parse(input);
-      return ContextStoreDraftViewSchema.parse(
-        await revisions.submitDraft(parsed.draftId, parsed.expectedRevision, parsed.summary),
-      );
+      return revisions.submitDraft(parsed.draftId, parsed.expectedRevision, parsed.summary);
     });
-    ipcMain.handle("context-store-drafts:update-file", async (_event, input: unknown) =>
-      ContextStoreDraftViewSchema.parse(
-        await revisions.updateDraftFile(UpdateContextStoreDraftFileSchema.parse(input)),
-      ),
+    ipcMain.handle("context-store-drafts:update-file", (_event, input: unknown) =>
+      revisions.updateDraftFile(UpdateContextStoreDraftFileSchema.parse(input)),
     );
     ipcMain.handle("context-store-drafts:discard", async (_event, input: unknown) => {
       const parsed = ContextStoreDraftRefSchema.parse(input);
@@ -178,10 +169,8 @@ export function installContextStoreHandlers(
     ipcMain.handle("context-store-drafts:inspect-rebase", (_event, draftId: unknown) =>
       revisions.inspectRebase(z.string().uuid().parse(draftId)),
     );
-    ipcMain.handle("context-store-drafts:rebase", async (_event, input: unknown) =>
-      ContextStoreDraftViewSchema.parse(
-        await revisions.rebase(RebaseContextStoreDraftSchema.parse(input)),
-      ),
+    ipcMain.handle("context-store-drafts:rebase", (_event, input: unknown) =>
+      revisions.rebase(RebaseContextStoreDraftSchema.parse(input)),
     );
     ipcMain.handle("context-store-revisions:get-profile", () => revisions.getProfile());
     ipcMain.handle("context-store-revisions:update-profile", async (_event, input: unknown) => {

@@ -46,7 +46,7 @@ Mission，也不升级 Core Execution 协议。
 
 - Semantic 与 Episodic 可独立失败、重试、诊断和演进；
 - 用户直接表达的独占事实变化可以收敛为一个稳定 identity，同时保留完整可审计历史；
-- 当前事实具有可解释冲突；长期版本历史由知识库导出和 Git 管理，不以自动覆盖换取表面简洁；
+- 当前事实具有可解释冲突和完整 revision history，不以自动覆盖换取表面简洁；
 - local User 是安装级身份，跨设备账户合并必须由后续显式迁移解决；
 - Repository subject、主动排序和管理中心 UI 继续属于后续阶段；
 - Renderer 通过类型化 IPC 查询和治理事实。

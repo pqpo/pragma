@@ -11,13 +11,13 @@ import {
   X,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
   ContextStore,
   ContextStoreChangeSet,
-  ContextStoreDraftView,
+  ContextStoreDraft,
   ContextStoreRevisionJob,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -112,15 +112,13 @@ export function ContextStoreRevisionFragment(props: {
     options === undefined ? t(key) : t(key, options);
   const [storeId, setStoreId] = useState(props.initialStoreId ?? "");
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
-  const [drafts, setDrafts] = useState<readonly ContextStoreDraftView[]>([]);
+  const [drafts, setDrafts] = useState<readonly ContextStoreDraft[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ContextStoreRevisionJob | null>(null);
-  const loadSequence = useRef(0);
 
   const load = async () => {
-    const sequence = ++loadSequence.current;
     const api = desktopApi();
     if (api === undefined) return;
     try {
@@ -129,7 +127,6 @@ export function ContextStoreRevisionFragment(props: {
         storeId === "" ? undefined : api.listContextStoreRevisions(),
         api.listContextStoreDrafts(storeId === "" ? {} : { storeId }),
       ]);
-      if (sequence !== loadSequence.current) return;
       setJobs(next);
       setDrafts(nextDrafts);
       props.onCountChanged?.(
@@ -137,7 +134,6 @@ export function ContextStoreRevisionFragment(props: {
       );
       setError(null);
     } catch (caught) {
-      if (sequence !== loadSequence.current) return;
       setError(localizedContextStoreRevisionError(caught, translateRevisionError));
     }
   };
@@ -147,11 +143,8 @@ export function ContextStoreRevisionFragment(props: {
   }, [props.initialStoreId]);
   useEffect(() => {
     void load();
-    const unsubscribe = desktopApi()?.subscribeContextStoreRevisionChanges(() => void load());
-    return () => {
-      loadSequence.current += 1;
-      unsubscribe?.();
-    };
+    const timer = window.setInterval(() => void load(), 2_000);
+    return () => window.clearInterval(timer);
   }, [storeId]);
 
   const act = async (
@@ -255,7 +248,6 @@ export function ContextStoreRevisionFragment(props: {
                   (candidate) => candidate.id === job.request.storeId,
                 );
                 const draft = drafts.find((candidate) => candidate.id === job.draftId);
-                const storeName = store?.name ?? t("deletedKnowledgeBase");
                 const canOpen = draft !== undefined;
                 const awaitingConfirmation = isDraftAwaitingConfirmation(job);
                 const openLabel =
@@ -273,8 +265,9 @@ export function ContextStoreRevisionFragment(props: {
                     >
                       <span className="revision-task-summary">
                         <strong title={job.request.prompt}>{job.request.prompt}</strong>
-                        <small title={storeName}>
-                          {storeName} · {t(`revisionSource.${job.request.source}`)}
+                        <small title={store?.name ?? job.request.storeId}>
+                          {store?.name ?? job.request.storeId} ·{" "}
+                          {t(`revisionSource.${job.request.source}`)}
                         </small>
                       </span>
                       <span className="revision-task-result">
@@ -376,7 +369,7 @@ export function ContextStoreRevisionFragment(props: {
 
 export function ContextStoreRevisionDiffFragment(props: {
   readonly job: ContextStoreRevisionJob;
-  readonly draft: ContextStoreDraftView;
+  readonly draft: ContextStoreDraft;
   readonly store?: ContextStore | undefined;
   readonly busy: boolean;
   readonly error: string | null;
@@ -423,7 +416,12 @@ export function ContextStoreRevisionDiffFragment(props: {
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
   const awaitingConfirmation = isDraftAwaitingConfirmation(props.job);
-  const revisionMetadata = `${props.store?.name ?? t("deletedKnowledgeBase")} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
+  const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${t(
+    "baseRevision",
+    {
+      count: props.draft.baseRevision,
+    },
+  )} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
 
   return (
     <StudioScreenFrame
@@ -720,7 +718,7 @@ function operationIcon(operation: RevisionOperation) {
 }
 
 export function draftOverlayOperations(
-  draft: ContextStoreDraftView,
+  draft: ContextStoreDraft,
   reviewChangeSet?: ContextStoreChangeSet,
 ): readonly RevisionOperation[] {
   const reviewedById = new Map(

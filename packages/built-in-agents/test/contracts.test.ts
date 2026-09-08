@@ -4,9 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ContextStoreRevisionProfileSchema,
   ContextStoreChangeSetSchema,
-  ContextStoreDraftSchema,
-  ContextStoreDraftViewSchema,
-  ContextStoreSnapshotSchema,
+  ContextStoreRevisionSnapshotSchema,
   PragmaAgentEvaluationDraftOperationSchema,
   PragmaAgentEvaluationDraftSchema,
   PragmaAgentFlowDraftOperationSchema,
@@ -32,8 +30,9 @@ describe("revision contracts", () => {
 
   it("keeps historical stored paths readable but enforces portable names for new files", () => {
     const snapshot = {
-      schemaVersion: "pragma.context-store-snapshot/v2" as const,
+      schemaVersion: "pragma.context-store-snapshot/v1" as const,
       storeId: "10000000-0000-4000-8000-000000000001",
+      revision: 1,
       snapshotHash: "a".repeat(64),
       createdAt: "2026-07-22T00:00:00.000Z",
       directories: ["legacy folder"],
@@ -45,11 +44,12 @@ describe("revision contracts", () => {
         },
       ],
     };
-    expect(ContextStoreSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    expect(ContextStoreRevisionSnapshotSchema.safeParse(snapshot).success).toBe(true);
     expect(
       ContextStoreChangeSetSchema.safeParse({
-        schemaVersion: "pragma.context-store-change-set/v2",
+        schemaVersion: "pragma.context-store-change-set/v1",
         storeId: snapshot.storeId,
+        baseRevision: 1,
         baseSnapshotHash: snapshot.snapshotHash,
         summary: "Create a non-portable file.",
         operations: [
@@ -71,41 +71,16 @@ describe("revision contracts", () => {
       metadata: { trigger: "model_decision" as const, priority: "normal" as const },
     };
     expect(
-      ContextStoreSnapshotSchema.safeParse({
-        schemaVersion: "pragma.context-store-snapshot/v2",
+      ContextStoreRevisionSnapshotSchema.safeParse({
+        schemaVersion: "pragma.context-store-snapshot/v1",
         storeId: "10000000-0000-4000-8000-000000000001",
+        revision: 1,
         snapshotHash: "a".repeat(64),
         createdAt: "2026-07-22T00:00:00.000Z",
         directories: [],
         files: [file, file],
       }).success,
     ).toBe(false);
-  });
-
-  it("keeps retained draft baselines out of cross-process views", () => {
-    const baseSnapshot = {
-      schemaVersion: "pragma.context-store-snapshot/v2" as const,
-      storeId: "10000000-0000-4000-8000-000000000001",
-      snapshotHash: "a".repeat(64),
-      createdAt: "2026-07-22T00:00:00.000Z",
-      directories: [],
-      files: [],
-    };
-    const draft = ContextStoreDraftSchema.parse({
-      schemaVersion: "pragma.context-store-draft/v2",
-      id: "20000000-0000-4000-8000-000000000001",
-      revision: 1,
-      name: "Update guidance",
-      storeId: baseSnapshot.storeId,
-      baseSnapshotHash: baseSnapshot.snapshotHash,
-      baseSnapshot,
-      state: "editing",
-      overlay: { files: [], deletedFiles: [], directories: [], deletedDirectories: [] },
-      createdAt: baseSnapshot.createdAt,
-      updatedAt: baseSnapshot.createdAt,
-    });
-
-    expect(ContextStoreDraftViewSchema.parse(draft)).not.toHaveProperty("baseSnapshot");
   });
 });
 

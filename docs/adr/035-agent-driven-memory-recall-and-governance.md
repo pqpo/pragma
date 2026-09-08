@@ -30,7 +30,7 @@ planner，也不改变各 Module 自己返回结果的语义。
 
 Episodic 与 Semantic revision binding 统一包含 `recall`、`export` 和 `permissionRevision`。治理 mutation 使用
 revision CAS，只允许保持或收紧 binding/visibility；扩权必须由未来独立批准流程实现。invalidate 保留历史，
-forget 删除当前内容和孤立 Evidence，只保留不含 Memory 内容和原始治理理由的 tombstone，
+forget 删除当前内容、revision history 和孤立 Evidence，只保留不含 Memory 内容和原始治理理由的 tombstone，
 同时清除该对象此前可能包含明文理由的 governance event。tombstone 是 forget 的唯一权威审计记录，并阻止
 相同稳定 identity 被后台重放重建。
 

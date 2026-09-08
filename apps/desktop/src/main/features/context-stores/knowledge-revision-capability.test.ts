@@ -11,14 +11,6 @@ const TEAM_ID = "0000000000000001";
 const EXPERT_ID = "0000000000000002";
 const STORE_ID = "00000000-0000-4000-8000-000000000201";
 const UNMOUNTED_STORE_ID = "00000000-0000-4000-8000-000000000202";
-const baseSnapshot = {
-  schemaVersion: "pragma.context-store-snapshot/v2" as const,
-  storeId: STORE_ID,
-  snapshotHash: "a".repeat(64),
-  createdAt: "2026-08-28T00:00:00.000Z",
-  directories: [],
-  files: [],
-};
 
 function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: string) {
   const contextResource = createDesktopContextResource({
@@ -91,16 +83,16 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
         id: STORE_ID,
         name: "Team knowledge",
         description: "Shared engineering invariants.",
-        snapshotHash: "a".repeat(64),
+        contentRevision: 4,
       },
       {
         id: UNMOUNTED_STORE_ID,
         name: "Unattached knowledge",
         description: "Available but not mounted.",
-        snapshotHash: "c".repeat(64),
+        contentRevision: 2,
       },
     ]),
-    getSnapshot: vi.fn(async () => ({ snapshotHash: "b".repeat(64) })),
+    getSnapshot: vi.fn(async () => ({ revision: 6, snapshotHash: "b".repeat(64) })),
   } as unknown as ContextStoreStore;
   let missionId: string | undefined =
     ownerMissionId ??
@@ -190,7 +182,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
         targetRef,
         name: "Team knowledge",
         description: "Shared engineering invariants.",
-        snapshotHash: "a".repeat(64),
+        revision: 4,
         mounted: true,
         mounts: [
           {
@@ -220,7 +212,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       expect.objectContaining({
         name: "Unattached knowledge",
         description: "Available but not mounted.",
-        snapshotHash: "c".repeat(64),
+        revision: 2,
         mounted: false,
         mounts: [],
       }),
@@ -231,13 +223,13 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     const { port, listDrafts } = fixture();
     listDrafts.mockResolvedValue([
       {
-        schemaVersion: "pragma.context-store-draft/v2",
+        schemaVersion: "pragma.context-store-draft/v1",
         id: "00000000-0000-4000-8000-000000000301",
         revision: 5,
         name: "Retry invariants",
         storeId: STORE_ID,
+        baseRevision: 4,
         baseSnapshotHash: "a".repeat(64),
-        baseSnapshot,
         state: "editing",
         overlay: {
           files: [
@@ -262,6 +254,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
         revision: 5,
         name: "Retry invariants",
         storeId: STORE_ID,
+        baseRevision: 4,
         state: "editing",
         createdAt: "2026-08-28T00:00:00.000Z",
         updatedAt: "2026-08-28T01:00:00.000Z",
@@ -272,13 +265,13 @@ describe("Desktop Pragma management knowledge revision tools", () => {
   it("recovers the writable namespace for a draft claimed by the current Mission", async () => {
     const { port, listDrafts, getDraft } = fixture(true);
     const draft = {
-      schemaVersion: "pragma.context-store-draft/v2" as const,
+      schemaVersion: "pragma.context-store-draft/v1" as const,
       id: "00000000-0000-4000-8000-000000000301",
       revision: 5,
       name: "Retry invariants",
       storeId: STORE_ID,
+      baseRevision: 4,
       baseSnapshotHash: "a".repeat(64),
-      baseSnapshot,
       state: "editing" as const,
       overlay: { files: [], deletedFiles: [], directories: [], deletedDirectories: [] },
       activeMissionId: "00000000-0000-4000-8000-000000000401",
@@ -303,13 +296,13 @@ describe("Desktop Pragma management knowledge revision tools", () => {
   it("reads draft hashes by default and only one file body on demand", async () => {
     const { port, getDraft, getDraftFile } = fixture();
     getDraft.mockResolvedValue({
-      schemaVersion: "pragma.context-store-draft/v2",
+      schemaVersion: "pragma.context-store-draft/v1",
       id: "00000000-0000-4000-8000-000000000301",
       revision: 5,
       name: "Retry invariants",
       storeId: STORE_ID,
+      baseRevision: 4,
       baseSnapshotHash: "a".repeat(64),
-      baseSnapshot,
       state: "editing",
       overlay: {
         files: [
@@ -341,6 +334,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     });
     expect(summary).toMatchObject({
       mode: "summary",
+      currentStoreRevision: 6,
       currentSnapshotHash: "b".repeat(64),
       stale: true,
       overlay: {

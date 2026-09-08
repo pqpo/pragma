@@ -65,7 +65,7 @@ import { createCapabilityVerifier } from "../features/capabilities/capability-ve
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
 import {
   createContextStoreRevisionService,
-  type ContextStoreRevisionExecutor,
+  type ContextStoreRevisionGenerator,
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
 import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
@@ -570,22 +570,16 @@ export async function createDesktopApplicationContainer(
     onRemoved: async (storeId) => {
       await knowledgePromotionRef.current?.clearStoreBinding(storeId);
     },
-    hasActiveDrafts: async (storeId) =>
+    hasActiveRevisions: async (storeId) =>
       (await storeRevisionsRef.current?.hasActiveJobs(storeId)) ?? false,
-    migrateLegacyDraftReferences: async (storeId, readLegacySnapshot) => {
-      if (storeRevisionsRef.current === undefined) {
-        throw new Error("Knowledge revision storage is not ready for context-store migration.");
-      }
-      await storeRevisionsRef.current.migrateLegacyStoreReferences(storeId, readLegacySnapshot);
-    },
   });
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
-  const revisionExecutor: ContextStoreRevisionExecutor = {
-    async execute(input) {
+  const revisionGenerator: ContextStoreRevisionGenerator = {
+    async generate(input) {
       if (storeRevisionAgentRef.current === undefined) {
         throw new Error("The Store Revision Agent has not been initialized.");
       }
-      await storeRevisionAgentRef.current.executor.execute(input);
+      return await storeRevisionAgentRef.current.generator.generate(input);
     },
   };
   const storeRevisions = createContextStoreRevisionService({
@@ -593,19 +587,7 @@ export async function createDesktopApplicationContainer(
     draftsPath: join(pragmaPaths.dataRoot(), "context-store-drafts"),
     draftsTrashPath: join(pragmaPaths.trashRoot(), "context-store-drafts"),
     contextStores,
-    executor: revisionExecutor,
-    onChanged: (storeId) => {
-      try {
-        const window = options.getWindow();
-        if (window !== null && !window.webContents.isDestroyed()) {
-          window.webContents.send("context-store-revisions:changed", {
-            ...(storeId === undefined ? {} : { storeId }),
-          });
-        }
-      } catch {
-        // The renderer can close between the state check and event delivery.
-      }
-    },
+    generator: revisionGenerator,
     onRevisionDetached: async ({ missionId, jobId, draftId, storeId }) => {
       try {
         await missionStore.restoreManagedRevisionStore({
@@ -623,12 +605,12 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
   });
-  storeRevisionsRef.current = storeRevisions;
   await migrateLegacyStoreRevisionProfile({
     stateRoot: pragmaPaths.stateRoot(),
     revisions: storeRevisions,
     systemExperts,
   });
+  storeRevisionsRef.current = storeRevisions;
   const pragmaManagementPortsRef: {
     current?: Omit<PragmaManagementToolPorts, "knowledgeRevisions">;
   } = {};

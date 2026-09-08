@@ -99,12 +99,22 @@ export const PragmaBundleConflictSchema = z
     matches: z.array(PragmaBundleConflictMatchSchema).min(1).max(2),
     updateAllowed: z.boolean(),
     updateBlockedReason: z.string().trim().min(1).max(2_000).optional(),
+    targetRevision: z.number().int().positive().optional(),
     targetSnapshotHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((conflict, context) => {
+    if ((conflict.targetRevision === undefined) !== (conflict.targetSnapshotHash === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetRevision"],
+        message: "Knowledge-base target revision and snapshot hash must be provided together.",
+      });
+    }
+  });
 
 export const PragmaBundleDependencySummarySchema = z
   .object({
@@ -215,18 +225,32 @@ export const PragmaBundleConflictResolutionSchema = z
   .object({
     resourceRef: PragmaResourceRefSchema,
     action: z.enum(["update", "copy"]),
+    expectedTargetRevision: z.number().int().positive().optional(),
     expectedTargetSnapshotHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((resolution, context) => {
+    if (
+      (resolution.expectedTargetRevision === undefined) !==
+      (resolution.expectedTargetSnapshotHash === undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedTargetRevision"],
+        message: "Knowledge-base CAS revision and snapshot hash must be provided together.",
+      });
+    }
+  });
 
 const PragmaBundleKnowledgeBaseUpdateSchema = z
   .object({
     sourceRef: PragmaContextStoreRefSchema,
     targetRef: PragmaContextStoreRefSchema,
     storeId: z.string().uuid(),
+    baseRevision: z.number().int().positive().optional(),
     baseSnapshotHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -234,7 +258,16 @@ const PragmaBundleKnowledgeBaseUpdateSchema = z
     importedSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
     phase: z.enum(["prepared", "applied"]),
   })
-  .strict();
+  .strict()
+  .superRefine((update, context) => {
+    if ((update.baseRevision === undefined) !== (update.baseSnapshotHash === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["baseRevision"],
+        message: "Knowledge-base update baseline revision and snapshot hash must be paired.",
+      });
+    }
+  });
 
 export const BundleRuntimeResolutionSchema = z
   .object({
@@ -296,7 +329,7 @@ export const PragmaBundlePendingDependencySchema = z
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v6"),
+    schemaVersion: z.literal("pragma.bundle-installation/v5"),
     bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1", "pragma.bundle/v2"]),
     sourceProjectFingerprint: z
       .string()

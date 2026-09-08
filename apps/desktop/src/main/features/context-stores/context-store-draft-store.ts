@@ -26,7 +26,6 @@ import {
 } from "@pragma/built-in-agents/contracts";
 
 import type { ContextStoreSnapshot } from "../../../shared/contracts/index.ts";
-import { hashContextStoreSnapshotContent } from "./context-store-store.ts";
 
 export interface ContextStoreDraftPersistence {
   read(draftId: string): Promise<ContextStoreDraft>;
@@ -39,9 +38,8 @@ export interface ContextStoreDraftPersistence {
 }
 
 /**
- * A copy-on-write view over a draft's retained base snapshot. File edits remain sparse in the
- * overlay; the base exists only while the draft is active so review and rebase do not depend on
- * long-lived knowledge-base history.
+ * A copy-on-write Context Store. The immutable base snapshot remains authoritative for every path
+ * absent from the overlay; only changed files and deletion tombstones are persisted with the draft.
  */
 export class SparseContextStoreDraft implements ExpertAgentContextStore {
   constructor(
@@ -177,7 +175,11 @@ export class SparseContextStoreDraft implements ExpertAgentContextStore {
   private async load(): Promise<{ draft: ContextStoreDraft; base: ContextStoreSnapshot }> {
     const draft = ContextStoreDraftSchema.parse(await this.persistence.read(this.draftId));
     const base = await this.persistence.readBase(draft);
-    if (base.storeId !== draft.storeId || base.snapshotHash !== draft.baseSnapshotHash) {
+    if (
+      base.storeId !== draft.storeId ||
+      base.revision !== draft.baseRevision ||
+      base.snapshotHash !== draft.baseSnapshotHash
+    ) {
       throw new Error("context_store_draft_base_mismatch");
     }
     return { draft, base };
@@ -206,15 +208,14 @@ export function materializeDraftSnapshot(
   );
   for (const directory of draft.overlay.directories) directories.add(directory);
 
-  const files = [...byId.values()].toSorted((left, right) => left.id.localeCompare(right.id));
-  const sortedDirectories = [...directories].toSorted();
   return {
-    schemaVersion: "pragma.context-store-snapshot/v2",
+    schemaVersion: "pragma.context-store-snapshot/v1",
     storeId: draft.storeId,
-    snapshotHash: hashContextStoreSnapshotContent(files, sortedDirectories),
+    revision: draft.baseRevision,
+    snapshotHash: draft.baseSnapshotHash,
     createdAt: draft.updatedAt,
-    directories: sortedDirectories,
-    files,
+    directories: [...directories].toSorted(),
+    files: [...byId.values()].toSorted((left, right) => left.id.localeCompare(right.id)),
   };
 }
 
@@ -223,13 +224,13 @@ function createEffectiveStore(
   overlay: ContextStoreDraftOverlay,
 ): InMemoryContextStore {
   const draft = ContextStoreDraftSchema.parse({
-    schemaVersion: "pragma.context-store-draft/v2",
+    schemaVersion: "pragma.context-store-draft/v1",
     id: "00000000-0000-4000-8000-000000000000",
     revision: 1,
     name: "effective",
     storeId: base.storeId,
+    baseRevision: base.revision,
     baseSnapshotHash: base.snapshotHash,
-    baseSnapshot: base,
     state: "editing",
     overlay,
     createdAt: base.createdAt,

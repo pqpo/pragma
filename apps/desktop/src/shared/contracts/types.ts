@@ -92,6 +92,7 @@ import {
   ContextStoreImportInspectionSchema,
   ContextStoreSchema,
   ContextStoreSnapshotSchema,
+  ContextStoreRevisionRecordSchema,
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
@@ -108,7 +109,6 @@ import {
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftRefSchema,
   ContextStoreDraftSchema,
-  ContextStoreDraftViewSchema,
   ContextStoreRevisionJobRefSchema,
   ContextStoreRevisionJobSchema,
   ContextStoreRevisionProfileSchema,
@@ -442,9 +442,9 @@ export type ResetModelProvidersResult = z.infer<typeof ResetModelProvidersResult
 export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
+export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
 export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
-export type ContextStoreDraftView = z.infer<typeof ContextStoreDraftViewSchema>;
 export type CreateContextStoreDraft = z.infer<typeof CreateContextStoreDraftSchema>;
 export type GetContextStoreDraftFile = z.infer<typeof GetContextStoreDraftFileSchema>;
 export type ListContextStoreDrafts = z.infer<typeof ListContextStoreDraftsSchema>;

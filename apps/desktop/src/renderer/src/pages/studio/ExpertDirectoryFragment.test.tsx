@@ -41,7 +41,8 @@ const expert: ExpertRecord = {
 };
 
 const contextStore: ContextStore = {
-  schemaVersion: "pragma.context-store/v5",
+  schemaVersion: "pragma.context-store/v4",
+  contentRevision: 1,
   snapshotHash: "0".repeat(64),
   id: "00000000-0000-4000-8000-000000000001",
   name: "Product Docs",

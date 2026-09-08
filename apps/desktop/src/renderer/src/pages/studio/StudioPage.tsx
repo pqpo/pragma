@@ -390,13 +390,14 @@ export function StudioPage(props: {
     const store =
       api === undefined
         ? ContextStoreSchema.parse({
-            schemaVersion: "pragma.context-store/v5",
+            schemaVersion: "pragma.context-store/v4",
             id: crypto.randomUUID(),
             name: input.name,
             description: input.description,
             type: "file",
             status: "ready",
             source: { origin: input.mode === "blank" ? "created" : "copied" },
+            contentRevision: 1,
             snapshotHash: "0".repeat(64),
             createdAt: timestamp,
             updatedAt: timestamp,
@@ -854,7 +855,7 @@ export function StudioPage(props: {
             onInspectImport={inspectContextStoreImport}
             onPickFolder={pickContextStoreFolder}
             revisionTaskCount={revisionTaskCount}
-            onOpenUpdateTasks={() => {
+            onOpenRevisions={() => {
               setRevisionStoreFilter(undefined);
               setScreen("context-store-revisions");
             }}
@@ -915,7 +916,7 @@ export function StudioPage(props: {
               }
               setScreen("directory");
             }}
-            onOpenUpdateTasks={() => {
+            onOpenRevisions={() => {
               setRevisionStoreFilter(selectedContextStore.id);
               setScreen("context-store-revisions");
             }}

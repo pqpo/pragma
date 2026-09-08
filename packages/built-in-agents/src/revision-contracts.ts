@@ -148,23 +148,23 @@ const ManagedMarkdownPathSchema = z
     );
   }, "The file name is not portable or exceeds 100 characters.");
 
-export const ContextStoreSnapshotFileSchema = z.object({
-  id: StoredMarkdownPathSchema,
-  content: z.string().max(1_000_000),
-  metadata: ContextStoreContentMetadataSchema,
-});
-
-export const ContextStoreSnapshotBaseSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-snapshot/v2"),
-  storeId: z.string().uuid(),
-  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  createdAt: z.string().datetime(),
-  directories: z.array(StoredDirectoryPathSchema).default([]),
-  files: z.array(ContextStoreSnapshotFileSchema),
-});
-
-export const ContextStoreSnapshotSchema = ContextStoreSnapshotBaseSchema.superRefine(
-  (snapshot, context) => {
+export const ContextStoreRevisionSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
+    storeId: z.string().uuid(),
+    revision: z.number().int().positive(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    createdAt: z.string().datetime(),
+    directories: z.array(StoredDirectoryPathSchema).default([]),
+    files: z.array(
+      z.object({
+        id: StoredMarkdownPathSchema,
+        content: z.string().max(1_000_000),
+        metadata: ContextStoreContentMetadataSchema,
+      }),
+    ),
+  })
+  .superRefine((snapshot, context) => {
     const fileIds = new Set<string>();
     for (const [index, file] of snapshot.files.entries()) {
       if (fileIds.has(file.id)) {
@@ -187,10 +187,9 @@ export const ContextStoreSnapshotSchema = ContextStoreSnapshotBaseSchema.superRe
       }
       directoryIds.add(id);
     }
-  },
-);
+  });
 
-export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotSchema.shape.files
+export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreRevisionSnapshotSchema.shape.files
   .min(4)
   .max(1_000)
   .superRefine((files, context) => {
@@ -249,8 +248,9 @@ export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation
 ]);
 
 export const ContextStoreChangeSetSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-change-set/v2"),
+  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
   storeId: z.string().uuid(),
+  baseRevision: z.number().int().positive(),
   baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   summary: z.string().trim().min(1).max(2_000),
   operations: z.array(ContextStoreChangeOperationSchema).min(1).max(1_000),
@@ -262,6 +262,7 @@ export const ContextStoreDraftStateSchema = z.enum([
   "merging",
   "needs_rebase",
   "needs_attention",
+  "merged",
 ]);
 
 export const ContextStoreDraftOverlaySchema = z
@@ -311,19 +312,15 @@ export const ContextStoreDraftOverlaySchema = z
     }
   });
 
-const ContextStoreDraftBaseSchema = z
+export const ContextStoreDraftSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-draft/v2"),
+    schemaVersion: z.literal("pragma.context-store-draft/v1"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     name: z.string().trim().min(1).max(120),
     storeId: z.string().uuid(),
+    baseRevision: z.number().int().positive(),
     baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    baseSnapshot: ContextStoreSnapshotSchema,
-    mergeTargetSnapshotHash: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/u)
-      .optional(),
     state: ContextStoreDraftStateSchema,
     overlay: ContextStoreDraftOverlaySchema,
     activeMissionId: z.string().uuid().optional(),
@@ -332,52 +329,30 @@ const ContextStoreDraftBaseSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
-  .strict();
-
-export const ContextStoreDraftSchema = ContextStoreDraftBaseSchema.superRefine((draft, context) => {
-  if (
-    (draft.state === "pending_review" || draft.state === "merging") &&
-    draft.submittedRevision !== draft.revision
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["submittedRevision"],
-      message: "A pending review must pin the current draft revision.",
-    });
-  }
-  if (
-    draft.state !== "pending_review" &&
-    draft.state !== "merging" &&
-    draft.submittedRevision !== undefined
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["submittedRevision"],
-      message: "Only a pending review may pin a submitted revision.",
-    });
-  }
-  if ((draft.state === "merging") !== (draft.mergeTargetSnapshotHash !== undefined)) {
-    context.addIssue({
-      code: "custom",
-      path: ["mergeTargetSnapshotHash"],
-      message: "Only a merging draft must declare its target snapshot hash.",
-    });
-  }
-  if (
-    draft.baseSnapshot.storeId !== draft.storeId ||
-    draft.baseSnapshot.snapshotHash !== draft.baseSnapshotHash
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["baseSnapshot"],
-      message: "The draft base snapshot must match its target and base hash.",
-    });
-  }
-});
-
-export const ContextStoreDraftViewSchema = ContextStoreDraftBaseSchema.omit({
-  baseSnapshot: true,
-}).strip();
+  .strict()
+  .superRefine((draft, context) => {
+    if (
+      (draft.state === "pending_review" || draft.state === "merging") &&
+      draft.submittedRevision !== draft.revision
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["submittedRevision"],
+        message: "A pending review must pin the current draft revision.",
+      });
+    }
+    if (
+      draft.state !== "pending_review" &&
+      draft.state !== "merging" &&
+      draft.submittedRevision !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["submittedRevision"],
+        message: "Only a pending review may pin a submitted revision.",
+      });
+    }
+  });
 
 export const CreateContextStoreDraftSchema = z
   .object({
@@ -448,6 +423,7 @@ export const ContextStoreDraftRebaseInspectionSchema = z
   .object({
     draftId: z.string().uuid(),
     draftRevision: z.number().int().positive(),
+    currentStoreRevision: z.number().int().positive(),
     currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     conflicts: z.array(ContextStoreDraftRebaseConflictSchema),
   })
@@ -658,7 +634,7 @@ export const SkillRevisionJobSchema = z
 export type ContextStoreRevisionRequest = z.infer<typeof ContextStoreRevisionRequestSchema>;
 export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
 export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSchema>;
-export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
+export type ContextStoreRevisionSnapshot = z.infer<typeof ContextStoreRevisionSnapshotSchema>;
 export type ContextStoreDraft = z.infer<typeof ContextStoreDraftSchema>;
 export type ContextStoreDraftOverlay = z.infer<typeof ContextStoreDraftOverlaySchema>;
 export type ContextStoreDraftState = z.infer<typeof ContextStoreDraftStateSchema>;

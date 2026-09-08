@@ -56,30 +56,36 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
-  it("round-trips only the current knowledge-base snapshot without history", async () => {
+  it("round-trips only the current knowledge-base snapshot as revision 1", async () => {
     const source = await createFixture("knowledge-source", { realContextStores: true });
     const sourceStore = await source.contextStores.createFromSnapshot({
       name: "Release handbook",
       description: "Current release guidance.",
+      author: "user",
+      summary: "Initial content.",
       directories: ["guides"],
       files: [knowledgeFile("guides/release.md", "# Release v1\n")],
     });
     const first = await source.contextStores.getSnapshot(sourceStore.id);
-    await source.contextStores.applyChangeSet({
-      schemaVersion: "pragma.context-store-change-set/v2",
-      storeId: sourceStore.id,
-      baseSnapshotHash: first.snapshotHash,
-      summary: "Publish v2.",
-      operations: [
-        {
-          operation: "upsert",
-          id: "guides/release.md",
-          previousContent: "# Release v1\n",
-          content: "# Release v2\n",
-          metadata: knowledgeFile("guides/release.md", "").metadata,
-        },
-      ],
-    });
+    await source.contextStores.applyChangeSet(
+      {
+        schemaVersion: "pragma.context-store-change-set/v1",
+        storeId: sourceStore.id,
+        baseRevision: first.revision,
+        baseSnapshotHash: first.snapshotHash,
+        summary: "Publish v2.",
+        operations: [
+          {
+            operation: "upsert",
+            id: "guides/release.md",
+            previousContent: "# Release v1\n",
+            content: "# Release v2\n",
+            metadata: knowledgeFile("guides/release.md", "").metadata,
+          },
+        ],
+      },
+      "user",
+    );
     const published = await publishKnowledgeResource(source, sourceStore.id);
     const path = join(source.root, "knowledge.pragma");
     const exported = await source.service.exportTo(
@@ -106,7 +112,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       schemaVersion: string;
       snapshot: { files: readonly Record<string, unknown>[] };
     };
-    expect(descriptor.schemaVersion).toBe("pragma.desktop.context-store-descriptor/v5");
+    expect(descriptor.schemaVersion).toBe("pragma.desktop.context-store-descriptor/v4");
     expect(descriptor.snapshot.files).toEqual([
       expect.objectContaining({ id: "guides/release.md" }),
     ]);
@@ -116,6 +122,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     await target.contextStores.createFromSnapshot({
       name: "Existing identical content",
       description: "This Store must not be reused for a first-class root.",
+      author: "user",
+      summary: "Existing content.",
       directories: ["guides"],
       files: [knowledgeFile("guides/release.md", "# Release v2\n")],
     });
@@ -138,9 +146,13 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     expect(await target.contextStores.list()).toHaveLength(2);
     expect(installation).toMatchObject({ rootKind: "ContextStore", status: "ready" });
     await expect(target.contextStores.getSnapshot(importedStore.id)).resolves.toMatchObject({
+      revision: 1,
       directories: ["guides"],
       files: [expect.objectContaining({ id: "guides/release.md", content: "# Release v2\n" })],
     });
+    await expect(target.contextStores.history(importedStore.id)).resolves.toEqual([
+      expect.objectContaining({ revision: 1, author: "import", parentRevision: null }),
+    ]);
   });
 
   it("rejects a knowledge-base root without its mandatory snapshot payload", async () => {
@@ -148,6 +160,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const store = await source.contextStores.createFromSnapshot({
       name: "Release handbook",
       description: "Current release guidance.",
+      author: "user",
+      summary: "Initial content.",
       files: [knowledgeFile("release.md", "# Release\n")],
     });
     const revision = await publishKnowledgeResource(source, store.id);
@@ -177,11 +191,13 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
   });
 
-  it("replaces knowledge conflicts with snapshot CAS and makes identical imports a no-op", async () => {
+  it("appends knowledge conflicts with snapshot CAS and makes identical imports a no-op", async () => {
     const source = await createFixture("knowledge-update-source", { realContextStores: true });
     const sourceStore = await source.contextStores.createFromSnapshot({
       name: "Release handbook",
       description: "Imported description.",
+      author: "user",
+      summary: "Imported content.",
       directories: ["imported-empty"],
       files: [knowledgeFile("release.md", "# Imported\n")],
     });
@@ -193,6 +209,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const targetStore = await target.contextStores.createFromSnapshot({
       name: "Local handbook",
       description: "Keep local identity and name.",
+      author: "user",
+      summary: "Local content.",
       directories: ["local-empty"],
       files: [knowledgeFile("release.md", "# Local\n")],
     });
@@ -201,10 +219,11 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const conflict = inspection.conflicts.find(
       (candidate) => candidate.ref === "context-store:kqh4nx7rx26mb3e7",
     )!;
-    expect(conflict).toMatchObject({ updateAllowed: true });
+    expect(conflict).toMatchObject({ updateAllowed: true, targetRevision: 1 });
     const updateConflict = {
       resourceRef: conflict.ref,
       action: "update" as const,
+      expectedTargetRevision: conflict.targetRevision,
       expectedTargetSnapshotHash: conflict.targetSnapshotHash,
     };
     const appended = await target.service.startImport({
@@ -220,6 +239,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       secrets: {},
     });
     await expect(target.contextStores.getSnapshot(targetStore.id)).resolves.toMatchObject({
+      revision: 2,
       directories: ["imported-empty"],
       files: [expect.objectContaining({ content: "# Imported\n" })],
     });
@@ -246,7 +266,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     await expect(target.restartService().listInstallations()).resolves.toContainEqual(
       expect.objectContaining({ id: appended.id, status: "ready" }),
     );
-    const importedHash = (await target.contextStores.getSnapshot(targetStore.id)).snapshotHash;
+    expect((await target.contextStores.getSnapshot(targetStore.id)).revision).toBe(2);
     const repeated = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
     const repeatedConflict = repeated.conflicts[0]!;
     await target.service.startImport({
@@ -259,6 +279,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
         {
           resourceRef: repeatedConflict.ref,
           action: "update",
+          expectedTargetRevision: repeatedConflict.targetRevision,
           expectedTargetSnapshotHash: repeatedConflict.targetSnapshotHash,
         },
       ],
@@ -267,9 +288,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       contextStores: [],
       secrets: {},
     });
-    expect((await target.contextStores.getSnapshot(targetStore.id)).snapshotHash).toBe(
-      importedHash,
-    );
+    expect((await target.contextStores.getSnapshot(targetStore.id)).revision).toBe(2);
 
     const copiedInspection = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
     const copied = await target.service.startImport({
@@ -291,7 +310,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     expect(copied.createdContextStoreIds).toHaveLength(1);
     await expect(
       target.contextStores.getSnapshot(copied.createdContextStoreIds[0]!),
-    ).resolves.toMatchObject({ snapshotHash: importedHash });
+    ).resolves.toMatchObject({ revision: 1 });
 
     const stale = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
     await target.contextStores.createFile(targetStore.id, "local.md", "# Concurrent\n");
@@ -306,6 +325,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
           {
             resourceRef: stale.conflicts[0]!.ref,
             action: "update",
+            expectedTargetRevision: stale.conflicts[0]!.targetRevision,
             expectedTargetSnapshotHash: stale.conflicts[0]!.targetSnapshotHash,
           },
         ],
@@ -416,18 +436,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v6",
+      "pragma.bundle-installations/v5",
     );
-    await expect(
-      readFile(
-        join(
-          fixture.paths.bundleInstallationsStateRoot(),
-          "migration-backups",
-          "installations.v1.json",
-        ),
-        "utf8",
-      ),
-    ).resolves.toContain("pragma.bundle-installations/v1");
   });
 
   it("keeps a failed lazy initialization retryable without replacing future data", async () => {
@@ -438,7 +448,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v7",
+      schemaVersion: "pragma.bundle-installations/v6",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);

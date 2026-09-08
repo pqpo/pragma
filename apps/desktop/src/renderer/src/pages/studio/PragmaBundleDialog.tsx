@@ -652,6 +652,9 @@ function BundleImportDialog(props: {
               conflicts: inspection.conflicts.map((conflict) => ({
                 resourceRef: conflict.ref,
                 action: conflicts[conflict.ref] ?? "copy",
+                ...(conflict.targetRevision === undefined
+                  ? {}
+                  : { expectedTargetRevision: conflict.targetRevision }),
                 ...(conflict.targetSnapshotHash === undefined
                   ? {}
                   : { expectedTargetSnapshotHash: conflict.targetSnapshotHash }),
@@ -1276,13 +1279,13 @@ function BundleConflictStep(props: {
               >
                 <strong>
                   {conflict.resourceKind === "ContextStore"
-                    ? t("bundleReplaceKnowledgeSnapshot")
+                    ? t("bundleAppendKnowledgeRevision")
                     : t("bundleUpdateExisting")}
                 </strong>
                 <small>
                   {conflict.updateAllowed
                     ? conflict.resourceKind === "ContextStore"
-                      ? t("bundleReplaceKnowledgeSnapshotHint")
+                      ? t("bundleAppendKnowledgeRevisionHint")
                       : t("bundleUpdateExistingShortHint")
                     : t("bundleUpdateBlocked")}
                 </small>

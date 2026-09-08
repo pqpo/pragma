@@ -5,7 +5,7 @@ import {
   SkillRevisionJobSchema,
   type ContextStoreChangeSet,
   type ContextStoreRevisionJob,
-  type ContextStoreSnapshot,
+  type ContextStoreRevisionSnapshot,
   type SkillEvaluationSnapshot,
   type SkillRevisionChangeSet,
   type SkillRevisionJob,
@@ -14,20 +14,14 @@ import {
 export type ContextStoreRevisionEvent =
   | { readonly type: "editing_started" }
   | { readonly type: "execution_started" }
-  | { readonly type: "execution_paused" }
   | { readonly type: "submitted" }
   | { readonly type: "execution_failed"; readonly code: string; readonly message: string }
   | { readonly type: "approved" }
   | { readonly type: "rejected" }
-  | { readonly type: "retried"; readonly draftId?: string }
-  | { readonly type: "mission_attached"; readonly missionId: string }
-  | { readonly type: "mission_detached"; readonly missionId: string }
+  | { readonly type: "retried" }
   | { readonly type: "merge_succeeded" }
   | { readonly type: "merge_failed"; readonly code: string; readonly message: string }
-  | { readonly type: "rebase_required" }
-  | { readonly type: "rebase_completed" }
-  | { readonly type: "review_recovered" }
-  | { readonly type: "discarded" };
+  | { readonly type: "rebase_required" };
 
 export function transitionContextStoreRevisionJob(
   current: ContextStoreRevisionJob,
@@ -42,9 +36,6 @@ export function transitionContextStoreRevisionJob(
       case "execution_started":
         requireState(current.state, ["editing"]);
         return { ...current, state: "running" as const };
-      case "execution_paused":
-        requireState(current.state, ["running"]);
-        return { ...current, state: "editing" as const, error: undefined };
       case "submitted":
         requireState(current.state, ["editing", "running"]);
         return { ...current, state: "pending_review" as const, error: undefined };
@@ -59,36 +50,7 @@ export function transitionContextStoreRevisionJob(
         return { ...current, state: "rejected" as const };
       case "retried":
         requireState(current.state, ["needs_attention", "rejected", "needs_rebase"]);
-        return {
-          ...current,
-          state: "editing" as const,
-          error: undefined,
-          missionId: undefined,
-          ...(event.draftId === undefined ? {} : { draftId: event.draftId }),
-        };
-      case "mission_attached":
-        requireState(current.state, ["editing", "running"]);
-        if (current.missionId !== undefined && current.missionId !== event.missionId) {
-          throw new Error("revision_state_invalid");
-        }
-        return { ...current, state: "running" as const, missionId: event.missionId };
-      case "mission_detached":
-        requireState(current.state, [
-          "editing",
-          "running",
-          "pending_review",
-          "merging",
-          "merged",
-          "rejected",
-          "needs_rebase",
-          "needs_attention",
-        ]);
-        if (current.missionId !== event.missionId) throw new Error("revision_state_invalid");
-        return {
-          ...current,
-          state: current.state === "running" ? ("editing" as const) : current.state,
-          missionId: undefined,
-        };
+        return { ...current, state: "editing" as const, error: undefined };
       case "merge_succeeded":
         requireState(current.state, ["merging"]);
         return { ...current, state: "merged" as const, error: undefined };
@@ -98,25 +60,6 @@ export function transitionContextStoreRevisionJob(
       case "rebase_required":
         requireState(current.state, ["pending_review", "merging"]);
         return { ...current, state: "needs_rebase" as const };
-      case "rebase_completed":
-        requireState(current.state, ["needs_rebase"]);
-        return { ...current, state: "editing" as const, error: undefined };
-      case "review_recovered":
-        requireState(current.state, ["merging"]);
-        return { ...current, state: "pending_review" as const };
-      case "discarded":
-        requireState(current.state, [
-          "editing",
-          "running",
-          "pending_review",
-          "needs_rebase",
-          "needs_attention",
-        ]);
-        return {
-          ...current,
-          state: "rejected" as const,
-          error: { code: "draft_discarded", message: "The knowledge draft was discarded." },
-        };
     }
   })();
   return ContextStoreRevisionJobSchema.parse({
@@ -209,7 +152,7 @@ export function transitionSkillRevisionJob(
 }
 
 export function attachContextStoreBaseContent(
-  base: ContextStoreSnapshot,
+  base: ContextStoreRevisionSnapshot,
   rawChangeSet: ContextStoreChangeSet,
 ): ContextStoreChangeSet {
   const files = new Map(base.files.map((file) => [file.id, file]));
@@ -224,7 +167,7 @@ export function attachContextStoreBaseContent(
 }
 
 export function assertProgressiveKnowledgeStructure(
-  base: ContextStoreSnapshot,
+  base: ContextStoreRevisionSnapshot,
   changeSet: ContextStoreChangeSet,
 ): void {
   const baseIds = new Set(base.files.map((file) => file.id));
@@ -289,7 +232,7 @@ export class KnowledgeDraftValidationError extends Error {
 function diagnosticFileId(
   path: readonly PropertyKey[],
   message: string,
-  files: ReadonlyArray<ContextStoreSnapshot["files"][number]>,
+  files: ReadonlyArray<ContextStoreRevisionSnapshot["files"][number]>,
 ): string {
   const index = path.find((segment): segment is number => typeof segment === "number");
   if (index !== undefined && files[index] !== undefined) return files[index].id;
@@ -298,7 +241,7 @@ function diagnosticFileId(
 }
 
 function validateNavigationLinks(
-  files: ReadonlyArray<ContextStoreSnapshot["files"][number]>,
+  files: ReadonlyArray<ContextStoreRevisionSnapshot["files"][number]>,
 ): readonly KnowledgeDraftValidationDiagnostic[] {
   const ids = new Set(files.map((file) => file.id));
   const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];

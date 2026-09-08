@@ -811,7 +811,7 @@
   }
 }
 
-/* Knowledge-base update tasks */
+/* Knowledge-base revision tasks */
 .context-store-revisions {
   --revision-task-actions-width: 168px;
   --revision-task-content-columns: minmax(260px, 1.25fr) minmax(220px, 1fr) 92px;

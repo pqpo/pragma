@@ -21,10 +21,8 @@ payload indexes, and both archive and portable-project fingerprints. Turning a m
 Host payload, not the DSL dependency, so the destination can guide the user through binding it.
 
 Secrets, local sessions, Missions, usage data, workspace files, provider accounts, and absolute
-local paths are excluded. A knowledge-base export is the user-controlled backup unit. It includes
-only the current snapshot and file metadata; drafts, update-task records, and Memory Evidence are
-excluded. Users who need a long-lived history can keep exported `.pragma` files in Git or another
-backup system.
+local paths are excluded. A knowledge-base export includes only its current snapshot and file
+metadata; revision history, drafts, revision jobs, and Memory Evidence are excluded.
 
 ## Import
 
@@ -52,17 +50,18 @@ The imported object remains visible and persisted while setup is incomplete, but
 or run a Mission. This gate also applies when another Flow reaches the pending object indirectly.
 Save all required bindings and secrets to move the installation to `ready`.
 
-For a knowledge-base conflict, update replaces the current local snapshot while retaining the local
-ID and name. Identical content is a no-op. Copy creates a new semantic resource and managed Store.
-Inspection records the matched Store's snapshot hash; import applies changes with hash CAS and asks
-for a fresh inspection if the target changed.
+For a knowledge-base conflict, update means append the imported snapshot as the next local revision
+while retaining the local ID, name, and history. Identical content is a no-op. Copy creates a new
+semantic resource and a new managed Store at revision 1. Inspection records the matched Store's
+revision and snapshot hash; import applies changes with snapshot CAS and asks for a fresh inspection
+if the target changed.
 
 If Desktop closes during import, the installation is marked failed at the next startup. Selecting
 the same archive and root again performs a fresh validated retry. Incomplete copy imports can also be
 discarded from the import dialog; update imports are not automatically rolled back because doing so
 could overwrite later project work.
 
-Desktop stores installation state as `pragma.bundle-installation/v6`. Archive identity
+Desktop stores installation state as `pragma.bundle-installation/v5`. Archive identity
 (`bundleFingerprint`) and portable content identity (`sourceProjectFingerprint`) are distinct: the
 former protects the inspected bytes and retry transaction, while the latter supports advisory
 content comparison without silently merging installations.

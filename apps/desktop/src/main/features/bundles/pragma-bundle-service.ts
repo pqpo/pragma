@@ -50,7 +50,6 @@ import { z } from "zod";
 import {
   CreateCapabilitySchema,
   CapabilityDefinitionSchema,
-  ContextStoreSnapshotBaseSchema,
   ContextStoreSnapshotSchema,
   PragmaBundleExportPreviewSchema,
   PragmaBundleExportResultSchema,
@@ -104,7 +103,7 @@ import {
 
 const InstallationCatalogSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installations/v6"),
+    schemaVersion: z.literal("pragma.bundle-installations/v5"),
     installations: z.array(PragmaBundleInstallationSchema),
   })
   .strict();
@@ -172,25 +171,6 @@ const DesktopContextPayloadDescriptorV2Schema = z
   })
   .strict();
 
-const LegacyBundleContextStoreSnapshotV1Schema = ContextStoreSnapshotBaseSchema.omit({
-  schemaVersion: true,
-})
-  .extend({
-    schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
-    revision: z.number().int().positive(),
-  })
-  .strict();
-
-const CompatibleBundleContextStoreSnapshotSchema = z
-  .union([ContextStoreSnapshotSchema, LegacyBundleContextStoreSnapshotV1Schema])
-  .transform((snapshot) =>
-    ContextStoreSnapshotSchema.parse({
-      ...snapshot,
-      schemaVersion: "pragma.context-store-snapshot/v2",
-      revision: undefined,
-    }),
-  );
-
 const DesktopContextPayloadDescriptorV3Schema = z
   .object({
     schemaVersion: z.literal("pragma.desktop.context-store-descriptor/v3"),
@@ -198,7 +178,7 @@ const DesktopContextPayloadDescriptorV3Schema = z
     description: z.string(),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     contentIncluded: z.boolean(),
-    snapshot: CompatibleBundleContextStoreSnapshotSchema.optional(),
+    snapshot: ContextStoreSnapshotSchema.optional(),
   })
   .strict()
   .superRefine((descriptor, context) => {
@@ -213,9 +193,9 @@ const DesktopContextPayloadDescriptorV3Schema = z
 
 const DesktopContextPayloadSnapshotV4Schema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
+    schemaVersion: ContextStoreSnapshotSchema.shape.schemaVersion,
     storeId: ContextStoreSnapshotSchema.shape.storeId,
-    revision: z.number().int().positive(),
+    revision: ContextStoreSnapshotSchema.shape.revision,
     snapshotHash: ContextStoreSnapshotSchema.shape.snapshotHash,
     createdAt: ContextStoreSnapshotSchema.shape.createdAt,
     directories: ContextStoreSnapshotSchema.shape.directories,
@@ -231,37 +211,6 @@ const DesktopContextPayloadDescriptorV4Schema = z
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     contentIncluded: z.boolean(),
     snapshot: DesktopContextPayloadSnapshotV4Schema.optional(),
-  })
-  .strict()
-  .superRefine((descriptor, context) => {
-    if (descriptor.contentIncluded !== (descriptor.snapshot !== undefined)) {
-      context.addIssue({
-        code: "custom",
-        message: "Knowledge-base snapshot presence must match contentIncluded.",
-        path: ["snapshot"],
-      });
-    }
-  });
-
-const DesktopContextPayloadSnapshotV5Schema = z
-  .object({
-    schemaVersion: ContextStoreSnapshotSchema.shape.schemaVersion,
-    storeId: ContextStoreSnapshotSchema.shape.storeId,
-    snapshotHash: ContextStoreSnapshotSchema.shape.snapshotHash,
-    createdAt: ContextStoreSnapshotSchema.shape.createdAt,
-    directories: ContextStoreSnapshotSchema.shape.directories,
-    files: z.array(ContextStoreSnapshotSchema.shape.files.element.omit({ content: true })),
-  })
-  .strict();
-
-const DesktopContextPayloadDescriptorV5Schema = z
-  .object({
-    schemaVersion: z.literal("pragma.desktop.context-store-descriptor/v5"),
-    name: z.string().min(1),
-    description: z.string(),
-    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    contentIncluded: z.boolean(),
-    snapshot: DesktopContextPayloadSnapshotV5Schema.optional(),
   })
   .strict()
   .superRefine((descriptor, context) => {
@@ -387,7 +336,7 @@ export function createPragmaBundleService(options: {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: "pragma.bundle-installations/v6", installations: [] };
+        return { schemaVersion: "pragma.bundle-installations/v5", installations: [] };
       }
       throw error;
     }
@@ -470,7 +419,7 @@ export function createPragmaBundleService(options: {
       (candidate) => candidate.id === update.storeId,
     );
     if (store === undefined) {
-      if (update.baseSnapshotHash !== undefined) {
+      if (update.baseRevision !== undefined || update.baseSnapshotHash !== undefined) {
         throw new Error("The knowledge base targeted by the interrupted import is unavailable.");
       }
       store = await options.contextStores.createFromSnapshot({
@@ -479,29 +428,39 @@ export function createPragmaBundleService(options: {
         description: dependency.description,
         directories: dependency.snapshot.directories,
         files: dependency.snapshot.files,
+        author: "import",
+        summary: "Recover interrupted knowledge-base Bundle import.",
         expectedSnapshotHash: dependency.snapshot.snapshotHash,
       });
     } else {
       const snapshot = await options.contextStores.getSnapshot(store.id);
       if (snapshot.snapshotHash !== update.importedSnapshotHash) {
-        if (snapshot.snapshotHash !== update.baseSnapshotHash) {
+        if (
+          snapshot.revision !== update.baseRevision ||
+          snapshot.snapshotHash !== update.baseSnapshotHash
+        ) {
           throw new Error(
             "The target knowledge base changed after an interrupted import. Inspect the Bundle again.",
           );
         }
-        await options.contextStores.replaceSnapshot({
-          storeId: store.id,
-          baseSnapshotHash: snapshot.snapshotHash,
-          snapshotHash: dependency.snapshot.snapshotHash,
-          directories: dependency.snapshot.directories,
-          files: dependency.snapshot.files,
-        });
+        await options.contextStores.appendSnapshot(
+          {
+            storeId: store.id,
+            baseRevision: snapshot.revision,
+            baseSnapshotHash: snapshot.snapshotHash,
+            snapshotHash: dependency.snapshot.snapshotHash,
+            directories: dependency.snapshot.directories,
+            files: dependency.snapshot.files,
+            summary: "Recover interrupted knowledge-base Bundle import.",
+          },
+          "import",
+        );
       }
     }
     await updateInstallationFile(installation.id, (record) => ({
       ...record,
       createdContextStoreIds:
-        update.baseSnapshotHash === undefined
+        update.baseRevision === undefined
           ? unique([...record.createdContextStoreIds, update.storeId])
           : record.createdContextStoreIds,
       knowledgeBaseUpdate: { ...update, phase: "applied" },
@@ -580,14 +539,13 @@ export function createPragmaBundleService(options: {
         ) as unknown;
         const upgraded = bundleInstallationsMigrationChain.upgrade(source);
         if (upgraded.migrated) {
-          const backupFile = `migration-backups/installations.v${upgraded.fromVersion}.json`;
           await applyAtomicStateMigration({
             aggregateRoot,
             journalFile,
             resource: migrationResource,
             fromVersion: upgraded.fromVersion,
             toVersion: upgraded.toVersion,
-            documents: { [backupFile]: source, [catalogFile]: upgraded.value },
+            documents: { [catalogFile]: upgraded.value },
             validateDocuments,
           });
         }
@@ -1011,7 +969,7 @@ export function createPragmaBundleService(options: {
                       new TextEncoder().encode(
                         `${JSON.stringify(
                           {
-                            schemaVersion: "pragma.desktop.context-store-descriptor/v5",
+                            schemaVersion: "pragma.desktop.context-store-descriptor/v4",
                             name: entry.store.name,
                             description: entry.store.description,
                             fingerprint,
@@ -1037,7 +995,7 @@ export function createPragmaBundleService(options: {
                   for (const file of snapshot?.files ?? []) {
                     files.set(`files/${file.id}`, new TextEncoder().encode(file.content));
                   }
-                  return { codec: "pragma.desktop.context-store@v5", files };
+                  return { codec: "pragma.desktop.context-store@v4", files };
                 }
                 return undefined;
               }
@@ -1115,6 +1073,7 @@ export function createPragmaBundleService(options: {
           const snapshot = await options.contextStores.getSnapshot(storeId);
           return {
             ...conflict,
+            targetRevision: snapshot.revision,
             targetSnapshotHash: snapshot.snapshotHash,
           };
         }),
@@ -1402,7 +1361,7 @@ export function createPragmaBundleService(options: {
           );
           const timestamp = new Date().toISOString();
           const initial = PragmaBundleInstallationSchema.parse({
-            schemaVersion: "pragma.bundle-installation/v6",
+            schemaVersion: "pragma.bundle-installation/v5",
             bundleVersion: "pragma.bundle/v2",
             sourceProjectFingerprint: archive.manifest.projectFingerprint,
             id: installationId,
@@ -1722,7 +1681,8 @@ export function createPragmaBundleService(options: {
                 const currentSnapshot = await options.contextStores.getSnapshot(store.id);
                 if (
                   conflictAction?.action === "update" &&
-                  conflictAction.expectedTargetSnapshotHash !== currentSnapshot.snapshotHash
+                  (conflictAction.expectedTargetRevision !== currentSnapshot.revision ||
+                    conflictAction.expectedTargetSnapshotHash !== currentSnapshot.snapshotHash)
                 ) {
                   throw new Error(
                     "The target knowledge base changed. Inspect the Bundle again before importing.",
@@ -1735,6 +1695,7 @@ export function createPragmaBundleService(options: {
                       sourceRef: dependency.resourceRef,
                       targetRef,
                       storeId: store!.id,
+                      baseRevision: currentSnapshot.revision,
                       baseSnapshotHash: currentSnapshot.snapshotHash,
                       importedSnapshotHash: dependency.snapshot!.snapshotHash,
                       phase: "prepared",
@@ -1743,13 +1704,18 @@ export function createPragmaBundleService(options: {
                   }));
                 }
                 if (currentSnapshot.snapshotHash !== dependency.snapshot.snapshotHash) {
-                  await options.contextStores.replaceSnapshot({
-                    storeId: store.id,
-                    baseSnapshotHash: currentSnapshot.snapshotHash,
-                    snapshotHash: dependency.snapshot.snapshotHash,
-                    directories: dependency.snapshot.directories,
-                    files: dependency.snapshot.files,
-                  });
+                  await options.contextStores.appendSnapshot(
+                    {
+                      storeId: store.id,
+                      baseRevision: currentSnapshot.revision,
+                      baseSnapshotHash: currentSnapshot.snapshotHash,
+                      snapshotHash: dependency.snapshot.snapshotHash,
+                      directories: dependency.snapshot.directories,
+                      files: dependency.snapshot.files,
+                      summary: "Append imported knowledge-base snapshot.",
+                    },
+                    "import",
+                  );
                   store = (await options.contextStores.list()).find(
                     (candidate) => candidate.id === updateStoreId,
                   );
@@ -1800,6 +1766,8 @@ export function createPragmaBundleService(options: {
                   description: dependency.description,
                   directories: dependency.snapshot.directories,
                   files: dependency.snapshot.files,
+                  author: "import",
+                  summary: "Import current knowledge-base snapshot from a Pragma Bundle.",
                   expectedSnapshotHash: dependency.snapshot.snapshotHash,
                 });
                 await updateInstallation(initial.id, (record) => ({
@@ -2539,14 +2507,6 @@ async function readDesktopBundle(
           ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
         });
       } else if (requirement.kind === "binding" && owner?.kind === "ContextStore") {
-        const v5 =
-          requirement.payload?.codec === "pragma.desktop.context-store@v5"
-            ? parseBundlePayloadJson(
-                requiredBundlePayloadFile(payloadFiles, "descriptor.json", requirement.id),
-                DesktopContextPayloadDescriptorV5Schema,
-                `ContextStore descriptor ${requirement.id}`,
-              )
-            : undefined;
         const v4 =
           requirement.payload?.codec === "pragma.desktop.context-store@v4"
             ? parseBundlePayloadJson(
@@ -2572,7 +2532,6 @@ async function readDesktopBundle(
               )
             : undefined;
         const metadata =
-          v5 ??
           v4 ??
           v3 ??
           v2 ??
@@ -2587,25 +2546,21 @@ async function readDesktopBundle(
           requirement.payload?.codec === "pragma.desktop.context-store@v1" ||
           (v2?.contentIncluded ?? false) ||
           (v3?.contentIncluded ?? false) ||
-          (v4?.contentIncluded ?? false) ||
-          (v5?.contentIncluded ?? false);
+          (v4?.contentIncluded ?? false);
         const snapshot =
-          (v5?.snapshot ?? v4?.snapshot) === undefined
+          v4?.snapshot === undefined
             ? v3?.snapshot
             : ContextStoreSnapshotSchema.parse({
-                ...(v5?.snapshot ?? v4!.snapshot),
-                schemaVersion: "pragma.context-store-snapshot/v2",
-                revision: undefined,
-                files: (v5?.snapshot ?? v4!.snapshot)!.files.map((file) => ({
+                ...v4.snapshot,
+                files: v4.snapshot.files.map((file) => ({
                   ...file,
                   content: new TextDecoder().decode(
                     requiredBundlePayloadFile(payloadFiles, `files/${file.id}`, requirement.id),
                   ),
                 })),
               });
-        const detachedSnapshot = v5?.snapshot ?? v4?.snapshot;
-        if (detachedSnapshot !== undefined) {
-          const declaredFiles = new Set(detachedSnapshot.files.map((file) => `files/${file.id}`));
+        if (v4?.snapshot !== undefined) {
+          const declaredFiles = new Set(v4.snapshot.files.map((file) => `files/${file.id}`));
           for (const path of payloadFiles.keys()) {
             if (path !== "descriptor.json" && !declaredFiles.has(path)) {
               throw new Error(
@@ -2623,18 +2578,14 @@ async function readDesktopBundle(
           ...(v2 === undefined
             ? {}
             : { sourceId: v2.sourceId, contentIncluded: v2.contentIncluded }),
-          ...(v5 !== undefined || v4 !== undefined
-            ? { contentIncluded: (v5 ?? v4)!.contentIncluded }
+          ...(v4 !== undefined
+            ? { contentIncluded: v4.contentIncluded }
             : v3 === undefined
               ? {}
               : { contentIncluded: v3.contentIncluded }),
           ...(snapshot === undefined ? {} : { snapshot }),
           included,
-          ...(requirement.payload === undefined ||
-          !included ||
-          v3 !== undefined ||
-          v4 !== undefined ||
-          v5 !== undefined
+          ...(requirement.payload === undefined || !included || v3 !== undefined || v4 !== undefined
             ? {}
             : { payloadRoot: `${requirement.payload.root}/files` }),
         });

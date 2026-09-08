@@ -137,7 +137,9 @@ describe("Memory knowledge promotion", () => {
       expectedRevision: candidate!.revision,
     });
     expect(mountStore).toHaveBeenCalledWith(expertRef, store.id);
-    const createdSnapshotHash = (await contextStores.getSnapshot(store.id)).snapshotHash;
+    await expect(contextStores.history(store.id)).resolves.toEqual([
+      expect.objectContaining({ revision: 1, author: "memory-initialization" }),
+    ]);
 
     await promotion.routeLearning({
       expertRefs: [expertRef],
@@ -153,7 +155,7 @@ describe("Memory knowledge promotion", () => {
       }),
     );
     expect(scheduleProcessing).toHaveBeenCalledTimes(1);
-    expect((await contextStores.getSnapshot(store.id)).snapshotHash).toBe(createdSnapshotHash);
+    expect((await contextStores.getSnapshot(store.id)).revision).toBe(1);
   });
 
   it("keeps a content-free digest tombstone when its Store is deleted", async () => {
