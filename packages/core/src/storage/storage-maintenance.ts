@@ -25,6 +25,7 @@ export interface StorageMaintenanceResult {
   readonly deletedCacheEntries: number;
   readonly deletedArchives: number;
   readonly deletedTemporaryEntries: number;
+  readonly deletedMigrationBackups: number;
   readonly deletedTrashEntries: number;
   readonly deletedContentObjects: number;
   readonly reclaimedContentBytes: number;
@@ -35,6 +36,12 @@ export interface TrashMaintenanceResult {
   readonly afterBytes: number;
   readonly deletedEntries: number;
   readonly reclaimedBytes: number;
+}
+
+export interface TransientStorageMaintenanceResult extends TrashMaintenanceResult {
+  readonly deletedCacheEntries: number;
+  readonly deletedTemporaryEntries: number;
+  readonly deletedMigrationBackups: number;
 }
 
 export interface StorageCapacityGuard {
@@ -195,6 +202,15 @@ export async function runStorageMaintenance(input: {
       now,
       ttlOnly: true,
     });
+    const migrations = await pruneCandidates(
+      await directChildren(join(input.paths.archivesRoot(), "storage-migrations")),
+      {
+        ttlMs: 7 * 24 * 60 * 60 * 1_000,
+        limitBytes: 0,
+        now,
+        ttlOnly: true,
+      },
+    );
     const trash = await pruneCompletedTrash({ paths: input.paths, policy, now });
     const roots = await readContentObjectRoots(input.paths);
     const content = await new ContentAddressedStore(
@@ -220,6 +236,7 @@ export async function runStorageMaintenance(input: {
       deletedCacheEntries: cache.deleted,
       deletedArchives: archives.deleted,
       deletedTemporaryEntries: temporary.deleted,
+      deletedMigrationBackups: migrations.deleted,
       deletedTrashEntries: trash.deleted + pressureTrash.deleted,
       deletedContentObjects: content.deletedObjects,
       reclaimedContentBytes: content.reclaimedBytes,
@@ -243,6 +260,50 @@ export async function runTrashMaintenance(input: {
       afterBytes,
       deletedEntries: result.deleted,
       reclaimedBytes: Math.max(0, beforeBytes - afterBytes),
+    };
+  });
+}
+
+/** Bounded post-window maintenance that never scans persistent owners or content roots. */
+export async function runTransientStorageMaintenance(input: {
+  readonly paths: PragmaPaths;
+  readonly policy?: StoragePolicy | undefined;
+  readonly now?: number | undefined;
+}): Promise<TransientStorageMaintenanceResult> {
+  const policy = input.policy ?? DEFAULT_STORAGE_POLICY;
+  const now = input.now ?? Date.now();
+  return await withFileLock(input.paths.storageGcLock(), async () => {
+    const beforeBytes = await directoryBytes(input.paths.trashRoot());
+    const cache = await pruneCandidates(await collectCacheCandidates(input.paths), {
+      ttlMs: policy.cacheTtlMs,
+      limitBytes: policy.cacheLimitBytes,
+      now,
+    });
+    const temporary = await pruneCandidates(await directChildren(input.paths.temporaryRoot()), {
+      ttlMs: policy.temporaryTtlMs,
+      limitBytes: 0,
+      now,
+      ttlOnly: true,
+    });
+    const migrations = await pruneCandidates(
+      await directChildren(join(input.paths.archivesRoot(), "storage-migrations")),
+      {
+        ttlMs: 7 * 24 * 60 * 60 * 1_000,
+        limitBytes: 0,
+        now,
+        ttlOnly: true,
+      },
+    );
+    const trash = await pruneCompletedTrash({ paths: input.paths, policy, now });
+    const afterBytes = await directoryBytes(input.paths.trashRoot());
+    return {
+      beforeBytes,
+      afterBytes,
+      deletedEntries: trash.deleted,
+      reclaimedBytes: Math.max(0, beforeBytes - afterBytes),
+      deletedCacheEntries: cache.deleted,
+      deletedTemporaryEntries: temporary.deleted,
+      deletedMigrationBackups: migrations.deleted,
     };
   });
 }

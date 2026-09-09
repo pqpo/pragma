@@ -28,6 +28,7 @@ import type {
   HostContextBindings,
   HostContextBindingsResolver,
 } from "./context-system/host-context-bindings.ts";
+import { PragmaPaths } from "./storage/pragma-paths.ts";
 
 export interface CreatePragmaOptions {
   readonly pragmaHome?: string | undefined;
@@ -72,18 +73,12 @@ export interface PragmaApp {
 
 export function createPragma(options: CreatePragmaOptions): PragmaApp {
   const loggerProvider = options.loggerProvider ?? defaultPragmaLoggerProvider;
-  const executions =
-    options.executionStore ??
-    createFileExecutionStore(
-      options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
-    );
+  const pragmaHome = new PragmaPaths(
+    options.pragmaHome === undefined ? {} : { pragmaHome: options.pragmaHome },
+  ).root;
+  const executions = options.executionStore ?? createFileExecutionStore({ pragmaHome });
   const sessions =
-    options.expertSessionStore ??
-    createFileExpertSessionStore(
-      options.pragmaHome === undefined
-        ? { executions }
-        : { executions, pragmaHome: options.pragmaHome },
-    );
+    options.expertSessionStore ?? createFileExpertSessionStore({ executions, pragmaHome });
   const runtimes = options.runtimes;
   const nestedFlowExecutor: NestedFlowInvocationExecutor = runNestedFlowInvocation;
   const experts = new ExpertSessionManager({
@@ -91,7 +86,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     executions,
     runtimes,
     loggerProvider,
-    pragmaHome: options.pragmaHome,
+    pragmaHome,
     automaticHumanInteractionHandler: options.automaticHumanInteractionHandler,
     usageSink: options.usageSink,
     hostContextBindings: options.hostContextBindings,
@@ -102,7 +97,7 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     executions,
     runtimes,
     options.automaticHumanInteractionHandler,
-    options.pragmaHome,
+    pragmaHome,
     loggerProvider,
     options.usageSink,
     options.hostContextBindings,

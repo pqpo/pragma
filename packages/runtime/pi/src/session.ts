@@ -72,6 +72,7 @@ export interface PiNativeSession {
   pendingCompactionOperationId?: string | undefined;
   pendingCompactionTrigger?: RuntimeContextCompactionTrigger | undefined;
   compactionTriggerOverride?: RuntimeContextCompactionTrigger | undefined;
+  cancellationPromise?: Promise<void> | undefined;
 }
 
 export interface PiNativeEvent {
@@ -207,8 +208,12 @@ export async function startPiTurn(
     const prompt = [...turn.startupMessages.map((message) => message.content), turn.prompt].join(
       "\n\n",
     );
-    if (images.length === 0) await nativeSession.session.prompt(prompt);
-    else await nativeSession.session.prompt(prompt, { images });
+    await racePiTurnWithAbort(
+      images.length === 0
+        ? nativeSession.session.prompt(prompt)
+        : nativeSession.session.prompt(prompt, { images }),
+      turn.signal,
+    );
     assertAssistantTurnCompleted(readPiRunAssistantMessages(nativeSession));
   } finally {
     const incompleteCompactionId = nativeSession.pendingCompactionOperationId;
@@ -243,6 +248,50 @@ export async function startPiTurn(
   return {
     runtimeSessionId: nativeSession.session.sessionId,
   };
+}
+
+export async function cancelPiTurn(session: PiNativeSession): Promise<void> {
+  if (session.cancellationPromise !== undefined) {
+    await session.cancellationPromise;
+    return;
+  }
+  const cancellation = (async () => {
+    let timer: NodeJS.Timeout | undefined;
+    const completed = await Promise.race([
+      Promise.resolve(session.session.abort()).then(
+        () => true,
+        () => true,
+      ),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), 2_000);
+        timer.unref();
+      }),
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+    if (!completed) session.session.dispose();
+  })();
+  session.cancellationPromise = cancellation;
+  try {
+    await cancellation;
+  } finally {
+    if (session.cancellationPromise === cancellation) session.cancellationPromise = undefined;
+  }
+}
+
+async function racePiTurnWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason ?? new Error("Pi turn was cancelled.");
+  let rejectAbort: (reason?: unknown) => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = (): void => rejectAbort(signal.reason ?? new Error("Pi turn was cancelled."));
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 async function createPiImageInputs(

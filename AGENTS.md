@@ -374,7 +374,8 @@ Server 与 Agent 的关系：
   已拥有的 conversation ID 定向读取，不得扫描宿主 Session 树。PreToolUse relay 凭据只能写入 Session
   私有 hook 文件，不得暴露给 agy 进程环境及其子 shell。
 - Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
-  Execution、Runtime Session 和 ownership claim 到带 journal 的回收站。
+  Execution 与 Runtime Session 文件到带 journal 的回收站，并用同一删除事务的 catalog pending
+  记录移除 SQLite ownership row；文件移动与 catalog 提交必须受跨进程锁保护且可在崩溃后重放。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
 - 每个 Runtime Session 必须由 ExpertSession context 或 FlowExecution Invocation 明确拥有；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
 - Core 必须通过原子 ownership claim 保证 `systemSessionId` 只有一个 owner；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。

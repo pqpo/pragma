@@ -85,9 +85,12 @@ packages/runtime/antigravity
 
 Runtime sessions are owned by exactly one ExpertSession context or FlowExecution Invocation. Public
 Runtime Adapters expose capability and model discovery; `defineRuntimeDriver()` registers the private
-Session factory. Core stores owner claims under `~/.pragma/state/runtime-session-owners/` and Session
-records under `~/.pragma/state/runtime-sessions/`. Recovery must match the original owner,
-`systemSessionId`, Expert, Runtime and `RuntimeSessionRef { type, id }`.
+Session factory. Core stores Session metadata and atomic owner claims in
+`~/.pragma/state/runtime-sessions/catalog.sqlite`; native Runtime state remains in encoded owner
+directories under `~/.pragma/state/runtime-sessions/`. Recovery must match the original owner,
+`systemSessionId`, Expert, Runtime and `RuntimeSessionRef { type, id }`. Owner deletion coordinates
+filesystem trash moves and catalog removal through a replayable journal, a catalog-side pending record,
+and a cross-process lock.
 
 An active ExpertSession holds a renewable cross-process lease and owns reusable root Runtime Sessions
 until `ExpertSession.close()`. Runtime reuse validates the complete context identity

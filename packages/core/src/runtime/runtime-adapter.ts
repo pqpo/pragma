@@ -162,7 +162,8 @@ export type RuntimeSessionRestoreHandler = (
 export interface RuntimeDriverSessionRequest {
   readonly agent: Expert;
   readonly owner: RuntimeSessionOwner;
-  readonly pragmaHome?: string | undefined;
+  /** Host-owned storage root. Callers must bind this explicitly; Runtime must never infer user storage. */
+  readonly pragmaHome: string;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly contextAssembly?: ContextAssemblerOptions | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;

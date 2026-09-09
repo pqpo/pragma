@@ -217,7 +217,7 @@ export interface ExpertSessionManagerDependencies {
   readonly runtimes: RuntimeResolver;
   readonly loggerProvider: PragmaLoggerProvider;
   readonly usageSink?: UsageSink | undefined;
-  readonly pragmaHome?: string | undefined;
+  readonly pragmaHome: string;
   readonly automaticHumanInteractionHandler?:
     ExpertAgentAutomaticHumanInteractionHandler | undefined;
   readonly hostContextBindings?: HostContextBindings | undefined;
@@ -641,11 +641,7 @@ export class ExpertSessionManager {
         }
         const now = new Date().toISOString();
         if (rootContext.snapshot !== undefined) {
-          const paths = new PragmaPaths(
-            this.dependencies.pragmaHome === undefined
-              ? {}
-              : { pragmaHome: this.dependencies.pragmaHome },
-          );
+          const paths = new PragmaPaths({ pragmaHome: this.dependencies.pragmaHome });
           await rebindRuntimeSessionExpertId({
             paths,
             ownerId: options.sessionId,
@@ -706,6 +702,7 @@ export class ExpertSessionManager {
 class ExpertSessionImpl implements ExpertSession {
   private controller: ExecutionController | undefined;
   private processing: Promise<void> | undefined;
+  private processingGeneration = 0;
   private readonly runtimeSessions = new RuntimeSessionPool();
   private readonly queueSteersInFlight = new Set<string>();
   private readonly strictSteersInFlight = new Map<
@@ -882,6 +879,10 @@ class ExpertSessionImpl implements ExpertSession {
           : prompt,
       ),
     }));
+    if (this.controller === controller) this.controller = undefined;
+    this.processingGeneration += 1;
+    this.processing = undefined;
+    this.paused = false;
     this.startProcessing();
   }
 
@@ -1112,13 +1113,15 @@ class ExpertSessionImpl implements ExpertSession {
         ),
       }));
       await this.controller?.cancel(reason);
+      this.controller = undefined;
+      this.processingGeneration += 1;
+      this.processing = undefined;
       for (const prompt of pending) {
         await this.cancelPersistedExecution(
           prompt.executionId,
           reason ?? "Execution cancelled because the Session closed.",
         );
       }
-      await this.processing;
       const session = await this.getState();
       for (const executionId of session.executionIds) {
         await closeExecutionContexts(this.dependencies.executions, executionId);
@@ -1287,11 +1290,7 @@ class ExpertSessionImpl implements ExpertSession {
       return await active.contextWindow.inspect();
     }
     if (context.snapshot === undefined) return undefined;
-    const paths = new PragmaPaths(
-      this.dependencies.pragmaHome === undefined
-        ? {}
-        : { pragmaHome: this.dependencies.pragmaHome },
-    );
+    const paths = new PragmaPaths({ pragmaHome: this.dependencies.pragmaHome });
     const record = await readRuntimeSessionRecord(
       paths,
       this.sessionId,
@@ -1729,7 +1728,21 @@ class ExpertSessionImpl implements ExpertSession {
     for (const prompt of pending) {
       await this.cancelPersistedExecution(prompt.executionId, cancellationReason);
     }
+    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      result: undefined,
+      session: {
+        ...session,
+        activeExecutionId: undefined,
+        lastStatus: "cancelled" as const,
+        updatedAt: new Date().toISOString(),
+      },
+      prompts,
+    }));
+    this.controller = undefined;
+    this.processingGeneration += 1;
+    this.processing = undefined;
     this.paused = false;
+    this.startProcessing();
   }
 
   private async cancelPersistedExecution(executionId: string, reason: string): Promise<void> {
@@ -2042,10 +2055,13 @@ class ExpertSessionImpl implements ExpertSession {
 
   private startProcessing(): void {
     if (this.paused || this.processing !== undefined) return;
-    this.processing = this.processQueue().finally(() => {
+    const generation = ++this.processingGeneration;
+    const processing = this.processQueue(generation).finally(() => {
+      if (this.processingGeneration !== generation) return;
       this.processing = undefined;
       if (!this.paused) void this.restartProcessingIfQueued();
     });
+    this.processing = processing;
   }
 
   private async restartProcessingIfQueued(): Promise<void> {
@@ -2054,12 +2070,15 @@ class ExpertSessionImpl implements ExpertSession {
     }
   }
 
-  private async processQueue(): Promise<void> {
+  private async processQueue(generation: number): Promise<void> {
     while (true) {
+      if (this.processingGeneration !== generation) return;
       const prompts = await this.getPromptQueue();
+      if (this.processingGeneration !== generation) return;
       const next = prompts.find((prompt) => prompt.status === "queued");
       if (next === undefined) return;
       const status = await this.runPrompt(next).catch(() => "failed" as const);
+      if (this.processingGeneration !== generation) return;
       if (status === "checkpointed") return;
       if (status === "failed") {
         const hasQueued = (await this.getPromptQueue()).some(
@@ -2148,6 +2167,7 @@ class ExpertSessionImpl implements ExpertSession {
     try {
       output = InvocationOutputSchema.parse(
         await runExpertInvocation({
+          pragmaHome: this.dependencies.pragmaHome,
           executionId: prompt.executionId,
           invocationId: prompt.executionId,
           isRecovery: this.recoveredExecutionId === prompt.executionId,
@@ -2184,6 +2204,11 @@ class ExpertSessionImpl implements ExpertSession {
         status = controller.isCancelled() ? "cancelled" : "failed";
         error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
       }
+    }
+    if (this.closePromise !== undefined) {
+      if (this.controller === controller) this.controller = undefined;
+      controller.finish();
+      return "cancelled";
     }
     if (status === "checkpointed") {
       // The Runtime has durably checkpointed a human interaction, but the
@@ -2263,7 +2288,8 @@ class ExpertSessionImpl implements ExpertSession {
       result: undefined,
       session: {
         ...current,
-        activeExecutionId: undefined,
+        activeExecutionId:
+          current.activeExecutionId === prompt.executionId ? undefined : current.activeExecutionId,
         lastStatus: status,
         updatedAt: new Date().toISOString(),
       },
@@ -2281,6 +2307,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async persistRuntimeContext(context: RuntimeContextRecord): Promise<void> {
+    if (this.closePromise !== undefined) return;
     await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {

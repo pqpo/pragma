@@ -25,6 +25,7 @@ interface PendingRuntimeSession {
 export class RuntimeSessionPool {
   private readonly sessions = new Map<string, RuntimeSessionEntry>();
   private readonly pending = new Map<string, PendingRuntimeSession>();
+  private readonly freshContexts = new Set<string>();
   private sealed = false;
   private closePromise: Promise<void> | undefined;
 
@@ -36,7 +37,7 @@ export class RuntimeSessionPool {
       throw new Error("Runtime Session pool is closed.");
     }
 
-    let fresh = false;
+    let fresh = this.freshContexts.delete(identity.contextId);
     while (true) {
       if (this.sealed) {
         throw new Error("Runtime Session pool is closed.");
@@ -94,6 +95,23 @@ export class RuntimeSessionPool {
     await entry.session.close();
   }
 
+  /**
+   * Removes an unhealthy Runtime Session without waiting for its provider to
+   * acknowledge close. The next acquire for this Context must start fresh: a
+   * provider that did not settle an interrupt cannot safely resume the same
+   * native conversation while its previous turn may still be alive.
+   */
+  invalidate(session: RuntimeAgentSession): void {
+    for (const [contextId, entry] of this.sessions) {
+      if (entry.session !== session) continue;
+      this.sessions.delete(contextId);
+      this.freshContexts.add(contextId);
+    }
+    void Promise.resolve()
+      .then(async () => await session.close())
+      .catch(() => undefined);
+  }
+
   async clear(): Promise<void> {
     if (this.sealed) throw new Error("Runtime Session pool is closed.");
     if (this.pending.size > 0) {
@@ -129,6 +147,7 @@ export class RuntimeSessionPool {
     );
     const sessions = [...this.sessions.values()].map((entry) => entry.session);
     this.sessions.clear();
+    this.freshContexts.clear();
     const closeResults = await Promise.allSettled(
       sessions.map(async (session) => await session.close()),
     );

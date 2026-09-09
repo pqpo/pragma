@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "pragma.runtime-session/v2",
+  "owner": {
+    "type": "expert-session",
+    "ownerId": "owner",
+    "contextId": "context"
+  },
+  "systemSessionId": "runtime-session",
+  "expertId": "expert",
+  "runtime": {
+    "id": "runtime",
+    "kind": "test"
+  },
+  "runtimeSessionRef": {
+    "type": "test",
+    "id": "native-session"
+  },
+  "currentWorkspace": "/workspace",
+  "workspaceHistory": ["/workspace"],
+  "processState": "stopped",
+  "retentionState": "retained",
+  "createdAt": "2026-07-24T00:00:00.000Z",
+  "updatedAt": "2026-07-24T00:00:00.000Z"
+}

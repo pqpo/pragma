@@ -12,7 +12,7 @@ import {
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
 import { CodexAppServerClient } from "./app-server-client.ts";
-import { prepareManagedCodexHome } from "./codex-home.ts";
+import { cleanupManagedCodexTransientData, prepareManagedCodexHome } from "./codex-home.ts";
 import {
   collectCodexUsage,
   compactCodexContextWindow,
@@ -264,6 +264,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               defaultModelName,
               defaultThinkingLevel,
               codexHome: codex.home,
+              sqliteHome: codex.sqliteHome,
               tokenCounter: options.tokenCounter,
               startupMessages: threadStartResult.startedFreshThread
                 ? ctx.agentContext.startupMessages
@@ -332,8 +333,20 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           await session.client.interruptTurn(session.state.threadId).catch(() => undefined);
         }
       },
-      async closeSession(session) {
+      async closeSession(session, ctx) {
         await session.client.close();
+        if (session.codexHome !== undefined && session.sqliteHome !== undefined) {
+          await cleanupManagedCodexTransientData({
+            home: session.codexHome,
+            sqliteHome: session.sqliteHome,
+          }).catch((error: unknown) => {
+            ctx.logger.warn(
+              "runtime.codex_transient_cleanup_failed",
+              "Codex transient diagnostics could not be removed after app-server exited",
+              { error: error instanceof Error ? error.message : String(error) },
+            );
+          });
+        }
       },
     },
     {

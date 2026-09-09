@@ -81,6 +81,7 @@ export interface QoderNativeSession {
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   sessionId: string;
   activeQuery?: Query | undefined;
+  activeCancellation?: { readonly query: Query; readonly promise: Promise<void> } | undefined;
   contextWindowUsage?: RuntimeContextWindowUsage | undefined;
   compactSummary?: string | undefined;
   pendingCompaction?:
@@ -118,7 +119,10 @@ export async function startQoderTurn(
   const prompt = [...turn.startupMessages.map((message) => message.content), turn.prompt].join(
     "\n\n",
   );
-  const { result, usage } = await runQoderQuery(session, prompt, turn);
+  const { result, usage } = await raceQoderTurnWithAbort(
+    runQoderQuery(session, prompt, turn),
+    turn.signal,
+  );
   const assistant = createAssistantMessage(result, usage);
   appendPendingCompactionSummary(session);
   session.messages.push(assistant);
@@ -273,12 +277,30 @@ export async function compactQoderContextWindow(
   } finally {
     session.pendingCompaction = undefined;
     session.activeQuery = undefined;
-    await q.close().catch(() => undefined);
+    await settleQoderOperation(q.close(), 500);
   }
 }
 
 export async function cancelQoderTurn(session: QoderNativeSession): Promise<void> {
-  await session.activeQuery?.interrupt().catch(() => undefined);
+  const active = session.activeQuery;
+  if (active === undefined) return;
+  if (session.activeCancellation?.query === active) {
+    await session.activeCancellation.promise;
+    return;
+  }
+  const cancellation = (async () => {
+    const interrupted = await settleQoderOperation(active.interrupt(), 1_500);
+    if (!interrupted) await settleQoderOperation(active.close(), 500);
+    if (session.activeQuery === active) session.activeQuery = undefined;
+  })();
+  session.activeCancellation = { query: active, promise: cancellation };
+  try {
+    await cancellation;
+  } finally {
+    if (session.activeCancellation?.promise === cancellation) {
+      session.activeCancellation = undefined;
+    }
+  }
 }
 
 export async function steerQoderTurn(
@@ -302,8 +324,44 @@ export async function steerQoderTurn(
 }
 
 export async function closeQoderSession(session: QoderNativeSession): Promise<void> {
-  await session.activeQuery?.close().catch(() => undefined);
+  await cancelQoderTurn(session);
+  await settleQoderOperation(session.activeQuery?.close() ?? Promise.resolve(), 500);
   session.activeQuery = undefined;
+}
+
+async function settleQoderOperation(
+  operation: Promise<unknown>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  return await Promise.race([
+    operation.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+async function raceQoderTurnWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason ?? new Error("Qoder CLI turn was cancelled.");
+  let rejectAbort: (reason?: unknown) => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = (): void =>
+    rejectAbort(signal.reason ?? new Error("Qoder CLI turn was cancelled."));
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 async function runQoderQuery(
@@ -359,7 +417,7 @@ async function runQoderQuery(
   });
   session.activeQuery = q;
   const onAbort = (): void => {
-    void q.interrupt().catch(() => undefined);
+    void cancelQoderTurn(session);
   };
   turn.signal.addEventListener("abort", onAbort, { once: true });
 
@@ -466,10 +524,10 @@ async function runQoderQuery(
       session.pendingCompaction = undefined;
     }
     turn.signal.removeEventListener("abort", onAbort);
-    session.activeQuery = undefined;
+    if (session.activeQuery === q) session.activeQuery = undefined;
     session.toolRuntimeState.runId = undefined;
     session.toolRuntimeState.source = undefined;
-    await q.close().catch(() => undefined);
+    await settleQoderOperation(q.close(), 500);
     if (session.externalCommandsCacheDir !== undefined) {
       await cleanupManagedQoderExternalCommands(session.externalCommandsCacheDir).catch((error) => {
         session.logger.warn(

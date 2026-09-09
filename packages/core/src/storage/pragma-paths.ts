@@ -15,6 +15,15 @@ export function encodePragmaPathSegment(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
 
+/** Decode only canonical path segments produced by encodePragmaPathSegment. */
+export function decodePragmaPathSegment(value: string): string {
+  const decoded = Buffer.from(value, "base64url").toString("utf8");
+  if (decoded.length === 0 || encodePragmaPathSegment(decoded) !== value) {
+    throw new Error(`Invalid Pragma path segment: ${value}`);
+  }
+  return decoded;
+}
+
 export class PragmaPaths {
   readonly root: string;
 
@@ -382,13 +391,6 @@ export class PragmaPaths {
 
   runtimeSessionOwnersRoot(): string {
     return join(this.stateRoot(), "runtime-session-owners");
-  }
-
-  runtimeSessionOwner(systemSessionId: string): string {
-    return join(
-      this.runtimeSessionOwnersRoot(),
-      `${encodePragmaPathSegment(systemSessionId)}.json`,
-    );
   }
 
   runtimeSessionsRoot(): string {

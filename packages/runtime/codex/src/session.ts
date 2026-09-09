@@ -52,6 +52,7 @@ export interface CodexNativeSession {
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
+  readonly sqliteHome?: string | undefined;
   readonly subagentThreads: Map<string, CodexSubagentThread>;
   readonly tokenCounter: RuntimeTokenCounter;
   tokenModelIdentity: RuntimeTokenModelIdentity;
@@ -122,6 +123,7 @@ export function createCodexNativeSession(options: {
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
+  readonly sqliteHome?: string | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
 }): CodexNativeSession {
@@ -133,6 +135,7 @@ export function createCodexNativeSession(options: {
     defaultModelName: options.defaultModelName,
     defaultThinkingLevel: options.defaultThinkingLevel,
     codexHome: options.codexHome,
+    sqliteHome: options.sqliteHome,
     subagentThreads: new Map(),
     tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
     tokenModelIdentity: codexTokenModelIdentity(options.defaultModelName),

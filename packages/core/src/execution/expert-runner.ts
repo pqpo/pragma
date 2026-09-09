@@ -127,6 +127,7 @@ interface PendingHumanInteraction {
 }
 
 export class ExecutionController {
+  private static readonly RUNTIME_CANCELLATION_TIMEOUT_MS = 3_000;
   private readonly activeRuntimeSessions = new Map<string, RuntimeAgentSession>();
   private readonly activeRuntimeSubmissions = new Map<string, ActiveSubmission>();
   private readonly runtimeSubmissionWaiters = new Map<
@@ -147,6 +148,7 @@ export class ExecutionController {
   >();
   private cancelled = false;
   private cancellationReason: Error | undefined;
+  private cancellationPromise: Promise<void> | undefined;
   private usage: AgentMessageUsage | undefined;
   private readonly recoverableInteractions: Promise<StoredHumanInteraction[]>;
 
@@ -293,7 +295,7 @@ export class ExecutionController {
     const session = await this.runtimeSessions.acquire(identity, create);
     this.activeRuntimeSessions.set(identity.contextId, session);
     if (this.cancelled) {
-      await session.close();
+      this.activeRuntimeSessions.delete(identity.contextId);
       throw new Error(`Execution cancelled: ${this.executionId}`);
     }
     return session;
@@ -613,7 +615,12 @@ export class ExecutionController {
     }
   }
 
-  async cancel(reason?: string): Promise<void> {
+  cancel(reason?: string): Promise<void> {
+    this.cancellationPromise ??= this.cancelInternal(reason);
+    return this.cancellationPromise;
+  }
+
+  private async cancelInternal(reason?: string): Promise<void> {
     this.cancelled = true;
     const cancellation = new Error(reason ?? `Execution cancelled: ${this.executionId}`);
     this.cancellationReason = cancellation;
@@ -621,9 +628,48 @@ export class ExecutionController {
     for (const controller of this.invocationSignals.values()) controller.abort(cancellation);
     for (const pending of this.pendingInteractions.values()) pending.reject(cancellation);
     this.pendingInteractions.clear();
-    await Promise.allSettled(
-      [...this.activeRuntimeSubmissions.values()].map((submission) => submission.handle.cancel()),
+    const cancellationStates = [...this.activeRuntimeSubmissions.values()].map((submission) => ({
+      submission,
+      settled: false,
+      uncertain: false,
+    }));
+    const runtimeCancellation = Promise.all(
+      cancellationStates.map(async (state) => {
+        try {
+          await state.submission.handle.cancel();
+        } catch {
+          state.uncertain = true;
+        } finally {
+          state.settled = true;
+        }
+      }),
     );
+    let cancellationTimer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      runtimeCancellation,
+      new Promise<void>((resolve) => {
+        cancellationTimer = setTimeout(
+          resolve,
+          ExecutionController.RUNTIME_CANCELLATION_TIMEOUT_MS,
+        );
+        cancellationTimer.unref();
+      }),
+    ]).finally(() => {
+      if (cancellationTimer !== undefined) clearTimeout(cancellationTimer);
+    });
+    // Preserve normal ExpertSession continuity after a confirmed cancellation.
+    // Only quarantine a provider Session whose cancel failed or missed the
+    // controller deadline, because its previous native turn may still be alive.
+    const uncertainSessions = new Set(
+      cancellationStates
+        .filter((state) => state.uncertain || !state.settled)
+        .map((state) => state.submission.session),
+    );
+    for (const session of uncertainSessions) {
+      this.runtimeSessions.invalidate(session);
+    }
+    this.activeRuntimeSessions.clear();
+    this.activeRuntimeSubmissions.clear();
     while (true) {
       const record = await this.store.get(this.executionId);
       if (record === undefined || isTerminalExecutionStatus(record.status)) return;
@@ -909,6 +955,7 @@ async function readHumanInteractionResponse(
 }
 
 export interface RunExpertInvocationOptions {
+  readonly pragmaHome: string;
   readonly executionId: string;
   readonly invocationId: string;
   /** True when this invocation is being replayed after a persisted checkpoint. */
@@ -945,6 +992,7 @@ export interface RunExpertInvocationOptions {
 }
 
 export interface NestedFlowInvocationOptions {
+  readonly pragmaHome: string;
   readonly flow: Flow;
   readonly executionId: string;
   readonly flowInvocationId: string;
@@ -1140,6 +1188,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const session = await options.controller.acquireRuntime(runtimeIdentity, async ({ fresh }) => {
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
+      pragmaHome: options.pragmaHome,
       owner:
         options.owner.type === "expert-session"
           ? { ...options.owner, contextId: options.context.contextId }
@@ -1546,6 +1595,7 @@ async function executeAgentJob(
   const context = await parent.store.getContext(parent.executionId, job.agent.contextId);
   if (context === undefined) throw new Error(`Runtime Context not found: ${job.agent.contextId}.`);
   await runExpertInvocation({
+    pragmaHome: parent.pragmaHome,
     executionId: parent.executionId,
     invocationId: job.invocation.invocationId,
     parentInvocationId: job.invocation.parentInvocationId,
@@ -1730,6 +1780,7 @@ async function invokeResourceFromExpert(
         throw new Error("Nested Flow executor is unavailable.");
       }
       const output = await options.nestedFlowExecutor({
+        pragmaHome: options.pragmaHome,
         flow: target,
         executionId: options.executionId,
         flowInvocationId: invocationId,
@@ -1849,6 +1900,7 @@ async function invokeResourceFromExpert(
     return unwrapInvocationOutput(
       InvocationOutputSchema.parse(
         await runExpertInvocation({
+          pragmaHome: options.pragmaHome,
           executionId: options.executionId,
           invocationId,
           parentInvocationId: options.invocationId,

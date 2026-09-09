@@ -101,6 +101,25 @@ describe("RuntimeSessionPool", () => {
     await pool.close();
     expect(second.close).toHaveBeenCalledTimes(1);
   });
+
+  it("invalidates an unhealthy Session without waiting and reopens fresh", async () => {
+    const pool = new RuntimeSessionPool();
+    const neverCloses = createRuntimeSession();
+    vi.mocked(neverCloses.close).mockReturnValue(new Promise<void>(() => undefined));
+    const replacement = createRuntimeSession();
+    const create = vi.fn(async ({ fresh }: { readonly fresh: boolean }) =>
+      fresh ? replacement : neverCloses,
+    );
+
+    await pool.acquire(identity, create);
+    pool.invalidate(neverCloses);
+
+    await expect(pool.acquire(identity, create)).resolves.toBe(replacement);
+    expect(neverCloses.close).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenNthCalledWith(2, { fresh: true });
+    await pool.close();
+    expect(replacement.close).toHaveBeenCalledOnce();
+  });
 });
 
 function createRuntimeSession(): RuntimeAgentSession {

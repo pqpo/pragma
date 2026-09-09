@@ -29,6 +29,8 @@ Each Codex Runtime Context receives a minimal private `CODEX_HOME`:
 - the host `~/.codex/plugins/cache` is linked directly as shared, rebuildable cache;
 - complete `plugins`, `packages`, generic `cache`, and host `sessions` trees are neither scanned nor
   copied.
+- after app-server exits, Pragma removes the Context-local generic `home/cache` and Codex
+  `logs_2.sqlite*` diagnostics; native sessions and state databases remain available for restore.
 
 If a host plugin cache exists but cannot be linked, Session preparation fails explicitly instead of
 copying the tree or silently removing native plugin capability. Existing Pragma cache bases are not

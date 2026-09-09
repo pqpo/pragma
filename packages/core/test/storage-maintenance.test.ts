@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import {
   createStorageCapacityGuard,
   runStorageMaintenance,
   runTrashMaintenance,
+  runTransientStorageMaintenance,
 } from "../src/storage/storage-maintenance.ts";
 import { DEFAULT_STORAGE_POLICY } from "../src/storage/storage-policy.ts";
 
@@ -24,6 +25,30 @@ afterEach(async () => {
 });
 
 describe("runStorageMaintenance", () => {
+  it("removes only migration backups older than seven days during transient maintenance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-storage-migration-backups-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const backupRoot = join(paths.archivesRoot(), "storage-migrations");
+    const expired = join(backupRoot, "expired");
+    const current = join(backupRoot, "current");
+    await Promise.all([mkdir(expired, { recursive: true }), mkdir(current, { recursive: true })]);
+    await Promise.all([
+      writeFile(join(expired, "records.jsonl"), "old"),
+      writeFile(join(current, "records.jsonl"), "new"),
+    ]);
+    const now = Date.parse("2026-09-09T00:00:00.000Z");
+    const old = new Date(now - 8 * 24 * 60 * 60 * 1_000);
+    const fresh = new Date(now - 6 * 24 * 60 * 60 * 1_000);
+    await Promise.all([utimes(expired, old, old), utimes(current, fresh, fresh)]);
+
+    const result = await runTransientStorageMaintenance({ paths, now });
+
+    expect(result.deletedMigrationBackups).toBe(1);
+    await expect(stat(expired)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(current)).resolves.toBeDefined();
+  });
+
   it("keeps Context Store objects while collecting the shared content pool", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-storage-context-roots-"));
     roots.push(root);

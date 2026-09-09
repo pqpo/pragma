@@ -142,6 +142,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
 }
 
 interface FakeRuntimeOptions {
+  readonly cancelError?: string;
   readonly closeError?: string;
   readonly createDelayMs?: number;
   readonly concurrentToolNames?: readonly string[];
@@ -278,6 +279,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     mapEvent: (usage) => ({ events: [], usage }),
     cancelTurn: () => {
       if (stats !== undefined) stats.cancelTurnCalls += 1;
+      if (options.cancelError !== undefined) throw new Error(options.cancelError);
     },
     ...(options.onSteer === undefined
       ? {}
@@ -1555,10 +1557,10 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     }
   });
 
-  it("cancels only the active submission and reuses its Runtime Session", async () => {
+  it("cancels only the active submission and reuses its healthy Runtime Session", async () => {
     const clearedPreviews: string[] = [];
     const { app, expert, stats } = await trackedFixture(
-      { delayMs: 100 },
+      { delayMs: 1_000 },
       {
         record: () => undefined,
         clearPreview: (observationId) => {
@@ -1578,8 +1580,27 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await expect(next.result).resolves.toBe("tracked:next");
     await waitUntil(async () => clearedPreviews.length === 2);
     expect(stats.createSessionCalls).toBe(1);
-    expect(stats.cancelTurnCalls).toBe(1);
+    expect(stats.cancelTurnCalls).toBeGreaterThanOrEqual(1);
     expect(stats.executionIds).toEqual([active.executionId, next.executionId]);
+    await session.close();
+  });
+
+  it("replaces a Runtime Session when native cancellation is not confirmed", async () => {
+    const { app, expert, stats } = await trackedFixture({
+      cancelError: "native cancellation failed",
+      delayMs: 1_000,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "uncertain-cancel-active" });
+    await waitUntil(async () => stats.executionIds.includes(active.executionId));
+
+    await active.cancel("stop");
+    await expect(active.result).rejects.toThrow("stop");
+    const next = await session.prompt("next", { requestId: "uncertain-cancel-next" });
+
+    await expect(next.result).resolves.toBe("tracked:next");
+    expect(stats.createSessionCalls).toBe(2);
+    expect(stats.cancelTurnCalls).toBeGreaterThanOrEqual(1);
     await session.close();
   });
 
@@ -3094,6 +3115,7 @@ describe("FlowExecution", { timeout: 30_000 }, () => {
       executions,
       runtimes,
       loggerProvider: createNoopLoggerProvider(),
+      pragmaHome: home,
     });
     const expert = await defineExpert({
       id: "caller-without-flow-executor",

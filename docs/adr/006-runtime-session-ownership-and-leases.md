@@ -2,10 +2,10 @@
 
 ## Status
 
-Accepted
+Superseded in part by ADR 049
 
 ADR 016 extends this decision with owner-scoped deletion and separates Runtime process state from
-storage retention state.
+storage retention state. ADR 049 replaces the per-Session metadata and ownership-claim file layout.
 
 ## Decision
 

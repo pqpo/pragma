@@ -88,8 +88,8 @@ Electron 对象、Node 实例或 secret。
 Framework 声明能力状态和一致性证据。Host 在创建 Runtime Context 时确定 `runtimeId`、revision 与
 environment fingerprint；恢复时按持久绑定解析同一环境。
 
-Runtime Session 由 ExpertSession context 或 FlowExecution Invocation 明确拥有。Core 使用原子 ownership
-claim、lease 和完整身份校验保护 `systemSessionId`，恢复还要求原 owner 与 `RuntimeSessionRef`。运行进程
+Runtime Session 由 ExpertSession context 或 FlowExecution Invocation 明确拥有。Core 在 Runtime Session
+SQLite catalog 中使用主键 ownership claim，并结合 lease 和完整身份校验保护 `systemSessionId`；恢复还要求原 owner 与 `RuntimeSessionRef`。运行进程
 的生命周期与持久 Session 数据生命周期彼此独立。
 
 权限由两层明确分工：Pragma 管理的 Tool/MCP 调用使用 Host approval policy；Runtime 原生文件、Shell、

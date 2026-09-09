@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { PragmaPaths, type Expert } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { prepareManagedCodexHome } from "../src/codex-home.ts";
+import { cleanupManagedCodexTransientData, prepareManagedCodexHome } from "../src/codex-home.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -29,6 +29,35 @@ afterEach(async () => {
 });
 
 describe("managed Codex home", () => {
+  it("removes only transient diagnostics and generic caches after shutdown", async () => {
+    const root = await createTemporaryRoot("pragma-codex-cleanup-");
+    const home = join(root, "home");
+    const sqliteHome = join(root, "sqlite");
+    await Promise.all([
+      mkdir(join(home, "cache"), { recursive: true }),
+      mkdir(join(home, "sessions"), { recursive: true }),
+      mkdir(sqliteHome, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(home, "cache", "catalog.json"), "rebuildable"),
+      writeFile(join(home, "sessions", "thread.jsonl"), "authoritative"),
+      writeFile(join(sqliteHome, "logs_2.sqlite"), "diagnostic"),
+      writeFile(join(sqliteHome, "logs_2.sqlite-wal"), "diagnostic"),
+      writeFile(join(sqliteHome, "state_5.sqlite"), "state"),
+    ]);
+
+    await cleanupManagedCodexTransientData({ home, sqliteHome });
+
+    await expect(stat(join(home, "cache"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(sqliteHome, "logs_2.sqlite"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(join(home, "sessions", "thread.jsonl"), "utf8")).resolves.toBe(
+      "authoritative",
+    );
+    await expect(readFile(join(sqliteHome, "state_5.sqlite"), "utf8")).resolves.toBe("state");
+  });
+
   it("copies only private configuration and links authentication and the host plugin cache", async () => {
     const root = await createTemporaryRoot("pragma-codex-home-");
     const sharedCodexHome = join(root, "shared");

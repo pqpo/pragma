@@ -1,11 +1,6 @@
 export type SessionState = "active" | "closing" | "closed";
 export type RunState =
-  | "queued"
-  | "running"
-  | "waiting_approval"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
+  "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
 export type TaskState = "pending" | "leased" | "retrying" | "dead_letter";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
@@ -36,6 +31,13 @@ export interface AgentLifecycleTask<TResult> {
   readonly cancel: () => Promise<void>;
 }
 
+export class AgentLifecycleQuiescenceError extends Error {
+  constructor() {
+    super("Agent session work did not settle before cleanup.");
+    this.name = "AgentLifecycleQuiescenceError";
+  }
+}
+
 export function createQueuedAgentLifecycle<TContext = unknown>(
   context: TContext | undefined,
   hooks: AgentLifecycleHooks = {},
@@ -54,13 +56,17 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
     await cleanupPromise;
   };
 
-  const waitForQueueOrTimeout = async (): Promise<void> => {
-    await Promise.race([
-      queue,
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, cleanupTimeoutMs);
+  const waitForQueueOrTimeout = async (): Promise<boolean> => {
+    let timer: NodeJS.Timeout | undefined;
+    return await Promise.race([
+      queue.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), cleanupTimeoutMs);
+        timer.unref();
       }),
-    ]);
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
   };
 
   const abortCurrentRun = (reason: unknown): void => {
@@ -153,6 +159,7 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
         return;
       }
 
+      const errors: unknown[] = [];
       if (sessionState === "active") {
         sessionState = "closing";
         sessionAbortController.abort(new Error("Agent session was aborted."));
@@ -160,12 +167,26 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
           if (!controller.signal.aborted) controller.abort(sessionAbortController.signal.reason);
         }
         abortCurrentRun(sessionAbortController.signal.reason);
-        await hooks.abort?.(sessionAbortController.signal);
+        try {
+          await hooks.abort?.(sessionAbortController.signal);
+        } catch (error) {
+          errors.push(error);
+        }
       }
 
-      await waitForQueueOrTimeout();
-      await cleanupOnce();
+      try {
+        if (!(await waitForQueueOrTimeout())) errors.push(new AgentLifecycleQuiescenceError());
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await cleanupOnce();
+      } catch (error) {
+        errors.push(error);
+      }
       sessionState = "closed";
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "Agent session close failed.");
     },
   };
 }

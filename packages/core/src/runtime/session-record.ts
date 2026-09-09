@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-
 import {
   runtimeSessionRecordMigrationChain,
   type RuntimeSessionRecord,
 } from "../storage/migrations/runtime-session/index.ts";
+import {
+  openRuntimeSessionCatalog,
+  runtimeSessionCatalogPath,
+} from "../storage/migrations/runtime-session-catalog/index.ts";
 import type { PragmaPaths } from "../storage/pragma-paths.ts";
 import type {
   RuntimeAdapterDescriptor,
@@ -26,11 +26,6 @@ export async function createRuntimeSessionRecord(options: {
   readonly runtime: RuntimeAdapterDescriptor;
   readonly workspace: string;
 }): Promise<RuntimeSessionRecord> {
-  const ownershipPath = await claimSystemSessionOwner(
-    options.paths,
-    options.owner,
-    options.systemSessionId,
-  );
   const now = new Date().toISOString();
   const record: RuntimeSessionRecord = {
     schemaVersion: "pragma.runtime-session/v3",
@@ -46,11 +41,32 @@ export async function createRuntimeSessionRecord(options: {
     createdAt: now,
     updatedAt: now,
   };
+  const database = await openRuntimeSessionCatalog(options.paths);
   try {
-    await writeRuntimeSessionRecord(options.paths, record);
+    database
+      .prepare(
+        `INSERT INTO runtime_sessions(system_session_id, owner_id, owner_type, record_json, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.systemSessionId,
+        record.owner.ownerId,
+        record.owner.type,
+        JSON.stringify(record),
+        record.updatedAt,
+      );
   } catch (error) {
-    await rm(ownershipPath, { force: true }).catch(() => undefined);
-    throw error;
+    if (!isConstraint(error)) throw error;
+    const existing = database
+      .prepare("SELECT owner_id, owner_type FROM runtime_sessions WHERE system_session_id = ?")
+      .get(record.systemSessionId) as
+      { readonly owner_id: string; readonly owner_type: string } | undefined;
+    throw new Error(
+      `Runtime Session ${record.systemSessionId} is already owned by ${JSON.stringify(existing)}.`,
+      { cause: error },
+    );
+  } finally {
+    database.close();
   }
   return record;
 }
@@ -135,22 +151,34 @@ export async function readRuntimeSessionRecord(
   ownerId: string,
   systemSessionId: string,
 ): Promise<RuntimeSessionRecord> {
-  const file = paths.ownedSystemSessionManifest(ownerId, systemSessionId);
-  let value: unknown;
+  const database = await openRuntimeSessionCatalog(paths);
   try {
-    value = JSON.parse(await readFile(file, "utf8")) as unknown;
+    const row = database
+      .prepare(
+        `SELECT system_session_id AS systemSessionId, owner_id AS ownerId,
+                owner_type AS ownerType, record_json AS recordJson
+         FROM runtime_sessions WHERE system_session_id = ? AND owner_id = ?`,
+      )
+      .get(systemSessionId, ownerId) as
+      | {
+          readonly systemSessionId: string;
+          readonly ownerId: string;
+          readonly ownerType: string;
+          readonly recordJson: string;
+        }
+      | undefined;
+    if (row === undefined) throw new Error(`Runtime Session not found: ${systemSessionId}`);
+    const record = runtimeSessionRecordMigrationChain.upgrade(JSON.parse(row.recordJson)).value;
+    assertEqual(record.systemSessionId, row.systemSessionId, "Catalog system Session id");
+    assertEqual(record.owner.ownerId, row.ownerId, "Catalog owner id");
+    assertEqual(record.owner.type, row.ownerType, "Catalog owner type");
+    return record;
   } catch (error) {
-    if (isNotFound(error)) {
-      throw new Error(`Runtime Session not found: ${systemSessionId}`, { cause: error });
-    }
-    throw error;
-  }
-  try {
-    const upgraded = runtimeSessionRecordMigrationChain.upgrade(value);
-    if (upgraded.migrated) await writeRuntimeSessionRecord(paths, upgraded.value);
-    return upgraded.value;
-  } catch (error) {
-    throw unsupported(file, error);
+    if (error instanceof Error && error.message.startsWith("Runtime Session not found:"))
+      throw error;
+    throw unsupported(runtimeSessionCatalogPath(paths), error);
+  } finally {
+    database.close();
   }
 }
 
@@ -158,55 +186,40 @@ async function writeRuntimeSessionRecord(
   paths: PragmaPaths,
   record: RuntimeSessionRecord,
 ): Promise<void> {
-  const file = paths.ownedSystemSessionManifest(record.owner.ownerId, record.systemSessionId);
-  await mkdir(dirname(file), { recursive: true });
-  const temporary = join(dirname(file), `.session.${randomUUID()}.tmp`);
+  const database = await openRuntimeSessionCatalog(paths);
   try {
-    await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-    await rename(temporary, file);
+    const result = database
+      .prepare(
+        `UPDATE runtime_sessions SET record_json = ?, updated_at = ?
+         WHERE system_session_id = ? AND owner_id = ? AND owner_type = ?`,
+      )
+      .run(
+        JSON.stringify(record),
+        record.updatedAt,
+        record.systemSessionId,
+        record.owner.ownerId,
+        record.owner.type,
+      );
+    if (Number(result.changes) !== 1) {
+      throw new Error(`Runtime Session not found: ${record.systemSessionId}`);
+    }
   } finally {
-    await rm(temporary, { force: true });
-  }
-}
-
-async function claimSystemSessionOwner(
-  paths: PragmaPaths,
-  owner: RuntimeSessionOwner,
-  systemSessionId: string,
-): Promise<string> {
-  const file = paths.runtimeSessionOwner(systemSessionId);
-  await mkdir(dirname(file), { recursive: true });
-  try {
-    await writeFile(
-      file,
-      `${JSON.stringify({ schemaVersion: "pragma.runtime-session-owner/v1", systemSessionId, owner }, null, 2)}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
-    return file;
-  } catch (error) {
-    if (!isAlreadyExists(error)) throw error;
-    const existing = JSON.parse(await readFile(file, "utf8")) as { owner?: RuntimeSessionOwner };
-    throw new Error(
-      `Runtime Session ${systemSessionId} is already owned by ${JSON.stringify(existing.owner)}.`,
-      { cause: error },
-    );
+    database.close();
   }
 }
 
 function assertEqual(actual: unknown, expected: unknown, label: string): void {
-  if (actual !== expected) {
-    throw new Error(`${label} mismatch while restoring Runtime Session.`);
-  }
+  if (actual !== expected) throw new Error(`${label} mismatch while restoring Runtime Session.`);
 }
 
 function unsupported(file: string, cause?: unknown): Error {
   return new Error(`unsupported-state-version: ${file}`, { cause });
 }
 
-function isNotFound(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+function isConstraint(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("UNIQUE constraint failed") ||
+      error.message.includes("PRIMARY KEY constraint failed"))
+  );
 }

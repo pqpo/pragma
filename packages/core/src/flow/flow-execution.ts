@@ -97,9 +97,9 @@ export class FlowExecutionManager {
   constructor(
     private readonly executions: ExecutionStore,
     private readonly runtimes: RuntimeResolver,
-    private readonly automaticHumanInteractionHandler?:
+    private readonly automaticHumanInteractionHandler:
       ExpertAgentAutomaticHumanInteractionHandler | undefined,
-    private readonly pragmaHome?: string | undefined,
+    private readonly pragmaHome: string,
     private readonly loggerProvider?: PragmaLoggerProvider | undefined,
     private readonly usageSink?: UsageSink | undefined,
     private readonly hostContextBindings?: HostContextBindings | undefined,
@@ -299,6 +299,7 @@ export class FlowExecutionManager {
     });
     try {
       const output = await runFlow({
+        pragmaHome: this.pragmaHome,
         flow,
         executionId,
         flowInvocationId: executionId,
@@ -433,6 +434,7 @@ export class FlowExecutionManager {
 }
 
 async function runFlow(options: {
+  readonly pragmaHome: string;
   readonly flow: Flow;
   readonly executionId: string;
   readonly flowInvocationId: string;
@@ -542,6 +544,7 @@ async function runFlow(options: {
 }
 
 export async function runNestedFlowInvocation(options: {
+  readonly pragmaHome: string;
   readonly flow: Flow;
   readonly executionId: string;
   readonly flowInvocationId: string;
@@ -648,6 +651,7 @@ async function runStep(
       throw new Error(`Runtime Context not found: ${invocation.contextId}.`);
     }
     const invocationOutput = await runExpertInvocation({
+      pragmaHome: options.pragmaHome,
       executionId: options.executionId,
       invocationId: invocation.invocationId,
       parentInvocationId: options.flowInvocationId,

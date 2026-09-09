@@ -52,6 +52,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Mission latency cache 与 Runtime warmup](./027-mission-latency-cache-and-runtime-warmup.md)
 - [Host-scoped MCP connections](./028-host-scoped-mcp-connections-and-tool-projections.md)
 - [Cross-Host SecretStore](./044-cross-host-secret-store.md)
+- [Runtime Session SQLite catalog 与 Host storage binding](./049-runtime-session-sqlite-catalog-and-host-storage-binding.md)
 
 ## Evaluation 与 Memory
 

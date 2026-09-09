@@ -39,6 +39,7 @@ import {
   canCompactPiContextWindow,
   compactPiContextWindow,
   collectPiUsage,
+  cancelPiTurn,
   consumePiStartupMessages,
   createPiNativeSession,
   listPiMessages,
@@ -335,7 +336,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       canCompactContext: canCompactPiContextWindow,
       compactContext: compactPiContextWindow,
       async cancelTurn(session) {
-        await session.session.abort();
+        await cancelPiTurn(session);
       },
       async steerTurn(session, request) {
         await session.session.steer(request.content);

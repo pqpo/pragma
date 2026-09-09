@@ -125,7 +125,6 @@ export interface IExpertAgent {
   /** Definition-level routing default. The resolved execution Runtime remains owned by RuntimeContextRecord. */
   readonly defaultRuntimeId?: string | undefined;
   readonly workspace: string;
-  readonly pragmaHome: string;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
@@ -139,10 +138,7 @@ export interface IExpertAgent {
   readonly logger: PragmaLogger;
 }
 
-export type ExpertOptions = Omit<
-  IExpertAgent,
-  "contextSystem" | "pluginLoadIssues" | "logger" | "pragmaHome"
-> & {
+export type ExpertOptions = Omit<IExpertAgent, "contextSystem" | "pluginLoadIssues" | "logger"> & {
   readonly contextSystem?: ContextSystem | undefined;
   readonly pragmaHome?: string | undefined;
 };
@@ -156,7 +152,6 @@ export interface DefineExpertOptions extends ExpertOptions {
 const defineExpertSymbol = Symbol("pragma.define-expert");
 
 interface ExpertRuntimeOptions extends Omit<ExpertOptions, "pragmaHome"> {
-  readonly pragmaHome: string;
   readonly pluginEntries?:
     readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[] | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
@@ -177,7 +172,6 @@ export class Expert implements IExpertAgent {
   readonly models: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
   readonly workspace: string;
-  readonly pragmaHome: string;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly toolPolicy: ToolPolicy | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
@@ -221,9 +215,10 @@ export class Expert implements IExpertAgent {
       pluginFailurePolicy: options.pluginFailurePolicy,
     });
 
+    const { pragmaHome: _pragmaHome, ...expertOptions } = options;
+    void _pragmaHome;
     const agent = new Expert({
-      ...options,
-      pragmaHome,
+      ...expertOptions,
       pluginEntries: [
         ...loaded.pluginEntries,
         ...pluginEntryUses.map((plugin) => ({
@@ -286,7 +281,6 @@ export class Expert implements IExpertAgent {
     this.models = resolved.models;
     this.contextSystem = contextSystem;
     this.workspace = options.workspace;
-    this.pragmaHome = options.pragmaHome;
     this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
     this.toolPolicy = options.toolPolicy;
     this.hooks = resolved.hooks;

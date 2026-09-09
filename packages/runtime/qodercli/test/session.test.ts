@@ -3,6 +3,7 @@ import type { RuntimeTurnContext } from "@pragma/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  cancelQoderTurn,
   consumeQoderStartupMessages,
   startQoderTurn,
   steerQoderTurn,
@@ -103,6 +104,54 @@ describe("Qoder startup messages", () => {
         uuid: "request-1",
       },
     ]);
+  });
+
+  it("settles an aborted turn and shares one native interrupt", async () => {
+    const controller = new AbortController();
+    const interrupt = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    const sdkQuery = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise<IteratorResult<never>>(() => undefined),
+        };
+      },
+      interrupt,
+      close,
+    };
+    queryMock.mockReturnValue(sdkQuery);
+    const session = createSession();
+    const turn = { ...createTurn([]), signal: controller.signal };
+
+    const result = startQoderTurn(session, turn);
+    await vi.waitFor(() => expect(session.activeQuery).toBe(sdkQuery));
+    controller.abort(new Error("stop"));
+
+    await expect(result).rejects.toThrow("stop");
+    await cancelQoderTurn(session);
+    expect(interrupt).toHaveBeenCalledOnce();
+  });
+
+  it("does not wait forever when Qoder ignores interrupt and close", async () => {
+    vi.useFakeTimers();
+    try {
+      const session = createSession();
+      const activeQuery = {
+        interrupt: vi.fn(() => new Promise<void>(() => undefined)),
+        close: vi.fn(() => new Promise<void>(() => undefined)),
+      } as unknown as NonNullable<QoderNativeSession["activeQuery"]>;
+      session.activeQuery = activeQuery;
+
+      const cancellation = cancelQoderTurn(session);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(cancellation).resolves.toBeUndefined();
+
+      expect(activeQuery.interrupt).toHaveBeenCalledOnce();
+      expect(activeQuery.close).toHaveBeenCalledOnce();
+      expect(session.activeQuery).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

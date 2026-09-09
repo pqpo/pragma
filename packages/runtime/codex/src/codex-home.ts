@@ -29,6 +29,22 @@ export interface ManagedCodexHome {
   readonly sqliteHome: string;
 }
 
+const CODEX_TRANSIENT_SQLITE_FILES = [
+  "logs_2.sqlite",
+  "logs_2.sqlite-wal",
+  "logs_2.sqlite-shm",
+] as const;
+
+/** Remove Codex-owned diagnostics and generic caches only after app-server has exited. */
+export async function cleanupManagedCodexTransientData(input: ManagedCodexHome): Promise<void> {
+  await Promise.all([
+    rm(join(input.home, "cache"), { recursive: true, force: true }),
+    ...CODEX_TRANSIENT_SQLITE_FILES.map(
+      async (file) => await rm(join(input.sqliteHome, file), { force: true }),
+    ),
+  ]);
+}
+
 const CODEX_PRIVATE_CONFIG_FILES = [
   ".env",
   "config.json",

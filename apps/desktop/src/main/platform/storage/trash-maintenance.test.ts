@@ -1,4 +1,4 @@
-import { PragmaPaths, type TrashMaintenanceResult } from "@pragma/core";
+import { PragmaPaths, type TransientStorageMaintenanceResult } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { createDesktopTrashMaintenance } from "./trash-maintenance.ts";
@@ -10,7 +10,7 @@ describe("createDesktopTrashMaintenance", () => {
       release = resolve;
     });
     const maintain = vi
-      .fn<() => Promise<TrashMaintenanceResult>>()
+      .fn<() => Promise<TransientStorageMaintenanceResult>>()
       .mockImplementationOnce(async () => {
         await blocked;
         return result(1);
@@ -35,7 +35,7 @@ describe("createDesktopTrashMaintenance", () => {
 
   it("logs a failure without preventing a later retry", async () => {
     const maintain = vi
-      .fn<() => Promise<TrashMaintenanceResult>>()
+      .fn<() => Promise<TransientStorageMaintenanceResult>>()
       .mockRejectedValueOnce(new Error("busy"))
       .mockResolvedValueOnce(result(1));
     const logger = { info: vi.fn(), warn: vi.fn() };
@@ -54,11 +54,14 @@ describe("createDesktopTrashMaintenance", () => {
   });
 });
 
-function result(deletedEntries: number): TrashMaintenanceResult {
+function result(deletedEntries: number): TransientStorageMaintenanceResult {
   return {
     beforeBytes: deletedEntries,
     afterBytes: 0,
     deletedEntries,
     reclaimedBytes: deletedEntries,
+    deletedCacheEntries: 0,
+    deletedTemporaryEntries: 0,
+    deletedMigrationBackups: 0,
   };
 }

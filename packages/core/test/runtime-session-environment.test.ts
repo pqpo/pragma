@@ -297,7 +297,7 @@ async function open(
   return await openRuntimeSession(runtime, {
     agent,
     owner: { type: "expert-session", ownerId: id, contextId: `${id}-context` },
-    pragmaHome: agent.pragmaHome,
+    pragmaHome: agent.workspace,
     systemSessionId: id,
   });
 }

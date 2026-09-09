@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  cancelPiTurn,
   collectPiUsage,
   consumePiStartupMessages,
   createPiNativeSession,
@@ -237,6 +238,25 @@ describe("PI startup messages", () => {
     } finally {
       await rm(path, { force: true });
     }
+  });
+
+  it("settles an aborted turn without waiting for the native prompt", async () => {
+    const native = createNativeSession();
+    const controller = new AbortController();
+    const abort = vi.fn(async () => undefined);
+    Object.assign(native.session, {
+      prompt: vi.fn(() => new Promise<void>(() => undefined)),
+      abort,
+      dispose: vi.fn(),
+    });
+    const turn = { ...createTurn([]), signal: controller.signal };
+
+    const result = startPiTurn(native, turn);
+    controller.abort(new Error("stop"));
+
+    await expect(result).rejects.toThrow("stop");
+    await cancelPiTurn(native);
+    expect(abort).toHaveBeenCalledOnce();
   });
 });
 

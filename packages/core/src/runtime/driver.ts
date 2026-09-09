@@ -102,6 +102,48 @@ import type {
   ExpertToolExecutionContext,
 } from "../tools/managed-tool.ts";
 
+const RUNTIME_CANCEL_TURN_TIMEOUT_MS = 2_000;
+const RUNTIME_CLOSE_SESSION_TIMEOUT_MS = 3_000;
+const RUNTIME_STEER_TIMEOUT_MS = 2_000;
+
+async function cancelRuntimeTurnWithinDeadline(operation: Promise<void>): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const outcome = await Promise.race([
+    operation.then(
+      () => ({ status: "settled" as const }),
+      (error: unknown) => ({ status: "failed" as const, error }),
+    ),
+    new Promise<{ readonly status: "timed_out" }>((resolve) => {
+      timer = setTimeout(() => resolve({ status: "timed_out" }), RUNTIME_CANCEL_TURN_TIMEOUT_MS);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+  if (outcome.status === "settled") return;
+  if (outcome.status === "failed") {
+    throw new Error("Runtime cancellation failed.", { cause: outcome.error });
+  }
+  throw new Error("Runtime cancellation timed out.");
+}
+
+async function runtimeOperationWithinDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return await Promise.race([
+    operation,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
 export interface DefineRuntimeDriverOptions {
   readonly outputRetryLimit?: number | undefined;
   readonly persistenceProvider?: RuntimeSessionPersistenceProvider | undefined;
@@ -468,7 +510,7 @@ async function createManagedRuntimeSession<
   if (request.runtimeSession !== undefined && request.systemSessionId === undefined) {
     throw new Error("Restoring a runtime session requires its original systemSessionId.");
   }
-  const pragmaPaths = new PragmaPaths({ pragmaHome: request.pragmaHome ?? agent.pragmaHome });
+  const pragmaPaths = new PragmaPaths({ pragmaHome: request.pragmaHome });
   const paths = createRuntimePaths(pragmaPaths, request.owner.ownerId, systemSessionId, descriptor);
   const resources = new RuntimeResourceScope(`runtime-session:${systemSessionId}`);
   const baseProcessEnvironment = freezeProcessEnvironment(
@@ -600,8 +642,11 @@ async function createManagedRuntimeSession<
 
     lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(runContext, {
       abort: async (signal) => {
-        if (nativeSession !== undefined) {
-          await driver.cancelTurn?.(nativeSession, { signal });
+        if (nativeSession !== undefined && lifecycle?.currentSignal !== undefined) {
+          const operation = driver.cancelTurn?.(nativeSession, { signal });
+          if (operation !== undefined) {
+            await cancelRuntimeTurnWithinDeadline(Promise.resolve(operation));
+          }
         }
       },
       cleanup: async () => {
@@ -615,12 +660,18 @@ async function createManagedRuntimeSession<
         }).catch((error: unknown) => {
           cleanupErrors.push(error);
         });
-        if (nativeSession !== undefined) {
-          await Promise.resolve(
-            driver.closeSession?.(nativeSession, {
-              sessionInfo,
-              logger,
+        const sessionToClose = nativeSession;
+        const closeSession = driver.closeSession;
+        if (sessionToClose !== undefined && closeSession !== undefined) {
+          await runtimeOperationWithinDeadline(
+            Promise.resolve().then(async () => {
+              await closeSession(sessionToClose, {
+                sessionInfo,
+                logger,
+              });
             }),
+            RUNTIME_CLOSE_SESSION_TIMEOUT_MS,
+            `Runtime session close timed out: ${systemSessionId}`,
           ).catch((error: unknown) => {
             cleanupErrors.push(error);
           });
@@ -1398,13 +1449,22 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         const active = this.activeRunId === runId;
         const signal = this.options.lifecycle.currentSignal;
         const cancellation = task.cancel();
-        if (active) {
-          await this.options.driver.cancelTurn?.(this.options.nativeSession, {
-            runId,
-            signal,
-          });
+        let cancellationFailure: unknown;
+        try {
+          if (active) {
+            const operation = this.options.driver.cancelTurn?.(this.options.nativeSession, {
+              runId,
+              signal,
+            });
+            if (operation !== undefined) {
+              await cancelRuntimeTurnWithinDeadline(Promise.resolve(operation));
+            }
+          }
+        } catch (error) {
+          cancellationFailure = error;
         }
         await cancellation;
+        if (cancellationFailure !== undefined) throw cancellationFailure;
       },
     };
   }
@@ -1426,7 +1486,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
         `Cannot steer inactive Runtime submission: ${request.targetRunId}`,
       );
     }
-    await this.options.driver.steerTurn(this.options.nativeSession, request);
+    await runtimeOperationWithinDeadline(
+      Promise.resolve(this.options.driver.steerTurn(this.options.nativeSession, request)),
+      RUNTIME_STEER_TIMEOUT_MS,
+      `Runtime steer timed out: ${request.targetRunId}`,
+    );
   }
 
   async close(): Promise<void> {

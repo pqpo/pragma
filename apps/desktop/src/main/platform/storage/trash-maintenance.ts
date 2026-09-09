@@ -1,8 +1,8 @@
 import {
-  runTrashMaintenance,
+  runTransientStorageMaintenance,
   type PragmaLogger,
   type PragmaPaths,
-  type TrashMaintenanceResult,
+  type TransientStorageMaintenanceResult,
 } from "@pragma/core";
 
 export interface DesktopTrashMaintenance {
@@ -12,10 +12,12 @@ export interface DesktopTrashMaintenance {
 export function createDesktopTrashMaintenance(options: {
   readonly paths: PragmaPaths;
   readonly logger: Pick<PragmaLogger, "info" | "warn">;
-  readonly maintain?: (() => Promise<TrashMaintenanceResult>) | undefined;
+  readonly maintain?: (() => Promise<TransientStorageMaintenanceResult>) | undefined;
 }): DesktopTrashMaintenance {
+  const DAILY_MAINTENANCE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
   const maintain =
-    options.maintain ?? (async () => await runTrashMaintenance({ paths: options.paths }));
+    options.maintain ??
+    (async () => await runTransientStorageMaintenance({ paths: options.paths }));
   let pendingReason: string | undefined;
   let running = false;
 
@@ -36,6 +38,9 @@ export function createDesktopTrashMaintenance(options: {
               deletedEntries: result.deletedEntries,
               reclaimedBytes: result.reclaimedBytes,
               trashBytes: result.afterBytes,
+              deletedCacheEntries: result.deletedCacheEntries,
+              deletedTemporaryEntries: result.deletedTemporaryEntries,
+              deletedMigrationBackups: result.deletedMigrationBackups,
             },
           );
         } catch (error) {
@@ -52,10 +57,13 @@ export function createDesktopTrashMaintenance(options: {
     }
   };
 
-  return {
+  const maintenance: DesktopTrashMaintenance = {
     schedule(reason) {
       pendingReason = reason;
       void drain();
     },
   };
+  const interval = setInterval(() => maintenance.schedule("daily"), DAILY_MAINTENANCE_INTERVAL_MS);
+  interval.unref();
+  return maintenance;
 }

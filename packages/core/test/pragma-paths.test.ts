@@ -2,9 +2,19 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { PragmaPaths } from "../src/storage/pragma-paths.ts";
+import {
+  decodePragmaPathSegment,
+  encodePragmaPathSegment,
+  PragmaPaths,
+} from "../src/storage/pragma-paths.ts";
 
 describe("PragmaPaths", () => {
+  it("round-trips canonical external identifier segments", () => {
+    const id = "mission/with spaces";
+    expect(decodePragmaPathSegment(encodePragmaPathSegment(id))).toBe(id);
+    expect(() => decodePragmaPathSegment("not canonical!")).toThrow("Invalid Pragma path segment");
+  });
+
   it("keeps the default workspace directly below the Pragma root", () => {
     const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
 
@@ -33,9 +43,7 @@ describe("PragmaPaths", () => {
     expect(paths.diagnosticFailureLog("desktop", "2026-07-26", bootId, 12)).toBe(
       join(bootRoot, "errors-0012.jsonl"),
     );
-    expect(paths.runtimeProbeArchivesRoot()).toBe(
-      join(paths.archivesRoot(), "runtime-probes"),
-    );
+    expect(paths.runtimeProbeArchivesRoot()).toBe(join(paths.archivesRoot(), "runtime-probes"));
     expect(() => paths.diagnosticBootRoot("desktop", "../escape", bootId)).toThrow(
       "Invalid diagnostic archive date",
     );
