@@ -62,6 +62,7 @@ describe("built-in capabilities", () => {
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
+        expectedRevision: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.latestRevision,
         toolName: "knowledge_revision_list_targets",
         input: {},
       },
@@ -78,6 +79,7 @@ describe("built-in capabilities", () => {
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
+        expectedRevision: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.latestRevision,
         toolName: "list_dsl_resources",
         input: {},
       },
@@ -101,6 +103,7 @@ describe("built-in capabilities", () => {
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
+        expectedRevision: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.latestRevision,
         toolName: "knowledge_revision_start",
         input: { targetRef: "context:test", prompt: "Revise this knowledge." },
       },

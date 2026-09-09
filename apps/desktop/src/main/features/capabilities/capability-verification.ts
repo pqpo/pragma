@@ -1,4 +1,5 @@
 import type { CapabilityDefinition, CapabilityHealth } from "../../../shared/contracts/index.ts";
+import type { CapabilityCredentialReader } from "./capability-credential-store.ts";
 
 export interface CapabilityVerifierResult {
   readonly definition: CapabilityDefinition;
@@ -8,4 +9,5 @@ export interface CapabilityVerifierResult {
 export type CapabilityVerifier = (
   definition: CapabilityDefinition,
   capabilityId: string,
+  credentials?: CapabilityCredentialReader,
 ) => Promise<CapabilityVerifierResult>;

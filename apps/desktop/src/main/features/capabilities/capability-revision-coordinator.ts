@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -7,9 +7,8 @@ import {
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
   type PragmaExpertResource,
+  type PragmaResource,
 } from "@pragma/interpreter/ast";
-import { z } from "zod";
-
 import {
   bindExistingDesktopCapabilityResource,
   classifyDesktopCapabilityResource,
@@ -21,48 +20,37 @@ import {
 } from "../projects/pragma-project-store.ts";
 import {
   CapabilityStoreError,
-  type CapabilityRevisionPublisher,
-  type CapabilityStore,
+  type CapabilityMutationService,
+  type CapabilityRepository,
 } from "./capability-store.ts";
 import type { Capability } from "../../../shared/contracts/index.ts";
-import { CapabilityHealthSchema } from "../../../shared/contracts/index.ts";
+import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
+import {
+  CapabilityMutationJournalSchema as JournalSchema,
+  migrateCapabilityMutationJournal,
+  type CapabilityMutationJournal as Journal,
+} from "./capability-mutation-journal.ts";
 
-const JournalSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.capability-revision-propagation/v1"),
-    capabilityId: z.string().uuid(),
-    targetRevision: z.number().int().positive(),
-    stage: z.enum([
-      "revision-pending",
-      "revision-written",
-      "project-propagated",
-      "system-experts-propagated",
-    ]),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
-    projectRevision: z.number().int().positive().optional(),
-    previousHealth: CapabilityHealthSchema,
-  })
-  .strict();
-
-type Journal = z.infer<typeof JournalSchema>;
-
-export interface CapabilityRevisionCoordinator extends CapabilityRevisionPublisher {
+export interface CapabilityRevisionCoordinator extends CapabilityMutationService {
   recover(): Promise<void>;
 }
 
 export function createCapabilityRevisionCoordinator(options: {
   readonly journalRoot: string;
-  readonly capabilities: CapabilityStore;
+  readonly capabilities: CapabilityRepository;
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
+  readonly credentials: CapabilityCredentialStore;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): CapabilityRevisionCoordinator {
   const capabilityDirectory = (id: string) =>
     join(options.journalRoot, encodePragmaPathSegment(id));
   const journalPath = (id: string, revision: number) =>
     join(capabilityDirectory(id), `${revision}.json`);
-  const lockPath = (id: string) => join(capabilityDirectory(id), ".lock");
+  const lockPath = (id: string) => join(options.journalRoot, `${encodePragmaPathSegment(id)}.lock`);
+  const prepareLockRoot = async (): Promise<void> => {
+    await mkdir(options.journalRoot, { recursive: true, mode: 0o700 });
+  };
 
   const writeJournal = async (journal: Journal): Promise<void> => {
     const path = journalPath(journal.capabilityId, journal.targetRevision);
@@ -72,6 +60,15 @@ export function createCapabilityRevisionCoordinator(options: {
       mode: 0o600,
     });
     await rename(temporaryPath, path);
+  };
+
+  const readJournal = async (path: string): Promise<Journal> => {
+    const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const current = JournalSchema.safeParse(raw);
+    if (current.success) return current.data;
+    const migrated = migrateCapabilityMutationJournal(raw);
+    await writeJournal(migrated);
+    return migrated;
   };
 
   const advance = async (
@@ -92,6 +89,7 @@ export function createCapabilityRevisionCoordinator(options: {
   const propagateProject = async (candidate: Capability): Promise<number | undefined> => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const snapshot = await options.project.get();
+      assertProjectCompatible(candidate, snapshot.resources);
       const upserts = snapshot.resources.flatMap((resource): PragmaCapabilityResource[] => {
         const binding = classifyDesktopCapabilityResource(resource);
         if (
@@ -118,11 +116,17 @@ export function createCapabilityRevisionCoordinator(options: {
         ];
       });
       if (upserts.length === 0) return undefined;
+      const byRef = new Map(
+        snapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+      );
+      for (const resource of upserts) {
+        byRef.set(canonicalPragmaResourceRef(resource), resource);
+      }
       try {
         return (
-          await options.project.apply({
-            baseRevision: snapshot.revision,
-            upserts,
+          await options.project.publish({
+            expectedRevision: snapshot.revision,
+            resources: [...byRef.values()],
           })
         ).revision;
       } catch (error) {
@@ -142,22 +146,52 @@ export function createCapabilityRevisionCoordinator(options: {
   const finishJournal = async (journal: Journal, candidate: Capability): Promise<void> => {
     let current = journal;
     if (current.stage === "revision-pending") {
+      const prepared =
+        current.credentialMutation ?? (await options.credentials.pending(current.capabilityId));
+      if (prepared !== undefined) {
+        if (current.credentialMutation === undefined) {
+          current = JournalSchema.parse({ ...current, credentialMutation: prepared });
+          await writeJournal(current);
+        }
+        await options.credentials.activate(prepared);
+      }
       current = await advance(current, "revision-written");
     }
-    if (current.stage === "revision-written") {
+    if (current.stage === "revision-written" && current.propagate) {
       const projectRevision = await propagateProject(candidate);
       current = await advance(current, "project-propagated", {
         ...(projectRevision === undefined ? {} : { projectRevision }),
       });
     }
+    if (current.stage === "revision-written" && !current.propagate) {
+      current = await advance(current, "system-experts-propagated");
+    }
     if (current.stage === "project-propagated") {
-      await options.systemExperts.upgradeCapabilityRevision(
-        candidate.manifest.id,
-        candidate.manifest.latestRevision,
-      );
+      try {
+        await options.systemExperts.validateAndUpgradeCapabilityRevision(
+          candidate.manifest.id,
+          candidate.manifest.latestRevision,
+          capabilityToolNames(candidate),
+        );
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "capability_incompatible") {
+          current = JournalSchema.parse({
+            ...current,
+            errorCode: "capability_incompatible",
+            retryable: false,
+            updatedAt: new Date().toISOString(),
+          });
+          await writeJournal(current);
+          throw new CapabilityStoreError("capability_incompatible", error.message);
+        }
+        throw error;
+      }
       current = await advance(current, "system-experts-propagated");
     }
     if (current.stage === "system-experts-propagated") {
+      if (current.credentialMutation !== undefined) {
+        await options.credentials.finalize(current.credentialMutation);
+      }
       await rm(journalPath(current.capabilityId, current.targetRevision), { force: true });
     }
   };
@@ -174,7 +208,12 @@ export function createCapabilityRevisionCoordinator(options: {
     }
     for (const entry of entries) {
       const path = join(capabilityDirectory(id), entry);
-      const journal = JournalSchema.parse(JSON.parse(await readFile(path, "utf8")) as unknown);
+      const journal = await readJournal(path);
+      if (journal.mutationType === "delete") {
+        await options.capabilities.completeRemoval(id, journal.targetRevision);
+        await rm(path, { force: true });
+        continue;
+      }
       const latest = await options.capabilities.get(id);
       if (
         journal.stage === "revision-pending" &&
@@ -185,6 +224,20 @@ export function createCapabilityRevisionCoordinator(options: {
           journal.targetRevision,
           journal.previousHealth,
         );
+        const prepared =
+          journal.credentialMutation ?? (await options.credentials.pending(journal.capabilityId));
+        if (prepared !== undefined) await options.credentials.rollback(prepared);
+        await rm(path, { force: true });
+        continue;
+      }
+      if (
+        journal.stage === "revision-pending" &&
+        journal.targetHealth !== undefined &&
+        JSON.stringify(latest.health) !== JSON.stringify(journal.targetHealth)
+      ) {
+        const prepared =
+          journal.credentialMutation ?? (await options.credentials.pending(journal.capabilityId));
+        if (prepared !== undefined) await options.credentials.rollback(prepared);
         await rm(path, { force: true });
         continue;
       }
@@ -202,7 +255,7 @@ export function createCapabilityRevisionCoordinator(options: {
         }
         throw error;
       }
-      if (candidate.health.status !== "ready") continue;
+      if (candidate.health.status !== "ready" && journal.propagate) continue;
       if (journal.stage === "revision-pending" || journal.stage === "revision-written") {
         await assertCompatible(candidate);
       }
@@ -211,27 +264,44 @@ export function createCapabilityRevisionCoordinator(options: {
   };
 
   const assertCompatible = async (candidate: Capability): Promise<void> => {
+    const snapshot = await options.project.get();
+    assertProjectCompatible(candidate, snapshot.resources);
+    assertSystemCompatible(candidate);
+  };
+
+  const assertProjectCompatible = (
+    candidate: Capability,
+    resources: readonly PragmaResource[],
+  ): void => {
     const availableTools = new Set(capabilityToolNames(candidate));
     if (candidate.definition.kind === "skill") return;
     const incompatible: string[] = [];
-    const snapshot = await options.project.get();
     const boundRefs = new Set(
-      snapshot.resources.flatMap((resource) => {
+      resources.flatMap((resource) => {
         const binding = classifyDesktopCapabilityResource(resource);
         return binding?.id === candidate.manifest.id ? [canonicalPragmaResourceRef(resource)] : [];
       }),
     );
-    for (const expert of snapshot.resources.filter(
+    for (const expert of resources.filter(
       (resource): resource is PragmaExpertResource => resource.kind === "Expert",
     )) {
       for (const reference of expert.spec.capabilities) {
         if (reference.kind !== "tools" || !boundRefs.has(reference.ref)) continue;
         const missing = (reference.tools ?? []).filter((tool) => !availableTools.has(tool));
         if (missing.length > 0) {
-          incompatible.push(`${canonicalPragmaResourceRef(expert)}: ${missing.join(", ")}`);
+          incompatible.push(
+            `${expert.metadata.name} (${canonicalPragmaResourceRef(expert)}): ${missing.join(", ")}`,
+          );
         }
       }
     }
+    if (incompatible.length > 0) throwIncompatible(incompatible);
+  };
+
+  const assertSystemCompatible = (candidate: Capability): void => {
+    if (candidate.definition.kind === "skill") return;
+    const availableTools = new Set(capabilityToolNames(candidate));
+    const incompatible: string[] = [];
     for (const summary of options.systemExperts.list()) {
       const expert = options.systemExperts.get(summary.ref);
       for (const reference of expert?.capabilities ?? []) {
@@ -239,15 +309,11 @@ export function createCapabilityRevisionCoordinator(options: {
           continue;
         }
         const missing = reference.toolNames.filter((tool) => !availableTools.has(tool));
-        if (missing.length > 0) incompatible.push(`${summary.ref}: ${missing.join(", ")}`);
+        if (missing.length > 0)
+          incompatible.push(`${summary.name} (${summary.ref}): ${missing.join(", ")}`);
       }
     }
-    if (incompatible.length > 0) {
-      throw new CapabilityStoreError(
-        "capability_incompatible",
-        `Capability update removes tools selected by current Experts: ${incompatible.join("; ")}. Update those Experts first.`,
-      );
-    }
+    if (incompatible.length > 0) throwIncompatible(incompatible);
   };
 
   const cleanupCapabilityDirectory = async (id: string): Promise<void> => {
@@ -260,26 +326,140 @@ export function createCapabilityRevisionCoordinator(options: {
   };
 
   return {
+    async mutate(input) {
+      await prepareLockRoot();
+      await withFileLock(lockPath(input.id), async () => {
+        await recoverCapabilityLocked(input.id);
+        const latest = await options.capabilities.get(input.id);
+        if (latest.manifest.latestRevision !== input.expectedRevision) {
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            `Capability revision changed from ${input.expectedRevision} to ${latest.manifest.latestRevision}.`,
+          );
+        }
+        await input.validateCurrent?.();
+        if (input.mutationType === "delete") {
+          const timestamp = new Date().toISOString();
+          const journal = JournalSchema.parse({
+            schemaVersion: "pragma.capability-mutation/v2",
+            mutationId: randomUUID(),
+            mutationType: "delete",
+            capabilityId: input.id,
+            baseRevision: input.expectedRevision,
+            targetRevision: input.expectedRevision,
+            targetRevisionRange: { from: input.expectedRevision, to: input.expectedRevision },
+            candidateContentHash: hashContent(`delete:${input.id}:${input.expectedRevision}`),
+            stage: "revision-pending",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            previousHealth: latest.health,
+            propagate: false,
+          });
+          await writeJournal(journal);
+          await input.commit();
+          await rm(journalPath(input.id, input.expectedRevision), { force: true });
+          return;
+        }
+        await input.commit();
+      });
+      await cleanupCapabilityDirectory(input.id);
+    },
+    async publishHealth(input) {
+      await prepareLockRoot();
+      return await withFileLock(lockPath(input.id), async () => {
+        await recoverCapabilityLocked(input.id);
+        const latest = await options.capabilities.get(input.id);
+        if (latest.manifest.latestRevision !== input.expectedRevision) {
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            `Capability revision changed from ${input.expectedRevision} to ${latest.manifest.latestRevision}.`,
+          );
+        }
+        await input.validateCurrent?.();
+        if (input.prepareCredentials === undefined) return await input.commit();
+        if (input.targetHealth === undefined) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            "A credential mutation requires its exact target health snapshot.",
+          );
+        }
+        const timestamp = new Date().toISOString();
+        let journal = JournalSchema.parse({
+          schemaVersion: "pragma.capability-mutation/v2",
+          mutationId: randomUUID(),
+          mutationType: "update",
+          capabilityId: input.id,
+          baseRevision: input.expectedRevision,
+          targetRevision: input.expectedRevision,
+          targetRevisionRange: { from: input.expectedRevision, to: input.expectedRevision },
+          candidateContentHash: hashContent(JSON.stringify(input.targetHealth)),
+          stage: "revision-pending",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          previousHealth: latest.health,
+          targetHealth: input.targetHealth,
+          propagate: false,
+        });
+        await writeJournal(journal);
+        const prepared = await input.prepareCredentials();
+        if (prepared !== undefined) {
+          journal = JournalSchema.parse({ ...journal, credentialMutation: prepared });
+          await writeJournal(journal);
+        }
+        const committed = await input.commit();
+        await finishJournal(journal, committed);
+        return committed;
+      });
+    },
     async publish(input) {
       const id = input.candidate.manifest.id;
+      await prepareLockRoot();
       try {
         return await withFileLock(lockPath(id), async () => {
           await recoverCapabilityLocked(id);
-          if (input.candidate.health.status !== "ready") return await input.commit();
-          await assertCompatible(input.candidate);
+          const latest = await options.capabilities.get(id);
+          if (
+            latest.manifest.latestRevision !== input.current.manifest.latestRevision ||
+            latest.health.revision !== input.current.health.revision
+          ) {
+            throw new CapabilityStoreError(
+              "revision_conflict",
+              `Capability revision changed from ${input.current.manifest.latestRevision} to ${latest.manifest.latestRevision}.`,
+            );
+          }
+          await input.validateCurrent?.();
+          if (input.candidate.health.status === "ready") await assertCompatible(input.candidate);
           const timestamp = new Date().toISOString();
           let journal = JournalSchema.parse({
-            schemaVersion: "pragma.capability-revision-propagation/v1",
+            schemaVersion: "pragma.capability-mutation/v2",
+            mutationId: randomUUID(),
+            mutationType: input.mutationType ?? "update",
             capabilityId: id,
+            baseRevision: input.current.manifest.latestRevision,
             targetRevision: input.candidate.manifest.latestRevision,
+            targetRevisionRange: {
+              from:
+                input.targetRevisionFrom ??
+                Math.min(
+                  input.current.manifest.latestRevision + 1,
+                  input.candidate.manifest.latestRevision,
+                ),
+              to: input.candidate.manifest.latestRevision,
+            },
+            candidateContentHash: hashContent(JSON.stringify(input.candidate.definition)),
             stage: "revision-pending",
             createdAt: timestamp,
             updatedAt: timestamp,
             previousHealth: input.current.health,
+            propagate: input.candidate.health.status === "ready",
           });
           await writeJournal(journal);
+          const prepared = await input.prepareCredentials?.();
+          if (prepared !== undefined) {
+            journal = JournalSchema.parse({ ...journal, credentialMutation: prepared });
+            await writeJournal(journal);
+          }
           const committed = await input.commit();
-          journal = await advance(journal, "revision-written");
           await finishJournal(journal, committed);
           return committed;
         });
@@ -304,10 +484,8 @@ export function createCapabilityRevisionCoordinator(options: {
             await rmdir(join(options.journalRoot, directory.name)).catch(() => undefined);
             continue;
           }
-          const journal = JournalSchema.parse(
-            JSON.parse(
-              await readFile(join(options.journalRoot, directory.name, firstJournal), "utf8"),
-            ) as unknown,
+          const journal = await readJournal(
+            join(options.journalRoot, directory.name, firstJournal),
           );
           await withFileLock(lockPath(journal.capabilityId), async () => {
             await recoverCapabilityLocked(journal.capabilityId);
@@ -319,6 +497,10 @@ export function createCapabilityRevisionCoordinator(options: {
       }
     },
   };
+}
+
+function hashContent(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 function capabilityToolNames(capability: Capability): string[] {
@@ -338,6 +520,13 @@ function capabilityDescription(capability: Capability): string {
   return description === ""
     ? `Host-provided Desktop capability ${capability.definition.name}.`
     : description;
+}
+
+function throwIncompatible(incompatible: readonly string[]): never {
+  throw new CapabilityStoreError(
+    "capability_incompatible",
+    `Capability update removes tools selected by current Experts: ${incompatible.join("; ")}. Update those Experts first.`,
+  );
 }
 
 function isNodeError(error: unknown, code: string): boolean {

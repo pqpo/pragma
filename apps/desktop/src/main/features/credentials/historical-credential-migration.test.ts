@@ -104,7 +104,7 @@ describe("historical credential writer migration chain", () => {
       keychain,
     });
     const providerRef = providerRefFrom(await readFile(providerPath, "utf8"));
-    const capabilityRef = credentialRefFrom(
+    const capabilityRef = capabilityCredentialRefFrom(
       await readFile(capabilityPath, "utf8"),
       "capability-a/token",
     );
@@ -233,6 +233,16 @@ function credentialRefFrom(raw: string, key: string) {
       credentials: Readonly<Record<string, import("@pragma/local-host").SecretRef>>;
     }
   ).credentials[key]!;
+}
+
+function capabilityCredentialRefFrom(raw: string, key: string) {
+  return (
+    JSON.parse(raw) as {
+      credentials: Readonly<
+        Record<string, { readonly ref: import("@pragma/local-host").SecretRef }>
+      >;
+    }
+  ).credentials[key]!.ref;
 }
 
 async function readSecret(

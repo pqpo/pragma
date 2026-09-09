@@ -46,7 +46,11 @@ import {
   type UpdateCapability,
   type UpdateSkillCapability,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
+import type {
+  CapabilityCredentialReader,
+  CapabilityCredentialStore,
+  PreparedCapabilityCredentials,
+} from "./capability-credential-store.ts";
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
 
@@ -71,9 +75,33 @@ const CapabilityManifestMigrationJournalSchema = z.object({
   targetManifest: CapabilityManifestSchema,
 });
 
-export interface CapabilityStore {
-  list(): Promise<Capability[]>;
+const CapabilityDeletionJournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.capability-deletion/v1"),
+    capabilityId: z.string().uuid(),
+    expectedRevision: z.number().int().positive(),
+  })
+  .strict();
+
+const CapabilityCreationJournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.capability-creation/v1"),
+    capabilityId: z.string().uuid(),
+  })
+  .strict();
+
+export interface CapabilityRepository {
   get(id: string, revision?: number): Promise<Capability>;
+  discardUnpublishedRevision(
+    id: string,
+    revision: number,
+    previousHealth: CapabilityHealth,
+  ): Promise<boolean>;
+  completeRemoval(id: string, expectedRevision: number): Promise<void>;
+}
+
+export interface CapabilityStore extends CapabilityRepository {
+  list(): Promise<Capability[]>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
   listSkillFiles(input: ListSkillFiles): Promise<SkillFileEntry[]>;
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
@@ -87,25 +115,25 @@ export interface CapabilityStore {
   }): Promise<Capability>;
   updateGeneratedSkill(input: {
     readonly id: string;
+    readonly baseRevision: number;
     readonly package: SkillPackage;
   }): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
-  retry(id: string): Promise<Capability>;
+  retry(id: string, expectedRevision: number): Promise<Capability>;
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
   previewCode(input: PreviewCodeServiceRequest): Promise<PreviewCodeServiceResult>;
   remove(id: string): Promise<void>;
-  setRevisionPublisher(publisher: CapabilityRevisionPublisher): void;
-  discardUnpublishedRevision(
-    id: string,
-    revision: number,
-    previousHealth: CapabilityHealth,
-  ): Promise<boolean>;
 }
 
 export interface CapabilityRevisionPublishInput {
   readonly current: Capability;
   readonly candidate: Capability;
+  readonly mutationType?: "update" | "skill-update" | "retry" | "bundle-append" | undefined;
+  readonly targetRevisionFrom?: number | undefined;
+  readonly validateCurrent?: (() => Promise<void>) | undefined;
+  readonly prepareCredentials?:
+    (() => Promise<PreparedCapabilityCredentials | undefined>) | undefined;
   readonly commit: () => Promise<Capability>;
 }
 
@@ -121,8 +149,24 @@ export interface ImportBundleCapabilityRevisions {
   readonly credentials?: Readonly<Record<string, string>> | undefined;
 }
 
-export interface CapabilityRevisionPublisher {
+export interface CapabilityMutationService {
   publish(input: CapabilityRevisionPublishInput): Promise<Capability>;
+  publishHealth(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly commit: () => Promise<Capability>;
+    readonly validateCurrent?: (() => Promise<void>) | undefined;
+    readonly prepareCredentials?:
+      (() => Promise<PreparedCapabilityCredentials | undefined>) | undefined;
+    readonly targetHealth?: CapabilityHealth | undefined;
+  }): Promise<Capability>;
+  mutate(input: {
+    readonly id: string;
+    readonly expectedRevision: number;
+    readonly mutationType?: "delete" | undefined;
+    readonly validateCurrent?: (() => Promise<void>) | undefined;
+    readonly commit: () => Promise<void>;
+  }): Promise<void>;
 }
 
 export class CapabilityStoreError extends Error {
@@ -133,6 +177,7 @@ export class CapabilityStoreError extends Error {
       | "import_invalid"
       | "capability_referenced"
       | "capability_incompatible"
+      | "revision_conflict"
       | "bundle_identity_conflict",
     message: string,
   ) {
@@ -146,16 +191,121 @@ export function createCapabilityStore(options: {
   readonly credentials: CapabilityCredentialStore;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly verify: CapabilityVerifier;
+  readonly mutations: CapabilityMutationService;
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
   readonly onRemoved?: ((capabilityId: string) => Promise<void>) | undefined;
 }): CapabilityStore {
-  let revisionPublisher: CapabilityRevisionPublisher | undefined;
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
   const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
   const healthPath = (id: string) => join(capabilityPath(id), "health.json");
   const migrationJournalPath = (id: string) => join(capabilityPath(id), "v1-to-v2.json");
+  const deletionJournalPath = (id: string) => join(capabilityPath(id), "deletion.json");
+  const creationJournalPath = (id: string) => join(capabilityPath(id), "creation.json");
   const revisionPath = (id: string, revision: number) =>
     join(capabilityPath(id), "revisions", revisionDirectory(revision));
+  const credentialsDiffer = async (
+    id: string,
+    credentials: Readonly<Record<string, string>>,
+  ): Promise<boolean> => {
+    for (const [name, value] of Object.entries(credentials)) {
+      if ((await options.credentials.get(id, name)) !== value) return true;
+    }
+    return false;
+  };
+  const credentialSnapshot = async (id: string): Promise<() => Promise<void>> => {
+    const expected = await options.credentials.fingerprint(id);
+    return async () => {
+      if ((await options.credentials.fingerprint(id)) !== expected) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          "Capability credentials changed while the mutation was being prepared.",
+        );
+      }
+    };
+  };
+  const recoverRemoval = async (id: string): Promise<void> => {
+    let journal;
+    try {
+      journal = CapabilityDeletionJournalSchema.parse(
+        JSON.parse(await readFile(deletionJournalPath(id), "utf8")) as unknown,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new CapabilityStoreError(
+        "config_invalid",
+        `Capability ${id} has an invalid deletion journal.`,
+      );
+    }
+    if (journal.capabilityId !== id) {
+      throw new CapabilityStoreError(
+        "config_invalid",
+        `Capability ${id} has a deletion journal for another capability.`,
+      );
+    }
+    await options.credentials.removeCapability(id);
+    await options.onRemoved?.(id);
+    await rm(capabilityPath(id), { recursive: true, force: true });
+  };
+  const completeRemoval = async (id: string, expectedRevision: number): Promise<void> => {
+    let manifest: CapabilityManifest;
+    try {
+      manifest = CapabilityManifestSchema.parse(
+        JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (manifest.latestRevision !== expectedRevision) {
+      throw new CapabilityStoreError(
+        "revision_conflict",
+        `Capability revision changed from ${expectedRevision} to ${manifest.latestRevision}.`,
+      );
+    }
+    await writeJson(
+      deletionJournalPath(id),
+      CapabilityDeletionJournalSchema.parse({
+        schemaVersion: "pragma.capability-deletion/v1",
+        capabilityId: id,
+        expectedRevision,
+      }),
+    );
+    await recoverRemoval(id);
+  };
+  const recoverCreation = async (id: string): Promise<void> => {
+    let journal;
+    try {
+      journal = CapabilityCreationJournalSchema.parse(
+        JSON.parse(await readFile(creationJournalPath(id), "utf8")) as unknown,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new CapabilityStoreError(
+        "config_invalid",
+        `Capability ${id} has an invalid creation journal.`,
+      );
+    }
+    if (journal.capabilityId !== id) {
+      throw new CapabilityStoreError(
+        "config_invalid",
+        `Capability ${id} has a creation journal for another capability.`,
+      );
+    }
+    const manifest = await readFile(manifestPath(id), "utf8")
+      .then((content) => CapabilityManifestSchema.safeParse(JSON.parse(content) as unknown))
+      .catch(() => undefined);
+    const prepared = await options.credentials.pending(id);
+    if (manifest?.success === true && manifest.data.id === id) {
+      if (prepared !== undefined) {
+        await options.credentials.activate(prepared);
+        await options.credentials.finalize(prepared);
+      }
+      await rm(creationJournalPath(id), { force: true });
+      return;
+    }
+    if (prepared !== undefined) await options.credentials.rollback(prepared);
+    await rm(capabilityPath(id), { recursive: true, force: true });
+  };
 
   const migrateManifest = async (id: string): Promise<CapabilityManifest> =>
     await withFileLock(join(capabilityPath(id), ".v2-migration.lock"), async () => {
@@ -217,6 +367,8 @@ export function createCapabilityStore(options: {
     });
 
   const readManifest = async (id: string): Promise<CapabilityManifest> => {
+    await recoverCreation(id);
+    await recoverRemoval(id);
     try {
       const raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
       const current = CapabilityManifestSchema.safeParse(raw);
@@ -301,19 +453,50 @@ export function createCapabilityStore(options: {
   };
 
   const publishRevision = async (input: CapabilityRevisionPublishInput): Promise<Capability> =>
-    revisionPublisher === undefined ? await input.commit() : await revisionPublisher.publish(input);
+    await options.mutations.publish(input);
+
+  const publishHealth = async (
+    id: string,
+    expectedRevision: number,
+    health: CapabilityHealth,
+    beforeCommit?: (() => Promise<void>) | undefined,
+    validateCurrent?: (() => Promise<void>) | undefined,
+    prepareCredentials?: (() => Promise<PreparedCapabilityCredentials | undefined>) | undefined,
+  ): Promise<Capability> => {
+    const commit = async (): Promise<Capability> => {
+      const latest = await readManifest(id);
+      if (latest.latestRevision !== expectedRevision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${expectedRevision} to ${latest.latestRevision}.`,
+        );
+      }
+      await beforeCommit?.();
+      await writeJson(healthPath(id), health);
+      return await readCapability(id);
+    };
+    return await options.mutations.publishHealth({
+      id,
+      expectedRevision,
+      commit,
+      ...(validateCurrent === undefined ? {} : { validateCurrent }),
+      ...(prepareCredentials === undefined ? {} : { prepareCredentials }),
+      targetHealth: health,
+    });
+  };
 
   const bundleHealth = async (
     definition: CapabilityDefinition,
     id: string,
     revision: number,
+    credentials: CapabilityCredentialReader = options.credentials,
   ): Promise<CapabilityHealth> => {
     const checkedAt = new Date().toISOString();
     if (definition.kind === "skill") {
       return CapabilityHealthSchema.parse({ revision, status: "ready", checkedAt });
     }
     try {
-      const verified = await options.verify(validateDefinition(definition), id);
+      const verified = await options.verify(validateDefinition(definition), id, credentials);
       return CapabilityHealthSchema.parse({ ...verified.health, revision });
     } catch {
       return CapabilityHealthSchema.parse({
@@ -340,7 +523,10 @@ export function createCapabilityStore(options: {
               try {
                 return await readCapability(entry.name);
               } catch (error) {
-                if (error instanceof CapabilityStoreError && error.code === "config_invalid") {
+                if (
+                  error instanceof CapabilityStoreError &&
+                  (error.code === "config_invalid" || error.code === "capability_not_found")
+                ) {
                   return undefined;
                 }
                 throw error;
@@ -543,153 +729,206 @@ export function createCapabilityStore(options: {
           "One Bundle capability cannot change kind between revisions.",
         );
       }
-      const candidates = (await this.list()).filter(
-        (capability) => capability.manifest.origin?.logicalId === logicalId,
-      );
-      const existing = candidates[0];
-      if (candidates.length > 1) {
-        throw new CapabilityStoreError(
-          "bundle_identity_conflict",
-          "Multiple local capabilities claim the same Bundle identity.",
-        );
-      }
-      const credentials = rawInput.credentials ?? {};
-      if (existing !== undefined) {
-        if (existing.manifest.kind !== revisions[0]!.definition.kind) {
-          throw new CapabilityStoreError(
-            "bundle_identity_conflict",
-            "The imported capability conflicts with the existing Bundle identity.",
+      const identityLocksPath = join(options.capabilitiesPath, ".bundle-identities");
+      await mkdir(identityLocksPath, { recursive: true, mode: 0o700 });
+      return await withFileLock(
+        join(identityLocksPath, `${logicalId}.lock`),
+        async () => {
+          const candidates = (await this.list()).filter(
+            (capability) => capability.manifest.origin?.logicalId === logicalId,
           );
-        }
-        return await withFileLock(
-          join(capabilityPath(existing.manifest.id), ".bundle-import.lock"),
-          async () => {
-            const current = await readCapability(existing.manifest.id);
-            for (const revision of revisions) {
-              if (revision.revision > current.manifest.latestRevision) continue;
-              const local = await readCapability(existing.manifest.id, revision.revision);
-              if (stableStringify(local.definition) !== stableStringify(revision.definition)) {
-                throw new CapabilityStoreError(
-                  "bundle_identity_conflict",
-                  `Capability revision ${revision.revision} conflicts with the existing Bundle identity.`,
-                );
-              }
-            }
-            const additions = revisions.filter(
-              (revision) => revision.revision > current.manifest.latestRevision,
+          const existing = candidates[0];
+          if (candidates.length > 1) {
+            throw new CapabilityStoreError(
+              "bundle_identity_conflict",
+              "Multiple local capabilities claim the same Bundle identity.",
             );
-            if (additions.length === 0) {
-              if (Object.keys(credentials).length > 0) {
-                await options.credentials.setMany(existing.manifest.id, credentials);
-              }
-              return await readCapability(existing.manifest.id);
-            }
-            if (additions[0]!.revision !== current.manifest.latestRevision + 1) {
+          }
+          const credentials = rawInput.credentials ?? {};
+          if (existing !== undefined) {
+            if (existing.manifest.kind !== revisions[0]!.definition.kind) {
               throw new CapabilityStoreError(
                 "bundle_identity_conflict",
-                "The Bundle skipped a capability revision; import the complete revision history.",
+                "The imported capability conflicts with the existing Bundle identity.",
               );
             }
-            for (let index = 1; index < additions.length; index += 1) {
-              if (additions[index]!.revision !== additions[index - 1]!.revision + 1) {
-                throw new CapabilityStoreError(
-                  "bundle_identity_conflict",
-                  "The Bundle contains a non-contiguous capability revision history.",
+            return await withFileLock(
+              join(capabilityPath(existing.manifest.id), ".bundle-import.lock"),
+              async () => {
+                const current = await readCapability(existing.manifest.id);
+                const validateCredentialSnapshot = await credentialSnapshot(existing.manifest.id);
+                for (const revision of revisions) {
+                  if (revision.revision > current.manifest.latestRevision) continue;
+                  const local = await readCapability(existing.manifest.id, revision.revision);
+                  if (stableStringify(local.definition) !== stableStringify(revision.definition)) {
+                    throw new CapabilityStoreError(
+                      "bundle_identity_conflict",
+                      `Capability revision ${revision.revision} conflicts with the existing Bundle identity.`,
+                    );
+                  }
+                }
+                const additions = revisions.filter(
+                  (revision) => revision.revision > current.manifest.latestRevision,
                 );
-              }
-            }
-            if (Object.keys(credentials).length > 0) {
-              await options.credentials.setMany(existing.manifest.id, credentials);
-            }
-            const createdPaths: string[] = [];
-            try {
-              for (const revision of additions) {
-                const path = await stageBundleCapabilityRevision(
-                  revisionPath(existing.manifest.id, revision.revision),
-                  revision,
+                if (additions.length === 0) {
+                  if (!(await credentialsDiffer(existing.manifest.id, credentials))) return current;
+                  const verified = await bundleHealth(
+                    current.definition,
+                    existing.manifest.id,
+                    current.manifest.latestRevision,
+                    options.credentials.overlay(existing.manifest.id, credentials),
+                  );
+                  return await publishHealth(
+                    existing.manifest.id,
+                    current.manifest.latestRevision,
+                    verified,
+                    undefined,
+                    validateCredentialSnapshot,
+                    async () =>
+                      await options.credentials.prepareMany(existing.manifest.id, credentials),
+                  );
+                }
+                if (additions[0]!.revision !== current.manifest.latestRevision + 1) {
+                  throw new CapabilityStoreError(
+                    "bundle_identity_conflict",
+                    "The Bundle skipped a capability revision; import the complete revision history.",
+                  );
+                }
+                for (let index = 1; index < additions.length; index += 1) {
+                  if (additions[index]!.revision !== additions[index - 1]!.revision + 1) {
+                    throw new CapabilityStoreError(
+                      "bundle_identity_conflict",
+                      "The Bundle contains a non-contiguous capability revision history.",
+                    );
+                  }
+                }
+                const latest = additions.at(-1)!;
+                const timestamp = new Date().toISOString();
+                const manifest = CapabilityManifestSchema.parse({
+                  ...existing.manifest,
+                  name: latest.definition.name,
+                  kind: latest.definition.kind,
+                  latestRevision: latest.revision,
+                  updatedAt: timestamp,
+                });
+                const health = await bundleHealth(
+                  latest.definition,
+                  existing.manifest.id,
+                  latest.revision,
+                  options.credentials.overlay(existing.manifest.id, credentials),
                 );
-                createdPaths.push(path);
-              }
-              const latest = additions.at(-1)!;
-              const timestamp = new Date().toISOString();
-              const manifest = CapabilityManifestSchema.parse({
-                ...existing.manifest,
-                name: latest.definition.name,
-                kind: latest.definition.kind,
-                latestRevision: latest.revision,
-                updatedAt: timestamp,
-              });
-              const health = await bundleHealth(
-                latest.definition,
-                existing.manifest.id,
-                latest.revision,
-              );
-              await writeJson(healthPath(existing.manifest.id), health);
-              await writeJson(manifestPath(existing.manifest.id), manifest);
-              return await readCapability(existing.manifest.id);
-            } catch (error) {
-              await Promise.all(
-                createdPaths.map(async (path) => await rm(path, { recursive: true, force: true })),
-              );
-              throw error;
-            }
-          },
-        );
-      }
+                const candidate = CapabilitySchema.parse({
+                  manifest,
+                  definition: latest.definition,
+                  health,
+                });
+                return await publishRevision({
+                  current,
+                  candidate,
+                  mutationType: "bundle-append",
+                  targetRevisionFrom: additions[0]!.revision,
+                  validateCurrent: validateCredentialSnapshot,
+                  prepareCredentials: async () =>
+                    await options.credentials.prepareMany(existing.manifest.id, credentials),
+                  commit: async () => {
+                    const createdPaths: string[] = [];
+                    try {
+                      for (const revision of additions) {
+                        const path = await stageBundleCapabilityRevision(
+                          revisionPath(existing.manifest.id, revision.revision),
+                          revision,
+                        );
+                        createdPaths.push(path);
+                      }
+                      await writeJson(healthPath(existing.manifest.id), health);
+                      await writeJson(manifestPath(existing.manifest.id), manifest);
+                      return await readCapability(existing.manifest.id);
+                    } catch (error) {
+                      await Promise.all(
+                        createdPaths.map(
+                          async (path) => await rm(path, { recursive: true, force: true }),
+                        ),
+                      );
+                      throw error;
+                    }
+                  },
+                });
+              },
+            );
+          }
 
-      if (revisions[0]!.revision !== 1) {
-        throw new CapabilityStoreError(
-          "bundle_identity_conflict",
-          "The Bundle does not contain the first capability revision.",
-        );
-      }
-      for (let index = 1; index < revisions.length; index += 1) {
-        if (revisions[index]!.revision !== revisions[index - 1]!.revision + 1) {
-          throw new CapabilityStoreError(
-            "bundle_identity_conflict",
-            "The Bundle contains a non-contiguous capability revision history.",
-          );
-        }
-      }
-      const id = randomUUID();
-      const timestamp = new Date().toISOString();
-      const temporaryPath = join(options.capabilitiesPath, `.${id}.${randomUUID()}.tmp`);
-      try {
-        await mkdir(join(temporaryPath, "revisions"), { recursive: true, mode: 0o700 });
-        for (const revision of revisions) {
-          await stageBundleCapabilityRevision(
-            join(temporaryPath, "revisions", revisionDirectory(revision.revision)),
-            revision,
-          );
-        }
-        if (Object.keys(credentials).length > 0) {
-          await options.credentials.setMany(id, credentials);
-        }
-        const latest = revisions.at(-1)!;
-        const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v2",
-          id,
-          runtimeKey: createRuntimeKey(latest.definition.name, id),
-          name: latest.definition.name,
-          kind: latest.definition.kind,
-          latestRevision: latest.revision,
-          origin: { kind: "pragma-bundle", logicalId },
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        const health = await bundleHealth(latest.definition, id, latest.revision);
-        await writeJson(join(temporaryPath, "capability.json"), manifest);
-        await writeJson(join(temporaryPath, "health.json"), health);
-        await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
-        await rename(temporaryPath, capabilityPath(id));
-        return await readCapability(id);
-      } catch (error) {
-        await rm(temporaryPath, { recursive: true, force: true });
-        if (Object.keys(credentials).length > 0) {
-          await options.credentials.removeCapability(id).catch(() => undefined);
-        }
-        throw error;
-      }
+          if (revisions[0]!.revision !== 1) {
+            throw new CapabilityStoreError(
+              "bundle_identity_conflict",
+              "The Bundle does not contain the first capability revision.",
+            );
+          }
+          for (let index = 1; index < revisions.length; index += 1) {
+            if (revisions[index]!.revision !== revisions[index - 1]!.revision + 1) {
+              throw new CapabilityStoreError(
+                "bundle_identity_conflict",
+                "The Bundle contains a non-contiguous capability revision history.",
+              );
+            }
+          }
+          const id = randomUUID();
+          const timestamp = new Date().toISOString();
+          const targetPath = capabilityPath(id);
+          let prepared: PreparedCapabilityCredentials | undefined;
+          try {
+            await mkdir(join(targetPath, "revisions"), { recursive: true, mode: 0o700 });
+            await writeJson(
+              creationJournalPath(id),
+              CapabilityCreationJournalSchema.parse({
+                schemaVersion: "pragma.capability-creation/v1",
+                capabilityId: id,
+              }),
+            );
+            for (const revision of revisions) {
+              await stageBundleCapabilityRevision(
+                join(targetPath, "revisions", revisionDirectory(revision.revision)),
+                revision,
+              );
+            }
+            const latest = revisions.at(-1)!;
+            const manifest = CapabilityManifestSchema.parse({
+              schemaVersion: "pragma.capability/v2",
+              id,
+              runtimeKey: createRuntimeKey(latest.definition.name, id),
+              name: latest.definition.name,
+              kind: latest.definition.kind,
+              latestRevision: latest.revision,
+              origin: { kind: "pragma-bundle", logicalId },
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            });
+            const health = await bundleHealth(
+              latest.definition,
+              id,
+              latest.revision,
+              options.credentials.overlay(id, credentials),
+            );
+            prepared = await options.credentials.prepareMany(id, credentials);
+            await writeJson(healthPath(id), health);
+            await writeJson(manifestPath(id), manifest);
+            if (prepared !== undefined) {
+              await options.credentials.activate(prepared);
+              await options.credentials.finalize(prepared);
+            }
+            await rm(creationJournalPath(id), { force: true }).catch(() => undefined);
+            return await readCapability(id);
+          } catch (error) {
+            if (prepared !== undefined)
+              await options.credentials.rollback(prepared).catch(() => undefined);
+            await rm(targetPath, { recursive: true, force: true });
+            if (Object.keys(credentials).length > 0) {
+              await options.credentials.removeCapability(id).catch(() => undefined);
+            }
+            throw error;
+          }
+        },
+        { operation: "capability-bundle-identity.mutate" },
+      );
     },
     async createGeneratedSkill(rawInput) {
       const input = SkillPackageSchema.parse(rawInput.package);
@@ -736,6 +975,12 @@ export function createCapabilityStore(options: {
     async updateSkill(rawInput) {
       const input = UpdateSkillCapabilitySchema.parse(rawInput);
       const current = await readCapability(input.id);
+      if (current.manifest.latestRevision !== input.baseRevision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${input.baseRevision} to ${current.manifest.latestRevision}.`,
+        );
+      }
       if (current.definition.kind !== "skill") {
         throw new CapabilityStoreError(
           "config_invalid",
@@ -757,6 +1002,10 @@ export function createCapabilityStore(options: {
           ...current.definition,
           contentHash: await hashDirectory(payloadPath),
         });
+        if (stableStringify(definition) === stableStringify(current.definition)) {
+          await rm(temporaryPath, { recursive: true, force: true });
+          return current;
+        }
         const timestamp = new Date().toISOString();
         const manifest = CapabilityManifestSchema.parse({
           ...current.manifest,
@@ -773,6 +1022,7 @@ export function createCapabilityStore(options: {
         return await publishRevision({
           current,
           candidate,
+          mutationType: "skill-update",
           commit: async () => {
             await rename(temporaryPath, revisionPath(input.id, revision));
             await writeJson(healthPath(input.id), health);
@@ -788,9 +1038,16 @@ export function createCapabilityStore(options: {
     async updateGeneratedSkill(rawInput) {
       const input = {
         id: CapabilityIdSchema.parse(rawInput.id),
+        baseRevision: z.number().int().positive().parse(rawInput.baseRevision),
         package: SkillPackageSchema.parse(rawInput.package),
       };
       const current = await readCapability(input.id);
+      if (current.manifest.latestRevision !== input.baseRevision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${input.baseRevision} to ${current.manifest.latestRevision}.`,
+        );
+      }
       if (current.definition.kind !== "skill") {
         throw new CapabilityStoreError(
           "config_invalid",
@@ -813,6 +1070,10 @@ export function createCapabilityStore(options: {
           description: input.package.description,
           contentHash: await hashDirectory(payloadPath),
         });
+        if (stableStringify(definition) === stableStringify(current.definition)) {
+          await rm(temporaryPath, { recursive: true, force: true });
+          return current;
+        }
         const timestamp = new Date().toISOString();
         const manifest = CapabilityManifestSchema.parse({
           ...current.manifest,
@@ -830,6 +1091,7 @@ export function createCapabilityStore(options: {
         return await publishRevision({
           current,
           candidate,
+          mutationType: "skill-update",
           commit: async () => {
             await rename(temporaryPath, revisionPath(input.id, revision));
             await writeJson(healthPath(input.id), health);
@@ -846,8 +1108,11 @@ export function createCapabilityStore(options: {
       const input = CreateCapabilitySchema.parse(rawInput);
       const id = randomUUID();
       const timestamp = new Date().toISOString();
-      await options.credentials.setMany(id, input.credentials);
-      const verified = await options.verify(validateDefinition(input.definition), id);
+      const verified = await options.verify(
+        validateDefinition(input.definition),
+        id,
+        options.credentials.overlay(id, input.credentials),
+      );
       assertCodeServiceReady(input.definition, verified.health);
       const manifest = CapabilityManifestSchema.parse({
         schemaVersion: "pragma.capability/v2",
@@ -859,17 +1124,50 @@ export function createCapabilityStore(options: {
         createdAt: timestamp,
         updatedAt: timestamp,
       });
-      await mkdir(join(capabilityPath(id), "revisions"), { recursive: true, mode: 0o700 });
-      return await writeNewRevision(manifest, verified.definition, verified.health);
+      let prepared: PreparedCapabilityCredentials | undefined;
+      try {
+        await mkdir(join(capabilityPath(id), "revisions"), { recursive: true, mode: 0o700 });
+        await writeJson(
+          creationJournalPath(id),
+          CapabilityCreationJournalSchema.parse({
+            schemaVersion: "pragma.capability-creation/v1",
+            capabilityId: id,
+          }),
+        );
+        prepared = await options.credentials.prepareMany(id, input.credentials);
+        const capability = await writeNewRevision(manifest, verified.definition, verified.health);
+        if (prepared !== undefined) {
+          await options.credentials.activate(prepared);
+          await options.credentials.finalize(prepared);
+        }
+        await rm(creationJournalPath(id), { force: true }).catch(() => undefined);
+        return capability;
+      } catch (error) {
+        if (prepared !== undefined)
+          await options.credentials.rollback(prepared).catch(() => undefined);
+        await rm(capabilityPath(id), { recursive: true, force: true });
+        await options.credentials.removeCapability(id).catch(() => undefined);
+        throw error;
+      }
     },
     async update(rawInput) {
       const input = UpdateCapabilitySchema.parse(rawInput);
       const current = await readManifest(input.id);
+      if (current.latestRevision !== input.baseRevision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${input.baseRevision} to ${current.latestRevision}.`,
+        );
+      }
       if (current.kind !== input.definition.kind) {
         throw new CapabilityStoreError("config_invalid", "Capability kind cannot be changed.");
       }
-      await options.credentials.setMany(input.id, input.credentials);
-      const verified = await options.verify(validateDefinition(input.definition), input.id);
+      const validateCredentialSnapshot = await credentialSnapshot(input.id);
+      const verified = await options.verify(
+        validateDefinition(input.definition),
+        input.id,
+        options.credentials.overlay(input.id, input.credentials),
+      );
       assertCodeServiceReady(input.definition, verified.health);
       const timestamp = new Date().toISOString();
       const manifest = CapabilityManifestSchema.parse({
@@ -879,6 +1177,24 @@ export function createCapabilityStore(options: {
         updatedAt: timestamp,
       });
       const existing = await readCapability(input.id);
+      if (stableStringify(verified.definition) === stableStringify(existing.definition)) {
+        const health = CapabilityHealthSchema.parse({
+          ...verified.health,
+          revision: existing.manifest.latestRevision,
+        });
+        const credentialChanged = await credentialsDiffer(input.id, input.credentials);
+        if (!credentialChanged && sameHealthState(health, existing.health)) return existing;
+        return await publishHealth(
+          input.id,
+          existing.manifest.latestRevision,
+          health,
+          undefined,
+          validateCredentialSnapshot,
+          credentialChanged
+            ? async () => await options.credentials.prepareMany(input.id, input.credentials)
+            : undefined,
+        );
+      }
       const candidate = CapabilitySchema.parse({
         manifest,
         definition: verified.definition,
@@ -887,14 +1203,26 @@ export function createCapabilityStore(options: {
       return await publishRevision({
         current: existing,
         candidate,
-        commit: async () => await writeNewRevision(manifest, verified.definition, verified.health),
+        validateCurrent: validateCredentialSnapshot,
+        prepareCredentials: async () =>
+          await options.credentials.prepareMany(input.id, input.credentials),
+        commit: async () => {
+          return await writeNewRevision(manifest, verified.definition, verified.health);
+        },
       });
     },
-    async retry(id) {
+    async retry(id, expectedRevision) {
       const current = await readCapability(id);
+      if (current.manifest.latestRevision !== expectedRevision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${expectedRevision} to ${current.manifest.latestRevision}.`,
+        );
+      }
       if (current.definition.kind === "skill") return current;
+      const validateCredentialSnapshot = await credentialSnapshot(id);
       const verified = await options.verify(current.definition, id);
-      if (JSON.stringify(verified.definition) !== JSON.stringify(current.definition)) {
+      if (stableStringify(verified.definition) !== stableStringify(current.definition)) {
         if (verified.definition.kind === "skill") return current;
         const manifest = CapabilityManifestSchema.parse({
           ...current.manifest,
@@ -910,6 +1238,8 @@ export function createCapabilityStore(options: {
         return await publishRevision({
           current,
           candidate,
+          mutationType: "retry",
+          validateCurrent: validateCredentialSnapshot,
           commit: async () =>
             await writeNewRevision(manifest, verified.definition, verified.health),
         });
@@ -918,19 +1248,29 @@ export function createCapabilityStore(options: {
         ...verified.health,
         revision: current.manifest.latestRevision,
       });
-      const commit = async (): Promise<Capability> => {
-        await writeJson(healthPath(id), health);
-        return await readCapability(id);
-      };
+      const commit = async (): Promise<Capability> =>
+        await publishHealth(id, expectedRevision, health, undefined, validateCredentialSnapshot);
       if (health.status !== "ready" || current.health.status === "ready") return await commit();
       return await publishRevision({
         current,
         candidate: CapabilitySchema.parse({ ...current, definition: verified.definition, health }),
-        commit,
+        mutationType: "retry",
+        targetRevisionFrom: current.manifest.latestRevision,
+        validateCurrent: validateCredentialSnapshot,
+        commit: async () => {
+          await writeJson(healthPath(id), health);
+          return await readCapability(id);
+        },
       });
     },
     async test(input) {
       const current = await readCapability(input.id);
+      if (current.manifest.latestRevision !== input.expectedRevision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${input.expectedRevision} to ${current.manifest.latestRevision}.`,
+        );
+      }
       if (current.definition.kind === "skill") {
         return {
           ok: true,
@@ -939,6 +1279,7 @@ export function createCapabilityStore(options: {
           capability: current,
         };
       }
+      const validateCredentialSnapshot = await credentialSnapshot(input.id);
       if (current.definition.kind === "mcp_server") {
         if (input.toolName === undefined) {
           throw new CapabilityStoreError("config_invalid", "Choose an MCP tool to test.");
@@ -989,13 +1330,19 @@ export function createCapabilityStore(options: {
                       },
                     }),
               });
-              await writeJson(healthPath(input.id), health);
+              const capability = await publishHealth(
+                input.id,
+                input.expectedRevision,
+                health,
+                undefined,
+                validateCredentialSnapshot,
+              );
               const output = readToolOutput(result);
               return {
                 ok: failure === undefined,
                 code: failure?.code ?? "success",
                 message: failure?.message ?? "The MCP tool test succeeded.",
-                capability: await readCapability(input.id),
+                capability,
                 ...(output === undefined ? {} : { output }),
               };
             } finally {
@@ -1005,18 +1352,28 @@ export function createCapabilityStore(options: {
             if (ownsPool) await pool.close();
           }
         } catch (error) {
+          if (error instanceof CapabilityStoreError && error.code === "revision_conflict") {
+            throw error;
+          }
           const diagnostic = classifyMcpError(error);
-          await writeJson(healthPath(input.id), {
+          const health = CapabilityHealthSchema.parse({
             revision: current.manifest.latestRevision,
             status: "needs_attention",
             checkedAt: new Date().toISOString(),
             diagnostic,
           });
+          const capability = await publishHealth(
+            input.id,
+            input.expectedRevision,
+            health,
+            undefined,
+            validateCredentialSnapshot,
+          );
           return {
             ok: false,
             code: diagnostic.code,
             message: diagnostic.message,
-            capability: await readCapability(input.id),
+            capability,
           };
         }
       }
@@ -1046,12 +1403,18 @@ export function createCapabilityStore(options: {
                 },
               }),
         });
-        await writeJson(healthPath(input.id), health);
+        const capability = await publishHealth(
+          input.id,
+          input.expectedRevision,
+          health,
+          undefined,
+          validateCredentialSnapshot,
+        );
         return {
           ok: failure === undefined,
           code: failure?.code ?? "success",
           message: failure?.message ?? "The code tool test succeeded.",
-          capability: await readCapability(input.id),
+          capability,
           ...(readStructuredOutput(result) === undefined
             ? {}
             : { output: readStructuredOutput(result) }),
@@ -1101,8 +1464,13 @@ export function createCapabilityStore(options: {
               }
             : {}),
         });
-        await writeJson(healthPath(input.id), health);
-        const capability = await readCapability(input.id);
+        const capability = await publishHealth(
+          input.id,
+          input.expectedRevision,
+          health,
+          undefined,
+          validateCredentialSnapshot,
+        );
         const output = readToolOutput(result);
         return {
           ok: !isError,
@@ -1112,6 +1480,9 @@ export function createCapabilityStore(options: {
           ...(output === undefined ? {} : { output }),
         };
       } catch (error) {
+        if (error instanceof CapabilityStoreError && error.code === "revision_conflict") {
+          throw error;
+        }
         const message = error instanceof Error ? error.message : "The HTTP tool test failed.";
         const health = CapabilityHealthSchema.parse({
           revision: current.manifest.latestRevision,
@@ -1119,12 +1490,18 @@ export function createCapabilityStore(options: {
           checkedAt: new Date().toISOString(),
           diagnostic: { code: "request_failed", message, retryable: true },
         });
-        await writeJson(healthPath(input.id), health);
+        const capability = await publishHealth(
+          input.id,
+          input.expectedRevision,
+          health,
+          undefined,
+          validateCredentialSnapshot,
+        );
         return {
           ok: false,
           code: "request_failed",
           message,
-          capability: await readCapability(input.id),
+          capability,
         };
       }
     },
@@ -1142,24 +1519,33 @@ export function createCapabilityStore(options: {
       };
     },
     async remove(id) {
-      await readManifest(id);
-      if (await options.isReferenced(id)) {
-        throw new CapabilityStoreError(
-          "capability_referenced",
-          "This capability is used by one or more Experts. Remove it from those Experts before deleting it.",
-        );
-      }
-      await rm(capabilityPath(id), { recursive: true, force: true });
-      await options.credentials.removeCapability(id);
-      await options.onRemoved?.(id);
+      const current = await readManifest(id);
+      await options.mutations.mutate({
+        id,
+        expectedRevision: current.latestRevision,
+        mutationType: "delete",
+        validateCurrent: async () => {
+          if (await options.isReferenced(id)) {
+            throw new CapabilityStoreError(
+              "capability_referenced",
+              "This capability is used by one or more Experts. Remove it from those Experts before deleting it.",
+            );
+          }
+        },
+        commit: async () => await completeRemoval(id, current.latestRevision),
+      });
     },
-    setRevisionPublisher(publisher) {
-      revisionPublisher = publisher;
-    },
+    completeRemoval,
     async discardUnpublishedRevision(id, revision, previousHealth) {
       const manifest = await readManifest(id);
       if (manifest.latestRevision >= revision) return false;
-      await rm(revisionPath(id, revision), { recursive: true, force: true });
+      for (
+        let unpublished = previousHealth.revision + 1;
+        unpublished <= revision;
+        unpublished += 1
+      ) {
+        await rm(revisionPath(id, unpublished), { recursive: true, force: true });
+      }
       await writeJson(
         healthPath(id),
         CapabilityHealthSchema.parse({
@@ -1573,4 +1959,11 @@ function stableStringify(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function sameHealthState(left: CapabilityHealth, right: CapabilityHealth): boolean {
+  return (
+    left.status === right.status &&
+    stableStringify(left.diagnostic ?? null) === stableStringify(right.diagnostic ?? null)
+  );
 }

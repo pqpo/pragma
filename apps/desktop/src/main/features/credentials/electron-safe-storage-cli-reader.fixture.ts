@@ -14,7 +14,7 @@ const provider = JSON.parse(await readFile(join(data, "model-providers.json"), "
 };
 const capability = JSON.parse(
   await readFile(join(credentials, "capability-credentials.json"), "utf8"),
-) as { credentials: Record<string, SecretRef> };
+) as { credentials: Record<string, { ref: SecretRef }> };
 const plugin = JSON.parse(await readFile(join(credentials, "plugin-credentials.json"), "utf8")) as {
   credentials: Record<string, SecretRef>;
 };
@@ -26,7 +26,7 @@ const secretStore = createSecretStore({
 
 const digests = {
   provider: await digest(secretStore, provider.providers[0]!.apiKeySecretRef),
-  capability: await digest(secretStore, capability.credentials["capability-e07/token"]!),
+  capability: await digest(secretStore, capability.credentials["capability-e07/token"]!.ref),
   plugin: await digest(secretStore, plugin.credentials["binding:e07"]!),
 };
 process.stdout.write(`${JSON.stringify({ digests })}\n`);

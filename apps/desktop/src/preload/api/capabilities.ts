@@ -2,6 +2,7 @@ import { ipcRenderer } from "electron";
 
 import {
   CapabilityActionSchema,
+  CapabilityRevisionActionSchema,
   CapabilityDeleteResultSchema,
   CapabilityIdSchema,
   CapabilitySchema,
@@ -66,9 +67,9 @@ export const capabilitiesApi = {
     CapabilitySchema.parse(
       await ipcRenderer.invoke("capabilities:update", UpdateCapabilitySchema.parse(input)),
     ),
-  retryCapability: async (id) =>
+  retryCapability: async (input) =>
     CapabilitySchema.parse(
-      await ipcRenderer.invoke("capabilities:retry", CapabilityActionSchema.parse({ id })),
+      await ipcRenderer.invoke("capabilities:retry", CapabilityRevisionActionSchema.parse(input)),
     ),
   testCapability: async (input) =>
     CapabilityTestResultSchema.parse(

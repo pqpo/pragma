@@ -26,6 +26,7 @@ describe("Skill revision service", () => {
 
     expect(updateGeneratedSkill).toHaveBeenCalledWith({
       id: capabilityId,
+      baseRevision: 1,
       package: expect.objectContaining({ description: "Updated workflow." }),
     });
     await expect(service.list()).resolves.toEqual([

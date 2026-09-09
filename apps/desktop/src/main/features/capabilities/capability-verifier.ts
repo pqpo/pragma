@@ -12,14 +12,18 @@ import {
   CapabilityToolSnapshotSchema,
   type CapabilityDefinition,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
+import type {
+  CapabilityCredentialReader,
+  CapabilityCredentialStore,
+} from "./capability-credential-store.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
 
 export function createCapabilityVerifier(
   credentials: CapabilityCredentialStore,
   mcpToolRegistryPool?: McpToolRegistryPool,
 ): CapabilityVerifier {
-  return async (definition, capabilityId) => {
+  return async (definition, capabilityId, credentialOverride) => {
+    const credentialReader = credentialOverride ?? credentials;
     const checkedAt = new Date().toISOString();
     if (definition.kind === "code_service") {
       const result = await verifyCodeServiceDefinition({
@@ -43,7 +47,7 @@ export function createCapabilityVerifier(
     }
 
     try {
-      const server = await toCoreMcpServer(definition, capabilityId, credentials);
+      const server = await toCoreMcpServer(definition, capabilityId, credentialReader);
       const ownsPool = mcpToolRegistryPool === undefined;
       const pool =
         mcpToolRegistryPool ??
@@ -88,7 +92,7 @@ export function createCapabilityVerifier(
 export async function toCoreMcpServer(
   definition: Extract<CapabilityDefinition, { readonly kind: "mcp_server" }>,
   capabilityId: string,
-  credentials: CapabilityCredentialStore,
+  credentials: CapabilityCredentialReader,
   allowTools?: readonly string[],
 ): Promise<IExpertAgentMcpServer> {
   const base = {

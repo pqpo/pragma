@@ -5,6 +5,7 @@ import type { PragmaManagementToolPorts } from "@pragma/built-in-agents";
 
 import {
   CapabilityActionSchema,
+  CapabilityRevisionActionSchema,
   CapabilityIdSchema,
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
@@ -59,8 +60,10 @@ export function installCapabilityHandlers(
     store.update(UpdateCapabilitySchema.parse(input)),
   );
   ipcMain.handle("capabilities:retry", (_event, input: unknown) => {
-    const id = CapabilityActionSchema.parse(input).id;
-    return isBuiltInCapabilityId(id) ? BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY : store.retry(id);
+    const parsed = CapabilityRevisionActionSchema.parse(input);
+    return isBuiltInCapabilityId(parsed.id)
+      ? BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY
+      : store.retry(parsed.id, parsed.expectedRevision);
   });
   ipcMain.handle("capabilities:test", async (_event, input: unknown) => {
     const parsed = CapabilityTestRequestSchema.parse(input);

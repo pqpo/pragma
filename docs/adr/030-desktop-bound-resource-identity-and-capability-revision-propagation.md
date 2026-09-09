@@ -34,10 +34,30 @@ therefore leave current Experts on different revisions and required a manual per
 - A ready Capability revision is activated through a Desktop coordinator. Before writing the new
   revision it checks all current Project and System Expert tool selections. Removing a selected tool
   blocks the update.
-- Activation uses a per-Capability lock and a stable v1 journal. It writes the Capability revision,
-  publishes one new current Project revision updating all bindings, then updates System Expert
-  customizations. Interrupted work is replayed from the journal after the Desktop window and IPC are
-  ready. Recovery scans only the journal root.
+- Activation uses one per-Capability mutation boundary and a stable v2 journal. It writes the
+  Capability revision, publishes one new current Project revision updating all bindings, then
+  updates System Expert customizations. Project publication uses an exact expected revision; a
+  conflict causes the latest snapshot to be read and compatibility to be checked again. Interrupted
+  work is replayed from the journal after the Desktop window and IPC are ready. Recovery scans only
+  the journal root. Historical v1 propagation journals are upgraded through the registered adjacent
+  migration when first recovered.
+- The mutation journal provides a replayable consistency transaction across the Capability,
+  Project, System Expert, and credential aggregates. It does not claim instantaneous physical
+  atomicity across multiple files or owners. A Project revision that has been published while the
+  System Expert update is pending is a safe recoverable intermediate state and is never rewritten or
+  rolled back.
+- Capability credentials are runtime state rather than revision payload. Candidate credentials are
+  verified through an overlay before activation. The credential aggregate maps logical names to
+  immutable secret generations; its journal contains SecretRef metadata only, never plaintext, and
+  either retains the old active mapping or finishes the new mapping after recovery. Capability
+  creation, Bundle identity creation, credential rotation, and deletion use staged generations; a
+  rejected or incomplete Capability write cannot switch the active credential mapping. Credential
+  aggregate v2 is upgraded to v3 through a source-bound migration journal and retained backup;
+  future versions fail closed.
+- Capability deletion is also a coordinator mutation. The coordinator-root journal records the
+  durable delete intent, while an owner-local deletion marker makes credential, customization, and
+  Capability-directory cleanup idempotent. Recovery therefore does not depend on a full Capability
+  scan and cannot leave a successfully deleted owner with active credential generations.
 - A `needs_attention` revision may be stored but is not activated. A successful retry activates it.
 - Existing Project revisions, Missions, Executions, and old Capability revision payloads remain
   immutable and pinned. Propagation changes only the current Project head and current System Expert

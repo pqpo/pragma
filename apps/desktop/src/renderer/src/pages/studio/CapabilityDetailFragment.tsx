@@ -103,6 +103,7 @@ export function CapabilityDetailFragment(props: {
       const input = parseTestInput(testInput);
       const result = await api.testCapability({
         id: capability.manifest.id,
+        expectedRevision: capability.manifest.latestRevision,
         ...(definition.kind === "mcp_server" || definition.kind === "http_service"
           ? { toolName: selectedToolName }
           : {}),
@@ -123,7 +124,12 @@ export function CapabilityDetailFragment(props: {
     setBusy(true);
     setError(null);
     try {
-      props.onChanged(await api.retryCapability(capability.manifest.id));
+      props.onChanged(
+        await api.retryCapability({
+          id: capability.manifest.id,
+          expectedRevision: capability.manifest.latestRevision,
+        }),
+      );
       setTestResult(null);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -148,6 +154,7 @@ export function CapabilityDetailFragment(props: {
       props.onChanged(
         await api.updateSkillCapability({
           id: capability.manifest.id,
+          baseRevision: capability.manifest.latestRevision,
           sourcePath: selected.path as string,
         }),
       );

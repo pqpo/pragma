@@ -192,7 +192,12 @@ export function CapabilityDirectoryFragment(props: {
     if (!api) return undefined;
     return editingCapability === null
       ? await api.createCapability({ definition, credentials })
-      : await api.updateCapability({ id: editingCapability.manifest.id, definition, credentials });
+      : await api.updateCapability({
+          id: editingCapability.manifest.id,
+          baseRevision: editingCapability.manifest.latestRevision,
+          definition,
+          credentials,
+        });
   };
 
   const importSkill = async () => {
@@ -211,6 +216,7 @@ export function CapabilityDirectoryFragment(props: {
         editingCapability?.definition.kind === "skill"
           ? await api.updateSkillCapability({
               id: editingCapability.manifest.id,
+              baseRevision: editingCapability.manifest.latestRevision,
               sourcePath: selected.path as string,
             })
           : await api.importSkillCapability({ sourcePath: selected.path as string });
@@ -672,7 +678,12 @@ function CapabilityRow(props: {
     setBusy(true);
     setError(null);
     try {
-      props.onChanged(await api.retryCapability(capability.manifest.id));
+      props.onChanged(
+        await api.retryCapability({
+          id: capability.manifest.id,
+          expectedRevision: capability.manifest.latestRevision,
+        }),
+      );
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {

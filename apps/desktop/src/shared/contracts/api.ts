@@ -555,7 +555,7 @@ export interface PragmaDesktopAPI {
   getSkillFile: (input: GetSkillFile) => Promise<SkillFileContent>;
   createCapability: (input: CreateCapability) => Promise<Capability>;
   updateCapability: (input: UpdateCapability) => Promise<Capability>;
-  retryCapability: (id: string) => Promise<Capability>;
+  retryCapability: (input: { id: string; expectedRevision: number }) => Promise<Capability>;
   testCapability: (input: CapabilityTestRequest) => Promise<CapabilityTestResult>;
   previewCodeService: (input: PreviewCodeServiceRequest) => Promise<PreviewCodeServiceResult>;
   deleteCapability: (id: string) => Promise<CapabilityDeleteResult>;

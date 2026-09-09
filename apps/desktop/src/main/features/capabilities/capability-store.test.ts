@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import { createCapabilityVerifier } from "./capability-verifier.ts";
+import type { CapabilityVerifier } from "./capability-verification.ts";
 import { createCapabilityStore, type CapabilityRevisionPublishInput } from "./capability-store.ts";
 
 const directories: string[] = [];
@@ -23,14 +25,54 @@ async function createStore(
     readonly mcpToolRegistryPool?: Parameters<
       typeof createCapabilityStore
     >[0]["mcpToolRegistryPool"];
+    readonly mutations?: Parameters<typeof createCapabilityStore>[0]["mutations"];
+    readonly verify?: CapabilityVerifier;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-capabilities-"));
   directories.push(directory);
   const secrets = new Map<string, string>();
+  const pendingCredentials = new Map<
+    string,
+    { capabilityId: string; values: Readonly<Record<string, string>> }
+  >();
   const credentials: CapabilityCredentialStore = {
+    overlay(id, values) {
+      return {
+        get: async (requestedId, name) =>
+          requestedId === id && Object.hasOwn(values, name)
+            ? values[name]
+            : secrets.get(`${requestedId}/${name}`),
+      };
+    },
     async setMany(id, values) {
       for (const [name, value] of Object.entries(values)) secrets.set(`${id}/${name}`, value);
+    },
+    async prepareMany(capabilityId, values) {
+      if (Object.keys(values).length === 0) return undefined;
+      const mutationId = randomUUID();
+      pendingCredentials.set(mutationId, { capabilityId, values });
+      return { mutationId, capabilityId, previousRefs: [], nextRefs: [] };
+    },
+    async activate(prepared) {
+      const pending = pendingCredentials.get(prepared.mutationId);
+      if (pending === undefined) return;
+      for (const [name, value] of Object.entries(pending.values))
+        secrets.set(`${pending.capabilityId}/${name}`, value);
+    },
+    async finalize(prepared) {
+      pendingCredentials.delete(prepared.mutationId);
+    },
+    async rollback(prepared) {
+      pendingCredentials.delete(prepared.mutationId);
+    },
+    async pending(capabilityId) {
+      const entry = [...pendingCredentials.entries()].find(
+        ([, pending]) => pending.capabilityId === capabilityId,
+      );
+      return entry === undefined
+        ? undefined
+        : { mutationId: entry[0], capabilityId, previousRefs: [], nextRefs: [] };
     },
     async get(id, name) {
       return secrets.get(`${id}/${name}`);
@@ -38,12 +80,35 @@ async function createStore(
     async removeCapability(id) {
       for (const key of secrets.keys()) if (key.startsWith(`${id}/`)) secrets.delete(key);
     },
-    async fingerprint() {
-      return "a".repeat(64);
+    async fingerprint(id) {
+      return createHash("sha256")
+        .update(
+          JSON.stringify(
+            [...secrets.entries()]
+              .filter(([key]) => key.startsWith(`${id}/`))
+              .toSorted(([left], [right]) => left.localeCompare(right)),
+          ),
+        )
+        .digest("hex");
     },
+  };
+  let mutationTail = Promise.resolve();
+  const withMutationLock = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const previous = mutationTail;
+    let release!: () => void;
+    mutationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   };
   return {
     directory,
+    credentials,
     store: createCapabilityStore({
       capabilitiesPath: join(directory, "capabilities"),
       credentials,
@@ -51,12 +116,52 @@ async function createStore(
         ? {}
         : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
       verify:
-        options.realVerifier === true
+        options.verify ??
+        (options.realVerifier === true
           ? createCapabilityVerifier(credentials)
           : async (definition) => ({
               definition,
               health: { status: "ready" as const, checkedAt: "2026-07-11T00:00:00.000Z" },
-            }),
+            })),
+      mutations: options.mutations ?? {
+        publish: async (input) =>
+          await withMutationLock(async () => {
+            await input.validateCurrent?.();
+            const prepared = await input.prepareCredentials?.();
+            try {
+              const result = await input.commit();
+              if (prepared !== undefined) {
+                await credentials.activate(prepared);
+                await credentials.finalize(prepared);
+              }
+              return result;
+            } catch (error) {
+              if (prepared !== undefined) await credentials.rollback(prepared);
+              throw error;
+            }
+          }),
+        publishHealth: async (input) =>
+          await withMutationLock(async () => {
+            await input.validateCurrent?.();
+            const prepared = await input.prepareCredentials?.();
+            try {
+              const result = await input.commit();
+              if (prepared !== undefined) {
+                await credentials.activate(prepared);
+                await credentials.finalize(prepared);
+              }
+              return result;
+            } catch (error) {
+              if (prepared !== undefined) await credentials.rollback(prepared);
+              throw error;
+            }
+          }),
+        mutate: async (input) =>
+          await withMutationLock(async () => {
+            await input.validateCurrent?.();
+            await input.commit();
+          }),
+      },
       isReferenced: async () => options.referenced ?? false,
     }),
   };
@@ -275,6 +380,7 @@ describe("capability store", () => {
     if (original.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
     const updated = await store.updateSkill({
       id: original.manifest.id,
+      baseRevision: original.manifest.latestRevision,
       sourcePath: updatedSource,
     });
 
@@ -361,15 +467,21 @@ describe("capability store", () => {
   );
 
   it("creates fixed revisions and keeps credentials out of definitions", async () => {
-    const { directory, store } = await createStore();
+    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
+    const { directory, store } = await createStore({
+      mutations: {
+        publish,
+        publishHealth: async (input) => await input.commit(),
+        mutate: async (input) => await input.commit(),
+      },
+    });
     const created = await store.create({
       definition: httpDefinition,
       credentials: { "service-auth": "top-secret" },
     });
-    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
-    store.setRevisionPublisher({ publish });
     const updated = await store.update({
       id: created.manifest.id,
+      baseRevision: created.manifest.latestRevision,
       definition: { ...httpDefinition, description: "Updated customer records." },
       credentials: {},
     });
@@ -395,6 +507,132 @@ describe("capability store", () => {
       "utf8",
     );
     expect(firstDefinition).not.toContain("top-secret");
+  });
+
+  it("removes a new Capability and its staged credentials when activation fails", async () => {
+    const { credentials, store } = await createStore();
+    vi.spyOn(credentials, "activate").mockRejectedValueOnce(new Error("activation failed"));
+
+    await expect(
+      store.create({
+        definition: httpDefinition,
+        credentials: { "service-auth": "must-not-survive" },
+      }),
+    ).rejects.toThrow("activation failed");
+
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("does not create a revision for a semantically unchanged definition", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const updated = await store.update({
+      id: created.manifest.id,
+      baseRevision: created.manifest.latestRevision,
+      definition: { ...httpDefinition },
+      credentials: {},
+    });
+
+    expect(updated.manifest.latestRevision).toBe(1);
+    await expect(
+      readFile(
+        join(
+          directory,
+          "capabilities",
+          created.manifest.id,
+          "revisions",
+          "000002",
+          "definition.json",
+        ),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not rotate credentials or health for an identical save", async () => {
+    const { directory, credentials, store } = await createStore();
+    const created = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "same-secret" },
+    });
+    const prepareMany = vi.spyOn(credentials, "prepareMany");
+
+    const saved = await store.update({
+      id: created.manifest.id,
+      baseRevision: created.manifest.latestRevision,
+      definition: httpDefinition,
+      credentials: { "service-auth": "same-secret" },
+    });
+
+    expect(saved.manifest.latestRevision).toBe(1);
+    expect(prepareMany).not.toHaveBeenCalled();
+    await expect(
+      readFile(join(directory, "capabilities", created.manifest.id, "revisions", "000002")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects an update based on a stale capability revision", async () => {
+    const { store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+
+    await expect(
+      store.update({
+        id: created.manifest.id,
+        baseRevision: created.manifest.latestRevision + 1,
+        definition: { ...httpDefinition, description: "Stale update." },
+        credentials: {},
+      }),
+    ).rejects.toMatchObject({ code: "revision_conflict" });
+  });
+
+  it("rejects the stale result of concurrent credential-only updates", async () => {
+    let verificationCount = 0;
+    let concurrentVerifications = 0;
+    let releaseConcurrent!: () => void;
+    const concurrentReady = new Promise<void>((resolve) => {
+      releaseConcurrent = resolve;
+    });
+    const verify: CapabilityVerifier = async (definition) => {
+      verificationCount += 1;
+      if (verificationCount > 1) {
+        concurrentVerifications += 1;
+        if (concurrentVerifications === 2) releaseConcurrent();
+        await concurrentReady;
+      }
+      return {
+        definition,
+        health: { status: "ready", checkedAt: "2026-07-11T00:00:00.000Z" },
+      };
+    };
+    const { store } = await createStore({ verify });
+    const created = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "initial" },
+    });
+
+    const results = await Promise.allSettled([
+      store.update({
+        id: created.manifest.id,
+        baseRevision: 1,
+        definition: httpDefinition,
+        credentials: { "service-auth": "first" },
+      }),
+      store.update({
+        id: created.manifest.id,
+        baseRevision: 1,
+        definition: httpDefinition,
+        credentials: { "service-auth": "second" },
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({
+      reason: { code: "revision_conflict" },
+    });
+    await expect(store.get(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 1 },
+    });
   });
 
   it("imports one Bundle capability identity with exact historical revisions idempotently", async () => {
@@ -440,6 +678,60 @@ describe("capability store", () => {
     ).rejects.toMatchObject({ code: "bundle_identity_conflict" });
   });
 
+  it("serializes concurrent first imports of the same Bundle identity", async () => {
+    const { store } = await createStore();
+    const input = {
+      logicalId: "00000000-0000-4000-8000-000000000192",
+      revisions: [{ revision: 1, definition: httpDefinition }],
+    };
+
+    const [first, second] = await Promise.all([
+      store.importBundleRevisions(input),
+      store.importBundleRevisions(input),
+    ]);
+
+    expect(second.manifest.id).toBe(first.manifest.id);
+    await expect(store.list()).resolves.toHaveLength(1);
+  });
+
+  it("appends a contiguous Bundle range through one revision publication", async () => {
+    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
+    const { store } = await createStore({
+      mutations: {
+        publish,
+        publishHealth: async (input) => await input.commit(),
+        mutate: async (input) => await input.commit(),
+      },
+    });
+    const logicalId = "00000000-0000-4000-8000-000000000191";
+    const revisionOne = { ...httpDefinition, description: "Revision one." };
+    const revisionTwo = { ...httpDefinition, description: "Revision two." };
+    const revisionThree = { ...httpDefinition, description: "Revision three." };
+    const created = await store.importBundleRevisions({
+      logicalId,
+      revisions: [{ revision: 1, definition: revisionOne }],
+    });
+
+    const appended = await store.importBundleRevisions({
+      logicalId,
+      revisions: [
+        { revision: 1, definition: revisionOne },
+        { revision: 2, definition: revisionTwo },
+        { revision: 3, definition: revisionThree },
+      ],
+    });
+
+    expect(appended.manifest.latestRevision).toBe(3);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      current: { manifest: { latestRevision: 1 } },
+      candidate: { manifest: { latestRevision: 3 } },
+    });
+    await expect(store.get(created.manifest.id, 2)).resolves.toMatchObject({
+      definition: { description: "Revision two." },
+    });
+  });
+
   it("blocks deletion while an Expert references the capability", async () => {
     const { store } = await createStore({ referenced: true });
     const capability = await store.create({ definition: httpDefinition, credentials: {} });
@@ -450,7 +742,14 @@ describe("capability store", () => {
   });
 
   it("publishes the same revision when retry makes it ready", async () => {
-    const { directory, store } = await createStore();
+    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
+    const { directory, store } = await createStore({
+      mutations: {
+        publish,
+        publishHealth: async (input) => await input.commit(),
+        mutate: async (input) => await input.commit(),
+      },
+    });
     const created = await store.create({ definition: httpDefinition, credentials: {} });
     await writeFile(
       join(directory, "capabilities", created.manifest.id, "health.json"),
@@ -461,10 +760,8 @@ describe("capability store", () => {
         diagnostic: { code: "offline", message: "Offline", retryable: true },
       })}\n`,
     );
-    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
-    store.setRevisionPublisher({ publish });
 
-    const retried = await store.retry(created.manifest.id);
+    const retried = await store.retry(created.manifest.id, created.manifest.latestRevision);
 
     expect(retried).toMatchObject({
       manifest: { latestRevision: 1 },
@@ -490,6 +787,7 @@ describe("capability store", () => {
 
     const result = await store.test({
       id: capability.manifest.id,
+      expectedRevision: capability.manifest.latestRevision,
       toolName: "get_customer",
       input: { path: { id: "42" } },
     });
@@ -515,6 +813,7 @@ describe("capability store", () => {
     await expect(
       store.test({
         id: capability.manifest.id,
+        expectedRevision: capability.manifest.latestRevision,
         toolName: "get_customer",
         input: { path: { id: "42" } },
       }),
@@ -573,7 +872,12 @@ describe("capability store", () => {
     });
 
     await expect(
-      store.test({ id: capability.manifest.id, toolName: "echo", input: { value: "hello" } }),
+      store.test({
+        id: capability.manifest.id,
+        expectedRevision: capability.manifest.latestRevision,
+        toolName: "echo",
+        input: { value: "hello" },
+      }),
     ).resolves.toMatchObject({
       ok: true,
       output: { echoed: { value: "hello" } },
@@ -612,11 +916,16 @@ describe("capability store", () => {
     const capability = await store.create({ definition: codeDefinition, credentials: {} });
 
     await expect(
-      store.test({ id: capability.manifest.id, input: { left: 2, right: 4 } }),
+      store.test({
+        id: capability.manifest.id,
+        expectedRevision: capability.manifest.latestRevision,
+        input: { left: 2, right: 4 },
+      }),
     ).resolves.toMatchObject({ ok: true, output: { result: 6 } });
 
     const broken = await store.update({
       id: capability.manifest.id,
+      baseRevision: capability.manifest.latestRevision,
       definition: {
         ...codeDefinition,
         tool: {
@@ -627,7 +936,11 @@ describe("capability store", () => {
       credentials: {},
     });
     await expect(
-      store.test({ id: broken.manifest.id, input: { left: 1, right: 1 } }),
+      store.test({
+        id: broken.manifest.id,
+        expectedRevision: broken.manifest.latestRevision,
+        input: { left: 1, right: 1 },
+      }),
     ).resolves.toMatchObject({
       ok: false,
       code: "invalid_output",

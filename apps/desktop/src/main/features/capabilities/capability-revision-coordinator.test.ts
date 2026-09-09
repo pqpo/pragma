@@ -1,9 +1,10 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { encodePragmaPathSegment } from "@pragma/core";
 
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
@@ -14,11 +15,31 @@ import {
   PragmaProjectStoreError,
   type PragmaProjectStore,
 } from "../projects/pragma-project-store.ts";
+import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
-import { createCapabilityRevisionCoordinator } from "./capability-revision-coordinator.ts";
+import { createCapabilityRevisionCoordinator as createCapabilityRevisionCoordinatorImpl } from "./capability-revision-coordinator.ts";
 
 const CAPABILITY_ID = "751a410b-4f80-4d0f-9db4-0efbe86afea7";
 const roots: string[] = [];
+
+const credentials: CapabilityCredentialStore = {
+  overlay: () => ({ get: async () => undefined }),
+  setMany: async () => undefined,
+  prepareMany: async () => undefined,
+  activate: async () => undefined,
+  finalize: async () => undefined,
+  rollback: async () => undefined,
+  pending: async () => undefined,
+  get: async () => undefined,
+  removeCapability: async () => undefined,
+  fingerprint: async () => "0".repeat(64),
+};
+
+function createCapabilityRevisionCoordinator(
+  options: Omit<Parameters<typeof createCapabilityRevisionCoordinatorImpl>[0], "credentials">,
+) {
+  return createCapabilityRevisionCoordinatorImpl({ ...options, credentials });
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true })));
@@ -60,8 +81,8 @@ describe("CapabilityRevisionCoordinator", () => {
     await coordinator.publish({ current, candidate, commit });
 
     expect(commit).toHaveBeenCalledOnce();
-    expect(project.apply).toHaveBeenCalledOnce();
-    expect(system.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2);
+    expect(project.publish).toHaveBeenCalledOnce();
+    expect(system.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2, ["search", "read", "write"]);
     expect(
       project.resources
         .filter((resource) => resource.kind === "Capability")
@@ -81,7 +102,7 @@ describe("CapabilityRevisionCoordinator", () => {
       revision: 1,
     });
     const project = fakeProject([binding]);
-    project.apply.mockRejectedValueOnce(
+    project.publish.mockRejectedValueOnce(
       new PragmaProjectStoreError("revision_conflict", "Simulated concurrent Project update."),
     );
     const coordinator = createCapabilityRevisionCoordinator({
@@ -93,8 +114,88 @@ describe("CapabilityRevisionCoordinator", () => {
 
     await coordinator.publish({ current, candidate, commit: async () => candidate });
 
-    expect(project.apply).toHaveBeenCalledTimes(2);
+    expect(project.publish).toHaveBeenCalledTimes(2);
     expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rechecks compatibility after a concurrent Project revision", async () => {
+    const root = await temporaryRoot();
+    const current = capability(1, ["search", "read"]);
+    const candidate = capability(2, ["search"]);
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: CAPABILITY_ID,
+      revision: 1,
+    });
+    const project = fakeProject([binding]);
+    project.publish.mockImplementationOnce(async () => {
+      project.concurrentUpdate([
+        binding,
+        expert("expert0000000003", canonicalPragmaResourceRef(binding), ["read"]),
+      ]);
+      throw new PragmaProjectStoreError("revision_conflict", "Concurrent Project update.");
+    });
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: fakeCapabilityStore(candidate),
+      project: project.store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+
+    await expect(
+      coordinator.publish({ current, candidate, commit: async () => candidate }),
+    ).rejects.toMatchObject({ code: "capability_incompatible" });
+    expect(project.publish).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a stale health result under the Capability lock", async () => {
+    const root = await temporaryRoot();
+    const candidate = capability(2, ["search"]);
+    const commit = vi.fn(async () => candidate);
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: { get: async () => candidate } as unknown as CapabilityStore,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+
+    await expect(
+      coordinator.publishHealth({ id: CAPABILITY_ID, expectedRevision: 1, commit }),
+    ).rejects.toMatchObject({ code: "revision_conflict" });
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it("allows only one of two concurrent updates based on the same revision", async () => {
+    const root = await temporaryRoot();
+    const current = capability(1, ["search"]);
+    const candidate = capability(2, ["search", "read"]);
+    let stored = current;
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: {
+        get: async () => stored,
+        discardUnpublishedRevision: async () => false,
+      } as unknown as CapabilityStore,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+    const mutation = () =>
+      coordinator.publish({
+        current,
+        candidate,
+        commit: async () => {
+          stored = candidate;
+          return candidate;
+        },
+      });
+
+    const results = await Promise.allSettled([mutation(), mutation()]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ code: "revision_conflict" }) }),
+    ]);
+    expect(stored.manifest.latestRevision).toBe(2);
   });
 
   it("blocks removed selected tools before committing any revision", async () => {
@@ -122,7 +223,7 @@ describe("CapabilityRevisionCoordinator", () => {
       code: "capability_incompatible",
     } satisfies Partial<CapabilityStoreError>);
     expect(commit).not.toHaveBeenCalled();
-    expect(project.apply).not.toHaveBeenCalled();
+    expect(project.publish).not.toHaveBeenCalled();
     expect(await journalFiles(root)).toEqual([]);
   });
 
@@ -146,7 +247,7 @@ describe("CapabilityRevisionCoordinator", () => {
     await coordinator.publish({ current, candidate, commit });
 
     expect(commit).toHaveBeenCalledOnce();
-    expect(project.apply).not.toHaveBeenCalled();
+    expect(project.publish).not.toHaveBeenCalled();
     expect(system.upgrade).not.toHaveBeenCalled();
   });
 
@@ -173,7 +274,7 @@ describe("CapabilityRevisionCoordinator", () => {
     await expect(
       first.publish({ current, candidate, commit: async () => candidate }),
     ).rejects.toThrow("simulated crash");
-    expect(project.apply).toHaveBeenCalledOnce();
+    expect(project.publish).toHaveBeenCalledOnce();
     expect(await journalFiles(root)).toHaveLength(1);
 
     const recoveredSystem = fakeSystemExpert([]);
@@ -184,8 +285,8 @@ describe("CapabilityRevisionCoordinator", () => {
       systemExperts: recoveredSystem.registry,
     }).recover();
 
-    expect(project.apply).toHaveBeenCalledOnce();
-    expect(recoveredSystem.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2);
+    expect(project.publish).toHaveBeenCalledOnce();
+    expect(recoveredSystem.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2, ["search"]);
     expect(await journalFiles(root)).toEqual([]);
   });
 
@@ -220,6 +321,136 @@ describe("CapabilityRevisionCoordinator", () => {
 
     expect(discard).toHaveBeenCalledWith(CAPABILITY_ID, 2, current.health);
     expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("rolls back prepared credentials when Capability commit never becomes visible", async () => {
+    const root = await temporaryRoot();
+    const current = capability(1, ["search"]);
+    const candidate = capability(2, ["search"]);
+    const prepared = {
+      mutationId: "00000000-0000-4000-8000-000000000201",
+      capabilityId: CAPABILITY_ID,
+      previousRefs: [],
+      nextRefs: [],
+    };
+    let pending = true;
+    const rollback = vi.fn(async () => {
+      pending = false;
+    });
+    const credentialStore: CapabilityCredentialStore = {
+      ...credentials,
+      prepareMany: async () => prepared,
+      pending: async () => (pending ? prepared : undefined),
+      rollback,
+    };
+    const discard = vi.fn(async () => true);
+    const store = {
+      get: async () => current,
+      discardUnpublishedRevision: discard,
+    } as unknown as CapabilityStore;
+    const coordinator = createCapabilityRevisionCoordinatorImpl({
+      journalRoot: root,
+      capabilities: store,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+      credentials: credentialStore,
+    });
+
+    await expect(
+      coordinator.publish({
+        current,
+        candidate,
+        prepareCredentials: async () => await credentialStore.prepareMany(CAPABILITY_ID, {}),
+        commit: async () => {
+          throw new Error("simulated storage failure");
+        },
+      }),
+    ).rejects.toThrow("simulated storage failure");
+
+    await coordinator.recover();
+
+    expect(rollback).toHaveBeenCalledWith(prepared);
+    expect(pending).toBe(false);
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("replays an interrupted deletion from the coordinator journal root", async () => {
+    const root = await temporaryRoot();
+    const current = capability(1, ["search"]);
+    const completeRemoval = vi.fn(async () => undefined);
+    const store = {
+      get: async () => current,
+      completeRemoval,
+    } as unknown as CapabilityStore;
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: store,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+
+    await expect(
+      coordinator.mutate({
+        id: CAPABILITY_ID,
+        expectedRevision: 1,
+        mutationType: "delete",
+        commit: async () => {
+          throw new Error("simulated deletion crash");
+        },
+      }),
+    ).rejects.toThrow("simulated deletion crash");
+
+    await coordinator.recover();
+
+    expect(completeRemoval).toHaveBeenCalledWith(CAPABILITY_ID, 1);
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("upgrades and replays a historical v1 journal fixture", async () => {
+    const root = await temporaryRoot();
+    const directory = join(root, encodePragmaPathSegment(CAPABILITY_ID));
+    await mkdir(directory, { recursive: true });
+    const fixture = await readFile(
+      new URL("./fixtures/capability-revision-propagation-v1.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(join(directory, "2.json"), fixture);
+    const system = fakeSystemExpert([]);
+
+    await createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: fakeCapabilityStore(capability(2, ["search"])),
+      project: fakeProject([]).store,
+      systemExperts: system.registry,
+    }).recover();
+
+    expect(system.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2, ["search"]);
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("fails closed and reports a future mutation journal version", async () => {
+    const root = await temporaryRoot();
+    const directory = join(root, encodePragmaPathSegment(CAPABILITY_ID));
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "2.json"),
+      `${JSON.stringify({ schemaVersion: "pragma.capability-mutation/v99" })}\n`,
+    );
+    const warn = vi.fn();
+
+    await createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: fakeCapabilityStore(capability(2, ["search"])),
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+      warn,
+    }).recover();
+
+    expect(warn).toHaveBeenCalledWith(
+      "Capability revision propagation could not be recovered.",
+      expect.anything(),
+    );
+    expect(await journalFiles(root)).toEqual([`${encodePragmaPathSegment(CAPABILITY_ID)}/2.json`]);
   });
 });
 
@@ -277,13 +508,8 @@ function expert(id: string, capabilityRef: string, tools: string[]): PragmaResou
 function fakeProject(initial: PragmaResource[]) {
   let revision = 1;
   const state = { resources: structuredClone(initial) };
-  const apply = vi.fn(async (input: { upserts?: readonly PragmaResource[] }) => {
-    const byRef = new Map(
-      state.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
-    );
-    for (const resource of input.upserts ?? [])
-      byRef.set(canonicalPragmaResourceRef(resource), resource);
-    state.resources = [...byRef.values()];
+  const publish = vi.fn(async (input: { resources: readonly PragmaResource[] }) => {
+    state.resources = structuredClone([...input.resources]);
     revision += 1;
     return { revision, resources: state.resources };
   });
@@ -291,10 +517,14 @@ function fakeProject(initial: PragmaResource[]) {
     get resources() {
       return state.resources;
     },
-    apply,
+    publish,
+    concurrentUpdate(resources: readonly PragmaResource[]) {
+      state.resources = structuredClone([...resources]);
+      revision += 1;
+    },
     store: {
       get: async () => ({ revision, resources: state.resources }),
-      apply,
+      publish,
     } as unknown as PragmaProjectStore,
   };
 }
@@ -318,14 +548,29 @@ function fakeSystemExpert(selectedTools: string[]) {
                 },
               ],
       }),
-      upgradeCapabilityRevision: upgrade,
+      validateAndUpgradeCapabilityRevision: upgrade,
     } as unknown as DesktopSystemExpertRegistry,
   };
 }
 
 function fakeCapabilityStore(candidate: Capability): CapabilityStore {
+  let firstRead = true;
   return {
-    get: async () => candidate,
+    get: async () => {
+      if (!firstRead) return candidate;
+      firstRead = false;
+      return {
+        ...candidate,
+        manifest: {
+          ...candidate.manifest,
+          latestRevision: Math.max(1, candidate.manifest.latestRevision - 1),
+        },
+        health: {
+          ...candidate.health,
+          revision: Math.max(1, candidate.health.revision - 1),
+        },
+      };
+    },
   } as unknown as CapabilityStore;
 }
 

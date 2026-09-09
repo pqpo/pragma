@@ -124,8 +124,9 @@ Project Revision 保存不可变 manifest 与 Merkle `snapshotHash`，文件对�
 ## Capability、Evaluation 与内置 Agent
 
 Capability 使用不可变 revision、独立凭据和工具快照。Expert 固定引用 Capability revision 与 tool
-allowlist；ready revision 的激活由 Desktop coordinator 原子更新当前 Project binding 和 System Expert
-customization，历史 Project Revision、Mission 与 Execution 保持固定。
+allowlist；ready revision 的激活由 Desktop coordinator 通过可重放事务更新当前 Project binding 和 System Expert
+customization，历史 Project Revision、Mission 与 Execution 保持固定。Capability 创建、删除和凭据切换也使用
+可恢复 journal；候选 Secret generation 只在对应 Capability 写入持久化后才切换为 active。
 
 Evaluation 是独立、可版本化的资源。它可以针对真实任务定义输入与判定标准，通过 Run Dry 验证 Flow，
 并为 Runtime、模型、Prompt、Context 或 Capability revision 的变更提供可重复比较的依据。

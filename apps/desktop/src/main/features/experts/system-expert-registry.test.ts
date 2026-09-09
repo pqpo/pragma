@@ -146,7 +146,19 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.getAdditionalResources(BUILT_IN_PRAGMA_REF)).toHaveLength(2);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).not.toBe(originalFingerprint);
 
-    await expect(registry.upgradeCapabilityRevision(capabilityId, 4)).resolves.toBe(true);
+    await expect(
+      registry.validateAndUpgradeCapabilityRevision(capabilityId, 4, []),
+    ).rejects.toMatchObject({
+      code: "capability_incompatible",
+    });
+    expect(registry.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
+      revision: 2,
+      capabilities: [{ capabilityId, revision: 3 }],
+    });
+
+    await expect(
+      registry.validateAndUpgradeCapabilityRevision(capabilityId, 4, ["search_docs"]),
+    ).resolves.toBe(true);
     expect(registry.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
       revision: 3,
       capabilities: [{ capabilityId, revision: 4 }],

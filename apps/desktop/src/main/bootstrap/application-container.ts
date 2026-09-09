@@ -526,11 +526,20 @@ export async function createDesktopApplicationContainer(
     secretStore,
     legacyDecryptor: legacyCredentialDecryptor,
   });
+  // Assigned after the repository-facing store is constructed; the callbacks are not invoked
+  // during construction, which closes the coordinator/store composition cycle without a setter.
+  // eslint-disable-next-line prefer-const
+  let capabilityRevisionCoordinator: ReturnType<typeof createCapabilityRevisionCoordinator>;
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
     credentials: capabilityCredentials,
     mcpToolRegistryPool,
     verify: createCapabilityVerifier(capabilityCredentials, mcpToolRegistryPool),
+    mutations: {
+      publish: async (input) => await capabilityRevisionCoordinator.publish(input),
+      publishHealth: async (input) => await capabilityRevisionCoordinator.publishHealth(input),
+      mutate: async (input) => await capabilityRevisionCoordinator.mutate(input),
+    },
     isReferenced: async (capabilityId) => {
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
@@ -543,15 +552,15 @@ export async function createDesktopApplicationContainer(
       await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
     },
   });
-  const capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
+  capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
     journalRoot: join(pragmaPaths.stateRoot(), "capability-revision-propagation"),
     capabilities: capabilityStore,
     project: pragmaProjectStore,
     systemExperts,
+    credentials: capabilityCredentials,
     warn: (message, error) =>
       mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
   });
-  capabilityStore.setRevisionPublisher(capabilityRevisionCoordinator);
   const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
   const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};

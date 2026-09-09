@@ -202,6 +202,7 @@ export function createSkillRevisionService(options: {
     try {
       await options.capabilities.updateGeneratedSkill({
         id: applying.request.capabilityId,
+        baseRevision: changeSet.baseRevision,
         package: nextPackage,
       });
       return await mutate(applying.id, applying.revision, (job) =>

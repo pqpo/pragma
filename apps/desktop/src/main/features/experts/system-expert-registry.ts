@@ -91,7 +91,11 @@ export interface DesktopSystemExpertRegistry {
   isReservedRef(ref: string): boolean;
   isReservedId(id: string): boolean;
   update(ref: string, input: UpdateBuiltInExpertDefinition): Promise<ExpertDefinition>;
-  upgradeCapabilityRevision(capabilityId: string, revision: number): Promise<boolean>;
+  validateAndUpgradeCapabilityRevision(
+    capabilityId: string,
+    revision: number,
+    availableTools?: readonly string[],
+  ): Promise<boolean>;
   reset(ref: string): Promise<ExpertDefinition>;
 }
 
@@ -352,10 +356,30 @@ export function createDesktopSystemExpertRegistry(options?: {
       });
       return definition(ref);
     },
-    async upgradeCapabilityRevision(capabilityId, revision) {
+    async validateAndUpgradeCapabilityRevision(capabilityId, revision, availableTools) {
       let changed = false;
       await mutate(async () => {
         const latest = await readConfig();
+        if (availableTools !== undefined) {
+          const available = new Set(availableTools);
+          const incompatible = [...latest.values()].flatMap((customization) =>
+            customization.capabilities.flatMap((capability) =>
+              capability.capabilityId === capabilityId && capability.kind === "tools"
+                ? capability.toolNames
+                    .filter((tool) => !available.has(tool))
+                    .map((tool) => `${customization.name} (${customization.ref}): ${tool}`)
+                : [],
+            ),
+          );
+          if (incompatible.length > 0) {
+            throw Object.assign(
+              new Error(
+                `Capability update removes tools selected by current System Experts: ${incompatible.join("; ")}.`,
+              ),
+              { code: "capability_incompatible" as const },
+            );
+          }
+        }
         for (const [ref, customization] of latest) {
           if (
             !customization.capabilities.some(

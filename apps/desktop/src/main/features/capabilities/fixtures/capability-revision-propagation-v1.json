@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "pragma.capability-revision-propagation/v1",
+  "capabilityId": "751a410b-4f80-4d0f-9db4-0efbe86afea7",
+  "targetRevision": 2,
+  "stage": "project-propagated",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "projectRevision": 2,
+  "previousHealth": {
+    "revision": 1,
+    "status": "ready",
+    "checkedAt": "2026-01-01T00:00:00.000Z"
+  }
+}

@@ -250,6 +250,7 @@ export const ImportSkillCapabilitySchema = z.object({
 
 export const UpdateSkillCapabilitySchema = z.object({
   id: CapabilityIdSchema,
+  baseRevision: z.number().int().positive(),
   sourcePath: z.string().trim().min(1).max(2_000),
 });
 
@@ -267,6 +268,7 @@ export const CreateCapabilitySchema = z
 export const UpdateCapabilitySchema = z
   .object({
     id: CapabilityIdSchema,
+    baseRevision: z.number().int().positive(),
     definition: z.union([
       McpServerCapabilityDefinitionSchema,
       HttpServiceCapabilityDefinitionSchema,
@@ -293,6 +295,9 @@ function addCodeCredentialIssue(
 }
 
 export const CapabilityActionSchema = z.object({ id: CapabilityIdSchema });
+export const CapabilityRevisionActionSchema = CapabilityActionSchema.extend({
+  expectedRevision: z.number().int().positive(),
+});
 export const CapabilityDeleteResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
   z.object({
@@ -336,6 +341,7 @@ export const SkillFileContentSchema = SkillFileEntrySchema.extend({
 });
 export const CapabilityTestRequestSchema = z.object({
   id: CapabilityIdSchema,
+  expectedRevision: z.number().int().positive(),
   toolName: CapabilityToolNameSchema.optional(),
   input: z.unknown().optional(),
 });
