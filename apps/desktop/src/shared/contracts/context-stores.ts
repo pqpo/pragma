@@ -186,6 +186,10 @@ export const ContextStoreRevisionRecordSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
+export const ListContextStoreRevisionRecordsSchema = z.object({
+  storeId: ContextStoreIdSchema.optional(),
+});
+
 const CreateContextStoreBaseShape = {
   name: KnowledgeBaseNameSchema,
   description: KnowledgeBaseDescriptionSchema,

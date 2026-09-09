@@ -6,6 +6,7 @@ import {
   ContextStoreEntrySchema,
   ContextStoreImportInspectionSchema,
   ContextStoreSchema,
+  ContextStoreRevisionRecordSchema,
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
@@ -14,6 +15,7 @@ import {
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,
   ListContextStoreEntriesSchema,
+  ListContextStoreRevisionRecordsSchema,
   RenameContextStoreEntrySchema,
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
@@ -124,6 +126,13 @@ export const contextStoresApi = {
       DiscardContextStoreEditorDraftSchema.parse(input),
     );
   },
+  listContextStoreRevisionRecords: async (input = {}) =>
+    ContextStoreRevisionRecordSchema.array().parse(
+      await ipcRenderer.invoke(
+        "context-stores:list-revision-records",
+        ListContextStoreRevisionRecordsSchema.parse(input),
+      ),
+    ),
   submitContextStoreRevision: async (input) =>
     ContextStoreRevisionJobSchema.parse(
       await ipcRenderer.invoke(
@@ -269,6 +278,7 @@ export const contextStoresApi = {
   | "getContextStoreEditorDraft"
   | "commitContextStoreEditorDraft"
   | "discardContextStoreEditorDraft"
+  | "listContextStoreRevisionRecords"
   | "submitContextStoreRevision"
   | "listContextStoreRevisions"
   | "getContextStoreRevision"

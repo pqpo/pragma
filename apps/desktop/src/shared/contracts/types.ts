@@ -106,6 +106,7 @@ import {
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,
   ListContextStoreEntriesSchema,
+  ListContextStoreRevisionRecordsSchema,
   RenameContextStoreEntrySchema,
   UpdateContextStoreFileSchema,
 } from "./context-stores.ts";
@@ -447,6 +448,7 @@ export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
+export type ListContextStoreRevisionRecords = z.infer<typeof ListContextStoreRevisionRecordsSchema>;
 export type ContextStoreEditorDraft = z.infer<typeof ContextStoreEditorDraftSchema>;
 export type GetContextStoreEditorDraft = z.infer<typeof GetContextStoreEditorDraftSchema>;
 export type CommitContextStoreEditorDraft = z.infer<typeof CommitContextStoreEditorDraftSchema>;

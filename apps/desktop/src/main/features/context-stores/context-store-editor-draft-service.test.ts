@@ -52,7 +52,15 @@ describe("context store editor drafts", () => {
     const committed = await drafts.commit(store.id, editorDraft!.revision);
 
     expect(committed.contentRevision).toBe(2);
-    await expect(stores.history(store.id)).resolves.toHaveLength(2);
+    await expect(stores.history(store.id)).resolves.toEqual([
+      expect.objectContaining({
+        revision: 2,
+        author: "user",
+        parentRevision: 1,
+        summary: "Manual save (2 changed entries).",
+      }),
+      expect.objectContaining({ revision: 1, parentRevision: null }),
+    ]);
     await expect(stores.getContent(store.id, "a.md")).resolves.toMatchObject({
       content: "First revised",
     });

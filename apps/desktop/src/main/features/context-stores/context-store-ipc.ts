@@ -14,6 +14,7 @@ import {
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,
   ListContextStoreEntriesSchema,
+  ListContextStoreRevisionRecordsSchema,
   RenameContextStoreEntrySchema,
   SubscribeContextStoreChangesSchema,
   UpdateContextStoreFileSchema,
@@ -84,6 +85,12 @@ export function installContextStoreHandlers(
   ipcMain.handle("context-stores:list-entries", (_event, input: unknown) => {
     const parsed = ListContextStoreEntriesSchema.parse(input);
     return (editorDrafts ?? store).listEntries(parsed.storeId);
+  });
+  ipcMain.handle("context-stores:list-revision-records", async (_event, input: unknown) => {
+    const parsed = ListContextStoreRevisionRecordsSchema.parse(input ?? {});
+    if (parsed.storeId !== undefined) return await store.history(parsed.storeId);
+    const stores = await store.list();
+    return (await Promise.all(stores.map(async (item) => await store.history(item.id)))).flat();
   });
   ipcMain.handle("context-stores:create-folder", async (_event, input: unknown) => {
     const parsed = CreateContextStoreFolderSchema.parse(input);

@@ -475,11 +475,11 @@ export const studio = {
   resourceId: "Resource ID",
   capabilities: "Capabilities",
   contextStores: "Knowledge bases",
-  contextStoreRevisions: "Revision tasks",
+  contextStoreRevisions: "Revision history",
   contextStoreRevisionsDescription:
-    "Track generated changes, review proposals, and handle tasks that need attention.",
-  revisionTaskCount: "{{count}} tasks",
-  revisionTaskColumn: "Revision request",
+    "Track manual saves and generated changes, review proposals, and handle tasks that need attention.",
+  revisionTaskCount: "{{count}} records",
+  revisionTaskColumn: "Revision",
   revisionUpdatedAt: "Updated",
   revisionErrorModelNotConfigured:
     "No revision model is configured. Configure one in Settings → Models & Providers, then retry.",
@@ -502,10 +502,13 @@ export const studio = {
   revisionErrorGeneric:
     "The revision task did not finish. Check its status or run details, then retry.",
   revisionSource: {
+    manual: "Manual change",
     user: "User",
     "memory-learning": "Memory learning",
     "expert-reflection": "Expert reflection",
   },
+  knowledgeRevisionNumber: "Revision {{count}}",
+  unavailableKnowledgeBase: "Unavailable knowledge base",
   revisionReflectionProvenance: "Team {{teamId}} · Expert {{expertId}} · Execution {{executionId}}",
   revisionExpertProvenance: "Expert {{expertId}} · Execution {{executionId}}",
   revisionStoreFilter: "Knowledge base filter",
@@ -518,9 +521,9 @@ export const studio = {
     "Describe the change you want Pragma to prepare for “{{name}}”. Nothing is applied without review.",
   submittingRevision: "Submitting…",
   allKnowledgeBases: "All knowledge bases",
-  noStoreRevisionTasks: "No revision tasks yet.",
+  noStoreRevisionTasks: "No revision history yet.",
   noStoreRevisionTasksDescription:
-    "Submitted tasks and changes waiting for review will appear here.",
+    "Manual saves, submitted tasks, and changes waiting for review will appear here.",
   approveRevision: "Approve and apply",
   rejectRevision: "Reject",
   retryRevision: "Retry",

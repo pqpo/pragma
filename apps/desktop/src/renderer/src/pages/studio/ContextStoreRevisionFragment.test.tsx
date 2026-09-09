@@ -6,7 +6,9 @@ import {
   buildRevisionLineDiff,
   ContextStoreRevisionDiffFragment,
   ContextStoreRevisionFragment,
+  ContextStoreManualRevisionRow,
   draftOverlayOperations,
+  manualContextStoreRevisionRecords,
 } from "./ContextStoreRevisionFragment.tsx";
 
 afterEach(async () => {
@@ -37,9 +39,61 @@ describe("ContextStoreRevisionFragment", () => {
       <ContextStoreRevisionFragment stores={[]} onBack={() => undefined} />,
     );
 
-    expect(html).toContain("修订任务");
+    expect(html).toContain("修订记录");
     expect(html).toContain("全部知识库");
-    expect(html).toContain("暂无修订任务");
+    expect(html).toContain("暂无修订记录");
+  });
+
+  it("labels a user-saved knowledge revision as a manual change", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const html = renderToStaticMarkup(
+      <ContextStoreManualRevisionRow
+        store={{
+          schemaVersion: "pragma.context-store/v4",
+          id: "00000000-0000-4000-8000-000000000001",
+          name: "产品知识",
+          description: "",
+          type: "file",
+          status: "ready",
+          source: { origin: "created" },
+          contentRevision: 2,
+          snapshotHash: "1".repeat(64),
+          createdAt: "2026-08-05T07:24:00.000Z",
+          updatedAt: "2026-08-05T07:29:00.000Z",
+        }}
+        record={{
+          schemaVersion: "pragma.context-store-revision-record/v1",
+          storeId: "00000000-0000-4000-8000-000000000001",
+          revision: 2,
+          snapshotHash: "1".repeat(64),
+          parentRevision: 1,
+          author: "user",
+          summary: "更新 2 个文件。",
+          createdAt: "2026-08-05T07:29:00.000Z",
+        }}
+      />,
+    );
+
+    expect(html).toContain("产品知识");
+    expect(html).toContain("修订版本 2");
+    expect(html).toContain("手动修改");
+  });
+
+  it("keeps only later user saves in manual revision history", () => {
+    const record = {
+      schemaVersion: "pragma.context-store-revision-record/v1" as const,
+      storeId: "00000000-0000-4000-8000-000000000001",
+      snapshotHash: "1".repeat(64),
+      summary: "Saved",
+      createdAt: "2026-08-05T07:29:00.000Z",
+    };
+    expect(
+      manualContextStoreRevisionRecords([
+        { ...record, revision: 1, parentRevision: null, author: "user" },
+        { ...record, revision: 2, parentRevision: 1, author: "store-revision-agent" },
+        { ...record, revision: 3, parentRevision: 2, author: "user" },
+      ]),
+    ).toEqual([expect.objectContaining({ revision: 3, author: "user" })]);
   });
 
   it("renders review-only documents before the changed files", async () => {

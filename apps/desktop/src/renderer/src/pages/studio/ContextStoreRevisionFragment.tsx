@@ -18,6 +18,7 @@ import type {
   ContextStore,
   ContextStoreChangeSet,
   ContextStoreDraft,
+  ContextStoreRevisionRecord,
   ContextStoreRevisionJob,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -100,6 +101,14 @@ export function buildRevisionLineDiff(before: string, after: string): readonly R
   return lines;
 }
 
+export function manualContextStoreRevisionRecords(
+  records: readonly ContextStoreRevisionRecord[],
+): readonly ContextStoreRevisionRecord[] {
+  return records
+    .filter((record) => record.author === "user" && record.parentRevision !== null)
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
 export function ContextStoreRevisionFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly initialStoreId?: string | undefined;
@@ -113,6 +122,7 @@ export function ContextStoreRevisionFragment(props: {
   const [storeId, setStoreId] = useState(props.initialStoreId ?? "");
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
   const [drafts, setDrafts] = useState<readonly ContextStoreDraft[]>([]);
+  const [revisionRecords, setRevisionRecords] = useState<readonly ContextStoreRevisionRecord[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -122,13 +132,15 @@ export function ContextStoreRevisionFragment(props: {
     const api = desktopApi();
     if (api === undefined) return;
     try {
-      const [next, allJobs, nextDrafts] = await Promise.all([
+      const [next, allJobs, nextDrafts, nextRecords] = await Promise.all([
         api.listContextStoreRevisions(storeId === "" ? {} : { storeId }),
         storeId === "" ? undefined : api.listContextStoreRevisions(),
         api.listContextStoreDrafts(storeId === "" ? {} : { storeId }),
+        api.listContextStoreRevisionRecords(storeId === "" ? {} : { storeId }),
       ]);
       setJobs(next);
       setDrafts(nextDrafts);
+      setRevisionRecords(nextRecords);
       props.onCountChanged?.(
         (allJobs ?? next).filter((job) => !["merged", "rejected"].includes(job.state)).length,
       );
@@ -174,6 +186,7 @@ export function ContextStoreRevisionFragment(props: {
 
   const selectedJob = jobs.find((job) => job.id === selectedJobId);
   const selectedDraft = drafts.find((draft) => draft.id === selectedJob?.draftId);
+  const manualRecords = manualContextStoreRevisionRecords(revisionRecords);
   if (selectedJob !== undefined && selectedDraft !== undefined) {
     return (
       <ContextStoreRevisionDiffFragment
@@ -208,7 +221,7 @@ export function ContextStoreRevisionFragment(props: {
                 <p>{t("contextStoreRevisionsDescription")}</p>
               </div>
               <span className="revision-task-count">
-                {t("revisionTaskCount", { count: jobs.length })}
+                {t("revisionTaskCount", { count: jobs.length + manualRecords.length })}
               </span>
             </div>
           </div>
@@ -228,7 +241,7 @@ export function ContextStoreRevisionFragment(props: {
       }
     >
       <div className="revision-task-content">
-        {jobs.length === 0 ? (
+        {jobs.length === 0 && manualRecords.length === 0 ? (
           <div className="revision-task-empty">
             <ClockCounterClockwise size={28} aria-hidden="true" />
             <h3>{t("noStoreRevisionTasks")}</h3>
@@ -243,6 +256,13 @@ export function ContextStoreRevisionFragment(props: {
               <span>{t("actions")}</span>
             </div>
             <div className="revision-task-list" role="list">
+              {manualRecords.map((record) => (
+                <ContextStoreManualRevisionRow
+                  key={`${record.storeId}:${record.revision}`}
+                  record={record}
+                  store={props.stores.find((candidate) => candidate.id === record.storeId)}
+                />
+              ))}
               {jobs.map((job) => {
                 const store = props.stores.find(
                   (candidate) => candidate.id === job.request.storeId,
@@ -364,6 +384,37 @@ export function ContextStoreRevisionFragment(props: {
         />
       ) : null}
     </StudioScreenFrame>
+  );
+}
+
+export function ContextStoreManualRevisionRow(props: {
+  readonly record: ContextStoreRevisionRecord;
+  readonly store: ContextStore | undefined;
+}) {
+  const { t, i18n } = useTranslation("studio");
+  return (
+    <article className="revision-task-row" role="listitem">
+      <div className="revision-task-open">
+        <span className="revision-task-summary">
+          <strong>{props.record.summary}</strong>
+          <small>
+            {props.store?.name ?? t("unavailableKnowledgeBase")} ·{` `}
+            {t("knowledgeRevisionNumber", { count: props.record.revision })}
+          </small>
+        </span>
+        <span className="revision-task-result">
+          <span className="revision-task-state is-manual">{t("revisionSource.manual")}</span>
+        </span>
+        <time
+          className="revision-task-updated"
+          dateTime={props.record.createdAt}
+          title={formatRevisionTimestamp(props.record.createdAt, i18n.language)}
+        >
+          {formatRevisionTimestamp(props.record.createdAt, i18n.language)}
+        </time>
+      </div>
+      <div className="revision-task-actions" />
+    </article>
   );
 }
 

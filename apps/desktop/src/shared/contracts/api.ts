@@ -34,6 +34,8 @@ import type {
   RenameContextStoreEntry,
   DeleteContextStoreEntry,
   ContextStoreEditorDraft,
+  ContextStoreRevisionRecord,
+  ListContextStoreRevisionRecords,
   GetContextStoreEditorDraft,
   CommitContextStoreEditorDraft,
   DiscardContextStoreEditorDraft,
@@ -368,6 +370,9 @@ export interface PragmaDesktopAPI {
   ) => Promise<ContextStoreEditorDraft | undefined>;
   commitContextStoreEditorDraft: (input: CommitContextStoreEditorDraft) => Promise<ContextStore>;
   discardContextStoreEditorDraft: (input: DiscardContextStoreEditorDraft) => Promise<void>;
+  listContextStoreRevisionRecords: (
+    input?: ListContextStoreRevisionRecords,
+  ) => Promise<ContextStoreRevisionRecord[]>;
   submitContextStoreRevision: (
     input: ContextStoreRevisionRequest,
   ) => Promise<ContextStoreRevisionJob>;

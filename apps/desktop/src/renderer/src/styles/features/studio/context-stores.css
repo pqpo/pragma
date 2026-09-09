@@ -1044,6 +1044,11 @@
   color: #277449;
 }
 
+.revision-task-state.is-manual {
+  background: rgb(92 74 168 / 10%);
+  color: #6650a4;
+}
+
 .revision-task-state:is(.is-needs_attention, .is-rejected) {
   background: rgb(183 121 31 / 11%);
   color: #966016;
