@@ -1,4 +1,4 @@
-import { isHumanInteractionCheckpointError, type PragmaLogger } from "@pragma/core";
+import { isHumanInteractionCheckpointError } from "@pragma/core";
 
 import type { MissionStore } from "./mission-store.ts";
 
@@ -25,7 +25,6 @@ export function observeMissionExecution(
   inputMessageId: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
-  logger?: PragmaLogger,
   onTerminal?: ((input: MissionExecutionTerminalOutcome) => void | Promise<void>) | undefined,
   checkpoint?: Promise<void> | undefined,
 ): Promise<"terminal" | "checkpointed"> {
@@ -59,31 +58,13 @@ export function observeMissionExecution(
         failure = error;
       }
     }
-    try {
-      await onFinished();
-    } catch (error) {
-      logger?.error(
-        "mission.finish_callback_failed",
-        `Failed to finish Mission execution ${execution.executionId}.`,
-        error,
-        { missionId, executionId: execution.executionId },
-      );
-    }
+    await onFinished();
     if (checkpointed) return "checkpointed";
-    try {
-      await onTerminal?.({
-        status,
-        ...(result === undefined ? {} : { result }),
-        ...(failure === undefined ? {} : { error: failure }),
-      });
-    } catch (error) {
-      logger?.error(
-        "mission.terminal_callback_failed",
-        `Failed to project Mission execution ${execution.executionId}.`,
-        error,
-        { missionId, executionId: execution.executionId },
-      );
-    }
+    await onTerminal?.({
+      status,
+      ...(result === undefined ? {} : { result }),
+      ...(failure === undefined ? {} : { error: failure }),
+    });
     await missions.updateExecution(
       missionId,
       {

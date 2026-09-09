@@ -14,7 +14,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 
-import { withFileLock } from "@pragma/core";
+import { decodePragmaPathSegment, encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import type { ExpertPromptAttachment } from "@pragma/shared";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
@@ -222,11 +222,21 @@ const EarlyMissionMigrationTransactionSchema = z.object({
   target: z.record(z.string(), z.unknown()),
 });
 
+const MissionPathMigrationTransactionSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.mission-path-migration/v1"),
+    missionId: MissionIdSchema,
+    legacy: z.string().min(1),
+    target: z.string().min(1),
+  })
+  .strict();
+
 export function createMissionStore(options: {
   readonly missionsPath: string;
   readonly onReadIssue?: ((issue: MissionStoreReadIssue) => void) | undefined;
 }): MissionStore {
-  const missionPath = (id: string) => join(options.missionsPath, id);
+  const missionPath = (id: string) => join(options.missionsPath, encodePragmaPathSegment(id));
+  const legacyMissionPath = (id: string) => join(options.missionsPath, id);
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
   const attachmentsPath = (id: string) => join(missionPath(id), "attachments.json");
@@ -257,7 +267,8 @@ export function createMissionStore(options: {
     join(missionPath(id), "migration-backups", "mission.v9.yaml");
   const branchHistoryPath = (id: string) => join(missionPath(id), "branch", "history.json");
   const projections = createMissionProjectionStorage(missionPath);
-  const lockPath = (id: string) => join(options.missionsPath, ".locks", `${id}.lock`);
+  const lockPath = (id: string) =>
+    join(options.missionsPath, ".locks", `${encodePragmaPathSegment(id)}.lock`);
   const timelineCache = new Map<
     string,
     { readonly size: number; readonly mtimeMs: number; readonly records: MissionTimelineRecord[] }
@@ -269,7 +280,76 @@ export function createMissionStore(options: {
   let executionTitleIndexInitialized = false;
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
-    await withFileLock(lockPath(id), operation);
+    await withFileLock(lockPath(id), async () => {
+      await migrateLegacyMissionPath(id);
+      return await operation();
+    });
+
+  const migrateLegacyMissionPath = async (id: string): Promise<void> => {
+    const legacy = legacyMissionPath(id);
+    const target = missionPath(id);
+    const journal = join(
+      options.missionsPath,
+      `.path-migration.${encodePragmaPathSegment(id)}.json`,
+    );
+    const pendingValue = await readJsonIfExists(journal);
+    if (pendingValue !== undefined) {
+      const pending = MissionPathMigrationTransactionSchema.parse(pendingValue);
+      if (pending.missionId !== id || pending.legacy !== legacy || pending.target !== target) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission ${id} has an invalid path migration journal.`,
+        );
+      }
+    }
+    if (!(await pathExists(legacy))) {
+      if (pendingValue !== undefined && (await pathExists(target)))
+        await rm(journal, { force: true });
+      else if (pendingValue !== undefined) {
+        throw new MissionStoreError(
+          "config_invalid",
+          `Mission ${id} path migration lost both its source and target.`,
+        );
+      }
+      return;
+    }
+    if (pendingValue === undefined) {
+      await writeJsonAtomically(
+        journal,
+        MissionPathMigrationTransactionSchema.parse({
+          schemaVersion: "pragma.mission-path-migration/v1",
+          missionId: id,
+          legacy,
+          target,
+        }),
+      );
+    }
+    if (await pathExists(target)) {
+      if (await directoryContainsFiles(target)) {
+        throw new MissionStoreError("config_invalid", `mission_path_migration_conflict: ${id}`);
+      }
+      await rm(target, { recursive: true, force: true });
+    }
+    await rename(legacy, target);
+    await rm(journal, { force: true });
+  };
+
+  const listMissionIds = async (): Promise<readonly string[]> => {
+    const directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
+      (entry) => entry.isDirectory() && !entry.name.startsWith("."),
+    );
+    return [
+      ...new Set(
+        directories.map((entry) => {
+          try {
+            return MissionIdSchema.parse(decodePragmaPathSegment(entry.name));
+          } catch {
+            return MissionIdSchema.parse(entry.name);
+          }
+        }),
+      ),
+    ];
+  };
 
   const recoverEarlyMigration = async (id: string): Promise<unknown | undefined> => {
     const value = await readJsonIfExists(earlyMigrationTransactionPath(id));
@@ -815,13 +895,11 @@ export function createMissionStore(options: {
     },
     async list() {
       try {
-        const directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
-          (entry) => entry.isDirectory() && !entry.name.startsWith("."),
-        );
+        const missionIds = await listMissionIds();
         const results = await Promise.allSettled(
-          directories.map(async (entry) => ({
-            missionId: entry.name,
-            mission: await readMission(entry.name),
+          missionIds.map(async (missionId) => ({
+            missionId,
+            mission: await readMission(missionId),
           })),
         );
         const missions: Mission[] = [];
@@ -831,7 +909,7 @@ export function createMissionStore(options: {
             missions.push(result.value.mission);
             continue;
           }
-          const missionId = directories[index]?.name ?? "unknown";
+          const missionId = missionIds[index] ?? "unknown";
           const issue = { missionId, error: normalizeReadError(result?.reason, missionId) };
           failures.push(issue);
           options.onReadIssue?.(issue);
@@ -858,20 +936,18 @@ export function createMissionStore(options: {
         unresolved.delete(executionId);
       }
       if (unresolved.size === 0 || executionTitleIndexInitialized) return resolved;
-      let directories;
+      let missionIds;
       try {
-        directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
-          (entry) => entry.isDirectory() && !entry.name.startsWith("."),
-        );
+        missionIds = await listMissionIds();
       } catch (error) {
         if (isNodeError(error, "ENOENT")) return resolved;
         throw error;
       }
-      for (const entry of directories) {
-        const records = await readRecords(entry.name, false);
+      for (const missionId of missionIds) {
+        const records = await readRecords(missionId, false);
         const executions = records.filter((record) => record.kind === "execution");
         if (executions.length === 0) continue;
-        const mission = await readMission(entry.name);
+        const mission = await readMission(missionId);
         for (const record of executions) {
           if (record.kind !== "execution") continue;
           executionTitleIndex.set(record.executionId, {
@@ -1293,17 +1369,15 @@ export function createMissionStore(options: {
       });
     },
     async isContextStoreReferenced(storeId) {
-      let directories;
+      let missionIds;
       try {
-        directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
-          (entry) => entry.isDirectory() && !entry.name.startsWith("."),
-        );
+        missionIds = await listMissionIds();
       } catch (error) {
         if (isNodeError(error, "ENOENT")) return false;
         throw error;
       }
-      for (const directory of directories) {
-        const mission = await readMission(directory.name);
+      for (const missionId of missionIds) {
+        const mission = await readMission(missionId);
         if (
           isUserFacingMissionOrigin(mission.origin) &&
           mission.contextMounts.some(
@@ -2008,6 +2082,24 @@ function normalizeReadError(error: unknown, id: string): MissionStoreError {
     "config_invalid",
     error instanceof Error ? error.message : `Mission ${id} is invalid.`,
   );
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+async function directoryContainsFiles(root: string): Promise<boolean> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.isFile() || entry.isSymbolicLink()) return true;
+    if (entry.isDirectory() && (await directoryContainsFiles(join(root, entry.name)))) return true;
+  }
+  return false;
 }
 
 function isNodeError(error: unknown, code: string): boolean {

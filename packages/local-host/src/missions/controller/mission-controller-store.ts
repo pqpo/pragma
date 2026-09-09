@@ -353,6 +353,7 @@ export interface MissionControllerStore {
 
 export function createMissionControllerStore(options: {
   readonly missionsPath: string;
+  readonly missionPath?: ((missionId: string) => string) | undefined;
   readonly clock?: MissionControlClock;
   readonly retention?: MissionRetentionOptions | undefined;
   /** Test-only deterministic interruption hook for durable journal boundaries. */
@@ -362,7 +363,7 @@ export function createMissionControllerStore(options: {
   const clock = options.clock ?? { now: () => new Date() };
   const retentionPolicy: MissionRetentionPolicy = resolveMissionRetentionPolicy(options.retention);
   const missionDirectory = (missionId: string) =>
-    join(options.missionsPath, missionId, "local-host");
+    join(options.missionPath?.(missionId) ?? join(options.missionsPath, missionId), "local-host");
   const statePath = (missionId: string) => join(missionDirectory(missionId), "aggregate.json");
   const commandsPath = (missionId: string) =>
     join(missionDirectory(missionId), "command-inbox.json");

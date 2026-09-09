@@ -1,7 +1,16 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -31,6 +40,56 @@ afterEach(async () => {
 });
 
 describe("mission store", { timeout: 30_000 }, () => {
+  it("migrates a legacy raw-id directory over an empty encoded board skeleton", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Migrate Mission path",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const encoded = store.storagePath!(created.id);
+    const legacy = join(root, "missions", created.id);
+    await rename(encoded, legacy);
+    await mkdir(join(encoded, "board", "shared"), { recursive: true });
+
+    await expect(store.get(created.id)).resolves.toMatchObject({ id: created.id });
+    await expect(readFile(join(encoded, "mission.yaml"), "utf8")).resolves.toContain(created.id);
+    await expect(readFile(join(legacy, "mission.yaml"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("replays a Mission path migration interrupted after the directory rename", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover Mission path",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const target = store.storagePath!(created.id);
+    const legacy = join(missionsPath, created.id);
+    const journal = join(missionsPath, `.path-migration.${basename(target)}.json`);
+    await rename(target, legacy);
+    await writeFile(
+      journal,
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-path-migration/v1",
+        missionId: created.id,
+        legacy,
+        target,
+      })}\n`,
+    );
+    await rename(legacy, target);
+
+    await expect(store.get(created.id)).resolves.toMatchObject({ id: created.id });
+    await expect(readFile(journal, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("persists a mission pinned to an immutable project revision", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
@@ -65,16 +124,16 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.list()).resolves.toEqual([
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
-    const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
+    const manifest = await readFile(join(store.storagePath!(created.id), "mission.yaml"), "utf8");
     expect(manifest).toContain("schemaVersion: pragma.mission/v10");
     expect(created.contextMounts).toEqual([]);
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
     expect(manifest).toContain("modelOverride:");
     expect(manifest).not.toContain("messages:");
-    expect(await readFile(join(root, "missions", created.id, "messages.jsonl"), "utf8")).toContain(
-      '"kind":"user"',
-    );
+    expect(
+      await readFile(join(store.storagePath!(created.id), "messages.jsonl"), "utf8"),
+    ).toContain('"kind":"user"');
     await expect(store.getAttachments(created.id)).resolves.toEqual([]);
   });
 
@@ -285,14 +344,12 @@ describe("mission store", { timeout: 30_000 }, () => {
     expect(stored).toHaveLength(3);
     expect(stored[0]).toMatchObject({ kind: "image", mimeType: "image/png" });
     expect(stored[0]?.path).toBe(
-      join(root, "missions", mission.id, "attachments", "images", `${stored[0]?.id}.png`),
+      join(store.storagePath!(mission.id), "attachments", "images", `${stored[0]?.id}.png`),
     );
     await expect(readFile(stored[0]!.path, "utf8")).resolves.toBe("image-bytes");
     expect(stored[0]?.optimized?.path).toBe(
       join(
-        root,
-        "missions",
-        mission.id,
+        store.storagePath!(mission.id),
         "attachments",
         "images",
         "optimized",
@@ -310,7 +367,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       path: await realpath(folder),
     });
     expect(
-      JSON.parse(await readFile(join(root, "missions", mission.id, "attachments.json"), "utf8")),
+      JSON.parse(await readFile(join(store.storagePath!(mission.id), "attachments.json"), "utf8")),
     ).toMatchObject({ schemaVersion: "pragma.mission-attachments/v1" });
     const initialTurn = (await store.readTimelinePage(mission.id, { limit: 10 })).turns[0];
     expect(initialTurn?.message.attachments).toEqual(stored);
@@ -439,7 +496,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       startedAt: "2026-08-20T00:02:00.000Z",
       finishedAt: "2026-08-20T00:03:00.000Z",
     });
-    const sourceDirectory = join(root, "missions", source.id);
+    const sourceDirectory = store.storagePath!(source.id);
     await mkdir(join(sourceDirectory, "board", "shared"), { recursive: true });
     await mkdir(join(sourceDirectory, "board", "private"), { recursive: true });
     await writeFile(join(sourceDirectory, "board", "shared", "result.md"), "shared result");
@@ -647,7 +704,9 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     const branchAttachments = await store.getAttachments(branch.id);
     expect(branchAttachments).toHaveLength(1);
-    expect(branchAttachments[0]?.path).toContain(join("missions", branch.id, "attachments"));
+    expect(branchAttachments[0]?.path).toContain(
+      join(store.storagePath!(branch.id), "attachments"),
+    );
     expect(
       branchHistory?.entries[0]?.kind === "user"
         ? branchHistory.entries[0].attachments?.[0]?.path
@@ -655,11 +714,11 @@ describe("mission store", { timeout: 30_000 }, () => {
     ).toBe(branchAttachments[0]?.path);
     await expect(readFile(branchAttachments[0]!.path, "utf8")).resolves.toBe("branch-image");
     await expect(
-      readFile(join(root, "missions", branch.id, "board", "shared", "result.md"), "utf8"),
+      readFile(join(store.storagePath!(branch.id), "board", "shared", "result.md"), "utf8"),
     ).resolves.toBe("shared result");
     await expect(
       readFile(
-        join(root, "missions", branch.id, "branch", "private-board-archive", "notes.md"),
+        join(store.storagePath!(branch.id), "branch", "private-board-archive", "notes.md"),
         "utf8",
       ),
     ).resolves.toBe("private notes");
@@ -677,7 +736,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const missionDirectory = join(root, "missions", mission.id);
+    const missionDirectory = store.storagePath!(mission.id);
     const messageId = "00000000-0000-4000-8000-000000000003";
     const attachmentId = "00000000-0000-4000-8000-000000000002";
     const storedPath = join(missionDirectory, "attachments", "images", `${attachmentId}.png`);
@@ -767,7 +826,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    await writeFile(join(root, "missions", mission.id, "attachments.json"), "{not-json");
+    await writeFile(join(store.storagePath!(mission.id), "attachments.json"), "{not-json");
 
     await expect(store.getAttachments(mission.id)).rejects.toMatchObject({
       code: "config_invalid",
@@ -1164,7 +1223,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const directory = join(root, "missions", created.id);
+    const directory = store.storagePath!(created.id);
     await appendFile(join(directory, "messages.jsonl"), '{"torn"', "utf8");
     await writeFile(
       join(directory, ".messages.transaction.json"),
@@ -1217,9 +1276,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await store.writeExecutionProjection(created.id, executionId, entries);
 
     const projectionPath = join(
-      root,
-      "missions",
-      created.id,
+      store.storagePath!(created.id),
       "execution-projections",
       `${executionId}.jsonl`,
     );
@@ -1316,9 +1373,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await store.writeExecutionProjection(created.id, executionId, entries);
 
     const projectionPath = join(
-      root,
-      "missions",
-      created.id,
+      store.storagePath!(created.id),
       "execution-projections",
       `${executionId}.jsonl`,
     );
@@ -1341,7 +1396,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       executor: missionExecutorSnapshot(expertFixture()),
     });
     const executionId = "00000000-0000-4000-8000-000000000021";
-    const directory = join(root, "missions", created.id, "execution-projections");
+    const directory = join(store.storagePath!(created.id), "execution-projections");
     const legacyPath = join(directory, `${executionId}.json`);
     const currentPath = join(directory, `${executionId}.jsonl`);
     const entry = {
@@ -1383,7 +1438,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const directory = join(root, "missions", created.id);
+    const directory = store.storagePath!(created.id);
     await appendFile(join(directory, "messages.jsonl"), "invalid-json\n", "utf8");
     await expect(store.list()).resolves.toEqual([expect.objectContaining({ id: created.id })]);
     await expect(store.readTimelinePage(created.id, { limit: 50 })).rejects.toMatchObject({
@@ -1419,7 +1474,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const unsupportedManifest = join(root, "missions", unsupported.id, "mission.yaml");
+    const unsupportedManifest = join(store.storagePath!(unsupported.id), "mission.yaml");
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
@@ -1459,7 +1514,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const unsupportedManifest = join(root, "missions", unsupported.id, "mission.yaml");
+    const unsupportedManifest = join(store.storagePath!(unsupported.id), "mission.yaml");
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
@@ -1490,7 +1545,7 @@ describe("mission store", { timeout: 30_000 }, () => {
         name: "Legacy Flow",
       },
     });
-    const manifestPath = join(root, "missions", created.id, "mission.yaml");
+    const manifestPath = join(store.storagePath!(created.id), "mission.yaml");
     const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     legacy["schemaVersion"] = "pragma.mission/v3";
     legacy["executor"] = { ...(legacy["executor"] as object), version: "1.0.0" };
@@ -1505,7 +1560,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     for (const version of ["v3", "v4", "v5"]) {
       await expect(
         readFile(
-          join(root, "missions", created.id, "migration-backups", `mission.${version}.yaml`),
+          join(store.storagePath!(created.id), "migration-backups", `mission.${version}.yaml`),
           "utf8",
         ),
       ).resolves.toContain(`schemaVersion: pragma.mission/${version}`);
@@ -1526,7 +1581,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const manifestPath = join(root, "missions", created.id, "mission.yaml");
+    const manifestPath = join(store.storagePath!(created.id), "mission.yaml");
     const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     legacy["schemaVersion"] = "pragma.mission/v5";
     delete legacy["origin"];
@@ -1538,11 +1593,14 @@ describe("mission store", { timeout: 30_000 }, () => {
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
     await expect(
-      readFile(join(root, "missions", created.id, "migration-backups", "mission.v5.yaml"), "utf8"),
+      readFile(
+        join(store.storagePath!(created.id), "migration-backups", "mission.v5.yaml"),
+        "utf8",
+      ),
     ).resolves.toContain("schemaVersion: pragma.mission/v5");
     expect(
       await readFile(
-        join(root, "missions", created.id, "migration-backups", "mission.v6.yaml"),
+        join(store.storagePath!(created.id), "migration-backups", "mission.v6.yaml"),
         "utf8",
       ),
     ).toContain("schemaVersion: pragma.mission/v6");
@@ -1557,7 +1615,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const directory = join(root, "missions", created.id);
+    const directory = store.storagePath!(created.id);
     const manifestPath = join(directory, "mission.yaml");
     const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     legacy["schemaVersion"] = "pragma.mission/v5";
@@ -1589,7 +1647,7 @@ describe("mission store", { timeout: 30_000 }, () => {
   it("migrates v7 Missions to empty Mission Knowledge references with a backup", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
-    const { directory, id, source } = await installMissionV7Fixture(root);
+    const { id, source } = await installMissionV7Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
       schemaVersion: "pragma.mission/v10",
@@ -1597,7 +1655,10 @@ describe("mission store", { timeout: 30_000 }, () => {
     });
     expect(
       parsePragmaYaml(
-        await readFile(join(directory, "migration-backups", "mission.v7.yaml"), "utf8"),
+        await readFile(
+          join(store.storagePath!(id), "migration-backups", "mission.v7.yaml"),
+          "utf8",
+        ),
       ),
     ).toEqual(parsePragmaYaml(source));
   });
@@ -1626,14 +1687,14 @@ describe("mission store", { timeout: 30_000 }, () => {
       contextMounts: [],
     });
     await expect(
-      readFile(join(directory, ".v7-to-v8.transaction.json"), "utf8"),
+      readFile(join(store.storagePath!(id), ".v7-to-v8.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("migrates the historical v8 Mission fixture to v9 with a backup", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
-    const { directory, id, source } = await installMissionV8Fixture(root);
+    const { id, source } = await installMissionV8Fixture(root);
 
     const migrated = await store.get(id);
     expect(migrated).toMatchObject({
@@ -1643,7 +1704,10 @@ describe("mission store", { timeout: 30_000 }, () => {
     expect(migrated.branch).toBeUndefined();
     expect(
       parsePragmaYaml(
-        await readFile(join(directory, "migration-backups", "mission.v8.yaml"), "utf8"),
+        await readFile(
+          join(store.storagePath!(id), "migration-backups", "mission.v8.yaml"),
+          "utf8",
+        ),
       ),
     ).toEqual(parsePragmaYaml(source));
   });
@@ -1668,14 +1732,14 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v10" });
     await expect(
-      readFile(join(directory, ".v8-to-v9.transaction.json"), "utf8"),
+      readFile(join(store.storagePath!(id), ".v8-to-v9.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("migrates the historical v9 Mission fixture to typed v10 mounts with a backup", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
-    const { directory, id, source } = await installMissionV9Fixture(root);
+    const { id, source } = await installMissionV9Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
       schemaVersion: "pragma.mission/v10",
@@ -1688,7 +1752,10 @@ describe("mission store", { timeout: 30_000 }, () => {
     expect((await store.get(id)).branch).not.toHaveProperty("cutoffExecutionId");
     expect(
       parsePragmaYaml(
-        await readFile(join(directory, "migration-backups", "mission.v9.yaml"), "utf8"),
+        await readFile(
+          join(store.storagePath!(id), "migration-backups", "mission.v9.yaml"),
+          "utf8",
+        ),
       ),
     ).toEqual(parsePragmaYaml(source));
   });
@@ -1719,7 +1786,7 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v10" });
     await expect(
-      readFile(join(directory, ".v9-to-v10.transaction.json"), "utf8"),
+      readFile(join(store.storagePath!(id), ".v9-to-v10.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -1741,13 +1808,13 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.get(id)).rejects.toMatchObject({ code: "config_invalid" });
     expect(
       (
-        parsePragmaYaml(await readFile(join(directory, "mission.yaml"), "utf8")) as {
+        parsePragmaYaml(await readFile(join(store.storagePath!(id), "mission.yaml"), "utf8")) as {
           schemaVersion: string;
         }
       ).schemaVersion,
     ).toBe("pragma.mission/v6");
     await expect(
-      readFile(join(directory, ".v6-to-v7.transaction.json"), "utf8"),
+      readFile(join(store.storagePath!(id), ".v6-to-v7.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -1779,7 +1846,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.get(id)).rejects.toMatchObject({ code: "config_invalid" });
     expect(
       (
-        parsePragmaYaml(await readFile(join(directory, "mission.yaml"), "utf8")) as {
+        parsePragmaYaml(await readFile(join(store.storagePath!(id), "mission.yaml"), "utf8")) as {
           schemaVersion: string;
         }
       ).schemaVersion,
@@ -1805,7 +1872,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const directory = join(root, "missions", created.id);
+    const directory = store.storagePath!(created.id);
     const manifestPath = join(directory, "mission.yaml");
     const current = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<
       string,

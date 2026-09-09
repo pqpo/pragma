@@ -21,6 +21,7 @@ export interface LocalHostMissionControllerComposition {
 
 export interface LocalHostMissionControllerCompositionOptions {
   readonly missionsPath: string;
+  readonly missionPath?: ((missionId: string) => string) | undefined;
   readonly onLeaseLost?: ((missionId: string) => Promise<void> | void) | undefined;
   readonly onPollingError?:
     | ((input: {
@@ -41,7 +42,10 @@ export interface LocalHostMissionControllerCompositionOptions {
 export function createLocalHostMissionController(
   options: LocalHostMissionControllerCompositionOptions,
 ): LocalHostMissionControllerComposition {
-  const controller = createMissionControllerStore({ missionsPath: options.missionsPath });
+  const controller = createMissionControllerStore({
+    missionsPath: options.missionsPath,
+    ...(options.missionPath === undefined ? {} : { missionPath: options.missionPath }),
+  });
   const ownerScope = createMissionOwnerScope({
     controller,
     leaseMs: options.leaseMs,

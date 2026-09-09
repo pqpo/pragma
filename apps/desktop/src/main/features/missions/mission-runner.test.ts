@@ -170,7 +170,10 @@ function createTestMissionControl(input: {
   readonly missions: ReturnType<typeof createMissionStore>;
   readonly runner: MissionRunner;
 }) {
-  const controller = createMissionControllerStore({ missionsPath: input.missionsPath });
+  const controller = createMissionControllerStore({
+    missionsPath: input.missionsPath,
+    missionPath: input.missions.storagePath,
+  });
   const ownerScope = createMissionOwnerScope({ controller });
   const adapter = input.runner.createLocalHostMissionControlAdapter();
   const control = createMissionControlApplication({
@@ -1570,7 +1573,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await runner.delete(mission.id);
     await expect(
-      readFile(join(root, "missions", mission.id, "board", "shared", originalBoardOutput.id)),
+      readFile(
+        join(activeMissions.storagePath!(mission.id), "board", "shared", originalBoardOutput.id),
+      ),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -1929,10 +1934,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     const interrupted = await runner.interrupt(mission.id);
     expect(interrupted.execution?.status).toBe("cancelled");
-    expect(cancelTurn).toHaveBeenCalledTimes(1);
-    await expect(runner.interrupt(mission.id)).rejects.toMatchObject({
-      code: "COMMAND_REJECTED",
-      details: { reason: "no_active_execution" },
+    const cancellationCalls = cancelTurn.mock.calls.length;
+    expect(cancellationCalls).toBeGreaterThanOrEqual(1);
+    await expect(runner.interrupt(mission.id)).resolves.toMatchObject({
+      execution: { id: interrupted.execution?.id, status: "cancelled" },
     });
     const settledChat = await runner.getChat({ id: mission.id, limit: 50 });
     expect(settledChat.syncIssues).toBeUndefined();
@@ -1972,6 +1977,26 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         }),
       ]),
     );
+
+    const doomed = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Delete while still running",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    await runner.run(doomed.id);
+    await vi.waitFor(
+      async () => {
+        const chat = await runner.getChat({ id: doomed.id, limit: 50 });
+        expect(chat.execution?.interruptible).toBe(true);
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    await expect(runner.delete(doomed.id)).resolves.toBeUndefined();
+    await expect(missions.get(doomed.id)).rejects.toThrow();
+    expect(cancelTurn.mock.calls.length).toBeGreaterThan(cancellationCalls);
     unsubscribe();
   });
 
@@ -3033,12 +3058,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     const firstRunPromise = runner.run(mission.id);
     const duplicateRunPromise = runner.run(mission.id);
-    await expect(runner.delete(mission.id)).rejects.toThrow(
-      "Stop the active execution before deleting this mission.",
-    );
-    const revisionAfterFailedDelete = chatRevisions.at(-1);
-    expect(revisionAfterFailedDelete).toBeGreaterThan(0);
     const [firstRun, duplicateRun] = await Promise.all([firstRunPromise, duplicateRunPromise]);
+    const revisionAfterRun = chatRevisions.at(-1);
+    expect(revisionAfterRun).toBeGreaterThan(0);
     expect(firstRun.execution?.status).toBe("running");
     expect(duplicateRun.execution?.id).toBe(firstRun.execution?.id);
     expect(firstRun.execution?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
@@ -3046,9 +3068,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
-    await vi.waitFor(() =>
-      expect(chatRevisions.at(-1)).toBeGreaterThan(revisionAfterFailedDelete!),
-    );
+    await vi.waitFor(() => expect(chatRevisions.at(-1)).toBeGreaterThan(revisionAfterRun!));
     expect(
       chatRevisions.every((revision, index) => index === 0 || revision > chatRevisions[index - 1]!),
     ).toBe(true);
@@ -5189,7 +5209,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(reply.content).toContain("Full output is available through Context System:");
     expect(reply.content).toContain("mission-board/");
     expect(reply.content).not.toContain("x".repeat(5_000));
-    const timeline = await readFile(join(root, "missions", mission.id, "messages.jsonl"), "utf8");
+    const timeline = await readFile(
+      join(storedMissions.storagePath!(mission.id), "messages.jsonl"),
+      "utf8",
+    );
     expect(timeline).not.toContain('"kind":"assistant"');
     expect(timeline).not.toContain("x".repeat(5_000));
   });

@@ -9,6 +9,7 @@ import {
 } from "@pragma/built-in-agents";
 import {
   createPragma,
+  AgentLifecycleQuiescenceError,
   createPragmaLogger,
   createFileExecutionStore,
   createFileExpertSessionStore,
@@ -222,6 +223,7 @@ interface ActiveMissionExecution {
   readonly handle: DesktopExecutionHandle;
   readonly settlement: Promise<void>;
   readonly audience: MissionSurfaceAudience;
+  readonly live: LiveMissionChat;
   readonly releaseAfterHumanCheckpoint: () => Promise<void>;
 }
 
@@ -475,7 +477,10 @@ export function createMissionRunner(options: {
     };
     const missionRoot =
       options.missions.storagePath?.(mission.id) ??
-      join(new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot(), mission.id);
+      join(
+        new PragmaPaths({ pragmaHome: options.pragmaHome }).missionsRoot(),
+        encodePragmaPathSegment(mission.id),
+      );
     const authorizeBoard = async (input: {
       readonly operation: "list" | "read" | "search" | "add" | "edit" | "delete";
       readonly ids: readonly string[];
@@ -1489,13 +1494,14 @@ export function createMissionRunner(options: {
         await input.onFinished?.();
       },
       input.sessionId,
-      logger,
       async (terminal) => {
         await persistMissionExecutionProjection(
           options.missions,
           executionStore,
           missionId,
           input.handle.executionId,
+          terminal.status === "cancelled",
+          live.entries,
         );
         await options.onExecutionTerminal?.({
           mission: await options.missions.get(missionId),
@@ -1517,20 +1523,20 @@ export function createMissionRunner(options: {
           });
         }
       })
-      .finally(
-        async () =>
-          await forgetActive(
-            missionId,
-            input.handle,
-            live,
-            audience,
-            settlementKind !== "checkpointed",
-          ),
-      );
+      .then(async () => {
+        await forgetActive(
+          missionId,
+          input.handle,
+          live,
+          audience,
+          settlementKind !== "checkpointed",
+        );
+      });
     lifecycleService.setActive(missionId, {
       handle: input.handle,
       settlement,
       audience,
+      live,
       releaseAfterHumanCheckpoint: async () => {
         releaseCheckpoint();
         await settlement;
@@ -2122,10 +2128,26 @@ export function createMissionRunner(options: {
   };
 
   const deleteMission = async (id: string): Promise<void> => {
-    if (lifecycleService.hasActive(id)) {
-      throw new Error("Stop the active execution before deleting this mission.");
-    }
     const mission = await options.missions.get(id);
+    const active = lifecycleService.active(id);
+    if (active !== undefined) {
+      const cancellation = await settlementOutcomeWithin(
+        active.handle.cancel("Mission deleted."),
+        4_000,
+      );
+      if (cancellation.status !== "fulfilled") {
+        logger.warn(
+          "mission.delete_execution_cancel_incomplete",
+          `Mission ${mission.id} Execution cancellation was not confirmed before Session shutdown.`,
+          {
+            missionId: mission.id,
+            executionId: active.handle.executionId,
+            outcome: cancellation.status,
+            ...(cancellation.status === "rejected" ? { error: cancellation.error } : {}),
+          },
+        );
+      }
+    }
     try {
       await reconcileMissionUsage(mission);
     } catch (error) {
@@ -2139,9 +2161,43 @@ export function createMissionRunner(options: {
     const sessionId = mission.execution?.sessionId;
     const session = sessionService.session(id);
     if (session !== undefined) {
-      await session.close("Mission deleted.");
+      const closed = await settlementOutcomeWithin(session.close("Mission deleted."), 15_000);
+      if (closed.status === "timed_out") {
+        throw new Error(
+          `Mission ${mission.id} could not be deleted because its Session did not stop safely.`,
+        );
+      }
+      if (closed.status === "rejected") {
+        if (containsAgentLifecycleQuiescenceError(closed.error)) {
+          throw new Error(
+            `Mission ${mission.id} could not be deleted because background Runtime work is still active.`,
+            { cause: closed.error },
+          );
+        }
+        logger.warn(
+          "mission.delete_session_close_failed",
+          `Mission ${mission.id} Session reported cleanup failures after stopping.`,
+          { error: closed.error, missionId: mission.id, sessionId: session.sessionId },
+        );
+      }
       sessionService.deleteSession(id);
       sessionService.clearCompilation(id);
+    }
+    if (active !== undefined) {
+      const settled = await settlementOutcomeWithin(active.settlement, 8_000);
+      if (settled.status === "timed_out") {
+        throw new Error(
+          `Mission ${mission.id} could not be deleted because its execution observer is still active.`,
+        );
+      }
+      if (settled.status === "rejected") {
+        logger.warn(
+          "mission.delete_execution_observer_failed",
+          `Mission ${mission.id} observer stopped with an error before deletion.`,
+          { error: settled.error, missionId: mission.id, executionId: active.handle.executionId },
+        );
+      }
+      await forgetActive(id, active.handle, active.live, active.audience, false);
     }
     await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
     const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
@@ -2182,6 +2238,7 @@ export function createMissionRunner(options: {
       paths,
       owner: { type: "mission", id },
       sources: uniqueSources,
+      runtimeSessionOwnerIds: [...(sessionId === undefined ? [] : [sessionId]), ...executionIds],
     });
     if (options.missions.storagePath === undefined) await options.missions.remove(id);
     else options.missions.forget?.(id);
@@ -2620,6 +2677,9 @@ export function createMissionRunner(options: {
           ...(mission.execution?.id === undefined ? {} : { executionId: mission.execution.id }),
         },
       });
+    }
+    if (mission.execution?.status === "cancelled") {
+      return mission;
     }
     if (
       mission.execution === undefined ||
@@ -3644,7 +3704,7 @@ export function createMissionRunner(options: {
     },
     async delete(id) {
       const inFlight = lifecycleService.run(id);
-      if (inFlight !== undefined) await inFlight.catch(() => undefined);
+      if (inFlight !== undefined) await settlesWithin(inFlight, 4_000);
       const liveChat = chatService.live(id);
       if (liveChat !== undefined) await chatService.closeLiveIfCurrent(id, liveChat);
       await (options.ownerScope?.terminalDelete(id, async () => await deleteMission(id)) ??
@@ -3944,30 +4004,96 @@ async function persistMissionExecutionProjection(
   executionStore: ReturnType<typeof createFileExecutionStore>,
   missionId: string,
   executionId: string,
+  cancelled: boolean,
+  liveEntries: readonly MissionChatEntry[] = [],
 ): Promise<void> {
-  let beforeSequence: number | undefined;
-  let matched: MissionTimelineTurn | undefined;
-  while (matched === undefined) {
-    const page = await missions.readTimelinePage(missionId, {
-      ...(beforeSequence === undefined ? {} : { beforeSequence }),
-      limit: 500,
-    });
-    matched = page.turns.find((turn) => turn.executionId === executionId);
-    if (matched !== undefined || page.nextBeforeSequence === undefined) break;
-    beforeSequence = page.nextBeforeSequence;
+  const interruptedProjection = liveEntries
+    .filter(
+      (entry): entry is Exclude<MissionChatEntry, { readonly kind: "user" }> =>
+        entry.kind !== "user" && entry.executionId === executionId,
+    )
+    .map(finalizeInterruptedMissionEntry);
+  // Cancellation can make the Core event stream incomplete. Persist the live
+  // renderer projection first so a later history-read or archive failure cannot
+  // make already-visible output disappear.
+  if (cancelled) {
+    await retryMissionProjectionWrite(missions, missionId, executionId, interruptedProjection);
   }
-  if (matched === undefined)
-    throw new Error(`Mission timeline is missing Execution ${executionId}.`);
-  const history = await readMissionChatHistory([matched], executionStore, missions, missionId);
-  if (history.syncIssues.length > 0) {
-    throw new Error(`Execution history could not be projected: ${executionId}.`);
+  try {
+    let beforeSequence: number | undefined;
+    let matched: MissionTimelineTurn | undefined;
+    while (matched === undefined) {
+      const page = await missions.readTimelinePage(missionId, {
+        ...(beforeSequence === undefined ? {} : { beforeSequence }),
+        limit: 500,
+      });
+      matched = page.turns.find((turn) => turn.executionId === executionId);
+      if (matched !== undefined || page.nextBeforeSequence === undefined) break;
+      beforeSequence = page.nextBeforeSequence;
+    }
+    if (matched === undefined) {
+      throw new Error(`Mission timeline is missing Execution ${executionId}.`);
+    }
+    const history = await readMissionChatHistory([matched], executionStore, missions, missionId);
+    if (history.syncIssues.length > 0) {
+      throw new Error(`Execution history could not be projected: ${executionId}.`);
+    }
+    const projected = new Map(
+      history.entries
+        .filter((entry) => entry.kind !== "user")
+        .map((entry) => [entry.id, entry] as const),
+    );
+    for (const entry of interruptedProjection) projected.set(entry.id, entry);
+    await retryMissionProjectionWrite(missions, missionId, executionId, [...projected.values()]);
+    await executionStore.archive(executionId);
+  } catch (error) {
+    // The cancellation snapshot above is already durable and sufficient for
+    // chat recovery. Canonical history enrichment is best-effort after that
+    // commit because an interrupted Runtime may never finish its event stream.
+    if (cancelled) return;
+    throw error;
   }
-  await missions.writeExecutionProjection(
-    missionId,
-    executionId,
-    history.entries.filter((entry) => entry.kind !== "user"),
-  );
-  await executionStore.archive(executionId);
+}
+
+async function retryMissionProjectionWrite(
+  missions: MissionStore,
+  missionId: string,
+  executionId: string,
+  entries: readonly Exclude<MissionChatEntry, { readonly kind: "user" }>[],
+): Promise<void> {
+  let failure: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await missions.writeExecutionProjection(missionId, executionId, entries);
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw new Error(`Mission execution projection could not be persisted: ${executionId}.`, {
+    cause: failure,
+  });
+}
+
+function finalizeInterruptedMissionEntry(
+  entry: Exclude<MissionChatEntry, { readonly kind: "user" }>,
+): Exclude<MissionChatEntry, { readonly kind: "user" }> {
+  if (entry.kind === "assistant" || entry.kind === "thinking") {
+    return { ...entry, streaming: false };
+  }
+  if (
+    entry.kind === "tool" &&
+    (entry.status === "running" || entry.status === "approval_required")
+  ) {
+    return { ...entry, status: "failed", error: entry.error ?? "Execution interrupted." };
+  }
+  if (entry.kind === "agent_activity" && entry.phase === "started") {
+    return { ...entry, phase: "failed", error: entry.error ?? "Execution interrupted." };
+  }
+  if (entry.kind === "context_operation" && entry.status === "running") {
+    return { ...entry, status: "failed", error: entry.error ?? "Execution interrupted." };
+  }
+  return entry;
 }
 
 type MissionChatPageCursor =
@@ -4753,6 +4879,7 @@ function observeMissionChat(
         }
         return;
       } catch (error) {
+        if (isExecutionUnavailable(error, execution.executionId)) return;
         if (!closed) {
           onSubscriptionError("output", error);
           await missionSubscriptionRetryDelay();
@@ -4782,6 +4909,7 @@ function observeMissionChat(
         }
         return;
       } catch (error) {
+        if (isExecutionUnavailable(error, execution.executionId)) return;
         if (!closed) {
           onSubscriptionError("events", error);
           await missionSubscriptionRetryDelay();
@@ -4799,6 +4927,10 @@ function observeMissionChat(
     await Promise.allSettled([outputTask, eventTask]);
   };
   return chat;
+}
+
+function isExecutionUnavailable(error: unknown, executionId: string): boolean {
+  return error instanceof Error && error.message === `Execution not found: ${executionId}`;
 }
 
 async function readDurableMissionChatEntries(
@@ -4859,6 +4991,54 @@ function logMissionPhase(
 
 function elapsedMissionMs(startedAt: number): number {
   return Math.round((performance.now() - startedAt) * 100) / 100;
+}
+
+async function settlesWithin(operation: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  return await Promise.race([
+    operation.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+type SettlementOutcome =
+  | { readonly status: "fulfilled" }
+  | { readonly status: "rejected"; readonly error: unknown }
+  | { readonly status: "timed_out" };
+
+function containsAgentLifecycleQuiescenceError(error: unknown): boolean {
+  if (error instanceof AgentLifecycleQuiescenceError) return true;
+  return (
+    error instanceof AggregateError &&
+    error.errors.some((nested) => containsAgentLifecycleQuiescenceError(nested))
+  );
+}
+
+async function settlementOutcomeWithin(
+  operation: Promise<unknown>,
+  timeoutMs: number,
+): Promise<SettlementOutcome> {
+  let timer: NodeJS.Timeout | undefined;
+  return await Promise.race([
+    operation.then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    ),
+    new Promise<{ readonly status: "timed_out" }>((resolve) => {
+      timer = setTimeout(() => resolve({ status: "timed_out" }), timeoutMs);
+      timer.unref();
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 export function isRootMissionRuntimeOutput(

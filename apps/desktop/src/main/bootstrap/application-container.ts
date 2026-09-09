@@ -361,6 +361,7 @@ export async function createDesktopApplicationContainer(
   // Desktop supplies only Electron-facing stop/replay hooks.
   const missionLifecycle = createLocalHostMissionController({
     missionsPath,
+    ...(missionStore.storagePath === undefined ? {} : { missionPath: missionStore.storagePath }),
     onPollingError: ({ missionId, error, consecutiveFailures }) => {
       mainLogger.warn(
         "mission.controller_inbox_poll_failed",

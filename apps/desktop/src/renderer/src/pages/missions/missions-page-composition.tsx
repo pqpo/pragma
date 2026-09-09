@@ -1502,6 +1502,7 @@ export function MissionDetailFragment(props: {
     state: clientOperation,
     begin: beginClientOperation,
     finish: finishClientOperation,
+    reset: resetClientOperation,
   } = useMissionClientOperation(props.mission.id);
   const [queuedMessageActions, setQueuedMessageActions] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -2164,6 +2165,25 @@ export function MissionDetailFragment(props: {
     awaitingRequest: awaitingRequestId !== null,
     hasPendingQueuedMessage: pendingQueuedMessages.length > 0,
   });
+
+  useEffect(() => {
+    const executionStatus = props.mission.execution?.status;
+    if (
+      props.mission.lifecycleStatus !== "completed" &&
+      (executionStatus === undefined || ["queued", "running", "waiting"].includes(executionStatus))
+    ) {
+      return;
+    }
+    resetClientOperation();
+    setAwaitingRequestId(null);
+    setPendingQueuedMessages([]);
+  }, [
+    props.mission.execution?.status,
+    props.mission.lifecycleStatus,
+    resetClientOperation,
+    setAwaitingRequestId,
+    setPendingQueuedMessages,
+  ]);
 
   useEffect(() => {
     if (durableEntryIds.size === 0) return;

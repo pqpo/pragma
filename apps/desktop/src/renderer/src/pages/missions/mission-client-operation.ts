@@ -28,6 +28,7 @@ export function useMissionClientOperation(missionId: string): {
     kind: Exclude<MissionClientOperationState["kind"], "idle">,
   ) => string | undefined;
   readonly finish: (token: string) => void;
+  readonly reset: () => void;
 } {
   const [state, setState] = useState<MissionClientOperationState>({ kind: "idle" });
   const stateRef = useRef<MissionClientOperationState>({ kind: "idle" });
@@ -56,5 +57,10 @@ export function useMissionClientOperation(missionId: string): {
     setState(released);
   }, []);
 
-  return { state, begin, finish };
+  const reset = useCallback((): void => {
+    stateRef.current = { kind: "idle" };
+    setState(stateRef.current);
+  }, []);
+
+  return { state, begin, finish, reset };
 }

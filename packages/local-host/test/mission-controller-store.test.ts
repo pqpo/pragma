@@ -152,6 +152,27 @@ describe("MissionControllerStore", () => {
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
+  it("keeps durable command order when an interrupt follows a queued message", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000032",
+      leaseMs: 10_000,
+    });
+    await store.appendCommand(commandInput("send", "00000000-0000-4000-8000-000000000033"));
+    await store.appendCommand({
+      ...commandInput("send", "00000000-0000-4000-8000-000000000034"),
+      kind: "interrupt" as const,
+      payload: { kind: "interrupt" as const, reason: "stop now" },
+    });
+    const apply = vi.fn(async () => ({ result: { delivered: true } }));
+
+    await store.processNext({ missionId, guard, consumer: { apply } });
+    await store.processNext({ missionId, guard, consumer: { apply } });
+
+    expect(apply.mock.calls.map(([input]) => input.command.kind)).toEqual(["send", "interrupt"]);
+  });
+
   it("replays an interrupted v1 command Inbox upgrade and keeps an exact backup", async () => {
     const root = await temporaryRoot();
     const missionsPath = join(root, "missions");
