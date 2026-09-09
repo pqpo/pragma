@@ -16,13 +16,13 @@ describe("Pragma management tools", () => {
   it("combines Host and knowledge tools through one factory", () => {
     const tools = createPragmaManagementTools({
       project: definitionOnlyPort(),
-      tasks: definitionOnlyPort(),
+      missions: definitionOnlyPort(),
       automations: definitionOnlyPort(),
       knowledgeRevisions: revisionPort(),
     });
 
-    expect(tools).toHaveLength(36);
-    expect(new Set(tools.map(({ name }) => name)).size).toBe(36);
+    expect(tools).toHaveLength(PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.length);
+    expect(new Set(tools.map(({ name }) => name)).size).toBe(tools.length);
     expect(
       tools.map(({ name, description, inputSchema, approval }) => ({
         name,
@@ -58,8 +58,13 @@ describe("Pragma management tools", () => {
       mounted: false,
       mounts: [],
     };
-    const listTargets = vi.fn(async () => [target]);
-    const start = vi.fn(async () => ({ jobId: "job-1", state: "editing", target }));
+    const listTargets = vi.fn(async () => ({ items: [target] }));
+    const start = vi.fn(async () => ({
+      jobId: "00000000-0000-4000-8000-000000000302",
+      draftId: "00000000-0000-4000-8000-000000000303",
+      state: "editing",
+      target,
+    }));
     const discardDraft = vi.fn(async (input: { readonly draftId: string }) => ({
       draftId: input.draftId,
       discarded: true as const,
@@ -82,11 +87,13 @@ describe("Pragma management tools", () => {
     expect(tools[0]?.approval).toEqual({ mode: "none" });
     expect(tools[2]?.approval).toEqual({
       mode: "required",
-      reason: "Start a managed knowledge revision task.",
+      reason: "Start a managed knowledge revision Mission.",
     });
-    expect(tools[7]?.approval).toEqual({
+    expect(
+      tools.find((tool) => tool.name === "knowledge_revision_discard_draft")?.approval,
+    ).toEqual({
       mode: "required",
-      reason: "Discard this knowledge draft and reject its unfinished revision task.",
+      reason: "Discard this knowledge draft and reject its unfinished revision Mission.",
     });
     await tools[0]!.call({}, undefined, context);
     await tools[2]!.call(
@@ -94,14 +101,16 @@ describe("Pragma management tools", () => {
       undefined,
       context,
     );
-    await tools[7]!.call(
-      {
-        draftId: "00000000-0000-4000-8000-000000000301",
-        expectedRevision: 5,
-      },
-      undefined,
-      context,
-    );
+    await tools
+      .find((tool) => tool.name === "knowledge_revision_discard_draft")!
+      .call(
+        {
+          draftId: "00000000-0000-4000-8000-000000000301",
+          expectedRevision: 5,
+        },
+        undefined,
+        context,
+      );
 
     expect(listTargets).toHaveBeenCalledWith({
       executionId: "execution-1",
@@ -109,6 +118,7 @@ describe("Pragma management tools", () => {
       expertId: "0000000000000002",
       teamId: "0000000000000003",
       operationId: "call-1",
+      limit: 25,
     });
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -131,19 +141,21 @@ describe("Pragma management tools", () => {
     const tools = createPragmaManagementTools({
       knowledgeRevisions: revisionPort(),
     });
-    await expect(tools[0]!.call({}, undefined, { toolCallId: "call-1" })).rejects.toThrow(
-      "pragma_management_execution_context_unavailable",
-    );
+    await expect(tools[0]!.call({}, undefined, { toolCallId: "call-1" })).resolves.toMatchObject({
+      isError: true,
+      details: { code: "unavailable", retryable: false },
+    });
   });
 });
 
 function revisionPort(overrides: Record<string, unknown> = {}) {
   return {
-    listTargets: vi.fn(async () => []),
-    listDrafts: vi.fn(async () => []),
+    listTargets: vi.fn(async () => ({ items: [] })),
+    listDrafts: vi.fn(async () => ({ items: [] })),
     start: vi.fn(async () => ({})),
     getDraft: vi.fn(),
     inspectRebase: vi.fn(),
+    getRebaseConflict: vi.fn(),
     rebase: vi.fn(),
     submitDraft: vi.fn(),
     discardDraft: vi.fn(),

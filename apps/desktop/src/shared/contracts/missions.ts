@@ -270,6 +270,7 @@ export const MissionSummarySchema = z.object({
   executor: z.object({
     kind: z.enum(["expert", "team", "flow"]),
     name: z.string().trim().min(1).max(120),
+    ref: MissionExecutorRefSchema.optional(),
   }),
   execution: z
     .object({

@@ -41,7 +41,7 @@ export const PRAGMA_MANAGEMENT_CAPABILITY_ID = PragmaSemanticResourceIdSchema.pa
 ) as "0000000000manage";
 export const PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID =
   "00000000-0000-4000-8000-000000000101" as const;
-export const PRAGMA_MANAGEMENT_CAPABILITY_REVISION = 2 as const;
+export const PRAGMA_MANAGEMENT_CAPABILITY_REVISION = 3 as const;
 export const STORE_REVISION_EXPERT_ID = PragmaExpertIdSchema.parse(
   "0000000000st0rev",
 ) as "0000000000st0rev";

@@ -24,8 +24,8 @@ import type { CapabilityStore } from "./capability-store.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
-function schemaHash(inputSchema: unknown): string {
-  return createHash("sha256").update(JSON.stringify(inputSchema)).digest("hex");
+function schemaHash(inputSchema: unknown, outputSchema: unknown): string {
+  return createHash("sha256").update(JSON.stringify({ inputSchema, outputSchema })).digest("hex");
 }
 
 export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchema.parse({
@@ -52,12 +52,15 @@ export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchem
       "Built-in Host tools for managing Pragma resources, evaluations, tasks, Automations, and reviewable knowledge revisions.",
     connection: { transport: "streamable-http", url: "http://pragma.invalid/builtin" },
     timeoutMs: 30_000,
-    tools: PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema }) => ({
-      name,
-      description,
-      inputSchema,
-      schemaHash: schemaHash(inputSchema),
-    })),
+    tools: PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(
+      ({ name, description, inputSchema, outputSchema }) => ({
+        name,
+        description,
+        inputSchema,
+        outputSchema,
+        schemaHash: schemaHash(inputSchema, outputSchema),
+      }),
+    ),
   },
 });
 

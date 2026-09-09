@@ -52,6 +52,7 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
+import { paginateManagementItems } from "./management-pagination.ts";
 
 const CandidateRecordSchema = z.object({
   changeSet: PragmaAgentChangeSetSchema,
@@ -252,16 +253,42 @@ export function createDesktopPragmaAgentProjectPort(options: {
         return { key: request.key, id, ref: `${request.kind}:${id}` };
       });
     },
-    async list() {
+    async list(input) {
       const snapshot = await options.project.get();
-      return {
-        projectRevision: snapshot.revision,
-        resources: snapshot.resources.map((resource) => ({
+      const query = input.query?.trim().toLocaleLowerCase();
+      const kinds = input.kinds === undefined ? undefined : new Set(input.kinds);
+      const resources = snapshot.resources
+        .map((resource) => ({
           ref: canonicalPragmaResourceRef(resource),
           kind: resource.kind,
           name: resource.metadata.name,
           description: resource.metadata.description,
-        })),
+        }))
+        .filter(
+          (resource) =>
+            (kinds === undefined || kinds.has(resource.kind)) &&
+            (query === undefined ||
+              [resource.ref, resource.name, resource.description].some((value) =>
+                value.toLocaleLowerCase().includes(query),
+              )),
+        )
+        .toSorted(
+          (left, right) =>
+            left.kind.localeCompare(right.kind) ||
+            left.name.localeCompare(right.name) ||
+            left.ref.localeCompare(right.ref),
+        );
+      const page = paginateManagementItems({
+        items: resources,
+        scope: "list_dsl_resources",
+        fingerprintValue: snapshot.revision,
+        filters: { kinds: input.kinds, query },
+        cursor: input.cursor,
+        limit: input.limit,
+      });
+      return {
+        projectRevision: snapshot.revision,
+        ...page,
       };
     },
     async read(ref) {
@@ -284,8 +311,34 @@ export function createDesktopPragmaAgentProjectPort(options: {
         source: formatPragmaYaml(resolved),
       };
     },
-    async listExpertOptions() {
-      return (await buildExpertCatalog(options)).options;
+    async listExpertOptions(input) {
+      const catalog = (await buildExpertCatalog(options)).options;
+      const query = input.query?.trim().toLocaleLowerCase();
+      const allItems = expertCatalogItems(catalog, input.category).filter((item) => {
+        if (
+          input.category === "capabilities" &&
+          input.capabilityKind !== undefined &&
+          "kind" in item &&
+          item.kind !== input.capabilityKind
+        ) {
+          return false;
+        }
+        return query === undefined || JSON.stringify(item).toLocaleLowerCase().includes(query);
+      });
+      const items = allItems.toSorted((left, right) =>
+        expertOptionSortKey(left).localeCompare(expertOptionSortKey(right)),
+      );
+      return {
+        category: input.category,
+        ...paginateManagementItems({
+          items,
+          scope: `list_expert_options:${input.category}`,
+          fingerprintValue: items,
+          filters: { query, capabilityKind: input.capabilityKind },
+          cursor: input.cursor,
+          limit: input.limit,
+        }),
+      };
     },
     async prepare(input) {
       return await prepareSources(input);
@@ -610,6 +663,36 @@ interface DesktopExpertCatalog {
   readonly readyCapabilityIds: ReadonlySet<string>;
 }
 
+type ExpertCatalogItem =
+  | PragmaAgentExpertOptionCatalog["runtimeModels"][number]
+  | PragmaAgentExpertOptionCatalog["capabilities"][number]
+  | PragmaAgentExpertOptionCatalog["avatars"][number]
+  | PragmaAgentExpertOptionCatalog["builtinExperts"][number];
+
+function expertCatalogItems(
+  catalog: PragmaAgentExpertOptionCatalog,
+  category: "runtime-models" | "capabilities" | "avatars" | "builtin-experts",
+): ExpertCatalogItem[] {
+  switch (category) {
+    case "runtime-models":
+      return [...catalog.runtimeModels];
+    case "capabilities":
+      return [...catalog.capabilities];
+    case "avatars":
+      return [...catalog.avatars];
+    case "builtin-experts":
+      return [...catalog.builtinExperts];
+  }
+}
+
+function expertOptionSortKey(item: ExpertCatalogItem): string {
+  if ("runtimeProfileRef" in item)
+    return `${item.runtimeName}/${item.providerName}/${item.modelName}`;
+  if ("avatarId" in item) return `${item.name}/${item.avatarId}`;
+  if ("ref" in item) return `${item.name}/${item.ref}`;
+  return JSON.stringify(item);
+}
+
 async function buildExpertCatalog(options: {
   readonly capabilities: CapabilityStore;
   readonly runtimes: RuntimeEnvironmentService;
@@ -878,7 +961,7 @@ function summarizeEvaluationDraft(draft: PragmaAgentEvaluationDraft) {
     ...(draft.sourceEvaluationRef === undefined
       ? {}
       : { sourceEvaluationRef: draft.sourceEvaluationRef }),
-    cases: draft.resource.spec.method.cases.map(({ id, name }) => ({ id, name })),
+    caseCount: draft.resource.spec.method.cases.length,
     diagnostics: draft.diagnostics,
     createdAt: draft.createdAt,
     updatedAt: draft.updatedAt,

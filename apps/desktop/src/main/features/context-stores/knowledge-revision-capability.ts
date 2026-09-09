@@ -4,8 +4,13 @@ import {
   KnowledgeRevisionDraftFileSchema,
   KnowledgeRevisionDraftInspectionSchema,
   KnowledgeRevisionDraftSummarySchema,
+  KnowledgeRevisionDraftReceiptSchema,
+  KnowledgeRevisionConflictPageSchema,
+  KnowledgeRevisionConflictContentSchema,
+  PragmaContentChunkSchema,
 } from "@pragma/built-in-agents";
 import type {
+  ContextStoreDraft,
   KnowledgeRevisionSubmissionPort,
   KnowledgeRevisionTarget,
   KnowledgeRevisionToolInvocation,
@@ -24,6 +29,7 @@ import {
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import type { ContextStoreStore } from "./context-store-store.ts";
+import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
 
 export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   readonly project: PragmaProjectStore;
@@ -81,8 +87,26 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   };
 
   return {
-    async listTargets() {
-      return (await targets()).map((target) => target.target);
+    async listTargets(input) {
+      const query = input.query?.toLocaleLowerCase();
+      const items = (await targets())
+        .map((target) => target.target)
+        .filter(
+          (target) =>
+            (input.mounted === undefined || target.mounted === input.mounted) &&
+            (query === undefined ||
+              [target.targetRef, target.name, target.description].some((value) =>
+                value.toLocaleLowerCase().includes(query),
+              )),
+        );
+      return paginateManagementItems({
+        items,
+        scope: "knowledge_revision_list_targets",
+        fingerprintValue: items,
+        filters: { mounted: input.mounted, query },
+        cursor: input.cursor,
+        limit: input.limit,
+      });
     },
     async listDrafts(input) {
       const inlineMission = options.inlineMission;
@@ -97,30 +121,49 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       const drafts = await options.revisions.listDrafts(
         selectedStoreId === undefined ? {} : { storeId: selectedStoreId },
       );
-      return drafts.map((draft) =>
-        KnowledgeRevisionDraftSummarySchema.parse({
-          draftId: draft.id,
-          revision: draft.revision,
-          name: draft.name,
-          storeId: draft.storeId,
-          baseRevision: draft.baseRevision,
-          state: draft.state,
-          ...(draft.activeMissionId === undefined
-            ? {}
-            : { activeMissionId: draft.activeMissionId }),
-          ...(inlineMission !== undefined &&
-          draft.activeMissionId === inlineMission.id &&
-          inlineMission.allowedStoreIds.has(draft.storeId)
-            ? { writableNamespace: inlineMission.writableNamespaceForStore(draft.storeId) }
-            : {}),
-          ...(draft.submittedRevision === undefined
-            ? {}
-            : { submittedRevision: draft.submittedRevision }),
-          ...(draft.summary === undefined ? {} : { summary: draft.summary }),
-          createdAt: draft.createdAt,
-          updatedAt: draft.updatedAt,
-        }),
-      );
+      const states = input.states === undefined ? undefined : new Set(input.states);
+      const query = input.query?.toLocaleLowerCase();
+      const items = drafts
+        .map((draft) =>
+          KnowledgeRevisionDraftSummarySchema.parse({
+            draftId: draft.id,
+            revision: draft.revision,
+            name: draft.name,
+            storeId: draft.storeId,
+            baseRevision: draft.baseRevision,
+            state: draft.state,
+            ...(draft.activeMissionId === undefined
+              ? {}
+              : { activeMissionId: draft.activeMissionId }),
+            ...(inlineMission !== undefined &&
+            draft.activeMissionId === inlineMission.id &&
+            inlineMission.allowedStoreIds.has(draft.storeId)
+              ? { writableNamespace: inlineMission.writableNamespaceForStore(draft.storeId) }
+              : {}),
+            ...(draft.submittedRevision === undefined
+              ? {}
+              : { submittedRevision: draft.submittedRevision }),
+            ...(draft.summary === undefined ? {} : { summary: draft.summary }),
+            createdAt: draft.createdAt,
+            updatedAt: draft.updatedAt,
+          }),
+        )
+        .filter(
+          (draft) =>
+            (states === undefined || states.has(draft.state)) &&
+            (query === undefined ||
+              [draft.draftId, draft.name, draft.summary ?? ""].some((value) =>
+                value.toLocaleLowerCase().includes(query),
+              )),
+        );
+      return paginateManagementItems({
+        items,
+        scope: "knowledge_revision_list_drafts",
+        fingerprintValue: items.map(({ draftId, revision }) => [draftId, revision]),
+        filters: { targetRef: input.targetRef, states: input.states, query },
+        cursor: input.cursor,
+        limit: input.limit,
+      });
     },
     async start(input) {
       const inlineMission = options.inlineMission;
@@ -225,12 +268,11 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           ...(writableNamespace === undefined ? {} : { writableNamespace }),
           draftRevision: draft.revision,
           id: file.id,
-          content: file.content,
+          content: contentChunk(file.content, input.offset ?? 0, input.limitChars ?? 20_000),
           metadata: file.metadata,
           revision: file.revision,
           etag: file.etag,
           sizeBytes: bytes.byteLength,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
         });
       }
       const current = await options.contextStores.getSnapshot(draft.storeId);
@@ -273,21 +315,66 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       });
     },
     async inspectRebase(input) {
-      return await options.revisions.inspectRebase(input.draftId);
+      const inspection = await options.revisions.inspectRebase(input.draftId);
+      const summaries = inspection.conflicts.map((conflict) => ({
+        id: conflict.id,
+        kind: conflict.kind,
+        availableSides: [
+          ...(conflict.baseContent === undefined ? [] : ["base" as const]),
+          ...(conflict.currentContent === undefined ? [] : ["current" as const]),
+          ...(conflict.draftContent === undefined ? [] : ["draft" as const]),
+        ],
+      }));
+      return KnowledgeRevisionConflictPageSchema.parse({
+        draftId: inspection.draftId,
+        draftRevision: inspection.draftRevision,
+        currentStoreRevision: inspection.currentStoreRevision,
+        currentSnapshotHash: inspection.currentSnapshotHash,
+        ...paginateManagementItems({
+          items: summaries,
+          scope: `knowledge_revision_inspect_rebase:${input.draftId}`,
+          fingerprintValue: [inspection.draftRevision, inspection.currentSnapshotHash, summaries],
+          filters: {},
+          cursor: input.cursor,
+          limit: input.limit,
+        }),
+      });
+    },
+    async getRebaseConflict(input) {
+      const inspection = await options.revisions.inspectRebase(input.draftId);
+      const conflict = inspection.conflicts.find((candidate) => candidate.id === input.conflictId);
+      if (conflict === undefined)
+        throw new Error(`Knowledge revision conflict not found: ${input.conflictId}`);
+      const source =
+        input.side === "base"
+          ? conflict.baseContent
+          : input.side === "current"
+            ? conflict.currentContent
+            : conflict.draftContent;
+      if (source === undefined)
+        throw new Error(`Knowledge revision conflict side unavailable: ${input.side}`);
+      return KnowledgeRevisionConflictContentSchema.parse({
+        draftId: input.draftId,
+        conflictId: input.conflictId,
+        side: input.side,
+        content: contentChunk(source, input.offset, input.limitChars),
+      });
     },
     async rebase(input) {
-      return await options.revisions.rebase({
+      const draft = await options.revisions.rebase({
         draftId: input.draftId,
         expectedRevision: input.expectedRevision,
         resolutions: input.resolutions,
       });
+      return await draftReceipt(draft, options.contextStores);
     },
     async submitDraft(input) {
-      return await options.revisions.submitDraft(
+      const draft = await options.revisions.submitDraft(
         input.draftId,
         input.expectedRevision,
         input.summary,
       );
+      return await draftReceipt(draft, options.contextStores);
     },
     async discardDraft(input) {
       await options.revisions.discardDraft(input.draftId, input.expectedRevision);
@@ -381,4 +468,39 @@ function digestSubmission(
       ]),
     )
     .digest("hex");
+}
+
+async function draftReceipt(draft: ContextStoreDraft, stores: ContextStoreStore) {
+  const current = await stores.getSnapshot(draft.storeId);
+  return KnowledgeRevisionDraftReceiptSchema.parse({
+    draftId: draft.id,
+    revision: draft.revision,
+    state: draft.state,
+    baseRevision: draft.baseRevision,
+    stale:
+      current.revision !== draft.baseRevision || current.snapshotHash !== draft.baseSnapshotHash,
+    changedPaths: [
+      ...draft.overlay.files.map((file) => file.id),
+      ...draft.overlay.deletedFiles,
+      ...draft.overlay.directories,
+      ...draft.overlay.deletedDirectories,
+    ],
+    ...(draft.submittedRevision === undefined
+      ? {}
+      : { submittedRevision: draft.submittedRevision }),
+  });
+}
+
+function contentChunk(source: string, offset: number, limitChars: number) {
+  const content = source.slice(offset, offset + limitChars);
+  const nextOffset = offset + content.length;
+  return PragmaContentChunkSchema.parse({
+    content,
+    offset,
+    sizeChars: content.length,
+    totalChars: source.length,
+    sha256: createHash("sha256").update(source).digest("hex"),
+    complete: nextOffset >= source.length,
+    ...(nextOffset < source.length ? { nextOffset } : {}),
+  });
 }

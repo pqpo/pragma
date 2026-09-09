@@ -14,12 +14,14 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 2. Call `list_dsl_resources`, then read every project resource that will be changed or referenced.
    Before creating an ExpertTeam, read every existing coordinator or member and include any new
    ones in the same change-set. Read reusable system Experts listed in
-   `list_expert_options.builtinExperts` through `read_dsl_resource`; they are valid read-only Team
+   the `builtin-experts` category of `list_expert_options` through `read_dsl_resource`; they are valid read-only Team
    coordinators or members and must not be recreated. A Host Runtime or Capability option that is
    not yet a project resource cannot be read and is the only exception.
-3. Before creating or changing an Expert, call `list_expert_options`. Confirm a listed Runtime
-   model, recommend only listed capabilities that match the user's intent, and select only a listed
-   avatar persona. When the user has not specified an avatar, either recommend the persona whose
+3. Before creating or changing an Expert, call `list_expert_options` once per needed category:
+   `runtime-models`, `capabilities`, `avatars`, or `builtin-experts`. Use `query` and follow
+   `nextCursor` instead of requesting a full catalog. Confirm a listed Runtime model, recommend only
+   listed capabilities that match the user's intent, and select only a listed avatar persona. When
+   the user has not specified an avatar, either recommend the persona whose
    traits best match the Expert's role or present a concise choice of relevant personas. Preserve an
    existing avatar when editing unless the user asks to change it. Ask whether to use the
    recommendation, customize it, or enable no capabilities. Reuse an existing project
@@ -36,7 +38,8 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
    batch. Pass `operations` as a native JSON array, never as a string containing serialized JSON;
    string parsing is only a recovery path. The update response is a compact revision summary. Call
-   `get_flow_draft` only when the complete current resource is needed. Flow drafts never contain Run
+   `get_flow_draft` with `includeResource: true` only when the complete current resource is needed.
+   Its default response is compact. Flow drafts never contain Run
    Dry cases and never require an Evaluation draft.
 7. Call `validate_flow_draft`, then `prepare_flow_draft` when the Flow is structurally complete.
    `prepare_flow_draft` prepares the Flow and optional non-Evaluation dependencies only. Fix every
@@ -57,7 +60,8 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
     then pass the returned `changeSetId` to `commit_dsl_changes`. This commit changes only the
     Evaluation; it is never part of `prepare_flow_draft` or `additionalSources`.
     Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
-    always an array with one complete YAML document per item, even for one resource.
+    always an array with one complete YAML document per item, even for one resource. Prepare calls
+    return compact receipts; use `read_prepared_dsl_change` for one changed source or diff when needed.
 11. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
     revision changed, reread affected resources and explicitly rebase the draft before retrying.
 12. After each commit tool returns, always report success or failure, the committed project

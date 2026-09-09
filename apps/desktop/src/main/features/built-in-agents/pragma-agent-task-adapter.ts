@@ -4,43 +4,65 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import {
-  type PragmaAgentTask,
-  type PragmaAgentTaskPort,
-  type PragmaAgentTaskSummary,
-  type PragmaAgentTaskWorkItem,
+  type PragmaAgentMission,
+  type PragmaAgentMissionPort,
+  type PragmaAgentMissionSummary,
+  type PragmaAgentMissionWorkItem,
 } from "@pragma/built-in-agents";
 
 import type { Mission } from "../../../shared/contracts/index.ts";
 import type { MissionCreator } from "../missions/mission-creator.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
+import { paginateManagementItems } from "./management-pagination.ts";
 
-export function createDesktopPragmaAgentTaskPort(options: {
+export function createDesktopPragmaAgentMissionPort(options: {
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly creator: MissionCreator;
   readonly stateRoot: string;
-}): PragmaAgentTaskPort {
+}): PragmaAgentMissionPort {
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.task.json`);
   return {
-    async list() {
-      return await Promise.all(
-        (await options.missions.list()).map(async (summary): Promise<PragmaAgentTaskSummary> => {
-          const mission = await options.missions.get(summary.id);
-          return {
-            id: mission.id,
-            title: mission.title,
-            status: mission.execution?.status ?? mission.lifecycleStatus,
-            executorRef: mission.executor.ref,
-            workspaceLabel: mission.workspace.basename,
-            updatedAt: mission.updatedAt,
-          };
-        }),
-      );
+    async list(input) {
+      const query = input.query?.trim().toLocaleLowerCase();
+      const statuses = input.statuses === undefined ? undefined : new Set(input.statuses);
+      const all = (await options.missions.list())
+        .map((summary): PragmaAgentMissionSummary => ({
+          missionId: summary.id,
+          title: summary.title,
+          status: summary.execution?.status ?? summary.lifecycleStatus,
+          executorRef: summary.executor.ref ?? `${summary.executor.kind}:unknown`,
+          workspaceLabel: summary.workspace.basename,
+          updatedAt: summary.updatedAt,
+        }))
+        .filter(
+          (mission) =>
+            (statuses === undefined || statuses.has(mission.status)) &&
+            (input.executorRef === undefined || mission.executorRef === input.executorRef) &&
+            (input.updatedAfter === undefined || mission.updatedAt > input.updatedAfter) &&
+            (query === undefined ||
+              [mission.missionId, mission.title, mission.executorRef, mission.workspaceLabel].some(
+                (value) => value.toLocaleLowerCase().includes(query),
+              )),
+        );
+      return paginateManagementItems({
+        items: all,
+        scope: "list_missions",
+        fingerprintValue: all.map(({ missionId, updatedAt }) => [missionId, updatedAt]),
+        filters: {
+          statuses: input.statuses,
+          executorRef: input.executorRef,
+          updatedAfter: input.updatedAfter,
+          query,
+        },
+        cursor: input.cursor,
+        limit: input.limit,
+      });
     },
     async get(id) {
-      return toTask(await options.missions.get(id));
+      return toMission(await options.missions.get(id));
     },
     async submit(input) {
       const path = operationPath(input.operationId);
@@ -48,7 +70,7 @@ export function createDesktopPragmaAgentTaskPort(options: {
         const storedId = await readOperation(path);
         if (storedId !== undefined) {
           const stored = await options.missions.get(storedId);
-          return toTask(
+          return toMission(
             stored.execution === undefined ? await options.runner.run(stored.id) : stored,
           );
         }
@@ -58,36 +80,83 @@ export function createDesktopPragmaAgentTaskPort(options: {
           executorRef: input.executorRef,
         });
         await writeOperation(path, mission.id);
-        return toTask(await options.runner.run(mission.id));
+        return toMission(await options.runner.run(mission.id));
       });
     },
     async sendMessage(input) {
-      return toTask(
-        (await options.runner.sendMessage({
-          id: input.id,
-          content: input.content,
-          requestId: deterministicUuid(input.operationId),
-        })).mission,
+      return toMission(
+        (
+          await options.runner.sendMessage({
+            id: input.missionId,
+            content: input.content,
+            requestId: deterministicUuid(input.operationId),
+          })
+        ).mission,
       );
     },
-    async listWorkItems(id) {
-      return (await options.runner.getWork(id)).records.map((record): PragmaAgentTaskWorkItem => ({
-        id: record.recordId,
+    async listWorkItems(input) {
+      const query = input.query?.trim().toLocaleLowerCase();
+      const kinds = input.kinds === undefined ? undefined : new Set(input.kinds);
+      const statuses = input.statuses === undefined ? undefined : new Set(input.statuses);
+      const all = (await options.runner.getWork(input.missionId)).records
+        .map((record): PragmaAgentMissionWorkItem => ({
+          workItemId: record.recordId,
+          kind: record.kind,
+          status: record.status,
+          label: record.title,
+          summary: record.summary,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        }))
+        .filter(
+          (item) =>
+            (kinds === undefined || kinds.has(item.kind)) &&
+            (statuses === undefined || statuses.has(item.status)) &&
+            (query === undefined ||
+              [item.workItemId, item.label, item.summary].some((value) =>
+                value.toLocaleLowerCase().includes(query),
+              )),
+        )
+        .toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.workItemId.localeCompare(right.workItemId),
+        );
+      return paginateManagementItems({
+        items: all,
+        scope: `list_mission_work_items:${input.missionId}`,
+        fingerprintValue: all.map(({ workItemId, updatedAt }) => [workItemId, updatedAt]),
+        filters: { kinds: input.kinds, statuses: input.statuses, query },
+        cursor: input.cursor,
+        limit: input.limit,
+      });
+    },
+    async getWorkItem(missionId, workItemId) {
+      const record = (await options.runner.getWork(missionId)).records.find(
+        (candidate) => candidate.recordId === workItemId,
+      );
+      if (record === undefined) throw new Error(`Mission work item not found: ${workItemId}`);
+      return {
+        workItemId: record.recordId,
         kind: record.kind,
         status: record.status,
         label: record.title,
-        details: record,
-      }));
+        summary: record.summary,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        ...(record.parentRecordId === undefined ? {} : { parentWorkItemId: record.parentRecordId }),
+        tasks: record.tasks,
+      };
     },
     async interrupt(id) {
-      return toTask(await options.runner.interrupt(id));
+      return toMission(await options.runner.interrupt(id));
     },
   };
 }
 
-function toTask(mission: Mission): PragmaAgentTask {
+function toMission(mission: Mission): PragmaAgentMission {
   return {
-    id: mission.id,
+    missionId: mission.id,
     title: mission.title,
     goal: mission.goal,
     status: mission.execution?.status ?? mission.lifecycleStatus,
@@ -95,7 +164,7 @@ function toTask(mission: Mission): PragmaAgentTask {
     workspaceId: mission.workspace.path,
     workspaceLabel: mission.workspace.basename,
     updatedAt: mission.updatedAt,
-    details: mission,
+    ...(mission.execution === undefined ? {} : { executionId: mission.execution.id }),
   };
 }
 

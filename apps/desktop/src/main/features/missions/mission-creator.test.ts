@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { MissionExecutor, PragmaProjectSnapshot } from "../../../shared/contracts/index.ts";
-import { createDesktopPragmaAgentTaskPort } from "../built-in-agents/pragma-agent-task-adapter.ts";
+import { createDesktopPragmaAgentMissionPort } from "../built-in-agents/pragma-agent-task-adapter.ts";
 import { createMissionCreator } from "./mission-creator.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionRunner } from "./mission-runner.ts";
@@ -104,23 +104,24 @@ describe("MissionCreator", () => {
     const runner = {
       run: async (id: string) => await missions.get(id),
     } as unknown as MissionRunner;
-    const tasks = createDesktopPragmaAgentTaskPort({
+    const missionPort = createDesktopPragmaAgentMissionPort({
       missions,
       runner,
       creator,
       stateRoot: join(root, "state"),
     });
 
-    const task = await tasks.submit({
+    const mission = await missionPort.submit({
       goal: "Restore the team",
       executorRef: executor.ref,
       workspaceId: workspace,
       operationId: "tool-call-1",
     });
 
-    expect(task.details).toMatchObject({
-      project: { id: "studio", revision: 1 },
-      executor,
+    expect(mission).toMatchObject({
+      goal: "Restore the team",
+      executorRef: executor.ref,
+      workspaceId: workspace,
     });
     expect((await project.get()).revision).toBe(1);
   });

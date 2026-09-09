@@ -4,21 +4,21 @@ import { describe, expect, it } from "vitest";
 import type {
   PragmaAgentAutomationPort,
   PragmaAgentDslProjectPort,
-  PragmaAgentTaskPort,
+  PragmaAgentMissionPort,
 } from "../src/ports.ts";
 import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
   it("keeps read tools open and gates durable writes", async () => {
-    const tools = createPragmaManagementTools({ project: projectPort(), tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project: projectPort(), missions: missionPort() });
     expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval?.mode).toBe("none");
     expect(tools.find((tool) => tool.name === "list_expert_options")?.approval?.mode).toBe("none");
     expect(tools.find((tool) => tool.name === "commit_dsl_changes")?.approval?.mode).toBe(
       "required",
     );
-    expect(tools.find((tool) => tool.name === "submit_task")?.approval?.mode).toBe("required");
-    expect(tools.find((tool) => tool.name === "interrupt_task")?.approval?.mode).toBe("none");
+    expect(tools.find((tool) => tool.name === "create_mission")?.approval?.mode).toBe("required");
+    expect(tools.find((tool) => tool.name === "interrupt_mission")?.approval?.mode).toBe("none");
   });
 
   it("injects the runtime toolCallId as the write operation id", async () => {
@@ -29,7 +29,7 @@ describe("Pragma Host management tools", () => {
         return { projectId: "studio", projectRevision: 2, changedRefs: [] };
       },
     });
-    const tool = createPragmaManagementTools({ project, tasks: taskPort() }).find(
+    const tool = createPragmaManagementTools({ project, missions: missionPort() }).find(
       (candidate) => candidate.name === "commit_dsl_changes",
     )!;
     await tool.call({ changeSetId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" }, undefined, {
@@ -44,7 +44,7 @@ describe("Pragma Host management tools", () => {
         return {} as never;
       },
     });
-    const tools = createPragmaManagementTools({ project, tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project, missions: missionPort() });
     expect(tools.some((candidate) => candidate.name === "run_evaluation")).toBe(false);
     const tool = tools.find((candidate) => candidate.name === "run_evaluation_draft")!;
 
@@ -57,7 +57,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     await expect(
       tool.call(
         {
@@ -67,11 +67,11 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
   });
 
   it("exposes independent Flow and Evaluation prepare-and-save paths", () => {
-    const tools = createPragmaManagementTools({ project: projectPort(), tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project: projectPort(), missions: missionPort() });
     const createEvaluation = tools.find(
       (candidate) => candidate.name === "create_evaluation_draft",
     )!;
@@ -110,7 +110,7 @@ describe("Pragma Host management tools", () => {
         return evaluationDraft();
       },
     });
-    const tool = createPragmaManagementTools({ project, tasks: taskPort() }).find(
+    const tool = createPragmaManagementTools({ project, missions: missionPort() }).find(
       (candidate) => candidate.name === "create_evaluation_draft",
     )!;
 
@@ -123,7 +123,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     expect(inputs).toHaveLength(0);
 
     await expect(
@@ -183,7 +183,7 @@ describe("Pragma Host management tools", () => {
         return evaluationDraft();
       },
     });
-    const tools = createPragmaManagementTools({ project, tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project, missions: missionPort() });
     const get = tools.find((candidate) => candidate.name === "get_evaluation_draft")!;
     const summary = await get.call(
       { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
@@ -192,17 +192,18 @@ describe("Pragma Host management tools", () => {
     );
     expect(summary.details).toMatchObject({
       cases: [{ id: "case-1", name: "Case one" }],
-      selectedCases: [],
     });
     expect(summary.text).not.toContain("expectInput");
-    const selected = await get.call(
-      {
-        draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
-        caseIds: ["case-1"],
-      },
-      undefined,
-      undefined,
-    );
+    const selected = await tools
+      .find((candidate) => candidate.name === "get_evaluation_cases")!
+      .call(
+        {
+          draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+          caseIds: ["case-1"],
+        },
+        undefined,
+        undefined,
+      );
     expect(selected.text).toContain("expectInput");
     await expect(
       get.call(
@@ -213,7 +214,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
 
     const update = tools.find((candidate) => candidate.name === "update_evaluation_draft")!;
     await expect(
@@ -229,7 +230,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).resolves.toMatchObject({ details: { cases: [{ id: "case-1" }] } });
+    ).resolves.toMatchObject({ details: { caseCount: 1 } });
     await expect(
       update.call(
         {
@@ -243,7 +244,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
   });
 
   it("keeps the Flow operation schema strict while recovering JSON array strings", async () => {
@@ -257,7 +258,7 @@ describe("Pragma Host management tools", () => {
         return flowDraft();
       },
     });
-    const tools = createPragmaManagementTools({ project, tasks: taskPort() });
+    const tools = createPragmaManagementTools({ project, missions: missionPort() });
     const update = tools.find((candidate) => candidate.name === "update_flow_draft")!;
     const get = tools.find((candidate) => candidate.name === "get_flow_draft")!;
 
@@ -334,8 +335,15 @@ describe("Pragma Host management tools", () => {
       diagnostics: [],
     });
 
-    const complete = await get.call(
+    const compact = await get.call(
       { draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855" },
+      undefined,
+      undefined,
+    );
+    expect(compact.details).not.toHaveProperty("resource");
+
+    const complete = await get.call(
+      { draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855", includeResource: true },
       undefined,
       undefined,
     );
@@ -351,7 +359,7 @@ describe("Pragma Host management tools", () => {
         return flowDraft();
       },
     });
-    const update = createPragmaManagementTools({ project, tasks: taskPort() }).find(
+    const update = createPragmaManagementTools({ project, missions: missionPort() }).find(
       (candidate) => candidate.name === "update_flow_draft",
     )!;
     const base = {
@@ -361,16 +369,16 @@ describe("Pragma Host management tools", () => {
 
     await expect(
       update.call({ ...base, operations: "not json" }, undefined, undefined),
-    ).rejects.toThrow("received a string that could not be parsed as JSON");
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     await expect(
       update.call({ ...base, operations: '{"type":"set_start"}' }, undefined, undefined),
-    ).rejects.toThrow("parsed string did not contain an array");
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     await expect(
       update.call({ ...base, operations: "[]" }, undefined, undefined),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     await expect(
       update.call({ ...base, operations: '[{"type":"unknown_operation"}]' }, undefined, undefined),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     await expect(
       update.call(
         {
@@ -382,7 +390,7 @@ describe("Pragma Host management tools", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
     expect(updateCount).toBe(0);
   });
 
@@ -396,7 +404,7 @@ describe("Pragma Host management tools", () => {
     });
     const tools = createPragmaManagementTools({
       project: projectPort(),
-      tasks: taskPort(),
+      missions: missionPort(),
       automations,
     });
 
@@ -417,13 +425,8 @@ function projectPort(
   overrides: Partial<PragmaAgentDslProjectPort> = {},
 ): PragmaAgentDslProjectPort {
   return {
-    list: async () => ({ projectRevision: 0, resources: [] }),
-    listExpertOptions: async () => ({
-      runtimeModels: [],
-      capabilities: [],
-      avatars: [],
-      builtinExperts: [],
-    }),
+    list: async () => ({ projectRevision: 0, items: [] }),
+    listExpertOptions: async (input) => ({ category: input.category, items: [] }),
     allocateResourceIds: async (requests) =>
       requests.map((request) => ({
         key: request.key,
@@ -476,9 +479,9 @@ function projectPort(
   };
 }
 
-function taskPort(): PragmaAgentTaskPort {
+function missionPort(): PragmaAgentMissionPort {
   return {
-    list: async () => [],
+    list: async () => ({ items: [] }),
     get: async () => {
       throw new Error("unused");
     },
@@ -488,7 +491,10 @@ function taskPort(): PragmaAgentTaskPort {
     sendMessage: async () => {
       throw new Error("unused");
     },
-    listWorkItems: async () => [],
+    listWorkItems: async () => ({ items: [] }),
+    getWorkItem: async () => {
+      throw new Error("unused");
+    },
     interrupt: async () => {
       throw new Error("unused");
     },
@@ -499,7 +505,7 @@ function automationPort(
   overrides: Partial<PragmaAgentAutomationPort> = {},
 ): PragmaAgentAutomationPort {
   return {
-    list: async () => ({ projectRevision: 1, automations: [] }),
+    list: async () => ({ projectRevision: 1, items: [] }),
     save: async () => automationSummary(),
     delete: async (input) => ({ deleted: true, ref: input.ref }),
     resetSession: async () => automationSummary(),

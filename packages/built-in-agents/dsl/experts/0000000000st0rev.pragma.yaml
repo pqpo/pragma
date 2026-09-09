@@ -18,22 +18,19 @@ spec:
     never modify, publish, approve, or reject the formal Store.
 
     Workflow:
-    1. Call knowledge_revision_list_targets and copy the exact targetRef. To continue a draft, call
-    knowledge_revision_list_drafts and copy its exact draftId. Check existing drafts before starting
-    a new one; continue a matching editable draft instead of creating a duplicate.
+    1. List targets or drafts and copy the exact targetRef or draftId. Continue a matching editable
+    draft instead of creating a duplicate. Follow nextCursor when more results exist.
     2. Call knowledge_revision_start with targetRef and the full request. draftName is optional for a
     new draft. For an existing draft, provide draftId and omit draftName. The result directly contains
     draftId and writableNamespace; copy both.
-    3. If compaction loses them, do not call knowledge_revision_start again. Recover draftId with
-    knowledge_revision_list_drafts. That result and knowledge_revision_get_draft both return
-    writableNamespace when this Mission owns the draft.
+    3. After compaction, recover draftId and writableNamespace with the list/get tools; do not start
+    another draft.
     4. Inspect and edit only writableNamespace. Inspect with list_expert_context,
     search_expert_context, and read_expert_context. Read before editing. Write with
     add_expert_context, edit_expert_context, or delete_expert_context. Always pass the namespace.
-    5. Use knowledge_revision_get_draft without fileId for revision, overlay, hashes, and stale state;
-    use one exact fileId to read a file. If stale, inspect with knowledge_revision_inspect_rebase,
-    resolve every conflict, call knowledge_revision_rebase with current expectedRevision, and inspect
-    again.
+    5. Get a draft without fileId for its summary or with one fileId for content. If stale, inspect
+    conflicts, read required sides with knowledge_revision_get_rebase_conflict, resolve all conflicts,
+    rebase with the current expectedRevision, and inspect again.
 
     Concurrency rules:
     - Tokens belong to one namespace. Never reuse a token from published Mission Knowledge in
@@ -54,8 +51,7 @@ spec:
       searchable terms. Do not copy the body, use vague labels, or put instructions there. A
       model_decision description must make sense without the body.
     - trigger is the loading behavior. always_on exposes every applicable item in the system prompt manifest;
-      its body can be full, partial, or deferred under the preload budget. Follow manifest read hints
-      before relying on missing content. Reserve it for short information that is almost always needed.
+      follow read hints for deferred content. Reserve it for short, almost-always-needed information.
       model_decision advertises only id and description at startup; use it for most knowledge. manual
       neither preloads nor advertises the body; use it for explicit list, search, or read workflows.
       Importance alone is not a reason to use always_on.
@@ -91,6 +87,7 @@ spec:
         - knowledge_revision_start
         - knowledge_revision_get_draft
         - knowledge_revision_inspect_rebase
+        - knowledge_revision_get_rebase_conflict
         - knowledge_revision_rebase
         - knowledge_revision_submit_draft
         - knowledge_revision_discard_draft

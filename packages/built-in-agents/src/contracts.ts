@@ -17,9 +17,76 @@ import {
   PragmaFlowRunDrySuiteResultSchema,
 } from "@pragma/evaluation/ast";
 import { PragmaExpertAvatarProfileSchema } from "@pragma/shared";
+import { OpaqueCursorSchema } from "@pragma/shared/integration";
 import { z } from "zod";
 
 export * from "./revision-contracts.ts";
+
+export const PRAGMA_MANAGEMENT_DEFAULT_PAGE_LIMIT = 25;
+export const PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT = 100;
+
+export const PragmaManagementPageInputSchema = z
+  .object({
+    cursor: OpaqueCursorSchema.optional().describe(
+      "Opaque nextCursor returned by the previous call with the same filters.",
+    ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT)
+      .default(PRAGMA_MANAGEMENT_DEFAULT_PAGE_LIMIT)
+      .describe("Maximum items to return; defaults to 25 and cannot exceed 100."),
+  })
+  .strict();
+
+export const PragmaManagementPageSchema = <T extends z.ZodType>(item: T) =>
+  z
+    .object({
+      items: z.array(item).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
+      nextCursor: OpaqueCursorSchema.optional(),
+    })
+    .strict();
+
+export const PragmaManagementErrorSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.management-error/v1"),
+    code: z.enum([
+      "invalid_input",
+      "not_found",
+      "revision_conflict",
+      "cursor_invalid",
+      "cursor_expired",
+      "unavailable",
+      "permission_denied",
+      "already_attached",
+      "response_too_large",
+      "internal_error",
+    ]),
+    message: z.string().min(1).max(2_000),
+    retryable: z.boolean(),
+    details: z.record(z.string(), z.unknown()).optional(),
+    recovery: z
+      .object({
+        tool: z.string().min(1).max(128),
+        reason: z.string().min(1).max(500),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export const PragmaContentChunkSchema = z
+  .object({
+    content: z.string().max(100_000),
+    offset: z.number().int().nonnegative(),
+    sizeChars: z.number().int().nonnegative(),
+    totalChars: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    complete: z.boolean(),
+    nextOffset: z.number().int().positive().optional(),
+  })
+  .strict();
 
 export const PragmaAgentResourceSummarySchema = z.object({
   ref: PragmaSemanticResourceRefSchema,
@@ -43,6 +110,10 @@ export const PragmaAgentDslDocumentSchema = PragmaAgentResourceSummarySchema.ext
   readOnly: z.boolean(),
   source: z.string().min(1),
 });
+
+export const PragmaAgentResourcePageSchema = PragmaManagementPageSchema(
+  PragmaAgentResourceSummarySchema,
+).extend({ projectRevision: z.number().int().nonnegative() });
 
 export const PragmaAgentRuntimeModelOptionSchema = z.object({
   key: z.string().min(1).max(500),
@@ -91,6 +162,30 @@ export const PragmaAgentExpertOptionCatalogSchema = z.object({
   builtinExperts: z.array(PragmaAgentBuiltinExpertOptionSchema),
 });
 
+export const PragmaAgentExpertOptionCategorySchema = z.enum([
+  "runtime-models",
+  "capabilities",
+  "avatars",
+  "builtin-experts",
+]);
+
+export const PragmaAgentExpertOptionPageSchema = z
+  .object({
+    category: PragmaAgentExpertOptionCategorySchema,
+    items: z
+      .array(
+        z.union([
+          PragmaAgentRuntimeModelOptionSchema,
+          PragmaAgentCapabilityOptionSchema,
+          PragmaExpertAvatarProfileSchema,
+          PragmaAgentBuiltinExpertOptionSchema,
+        ]),
+      )
+      .max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
+    nextCursor: OpaqueCursorSchema.optional(),
+  })
+  .strict();
+
 export const PragmaAgentDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });
 
 export const PragmaAgentChangeSetSchema = z.object({
@@ -106,6 +201,26 @@ export const PragmaAgentChangeSetSchema = z.object({
   ),
   createdAt: z.string().datetime(),
 });
+
+export const PragmaAgentChangeSetSummarySchema = z.object({
+  changeSetId: z.string().uuid(),
+  projectRevision: z.number().int().nonnegative(),
+  diagnostics: z.array(PragmaDiagnosticSchema),
+  changes: z.array(
+    z.object({
+      ref: PragmaSemanticResourceRefSchema,
+      kind: z.enum(["created", "updated"]),
+      sizeBytes: z.number().int().nonnegative(),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    }),
+  ),
+  createdAt: z.string().datetime(),
+});
+
+export const PragmaAgentCompactPrepareResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("invalid"), diagnostics: z.array(PragmaDiagnosticSchema) }),
+  z.object({ status: z.literal("prepared"), changeSet: PragmaAgentChangeSetSummarySchema }),
+]);
 
 export const PragmaAgentPrepareResultSchema = z.discriminatedUnion("status", [
   z.object({
@@ -200,7 +315,7 @@ export const PragmaAgentFlowDraftUpdateSummarySchema = z.object({
   baseProjectRevision: z.number().int().nonnegative(),
   draftRevision: z.number().int().nonnegative(),
   applied: z.object({
-    operationCount: z.number().int().positive(),
+    operationCount: z.number().int().nonnegative(),
     stepsChanged: z.array(DraftGraphIdSchema),
     transitionsChanged: z.array(DraftGraphIdSchema),
     loopsChanged: z.array(DraftGraphIdSchema),
@@ -270,20 +385,29 @@ export const PragmaAgentEvaluationDraftSummarySchema = z.object({
   metadata: PragmaEvaluationMetadataSchema,
   targetRef: PragmaEvaluationFlowRefSchema,
   sourceEvaluationRef: PragmaEvaluationRefSchema.optional(),
-  cases: z.array(
-    z.object({
-      id: PragmaFlowRunDryCaseSchema.shape.id,
-      name: PragmaFlowRunDryCaseSchema.shape.name,
-    }),
-  ),
+  caseCount: z.number().int().nonnegative(),
   diagnostics: z.array(PragmaAgentEvaluationDraftDiagnosticSchema),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 
-export const PragmaAgentEvaluationDraftViewSchema = PragmaAgentEvaluationDraftSummarySchema.extend({
-  selectedCases: z.array(PragmaFlowRunDryCaseSchema).max(10),
+export const PragmaAgentEvaluationCaseSummarySchema = z.object({
+  id: PragmaFlowRunDryCaseSchema.shape.id,
+  name: PragmaFlowRunDryCaseSchema.shape.name,
 });
+
+export const PragmaAgentEvaluationDraftViewSchema = PragmaAgentEvaluationDraftSummarySchema.extend({
+  cases: z.array(PragmaAgentEvaluationCaseSummarySchema).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
+  nextCursor: OpaqueCursorSchema.optional(),
+});
+
+export const PragmaAgentEvaluationCasesSchema = z
+  .object({
+    draftId: z.string().uuid(),
+    draftRevision: z.number().int().nonnegative(),
+    cases: z.array(PragmaFlowRunDryCaseSchema).min(1).max(10),
+  })
+  .strict();
 
 export const PragmaAgentEvaluationDraftRunResultSchema = z.object({
   draft: PragmaAgentEvaluationDraftSummarySchema,
@@ -304,8 +428,8 @@ export const PragmaAgentProjectCommitSchema = z.object({
   changedRefs: z.array(PragmaSemanticResourceRefSchema),
 });
 
-export const PragmaAgentTaskSummarySchema = z.object({
-  id: z.string().min(1),
+export const PragmaAgentMissionSummarySchema = z.object({
+  missionId: z.string().uuid(),
   title: z.string().min(1),
   status: z.string().min(1),
   executorRef: z.string().min(1),
@@ -313,19 +437,33 @@ export const PragmaAgentTaskSummarySchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const PragmaAgentTaskSchema = PragmaAgentTaskSummarySchema.extend({
+export const PragmaAgentMissionSchema = PragmaAgentMissionSummarySchema.extend({
   goal: z.string().min(1),
   workspaceId: z.string().min(1),
-  details: z.unknown().optional(),
+  executionId: z.string().uuid().optional(),
 });
 
-export const PragmaAgentTaskWorkItemSchema = z.object({
-  id: z.string().min(1),
+export const PragmaAgentMissionWorkItemSchema = z.object({
+  workItemId: z.string().min(1),
   kind: z.string().min(1),
   status: z.string().min(1),
   label: z.string().min(1),
-  details: z.unknown().optional(),
+  summary: z.string().max(1_000),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 });
+
+export const PragmaAgentMissionWorkItemDetailSchema = PragmaAgentMissionWorkItemSchema.extend({
+  parentWorkItemId: z.string().min(1).optional(),
+  tasks: z.array(z.unknown()),
+});
+
+export const PragmaAgentMissionPageSchema = PragmaManagementPageSchema(
+  PragmaAgentMissionSummarySchema,
+);
+export const PragmaAgentMissionWorkItemPageSchema = PragmaManagementPageSchema(
+  PragmaAgentMissionWorkItemSchema,
+);
 
 export const PragmaAgentAutomationSummarySchema = z.object({
   ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("automation:")),
@@ -341,6 +479,10 @@ export const PragmaAgentAutomationSummarySchema = z.object({
   diagnostic: z.string().optional(),
 });
 
+export const PragmaAgentAutomationPageSchema = PragmaManagementPageSchema(
+  PragmaAgentAutomationSummarySchema,
+).extend({ projectRevision: z.number().int().nonnegative() });
+
 export type PragmaAgentResourceSummary = z.infer<typeof PragmaAgentResourceSummarySchema>;
 export type PragmaAgentDslDocument = z.infer<typeof PragmaAgentDslDocumentSchema>;
 export type PragmaAgentRuntimeModelOption = z.infer<typeof PragmaAgentRuntimeModelOptionSchema>;
@@ -349,6 +491,7 @@ export type PragmaAgentBuiltinExpertOption = z.infer<typeof PragmaAgentBuiltinEx
 export type PragmaAgentExpertOptionCatalog = z.infer<typeof PragmaAgentExpertOptionCatalogSchema>;
 export type PragmaAgentDslChange = z.infer<typeof PragmaAgentDslChangeSchema>;
 export type PragmaAgentChangeSet = z.infer<typeof PragmaAgentChangeSetSchema>;
+export type PragmaAgentChangeSetSummary = z.infer<typeof PragmaAgentChangeSetSummarySchema>;
 export type PragmaAgentPrepareResult = z.infer<typeof PragmaAgentPrepareResultSchema>;
 export type PragmaAgentFlowDraft = z.infer<typeof PragmaAgentFlowDraftSchema>;
 export type PragmaAgentFlowDraftDiagnostic = z.infer<typeof PragmaAgentFlowDraftDiagnosticSchema>;
@@ -371,7 +514,10 @@ export type PragmaAgentEvaluationDraftRunResult = z.infer<
   typeof PragmaAgentEvaluationDraftRunResultSchema
 >;
 export type PragmaAgentProjectCommit = z.infer<typeof PragmaAgentProjectCommitSchema>;
-export type PragmaAgentTaskSummary = z.infer<typeof PragmaAgentTaskSummarySchema>;
-export type PragmaAgentTask = z.infer<typeof PragmaAgentTaskSchema>;
-export type PragmaAgentTaskWorkItem = z.infer<typeof PragmaAgentTaskWorkItemSchema>;
+export type PragmaAgentMissionSummary = z.infer<typeof PragmaAgentMissionSummarySchema>;
+export type PragmaAgentMission = z.infer<typeof PragmaAgentMissionSchema>;
+export type PragmaAgentMissionWorkItem = z.infer<typeof PragmaAgentMissionWorkItemSchema>;
+export type PragmaAgentMissionWorkItemDetail = z.infer<
+  typeof PragmaAgentMissionWorkItemDetailSchema
+>;
 export type PragmaAgentAutomationSummary = z.infer<typeof PragmaAgentAutomationSummarySchema>;

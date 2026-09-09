@@ -77,7 +77,7 @@ import {
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../features/context-stores/knowledge-revision-capability.ts";
 import { createDesktopPragmaAgentAutomationPort } from "../features/built-in-agents/pragma-agent-automation-adapter.ts";
 import { createDesktopPragmaAgentProjectPort } from "../features/built-in-agents/pragma-agent-project-adapter.ts";
-import { createDesktopPragmaAgentTaskPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
+import { createDesktopPragmaAgentMissionPort } from "../features/built-in-agents/pragma-agent-task-adapter.ts";
 import { installExpertDefinitionHandlers } from "../features/experts/expert-definition-ipc.ts";
 import { installEvaluationHandlers } from "../features/evaluations/evaluation-ipc.ts";
 import {
@@ -1227,7 +1227,7 @@ export async function createDesktopApplicationContainer(
     onStorageTrashed: () => trashMaintenance.schedule("automation-storage-trashed"),
   });
   installAutomationHandlers(automationService);
-  const pragmaAgentTasks = createDesktopPragmaAgentTaskPort({
+  const pragmaAgentMissions = createDesktopPragmaAgentMissionPort({
     missions: missionStore,
     runner: missionRunner,
     creator: missionCreator,
@@ -1235,7 +1235,7 @@ export async function createDesktopApplicationContainer(
   });
   pragmaManagementPortsRef.current = {
     project: pragmaAgentProject,
-    tasks: pragmaAgentTasks,
+    missions: pragmaAgentMissions,
     automations: createDesktopPragmaAgentAutomationPort({
       service: automationService,
       project: pragmaProjectStore,

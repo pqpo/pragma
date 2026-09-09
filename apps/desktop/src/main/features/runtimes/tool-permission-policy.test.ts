@@ -12,7 +12,7 @@ describe("Desktop tool permission policy", () => {
   it.each([
     "read_and_delete",
     "get_then_write",
-    "mcp__pragma__get_task",
+    "mcp__pragma__get_mission",
     "WebSearch",
     "webfetch",
     "commit_dsl_changes",

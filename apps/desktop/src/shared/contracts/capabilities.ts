@@ -82,6 +82,7 @@ export const CapabilityToolSnapshotSchema = z.object({
   name: CapabilityToolNameSchema,
   description: z.string().trim().max(2_000).optional(),
   inputSchema: z.unknown().optional(),
+  outputSchema: z.unknown().optional(),
   schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
 

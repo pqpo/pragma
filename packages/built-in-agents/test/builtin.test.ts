@@ -105,12 +105,13 @@ describe("built-in Pragma Agent DSL", () => {
         getChangeSet: unavailable,
         commit: unavailable,
       },
-      tasks: {
+      missions: {
         list: unavailable,
         get: unavailable,
         submit: unavailable,
         sendMessage: unavailable,
         listWorkItems: unavailable,
+        getWorkItem: unavailable,
         interrupt: unavailable,
       },
       automations: {
@@ -144,7 +145,7 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(28);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(31);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
@@ -493,6 +494,7 @@ describe("built-in Pragma Agent DSL", () => {
           "knowledge_revision_start",
           "knowledge_revision_get_draft",
           "knowledge_revision_inspect_rebase",
+          "knowledge_revision_get_rebase_conflict",
           "knowledge_revision_rebase",
           "knowledge_revision_submit_draft",
           "knowledge_revision_discard_draft",
@@ -502,8 +504,8 @@ describe("built-in Pragma Agent DSL", () => {
     expect(resource.spec.instructions).toContain("edit_expert_context");
     expect(resource.spec.instructions).toContain("draftId and writableNamespace; copy both");
     expect(resource.spec.instructions).toContain("Inspect and edit only writableNamespace");
-    expect(resource.spec.instructions).toContain("do not call knowledge_revision_start again");
-    expect(resource.spec.instructions).toContain("when this Mission owns the draft");
+    expect(resource.spec.instructions).toContain("do not start");
+    expect(resource.spec.instructions).toContain("After compaction, recover draftId");
     expect(resource.spec.instructions).toContain("Never reuse a token");
     expect(resource.spec.instructions).toContain("description is a concise retrieval label");
     expect(resource.spec.instructions).toContain("trigger is the loading behavior");

@@ -47,6 +47,7 @@ describe("Desktop Pragma adapter Host", () => {
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema,
             approval: tool.approval,
           })),
         ),

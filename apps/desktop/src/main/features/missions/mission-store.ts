@@ -1783,7 +1783,11 @@ function toMissionSummary(mission: Mission): MissionSummary {
     id: mission.id,
     title: mission.title,
     workspace: { basename: mission.workspace.basename },
-    executor: { kind: mission.executor.kind, name: mission.executor.name },
+    executor: {
+      kind: mission.executor.kind,
+      name: mission.executor.name,
+      ref: mission.executor.ref,
+    },
     ...(mission.execution === undefined
       ? {}
       : {

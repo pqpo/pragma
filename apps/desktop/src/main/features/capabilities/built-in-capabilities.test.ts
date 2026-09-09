@@ -37,12 +37,13 @@ describe("built-in capabilities", () => {
     expect(capability.kind).toBe("mcp_server");
     if (capability.kind !== "mcp_server") return;
 
-    expect(PRAGMA_MANAGEMENT_TOOL_DEFINITIONS).toHaveLength(36);
-    expect(new Set(PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name }) => name)).size).toBe(36);
+    expect(new Set(PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name }) => name)).size).toBe(
+      PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.length,
+    );
     expect(PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name }) => name)).toEqual(
       expect.arrayContaining([
         "list_dsl_resources",
-        "submit_task",
+        "create_mission",
         "save_automation",
         "knowledge_revision_start",
       ]),
@@ -53,12 +54,13 @@ describe("built-in capabilities", () => {
         name: expected.name,
         description: expected.description,
         inputSchema: expected.inputSchema,
+        outputSchema: expected.outputSchema,
       });
     }
   });
 
   it("tests the read-only listing tool against the Host port", async () => {
-    const listTargets = vi.fn(async () => []);
+    const listTargets = vi.fn(async () => ({ items: [] }));
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
@@ -70,12 +72,12 @@ describe("built-in capabilities", () => {
       vi.fn(),
     );
 
-    expect(result).toMatchObject({ ok: true, code: "success", output: [] });
+    expect(result).toMatchObject({ ok: true, code: "success", output: { items: [] } });
     expect(listTargets).toHaveBeenCalledOnce();
   });
 
   it("tests a resource management tool through the same unified factory", async () => {
-    const list = vi.fn(async () => ({ projectRevision: 7, resources: [] }));
+    const list = vi.fn(async () => ({ projectRevision: 7, items: [] }));
     const result = await testBuiltInCapability(
       {
         id: BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY.manifest.id,
@@ -85,7 +87,7 @@ describe("built-in capabilities", () => {
       },
       {
         project: { list } as never,
-        tasks: {} as never,
+        missions: {} as never,
       },
       vi.fn(),
     );
@@ -93,7 +95,7 @@ describe("built-in capabilities", () => {
     expect(result).toMatchObject({
       ok: true,
       code: "success",
-      output: { projectRevision: 7, resources: [] },
+      output: { projectRevision: 7, items: [] },
     });
     expect(list).toHaveBeenCalledOnce();
   });
@@ -118,11 +120,12 @@ describe("built-in capabilities", () => {
 
 function revisionPort(overrides: Record<string, unknown> = {}) {
   return {
-    listTargets: vi.fn(async () => []),
-    listDrafts: vi.fn(async () => []),
+    listTargets: vi.fn(async () => ({ items: [] })),
+    listDrafts: vi.fn(async () => ({ items: [] })),
     start: vi.fn(async () => ({})),
     getDraft: vi.fn(),
     inspectRebase: vi.fn(),
+    getRebaseConflict: vi.fn(),
     rebase: vi.fn(),
     submitDraft: vi.fn(),
     discardDraft: vi.fn(),

@@ -33,7 +33,7 @@ stored in `metadata.avatarId`; name, gender, and personality are selection metad
 | `pragma.avatar.expert.26` | Sam   | man       | energetic, pragmatic, optimistic   |
 | `pragma.avatar.expert.27` | Cleo  | woman     | inventive, decisive, sociable      |
 
-Use the current `list_expert_options.avatars` result as the runtime source of truth. Recommend a
+Use the current `avatars` category from `list_expert_options` as the runtime source of truth. Recommend a
 persona by matching its traits to the Expert's intended working style. If several personas fit or
 the choice is mainly aesthetic, present a short relevant subset and let the user choose. Never infer
 capabilities, permissions, or actual behavior from a persona. Preserve the current `avatarId` when

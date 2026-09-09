@@ -44,6 +44,7 @@ export function createDesktopAdapterHost(
                 name: tool.name,
                 description: tool.description,
                 inputSchema: tool.inputSchema,
+                outputSchema: tool.outputSchema,
                 approval: tool.approval,
               })),
             ),

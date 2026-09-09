@@ -6,13 +6,13 @@ import type {
   PragmaAgentFlowDraft,
   PragmaAgentFlowDraftOperation,
   PragmaAgentDslDocument,
-  PragmaAgentExpertOptionCatalog,
   PragmaAgentProjectCommit,
   PragmaAgentPrepareResult,
   PragmaAgentResourceSummary,
-  PragmaAgentTask,
-  PragmaAgentTaskSummary,
-  PragmaAgentTaskWorkItem,
+  PragmaAgentMission,
+  PragmaAgentMissionSummary,
+  PragmaAgentMissionWorkItem,
+  PragmaAgentMissionWorkItemDetail,
   PragmaAgentAutomationSummary,
 } from "./contracts.ts";
 
@@ -31,11 +31,27 @@ export interface PragmaAgentDslProjectPort {
         | "evaluation";
     }[],
   ): Promise<readonly { readonly key: string; readonly id: string; readonly ref: string }[]>;
-  list(): Promise<{
+  list(input: {
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+    readonly kinds?: readonly PragmaAgentResourceSummary["kind"][] | undefined;
+    readonly query?: string | undefined;
+  }): Promise<{
     readonly projectRevision: number;
-    readonly resources: PragmaAgentResourceSummary[];
+    readonly items: PragmaAgentResourceSummary[];
+    readonly nextCursor?: string | undefined;
   }>;
-  listExpertOptions(): Promise<PragmaAgentExpertOptionCatalog>;
+  listExpertOptions(input: {
+    readonly category: "runtime-models" | "capabilities" | "avatars" | "builtin-experts";
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+    readonly query?: string | undefined;
+    readonly capabilityKind?: "skill" | "tools" | undefined;
+  }): Promise<{
+    readonly category: "runtime-models" | "capabilities" | "avatars" | "builtin-experts";
+    readonly items: readonly unknown[];
+    readonly nextCursor?: string | undefined;
+  }>;
   read(ref: string): Promise<PragmaAgentDslDocument>;
   prepare(input: {
     readonly expectedProjectRevision: number;
@@ -97,28 +113,57 @@ export interface PragmaAgentDslProjectPort {
   }): Promise<PragmaAgentProjectCommit>;
 }
 
-export interface PragmaAgentTaskPort {
-  list(): Promise<readonly PragmaAgentTaskSummary[]>;
-  get(id: string): Promise<PragmaAgentTask>;
+export interface PragmaAgentMissionPort {
+  list(input: {
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+    readonly statuses?: readonly string[] | undefined;
+    readonly executorRef?: string | undefined;
+    readonly updatedAfter?: string | undefined;
+    readonly query?: string | undefined;
+  }): Promise<{
+    readonly items: readonly PragmaAgentMissionSummary[];
+    readonly nextCursor?: string | undefined;
+  }>;
+  get(missionId: string): Promise<PragmaAgentMission>;
   submit(input: {
     readonly goal: string;
     readonly executorRef: string;
     readonly workspaceId: string;
     readonly operationId: string;
-  }): Promise<PragmaAgentTask>;
+  }): Promise<PragmaAgentMission>;
   sendMessage(input: {
-    readonly id: string;
+    readonly missionId: string;
     readonly content: string;
     readonly operationId: string;
-  }): Promise<PragmaAgentTask>;
-  listWorkItems(id: string): Promise<readonly PragmaAgentTaskWorkItem[]>;
-  interrupt(id: string): Promise<PragmaAgentTask>;
+  }): Promise<PragmaAgentMission>;
+  listWorkItems(input: {
+    readonly missionId: string;
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+    readonly kinds?: readonly string[] | undefined;
+    readonly statuses?: readonly string[] | undefined;
+    readonly query?: string | undefined;
+  }): Promise<{
+    readonly items: readonly PragmaAgentMissionWorkItem[];
+    readonly nextCursor?: string | undefined;
+  }>;
+  getWorkItem(missionId: string, workItemId: string): Promise<PragmaAgentMissionWorkItemDetail>;
+  interrupt(missionId: string): Promise<PragmaAgentMission>;
 }
 
 export interface PragmaAgentAutomationPort {
-  list(): Promise<{
+  list(input: {
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+    readonly statuses?: readonly PragmaAgentAutomationSummary["status"][] | undefined;
+    readonly enabled?: boolean | undefined;
+    readonly executorRef?: string | undefined;
+    readonly query?: string | undefined;
+  }): Promise<{
     readonly projectRevision: number;
-    readonly automations: readonly PragmaAgentAutomationSummary[];
+    readonly items: readonly PragmaAgentAutomationSummary[];
+    readonly nextCursor?: string | undefined;
   }>;
   save(input: {
     readonly expectedProjectRevision: number;

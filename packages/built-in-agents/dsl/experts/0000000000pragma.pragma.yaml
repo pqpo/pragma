@@ -29,12 +29,14 @@ spec:
         - list_expert_options
         - allocate_dsl_resource_ids
         - prepare_dsl_changes
+        - read_prepared_dsl_change
         - create_flow_draft
         - get_flow_draft
         - update_flow_draft
         - validate_flow_draft
         - create_evaluation_draft
         - get_evaluation_draft
+        - get_evaluation_cases
         - update_evaluation_draft
         - run_evaluation_draft
         - prepare_evaluation_draft
@@ -42,12 +44,13 @@ spec:
         - prepare_flow_draft
         - discard_flow_draft
         - commit_dsl_changes
-        - list_tasks
-        - get_task
-        - submit_task
-        - send_task_message
-        - list_task_work_items
-        - interrupt_task
+        - list_missions
+        - get_mission
+        - create_mission
+        - send_mission_message
+        - list_mission_work_items
+        - get_mission_work_item
+        - interrupt_mission
         - list_automations
         - save_automation
         - delete_automation

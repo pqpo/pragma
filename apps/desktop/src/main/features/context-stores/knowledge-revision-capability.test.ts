@@ -177,46 +177,48 @@ describe("Desktop Pragma management knowledge revision tools", () => {
   it("lists every knowledge base with descriptions and current Expert or Team mounts", async () => {
     const { port, targetRef } = fixture();
 
-    await expect(port.listTargets(invocation)).resolves.toEqual([
-      {
-        targetRef,
-        name: "Team knowledge",
-        description: "Shared engineering invariants.",
-        revision: 4,
-        mounted: true,
-        mounts: [
-          {
-            ownerKind: "expert",
-            ownerRef: `expert:${EXPERT_ID}`,
-            ownerName: "Reflector",
-            namespace: "private-knowledge",
-            required: false,
-          },
-          {
-            ownerKind: "team",
-            ownerRef: `team:${TEAM_ID}`,
-            ownerName: "Reflection team",
-            namespace: "team-knowledge",
-            required: true,
-            visibility: { mode: "whitelist", expertIds: [EXPERT_ID] },
-          },
-          {
-            ownerKind: "expert",
-            ownerRef: "expert:0000000000000004",
-            ownerName: "Pragma",
-            namespace: "system-knowledge",
-            required: true,
-          },
-        ],
-      },
-      expect.objectContaining({
-        name: "Unattached knowledge",
-        description: "Available but not mounted.",
-        revision: 2,
-        mounted: false,
-        mounts: [],
-      }),
-    ]);
+    await expect(port.listTargets({ ...invocation, limit: 25 })).resolves.toEqual({
+      items: [
+        {
+          targetRef,
+          name: "Team knowledge",
+          description: "Shared engineering invariants.",
+          revision: 4,
+          mounted: true,
+          mounts: [
+            {
+              ownerKind: "expert",
+              ownerRef: `expert:${EXPERT_ID}`,
+              ownerName: "Reflector",
+              namespace: "private-knowledge",
+              required: false,
+            },
+            {
+              ownerKind: "team",
+              ownerRef: `team:${TEAM_ID}`,
+              ownerName: "Reflection team",
+              namespace: "team-knowledge",
+              required: true,
+              visibility: { mode: "whitelist", expertIds: [EXPERT_ID] },
+            },
+            {
+              ownerKind: "expert",
+              ownerRef: "expert:0000000000000004",
+              ownerName: "Pragma",
+              namespace: "system-knowledge",
+              required: true,
+            },
+          ],
+        },
+        expect.objectContaining({
+          name: "Unattached knowledge",
+          description: "Available but not mounted.",
+          revision: 2,
+          mounted: false,
+          mounts: [],
+        }),
+      ],
+    });
   });
 
   it("lists lightweight draft summaries without returning overlay content", async () => {
@@ -248,18 +250,20 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       },
     ]);
 
-    await expect(port.listDrafts({ ...invocation })).resolves.toEqual([
-      {
-        draftId: "00000000-0000-4000-8000-000000000301",
-        revision: 5,
-        name: "Retry invariants",
-        storeId: STORE_ID,
-        baseRevision: 4,
-        state: "editing",
-        createdAt: "2026-08-28T00:00:00.000Z",
-        updatedAt: "2026-08-28T01:00:00.000Z",
-      },
-    ]);
+    await expect(port.listDrafts({ ...invocation, limit: 25 })).resolves.toEqual({
+      items: [
+        {
+          draftId: "00000000-0000-4000-8000-000000000301",
+          revision: 5,
+          name: "Retry invariants",
+          storeId: STORE_ID,
+          baseRevision: 4,
+          state: "editing",
+          createdAt: "2026-08-28T00:00:00.000Z",
+          updatedAt: "2026-08-28T01:00:00.000Z",
+        },
+      ],
+    });
   });
 
   it("recovers the writable namespace for a draft claimed by the current Mission", async () => {
@@ -281,12 +285,14 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     listDrafts.mockResolvedValue([draft]);
     getDraft.mockResolvedValue(draft);
 
-    await expect(port.listDrafts({ ...invocation })).resolves.toEqual([
-      expect.objectContaining({
-        draftId: draft.id,
-        writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
-      }),
-    ]);
+    await expect(port.listDrafts({ ...invocation, limit: 25 })).resolves.toEqual({
+      items: [
+        expect.objectContaining({
+          draftId: draft.id,
+          writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
+        }),
+      ],
+    });
     await expect(port.getDraft({ ...invocation, draftId: draft.id })).resolves.toMatchObject({
       mode: "summary",
       draft: { draftId: draft.id, writableNamespace: `mission-knowledge-draft:${STORE_ID}` },
@@ -359,7 +365,12 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     ).resolves.toMatchObject({
       mode: "file",
       id: "items/retry.md",
-      content: "large draft content",
+      content: expect.objectContaining({
+        content: "large draft content",
+        offset: 0,
+        totalChars: 19,
+        complete: true,
+      }),
       revision: "draft-revision",
       etag: "draft-etag",
     });
@@ -367,7 +378,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
 
   it("submits to any listed target and records Team provenance when applicable", async () => {
     const { port, start, scheduleProcessing } = fixture();
-    const unmounted = (await port.listTargets(invocation)).find(
+    const unmounted = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
       (target) => target.name === "Unattached knowledge",
     )!;
 
@@ -407,7 +418,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
 
   it("supports standalone Experts and rejects targets that are not in the current store list", async () => {
     const { port, start } = fixture();
-    const unmounted = (await port.listTargets(invocation)).find(
+    const unmounted = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
       (target) => target.name === "Unattached knowledge",
     )!;
 
@@ -508,7 +519,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
 
   it("rejects a direct revision target that is not mounted in the Mission", async () => {
     const { port } = fixture(true);
-    const target = (await port.listTargets(invocation)).find(
+    const target = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
       (candidate) => candidate.name === "Unattached knowledge",
     )!;
 

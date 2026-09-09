@@ -29,8 +29,8 @@ runtime-profile:7h8j9k0m1n2p3q4r
 
 - `list_dsl_resources` lists resources already in the current project. Read and reuse their exact
   refs instead of creating another resource with the same name or purpose.
-- `list_expert_options` lists ready Host Runtime models and capabilities, named avatar personas, and
-  read-only built-in Experts. A `builtinExperts` entry can be referenced directly as an ExpertTeam
+- `list_expert_options` returns one filtered, paged category per call: `runtime-models`,
+  `capabilities`, `avatars`, or `builtin-experts`. A built-in Expert entry can be referenced directly as an ExpertTeam
   coordinator or member; read it through `read_dsl_resource` and never duplicate it as a project
   Expert.
   For Runtime models, use the `runtimeProfileRef` field, not a copied display name or a newly

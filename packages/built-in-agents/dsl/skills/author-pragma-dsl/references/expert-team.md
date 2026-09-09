@@ -39,7 +39,7 @@ spec:
 ```
 
 - The coordinator and every member must already exist or be included in the same change-set.
-- Reuse a matching read-only system Expert from `list_expert_options.builtinExperts` when available.
+- Reuse a matching read-only system Expert from the `builtin-experts` category of `list_expert_options` when available.
   Its canonical ref is valid directly and it remains outside the editable project resource list.
 - `avatarId` remains part of the `pragma/v5` portable resource protocol. Desktop displays the
   coordinator's current Expert avatar and adds the Team badge in the UI.

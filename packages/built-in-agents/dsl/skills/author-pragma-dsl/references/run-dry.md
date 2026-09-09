@@ -77,5 +77,5 @@ an uncommitted Flow draft. Never report test-set success until `commit_dsl_chang
 committed revision containing the canonical Evaluation ref.
 
 Never build, resend, or request the complete Evaluation YAML during conversational authoring.
-`get_evaluation_draft` returns summaries by default; request at most 10 exact case IDs only when
-their full definitions are needed.
+`get_evaluation_draft` returns a paged case summary; call `get_evaluation_cases` with at most 10
+exact case IDs only when their full definitions are needed.

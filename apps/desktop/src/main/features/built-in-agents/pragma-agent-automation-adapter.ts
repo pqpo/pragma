@@ -15,6 +15,7 @@ import { z } from "zod";
 import type { AutomationSummary } from "../../../shared/contracts/index.ts";
 import type { AutomationService } from "../automations/automation-service.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { paginateManagementItems } from "./management-pagination.ts";
 
 const DeleteResultSchema = z.object({
   deleted: z.literal(true),
@@ -34,14 +35,43 @@ export function createDesktopPragmaAgentAutomationPort(options: {
     );
 
   return {
-    async list() {
+    async list(input) {
       const [project, automations] = await Promise.all([
         options.project.get(),
         options.service.list(),
       ]);
+      const query = input.query?.trim().toLocaleLowerCase();
+      const statuses = input.statuses === undefined ? undefined : new Set(input.statuses);
+      const items = automations
+        .map(toPragmaAgentSummary)
+        .filter(
+          (automation) =>
+            (statuses === undefined || statuses.has(automation.status)) &&
+            (input.enabled === undefined || automation.enabled === input.enabled) &&
+            (input.executorRef === undefined || automation.executorRef === input.executorRef) &&
+            (query === undefined ||
+              [automation.ref, automation.name, automation.executorRef].some((value) =>
+                value.toLocaleLowerCase().includes(query),
+              )),
+        )
+        .toSorted(
+          (left, right) => left.name.localeCompare(right.name) || left.ref.localeCompare(right.ref),
+        );
       return {
         projectRevision: project.revision,
-        automations: automations.map(toPragmaAgentSummary),
+        ...paginateManagementItems({
+          items,
+          scope: "list_automations",
+          fingerprintValue: [project.revision, items],
+          filters: {
+            statuses: input.statuses,
+            enabled: input.enabled,
+            executorRef: input.executorRef,
+            query,
+          },
+          cursor: input.cursor,
+          limit: input.limit,
+        }),
       };
     },
     async save(input) {

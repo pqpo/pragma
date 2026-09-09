@@ -47,7 +47,11 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
-    const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
     const first = requirePrepared(
       await adapter.prepare({
         expectedProjectRevision: 0,
@@ -86,7 +90,11 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
-    const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
     const candidate = requirePrepared(
       await adapter.prepare({
         expectedProjectRevision: 0,
@@ -112,9 +120,18 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       ]),
     );
 
-    const options = await adapter.listExpertOptions();
+    const runtimeModels = await adapter.listExpertOptions({
+      category: "runtime-models",
+      limit: 25,
+    });
+    const capabilities = await adapter.listExpertOptions({ category: "capabilities", limit: 25 });
+    const avatars = await adapter.listExpertOptions({ category: "avatars", limit: 25 });
+    const builtinExperts = await adapter.listExpertOptions({
+      category: "builtin-experts",
+      limit: 25,
+    });
 
-    expect(options.runtimeModels).toEqual([
+    expect(runtimeModels.items).toEqual([
       expect.objectContaining({
         runtimeName: "Test Runtime",
         providerName: "Test",
@@ -122,7 +139,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         isDefault: true,
       }),
     ]);
-    expect(options.capabilities).toEqual([
+    expect(capabilities.items).toEqual([
       expect.objectContaining({
         name: "Pragma management tools",
         kind: "tools",
@@ -143,14 +160,14 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         toolNames: [],
       }),
     ]);
-    expect(options.avatars).toHaveLength(27);
-    expect(options.avatars[0]).toEqual({
-      avatarId: "pragma.avatar.expert.01",
-      name: "Zara",
+    expect(avatars.items).toHaveLength(25);
+    expect(avatars.items[0]).toEqual({
+      avatarId: "pragma.avatar.expert.07",
+      name: "Ada",
       gender: "woman",
-      personality: ["analytical", "calm", "perceptive"],
+      personality: ["meticulous", "analytical", "focused"],
     });
-    expect(options.builtinExperts).toEqual([
+    expect(builtinExperts.items).toEqual([
       expect.objectContaining({
         ref: "expert:0000000000pragma",
         name: "Pragma",
@@ -177,7 +194,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       adapterOptions(project, join(root, "state")),
     );
 
-    await expect(adapter.list()).resolves.toEqual({ projectRevision: 0, resources: [] });
+    await expect(adapter.list({ limit: 25 })).resolves.toEqual({ projectRevision: 0, items: [] });
     await expect(adapter.read("expert:0000000000st0rev")).resolves.toMatchObject({
       ref: "expert:0000000000st0rev",
       kind: "Expert",
@@ -243,7 +260,11 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       systemExperts: createDesktopSystemExpertRegistry(),
       validateModel: async () => undefined,
     });
-    const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
     const acceptedId = "a".repeat(16);
     const candidate = requirePrepared(
       await adapter.prepare({

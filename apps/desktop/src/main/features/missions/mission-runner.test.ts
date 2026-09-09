@@ -1256,7 +1256,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           runContext: session.context.runContext,
           toolCallId: "list-revision-targets",
         });
-        const targets = listed.details as { readonly targetRef: string; readonly name: string }[];
+        const targets = (
+          listed.details as {
+            readonly items: readonly { readonly targetRef: string; readonly name: string }[];
+          }
+        ).items;
         const continuing = turn.rawQuery === "Continue the first knowledge draft";
         const targetStores = continuing ? [firstStore] : [firstStore, secondStore];
         let outputText = "";
