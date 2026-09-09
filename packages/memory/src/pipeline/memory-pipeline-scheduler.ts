@@ -33,6 +33,13 @@ export function createMemoryPipelineScheduler(options: {
   readonly pollIntervalMs?: number | undefined;
   readonly now?: (() => Date) | undefined;
   readonly isEnabled?: (() => Promise<boolean>) | undefined;
+  readonly onDisabledSkip?:
+    | ((input: {
+        readonly consumerId: string;
+        readonly from: number;
+        readonly through: number;
+      }) => Promise<void> | void)
+    | undefined;
   readonly setTimer?:
     ((callback: () => void, delay: number) => ReturnType<typeof setTimeout>) | undefined;
   readonly clearTimer?: ((timer: ReturnType<typeof setTimeout>) => void) | undefined;
@@ -58,7 +65,12 @@ export function createMemoryPipelineScheduler(options: {
 
   const runOnce = async (): Promise<void> => {
     if (running !== undefined) return await running;
-    if (options.isEnabled !== undefined && !(await options.isEnabled())) return;
+    if (options.isEnabled !== undefined && !(await options.isEnabled())) {
+      running = skipDisabledEvidence(options).finally(() => {
+        running = undefined;
+      });
+      return await running;
+    }
     running = Promise.all(
       options.registry.list().map(async (module) => {
         try {
@@ -126,6 +138,41 @@ export function createMemoryPipelineScheduler(options: {
       await running;
     },
   };
+}
+
+async function skipDisabledEvidence(
+  options: Pick<
+    Parameters<typeof createMemoryPipelineScheduler>[0],
+    "registry" | "feed" | "checkpoints" | "now" | "onDisabledSkip"
+  >,
+): Promise<void> {
+  const now = options.now ?? (() => new Date());
+  const through = (await options.feed.inspect()).lastSequence;
+  await Promise.all(
+    options.registry.list().map(async (module) => {
+      const current = await options.checkpoints.read(module.descriptor.id);
+      if (current.sequence >= through) return;
+      const next = await options.checkpoints.update(module.descriptor.id, (checkpoint) => ({
+        ...checkpoint,
+        sequence: through,
+        attempts: {},
+        retryAfter: undefined,
+        updatedAt: now().toISOString(),
+      }));
+      updateDiagnostic(
+        { module, registry: options.registry, now },
+        next,
+        through,
+        "healthy",
+        "policy_disabled_skip",
+      );
+      await options.onDisabledSkip?.({
+        consumerId: module.descriptor.id,
+        from: current.sequence,
+        through,
+      });
+    }),
+  );
 }
 
 async function processModule(input: {

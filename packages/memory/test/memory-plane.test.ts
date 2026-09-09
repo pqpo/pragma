@@ -330,7 +330,12 @@ describe("Memory Plane phase one", () => {
     });
 
     await scheduler.runOnce();
-    expect(registry.diagnostic("pragma.memory.probe")).toBeUndefined();
+    expect(registry.diagnostic("pragma.memory.probe")).toMatchObject({
+      status: "healthy",
+      lag: 0,
+      lastErrorCode: "policy_disabled_skip",
+    });
+    expect((await state.read("pragma.memory.probe")).sequence).toBeGreaterThan(0);
 
     const context = createFederatedMemoryContextStore(registry, {
       resolveRecallScope: () => ({
@@ -347,7 +352,7 @@ describe("Memory Plane phase one", () => {
     await scheduler.runOnce();
     await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
       ok: true,
-      value: { content: expect.stringContaining("pipeline-disabled-evidence") },
+      value: { content: expect.not.stringContaining("pipeline-disabled-evidence") },
     });
     canonical.close();
   });

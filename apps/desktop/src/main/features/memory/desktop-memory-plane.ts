@@ -289,6 +289,13 @@ export async function createDesktopMemoryPlane(options: {
     deadLetters: state,
     outbox: state,
     isEnabled: async () => (await policies.getGlobal()).policy.enabled === "enabled",
+    onDisabledSkip: ({ consumerId, from, through }) => {
+      options.logger.info(
+        "desktop.memory_policy_disabled_skip",
+        "Memory learning is disabled; the Module checkpoint advanced without consuming events.",
+        { consumerId, from, through, reason: "policy-disabled-skip" },
+      );
+    },
   });
   let stopped = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
