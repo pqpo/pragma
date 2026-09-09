@@ -117,6 +117,7 @@ describe("knowledge base UI", () => {
         store={store}
         onBack={() => undefined}
         onOpenRevisions={() => undefined}
+        onExport={async () => undefined}
         onSubmitRevision={async () => undefined}
         onRevisionSubmitted={() => undefined}
         onDelete={async () => undefined}
@@ -148,6 +149,21 @@ describe("knowledge base UI", () => {
     expect(html).toContain('class="knowledge-base-editor-actions"');
     expect(html).toContain("Revision history");
     expect(html).toContain("Submit revision");
+    expect(html.match(/role="tooltip"/g)).toHaveLength(5);
+    expect(html).toContain('aria-label="Save"');
+    expect(html).toContain("No changes to save");
+    expect(html.indexOf('aria-label="Save"')).toBeLessThan(
+      html.indexOf('aria-label="Submit revision"'),
+    );
+    expect(html.indexOf('aria-label="Submit revision"')).toBeLessThan(
+      html.indexOf('aria-label="Revision history"'),
+    );
+    expect(html.indexOf('aria-label="Revision history"')).toBeLessThan(
+      html.indexOf('aria-label="Export knowledge base"'),
+    );
+    expect(html.indexOf('aria-label="Export knowledge base"')).toBeLessThan(
+      html.indexOf('aria-label="Delete knowledge base"'),
+    );
     expect(html).toContain('aria-label="Resize file list"');
     expect(html).toContain('aria-valuemin="180"');
     expect(html).toContain('aria-valuemax="360"');

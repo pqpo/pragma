@@ -649,6 +649,7 @@ export const studio = {
   saved: "Saved",
   draftBackedUp: "Draft backed up",
   saveKnowledgeBase: "Save",
+  noKnowledgeChangesToSave: "No changes to save",
   unsavedKnowledgeChangesTitle: "Save changes before leaving?",
   unsavedKnowledgeChangesDescription:
     "This knowledge base contains changes that have not been published as a version.",

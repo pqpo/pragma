@@ -604,6 +604,7 @@ export const studio = {
   saved: "已保存",
   draftBackedUp: "草稿已备份",
   saveKnowledgeBase: "保存",
+  noKnowledgeChangesToSave: "没有需要保存的更改",
   unsavedKnowledgeChangesTitle: "离开前保存修改？",
   unsavedKnowledgeChangesDescription: "知识库中还有尚未发布为正式版本的修改。",
   saveAndLeave: "保存并离开",

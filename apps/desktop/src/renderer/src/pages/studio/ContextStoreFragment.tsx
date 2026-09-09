@@ -23,7 +23,16 @@ import {
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -100,6 +109,39 @@ type LoadFileOptions = {
 };
 
 export type ContextStoreLeaveGuard = (action: () => void) => void;
+
+function KnowledgeBaseActionButton(props: {
+  readonly label: string;
+  readonly tooltip?: string | undefined;
+  readonly icon: ReactNode;
+  readonly tone?: "default" | "primary" | "danger" | undefined;
+  readonly disabled?: boolean | undefined;
+  readonly busy?: boolean | undefined;
+  readonly onClick: () => void;
+}) {
+  const tooltipId = useId();
+  const tone = props.tone ?? "default";
+
+  return (
+    <span
+      className={`knowledge-base-action-with-tooltip is-${tone}${props.busy ? " is-busy" : ""}`}
+    >
+      <button
+        className="knowledge-base-action-button"
+        type="button"
+        aria-label={props.label}
+        aria-describedby={tooltipId}
+        disabled={props.disabled}
+        onClick={props.onClick}
+      >
+        {props.icon}
+      </button>
+      <span id={tooltipId} className="knowledge-base-action-tooltip" role="tooltip">
+        {props.tooltip ?? props.label}
+      </span>
+    </span>
+  );
+}
 
 const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
@@ -957,57 +999,62 @@ export function ContextStoreDetailFragment(props: {
             </div>
           </div>
           <div className="knowledge-base-editor-actions">
-            <button
-              className="primary-button"
-              type="button"
+            <KnowledgeBaseActionButton
+              label={saveStatus === "saving" ? t("saving") : t("saveKnowledgeBase")}
+              tooltip={
+                saveStatus === "saving"
+                  ? t("saving")
+                  : !dirty && !draftDirty
+                    ? t("noKnowledgeChangesToSave")
+                    : t("saveKnowledgeBase")
+              }
+              tone="primary"
               disabled={(!dirty && !draftDirty) || saveStatus === "saving"}
+              busy={saveStatus === "saving"}
+              icon={
+                saveStatus === "saving" ? (
+                  <SpinnerGap className="spin" size={18} aria-hidden="true" />
+                ) : (
+                  <FloppyDisk size={18} aria-hidden="true" />
+                )
+              }
               onClick={() => void commitDraft()}
-            >
-              <FloppyDisk size={17} aria-hidden="true" />
-              {saveStatus === "saving" ? t("saving") : t("saveKnowledgeBase")}
-            </button>
-            {props.onExport !== undefined ? (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
-                }}
-              >
-                <UploadSimple size={17} aria-hidden="true" />
-                {t("exportKnowledgeBase")}
-              </button>
-            ) : null}
-            {props.onOpenRevisions !== undefined ? (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => requestLeave(props.onOpenRevisions!)}
-              >
-                <ListBullets size={17} aria-hidden="true" />
-                {t("viewStoreRevisions")}
-              </button>
-            ) : null}
+            />
             {props.onSubmitRevision !== undefined ? (
-              <button
-                className="secondary-button"
-                type="button"
+              <KnowledgeBaseActionButton
+                label={t("submitStoreRevision")}
+                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
                 onClick={() =>
                   requestLeave(() => {
                     setRevisionError(null);
                     setRevisionDialogOpen(true);
                   })
                 }
-              >
-                <PaperPlaneTilt size={17} aria-hidden="true" />
-                {t("submitStoreRevision")}
-              </button>
+              />
             ) : null}
-            <button className="danger-button" type="button" onClick={() => setConfirmOpen(true)}>
-              <Trash size={17} aria-hidden="true" />
-              {t("deleteKnowledgeBaseAction")}
-            </button>
+            {props.onOpenRevisions !== undefined ? (
+              <KnowledgeBaseActionButton
+                label={t("viewStoreRevisions")}
+                icon={<ListBullets size={18} aria-hidden="true" />}
+                onClick={() => requestLeave(props.onOpenRevisions!)}
+              />
+            ) : null}
+            {props.onExport !== undefined ? (
+              <KnowledgeBaseActionButton
+                label={t("exportKnowledgeBase")}
+                icon={<UploadSimple size={18} aria-hidden="true" />}
+                onClick={() => {
+                  setError(null);
+                  void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
+                }}
+              />
+            ) : null}
+            <KnowledgeBaseActionButton
+              label={t("deleteKnowledgeBaseAction")}
+              tone="danger"
+              icon={<Trash size={18} aria-hidden="true" />}
+              onClick={() => setConfirmOpen(true)}
+            />
           </div>
         </div>
       }

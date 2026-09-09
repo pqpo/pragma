@@ -605,6 +605,7 @@ export const studio = {
   saved: "已儲存",
   draftBackedUp: "草稿已備份",
   saveKnowledgeBase: "儲存",
+  noKnowledgeChangesToSave: "沒有需要儲存的變更",
   unsavedKnowledgeChangesTitle: "離開前儲存修改？",
   unsavedKnowledgeChangesDescription: "知識庫中還有尚未發佈為正式版本的修改。",
   saveAndLeave: "儲存並離開",

@@ -354,7 +354,120 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
+}
+
+.knowledge-base-action-with-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.knowledge-base-action-button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: 50%;
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.knowledge-base-action-button:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-accent-strong);
+  transform: translateY(-1px);
+}
+
+.knowledge-base-action-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.knowledge-base-action-with-tooltip.is-primary .knowledge-base-action-button {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent);
+  color: #fff;
+}
+
+.knowledge-base-action-with-tooltip.is-primary
+  .knowledge-base-action-button:hover:not(:disabled) {
+  background: var(--ui-accent-strong);
+  color: #fff;
+}
+
+.knowledge-base-action-with-tooltip.is-danger .knowledge-base-action-button {
+  border-color: #d8bbb6;
+  color: #9d3f34;
+}
+
+.knowledge-base-action-with-tooltip.is-danger
+  .knowledge-base-action-button:hover:not(:disabled) {
+  border-color: #c98479;
+  background: #fff8f7;
+  color: #8a3027;
+}
+
+.knowledge-base-action-with-tooltip .knowledge-base-action-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.knowledge-base-action-with-tooltip.is-busy .knowledge-base-action-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.knowledge-base-action-tooltip {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 48px));
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #35443b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.knowledge-base-action-with-tooltip:hover .knowledge-base-action-tooltip,
+.knowledge-base-action-with-tooltip:focus-within .knowledge-base-action-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
+.knowledge-base-action-with-tooltip:last-child .knowledge-base-action-tooltip {
+  right: 0;
+  left: auto;
+  transform: translate(0, -3px);
+}
+
+.knowledge-base-action-with-tooltip:last-child:hover .knowledge-base-action-tooltip,
+.knowledge-base-action-with-tooltip:last-child:focus-within .knowledge-base-action-tooltip {
+  transform: translate(0, 0);
 }
 
 .knowledge-base-title {
