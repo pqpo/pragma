@@ -3,7 +3,6 @@ import {
   Database,
   GitBranch,
   PlugsConnected,
-  PuzzlePiece,
   User,
   UsersThree,
   Wrench,
@@ -201,7 +200,6 @@ export const studioSections = [
   { id: "flows", labelKey: "flows", icon: GitBranch },
   { id: "integrations", labelKey: "integrations", icon: PlugsConnected },
   { id: "capabilities", labelKey: "capabilities", icon: Wrench },
-  { id: "plugins", labelKey: "plugins", icon: PuzzlePiece },
   { id: "context-stores", labelKey: "contextStores", icon: Database },
 ] as const satisfies readonly {
   readonly id: StudioView;

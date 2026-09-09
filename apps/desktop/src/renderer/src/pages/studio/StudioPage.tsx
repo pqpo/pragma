@@ -718,9 +718,7 @@ export function StudioPage(props: {
                       ? automations.length
                       : section.id === "capabilities"
                         ? capabilities.length
-                        : section.id === "plugins"
-                          ? plugins.length
-                          : 0;
+                        : 0;
           return (
             <button
               key={section.id}

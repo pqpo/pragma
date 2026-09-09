@@ -98,7 +98,6 @@ describe("studioSections", () => {
       "flows",
       "integrations",
       "capabilities",
-      "plugins",
       "context-stores",
     ]);
   });

@@ -16,6 +16,7 @@ describe("StudioPage", () => {
     expect(html).toContain('aria-label="Resize navigation"');
     expect(html).toContain('role="separator"');
     expect(html).not.toContain("<span>Revision tasks</span><em>");
+    expect(html).not.toContain("<span>Plugins</span>");
     expect(resourceIndex).toBeGreaterThan(-1);
     expect(distributionIndex).toBeGreaterThan(resourceIndex);
     expect(squareIndex).toBeGreaterThan(distributionIndex);
