@@ -60,7 +60,7 @@
     "overrides": {
       "typescript": "6.0.3",
       "eslint": "10.9.1",
-      "typescript-eslint": "8.65.0",
+      "typescript-eslint": "8.69.0",
       "turbo": "2.10.12",
       "@types/node": "26.1.0",
       "tsx": "4.23.13",
