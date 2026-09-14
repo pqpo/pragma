@@ -4905,8 +4905,7 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
             kind: "assistant",
             content: truncate(content.text, 200_000),
             streaming: false,
-            ...(assistantMessage.stopReason === undefined ||
-            assistantMessage.stopReason === "stop" ||
+            ...(assistantMessage.stopReason === "stop" ||
             assistantMessage.stopReason === "length"
               ? { finalAnswer: true }
               : {}),
@@ -5575,7 +5574,7 @@ function missionAnswerRunKey(item: Pick<ExecutionOutputItem, "invocationId" | "r
 
 function isFinalMissionAnswer(value: unknown): boolean {
   const stopReason = asRecord(value)["stopReason"];
-  return stopReason === undefined || stopReason === "stop" || stopReason === "length";
+  return stopReason === "stop" || stopReason === "length";
 }
 
 function hasCompletedMessageForRun(

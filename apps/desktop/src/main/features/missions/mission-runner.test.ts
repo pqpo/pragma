@@ -1,7 +1,7 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { STORE_REVISION_EXPERT_REF, createPragmaManagementTools } from "@pragma/built-in-agents";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -68,7 +68,6 @@ import {
   mergeMissionChatEntriesWithLive,
   orderMissionExecutionEntries,
 } from "./mission-runner-composition.ts";
-import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
@@ -427,6 +426,13 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       value: { stopReason: "toolUse", content: [{ type: "text", text: "Tool handoff" }] },
     });
     expect(consumeLiveChatOutput(chat, output("run-c", "thought", "After tool"))).toHaveLength(1);
+
+    // Qoder completes intermediate assistant messages with a string and no stop reason.
+    consumeLiveChatOutput(chat, {
+      ...output("run-d", "message", "Intermediate", true),
+      value: "Intermediate",
+    });
+    expect(consumeLiveChatOutput(chat, output("run-d", "thought", "After intermediate"))).toHaveLength(1);
   });
 
   it("keeps live thinking before a durable final answer during refresh", () => {
@@ -561,37 +567,15 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       executionId,
       createdAt,
     });
-    const projectionPath = join(
-      missions.storagePath!(mission.id),
-      "execution-projections",
-      `${executionId}.jsonl`,
+    const projectionDirectory = join(missions.storagePath!(mission.id), "execution-projections");
+    const projectionPath = join(projectionDirectory, `${executionId}.jsonl`);
+    // Written by the pre-repair writer at d48a414d839d, before orderingVersion existed.
+    const historicalProjection = new URL(
+      "./fixtures/mission-execution-projection-pre-order-repair.jsonl",
+      import.meta.url,
     );
-    await writeMissionExecutionProjection(
-      projectionPath,
-      executionId,
-      [
-        {
-          id: `message:${executionId}:${executionId}:run-a:assistant:0`,
-          kind: "assistant",
-          content: "Answer",
-          streaming: false,
-          createdAt,
-        },
-        {
-          id: `message:${executionId}:${executionId}:run-a:thinking:0`,
-          kind: "thinking",
-          content: "Reasoning",
-          streaming: false,
-          createdAt,
-        },
-      ],
-      1,
-    );
-    await writeFile(
-      projectionPath,
-      (await readFile(projectionPath, "utf8")).replace('"orderingVersion":1,', ""),
-      "utf8",
-    );
+    await mkdir(projectionDirectory, { recursive: true });
+    await copyFile(historicalProjection, projectionPath);
     const runtime = defineRuntimeTestDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
@@ -618,8 +602,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       entries: [{ kind: "thinking" }, { kind: "assistant", finalAnswer: true }],
     });
     const backup = await readFile(`${projectionPath}.before-order-repair`, "utf8");
-    expect(backup).toContain('"schemaVersion":"pragma.mission-execution-projection/v2"');
-    expect(backup).not.toContain('"orderingVersion"');
+    expect(backup).toBe(await readFile(historicalProjection, "utf8"));
   });
 
   it("orders durable thinking and final replies by event sequence", () => {
