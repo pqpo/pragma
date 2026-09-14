@@ -4012,7 +4012,6 @@ function observeMissionHumanWaitingStatus(input: {
         "Mission human-input waiting status could not be updated.",
         { error, missionId: input.missionId, executionId: input.execution.executionId },
       );
-      throw error;
     }
   };
 
@@ -4919,15 +4918,29 @@ function observeMissionChat(
       try {
         const subscription = await execution.subscribeEvents({ scope: { kind: "all" } });
         eventSubscription = subscription;
-        await onEventResync();
+        let resyncFailed = false;
+        while (!closed) {
+          try {
+            await onEventResync();
+            // A failed seed can miss an interaction event because the event bus is live-only.
+            // Once its durable projection recovers, tell both the chat and rail to reload it.
+            if (resyncFailed) onInvalidate();
+            break;
+          } catch (error) {
+            if (closed) break;
+            resyncFailed = true;
+            onSubscriptionError("events", error);
+            // Preserve the user-visible interaction update while the durable Mission projection
+            // retries. The established subscription keeps subsequent live events queued.
+            onInvalidate();
+            await missionSubscriptionRetryDelay();
+          }
+        }
+        if (closed) return;
         for await (const event of subscription) {
           if (closed) break;
           await onEvent(event);
-          if (
-            event.type === "human.requested" ||
-            event.type === "human.responded" ||
-            event.type.startsWith("execution.")
-          ) {
+          if (event.type.startsWith("human.") || event.type.startsWith("execution.")) {
             onInvalidate();
           }
         }
