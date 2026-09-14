@@ -10,6 +10,7 @@ import {
   PragmaContentChunkSchema,
 } from "@pragma/built-in-agents";
 import type {
+  ContextStoreDraft,
   KnowledgeRevisionSubmissionPort,
   KnowledgeRevisionTarget,
   KnowledgeRevisionToolInvocation,

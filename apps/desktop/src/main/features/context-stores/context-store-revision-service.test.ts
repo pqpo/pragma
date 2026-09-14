@@ -438,6 +438,37 @@ describe("context store sparse draft revisions", () => {
     expect(recoveredJob.missionId).toBeUndefined();
   });
 
+  it("continues recovering valid claim releases when another release journal is malformed", async () => {
+    const { directory, service, store } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Recover despite another damaged release journal",
+      source: "user",
+    });
+    const missionId = "22222222-2222-4222-8222-222222222240";
+    await service.attachMission(job.id, missionId);
+    const journals = join(directory, "state", "context-store-revisions", "claim-releases");
+    await mkdir(journals, { recursive: true });
+    await writeFile(
+      join(journals, `${job.draftId}-${job.id}-${missionId}.json`),
+      `${JSON.stringify({
+        schemaVersion: "pragma.context-store-revision-claim-release/v1",
+        draftId: job.draftId,
+        jobId: job.id,
+        missionId,
+        reason: "mission_orphaned",
+      })}\n`,
+    );
+    await writeFile(join(journals, "broken.json"), "{invalid");
+
+    await service.recoverMissionClaimReleases();
+
+    const recovered = await service.get(job.id);
+    expect(recovered.error).toMatchObject({ code: "mission_orphaned" });
+    expect(recovered.missionId).toBeUndefined();
+  });
+
   it("recovers one durable Mission claim after interruption before the Mission mount", async () => {
     const { contextStores, directory, store, service } = await fixture();
     const missionId = "22222222-2222-4222-8222-222222222231";
@@ -499,6 +530,32 @@ describe("context store sparse draft revisions", () => {
     ]);
   });
 
+  it("serializes two Mission claims that continue the same draft", async () => {
+    const { service, store } = await fixture();
+    const draft = await service.createDraft({ storeId: store.id, name: "Continue me" });
+    const start = (missionId: string, prompt: string) =>
+      service.startForMission({
+        missionId,
+        draftId: draft.id,
+        request: {
+          schemaVersion: "pragma.context-store-revision-request/v1",
+          storeId: store.id,
+          prompt,
+          source: "user",
+        },
+      });
+
+    const [first, second] = await Promise.all([
+      start("22222222-2222-4222-8222-222222222234", "First Mission"),
+      start("22222222-2222-4222-8222-222222222235", "Second Mission"),
+    ]);
+
+    expect(second).toMatchObject({ id: first.id, draftId: draft.id, missionId: first.missionId });
+    await expect(service.list({ storeId: store.id })).resolves.toEqual([
+      expect.objectContaining({ id: first.id, draftId: draft.id }),
+    ]);
+  });
+
   it("keeps unreadable linked Missions isolated to their individual draft records", async () => {
     const missionId = "22222222-2222-4222-8222-222222222233";
     const { service, store } = await fixture({
@@ -539,6 +596,44 @@ describe("context store sparse draft revisions", () => {
     await expect(service.listDrafts()).resolves.toEqual([
       expect.objectContaining({ id: healthy.id }),
     ]);
+  });
+
+  it("fails closed when a malformed draft prevents checking Store deletion references", async () => {
+    const { draftsPath, service, store } = await fixture();
+    await mkdir(join(draftsPath, "broken"), { recursive: true });
+    await writeFile(join(draftsPath, "broken", "draft.json"), "{invalid");
+
+    await expect(service.hasActiveJobs(store.id)).resolves.toBe(true);
+  });
+
+  it("reconciles a terminal Mission claim after its first detach attempt is interrupted", async () => {
+    let detachAttempts = 0;
+    const onRevisionDetached = vi.fn(async () => {
+      detachAttempts += 1;
+      if (detachAttempts === 1) throw new Error("Interrupted before restoring the Mission mount.");
+    });
+    const { service, store } = await fixture({ onRevisionDetached });
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Recover the rejected Mission claim",
+      source: "user",
+    });
+    const missionId = "22222222-2222-4222-8222-222222222241";
+    await service.attachMission(job.id, missionId);
+    const resolved = await service.resolveDraft(job.draftId);
+    await resolved.store.addContext({ id: "items/rejected.md", content: "Review me" });
+    const edited = await service.getDraft(job.draftId);
+    await service.submitDraft(job.draftId, edited.revision, "Ready for rejection");
+    const rejected = await service.reject(job.id, (await service.get(job.id)).revision);
+    expect(rejected).toMatchObject({ state: "rejected", missionId });
+
+    await service.processPending();
+
+    const recovered = await service.get(job.id);
+    expect(recovered.state).toBe("rejected");
+    expect(recovered.missionId).toBeUndefined();
+    expect(onRevisionDetached).toHaveBeenCalledTimes(2);
   });
 
   it("does not revive submitted or terminal revisions when attaching a Mission", async () => {

@@ -211,6 +211,7 @@ export function createContextStoreRevisionService(options: {
     join(missionClaimsPath, `${missionId}-${storeId}.json`);
   const missionClaimLockPath = (missionId: string, storeId: string) =>
     join(missionClaimsPath, `${missionId}-${storeId}.lock`);
+  const missionClaimsLockPath = join(missionClaimsPath, ".claims.lock");
   let processing: Promise<void> | undefined;
   const notifyRevisionDetached = async (input: {
     readonly missionId: string;
@@ -293,7 +294,7 @@ export function createContextStoreRevisionService(options: {
     storeId: string,
     name: string,
     overlay: ContextStoreDraftOverlay = emptyOverlay(),
-    id = randomUUID(),
+    id: string = randomUUID(),
   ): Promise<ContextStoreDraft> => {
     const base = await options.contextStores.getSnapshot(storeId);
     const timestamp = new Date().toISOString();
@@ -651,11 +652,36 @@ export function createContextStoreRevisionService(options: {
       candidate.endsWith(".json"),
     )) {
       const path = join(claimReleaseJournalsPath, name);
-      const journal = MissionClaimReleaseJournalSchema.parse(
-        JSON.parse(await readFile(path, "utf8")),
-      );
-      await releaseMissionClaim(journal, false);
+      try {
+        const journal = MissionClaimReleaseJournalSchema.parse(
+          JSON.parse(await readFile(path, "utf8")),
+        );
+        await releaseMissionClaim(journal, false);
+      } catch (error) {
+        options.warn?.(
+          "A knowledge revision Mission-claim release journal could not be recovered.",
+          error,
+        );
+      }
     }
+  };
+
+  const recoverTerminalMissionClaim = async (
+    job: ContextStoreRevisionJob,
+  ): Promise<ContextStoreRevisionJob> => {
+    if (
+      job.missionId === undefined ||
+      !["merged", "rejected"].includes(job.state) ||
+      !(await notifyRevisionDetached({
+        missionId: job.missionId,
+        jobId: job.id,
+        draftId: job.draftId,
+        storeId: job.request.storeId,
+      }))
+    ) {
+      return job;
+    }
+    return await mutateJob(job.id, job.revision, () => ({ missionId: undefined }));
   };
 
   const api: ContextStoreRevisionService = {
@@ -709,48 +735,50 @@ export function createContextStoreRevisionService(options: {
 
     async startForMission(input) {
       const request = ContextStoreRevisionRequestSchema.parse(input.request);
-      return await withFileLock(missionClaimLockPath(input.missionId, request.storeId), async () => {
-        const existingClaim = await readMissionClaim(input.missionId, request.storeId);
-        if (existingClaim !== undefined) {
-          const job = await materializeMissionClaim(existingClaim);
-          if (isActiveMissionJob(job)) return job;
-          await rm(missionClaimPath(input.missionId, request.storeId), { force: true });
-        }
+      return await withFileLock(missionClaimsLockPath, async () =>
+        await withFileLock(missionClaimLockPath(input.missionId, request.storeId), async () => {
+          const existingClaim = await readMissionClaim(input.missionId, request.storeId);
+          if (existingClaim !== undefined) {
+            const job = await materializeMissionClaim(existingClaim);
+            if (isActiveMissionJob(job)) return job;
+            await rm(missionClaimPath(input.missionId, request.storeId), { force: true });
+          }
 
-        const existingForMission = await findMissionActiveJob(input.missionId, request.storeId);
-        if (existingForMission !== undefined) return existingForMission;
+          const existingForMission = await findMissionActiveJob(input.missionId, request.storeId);
+          if (existingForMission !== undefined) return existingForMission;
 
-        const existingForRequest =
-          request.sourceDigest === undefined
-            ? undefined
-            : (await readAllJobs()).find(
-                (job) =>
-                  job.request.storeId === request.storeId &&
-                  job.request.source === request.source &&
-                  job.request.sourceDigest === request.sourceDigest &&
-                  isActiveMissionJob(job),
-              );
-        const existingForDraft =
-          input.draftId === undefined
-            ? undefined
-            : (await readAllJobs()).find(
-                (job) => job.draftId === input.draftId && isActiveMissionJob(job),
-              );
-        const existing = existingForRequest ?? existingForDraft;
-        if (existing !== undefined && existing.missionId !== undefined) return existing;
+          const existingForRequest =
+            request.sourceDigest === undefined
+              ? undefined
+              : (await readAllJobs()).find(
+                  (job) =>
+                    job.request.storeId === request.storeId &&
+                    job.request.source === request.source &&
+                    job.request.sourceDigest === request.sourceDigest &&
+                    isActiveMissionJob(job),
+                );
+          const existingForDraft =
+            input.draftId === undefined
+              ? undefined
+              : (await readAllJobs()).find(
+                  (job) => job.draftId === input.draftId && isActiveMissionJob(job),
+                );
+          const existing = existingForRequest ?? existingForDraft;
+          if (existing !== undefined && existing.missionId !== undefined) return existing;
 
-        const claim = MissionClaimJournalSchema.parse({
-          schemaVersion: "pragma.context-store-revision-mission-claim/v1",
-          missionId: input.missionId,
-          storeId: request.storeId,
-          jobId: existing?.id ?? randomUUID(),
-          draftId: existing?.draftId ?? input.draftId ?? randomUUID(),
-          request,
-          ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
-        });
-        await writeJsonAtomic(missionClaimPath(input.missionId, request.storeId), claim);
-        return await materializeMissionClaim(claim);
-      });
+          const claim = MissionClaimJournalSchema.parse({
+            schemaVersion: "pragma.context-store-revision-mission-claim/v1",
+            missionId: input.missionId,
+            storeId: request.storeId,
+            jobId: existing?.id ?? randomUUID(),
+            draftId: existing?.draftId ?? input.draftId ?? randomUUID(),
+            request,
+            ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
+          });
+          await writeJsonAtomic(missionClaimPath(input.missionId, request.storeId), claim);
+          return await materializeMissionClaim(claim);
+        }),
+      );
     },
 
     async getMissionActiveJob(input) {
@@ -785,7 +813,11 @@ export function createContextStoreRevisionService(options: {
       for (const job of jobs) {
         try {
           await recoverOrphanedClaim(job);
-          reconciled.push(job.missionId === undefined ? job : await readJob(job.id));
+          reconciled.push(
+            await recoverTerminalMissionClaim(
+              job.missionId === undefined ? job : await readJob(job.id),
+            ),
+          );
         } catch (error) {
           options.warn?.("A knowledge revision Mission claim could not be reconciled.", error);
           reconciled.push(job);
@@ -797,7 +829,9 @@ export function createContextStoreRevisionService(options: {
     async get(jobId) {
       const job = await readJob(jobId);
       await recoverOrphanedClaim(job);
-      return job.missionId === undefined ? job : await readJob(job.id);
+      return await recoverTerminalMissionClaim(
+        job.missionId === undefined ? job : await readJob(job.id),
+      );
     },
 
     async approve(jobId, expectedRevision) {
@@ -1334,9 +1368,19 @@ export function createContextStoreRevisionService(options: {
     },
 
     async hasActiveJobs(storeId) {
-      return (await readAllDrafts()).some(
-        (draft) => draft.storeId === storeId && draft.state !== "merged",
-      );
+      for (const name of await readNames(draftsPath)) {
+        try {
+          const draft = await readDraft(name);
+          if (draft.storeId === storeId && draft.state !== "merged") return true;
+        } catch (error) {
+          options.warn?.(
+            "A knowledge revision draft could not be read while checking whether a Context Store can be deleted.",
+            error,
+          );
+          return true;
+        }
+      }
+      return false;
     },
 
     async getProfile() {
