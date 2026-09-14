@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { MissionChatUpdate } from "../../../shared/contracts/index.ts";
 import {
+  createMissionSummaryRefreshScheduler,
   forwardMissionChatNotification,
   forwardMissionWorkNotification,
 } from "./mission-renderer-update-forwarder.ts";
@@ -9,6 +10,30 @@ import {
 const missionId = "00000000-0000-4000-8000-000000000000";
 
 describe("Mission renderer update forwarding", () => {
+  it("serializes summary refreshes for the same Mission while allowing other Missions through", async () => {
+    const otherMissionId = "00000000-0000-4000-8000-000000000001";
+    let releaseFirstRefresh: (() => void) | undefined;
+    const started: string[] = [];
+    const refresh = createMissionSummaryRefreshScheduler(async (id) => {
+      started.push(id);
+      if (id === missionId && started.filter((candidate) => candidate === missionId).length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirstRefresh = resolve;
+        });
+      }
+    });
+
+    const first = refresh(missionId);
+    const second = refresh(missionId);
+    const other = refresh(otherMissionId);
+
+    await vi.waitFor(() => expect(started).toEqual([missionId, otherMissionId]));
+    releaseFirstRefresh?.();
+    await Promise.all([first, second, other]);
+
+    expect(started).toEqual([missionId, otherMissionId, missionId]);
+  });
+
   it("forwards user chat patches in revision order without refreshing the Mission", () => {
     const send = vi.fn();
     const refreshMissionSummary = vi.fn(async () => undefined);

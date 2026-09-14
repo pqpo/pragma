@@ -149,6 +149,26 @@ describe("MissionsPage", () => {
     ).toBe("Waiting for experts");
   });
 
+  it("preserves a Mission wait reason when deriving its rail summary", () => {
+    const base = missionFixture("expert");
+    const mission = {
+      ...base,
+      execution: {
+        ...base.execution!,
+        status: "waiting" as const,
+        waitReason: "human_input" as const,
+      },
+    };
+
+    const state = resolveMissionsPageInitialState({ initialMission: mission });
+
+    expect(state.missions).toHaveLength(1);
+    expect(state.missions[0]?.execution).toEqual({
+      status: "waiting",
+      waitReason: "human_input",
+    });
+  });
+
   it("shows a shimmer skeleton only when no in-memory snapshot is available", () => {
     const firstLoad = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
     const revisit = renderToStaticMarkup(

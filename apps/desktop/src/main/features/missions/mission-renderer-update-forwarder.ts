@@ -8,6 +8,31 @@ export interface MissionRendererUpdateSender {
   ): void;
 }
 
+/**
+ * Serialize summary reads for each Mission. Chat invalidations can arrive in quick succession,
+ * and sending a slower, older read after a newer one would regress the Mission rail.
+ */
+export function createMissionSummaryRefreshScheduler(
+  refresh: (missionId: string) => Promise<void>,
+): (missionId: string) => Promise<void> {
+  const tails = new Map<string, Promise<void>>();
+
+  return (missionId) => {
+    const previous = tails.get(missionId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(async () => await refresh(missionId));
+    tails.set(missionId, next);
+    void next.then(
+      () => {
+        if (tails.get(missionId) === next) tails.delete(missionId);
+      },
+      () => {
+        if (tails.get(missionId) === next) tails.delete(missionId);
+      },
+    );
+    return next;
+  };
+}
+
 export function forwardMissionChatNotification(options: {
   readonly notification: MissionChatNotification;
   readonly getSender: () => MissionRendererUpdateSender | null;

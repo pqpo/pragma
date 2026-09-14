@@ -4191,6 +4191,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     };
     let runtimeStarts = 0;
+    let markResumedTurnStarted = (): void => undefined;
+    const resumedTurnStarted = new Promise<void>((resolve) => {
+      markResumedTurnStarted = resolve;
+    });
+    let releaseResumedTurn = (): void => undefined;
+    const resumedTurnCanFinish = new Promise<void>((resolve) => {
+      releaseResumedTurn = resolve;
+    });
     const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
@@ -4201,6 +4209,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         const handler = session.context.request.humanInteractionHandler;
         if (handler === undefined) throw new Error("Human interaction handler is missing.");
         const response = await handler(request);
+        if (runtimeStarts === 2) {
+          markResumedTurnStarted();
+          await resumedTurnCanFinish;
+        }
         return {
           outputText: JSON.stringify(response),
           runtimeSessionId: "first-human-runtime",
@@ -4284,6 +4296,12 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       requestId: "60000000-0000-4000-8000-000000000001",
       response: { answers: { "Which environment?": "staging" } },
     });
+    await resumedTurnStarted;
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("running"),
+      { timeout: settlementTimeoutMs },
+    );
+    releaseResumedTurn();
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },

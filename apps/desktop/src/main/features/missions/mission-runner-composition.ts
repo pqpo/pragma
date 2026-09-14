@@ -3932,7 +3932,7 @@ function observeMissionHumanWaitingStatus(input: {
   readonly sessionId?: string | undefined;
   readonly logger: PragmaLogger;
 }): {
-  readonly onEvent: (event: ExecutionEvent) => void;
+  readonly onEvent: (event: ExecutionEvent) => Promise<void>;
   readonly resync: () => Promise<void>;
   readonly drain: () => Promise<void>;
 } {
@@ -3994,7 +3994,7 @@ function observeMissionHumanWaitingStatus(input: {
   };
   void enqueueUpdate(resync).catch(() => undefined);
 
-  const onEvent = (event: ExecutionEvent): void => {
+  const onEvent = async (event: ExecutionEvent): Promise<void> => {
     if (
       event.type !== "human.requested" &&
       event.type !== "human.responded" &&
@@ -4004,16 +4004,16 @@ function observeMissionHumanWaitingStatus(input: {
     ) {
       return;
     }
-    const update = enqueueUpdate(async () => {
-      await resync();
-    });
-    void update.catch((error: unknown) => {
+    try {
+      await enqueueUpdate(resync);
+    } catch (error) {
       input.logger.warn(
         "mission.human_wait_status_update_failed",
         "Mission human-input waiting status could not be updated.",
         { error, missionId: input.missionId, executionId: input.execution.executionId },
       );
-    });
+      throw error;
+    }
   };
 
   return {
@@ -4855,7 +4855,7 @@ function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
-  onEvent: (event: ExecutionEvent) => void,
+  onEvent: (event: ExecutionEvent) => Promise<void>,
   onEventResync: () => Promise<void>,
   onSubscriptionError: (channel: "output" | "events", error: unknown) => void,
   onItem: (item: ExecutionOutputItem) => void,
@@ -4922,7 +4922,7 @@ function observeMissionChat(
         await onEventResync();
         for await (const event of subscription) {
           if (closed) break;
-          onEvent(event);
+          await onEvent(event);
           if (
             event.type === "human.requested" ||
             event.type === "human.responded" ||

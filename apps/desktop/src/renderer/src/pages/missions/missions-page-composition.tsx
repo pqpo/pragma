@@ -4712,7 +4712,16 @@ function missionToSummary(
     title: mission.title,
     workspace: { basename: mission.workspace.basename },
     executor: { kind: mission.executor.kind, name: mission.executor.name },
-    ...(mission.execution === undefined ? {} : { execution: { status: mission.execution.status } }),
+    ...(mission.execution === undefined
+      ? {}
+      : {
+          execution: {
+            status: mission.execution.status,
+            ...(mission.execution.waitReason === undefined
+              ? {}
+              : { waitReason: mission.execution.waitReason }),
+          },
+        }),
     source,
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
