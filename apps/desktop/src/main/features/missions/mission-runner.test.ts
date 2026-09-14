@@ -4161,6 +4161,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-first-human-checkpoint-"));
     temporaryPaths.push(root);
     const pragmaHome = join(root, "state");
+    const executionStore = createFileExecutionStore({ pragmaHome });
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const expertResource = expertFixture();
     const snapshot = await project.publish({
@@ -4191,6 +4192,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     };
     let runtimeStarts = 0;
+    let markResumedTurnStarted = (): void => undefined;
+    const resumedTurnStarted = new Promise<void>((resolve) => {
+      markResumedTurnStarted = resolve;
+    });
+    let releaseResumedTurn = (): void => undefined;
+    const resumedTurnCanFinish = new Promise<void>((resolve) => {
+      releaseResumedTurn = resolve;
+    });
     const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: (context) => ({ context }),
@@ -4201,6 +4210,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         const handler = session.context.request.humanInteractionHandler;
         if (handler === undefined) throw new Error("Human interaction handler is missing.");
         const response = await handler(request);
+        if (runtimeStarts === 2) {
+          markResumedTurnStarted();
+          await resumedTurnCanFinish;
+        }
         return {
           outputText: JSON.stringify(response),
           runtimeSessionId: "first-human-runtime",
@@ -4216,6 +4229,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome,
+      executionStore,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const workspace = {
@@ -4278,12 +4292,48 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     const interaction = (await runner.listHumanInteractions(mission.id))[0];
     expect(interaction).toBeDefined();
+    let releaseHumanResumeCommit = (): void => undefined;
+    const humanResumeCommitCanFinish = new Promise<void>((resolve) => {
+      releaseHumanResumeCommit = resolve;
+    });
+    let markHumanResumeCommitStarted = (): void => undefined;
+    const humanResumeCommitStarted = new Promise<void>((resolve) => {
+      markHumanResumeCommitStarted = resolve;
+    });
+    const originalCommit = executionStore.commit.bind(executionStore);
+    vi.spyOn(executionStore, "commit").mockImplementation(async (input) => {
+      if (input.commitId === `human-resumed:${interaction!.interactionId}`) {
+        markHumanResumeCommitStarted();
+        await humanResumeCommitCanFinish;
+      }
+      return await originalCommit(input);
+    });
+    let markRunningInvalidation = (): void => undefined;
+    const runningInvalidation = new Promise<void>((resolve) => {
+      markRunningInvalidation = resolve;
+    });
+    const unsubscribeChat = runner.subscribeChat(({ update }) => {
+      if (update.missionId !== mission.id || update.kind !== "invalidate") return;
+      void missions.get(mission.id).then((current) => {
+        if (current.execution?.status === "running") markRunningInvalidation();
+      });
+    });
     await runner.respondToHumanInteraction({
       missionId: mission.id,
       interactionId: interaction!.interactionId,
       requestId: "60000000-0000-4000-8000-000000000001",
       response: { answers: { "Which environment?": "staging" } },
     });
+    await humanResumeCommitStarted;
+    releaseHumanResumeCommit();
+    await resumedTurnStarted;
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("running"),
+      { timeout: settlementTimeoutMs },
+    );
+    await runningInvalidation;
+    unsubscribeChat();
+    releaseResumedTurn();
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -4545,6 +4595,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
       loggerProvider: createNoopLoggerProvider(),
     });
+    let invalidations = 0;
+    const unsubscribeChat = runner.subscribeChat(({ update }) => {
+      if (update.missionId === mission.id && update.kind === "invalidate") invalidations += 1;
+    });
 
     await runner.run(mission.id);
     await initialSeedComplete;
@@ -4569,6 +4623,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
     expect(listEventsCalls).toBeGreaterThanOrEqual(3);
+    expect(invalidations).toBeGreaterThan(0);
+    unsubscribeChat();
   });
 
   it("round-trips a Flow human interaction with globally unique resource IDs", async () => {

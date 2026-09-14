@@ -61,6 +61,7 @@ import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
 import { createMissionImageDraftStore } from "./mission-image-drafts.ts";
 import {
+  createMissionSummaryRefreshScheduler,
   forwardMissionChatNotification,
   forwardMissionWorkNotification,
 } from "./mission-renderer-update-forwarder.ts";
@@ -701,12 +702,14 @@ export function installMissionHandlers(options: {
       publishRemoval(missionId);
     }),
   );
+  const refreshMissionSummary = createMissionSummaryRefreshScheduler(
+    async (missionId) => await publishMission(await getManagedMission(missionId)),
+  );
   options.runner.subscribeChat((notification) => {
     forwardMissionChatNotification({
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
-      refreshMissionSummary: async (missionId) =>
-        await publishMission(await getManagedMission(missionId)),
+      refreshMissionSummary,
       reportSummaryRefreshFailure: (error, missionId) => {
         console.warn(
           JSON.stringify({

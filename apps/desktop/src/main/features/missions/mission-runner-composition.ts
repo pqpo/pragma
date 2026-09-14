@@ -3932,7 +3932,7 @@ function observeMissionHumanWaitingStatus(input: {
   readonly sessionId?: string | undefined;
   readonly logger: PragmaLogger;
 }): {
-  readonly onEvent: (event: ExecutionEvent) => void;
+  readonly onEvent: (event: ExecutionEvent) => Promise<void>;
   readonly resync: () => Promise<void>;
   readonly drain: () => Promise<void>;
 } {
@@ -3994,7 +3994,7 @@ function observeMissionHumanWaitingStatus(input: {
   };
   void enqueueUpdate(resync).catch(() => undefined);
 
-  const onEvent = (event: ExecutionEvent): void => {
+  const onEvent = async (event: ExecutionEvent): Promise<void> => {
     if (
       event.type !== "human.requested" &&
       event.type !== "human.responded" &&
@@ -4004,16 +4004,15 @@ function observeMissionHumanWaitingStatus(input: {
     ) {
       return;
     }
-    const update = enqueueUpdate(async () => {
-      await resync();
-    });
-    void update.catch((error: unknown) => {
+    try {
+      await enqueueUpdate(resync);
+    } catch (error) {
       input.logger.warn(
         "mission.human_wait_status_update_failed",
         "Mission human-input waiting status could not be updated.",
         { error, missionId: input.missionId, executionId: input.execution.executionId },
       );
-    });
+    }
   };
 
   return {
@@ -4855,7 +4854,7 @@ function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
-  onEvent: (event: ExecutionEvent) => void,
+  onEvent: (event: ExecutionEvent) => Promise<void>,
   onEventResync: () => Promise<void>,
   onSubscriptionError: (channel: "output" | "events", error: unknown) => void,
   onItem: (item: ExecutionOutputItem) => void,
@@ -4919,15 +4918,29 @@ function observeMissionChat(
       try {
         const subscription = await execution.subscribeEvents({ scope: { kind: "all" } });
         eventSubscription = subscription;
-        await onEventResync();
+        let resyncFailed = false;
+        while (!closed) {
+          try {
+            await onEventResync();
+            // A failed seed can miss an interaction event because the event bus is live-only.
+            // Once its durable projection recovers, tell both the chat and rail to reload it.
+            if (resyncFailed) onInvalidate();
+            break;
+          } catch (error) {
+            if (closed) break;
+            resyncFailed = true;
+            onSubscriptionError("events", error);
+            // Preserve the user-visible interaction update while the durable Mission projection
+            // retries. The established subscription keeps subsequent live events queued.
+            onInvalidate();
+            await missionSubscriptionRetryDelay();
+          }
+        }
+        if (closed) return;
         for await (const event of subscription) {
           if (closed) break;
-          onEvent(event);
-          if (
-            event.type === "human.requested" ||
-            event.type === "human.responded" ||
-            event.type.startsWith("execution.")
-          ) {
+          await onEvent(event);
+          if (event.type.startsWith("human.") || event.type.startsWith("execution.")) {
             onInvalidate();
           }
         }
