@@ -228,6 +228,75 @@ describe("RuntimeEnvironmentService", () => {
     expect(refreshed.adapter).not.toBe(first.adapter);
     expect(create).toHaveBeenCalledTimes(2);
   });
+
+  it("uses one prepared dynamic snapshot for an adapter and its cache key", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-prepared-cache-"));
+    const store = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "Runtime")],
+    });
+    let agentContextWindow = 258_000;
+    let markCreateStarted: (() => void) | undefined;
+    const createStarted = new Promise<void>((resolve) => {
+      markCreateStarted = resolve;
+    });
+    let allowCreateToFinish: (() => void) | undefined;
+    const createMayFinish = new Promise<void>((resolve) => {
+      allowCreateToFinish = resolve;
+    });
+    const create = vi.fn((): never => {
+      throw new Error("A prepared adapter must not call the fallback factory.");
+    });
+    const prepare = vi.fn(() => {
+      const capturedAgentContextWindow = agentContextWindow;
+      return {
+        cacheKey: `agent-context-window=${capturedAgentContextWindow}`,
+        create: async () => {
+          markCreateStarted?.();
+          await createMayFinish;
+          return defineRuntimeTestDriver({
+            descriptor: {
+              id: "pi",
+              kind: "test",
+              displayName: `Window ${capturedAgentContextWindow}`,
+            },
+            createSession: () => ({}),
+            startTurn: () => ({ outputText: "" }),
+            mapEvent: () => ({ events: [] }),
+          });
+        },
+      };
+    });
+    const service = createRuntimeEnvironmentService({
+      store,
+      factories: [
+        {
+          id: "test.runtime",
+          version: "v1",
+          prepare,
+          create,
+        },
+      ],
+    });
+
+    const initialBinding = service.bind();
+    await createStarted;
+    // This change lands after preparation and cache-key creation but before the adapter has
+    // finished materializing. The adapter must keep the prepared value rather than mixing it
+    // with this newer setting.
+    agentContextWindow = 320_000;
+    allowCreateToFinish?.();
+    const initial = await initialBinding;
+    const updated = await service.bind();
+    agentContextWindow = 258_000;
+    const restored = await service.bind();
+
+    expect(initial.adapter.descriptor.displayName).toBe("Window 258000");
+    expect(updated.adapter.descriptor.displayName).toBe("Window 320000");
+    expect(restored.adapter).toBe(initial.adapter);
+    expect(prepare).toHaveBeenCalledTimes(3);
+    expect(create).not.toHaveBeenCalled();
+  });
 });
 
 describe("Codex tool permission mapping", () => {

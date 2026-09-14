@@ -36,10 +36,30 @@ import {
 export interface RuntimeEnvironmentAdapterFactory {
   readonly id: string;
   readonly version: string;
+  /**
+   * Captures dynamic factory inputs once for one materialization attempt.
+   *
+   * The returned cache key and `create` closure must describe the same snapshot.
+   * This prevents a settings change from caching an adapter under one value while
+   * constructing it with a newer value.
+   */
+  readonly prepare?: (
+    environment: RuntimeEnvironmentDefinition,
+    context?: { readonly toolPermissionMode?: DesktopToolPermissionMode | undefined },
+  ) =>
+    | RuntimeEnvironmentAdapterPreparation
+    | Promise<RuntimeEnvironmentAdapterPreparation>
+    | undefined
+    | Promise<undefined>;
   readonly create: (
     environment: RuntimeEnvironmentDefinition,
     context?: { readonly toolPermissionMode?: DesktopToolPermissionMode | undefined },
   ) => RuntimeAdapter | Promise<RuntimeAdapter>;
+}
+
+export interface RuntimeEnvironmentAdapterPreparation {
+  readonly cacheKey: string;
+  readonly create: () => RuntimeAdapter | Promise<RuntimeAdapter>;
 }
 
 export interface RuntimeEnvironmentInspection {
@@ -84,7 +104,15 @@ export function createRuntimeEnvironmentService(options: {
     const factory = factories.get(ref);
     if (factory === undefined)
       throw new Error(`Runtime adapter factory is not registered: ${ref}.`);
-    const materializationCacheKey = await getMaterializationCacheKey();
+    const factoryContext =
+      effectiveToolPermissionMode === undefined
+        ? undefined
+        : { toolPermissionMode: effectiveToolPermissionMode };
+    const preparation = await factory.prepare?.(definition, factoryContext);
+    const materializationCacheKey = [
+      await getMaterializationCacheKey(),
+      preparation?.cacheKey ?? "default",
+    ].join("\0");
     const cacheKey = [
       revision.runtimeId,
       revision.revision,
@@ -98,12 +126,7 @@ export function createRuntimeEnvironmentService(options: {
     if (adapterPromise === undefined) {
       const materializeStartedAt = performance.now();
       adapterPromise = Promise.resolve(
-        factory.create(
-          definition,
-          effectiveToolPermissionMode === undefined
-            ? undefined
-            : { toolPermissionMode: effectiveToolPermissionMode },
-        ),
+        preparation?.create() ?? factory.create(definition, factoryContext),
       );
       void adapterPromise
         .then(
@@ -278,6 +301,7 @@ function environmentElapsedMs(startedAt: number): number {
 export interface CreateBuiltInRuntimeFactoriesOptions {
   readonly modelProviders: ModelProviderStore;
   readonly modelCatalogCacheRoot?: string | undefined;
+  readonly getAgentContextWindow?: (() => number | Promise<number>) | undefined;
   readonly getToolPermissionMode?:
     (() => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>) | undefined;
   readonly getRuntimeProcessEnvironment?: (() => Promise<NodeJS.ProcessEnv>) | undefined;
@@ -293,6 +317,24 @@ export function createBuiltInRuntimeFactories(
   const getRuntimeProcessEnvironment =
     options.getRuntimeProcessEnvironment ?? (async () => ({ ...process.env }));
   const onModelCatalogUpdated = options.onModelCatalogUpdated;
+
+  async function createPiAdapter(
+    environment: RuntimeEnvironmentDefinition,
+    agentContextWindow: number | undefined,
+  ): Promise<RuntimeAdapter> {
+    assertEmptyRuntimeConfig(environment);
+    return createPiRuntime({
+      descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
+      modelProviders: options.modelProviders,
+      env: await getRuntimeProcessEnvironment(),
+      ...(agentContextWindow === undefined ? {} : { agentContextWindow }),
+      tokenCounter: options.tokenCounter,
+      ...(options.mcpToolRegistryPool === undefined
+        ? {}
+        : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
+    });
+  }
+
   return [
     {
       id: "pragma.runtime.codex",
@@ -400,18 +442,15 @@ export function createBuiltInRuntimeFactories(
     {
       id: "pragma.runtime.pi",
       version: "v1",
-      create: async (environment) => {
+      create: async (environment) =>
+        await createPiAdapter(environment, await options.getAgentContextWindow?.()),
+      prepare: async (environment) => {
         assertEmptyRuntimeConfig(environment);
-        const env = await getRuntimeProcessEnvironment();
-        return createPiRuntime({
-          descriptor: { id: environment.id, displayName: BUILT_IN_RUNTIME_DISPLAY_NAME },
-          modelProviders: options.modelProviders,
-          env,
-          tokenCounter: options.tokenCounter,
-          ...(options.mcpToolRegistryPool === undefined
-            ? {}
-            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
-        });
+        const agentContextWindow = await options.getAgentContextWindow?.();
+        return {
+          cacheKey: `agent-context-window=${agentContextWindow ?? "default"}`,
+          create: async () => await createPiAdapter(environment, agentContextWindow),
+        };
       },
     },
   ];

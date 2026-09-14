@@ -1,5 +1,5 @@
 import { FolderOpen, X } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -12,6 +12,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
+import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 const languageOptions: readonly {
@@ -33,8 +34,11 @@ export function GeneralSettingsFragment() {
   const [revisionModelKey, setRevisionModelKey] = useState("");
   const [evaluationRuntimeId, setEvaluationRuntimeId] = useState("");
   const [evaluationModelKey, setEvaluationModelKey] = useState("");
+  const [agentContextWindowDraft, setAgentContextWindowDraft] = useState("");
+  const [agentContextWindowTouched, setAgentContextWindowTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
+  const agentContextWindowInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,9 +47,12 @@ export function GeneralSettingsFragment() {
       .then((snapshot) => {
         if (cancelled) return;
         setSettings(snapshot);
+        setAgentContextWindowDraft(String(snapshot.agentContextWindow));
+        setAgentContextWindowTouched(false);
       })
-      .catch(() => {
-        if (!cancelled) setError(t("general.saveError", { ns: "settings" }));
+      .catch((cause: unknown) => {
+        if (!cancelled)
+          setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
       });
     return () => {
       cancelled = true;
@@ -101,8 +108,8 @@ export function GeneralSettingsFragment() {
       const snapshot = await window.pragmaDesktop.updateDesktopSettings({ localePreference });
       await setDesktopLocale(snapshot.resolvedLocale);
       setSettings(snapshot);
-    } catch {
-      setError(t("general.saveError", { ns: "settings" }));
+    } catch (cause) {
+      setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
     } finally {
       setSaving(false);
     }
@@ -114,8 +121,30 @@ export function GeneralSettingsFragment() {
     setError(undefined);
     try {
       setSettings(await window.pragmaDesktop.updateDesktopSettings({ toolPermissionMode }));
-    } catch {
-      setError(t("general.saveError", { ns: "settings" }));
+    } catch (cause) {
+      setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateAgentContextWindow = async () => {
+    if (settings === undefined) return;
+    setAgentContextWindowTouched(true);
+    if (!agentContextWindowIsValid) {
+      agentContextWindowInputRef.current?.focus();
+      return;
+    }
+    if (agentContextWindow === settings.agentContextWindow) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      const snapshot = await window.pragmaDesktop.updateDesktopSettings({ agentContextWindow });
+      setSettings(snapshot);
+      setAgentContextWindowDraft(String(snapshot.agentContextWindow));
+      setAgentContextWindowTouched(false);
+    } catch (cause) {
+      setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
     } finally {
       setSaving(false);
     }
@@ -132,8 +161,8 @@ export function GeneralSettingsFragment() {
       setSettings(
         await window.pragmaDesktop.updateDesktopSettings({ defaultWorkspace: result.path }),
       );
-    } catch {
-      setError(t("general.saveError", { ns: "settings" }));
+    } catch (cause) {
+      setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
     } finally {
       setSaving(false);
     }
@@ -145,8 +174,8 @@ export function GeneralSettingsFragment() {
     setError(undefined);
     try {
       setSettings(await window.pragmaDesktop.updateDesktopSettings({ defaultWorkspace: null }));
-    } catch {
-      setError(t("general.saveError", { ns: "settings" }));
+    } catch (cause) {
+      setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
     } finally {
       setSaving(false);
     }
@@ -176,6 +205,13 @@ export function GeneralSettingsFragment() {
 
   const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
+  const agentContextWindow = Number(agentContextWindowDraft);
+  const agentContextWindowIsValid =
+    Number.isSafeInteger(agentContextWindow) && agentContextWindow > 0;
+  const agentContextWindowError =
+    agentContextWindowTouched && !agentContextWindowIsValid
+      ? t("general.agentContextWindowInvalid", { ns: "settings" })
+      : undefined;
   const selectedRevisionRuntime = runtimes.find((runtime) => runtime.id === revisionRuntimeId);
   const selectedEvaluationRuntime = runtimes.find((runtime) => runtime.id === evaluationRuntimeId);
 
@@ -272,6 +308,62 @@ export function GeneralSettingsFragment() {
               </label>
             ))}
           </span>
+        </div>
+        <div className="setting-row agent-context-window-setting">
+          <span className="setting-copy">
+            <strong>{t("general.agentContextWindow", { ns: "settings" })}</strong>
+            <span>{t("general.agentContextWindowDescription", { ns: "settings" })}</span>
+          </span>
+          <form
+            className="agent-context-window-controls"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void updateAgentContextWindow();
+            }}
+          >
+            <div className="agent-context-window-input">
+              <div className="agent-context-window-field">
+                <input
+                  ref={agentContextWindowInputRef}
+                  aria-label={t("general.agentContextWindow", { ns: "settings" })}
+                  aria-describedby={
+                    agentContextWindowError === undefined ? undefined : "agent-context-window-error"
+                  }
+                  aria-invalid={agentContextWindowError === undefined ? undefined : true}
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={agentContextWindowDraft}
+                  disabled={settings === undefined || saving}
+                  onBlur={() => setAgentContextWindowTouched(true)}
+                  onChange={(event) => setAgentContextWindowDraft(event.target.value)}
+                />
+                <span>{t("general.agentContextWindowUnit", { ns: "settings" })}</span>
+              </div>
+              {agentContextWindowError === undefined ? null : (
+                <span
+                  id="agent-context-window-error"
+                  className="agent-context-window-error"
+                  role="alert"
+                >
+                  {agentContextWindowError}
+                </span>
+              )}
+            </div>
+            <button
+              className="secondary-button"
+              type="submit"
+              disabled={
+                settings === undefined ||
+                saving ||
+                !agentContextWindowIsValid ||
+                agentContextWindow === settings.agentContextWindow
+              }
+            >
+              {t("general.agentContextWindowSave", { ns: "settings" })}
+            </button>
+          </form>
         </div>
         <div className="setting-row general-workspace-setting">
           <span className="setting-copy">
@@ -516,4 +608,18 @@ export function GeneralSettingsFragment() {
       </div>
     </SettingsScreenFrame>
   );
+}
+
+function desktopSettingsErrorKey(
+  cause: unknown,
+): "settingsMigrationError" | "settingsVersionTooNew" | "saveError" {
+  switch (errorMessage(cause)) {
+    case "desktop_settings_migration_recovery_failed":
+    case "desktop_settings_migration_failed":
+      return "settingsMigrationError";
+    case "desktop_settings_unsupported_version":
+      return "settingsVersionTooNew";
+    default:
+      return "saveError";
+  }
 }

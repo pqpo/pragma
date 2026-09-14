@@ -69,7 +69,9 @@ const PI_EVIDENCE_PENDING =
 type PiDriverSession = PiNativeSession;
 
 export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): RuntimeAdapter {
-  const modelProviderConverter = createPiModelProviderConverter();
+  const modelProviderConverter = createPiModelProviderConverter({
+    agentContextWindow: options.agentContextWindow,
+  });
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
   const descriptor = {
     ...CLOUD_PI_RUNTIME_DESCRIPTOR,

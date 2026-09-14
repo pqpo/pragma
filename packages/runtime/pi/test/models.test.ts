@@ -11,6 +11,10 @@ import {
   resolveRequiredRuntimeModel,
 } from "../src/models.ts";
 import { createPiModelProviderDirectory } from "../src/catalog.ts";
+import {
+  DEFAULT_PI_AGENT_CONTEXT_WINDOW_TOKENS,
+  resolvePiEffectiveContextWindow,
+} from "../src/context-window.ts";
 
 describe("PI runtime model resolution", () => {
   it("exposes the one-million-token Qwen Max catalog limits", () => {
@@ -28,6 +32,39 @@ describe("PI runtime model resolution", () => {
         maxTokens: 131_072,
       }),
     ]);
+  });
+
+  it("limits Pi-native models to the Agent working context without changing model capability", () => {
+    const converter = createPiModelProviderConverter({ agentContextWindow: 258_000 });
+    const provider: ModelProviderDefinition = {
+      id: "provider",
+      catalogId: "qwen-token-plan-cn",
+      displayName: "Provider",
+      api: "openai-completions",
+      baseUrl: "https://models.example.com/v1",
+      models: [{ ...testModel("qwen3.8-max"), contextWindow: 1_000_000 }],
+    };
+
+    const native = converter.convertProvider({
+      ...provider,
+      apiKey: "secret",
+      credentialFingerprint: "fingerprint",
+    });
+
+    expect(provider.models[0]?.contextWindow).toBe(1_000_000);
+    expect(native.models[0]?.contextWindow).toBe(258_000);
+  });
+
+  it("resolves an Agent window as the lower of configured and model limits", () => {
+    expect(DEFAULT_PI_AGENT_CONTEXT_WINDOW_TOKENS).toBe(258_000);
+    expect(
+      [128_000, 200_000, 258_000, 512_000, 1_000_000].map((modelContextWindow) =>
+        resolvePiEffectiveContextWindow({ agentContextWindow: 258_000, modelContextWindow }),
+      ),
+    ).toEqual([128_000, 200_000, 258_000, 258_000, 258_000]);
+    expect(() =>
+      resolvePiEffectiveContextWindow({ agentContextWindow: 0, modelContextWindow: 128_000 }),
+    ).toThrow("Agent context window must be a positive safe integer.");
   });
 
   it("uses provider and model as the canonical identity", async () => {

@@ -48,6 +48,16 @@ export const settings = {
         description: "Allow actions anywhere on this device without approval.",
       },
     },
+    agentContextWindow: "Agent context window",
+    agentContextWindowDescription:
+      "Default working-context budget for Pi Agents. A model with a smaller hard limit always uses that smaller limit. Changes apply when a Pi session is opened or resumed.",
+    agentContextWindowUnit: "tokens",
+    agentContextWindowSave: "Save window",
+    agentContextWindowInvalid: "Enter a positive whole number of tokens.",
+    settingsMigrationError:
+      "Desktop settings could not be upgraded. Your original settings were retained; restore a settings backup or update Pragma, then restart.",
+    settingsVersionTooNew:
+      "These Desktop settings were written by a newer version of Pragma. Update Pragma to continue; no settings were changed.",
     defaultWorkspace: "Default workspace",
     defaultWorkspaceDescription:
       "Used when Home starts a mission without a task-specific workspace.",

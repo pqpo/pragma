@@ -52,6 +52,8 @@ export interface CloudPiRuntimeAdapterOptions {
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly sessionSyncDebounceMs?: number | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
+  /** Maximum working context budget for Pi Agents before model hard-limit clamping. */
+  readonly agentContextWindow?: number | undefined;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
 }
 

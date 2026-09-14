@@ -218,6 +218,61 @@
   opacity: 0.55;
 }
 
+.agent-context-window-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.agent-context-window-setting > .setting-copy {
+  max-width: 420px;
+}
+
+.agent-context-window-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-context-window-input {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-context-window-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-context-window-field input {
+  width: 132px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+}
+
+.agent-context-window-field input:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.agent-context-window-field > span {
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+}
+
+.agent-context-window-error {
+  color: var(--ui-danger);
+  font-size: 12px;
+}
+
 .general-workspace-controls {
   display: flex;
   width: 220px;

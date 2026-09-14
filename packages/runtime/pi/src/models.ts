@@ -20,6 +20,7 @@ import {
   resolvePiCompatibilityProfile,
   type PiCompatibilityProfile,
 } from "./profiles.ts";
+import { resolvePiEffectiveContextWindow } from "./context-window.ts";
 import type { PiModelProviderConfig, PiProviderModelConfig } from "./types.ts";
 
 const THINKING_LEVEL_LABELS = {
@@ -135,14 +136,21 @@ export function resolvePiThinkingLevel(
   }
 }
 
-export function createPiModelProviderConverter(): RuntimeModelProviderConverter<PiModelProviderConfig> {
+export function createPiModelProviderConverter(
+  options: {
+    readonly agentContextWindow?: number | undefined;
+  } = {},
+): RuntimeModelProviderConverter<PiModelProviderConfig> {
   return {
     supports: (api) => SUPPORTED_APIS.has(api),
     toRuntimeModels(provider) {
       return provider.models.flatMap((model) => {
         const api = model.api ?? provider.api;
         if (!SUPPORTED_APIS.has(api)) return [];
-        const piModel = resolvePiModel(provider, toPiProviderModel(model));
+        const piModel = resolvePiModel(
+          provider,
+          toPiProviderModel(model, options.agentContextWindow),
+        );
         const levels = supportedDeclaredThinkingLevels(piModel, model.thinking);
         return [
           {
@@ -175,7 +183,7 @@ export function createPiModelProviderConverter(): RuntimeModelProviderConverter<
     convertProvider(provider) {
       const models = provider.models
         .filter((model) => SUPPORTED_APIS.has(model.api ?? provider.api))
-        .map(toPiProviderModel);
+        .map((model) => toPiProviderModel(model, options.agentContextWindow));
       if (models.length === 0) {
         throw new Error(
           `No configured models are supported for provider "${provider.displayName}".`,
@@ -199,7 +207,10 @@ export function createPiModelProviderConverter(): RuntimeModelProviderConverter<
   };
 }
 
-function toPiProviderModel(model: ProviderModelDefinition): PiProviderModelConfig {
+function toPiProviderModel(
+  model: ProviderModelDefinition,
+  agentContextWindow: number | undefined,
+): PiProviderModelConfig {
   return {
     id: model.id,
     name: model.name,
@@ -212,7 +223,10 @@ function toPiProviderModel(model: ProviderModelDefinition): PiProviderModelConfi
       : { compatibilityProfileId: model.compatibilityProfileId }),
     input: [...model.input],
     cost: toPiModelCost(model.cost),
-    contextWindow: model.contextWindow,
+    contextWindow: resolvePiEffectiveContextWindow({
+      agentContextWindow,
+      modelContextWindow: model.contextWindow,
+    }),
     maxTokens: model.maxTokens,
   };
 }
