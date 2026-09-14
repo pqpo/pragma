@@ -1,5 +1,6 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { STORE_REVISION_EXPERT_REF, createPragmaManagementTools } from "@pragma/built-in-agents";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +43,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  GetMissionChatSchema,
   missionExecutorSnapshot,
   type DesktopToolPermissionMode,
   type MissionChatUpdate,
@@ -60,6 +62,13 @@ import {
   type MissionRunner,
   type LiveMissionChat,
 } from "./mission-runner.ts";
+import {
+  decodeMissionChatPageCursor,
+  encodeMissionChatPageCursor,
+  mergeMissionChatEntriesWithLive,
+  orderMissionExecutionEntries,
+} from "./mission-runner-composition.ts";
+import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
@@ -377,6 +386,264 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
   });
 
+  it("ignores late thinking after a final answer but accepts a new run", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const output = (
+      runId: string,
+      channel: "thought" | "message",
+      content: string,
+      completed = false,
+    ): ExecutionOutputItem => ({
+      sourceEventId: `${runId}:${channel}:${content}`,
+      executionId: chat.executionId,
+      invocationId: "invocation-a",
+      contextId: "context-a",
+      runId,
+      source: { kind: "runtime", runId, path: [] },
+      channel,
+      ...(completed
+        ? { value: { stopReason: "stop", content: [{ type: "text", text: content }] } }
+        : { delta: content }),
+      occurredAt: "2026-08-24T00:00:00.000Z",
+    });
+
+    consumeLiveChatOutput(chat, output("run-a", "thought", "Reasoning"));
+    consumeLiveChatOutput(chat, output("run-a", "message", "Answer", true));
+    expect(consumeLiveChatOutput(chat, output("run-a", "thought", " late"))).toEqual([]);
+    expect(chat.entries.map((entry) => entry.kind)).toEqual(["thinking", "assistant"]);
+    expect(chat.entries[0]).toMatchObject({ content: "Reasoning", streaming: false });
+
+    consumeLiveChatOutput(chat, output("run-b", "thought", "New reasoning"));
+    expect(chat.entries.at(-1)).toMatchObject({ kind: "thinking", content: "New reasoning" });
+
+    consumeLiveChatOutput(chat, {
+      ...output("run-c", "message", "Tool handoff", true),
+      value: { stopReason: "toolUse", content: [{ type: "text", text: "Tool handoff" }] },
+    });
+    expect(consumeLiveChatOutput(chat, output("run-c", "thought", "After tool"))).toHaveLength(1);
+  });
+
+  it("keeps live thinking before a durable final answer during refresh", () => {
+    const createdAt = "2026-08-24T00:00:00.000Z";
+    const user = { id: "request", kind: "user" as const, content: "Ask", createdAt };
+    const thinking = {
+      id: "message:execution-1:invocation-a:run-a:thinking:0",
+      kind: "thinking" as const,
+      content: "Reasoning",
+      streaming: false,
+      createdAt,
+    };
+    const durableAnswer = {
+      id: "message:execution-1:invocation-a:run-a:assistant:0",
+      kind: "assistant" as const,
+      content: "Answer",
+      streaming: false,
+      eventSequence: 7,
+      finalAnswer: true,
+      createdAt,
+    };
+    const liveAnswer = { ...durableAnswer, eventSequence: undefined, streaming: true };
+
+    expect(
+      mergeMissionChatEntriesWithLive([user, durableAnswer], [thinking, liveAnswer]),
+    ).toMatchObject([
+      { id: "request" },
+      { id: thinking.id },
+      { id: durableAnswer.id, streaming: true, eventSequence: 7 },
+    ]);
+    expect(mergeMissionChatEntriesWithLive([user], [thinking])).toMatchObject([
+      { id: "request" },
+      { id: thinking.id },
+    ]);
+    expect(mergeMissionChatEntriesWithLive([user, durableAnswer], [thinking])).toMatchObject([
+      { id: "request" },
+      { id: thinking.id },
+      { id: durableAnswer.id },
+    ]);
+  });
+
+  it("repairs an archived turn's old projection from its event log on first read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-order-repair-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expert = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expert],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Repair old conversation",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expert),
+    });
+    const executions = createFileExecutionStore({ pragmaHome });
+    const executionId = "00000000-0000-4000-8000-000000000121";
+    const timestamp = new Date("2026-08-24T00:00:00.000Z").getTime();
+    const createdAt = new Date(timestamp).toISOString();
+    const definition = { id: expert.metadata.id, kind: "expert" as const };
+    await executions.create(
+      {
+        schemaVersion: "pragma.execution/v11",
+        executionId,
+        version: 0,
+        kind: "expert-turn",
+        definition,
+        rootInvocationId: executionId,
+        status: "running",
+        input: { text: mission.goal, attachments: [] },
+        state: {},
+        lastAppliedSequence: 0,
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        invocationId: executionId,
+        rootInvocationId: executionId,
+        definition,
+        executorId: expert.metadata.id,
+        contextId: "00000000-0000-4000-8000-000000000122",
+        status: "running",
+        pendingExpertMessages: [],
+        input: { text: mission.goal, attachments: [] },
+        createdAt,
+        updatedAt: createdAt,
+      },
+    );
+    await appendExecutionEvent(
+      executions,
+      executionId,
+      executionId,
+      "invocation.message.appended",
+      {
+        runId: "run-a",
+        source: { kind: "runtime", runId: "run-a", path: [] },
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "Reasoning" },
+            { type: "text", text: "Answer" },
+          ],
+          api: "test",
+          provider: "test",
+          model: "test-model",
+          usage: {
+            measurement: "reported",
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "stop",
+          timestamp,
+        },
+      },
+    );
+    await executions.commit({
+      commitId: "complete-old-execution",
+      executionId,
+      executionPatch: { status: "succeeded" },
+    });
+    await executions.archive(executionId);
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt,
+    });
+    const projectionPath = join(
+      missions.storagePath!(mission.id),
+      "execution-projections",
+      `${executionId}.jsonl`,
+    );
+    await writeMissionExecutionProjection(
+      projectionPath,
+      executionId,
+      [
+        {
+          id: `message:${executionId}:${executionId}:run-a:assistant:0`,
+          kind: "assistant",
+          content: "Answer",
+          streaming: false,
+          createdAt,
+        },
+        {
+          id: `message:${executionId}:${executionId}:run-a:thinking:0`,
+          kind: "thinking",
+          content: "Reasoning",
+          streaming: false,
+          createdAt,
+        },
+      ],
+      1,
+    );
+    await writeFile(
+      projectionPath,
+      (await readFile(projectionPath, "utf8")).replace('"orderingVersion":1,', ""),
+      "utf8",
+    );
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(chat.entries.map((entry) => entry.kind)).toEqual(["user", "thinking", "assistant"]);
+    expect(
+      await missions.readExecutionProjectionPage(mission.id, executionId, { limit: 50 }),
+    ).toMatchObject({
+      orderingVersion: 2,
+      entries: [{ kind: "thinking" }, { kind: "assistant", finalAnswer: true }],
+    });
+    const backup = await readFile(`${projectionPath}.before-order-repair`, "utf8");
+    expect(backup).toContain('"schemaVersion":"pragma.mission-execution-projection/v2"');
+    expect(backup).not.toContain('"orderingVersion"');
+  });
+
+  it("orders durable thinking and final replies by event sequence", () => {
+    const entries = orderMissionExecutionEntries([
+      {
+        id: "answer",
+        kind: "assistant",
+        content: "Final",
+        streaming: false,
+        eventSequence: 12,
+        createdAt: "2026-08-24T00:00:01.000Z",
+      },
+      {
+        id: "thought",
+        kind: "thinking",
+        content: "Reasoning",
+        streaming: false,
+        eventSequence: 11,
+        createdAt: "2026-08-24T00:00:02.000Z",
+      },
+    ]);
+    expect(entries.map((entry) => entry.id)).toEqual(["thought", "answer"]);
+  });
+
   it("stops emitting visible patches after a streaming message reaches its content cap", () => {
     const chat: LiveMissionChat = {
       executionId: "execution-1",
@@ -507,6 +774,44 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         ],
       }),
     ]);
+  });
+
+  it("keeps Mission chat entry cursors bounded and accepts long legacy cursors", () => {
+    const entryId = `tool:execution:${"x".repeat(3_000)}`;
+    const legacyCursor = encodeMissionChatPageCursor({
+      version: 1,
+      kind: "entries",
+      sequence: 1,
+      beforeEntryId: entryId,
+    });
+    expect(legacyCursor.length).toBeGreaterThan(2_048);
+    expect(
+      GetMissionChatSchema.safeParse({
+        id: "00000000-0000-4000-8000-000000000001",
+        beforeCursor: legacyCursor,
+      }).success,
+    ).toBe(true);
+    expect(decodeMissionChatPageCursor(legacyCursor)).toEqual({
+      version: 1,
+      kind: "entries",
+      sequence: 1,
+      beforeEntryId: entryId,
+    });
+
+    const hash = createHash("sha256").update(entryId, "utf8").digest("hex");
+    const nextCursor = encodeMissionChatPageCursor({
+      version: 2,
+      kind: "entries",
+      sequence: 1,
+      beforeEntryHash: hash,
+    });
+    expect(nextCursor.length).toBeLessThan(2_048);
+    expect(decodeMissionChatPageCursor(nextCursor)).toEqual({
+      version: 2,
+      kind: "entries",
+      sequence: 1,
+      beforeEntryHash: hash,
+    });
   });
 
   it("paginates a single long Mission turn by visible entries", async () => {
@@ -1783,7 +2088,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
     });
 
-    await expect(runner.delete(mission.id)).rejects.toThrow("stop before Mission ownership is removed");
+    await expect(runner.delete(mission.id)).rejects.toThrow(
+      "stop before Mission ownership is removed",
+    );
     await expect(missions.get(mission.id)).resolves.toMatchObject({ id: mission.id });
     await expect(revisions.get(job.id)).resolves.toMatchObject({
       state: "running",

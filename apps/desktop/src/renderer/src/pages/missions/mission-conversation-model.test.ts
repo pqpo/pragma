@@ -8,6 +8,7 @@ import {
   hidePreparingQueuedChatEntries,
   mergeLatestChatPage,
   missionTurnFinalReplyIds,
+  orderMissionConversationEntries,
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
   startMissionContextOperation,
@@ -303,6 +304,80 @@ describe("mission conversation model", () => {
     ];
 
     expect([...missionTurnFinalReplyIds(entries)]).toEqual(["turn-1-final", "turn-2-final"]);
+  });
+
+  it("preserves durable event order across timestamps and inserts local messages", () => {
+    const entries = orderMissionConversationEntries([
+      {
+        type: "durable",
+        entry: {
+          id: "thinking",
+          kind: "thinking",
+          content: "Reasoning",
+          streaming: false,
+          createdAt: "2026-07-11T00:00:02.000Z",
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "answer",
+          kind: "assistant",
+          content: "Final answer",
+          streaming: false,
+          createdAt: "2026-07-11T00:00:01.000Z",
+        },
+      },
+      {
+        type: "local",
+        entry: {
+          id: "next-request",
+          content: "Next question",
+          createdAt: "2026-07-11T00:00:03.000Z",
+          attachments: [],
+          status: "pending",
+        },
+      },
+    ]);
+
+    expect(entries.map(({ entry }) => entry.id)).toEqual(["thinking", "answer", "next-request"]);
+  });
+
+  it("keeps a newer live answer after thinking when an older refresh arrives", () => {
+    const current: MissionChatSnapshot = {
+      ...streamingSnapshot("answer", 8),
+      entries: [
+        {
+          id: "thinking",
+          kind: "thinking",
+          content: "Reasoning",
+          streaming: false,
+          createdAt: "2026-07-11T00:00:02.000Z",
+        },
+        {
+          ...streamingSnapshot("answer", 8).entries[0]!,
+          createdAt: "2026-07-11T00:00:01.000Z",
+        },
+      ],
+    };
+    const stale: MissionChatSnapshot = {
+      ...current,
+      revision: 7,
+      entries: [
+        current.entries[0]!,
+        {
+          id: "answer",
+          kind: "assistant",
+          content: "ans",
+          streaming: true,
+          createdAt: "2026-07-11T00:00:01.000Z",
+        },
+      ],
+    };
+
+    const merged = reconcileMissionChatRefresh(current, stale, []);
+    expect(merged.snapshot.entries.map((entry) => entry.id)).toEqual(["thinking", "answer"]);
+    expect(merged.snapshot.entries[1]).toMatchObject({ content: "answer" });
   });
 
   it("hides only synthetic interrupted execution fallbacks from the conversation", () => {

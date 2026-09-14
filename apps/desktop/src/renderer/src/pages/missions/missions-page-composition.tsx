@@ -80,6 +80,7 @@ import {
   hidePreparingQueuedChatEntries,
   mergeLatestChatPage,
   missionTurnFinalReplyIds,
+  orderMissionConversationEntries,
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
@@ -2120,7 +2121,7 @@ export function MissionDetailFragment(props: {
   );
   const conversationEntries = useMemo(
     () =>
-      [
+      orderMissionConversationEntries([
         ...displayEntries.map((entry) => ({ type: "durable" as const, entry })),
         ...optimisticMessages
           .filter((message) => !durableEntryIds.has(message.id))
@@ -2129,7 +2130,7 @@ export function MissionDetailFragment(props: {
           type: "context-operation" as const,
           entry: operation,
         })),
-      ].toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt)),
+      ]),
     [contextOperations, displayEntries, durableEntryIds, optimisticMessages],
   );
   const conversationBlocks = useMemo(

@@ -5,6 +5,12 @@ import type {
   ExpertAgentManagedToolCallContext,
   ExpertAgentToolCallResult,
 } from "@pragma/core";
+import {
+  decodeShortPageCursor,
+  encodeShortPageCursor,
+  isShortPageCursor,
+  ShortPageCursorError,
+} from "@pragma/core";
 import { z } from "zod";
 
 import type {
@@ -943,9 +949,7 @@ function encodeEvaluationCursor(
   query: string | undefined,
   offset: number,
 ): string {
-  return Buffer.from(JSON.stringify([1, draftId, draftRevision, query ?? null, offset])).toString(
-    "base64url",
-  );
+  return encodeShortPageCursor(evaluationCursorBinding(draftId, draftRevision, query), offset);
 }
 
 function decodeEvaluationCursor(
@@ -955,8 +959,19 @@ function decodeEvaluationCursor(
   query: string | undefined,
 ): number {
   if (cursor === undefined) return 0;
+  if (isShortPageCursor(cursor)) {
+    try {
+      return decodeShortPageCursor(cursor, evaluationCursorBinding(draftId, draftRevision, query));
+    } catch (error) {
+      if (error instanceof ShortPageCursorError) throw new Error(error.code, { cause: error });
+      throw error;
+    }
+  }
   let value: unknown;
   try {
+    if (cursor.length > 4_096 || !/^[A-Za-z0-9_-]+$/u.test(cursor)) {
+      throw new Error("invalid legacy cursor encoding");
+    }
     value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
   } catch {
     throw new Error("cursor_invalid");
@@ -969,6 +984,18 @@ function decodeEvaluationCursor(
     throw new Error("cursor_invalid");
   }
   return Number(value[4]);
+}
+
+function evaluationCursorBinding(
+  draftId: string,
+  draftRevision: number,
+  query: string | undefined,
+) {
+  return {
+    scope: `get_evaluation_draft:${draftId}`,
+    filters: { query: query ?? null },
+    fingerprint: draftRevision,
+  };
 }
 
 function summarizePrepareResult(input: PragmaAgentPrepareResult) {

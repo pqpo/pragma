@@ -454,7 +454,7 @@ export const MissionQueuePromptActionSchema = z
   });
 export const GetMissionChatSchema = z.object({
   id: MissionIdSchema,
-  beforeCursor: z.string().min(1).max(2_048).optional(),
+  beforeCursor: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).default(50),
 });
 export const GetMissionWorkConversationSchema = z.object({
@@ -512,6 +512,7 @@ export const MissionHumanInteractionSchema = z.object({
 const MissionChatEntryBaseSchema = z.object({
   id: z.string().min(1),
   timelineSequence: z.number().int().positive().optional(),
+  eventSequence: z.number().int().nonnegative().optional(),
   executionId: z.string().min(1).optional(),
   invocationId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
@@ -539,6 +540,7 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
     kind: z.literal("assistant"),
     content: z.string().max(200_000),
     streaming: z.boolean().default(false),
+    finalAnswer: z.boolean().optional(),
   }),
   MissionChatEntryBaseSchema.extend({
     kind: z.literal("thinking"),

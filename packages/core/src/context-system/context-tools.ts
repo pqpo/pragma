@@ -1,4 +1,10 @@
 import { createHash } from "node:crypto";
+import {
+  decodeShortPageCursor,
+  encodeShortPageCursor,
+  isShortPageCursor,
+  ShortPageCursorError,
+} from "../pagination/short-page-cursor.ts";
 
 import type {
   ContextTrigger,
@@ -973,7 +979,7 @@ function paginateContextIndex(
   byteBudget: number,
   namespace: string | undefined,
 ): ExpertAgentContextResult<ContextIndexPage> {
-  const cursor = decodeContextListCursor(encodedCursor);
+  const cursor = decodeContextListCursor(encodedCursor, namespace);
   if (!cursor.ok) return cursor;
   const cursorNamespace = cursor.value?.length === 3 ? cursor.value[2] : null;
   const requestedNamespace = namespace ?? null;
@@ -1034,7 +1040,7 @@ function paginateContextIndex(
       skippedOversized,
       omittedIssues: boundedIssues.omitted,
       ...(hasMore
-        ? { nextCursor: encodeContextListCursor([2, nextOffset, requestedNamespace]) }
+        ? { nextCursor: encodeShortPageCursor(contextCursorBinding(namespace), nextOffset) }
         : {}),
     },
   };
@@ -1076,15 +1082,47 @@ function formatContextIndexPage(page: ContextIndexPage): string {
   return truncateUtf8(output, page.byteBudget, "");
 }
 
-function encodeContextListCursor(cursor: ContextListCursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+function contextCursorBinding(namespace: string | undefined) {
+  return {
+    scope: "list_expert_context",
+    filters: { namespace: namespace ?? null },
+    fingerprint: null,
+  };
 }
 
 function decodeContextListCursor(
   cursor: string | undefined,
+  namespace: string | undefined,
 ): ExpertAgentContextResult<ContextListCursor | undefined> {
   if (cursor === undefined) return { ok: true, value: undefined };
+  if (isShortPageCursor(cursor)) {
+    try {
+      return {
+        ok: true,
+        value: [
+          2,
+          decodeShortPageCursor(cursor, contextCursorBinding(namespace)),
+          namespace ?? null,
+        ],
+      };
+    } catch (error) {
+      if (!(error instanceof ShortPageCursorError)) throw error;
+      return {
+        ok: false,
+        error: {
+          code: "invalid_input",
+          message: "Context list cursor is invalid or does not match the requested namespace.",
+        },
+      };
+    }
+  }
   try {
+    if (
+      cursor.length > legacyContextCursorMaxLength(namespace) ||
+      !/^[A-Za-z0-9_-]+$/u.test(cursor)
+    ) {
+      throw new Error("invalid legacy cursor encoding");
+    }
     const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
     if (
       !Array.isArray(value) ||
@@ -1108,6 +1146,16 @@ function decodeContextListCursor(
       error: { code: "invalid_input", message: "Context list cursor is invalid." },
     };
   }
+}
+
+function legacyContextCursorMaxLength(namespace: string | undefined): number {
+  // Legacy v2 embeds the requested namespace, whose valid length is unbounded.
+  return Math.max(
+    Buffer.from(JSON.stringify([1, Number.MAX_SAFE_INTEGER])).toString("base64url").length,
+    Buffer.from(JSON.stringify([2, Number.MAX_SAFE_INTEGER, namespace ?? null])).toString(
+      "base64url",
+    ).length,
+  );
 }
 
 function compareContextSummary(

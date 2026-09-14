@@ -14,6 +14,11 @@ export const ExecutionIdSchema = z.string().uuid();
 export const InteractionIdSchema = z.string().min(1).max(512);
 export const IsoDateTimeSchema = z.string().datetime({ offset: true });
 export const OpaqueCursorSchema = z.string().min(1).max(4_096);
+export const AGENT_PAGE_CURSOR_MAX_LENGTH = 64;
+export const ShortOffsetPageCursorSchema = z
+  .string()
+  .max(AGENT_PAGE_CURSOR_MAX_LENGTH)
+  .regex(/^p1\.[A-Za-z0-9_-]{40}$/u);
 export const PayloadHashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 export const FencingTokenSchema = z.string().regex(/^[1-9][0-9]*$/);
 export const SemanticResourceIdSchema = z.string().regex(/^[0-9a-hjkmnp-tv-z]{16}$/);

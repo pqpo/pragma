@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { paginateManagementItems } from "./management-pagination.ts";
@@ -14,6 +15,7 @@ describe("management pagination", () => {
 
     expect(first.items).toEqual(["a", "b"]);
     expect(first.nextCursor).toEqual(expect.any(String));
+    expect(first.nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
     expect(
       paginateManagementItems({
         items: ["a", "b", "c"],
@@ -61,5 +63,33 @@ describe("management pagination", () => {
         }),
       ).toThrow("cursor_invalid");
     }
+  });
+
+  it("continues a legacy cursor and emits a short cursor for the next page", () => {
+    const items = ["a", "b", "c", "d"];
+    const scope = "list_dsl_resources";
+    const filters = {};
+    const sha256 = (value: unknown) =>
+      createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const legacy = Buffer.from(
+      JSON.stringify({
+        version: 1,
+        scope,
+        fingerprint: sha256(items),
+        filterHash: sha256(filters),
+        offset: 1,
+      }),
+    ).toString("base64url");
+
+    const page = paginateManagementItems({
+      items,
+      scope,
+      fingerprintValue: items,
+      filters,
+      cursor: legacy,
+      limit: 2,
+    });
+    expect(page.items).toEqual(["b", "c"]);
+    expect(page.nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
   });
 });
