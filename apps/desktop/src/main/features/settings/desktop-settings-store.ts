@@ -30,6 +30,7 @@ export const DESKTOP_SETTINGS_MIGRATION_ERROR_CODES = {
   recoveryFailed: "desktop_settings_migration_recovery_failed",
   migrationFailed: "desktop_settings_migration_failed",
   unsupportedVersion: "desktop_settings_unsupported_version",
+  invalidSettings: "desktop_settings_invalid",
 } as const;
 
 export class DesktopSettingsMigrationError extends Error {
@@ -129,6 +130,11 @@ export function createDesktopSettingsStore(options: {
       await recoverMigration();
       const source = JSON.parse(await readFile(options.settingsPath, "utf8")) as unknown;
       const version = readSchemaVersion(source);
+      if (version === undefined) {
+        throw new DesktopSettingsMigrationError(
+          DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+        );
+      }
       if (version === 1) {
         await migrateV1ToV2(source);
         return DesktopSettingsSchema.parse(
@@ -144,8 +150,11 @@ export function createDesktopSettingsStore(options: {
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return defaultSettings;
       if (error instanceof DesktopSettingsMigrationError) throw error;
-      options.warn?.("Desktop settings could not be read; using defaults.", error);
-      return defaultSettings;
+      options.warn?.("Desktop settings could not be read safely; preserving the source.", error);
+      throw new DesktopSettingsMigrationError(
+        DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+        { cause: error },
+      );
     }
   };
 

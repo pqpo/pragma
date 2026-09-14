@@ -12,7 +12,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
 import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.tsx";
-import { errorMessage } from "../../lib/errors.ts";
+import { desktopSettingsErrorKey } from "../../lib/desktop-settings-errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 const languageOptions: readonly {
@@ -608,18 +608,4 @@ export function GeneralSettingsFragment() {
       </div>
     </SettingsScreenFrame>
   );
-}
-
-function desktopSettingsErrorKey(
-  cause: unknown,
-): "settingsMigrationError" | "settingsVersionTooNew" | "saveError" {
-  switch (errorMessage(cause)) {
-    case "desktop_settings_migration_recovery_failed":
-    case "desktop_settings_migration_failed":
-      return "settingsMigrationError";
-    case "desktop_settings_unsupported_version":
-      return "settingsVersionTooNew";
-    default:
-      return "saveError";
-  }
 }

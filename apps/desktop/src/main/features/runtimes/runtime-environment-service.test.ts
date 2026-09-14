@@ -1,12 +1,14 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { createPiModelProviderConverter } from "@pragma/runtime-pi";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
 import type { ModelProviderStore } from "../model-providers/model-provider-store.ts";
+import { createDesktopSettingsStore } from "../settings/desktop-settings-store.ts";
 import {
   antigravityRuntimePermissionForMode,
   codexRuntimePermissionsForMode,
@@ -16,6 +18,11 @@ import {
   type RuntimeEnvironmentAdapterFactory,
 } from "./runtime-environment-service.ts";
 import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
+
+const desktopSettingsV1Fixture = new URL(
+  "../settings/fixtures/desktop-settings-v1.json",
+  import.meta.url,
+);
 
 describe("RuntimeEnvironmentService", () => {
   it("binds latest revisions without restart and resolves historical bindings", async () => {
@@ -296,6 +303,56 @@ describe("RuntimeEnvironmentService", () => {
     expect(restored.adapter).toBe(initial.adapter);
     expect(prepare).toHaveBeenCalledTimes(3);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("carries a historical Desktop setting through Pi preparation and native model conversion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-pi-v1-settings-startup-"));
+    const settingsPath = join(root, "state", "desktop-settings.json");
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await copyFile(desktopSettingsV1Fixture, settingsPath);
+    const settings = createDesktopSettingsStore({
+      settingsPath,
+      builtInDefaultWorkspace: join(root, "workspace"),
+    });
+    const getAgentContextWindow = async () =>
+      (await settings.getSnapshot(["en-US"])).agentContextWindow;
+    const piFactory = createBuiltInRuntimeFactories({
+      modelProviders: {} as ModelProviderStore,
+      getAgentContextWindow,
+      getRuntimeProcessEnvironment: async () => ({}),
+    }).find((factory) => factory.id === "pragma.runtime.pi")!;
+
+    const preparation = await piFactory.prepare?.(definition("pi", "Pi", "pragma.runtime.pi"));
+    if (preparation === undefined) throw new Error("Pi factory must prepare its dynamic settings.");
+    expect(preparation.cacheKey).toBe("agent-context-window=258000");
+    await expect(preparation.create()).resolves.toMatchObject({
+      descriptor: { id: "pi" },
+    });
+
+    const provider = createPiModelProviderConverter({
+      agentContextWindow: await getAgentContextWindow(),
+    }).convertProvider({
+      id: "provider",
+      catalogId: "qwen-token-plan-cn",
+      displayName: "Provider",
+      api: "openai-completions",
+      baseUrl: "https://models.example.com/v1",
+      apiKey: "secret",
+      credentialFingerprint: "fingerprint",
+      models: [
+        {
+          id: "qwen3.8-max",
+          name: "Qwen 3.8 Max",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1_000_000,
+          maxTokens: 131_072,
+        },
+      ],
+    });
+
+    expect(provider.models[0]?.contextWindow).toBe(258_000);
   });
 });
 

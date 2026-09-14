@@ -58,6 +58,8 @@ export const settings = {
       "Desktop settings could not be upgraded. Your original settings were retained; restore a settings backup or update Pragma, then restart.",
     settingsVersionTooNew:
       "These Desktop settings were written by a newer version of Pragma. Update Pragma to continue; no settings were changed.",
+    settingsInvalid:
+      "Desktop settings could not be read safely. They were not changed; restore a settings backup or update Pragma, then restart.",
     defaultWorkspace: "Default workspace",
     defaultWorkspaceDescription:
       "Used when Home starts a mission without a task-specific workspace.",

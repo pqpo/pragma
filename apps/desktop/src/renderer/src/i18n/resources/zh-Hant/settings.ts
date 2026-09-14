@@ -57,6 +57,8 @@ export const settings = {
       "無法升級桌面設定。原有設定已保留；請從設定備份還原或更新 Pragma，然後重新啟動。",
     settingsVersionTooNew:
       "這些桌面設定是由較新版本的 Pragma 寫入。請更新 Pragma 後繼續；未變更任何設定。",
+    settingsInvalid:
+      "無法安全讀取桌面設定。未變更任何設定；請從設定備份還原或更新 Pragma，然後重新啟動。",
     defaultWorkspace: "預設工作區",
     defaultWorkspaceDescription: "首頁未為單次任務選擇工作區時使用此目錄。",
     chooseWorkspace: "選擇資料夾",

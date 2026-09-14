@@ -216,6 +216,30 @@ describe("desktop settings store", () => {
     await expect(readFile(settingsPath, "utf8").then(JSON.parse)).resolves.toEqual(current);
   });
 
+  it("fails closed and preserves current-version settings that do not validate", async () => {
+    const settingsPath = await temporarySettingsPath();
+    const corruptCurrent = {
+      schemaVersion: 2,
+      localePreference: "zh-Hant",
+      toolPermissionMode: "auto-approve",
+      // Simulates a truncated write or a v2 document created before this required field existed.
+      defaultWorkspace: "/work/project",
+    };
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify(corruptCurrent));
+    const store = createStore(settingsPath);
+
+    await expect(store.getSnapshot(["en-US"])).rejects.toMatchObject({
+      name: "DesktopSettingsMigrationError",
+      code: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+      message: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+    });
+    await expect(store.update({ localePreference: "en" }, ["en-US"])).rejects.toMatchObject({
+      code: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+    });
+    await expect(readFile(settingsPath, "utf8").then(JSON.parse)).resolves.toEqual(corruptCurrent);
+  });
+
   it("rejects settings written by a future version", async () => {
     const settingsPath = await temporarySettingsPath();
     await mkdir(dirname(settingsPath), { recursive: true });
@@ -264,16 +288,17 @@ describe("desktop settings store", () => {
     });
   });
 
-  it("warns and follows the system when the stored file is invalid", async () => {
+  it("fails closed when the stored file is malformed", async () => {
     const settingsPath = await temporarySettingsPath();
     await mkdir(join(settingsPath, ".."), { recursive: true });
     await writeFile(settingsPath, "not json");
     const warn = vi.fn();
     const store = createStore(settingsPath, warn);
 
-    await expect(store.getSnapshot(["zh-CN"])).resolves.toMatchObject({
-      localePreference: "system",
-      resolvedLocale: "zh-Hans",
+    await expect(store.getSnapshot(["zh-CN"])).rejects.toMatchObject({
+      name: "DesktopSettingsMigrationError",
+      code: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
+      message: DESKTOP_SETTINGS_MIGRATION_ERROR_CODES.invalidSettings,
     });
     expect(warn).toHaveBeenCalledOnce();
   });
