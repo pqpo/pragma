@@ -23,6 +23,7 @@ import {
   PragmaManagementErrorSchema,
   PragmaManagementPageInputSchema,
   PragmaManagementPageSchema,
+  PragmaShortPageCursorSchema,
 } from "./contracts.ts";
 
 import {
@@ -272,7 +273,7 @@ export const KnowledgeRevisionConflictPageSchema = z
     currentStoreRevision: z.number().int().positive(),
     currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     items: z.array(KnowledgeRevisionConflictSummarySchema).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
-    nextCursor: z.string().min(1).max(4_096).optional(),
+    nextCursor: PragmaShortPageCursorSchema.optional(),
   })
   .strict();
 export const KnowledgeRevisionInspectRebaseInputSchema = PragmaManagementPageInputSchema.extend({

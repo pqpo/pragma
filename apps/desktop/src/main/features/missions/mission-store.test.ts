@@ -1263,6 +1263,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       (_, index) => ({
         id: `assistant:${index}`,
         executionId,
+        eventSequence: index,
         kind: "assistant" as const,
         content:
           index === MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1
@@ -1299,7 +1300,7 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     const projected = await store.readExecutionProjection(created.id, executionId);
     expect(projected).toHaveLength(MISSION_EXECUTION_PROJECTION_MAX_ENTRIES);
-    expect(projected?.[0]?.id).toBe("assistant:2");
+    expect(projected?.[0]).toMatchObject({ id: "assistant:2", eventSequence: 2 });
     expect(projected?.at(-1)).toMatchObject({
       id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
       content: "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH),
@@ -1309,9 +1310,10 @@ describe("mission store", { timeout: 30_000 }, () => {
       limit: 20,
     });
     expect(latestPage?.entries).toHaveLength(20);
-    expect(latestPage?.entries[0]?.id).toBe(
-      `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18}`,
-    );
+    expect(latestPage?.entries[0]).toMatchObject({
+      id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18}`,
+      eventSequence: MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18,
+    });
     expect(latestPage?.entries.at(-1)?.id).toBe(
       `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
     );
@@ -1423,6 +1425,14 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(readFile(legacyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(currentPath, "utf8")).toContain(
       '"schemaVersion":"pragma.mission-execution-projection/v2"',
+    );
+    expect(
+      await store.readExecutionProjectionPage(created.id, executionId, { limit: 10 }),
+    ).toMatchObject({
+      orderingVersion: 1,
+    });
+    expect(await readFile(`${legacyPath}.before-jsonl-migration`, "utf8")).toContain(
+      '"schemaVersion":"pragma.mission-execution-projection/v1"',
     );
 
     await store.remove(created.id);

@@ -1,4 +1,10 @@
 import { createHash } from "node:crypto";
+import {
+  decodeShortPageCursor,
+  encodeShortPageCursor,
+  isShortPageCursor,
+  ShortPageCursorError,
+} from "@pragma/core";
 
 interface CursorPayload {
   readonly version: 1;
@@ -18,10 +24,13 @@ export function paginateManagementItems<T>(input: {
 }): { readonly items: T[]; readonly nextCursor?: string | undefined } {
   const fingerprint = digest(input.fingerprintValue);
   const filterHash = digest(input.filters);
+  const binding = { scope: input.scope, filters: filterHash, fingerprint };
   const offset =
     input.cursor === undefined
       ? 0
-      : decodeCursor(input.cursor, input.scope, fingerprint, filterHash).offset;
+      : isShortPageCursor(input.cursor)
+        ? decodeManagementShortCursor(input.cursor, binding)
+        : decodeLegacyCursor(input.cursor, input.scope, fingerprint, filterHash).offset;
   if (offset > input.items.length) throw managementCursorError("cursor_expired");
   const items = [...input.items.slice(offset, offset + input.limit)];
   const nextOffset = offset + items.length;
@@ -29,23 +38,25 @@ export function paginateManagementItems<T>(input: {
     items,
     ...(nextOffset < input.items.length
       ? {
-          nextCursor: encodeCursor({
-            version: 1,
-            scope: input.scope,
-            fingerprint,
-            filterHash,
-            offset: nextOffset,
-          }),
+          nextCursor: encodeShortPageCursor(binding, nextOffset),
         }
       : {}),
   };
 }
 
-function encodeCursor(cursor: CursorPayload): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+function decodeManagementShortCursor(
+  value: string,
+  binding: Parameters<typeof decodeShortPageCursor>[1],
+): number {
+  try {
+    return decodeShortPageCursor(value, binding);
+  } catch (error) {
+    if (error instanceof ShortPageCursorError) throw managementCursorError(error.code);
+    throw error;
+  }
 }
 
-function decodeCursor(
+function decodeLegacyCursor(
   value: string,
   scope: string,
   fingerprint: string,
@@ -53,6 +64,9 @@ function decodeCursor(
 ): CursorPayload {
   let parsed: unknown;
   try {
+    if (value.length > 4_096 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+      throw new Error("invalid legacy cursor encoding");
+    }
     parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
   } catch {
     throw managementCursorError("cursor_invalid");

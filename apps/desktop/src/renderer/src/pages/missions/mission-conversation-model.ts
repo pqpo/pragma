@@ -143,6 +143,22 @@ export function groupMissionConversationEntries(
   return blocks;
 }
 
+export function orderMissionConversationEntries(
+  entries: readonly MissionConversationEntry[],
+): MissionConversationEntry[] {
+  const ordered: MissionConversationEntry[] = entries.filter((entry) => entry.type === "durable");
+  const local = entries
+    .filter((entry) => entry.type !== "durable")
+    .toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt));
+  for (const entry of local) {
+    const index = ordered.findIndex(
+      (candidate) => candidate.entry.createdAt > entry.entry.createdAt,
+    );
+    ordered.splice(index < 0 ? ordered.length : index, 0, entry);
+  }
+  return ordered;
+}
+
 export function applyMissionChatPatches(
   snapshot: MissionChatSnapshot,
   patches: readonly MissionChatPatch[],

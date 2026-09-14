@@ -247,6 +247,49 @@ describe("Pragma Host management tools", () => {
     ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
   });
 
+  it("paginates Evaluation cases with short and legacy cursors", async () => {
+    const draft = evaluationDraft();
+    const firstCase = draft.resource.spec.method.cases[0]!;
+    draft.resource.spec.method.cases.push(
+      { ...firstCase, id: "case-2", name: "Case two" },
+      { ...firstCase, id: "case-3", name: "Case three" },
+    );
+    const project = projectPort({
+      async getEvaluationDraft() {
+        return draft;
+      },
+    });
+    const get = createPragmaManagementTools({ project, missions: missionPort() }).find(
+      (candidate) => candidate.name === "get_evaluation_draft",
+    )!;
+    const draftId = draft.draftId;
+    const first = await get.call({ draftId, limit: 1 }, undefined);
+    const nextCursor = (first.details as { nextCursor: string }).nextCursor;
+    expect(nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
+    const second = await get.call({ draftId, limit: 1, cursor: nextCursor }, undefined);
+    expect(second.details).toMatchObject({ cases: [{ id: "case-2" }] });
+
+    const legacy = Buffer.from(JSON.stringify([1, draftId, draft.draftRevision, null, 1])).toString(
+      "base64url",
+    );
+    const legacyPage = await get.call({ draftId, limit: 1, cursor: legacy }, undefined);
+    expect(legacyPage.details).toMatchObject({ cases: [{ id: "case-2" }] });
+    expect(legacyPage.details).toMatchObject({
+      nextCursor: (second.details as { nextCursor: string }).nextCursor,
+    });
+
+    await expect(
+      get.call({ draftId, limit: 1, cursor: nextCursor, query: "Case" }, undefined),
+    ).resolves.toMatchObject({ isError: true, details: { code: "cursor_invalid" } });
+    draft.draftRevision += 1;
+    await expect(
+      get.call({ draftId, limit: 1, cursor: nextCursor }, undefined),
+    ).resolves.toMatchObject({
+      isError: true,
+      details: { code: "cursor_expired" },
+    });
+  });
+
   it("keeps the Flow operation schema strict while recovering JSON array strings", async () => {
     const inputs: Parameters<PragmaAgentDslProjectPort["updateFlowDraft"]>[0][] = [];
     const project = projectPort({

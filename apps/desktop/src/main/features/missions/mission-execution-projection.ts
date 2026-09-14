@@ -23,6 +23,7 @@ const ProjectionTruncatedFieldSchema = z.object({
 const ProjectionHeaderSchema = z.object({
   schemaVersion: z.literal(ProjectionSchemaVersion),
   recordType: z.literal("header"),
+  orderingVersion: z.union([z.literal(1), z.literal(2)]).optional(),
   executionId: z.string().min(1),
   createdAt: z.string().datetime(),
   limits: z.object({
@@ -60,7 +61,25 @@ export class MissionExecutionProjectionError extends Error {
 export interface MissionExecutionProjectionPage {
   readonly entries: readonly MissionChatEntry[];
   readonly createdAt: string;
+  readonly orderingVersion: 1 | 2;
   readonly nextBeforeOffset?: number | undefined;
+}
+
+export async function readMissionExecutionProjectionOrderingVersion(
+  path: string,
+  executionId: string,
+): Promise<1 | 2 | undefined> {
+  const metadata = await stat(path).catch((error: unknown) => {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  });
+  if (metadata === undefined) return undefined;
+  const handle = await open(path, "r");
+  try {
+    return (await readProjectionHeader(handle, metadata.size, executionId)).orderingVersion;
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function readMissionExecutionProjectionPage(
@@ -116,6 +135,7 @@ export async function readMissionExecutionProjectionPage(
     return {
       entries: page.entries,
       createdAt: header.createdAt,
+      orderingVersion: header.orderingVersion,
       ...(page.nextBeforeOffset === undefined ? {} : { nextBeforeOffset: page.nextBeforeOffset }),
     };
   } finally {
@@ -196,8 +216,9 @@ export async function writeMissionExecutionProjection(
   path: string,
   executionId: string,
   entries: readonly MissionChatEntry[],
+  orderingVersion: 1 | 2 = 2,
 ): Promise<void> {
-  const records = createBoundedProjection(executionId, entries);
+  const records = createBoundedProjection(executionId, entries, orderingVersion);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporaryPath, "wx", 0o600);
@@ -219,7 +240,11 @@ async function readProjectionHeader(
   handle: Awaited<ReturnType<typeof open>>,
   size: number,
   executionId: string,
-): Promise<{ readonly entriesOffset: number; readonly createdAt: string }> {
+): Promise<{
+  readonly entriesOffset: number;
+  readonly createdAt: string;
+  readonly orderingVersion: 1 | 2;
+}> {
   const maximumHeaderBytes = Math.min(size, 64 * 1024);
   const bytes = Buffer.allocUnsafe(maximumHeaderBytes);
   const { bytesRead } = await handle.read(bytes, 0, maximumHeaderBytes, 0);
@@ -242,7 +267,11 @@ async function readProjectionHeader(
   } catch (error) {
     throw invalidProjectionRecord(1, error);
   }
-  return { entriesOffset: newline + 1, createdAt: header.createdAt };
+  return {
+    entriesOffset: newline + 1,
+    createdAt: header.createdAt,
+    orderingVersion: header.orderingVersion ?? 1,
+  };
 }
 
 async function readProjectionRecordsBackward(
@@ -317,6 +346,7 @@ function completeLineRanges(
 function createBoundedProjection(
   executionId: string,
   entries: readonly MissionChatEntry[],
+  orderingVersion: 1 | 2,
 ): readonly [ProjectionHeader, ...ProjectionEntry[]] {
   const parsed = MissionChatEntrySchema.array().parse(entries);
   const bounded = parsed.map((entry) => boundEntry(executionId, entry));
@@ -326,6 +356,7 @@ function createBoundedProjection(
     ProjectionHeaderSchema.parse({
       schemaVersion: ProjectionSchemaVersion,
       recordType: "header",
+      orderingVersion,
       executionId,
       createdAt: new Date().toISOString(),
       limits: {

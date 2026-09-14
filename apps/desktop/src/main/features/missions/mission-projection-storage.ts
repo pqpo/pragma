@@ -1,9 +1,11 @@
-import { readFile, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { MissionChatEntrySchema, type MissionChatEntry } from "../../../shared/contracts/index.ts";
 import {
   readMissionExecutionProjection,
+  readMissionExecutionProjectionOrderingVersion,
   readMissionExecutionProjectionPage,
   writeMissionExecutionProjection,
   type MissionExecutionProjectionPage,
@@ -43,7 +45,14 @@ export function createMissionProjectionStorage(
   ): Promise<readonly MissionChatEntry[] | undefined> => {
     const legacy = await readLegacyProjection(legacyPath(id, executionId));
     if (legacy === undefined) return undefined;
-    await writeMissionExecutionProjection(currentPath(id, executionId), executionId, legacy);
+    await copyFile(
+      legacyPath(id, executionId),
+      `${legacyPath(id, executionId)}.before-jsonl-migration`,
+      constants.COPYFILE_EXCL,
+    ).catch((error: unknown) => {
+      if (!isNodeError(error, "EEXIST")) throw error;
+    });
+    await writeMissionExecutionProjection(currentPath(id, executionId), executionId, legacy, 1);
     await rm(legacyPath(id, executionId), { force: true });
     return legacy;
   };
@@ -72,7 +81,19 @@ export function createMissionProjectionStorage(
       );
     },
     async write(id, executionId, entries) {
-      await writeMissionExecutionProjection(currentPath(id, executionId), executionId, entries);
+      const path = currentPath(id, executionId);
+      const previousOrderingVersion = await readMissionExecutionProjectionOrderingVersion(
+        path,
+        executionId,
+      );
+      if (previousOrderingVersion === 1) {
+        await copyFile(path, `${path}.before-order-repair`, constants.COPYFILE_EXCL).catch(
+          (error: unknown) => {
+            if (!isNodeError(error, "EEXIST")) throw error;
+          },
+        );
+      }
+      await writeMissionExecutionProjection(path, executionId, entries);
       await rm(legacyPath(id, executionId), { force: true });
     },
   };

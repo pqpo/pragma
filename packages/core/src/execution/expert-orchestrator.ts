@@ -14,6 +14,7 @@ import {
 
 import type { Expert } from "../agent/expert-agent.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
+import { encodeShortPageAnchor, findPageAnchorIndex } from "../pagination/short-page-cursor.ts";
 import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 import { summarizeRuntimeInput } from "../runtime/output.ts";
 import type { ExecutionStore } from "./execution-store.ts";
@@ -434,10 +435,11 @@ export class ExpertOrchestrator {
           left.createdAt.localeCompare(right.createdAt) ||
           left.contextId.localeCompare(right.contextId),
       );
-    const cursorIndex =
-      request.cursor === undefined
-        ? -1
-        : directory.findIndex((context) => context.contextId === request.cursor);
+    const cursorIndex = findPageAnchorIndex(
+      directory,
+      request.cursor,
+      (context) => context.contextId,
+    );
     if (request.cursor !== undefined && cursorIndex < 0) throw new Error("Invalid context cursor.");
     const entries = directory.map((context) => {
       const currentAgent = localAgentByContext.get(context.contextId);
@@ -531,10 +533,11 @@ export class ExpertOrchestrator {
     const matching = entries.filter(
       (entry) => request.status === undefined || entry.status === request.status,
     );
-    const matchingCursorIndex =
-      request.cursor === undefined
-        ? -1
-        : matching.findIndex((entry) => entry.contextId === request.cursor);
+    const matchingCursorIndex = findPageAnchorIndex(
+      matching,
+      request.cursor,
+      (entry) => entry.contextId,
+    );
     if (request.cursor !== undefined && matchingCursorIndex < 0) {
       throw new Error("Context cursor does not match the requested filters.");
     }
@@ -552,7 +555,7 @@ export class ExpertOrchestrator {
       contexts: page,
       ...(remaining.length <= limit || page.length === 0
         ? {}
-        : { nextCursor: page.at(-1)!.contextId }),
+        : { nextCursor: encodeShortPageAnchor(page.at(-1)!.contextId) }),
     };
   }
 

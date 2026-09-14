@@ -255,6 +255,7 @@ export interface LiveMissionChat {
   readonly executionId: string;
   readonly entries: MissionChatEntry[];
   readonly messageOrdinals: Map<string, number>;
+  completedAnswerRuns?: Set<string>;
   close: () => Promise<void>;
   readDurableEntries: (timelineSequence: number) => Promise<readonly MissionChatEntry[]>;
 }
@@ -2481,14 +2482,7 @@ export function createMissionRunner(options: {
     const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
       executorMetadata.avatarIds,
     );
-    // Durable recovery entries are appended before the live projection. Keep the live value for
-    // stable IDs so richer streaming fields (for example the full tool error) win without
-    // duplicating the row.
-    const mergedEntries = [
-      ...new Map(
-        [...entries, ...revisionLiveEntries].map((entry) => [entry.id, entry] as const),
-      ).values(),
-    ];
+    const mergedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries);
     const presentedEntries = mergedEntries.map((entry) => {
       if (entry.executorId === undefined) return entry;
       const executorAvatarId = entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
@@ -4133,6 +4127,12 @@ type MissionChatPageCursor =
       readonly sequence: number;
       readonly beforeEntryId: string;
     }
+  | {
+      readonly version: 2;
+      readonly kind: "entries";
+      readonly sequence: number;
+      readonly beforeEntryHash: string;
+    }
   | { readonly version: 1; readonly kind: "turn-start"; readonly sequence: number };
 
 async function readMissionChatHistoryPage(input: {
@@ -4269,7 +4269,7 @@ async function readMissionChatTurnPage(input: {
     input.turn.executionId !== input.activeChat?.executionId &&
     (input.cursor === undefined || input.cursor.kind === "projection")
   ) {
-    const projection = await input.missions.readExecutionProjectionPage(
+    let projection = await input.missions.readExecutionProjectionPage(
       input.missionId,
       input.turn.executionId,
       {
@@ -4279,10 +4279,45 @@ async function readMissionChatTurnPage(input: {
     );
     const executionState =
       projection === undefined ? undefined : await input.executionStore.get(input.turn.executionId);
+    const projectionSyncIssues: MissionChatSyncIssue[] = [];
+    if (
+      projection?.orderingVersion === 1 &&
+      input.cursor === undefined &&
+      executionState !== undefined &&
+      isFinalExecutionStatus(executionState.status)
+    ) {
+      try {
+        const canonical = await readDurableMissionChatEntries(
+          new StoredExecutionView(input.turn.executionId, input.executionStore),
+          input.turn.sequence,
+        );
+        const previous =
+          (await input.missions.readExecutionProjection(input.missionId, input.turn.executionId)) ??
+          [];
+        if (canonical.length === 0 && previous.length > 0) {
+          throw new Error("Execution event history is unavailable for projection repair.");
+        }
+        await input.missions.writeExecutionProjection(
+          input.missionId,
+          input.turn.executionId,
+          mergeMissionChatEntriesWithLive(previous, canonical),
+        );
+        projection = await input.missions.readExecutionProjectionPage(
+          input.missionId,
+          input.turn.executionId,
+          { limit: input.limit },
+        );
+      } catch {
+        projectionSyncIssues.push(missionChatSyncIssue("history"));
+      }
+    }
+    if (projection?.orderingVersion === 1 && projectionSyncIssues.length === 0) {
+      projectionSyncIssues.push(missionChatSyncIssue("history"));
+    }
     const projectionIsCurrent =
       projection !== undefined &&
       (executionState === undefined || executionState.updatedAt <= projection.createdAt);
-    if (projectionIsCurrent) {
+    if (projectionIsCurrent && projection !== undefined) {
       const projectedEntries = projection.entries.map((entry) => ({
         ...entry,
         timelineSequence: entry.timelineSequence ?? input.turn.sequence,
@@ -4290,7 +4325,7 @@ async function readMissionChatTurnPage(input: {
       if (projection.nextBeforeOffset !== undefined) {
         return {
           entries: projectedEntries,
-          syncIssues: [],
+          syncIssues: projectionSyncIssues,
           nextCursor: {
             version: 1,
             kind: "projection",
@@ -4302,11 +4337,11 @@ async function readMissionChatTurnPage(input: {
       if (projectedEntries.length === input.limit) {
         return {
           entries: projectedEntries,
-          syncIssues: [],
+          syncIssues: projectionSyncIssues,
           nextCursor: { version: 1, kind: "turn-start", sequence: input.turn.sequence },
         };
       }
-      return { entries: [userEntry, ...projectedEntries], syncIssues: [] };
+      return { entries: [userEntry, ...projectedEntries], syncIssues: projectionSyncIssues };
     }
     if (projection !== undefined && input.cursor?.kind === "projection") {
       throw new Error("Mission chat page cursor is no longer available.");
@@ -4324,22 +4359,28 @@ async function readMissionChatTurnPage(input: {
     input.activeChat !== undefined && input.turn.executionId === input.activeChat.executionId
       ? input.activeChat.entries
       : [];
-  const combined = uniqueMissionChatEntriesById([
-    ...history.entries,
-    ...input.inheritedEntries.map((entry) => ({
+  const combined = mergeMissionChatEntriesWithLive(
+    [
+      ...history.entries,
+      ...input.inheritedEntries.map((entry) => ({
+        ...entry,
+        timelineSequence: entry.timelineSequence ?? input.turn.sequence,
+      })),
+    ],
+    activeEntries.map((entry) => ({
       ...entry,
       timelineSequence: entry.timelineSequence ?? input.turn.sequence,
     })),
-    ...activeEntries.map((entry) => ({
-      ...entry,
-      timelineSequence: entry.timelineSequence ?? input.turn.sequence,
-    })),
-  ]).toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
-  const beforeEntryId = input.cursor?.kind === "entries" ? input.cursor.beforeEntryId : undefined;
+  );
+  const entryCursor = input.cursor?.kind === "entries" ? input.cursor : undefined;
   const requestedEnd =
-    beforeEntryId === undefined
+    entryCursor === undefined
       ? combined.length
-      : combined.findIndex((entry) => entry.id === beforeEntryId);
+      : combined.findIndex((entry) =>
+          entryCursor.version === 1
+            ? entry.id === entryCursor.beforeEntryId
+            : missionChatEntryHash(entry.id) === entryCursor.beforeEntryHash,
+        );
   if (requestedEnd < 0) throw new Error("Mission chat page cursor is no longer available.");
   const start = Math.max(0, requestedEnd - input.limit);
   return {
@@ -4349,10 +4390,10 @@ async function readMissionChatTurnPage(input: {
       ? {}
       : {
           nextCursor: {
-            version: 1 as const,
+            version: 2 as const,
             kind: "entries" as const,
             sequence: input.turn.sequence,
-            beforeEntryId: combined[start]!.id,
+            beforeEntryHash: missionChatEntryHash(combined[start]!.id),
           },
         }),
   };
@@ -4364,11 +4405,77 @@ function uniqueMissionChatEntriesById(entries: readonly MissionChatEntry[]): Mis
   return [...byId.values()];
 }
 
-function encodeMissionChatPageCursor(cursor: MissionChatPageCursor): string {
+export function mergeMissionChatEntriesWithLive(
+  durable: readonly MissionChatEntry[],
+  live: readonly MissionChatEntry[],
+): MissionChatEntry[] {
+  const durableEntries = uniqueMissionChatEntriesById(durable);
+  const merged = uniqueMissionChatEntriesById(live);
+  const liveIds = new Set(merged.map((entry) => entry.id));
+  const firstSharedIndex = durableEntries.findIndex((entry) => liveIds.has(entry.id));
+  let nextAnchor = merged.length;
+  for (let index = durableEntries.length - 1; index >= 0; index -= 1) {
+    const entry = durableEntries[index]!;
+    if (liveIds.has(entry.id)) {
+      nextAnchor = merged.findIndex((candidate) => candidate.id === entry.id);
+      const current = merged[nextAnchor]!;
+      merged[nextAnchor] = {
+        ...current,
+        ...(current.timelineSequence === undefined && entry.timelineSequence !== undefined
+          ? { timelineSequence: entry.timelineSequence }
+          : {}),
+        ...(current.eventSequence === undefined && entry.eventSequence !== undefined
+          ? { eventSequence: entry.eventSequence }
+          : {}),
+        ...(current.kind === "assistant" &&
+        entry.kind === "assistant" &&
+        current.finalAnswer === undefined &&
+        entry.finalAnswer !== undefined
+          ? { finalAnswer: entry.finalAnswer }
+          : {}),
+      } as MissionChatEntry;
+    } else {
+      merged.splice(firstSharedIndex < 0 || index < firstSharedIndex ? 0 : nextAnchor, 0, entry);
+    }
+  }
+  return placeThinkingBeforeFinalAnswer(merged);
+}
+
+function placeThinkingBeforeFinalAnswer(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
+  const ordered = [...entries];
+  for (const entry of entries) {
+    if (entry.kind !== "thinking") continue;
+    const runKey = missionMessageRunKey(entry.id);
+    if (runKey === undefined) continue;
+    const finalIndex = ordered.findIndex(
+      (candidate) =>
+        candidate.kind === "assistant" &&
+        candidate.finalAnswer === true &&
+        missionMessageRunKey(candidate.id) === runKey,
+    );
+    const thinkingIndex = ordered.findIndex((candidate) => candidate.id === entry.id);
+    if (finalIndex < 0 || thinkingIndex < finalIndex) continue;
+    ordered.splice(thinkingIndex, 1);
+    ordered.splice(finalIndex, 0, entry);
+  }
+  return ordered;
+}
+
+function missionMessageRunKey(entryId: string): string | undefined {
+  return /^(message:.+):(assistant|thinking):\d+$/.exec(entryId)?.[1];
+}
+
+function missionChatEntryHash(entryId: string): string {
+  return createHash("sha256").update(entryId, "utf8").digest("hex");
+}
+
+export function encodeMissionChatPageCursor(cursor: MissionChatPageCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
-function decodeMissionChatPageCursor(value: string | undefined): MissionChatPageCursor | undefined {
+export function decodeMissionChatPageCursor(
+  value: string | undefined,
+): MissionChatPageCursor | undefined {
   if (value === undefined) return undefined;
   try {
     const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown;
@@ -4376,10 +4483,14 @@ function decodeMissionChatPageCursor(value: string | undefined): MissionChatPage
       throw new Error("invalid cursor shape");
     }
     const cursor = parsed as Record<string, unknown>;
-    if (cursor["version"] !== 1 || typeof cursor["kind"] !== "string") {
+    if (
+      (cursor["version"] !== 1 && cursor["version"] !== 2) ||
+      typeof cursor["kind"] !== "string"
+    ) {
       throw new Error("invalid cursor version");
     }
     if (
+      cursor["version"] === 1 &&
       cursor["kind"] === "timeline" &&
       Number.isInteger(cursor["beforeSequence"]) &&
       (cursor["beforeSequence"] as number) > 0
@@ -4391,6 +4502,7 @@ function decodeMissionChatPageCursor(value: string | undefined): MissionChatPage
       };
     }
     if (
+      cursor["version"] === 1 &&
       cursor["kind"] === "projection" &&
       Number.isInteger(cursor["sequence"]) &&
       (cursor["sequence"] as number) > 0 &&
@@ -4405,6 +4517,7 @@ function decodeMissionChatPageCursor(value: string | undefined): MissionChatPage
       };
     }
     if (
+      cursor["version"] === 1 &&
       cursor["kind"] === "entries" &&
       Number.isInteger(cursor["sequence"]) &&
       (cursor["sequence"] as number) > 0 &&
@@ -4419,6 +4532,22 @@ function decodeMissionChatPageCursor(value: string | undefined): MissionChatPage
       };
     }
     if (
+      cursor["version"] === 2 &&
+      cursor["kind"] === "entries" &&
+      Number.isSafeInteger(cursor["sequence"]) &&
+      (cursor["sequence"] as number) > 0 &&
+      typeof cursor["beforeEntryHash"] === "string" &&
+      /^[0-9a-f]{64}$/u.test(cursor["beforeEntryHash"])
+    ) {
+      return {
+        version: 2,
+        kind: "entries",
+        sequence: cursor["sequence"] as number,
+        beforeEntryHash: cursor["beforeEntryHash"],
+      };
+    }
+    if (
+      cursor["version"] === 1 &&
       cursor["kind"] === "turn-start" &&
       Number.isInteger(cursor["sequence"]) &&
       (cursor["sequence"] as number) > 0
@@ -4516,7 +4645,7 @@ async function readMissionChatHistory(
       continue;
     }
     const richEntries = finalizeHistoricalChatEntries(
-      [
+      orderMissionExecutionEntries([
         ...messageRecordsToChatEntries(
           histories
             .flatMap((history) => history.messages)
@@ -4526,7 +4655,7 @@ async function readMissionChatHistory(
           timelineSequence: turn.sequence,
         })),
         ...activityEntries,
-      ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      ]),
       isFinalExecutionStatus(state.status),
     );
     entries.push(...richEntries);
@@ -4562,6 +4691,7 @@ async function readHistoricalRuntimeActivityEntries(
   const events: Array<{
     readonly event: ExpertAgentStreamEvent;
     readonly invocationId: string;
+    readonly sequence: number;
   }> = [];
   let after: { executionId: string; sequence: number } | undefined;
   do {
@@ -4576,7 +4706,11 @@ async function readHistoricalRuntimeActivityEntries(
           (parsed.data.type === "progress" &&
             isRuntimeContextCompactionStage(parsed.data.payload.stage)))
       ) {
-        events.push({ event: parsed.data, invocationId: event.invocationId });
+        events.push({
+          event: parsed.data,
+          invocationId: event.invocationId,
+          sequence: event.cursor.sequence,
+        });
       }
     }
     after = page.nextCursor;
@@ -4595,6 +4729,7 @@ async function readHistoricalRuntimeActivityEntries(
       byId.set(id, {
         id,
         timelineSequence,
+        eventSequence: existing?.eventSequence ?? record.sequence,
         executionId: view.executionId,
         invocationId: record.invocationId,
         kind: "context_operation",
@@ -4629,6 +4764,8 @@ async function readHistoricalRuntimeActivityEntries(
     byId.set(`agent:${view.executionId}:${commandId}`, {
       id: `agent:${view.executionId}:${commandId}`,
       timelineSequence,
+      eventSequence:
+        byId.get(`agent:${view.executionId}:${commandId}`)?.eventSequence ?? record.sequence,
       executionId: view.executionId,
       kind: "agent_activity",
       commandId,
@@ -4652,6 +4789,15 @@ async function readHistoricalRuntimeActivityEntries(
     });
   }
   return [...byId.values()];
+}
+
+export function orderMissionExecutionEntries(
+  entries: readonly MissionChatEntry[],
+): MissionChatEntry[] {
+  return [...entries].toSorted((left, right) => {
+    if (left.eventSequence === undefined || right.eventSequence === undefined) return 0;
+    return left.eventSequence - right.eventSequence;
+  });
 }
 
 function executionFallback(status: string, output: unknown, error: unknown): string {
@@ -4737,11 +4883,13 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
     const base = {
       executionId: record.executionId,
       invocationId: record.invocationId,
+      eventSequence: record.sequence,
       ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
       createdAt: new Date(record.message.timestamp).toISOString(),
     };
     if (record.message.role === "assistant") {
-      record.message.content.forEach((content, index) => {
+      const assistantMessage = record.message;
+      assistantMessage.content.forEach((content, index) => {
         if (content.type === "thinking" && content.thinking !== "") {
           entries.push({
             ...base,
@@ -4757,6 +4905,10 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
             kind: "assistant",
             content: truncate(content.text, 200_000),
             streaming: false,
+            ...(assistantMessage.stopReason === "stop" ||
+            assistantMessage.stopReason === "length"
+              ? { finalAnswer: true }
+              : {}),
           });
         } else if (content.type === "toolCall") {
           entries.push({
@@ -4800,7 +4952,13 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
     };
     const existing = entries[existingIndex];
     if (existingIndex === -1 || existing?.kind !== "tool") entries.push(tool);
-    else entries[existingIndex] = { ...existing, ...tool };
+    else
+      entries[existingIndex] = {
+        ...existing,
+        ...tool,
+        eventSequence: existing.eventSequence,
+        createdAt: existing.createdAt,
+      };
   }
   return entries;
 }
@@ -4982,14 +5140,14 @@ async function readDurableMissionChatEntries(
     state.rootInvocationId,
   );
   return finalizeHistoricalChatEntries(
-    [
+    orderMissionExecutionEntries([
       ...messageRecordsToChatEntries(
         histories
           .flatMap((history) => history.messages)
           .filter((record) => record.source?.parentSessionId === undefined),
       ).map((entry) => ({ ...entry, timelineSequence })),
       ...activityEntries,
-    ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    ]),
     isFinalExecutionStatus(state.status),
   );
 }
@@ -5213,6 +5371,7 @@ export function consumeLiveChatOutput(
   }
   if (item.source.parentSessionId !== undefined && options.includeNestedSource !== true) return [];
   if (item.channel === "thought") {
+    if (chat.completedAnswerRuns?.has(missionAnswerRunKey(item))) return [];
     const content = item.delta ?? formatValue(item.value, 200_000);
     if (content === "") return [];
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "thinking");
@@ -5246,6 +5405,9 @@ export function consumeLiveChatOutput(
   if (item.channel === "message") {
     const content = item.delta ?? completedMessageText(item.value);
     const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
+    if (item.delta === undefined && isFinalMissionAnswer(item.value)) {
+      (chat.completedAnswerRuns ??= new Set()).add(missionAnswerRunKey(item));
+    }
     const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "assistant");
     // Codex can deliver an item/completed notification before a queued delta is
     // drained. The completed item already owns the final text; treating that late
@@ -5376,6 +5538,8 @@ export function consumeLiveChatOutput(
     return patches;
   }
   if (item.channel === "result") {
+    (chat.completedAnswerRuns ??= new Set()).add(missionAnswerRunKey(item));
+    const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
     const content = formatValue(item.value, 200_000);
     if (
       content !== "" &&
@@ -5397,10 +5561,20 @@ export function consumeLiveChatOutput(
         streaming: false,
       };
       chat.entries.push(entry);
-      return [{ type: "entry.upsert", entry: { ...entry } }];
+      return [...patches, { type: "entry.upsert", entry: { ...entry } }];
     }
+    return patches;
   }
   return [];
+}
+
+function missionAnswerRunKey(item: Pick<ExecutionOutputItem, "invocationId" | "runId">): string {
+  return JSON.stringify([item.invocationId, item.runId]);
+}
+
+function isFinalMissionAnswer(value: unknown): boolean {
+  const stopReason = asRecord(value)["stopReason"];
+  return stopReason === "stop" || stopReason === "length";
 }
 
 function hasCompletedMessageForRun(

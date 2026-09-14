@@ -17,13 +17,14 @@ import {
   PragmaFlowRunDrySuiteResultSchema,
 } from "@pragma/evaluation/ast";
 import { PragmaExpertAvatarProfileSchema } from "@pragma/shared";
-import { OpaqueCursorSchema } from "@pragma/shared/integration";
+import { OpaqueCursorSchema, ShortOffsetPageCursorSchema } from "@pragma/shared/integration";
 import { z } from "zod";
 
 export * from "./revision-contracts.ts";
 
 export const PRAGMA_MANAGEMENT_DEFAULT_PAGE_LIMIT = 25;
 export const PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT = 100;
+export const PragmaShortPageCursorSchema = ShortOffsetPageCursorSchema;
 
 export const PragmaManagementPageInputSchema = z
   .object({
@@ -44,7 +45,7 @@ export const PragmaManagementPageSchema = <T extends z.ZodType>(item: T) =>
   z
     .object({
       items: z.array(item).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
-      nextCursor: OpaqueCursorSchema.optional(),
+      nextCursor: PragmaShortPageCursorSchema.optional(),
     })
     .strict();
 
@@ -182,7 +183,7 @@ export const PragmaAgentExpertOptionPageSchema = z
         ]),
       )
       .max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
-    nextCursor: OpaqueCursorSchema.optional(),
+    nextCursor: PragmaShortPageCursorSchema.optional(),
   })
   .strict();
 
@@ -398,7 +399,7 @@ export const PragmaAgentEvaluationCaseSummarySchema = z.object({
 
 export const PragmaAgentEvaluationDraftViewSchema = PragmaAgentEvaluationDraftSummarySchema.extend({
   cases: z.array(PragmaAgentEvaluationCaseSummarySchema).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
-  nextCursor: OpaqueCursorSchema.optional(),
+  nextCursor: PragmaShortPageCursorSchema.optional(),
 });
 
 export const PragmaAgentEvaluationCasesSchema = z

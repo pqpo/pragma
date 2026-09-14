@@ -633,6 +633,7 @@ describe("Expert context tools", () => {
     };
     expect(firstDetails.context.map((item) => item.id)).toEqual(["a.md", "b.md"]);
     expect(first.text).toContain("More items are available");
+    expect(firstDetails.page.nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
 
     await expect(tool.call({ cursor: "" }, undefined)).resolves.not.toMatchObject({
       isError: true,
@@ -644,6 +645,13 @@ describe("Expert context tools", () => {
     const second = await tool.call({ cursor: firstDetails.page.nextCursor, limit: 2 }, undefined);
     expect(
       (second.details as { readonly context: readonly { readonly id: string }[] }).context.map(
+        (item) => item.id,
+      ),
+    ).toEqual(["c.md"]);
+    const legacyCursor = Buffer.from(JSON.stringify([2, 2, null])).toString("base64url");
+    const legacyPage = await tool.call({ cursor: legacyCursor, limit: 2 }, undefined);
+    expect(
+      (legacyPage.details as { readonly context: readonly { readonly id: string }[] }).context.map(
         (item) => item.id,
       ),
     ).toEqual(["c.md"]);
@@ -707,6 +715,54 @@ describe("Expert context tools", () => {
     await expect(
       tool.call({ namespace: "memory", cursor: details.page.nextCursor, limit: 2 }, undefined),
     ).resolves.toMatchObject({ text: expect.stringContaining("Showing 1 of 3") });
+  });
+
+  it("continues a legacy cursor that embeds a long valid namespace", async () => {
+    const namespace = "n".repeat(3_100);
+    const legacyCursor = Buffer.from(JSON.stringify([2, 1, namespace])).toString("base64url");
+    expect(legacyCursor.length).toBeGreaterThan(4_096);
+    const unsupported = vi.fn(async () => {
+      throw new Error("not used");
+    });
+    const operations: ExpertAgentContextItemOperations = {
+      listContext: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          items: ["a.md", "b.md", "c.md"].map((id) => ({
+            id,
+            namespace,
+            metadata: { trigger: "manual" as const, priority: "normal" as const },
+          })),
+          issues: [],
+          stores: [],
+        },
+      })),
+      readContext: unsupported,
+      searchContext: unsupported,
+      addContext: unsupported,
+      editContext: unsupported,
+      deleteContext: unsupported,
+    };
+    const tool = createContextTools(operations).find(
+      (candidate) => candidate.name === "list_expert_context",
+    )!;
+
+    const page = await tool.call({ namespace, cursor: legacyCursor, limit: 1 }, undefined);
+    expect(page.isError).not.toBe(true);
+    expect(
+      (page.details as { readonly context: readonly { readonly id: string }[] }).context.map(
+        (item) => item.id,
+      ),
+    ).toEqual(["b.md"]);
+    const nextCursor = (page.details as { readonly page: { readonly nextCursor: string } }).page
+      .nextCursor;
+    expect(nextCursor).toMatch(/^p1\.[A-Za-z0-9_-]{40}$/u);
+    const nextPage = await tool.call({ namespace, cursor: nextCursor, limit: 1 }, undefined);
+    expect(
+      (nextPage.details as { readonly context: readonly { readonly id: string }[] }).context.map(
+        (item) => item.id,
+      ),
+    ).toEqual(["c.md"]);
   });
 
   it("lists display metadata without changing Context addressing", async () => {
