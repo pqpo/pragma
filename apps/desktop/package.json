@@ -59,7 +59,7 @@
     "react": "latest",
     "react-dom": "latest",
     "react-i18next": "^17.0.11",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "yaml": "^2.9.0",
     "zod": "latest"
   },
