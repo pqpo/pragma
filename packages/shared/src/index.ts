@@ -1,4 +1,5 @@
 export * from "./agent-message.schema.ts";
+export * from "./agent-context-window.ts";
 export * from "./avatar.ts";
 export * from "./bounded-lru-cache.ts";
 export * from "./bundle-source.schema.ts";

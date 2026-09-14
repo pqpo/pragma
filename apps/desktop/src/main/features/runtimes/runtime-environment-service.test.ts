@@ -1,12 +1,14 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { createPiModelProviderConverter } from "@pragma/runtime-pi";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopToolPermissionMode } from "../../../shared/contracts/index.ts";
 import type { ModelProviderStore } from "../model-providers/model-provider-store.ts";
+import { createDesktopSettingsStore } from "../settings/desktop-settings-store.ts";
 import {
   antigravityRuntimePermissionForMode,
   codexRuntimePermissionsForMode,
@@ -16,6 +18,11 @@ import {
   type RuntimeEnvironmentAdapterFactory,
 } from "./runtime-environment-service.ts";
 import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
+
+const desktopSettingsV1Fixture = new URL(
+  "../settings/fixtures/desktop-settings-v1.json",
+  import.meta.url,
+);
 
 describe("RuntimeEnvironmentService", () => {
   it("binds latest revisions without restart and resolves historical bindings", async () => {
@@ -227,6 +234,125 @@ describe("RuntimeEnvironmentService", () => {
     expect(second.adapter).toBe(first.adapter);
     expect(refreshed.adapter).not.toBe(first.adapter);
     expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses one prepared dynamic snapshot for an adapter and its cache key", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-runtime-prepared-cache-"));
+    const store = createRuntimeEnvironmentStore({
+      pragmaHome,
+      builtIns: [definition("pi", "Runtime")],
+    });
+    let agentContextWindow = 258_000;
+    let markCreateStarted: (() => void) | undefined;
+    const createStarted = new Promise<void>((resolve) => {
+      markCreateStarted = resolve;
+    });
+    let allowCreateToFinish: (() => void) | undefined;
+    const createMayFinish = new Promise<void>((resolve) => {
+      allowCreateToFinish = resolve;
+    });
+    const create = vi.fn((): never => {
+      throw new Error("A prepared adapter must not call the fallback factory.");
+    });
+    const prepare = vi.fn(() => {
+      const capturedAgentContextWindow = agentContextWindow;
+      return {
+        cacheKey: `agent-context-window=${capturedAgentContextWindow}`,
+        create: async () => {
+          markCreateStarted?.();
+          await createMayFinish;
+          return defineRuntimeTestDriver({
+            descriptor: {
+              id: "pi",
+              kind: "test",
+              displayName: `Window ${capturedAgentContextWindow}`,
+            },
+            createSession: () => ({}),
+            startTurn: () => ({ outputText: "" }),
+            mapEvent: () => ({ events: [] }),
+          });
+        },
+      };
+    });
+    const service = createRuntimeEnvironmentService({
+      store,
+      factories: [
+        {
+          id: "test.runtime",
+          version: "v1",
+          prepare,
+          create,
+        },
+      ],
+    });
+
+    const initialBinding = service.bind();
+    await createStarted;
+    // This change lands after preparation and cache-key creation but before the adapter has
+    // finished materializing. The adapter must keep the prepared value rather than mixing it
+    // with this newer setting.
+    agentContextWindow = 320_000;
+    allowCreateToFinish?.();
+    const initial = await initialBinding;
+    const updated = await service.bind();
+    agentContextWindow = 258_000;
+    const restored = await service.bind();
+
+    expect(initial.adapter.descriptor.displayName).toBe("Window 258000");
+    expect(updated.adapter.descriptor.displayName).toBe("Window 320000");
+    expect(restored.adapter).toBe(initial.adapter);
+    expect(prepare).toHaveBeenCalledTimes(3);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("carries a historical Desktop setting through Pi preparation and native model conversion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-pi-v1-settings-startup-"));
+    const settingsPath = join(root, "state", "desktop-settings.json");
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await copyFile(desktopSettingsV1Fixture, settingsPath);
+    const settings = createDesktopSettingsStore({
+      settingsPath,
+      builtInDefaultWorkspace: join(root, "workspace"),
+    });
+    const getAgentContextWindow = async () =>
+      (await settings.getSnapshot(["en-US"])).agentContextWindow;
+    const piFactory = createBuiltInRuntimeFactories({
+      modelProviders: {} as ModelProviderStore,
+      getAgentContextWindow,
+      getRuntimeProcessEnvironment: async () => ({}),
+    }).find((factory) => factory.id === "pragma.runtime.pi")!;
+
+    const preparation = await piFactory.prepare?.(definition("pi", "Pi", "pragma.runtime.pi"));
+    if (preparation === undefined) throw new Error("Pi factory must prepare its dynamic settings.");
+    expect(preparation.cacheKey).toBe("agent-context-window=258000");
+    await expect(preparation.create()).resolves.toMatchObject({
+      descriptor: { id: "pi" },
+    });
+
+    const provider = createPiModelProviderConverter({
+      agentContextWindow: await getAgentContextWindow(),
+    }).convertProvider({
+      id: "provider",
+      catalogId: "qwen-token-plan-cn",
+      displayName: "Provider",
+      api: "openai-completions",
+      baseUrl: "https://models.example.com/v1",
+      apiKey: "secret",
+      credentialFingerprint: "fingerprint",
+      models: [
+        {
+          id: "qwen3.8-max",
+          name: "Qwen 3.8 Max",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1_000_000,
+          maxTokens: 131_072,
+        },
+      ],
+    });
+
+    expect(provider.models[0]?.contextWindow).toBe(258_000);
   });
 });
 

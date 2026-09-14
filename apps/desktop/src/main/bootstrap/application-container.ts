@@ -300,6 +300,8 @@ export async function createDesktopApplicationContainer(
   });
   const getToolPermissionMode = async () =>
     (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).toolPermissionMode;
+  const getAgentContextWindow = async () =>
+    (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).agentContextWindow;
   const automaticHumanInteractionHandler =
     createAutomaticToolPermissionHandler(getToolPermissionMode);
   const systemExperts = createDesktopSystemExpertRegistry({
@@ -449,6 +451,7 @@ export async function createDesktopApplicationContainer(
       modelProviders: modelProviderStore,
       modelCatalogCacheRoot: pragmaPaths.cacheRoot(),
       getToolPermissionMode,
+      getAgentContextWindow,
       getRuntimeProcessEnvironment: runtimeProcessEnvironment.get,
       onModelCatalogUpdated: (runtimeId) => {
         options.sendRuntimeModelCatalogUpdate(runtimeId);

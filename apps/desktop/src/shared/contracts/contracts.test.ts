@@ -55,12 +55,16 @@ describe("desktop settings contracts", () => {
     expect(UpdateDesktopSettingsSchema.parse({ toolPermissionMode: "full-access" })).toEqual({
       toolPermissionMode: "full-access",
     });
+    expect(UpdateDesktopSettingsSchema.parse({ agentContextWindow: 258_000 })).toEqual({
+      agentContextWindow: 258_000,
+    });
     expect(UpdateDesktopSettingsSchema.safeParse({}).success).toBe(false);
     expect(
       DesktopSettingsSnapshotSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         localePreference: "zh-Hant",
         toolPermissionMode: "request-approval",
+        agentContextWindow: 258_000,
         defaultWorkspace: "/workspace/default",
         usesBuiltInDefaultWorkspace: false,
         resolvedLocale: "zh-Hant",
@@ -71,6 +75,7 @@ describe("desktop settings contracts", () => {
       resolvedLocale: "zh-Hant",
     });
     expect(UpdateDesktopSettingsSchema.safeParse({ localePreference: "fr" }).success).toBe(false);
+    expect(UpdateDesktopSettingsSchema.safeParse({ agentContextWindow: 0 }).success).toBe(false);
   });
 });
 

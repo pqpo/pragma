@@ -8,10 +8,11 @@ export const DesktopResolvedLocaleSchema = z.enum(["en", "zh-Hans", "zh-Hant"]);
 export const DesktopToolPermissionModeSchema = ToolPermissionModeSchema;
 
 export const DesktopSettingsSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   localePreference: DesktopLocalePreferenceSchema,
   toolPermissionMode: DesktopToolPermissionModeSchema.default("request-approval"),
   defaultWorkspace: z.string().trim().min(1).max(2_000).optional(),
+  agentContextWindow: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 });
 
 export const DesktopSettingsSnapshotSchema = DesktopSettingsSchema.omit({
@@ -27,12 +28,14 @@ export const UpdateDesktopSettingsSchema = z
     localePreference: DesktopLocalePreferenceSchema.optional(),
     toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
     defaultWorkspace: z.string().trim().min(1).max(2_000).nullable().optional(),
+    agentContextWindow: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   })
   .refine(
     (input) =>
       input.localePreference !== undefined ||
       input.toolPermissionMode !== undefined ||
-      input.defaultWorkspace !== undefined,
+      input.defaultWorkspace !== undefined ||
+      input.agentContextWindow !== undefined,
     "At least one Desktop setting must be provided.",
   );
 

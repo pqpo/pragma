@@ -47,6 +47,18 @@ export const settings = {
         description: "無需核准即可存取和修改此裝置上的任意位置。",
       },
     },
+    agentContextWindow: "Agent 上下文視窗",
+    agentContextWindowDescription:
+      "Pi Agent 的預設工作上下文預算。模型硬上限較小時，一律採用該較小值。變更會在 Pi 工作階段新建或恢復時生效。",
+    agentContextWindowUnit: "tokens",
+    agentContextWindowSave: "儲存視窗",
+    agentContextWindowInvalid: "請輸入正整數 Token 數。",
+    settingsMigrationError:
+      "無法升級桌面設定。原有設定已保留；請從設定備份還原或更新 Pragma，然後重新啟動。",
+    settingsVersionTooNew:
+      "這些桌面設定是由較新版本的 Pragma 寫入。請更新 Pragma 後繼續；未變更任何設定。",
+    settingsInvalid:
+      "無法安全讀取桌面設定。未變更任何設定；請從設定備份還原或更新 Pragma，然後重新啟動。",
     defaultWorkspace: "預設工作區",
     defaultWorkspaceDescription: "首頁未為單次任務選擇工作區時使用此目錄。",
     chooseWorkspace: "選擇資料夾",
