@@ -603,6 +603,15 @@ export async function createDesktopApplicationContainer(
     draftsTrashPath: join(pragmaPaths.trashRoot(), "context-store-drafts"),
     contextStores,
     generator: revisionGenerator,
+    isMissionAvailable: async (missionId) => {
+      try {
+        await missionStore.get(missionId);
+        return true;
+      } catch (error) {
+        if (error instanceof MissionStoreError && error.code === "mission_not_found") return false;
+        throw error;
+      }
+    },
     onRevisionDetached: async ({ missionId, jobId, draftId, storeId }) => {
       try {
         await missionStore.restoreManagedRevisionStore({
@@ -1165,7 +1174,6 @@ export async function createDesktopApplicationContainer(
   });
   memoryCuratorRef.current = memoryCurator;
   storeRevisionAgentRef.current = createDesktopStoreRevisionAgent({
-    revisions: storeRevisions,
     missions: missionStore,
     runner: missionRunner,
     project: pragmaProjectStore,
@@ -1506,13 +1514,6 @@ export async function createDesktopApplicationContainer(
         mainLogger.warn(
           "desktop.memory_skill_promotion_recovery_failed",
           "An interrupted Memory Skill initialization could not be recovered.",
-          { error },
-        );
-      });
-      void storeRevisionAgentRef.current?.recoverOrphans().catch((error: unknown) => {
-        mainLogger.warn(
-          "desktop.context_store_revision_orphan_cleanup_failed",
-          "Orphaned Store Revision Agent Missions could not be cleaned up.",
           { error },
         );
       });

@@ -461,6 +461,7 @@ export const studio = {
     "草稿仍可编辑，尚未提交审批。请先查看变更，确认后打开关联任务继续修改或提交。",
   revisionErrorValidationFailed: "草稿未通过结构校验，请打开关联任务修正后重新提交。",
   revisionErrorGenerationFailed: "修订生成未完成，请打开关联任务查看运行详情后重试。",
+  revisionErrorMissionUnavailable: "关联修订任务已不存在；草稿已保留，可继续修订或丢弃。",
   revisionErrorGeneric: "修订任务未完成，请查看任务状态或运行详情后重试。",
   revisionSource: {
     manual: "手动修改",
@@ -488,6 +489,9 @@ export const studio = {
   retryRevision: "重试",
   deleteRevisionTask: "删除任务",
   deleteRevisionTaskTitle: "删除此修订任务？",
+  discardRevisionDraft: "丢弃草稿",
+  discardRevisionDraftTitle: "丢弃此修订草稿？",
+  discardRevisionDraftDescription: "“{{name}}”及其未合并修改将移入回收站。",
   deleteRevisionTaskDescription:
     "“{{name}}”将从修订任务列表中移除。删除任务不会回滚已经应用的变更，也不会删除知识库。",
   viewAllStoreRevisions: "修订任务",

@@ -991,29 +991,13 @@ export function createMissionRunner(options: {
                   inlineMission: {
                     id: mission.id,
                     allowedStoreIds: mountedStoreIds,
-                    activeRevisionJobIdForStore: async (storeId) => {
-                      const currentMission = await options.missions.get(mission.id);
-                      const matches = (
-                        await Promise.all(
-                          currentMission.contextMounts.map(async (mount) => {
-                            if (
-                              mount.kind !== "context-store-draft" ||
-                              mount.revisionJobId === undefined
-                            ) {
-                              return undefined;
-                            }
-                            const draft = await options.contextStoreRevisions!.getDraft(
-                              mount.draftId,
-                            );
-                            return draft.storeId === storeId ? mount.revisionJobId : undefined;
-                          }),
-                        )
-                      ).filter((jobId): jobId is string => jobId !== undefined);
-                      if (matches.length > 1) {
-                        throw new Error("knowledge_revision_multiple_active_drafts");
-                      }
-                      return matches[0];
-                    },
+                    activeRevisionJobIdForStore: async (storeId) =>
+                      (
+                        await options.contextStoreRevisions!.getMissionActiveJob({
+                          missionId: mission.id,
+                          storeId,
+                        })
+                      )?.id,
                     writableNamespaceForStore: activeMissionKnowledgeDraftNamespace,
                     mountDraft: async ({ storeId, draftId, revisionJobId, previousMissionId }) => {
                       sessionService.beginContextBindingChange(mission.id);
@@ -1021,6 +1005,7 @@ export function createMissionRunner(options: {
                         sessionService.beginContextBindingChange(previousMissionId);
                       }
                       let previousRestored = false;
+                      let mountedHere = false;
                       try {
                         const session = sessionService.session(mission.id);
                         const queued = (await session?.getPromptQueue())?.some(
@@ -1077,6 +1062,11 @@ export function createMissionRunner(options: {
                             revisionJobId,
                             mission.id,
                           );
+                        } else {
+                          await options.contextStoreRevisions!.attachMission(
+                            revisionJobId,
+                            mission.id,
+                          );
                         }
                         await options.missions.mountManagedRevisionDraft({
                           id: mission.id,
@@ -1084,6 +1074,32 @@ export function createMissionRunner(options: {
                           storeId,
                           draftId,
                           revisionJobId,
+                        });
+                        mountedHere = true;
+                        const [attachedJob, attachedDraft, attachedMission] = await Promise.all([
+                          options.contextStoreRevisions!.get(revisionJobId),
+                          options.contextStoreRevisions!.getDraft(draftId),
+                          options.missions.get(mission.id),
+                        ]);
+                        const claimMounted = attachedMission.contextMounts.some(
+                          (mount) =>
+                            mount.kind === "context-store-draft" &&
+                            mount.draftId === draftId &&
+                            mount.revisionJobId === revisionJobId,
+                        );
+                        if (
+                          !claimMounted ||
+                          attachedJob.state !== "running" ||
+                          attachedJob.missionId !== mission.id ||
+                          attachedDraft.activeMissionId !== mission.id
+                        ) {
+                          throw new Error("knowledge_revision_mount_incomplete");
+                        }
+                        await options.contextStoreRevisions!.completeMissionClaimMount({
+                          missionId: mission.id,
+                          storeId,
+                          jobId: revisionJobId,
+                          draftId,
                         });
                         await invalidateContextBindings(mission.id);
                         if (previousMissionId !== undefined) {
@@ -1093,6 +1109,14 @@ export function createMissionRunner(options: {
                           writableNamespace: activeMissionKnowledgeDraftNamespace(storeId),
                         };
                       } catch (error) {
+                        if (mountedHere) {
+                          await options.missions.restoreManagedRevisionStore({
+                            id: mission.id,
+                            storeId,
+                            draftId,
+                            revisionJobId,
+                          });
+                        }
                         if (previousMissionId !== undefined && previousRestored) {
                           let current = await options.contextStoreRevisions!.get(revisionJobId);
                           if (current.missionId === mission.id) {
@@ -2199,6 +2223,11 @@ export function createMissionRunner(options: {
       }
       await forgetActive(id, active.handle, active.live, active.audience, false);
     }
+    const revisionClaims = mission.contextMounts.flatMap((mount) =>
+      mount.kind === "context-store-draft" && mount.revisionJobId !== undefined
+        ? [{ draftId: mount.draftId, jobId: mount.revisionJobId }]
+        : [],
+    );
     await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
     const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
     const sources = [
@@ -2243,17 +2272,12 @@ export function createMissionRunner(options: {
     if (options.missions.storagePath === undefined) await options.missions.remove(id);
     else options.missions.forget?.(id);
     if (options.contextStoreRevisions !== undefined) {
-      for (const mount of mission.contextMounts) {
-        if (mount.kind !== "context-store-draft" || mount.revisionJobId === undefined) continue;
-        try {
-          await options.contextStoreRevisions.detachMission(mount.revisionJobId, mission.id);
-        } catch (error) {
-          logger.warn(
-            "mission.revision_claim_detach_failed",
-            "Mission deletion completed, but its knowledge revision claim will require startup recovery.",
-            { missionId: mission.id, revisionJobId: mount.revisionJobId, error },
-          );
-        }
+      for (const claim of revisionClaims) {
+        await options.contextStoreRevisions.releaseMissionClaim({
+          ...claim,
+          missionId: mission.id,
+          reason: "mission_deleted",
+        });
       }
     }
     options.usage?.markSubjectDeleted("mission", id);

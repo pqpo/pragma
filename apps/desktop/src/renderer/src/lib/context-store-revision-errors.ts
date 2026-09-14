@@ -61,6 +61,9 @@ export function localizedContextStoreRevisionError(
   if (details.code === "generation_failed") {
     return translate("revisionErrorGenerationFailed");
   }
+  if (details.code === "mission_orphaned" || details.code === "mission_deleted") {
+    return translate("revisionErrorMissionUnavailable");
+  }
   return translate("revisionErrorGeneric");
 }
 

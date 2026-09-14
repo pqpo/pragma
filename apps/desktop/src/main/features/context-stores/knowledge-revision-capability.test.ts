@@ -104,6 +104,15 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     missionId,
     request,
   }));
+  const startForMission = vi.fn(async ({ request, missionId: claimedMissionId }) => {
+    const job = await start(request);
+    if (job.missionId === undefined) missionId = claimedMissionId;
+    return {
+      ...job,
+      missionId,
+      state: missionId === undefined ? job.state : "running",
+    };
+  });
   const scheduleProcessing = vi.fn();
   const attachMission = vi.fn(async (_jobId: string, nextMissionId: string) => {
     missionId = nextMissionId;
@@ -113,12 +122,21 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
   }));
   const listDrafts = vi.fn<ContextStoreRevisionService["listDrafts"]>(async () => []);
   const getDraft = vi.fn<ContextStoreRevisionService["getDraft"]>();
+  const listDraftsWithRecovery = vi.fn(async () =>
+    (await listDrafts()).map((draft) => ({ draft })),
+  );
+  const getDraftWithRecovery = vi.fn(async (draftId: string) => ({
+    draft: await getDraft(draftId),
+  }));
   const getDraftFile = vi.fn<ContextStoreRevisionService["getDraftFile"]>();
   const discardDraft = vi.fn<ContextStoreRevisionService["discardDraft"]>();
   const revisions = {
     start,
+    startForMission,
     listDrafts,
+    listDraftsWithRecovery,
     getDraft,
+    getDraftWithRecovery,
     getDraftFile,
     inspectRebase: vi.fn(),
     rebase: vi.fn(),
@@ -155,6 +173,7 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
         : {}),
     }),
     start,
+    startForMission,
     scheduleProcessing,
     targetRef,
     attachMission,
@@ -376,34 +395,22 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     });
   });
 
-  it("submits to any listed target and records Team provenance when applicable", async () => {
+  it("does not start a writable revision outside a Store Revision Mission", async () => {
     const { port, start, scheduleProcessing } = fixture();
     const unmounted = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
       (target) => target.name === "Unattached knowledge",
     )!;
 
-    await port.start({
-      ...invocation,
-      teamId: TEAM_ID,
-      targetRef: unmounted.targetRef,
-      prompt: "Record invariant",
-    });
-
-    expect(start).toHaveBeenCalledWith(
-      expect.objectContaining({
-        storeId: UNMOUNTED_STORE_ID,
-        source: "expert-reflection",
-        sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
-        provenance: {
-          executionId: "execution-1",
-          invocationId: "invocation-1",
-          expertId: EXPERT_ID,
-          teamId: TEAM_ID,
-        },
+    await expect(
+      port.start({
+        ...invocation,
+        teamId: TEAM_ID,
+        targetRef: unmounted.targetRef,
+        prompt: "Record invariant",
       }),
-      {},
-    );
-    expect(scheduleProcessing).toHaveBeenCalledOnce();
+    ).rejects.toThrow("knowledge_revision_mission_unavailable");
+    expect(start).not.toHaveBeenCalled();
+    expect(scheduleProcessing).not.toHaveBeenCalled();
   });
 
   it("discards an unmerged draft through the revision service", async () => {
@@ -416,8 +423,8 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     expect(discardDraft).toHaveBeenCalledWith(draftId, 5);
   });
 
-  it("supports standalone Experts and rejects targets that are not in the current store list", async () => {
-    const { port, start } = fixture();
+  it("rejects unavailable targets before attempting a revision", async () => {
+    const { port } = fixture();
     const unmounted = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
       (target) => target.name === "Unattached knowledge",
     )!;
@@ -429,25 +436,17 @@ describe("Desktop Pragma management knowledge revision tools", () => {
         prompt: "No",
       }),
     ).rejects.toThrow("knowledge_revision_target_unavailable");
-    await port.start({
-      ...invocation,
-      targetRef: unmounted.targetRef,
-      prompt: "Record invariant",
-    });
-    expect(start).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        provenance: {
-          executionId: "execution-1",
-          invocationId: "invocation-1",
-          expertId: EXPERT_ID,
-        },
+    await expect(
+      port.start({
+        ...invocation,
+        targetRef: unmounted.targetRef,
+        prompt: "Record invariant",
       }),
-      {},
-    );
+    ).rejects.toThrow("knowledge_revision_mission_unavailable");
   });
 
-  it("attaches a selected Mission Knowledge target to the same Mission", async () => {
-    const { port, targetRef, attachMission, mountDraft, scheduleProcessing } = fixture(true);
+  it("claims a selected Mission Knowledge target before mounting it", async () => {
+    const { port, targetRef, startForMission, mountDraft, scheduleProcessing } = fixture(true);
 
     await expect(
       port.start({ ...invocation, targetRef, prompt: "Revise this Mission knowledge" }),
@@ -457,7 +456,9 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       state: "running",
       writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
     });
-    expect(attachMission).toHaveBeenCalledWith("job-1", "00000000-0000-4000-8000-000000000401");
+    expect(startForMission).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "00000000-0000-4000-8000-000000000401" }),
+    );
     expect(mountDraft).toHaveBeenCalledWith({
       storeId: STORE_ID,
       draftId: "00000000-0000-4000-8000-000000000301",
@@ -466,31 +467,27 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     expect(scheduleProcessing).not.toHaveBeenCalled();
   });
 
-  it("returns an already-mounted matching revision without attaching or mounting it again", async () => {
-    const first = fixture(true);
-    await first.port.start({
-      ...invocation,
-      targetRef: first.targetRef,
-      prompt: "Revise this Mission knowledge",
-    });
-    const sourceDigest = first.start.mock.calls[0]?.[0].sourceDigest;
-    if (sourceDigest === undefined) throw new Error("Expected a source digest.");
-    const retry = fixture(true, sourceDigest);
+  it("returns an already-mounted revision even when the retry input differs", async () => {
+    const retry = fixture(true, "a".repeat(64));
 
     await expect(
       retry.port.start({
         ...invocation,
         targetRef: retry.targetRef,
-        prompt: "Revise this Mission knowledge",
+        prompt: "Continue with a more specific request",
       }),
     ).resolves.toMatchObject({
       jobId: "job-1",
       state: "running",
       writableNamespace: `mission-knowledge-draft:${STORE_ID}`,
     });
-    expect(retry.start).not.toHaveBeenCalled();
+    expect(retry.startForMission).not.toHaveBeenCalled();
     expect(retry.attachMission).not.toHaveBeenCalled();
-    expect(retry.mountDraft).not.toHaveBeenCalled();
+    expect(retry.mountDraft).toHaveBeenCalledWith({
+      storeId: STORE_ID,
+      draftId: "00000000-0000-4000-8000-000000000301",
+      revisionJobId: "job-1",
+    });
   });
 
   it("asks the Host to transfer an existing draft claim from an earlier Mission", async () => {

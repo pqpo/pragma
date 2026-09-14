@@ -95,6 +95,13 @@ const WritableNamespaceSchema = z
     "Writable Context namespace for this draft in the current Mission. Pass it unchanged to Expert Context tools.",
   );
 
+const KnowledgeRevisionDraftRecoverySchema = z
+  .object({
+    code: z.enum(["mission_orphaned", "mission_unreadable"]),
+    message: z.string().min(1).max(500),
+  })
+  .strict();
+
 export const KnowledgeRevisionDraftSummarySchema = z
   .object({
     draftId: ContextStoreDraftSchema.shape.id,
@@ -104,6 +111,7 @@ export const KnowledgeRevisionDraftSummarySchema = z
     baseRevision: ContextStoreDraftSchema.shape.baseRevision,
     state: ContextStoreDraftSchema.shape.state,
     activeMissionId: ContextStoreDraftSchema.shape.activeMissionId,
+    recovery: KnowledgeRevisionDraftRecoverySchema.optional(),
     writableNamespace: WritableNamespaceSchema.optional(),
     submittedRevision: ContextStoreDraftSchema.shape.submittedRevision,
     summary: ContextStoreDraftSchema.shape.summary,
@@ -384,7 +392,7 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
       missionId: z.string().uuid().optional(),
       state: z.string().min(1),
       target: KnowledgeRevisionTargetSchema,
-      writableNamespace: WritableNamespaceSchema.optional(),
+      writableNamespace: WritableNamespaceSchema,
     }),
     { reason: "Start a managed knowledge revision Mission." },
   ),

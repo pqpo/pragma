@@ -1645,6 +1645,155 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(await missions.list()).toHaveLength(1);
   });
 
+  it("releases a managed knowledge draft only after deleting its Mission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-delete-revision-claim-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture()],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
+    const revisions = createContextStoreRevisionService({
+      statePath: join(root, "context-store-revisions"),
+      draftsPath: join(root, "context-store-drafts"),
+      contextStores,
+      generator: { generate: async () => undefined },
+    });
+    const job = await revisions.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Keep this draft after deleting the Mission",
+      source: "user",
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Delete this Store Revision Mission",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: {
+        kind: "expert",
+        ref: STORE_REVISION_EXPERT_REF,
+        name: "Store Revision Agent",
+      },
+      contextMounts: [
+        {
+          kind: "context-store-draft",
+          draftId: job.draftId,
+          revisionJobId: job.id,
+        },
+      ],
+    });
+    await revisions.attachMission(job.id, mission.id);
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      contextStoreRevisions: revisions,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      assertStorageWriteAllowed: async () => undefined,
+    });
+
+    await runner.delete(mission.id);
+
+    expect((await revisions.getDraft(job.draftId)).activeMissionId).toBeUndefined();
+    const released = await revisions.get(job.id);
+    expect(released).toMatchObject({
+      state: "needs_attention",
+      error: { code: "mission_deleted" },
+    });
+    expect(released.missionId).toBeUndefined();
+  });
+
+  it("does not release a revision claim when Mission deletion aborts before the owner is removed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-delete-claim-abort-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture()],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
+    const revisions = createContextStoreRevisionService({
+      statePath: join(root, "context-store-revisions"),
+      draftsPath: join(root, "context-store-drafts"),
+      contextStores,
+      generator: { generate: async () => undefined },
+    });
+    const job = await revisions.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Do not release this claim until deletion commits",
+      source: "user",
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Abort deletion before it commits",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: {
+        kind: "expert",
+        ref: STORE_REVISION_EXPERT_REF,
+        name: "Store Revision Agent",
+      },
+      contextMounts: [
+        {
+          kind: "context-store-draft",
+          draftId: job.draftId,
+          revisionJobId: job.id,
+        },
+      ],
+    });
+    await revisions.attachMission(job.id, mission.id);
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      contextStoreRevisions: revisions,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      assertStorageWriteAllowed: async () => undefined,
+      onOwnerDeleting: async () => {
+        throw new Error("stop before Mission ownership is removed");
+      },
+    });
+
+    await expect(runner.delete(mission.id)).rejects.toThrow("stop before Mission ownership is removed");
+    await expect(missions.get(mission.id)).resolves.toMatchObject({ id: mission.id });
+    await expect(revisions.get(job.id)).resolves.toMatchObject({
+      state: "running",
+      missionId: mission.id,
+    });
+    await expect(revisions.getDraft(job.draftId)).resolves.toMatchObject({
+      activeMissionId: mission.id,
+    });
+  });
+
   it("projects and compacts the persisted root context window", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-context-window-"));
     temporaryPaths.push(root);

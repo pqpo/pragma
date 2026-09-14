@@ -461,6 +461,7 @@ export const studio = {
     "草稿仍可編輯，尚未提交審批。請先檢視變更，確認後開啟關聯任務繼續修改或提交。",
   revisionErrorValidationFailed: "草稿未通過結構驗證，請開啟關聯任務修正後重新提交。",
   revisionErrorGenerationFailed: "修訂產生未完成，請開啟關聯任務查看執行詳情後重試。",
+  revisionErrorMissionUnavailable: "關聯修訂任務已不存在；草稿已保留，可繼續修訂或丟棄。",
   revisionErrorGeneric: "修訂任務未完成，請查看任務狀態或執行詳情後重試。",
   revisionSource: {
     manual: "手動修改",
@@ -488,6 +489,9 @@ export const studio = {
   retryRevision: "重試",
   deleteRevisionTask: "刪除任務",
   deleteRevisionTaskTitle: "刪除此修訂任務？",
+  discardRevisionDraft: "丟棄草稿",
+  discardRevisionDraftTitle: "丟棄此修訂草稿？",
+  discardRevisionDraftDescription: "「{{name}}」及其未合併修改將移至回收桶。",
   deleteRevisionTaskDescription:
     "「{{name}}」將從修訂任務列表中移除。刪除任務不會回滾已套用的變更，也不會刪除知識庫。",
   viewAllStoreRevisions: "修訂任務",

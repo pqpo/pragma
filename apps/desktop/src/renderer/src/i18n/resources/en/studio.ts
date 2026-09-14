@@ -499,6 +499,8 @@ export const studio = {
     "The draft did not pass structural validation. Open the related task, fix it, and submit again.",
   revisionErrorGenerationFailed:
     "Revision generation did not finish. Open the related task to inspect the run details, then retry.",
+  revisionErrorMissionUnavailable:
+    "The linked revision task no longer exists. The draft was preserved and can be continued or discarded.",
   revisionErrorGeneric:
     "The revision task did not finish. Check its status or run details, then retry.",
   revisionSource: {
@@ -529,6 +531,9 @@ export const studio = {
   retryRevision: "Retry",
   deleteRevisionTask: "Delete task",
   deleteRevisionTaskTitle: "Delete this revision task?",
+  discardRevisionDraft: "Discard draft",
+  discardRevisionDraftTitle: "Discard this revision draft?",
+  discardRevisionDraftDescription: "{{name}} and its unmerged changes will be moved to the trash.",
   deleteRevisionTaskDescription:
     "“{{name}}” will be removed from the revision task list. Deleting the task does not roll back changes that have already been applied or delete the knowledge base.",
   viewAllStoreRevisions: "Revision tasks",
