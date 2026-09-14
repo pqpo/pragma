@@ -127,27 +127,36 @@ export function ContextStoreRevisionFragment(props: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ContextStoreRevisionJob | null>(null);
+  const [pendingDiscard, setPendingDiscard] = useState<ContextStoreDraft | null>(null);
 
   const load = async () => {
     const api = desktopApi();
     if (api === undefined) return;
-    try {
-      const [next, allJobs, nextDrafts, nextRecords] = await Promise.all([
-        api.listContextStoreRevisions(storeId === "" ? {} : { storeId }),
-        storeId === "" ? undefined : api.listContextStoreRevisions(),
-        api.listContextStoreDrafts(storeId === "" ? {} : { storeId }),
-        api.listContextStoreRevisionRecords(storeId === "" ? {} : { storeId }),
-      ]);
-      setJobs(next);
-      setDrafts(nextDrafts);
-      setRevisionRecords(nextRecords);
+    const [jobsResult, allJobsResult, draftsResult, recordsResult] = await Promise.allSettled([
+      api.listContextStoreRevisions(storeId === "" ? {} : { storeId }),
+      storeId === "" ? undefined : api.listContextStoreRevisions(),
+      api.listContextStoreDrafts(storeId === "" ? {} : { storeId }),
+      api.listContextStoreRevisionRecords(storeId === "" ? {} : { storeId }),
+    ]);
+    if (jobsResult.status === "fulfilled") {
+      setJobs(jobsResult.value);
       props.onCountChanged?.(
-        (allJobs ?? next).filter((job) => !["merged", "rejected"].includes(job.state)).length,
+        (allJobsResult.status === "fulfilled" && allJobsResult.value !== undefined
+          ? allJobsResult.value
+          : jobsResult.value
+        ).filter((job) => !["merged", "rejected"].includes(job.state)).length,
       );
-      setError(null);
-    } catch (caught) {
-      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
     }
+    if (draftsResult.status === "fulfilled") setDrafts(draftsResult.value);
+    if (recordsResult.status === "fulfilled") setRevisionRecords(recordsResult.value);
+    const failed = [jobsResult, allJobsResult, draftsResult, recordsResult].find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    setError(
+      failed === undefined
+        ? null
+        : localizedContextStoreRevisionError(failed.reason, translateRevisionError),
+    );
   };
 
   useEffect(() => {
@@ -176,6 +185,26 @@ export function ContextStoreRevisionFragment(props: {
         setSelectedJobId(null);
         setPendingDelete(null);
       }
+      await load();
+    } catch (caught) {
+      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const discard = async (draft: ContextStoreDraft) => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    const actionId = `discard:${draft.id}`;
+    setBusy(actionId);
+    try {
+      await api.discardContextStoreDraft({
+        draftId: draft.id,
+        expectedRevision: draft.revision,
+      });
+      setPendingDiscard(null);
+      setSelectedJobId(null);
       await load();
     } catch (caught) {
       setError(localizedContextStoreRevisionError(caught, translateRevisionError));
@@ -348,6 +377,18 @@ export function ContextStoreRevisionFragment(props: {
                           <ArrowClockwise size={16} aria-hidden="true" />
                         </button>
                       ) : null}
+                      {draft !== undefined && draft.state !== "merged" ? (
+                        <button
+                          className="revision-task-icon-button is-danger"
+                          type="button"
+                          aria-label={t("discardRevisionDraft")}
+                          title={t("discardRevisionDraft")}
+                          disabled={busy !== null}
+                          onClick={() => setPendingDiscard(draft)}
+                        >
+                          <Trash size={16} aria-hidden="true" />
+                        </button>
+                      ) : null}
                       <button
                         className="revision-task-icon-button is-danger"
                         type="button"
@@ -380,6 +421,20 @@ export function ContextStoreRevisionFragment(props: {
           busy={busy === pendingDelete.id}
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => void act(pendingDelete, "delete")}
+          action="delete"
+        />
+      ) : null}
+      {pendingDiscard !== null ? (
+        <StudioConfirmationDialog
+          className="revision-task-delete-dialog"
+          title={t("discardRevisionDraftTitle")}
+          description={t("discardRevisionDraftDescription", { name: pendingDiscard.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("discardRevisionDraft")}
+          busyLabel={t("deleting")}
+          busy={busy === `discard:${pendingDiscard.id}`}
+          onCancel={() => setPendingDiscard(null)}
+          onConfirm={() => void discard(pendingDiscard)}
           action="delete"
         />
       ) : null}

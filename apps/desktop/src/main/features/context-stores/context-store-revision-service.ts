@@ -31,6 +31,7 @@ import {
   type UpdateContextStoreDraftFile,
   type UpdateContextStoreRevisionProfile,
 } from "@pragma/built-in-agents/contracts";
+import { z } from "zod";
 
 import type { ContextStoreContent, ContextStoreSnapshot } from "../../../shared/contracts/index.ts";
 import { SparseContextStoreDraft, materializeDraftSnapshot } from "./context-store-draft-store.ts";
@@ -50,12 +51,38 @@ export interface ContextStoreRevisionGenerator {
   }): Promise<ContextStoreChangeSet | undefined>;
 }
 
+export interface ContextStoreRevisionDraftRecoveryIssue {
+  readonly code: "mission_orphaned" | "mission_unreadable";
+  readonly message: string;
+}
+
+export interface ContextStoreRevisionDraftListEntry {
+  readonly draft: ContextStoreDraft;
+  readonly recovery?: ContextStoreRevisionDraftRecoveryIssue | undefined;
+}
+
 export interface ContextStoreRevisionService {
   submit(request: ContextStoreRevisionRequest): Promise<ContextStoreRevisionJob>;
   start(
     request: ContextStoreRevisionRequest,
     options?: { readonly draftId?: string | undefined; readonly draftName?: string | undefined },
   ): Promise<ContextStoreRevisionJob>;
+  startForMission(input: {
+    readonly request: ContextStoreRevisionRequest;
+    readonly missionId: string;
+    readonly draftId?: string | undefined;
+    readonly draftName?: string | undefined;
+  }): Promise<ContextStoreRevisionJob>;
+  getMissionActiveJob(input: {
+    readonly missionId: string;
+    readonly storeId: string;
+  }): Promise<ContextStoreRevisionJob | undefined>;
+  completeMissionClaimMount(input: {
+    readonly missionId: string;
+    readonly storeId: string;
+    readonly jobId: string;
+    readonly draftId: string;
+  }): Promise<void>;
   list(filter?: ListContextStoreRevisionJobs): Promise<readonly ContextStoreRevisionJob[]>;
   get(jobId: string): Promise<ContextStoreRevisionJob>;
   approve(jobId: string, expectedRevision: number): Promise<ContextStoreRevisionJob>;
@@ -67,7 +94,11 @@ export interface ContextStoreRevisionService {
     readonly name: string;
   }): Promise<ContextStoreDraft>;
   listDrafts(filter?: ListContextStoreDrafts): Promise<readonly ContextStoreDraft[]>;
+  listDraftsWithRecovery(
+    filter?: ListContextStoreDrafts,
+  ): Promise<readonly ContextStoreRevisionDraftListEntry[]>;
   getDraft(draftId: string): Promise<ContextStoreDraft>;
+  getDraftWithRecovery(draftId: string): Promise<ContextStoreRevisionDraftListEntry>;
   getDraftChangeSet(draftId: string): Promise<ContextStoreChangeSet>;
   getDraftFile(input: GetContextStoreDraftFile): Promise<ContextStoreContent>;
   submitDraft(
@@ -86,6 +117,13 @@ export interface ContextStoreRevisionService {
   }>;
   attachMission(jobId: string, missionId: string): Promise<ContextStoreRevisionJob>;
   detachMission(jobId: string, missionId: string): Promise<ContextStoreRevisionJob>;
+  releaseMissionClaim(input: {
+    readonly draftId: string;
+    readonly missionId: string;
+    readonly jobId?: string | undefined;
+    readonly reason: "mission_deleted" | "mission_orphaned";
+  }): Promise<void>;
+  recoverMissionClaimReleases(): Promise<void>;
   processPending(): Promise<void>;
   scheduleProcessing(): void;
   hasActiveJobs(storeId: string): Promise<boolean>;
@@ -111,6 +149,32 @@ export class ContextStoreRevisionServiceError extends Error {
   }
 }
 
+const MissionClaimReleaseJournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-revision-claim-release/v1"),
+    draftId: z.string().uuid(),
+    missionId: z.string().uuid(),
+    jobId: z.string().uuid().optional(),
+    reason: z.enum(["mission_deleted", "mission_orphaned"]),
+  })
+  .strict();
+
+type MissionClaimReleaseJournal = z.infer<typeof MissionClaimReleaseJournalSchema>;
+
+const MissionClaimJournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-revision-mission-claim/v1"),
+    missionId: z.string().uuid(),
+    storeId: z.string().uuid(),
+    jobId: z.string().uuid(),
+    draftId: z.string().uuid(),
+    request: ContextStoreRevisionRequestSchema,
+    draftName: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+
+type MissionClaimJournal = z.infer<typeof MissionClaimJournalSchema>;
+
 export function createContextStoreRevisionService(options: {
   readonly statePath: string;
   readonly draftsPath?: string | undefined;
@@ -118,6 +182,7 @@ export function createContextStoreRevisionService(options: {
   readonly contextStores: ContextStoreStore;
   readonly generator: ContextStoreRevisionGenerator;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
+  readonly isMissionAvailable?: ((missionId: string) => Promise<boolean>) | undefined;
   readonly onRevisionDetached?:
     | ((input: {
         readonly missionId: string;
@@ -130,11 +195,22 @@ export function createContextStoreRevisionService(options: {
   const jobsPath = join(options.statePath, "jobs");
   const draftsPath = options.draftsPath ?? join(options.statePath, "drafts");
   const draftsTrashPath = options.draftsTrashPath ?? join(options.statePath, "trash", "drafts");
+  const claimReleaseJournalsPath = join(options.statePath, "claim-releases");
+  const missionClaimsPath = join(options.statePath, "mission-claims");
   const profilePath = join(options.statePath, "profile.json");
   const jobsLockPath = join(options.statePath, ".jobs.lock");
   const jobPath = (id: string) => join(jobsPath, `${id}.json`);
   const draftRoot = (id: string) => join(draftsPath, id);
   const draftPath = (id: string) => join(draftRoot(id), "draft.json");
+  const claimReleaseJournalPath = (journal: MissionClaimReleaseJournal) =>
+    join(
+      claimReleaseJournalsPath,
+      `${journal.draftId}-${journal.jobId ?? "draft"}-${journal.missionId}.json`,
+    );
+  const missionClaimPath = (missionId: string, storeId: string) =>
+    join(missionClaimsPath, `${missionId}-${storeId}.json`);
+  const missionClaimLockPath = (missionId: string, storeId: string) =>
+    join(missionClaimsPath, `${missionId}-${storeId}.lock`);
   let processing: Promise<void> | undefined;
   const notifyRevisionDetached = async (input: {
     readonly missionId: string;
@@ -217,12 +293,13 @@ export function createContextStoreRevisionService(options: {
     storeId: string,
     name: string,
     overlay: ContextStoreDraftOverlay = emptyOverlay(),
+    id = randomUUID(),
   ): Promise<ContextStoreDraft> => {
     const base = await options.contextStores.getSnapshot(storeId);
     const timestamp = new Date().toISOString();
     const draft = ContextStoreDraftSchema.parse({
       schemaVersion: "pragma.context-store-draft/v1",
-      id: randomUUID(),
+      id,
       revision: 1,
       name,
       storeId,
@@ -336,12 +413,21 @@ export function createContextStoreRevisionService(options: {
       return next;
     });
 
-  const readAllJobs = async (): Promise<readonly ContextStoreRevisionJob[]> =>
-    await Promise.all(
+  const readAllJobs = async (): Promise<readonly ContextStoreRevisionJob[]> => {
+    const jobs = await Promise.all(
       (await readNames(jobsPath))
         .filter((name) => name.endsWith(".json"))
-        .map(async (name) => await readJob(name.slice(0, -5))),
+        .map(async (name) => {
+          try {
+            return await readJob(name.slice(0, -5));
+          } catch (error) {
+            options.warn?.("A knowledge revision job could not be read and was skipped.", error);
+            return undefined;
+          }
+        }),
     );
+    return jobs.filter((job): job is ContextStoreRevisionJob => job !== undefined);
+  };
 
   const readAllDrafts = async (): Promise<readonly ContextStoreDraft[]> => {
     const drafts = await Promise.all(
@@ -355,11 +441,221 @@ export function createContextStoreRevisionService(options: {
           ) {
             return undefined;
           }
-          throw error;
+          options.warn?.("A knowledge revision draft could not be read and was skipped.", error);
+          return undefined;
         }
       }),
     );
     return drafts.filter((draft): draft is ContextStoreDraft => draft !== undefined);
+  };
+
+  const readMissionClaim = async (
+    missionId: string,
+    storeId: string,
+  ): Promise<MissionClaimJournal | undefined> => {
+    try {
+      return MissionClaimJournalSchema.parse(
+        JSON.parse(await readFile(missionClaimPath(missionId, storeId), "utf8")),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+
+  const isActiveMissionJob = (job: ContextStoreRevisionJob): boolean =>
+    !["merged", "rejected", "needs_attention"].includes(job.state);
+
+  const findMissionActiveJob = async (
+    missionId: string,
+    storeId: string,
+  ): Promise<ContextStoreRevisionJob | undefined> => {
+    const matches = (await readAllJobs()).filter(
+      (job) =>
+        job.missionId === missionId &&
+        job.request.storeId === storeId &&
+        isActiveMissionJob(job),
+    );
+    if (matches.length > 1) {
+      throw invalidState("More than one active knowledge revision claims this Mission target.");
+    }
+    return matches[0];
+  };
+
+  const clearMissionClaimIfMatches = async (input: {
+    readonly missionId: string;
+    readonly draftId: string;
+    readonly jobId?: string | undefined;
+  }): Promise<void> => {
+    for (const name of (await readNames(missionClaimsPath)).filter((candidate) =>
+      candidate.endsWith(".json"),
+    )) {
+      const path = join(missionClaimsPath, name);
+      try {
+        const claim = MissionClaimJournalSchema.parse(JSON.parse(await readFile(path, "utf8")));
+        if (
+          claim.missionId === input.missionId &&
+          claim.draftId === input.draftId &&
+          (input.jobId === undefined || claim.jobId === input.jobId)
+        ) {
+          await rm(path, { force: true });
+        }
+      } catch (error) {
+        options.warn?.("A knowledge revision Mission claim journal could not be read.", error);
+      }
+    }
+  };
+
+  const materializeMissionClaim = async (
+    claim: MissionClaimJournal,
+  ): Promise<ContextStoreRevisionJob> => {
+    let draft: ContextStoreDraft;
+    try {
+      draft = await readDraft(claim.draftId);
+    } catch (error) {
+      if (!(error instanceof ContextStoreRevisionServiceError) || error.code !== "draft_not_found") {
+        throw error;
+      }
+      draft = await createDraft(
+        claim.storeId,
+        claim.draftName ?? revisionDraftName(claim.request),
+        emptyOverlay(),
+        claim.draftId,
+      );
+    }
+    if (draft.storeId !== claim.storeId || draft.state === "merged") {
+      throw invalidState("The claimed knowledge draft is not editable for this knowledge base.");
+    }
+
+    let job: ContextStoreRevisionJob;
+    try {
+      job = await readJob(claim.jobId);
+    } catch (error) {
+      if (!(error instanceof ContextStoreRevisionServiceError) || error.code !== "job_not_found") {
+        throw error;
+      }
+      const timestamp = new Date().toISOString();
+      job = ContextStoreRevisionJobSchema.parse({
+        schemaVersion: "pragma.context-store-revision-job/v2",
+        id: claim.jobId,
+        revision: 1,
+        draftId: claim.draftId,
+        request: claim.request,
+        missionId: claim.missionId,
+        state: "running",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await writeJob(job);
+    }
+    if (
+      job.draftId !== claim.draftId ||
+      job.request.storeId !== claim.storeId ||
+      (job.missionId !== undefined && job.missionId !== claim.missionId)
+    ) {
+      throw invalidState("The durable Mission claim does not match its revision task.");
+    }
+    if (!isActiveMissionJob(job)) return job;
+    return await api.attachMission(job.id, claim.missionId);
+  };
+
+  const recoverOrphanedClaim = async (input: {
+    readonly draftId: string;
+    readonly missionId?: string | undefined;
+  }): Promise<ContextStoreRevisionDraftRecoveryIssue | undefined> => {
+    if (input.missionId === undefined || options.isMissionAvailable === undefined) return undefined;
+    let available: boolean;
+    try {
+      available = await options.isMissionAvailable(input.missionId);
+    } catch (error) {
+      options.warn?.("A linked Mission could not be read while listing a knowledge draft.", error);
+      return {
+        code: "mission_unreadable",
+        message: "The linked Mission could not be read. The draft was left unchanged.",
+      };
+    }
+    if (available) return undefined;
+    await releaseMissionClaim({
+      draftId: input.draftId,
+      missionId: input.missionId,
+      reason: "mission_orphaned",
+    });
+    return {
+      code: "mission_orphaned",
+      message: "The linked Mission no longer exists. The draft was preserved and released.",
+    };
+  };
+
+  const releaseMissionClaim = async (
+    input: Omit<MissionClaimReleaseJournal, "schemaVersion">,
+    persistJournal = true,
+  ): Promise<void> => {
+    const journal = MissionClaimReleaseJournalSchema.parse({
+      schemaVersion: "pragma.context-store-revision-claim-release/v1",
+      ...input,
+    });
+    const journalPath = claimReleaseJournalPath(journal);
+    if (persistJournal) await writeJsonAtomic(journalPath, journal);
+    let draft: ContextStoreDraft | undefined;
+    try {
+      draft = await readDraft(journal.draftId);
+    } catch (error) {
+      if (
+        !(error instanceof ContextStoreRevisionServiceError) ||
+        error.code !== "draft_not_found"
+      ) {
+        throw error;
+      }
+    }
+    if (
+      draft !== undefined &&
+      draft.activeMissionId === journal.missionId &&
+      draft.state !== "merged"
+    ) {
+      await mutateDraftRecord(draft.id, draft.revision, () => ({ activeMissionId: undefined }));
+    }
+
+    const jobs =
+      journal.jobId === undefined
+        ? (await readAllJobs()).filter(
+            (candidate) =>
+              candidate.draftId === journal.draftId && candidate.missionId === journal.missionId,
+          )
+        : [await readJob(journal.jobId)].filter(
+            (candidate) =>
+              candidate.draftId === journal.draftId && candidate.missionId === journal.missionId,
+          );
+    for (const job of jobs) {
+      await mutateJob(job.id, job.revision, (current) => ({
+        missionId: undefined,
+        ...(["merged", "rejected"].includes(current.state)
+          ? {}
+          : {
+              state: "needs_attention" as const,
+              error: {
+                code: journal.reason,
+                message:
+                  journal.reason === "mission_deleted"
+                    ? "The revision Mission was deleted. The draft was preserved."
+                    : "The revision Mission no longer exists. The draft was preserved.",
+              },
+            }),
+      }));
+    }
+    await clearMissionClaimIfMatches(journal);
+    await rm(journalPath, { force: true });
+  };
+
+  const recoverMissionClaimReleases = async (): Promise<void> => {
+    for (const name of (await readNames(claimReleaseJournalsPath)).filter((candidate) =>
+      candidate.endsWith(".json"),
+    )) {
+      const path = join(claimReleaseJournalsPath, name);
+      const journal = MissionClaimReleaseJournalSchema.parse(
+        JSON.parse(await readFile(path, "utf8")),
+      );
+      await releaseMissionClaim(journal, false);
+    }
   };
 
   const api: ContextStoreRevisionService = {
@@ -411,18 +707,97 @@ export function createContextStoreRevisionService(options: {
       });
     },
 
+    async startForMission(input) {
+      const request = ContextStoreRevisionRequestSchema.parse(input.request);
+      return await withFileLock(missionClaimLockPath(input.missionId, request.storeId), async () => {
+        const existingClaim = await readMissionClaim(input.missionId, request.storeId);
+        if (existingClaim !== undefined) {
+          const job = await materializeMissionClaim(existingClaim);
+          if (isActiveMissionJob(job)) return job;
+          await rm(missionClaimPath(input.missionId, request.storeId), { force: true });
+        }
+
+        const existingForMission = await findMissionActiveJob(input.missionId, request.storeId);
+        if (existingForMission !== undefined) return existingForMission;
+
+        const existingForRequest =
+          request.sourceDigest === undefined
+            ? undefined
+            : (await readAllJobs()).find(
+                (job) =>
+                  job.request.storeId === request.storeId &&
+                  job.request.source === request.source &&
+                  job.request.sourceDigest === request.sourceDigest &&
+                  isActiveMissionJob(job),
+              );
+        const existingForDraft =
+          input.draftId === undefined
+            ? undefined
+            : (await readAllJobs()).find(
+                (job) => job.draftId === input.draftId && isActiveMissionJob(job),
+              );
+        const existing = existingForRequest ?? existingForDraft;
+        if (existing !== undefined && existing.missionId !== undefined) return existing;
+
+        const claim = MissionClaimJournalSchema.parse({
+          schemaVersion: "pragma.context-store-revision-mission-claim/v1",
+          missionId: input.missionId,
+          storeId: request.storeId,
+          jobId: existing?.id ?? randomUUID(),
+          draftId: existing?.draftId ?? input.draftId ?? randomUUID(),
+          request,
+          ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
+        });
+        await writeJsonAtomic(missionClaimPath(input.missionId, request.storeId), claim);
+        return await materializeMissionClaim(claim);
+      });
+    },
+
+    async getMissionActiveJob(input) {
+      return await withFileLock(missionClaimLockPath(input.missionId, input.storeId), async () => {
+        const claim = await readMissionClaim(input.missionId, input.storeId);
+        if (claim !== undefined) {
+          const job = await materializeMissionClaim(claim);
+          return isActiveMissionJob(job) ? job : undefined;
+        }
+        return await findMissionActiveJob(input.missionId, input.storeId);
+      });
+    },
+
+    async completeMissionClaimMount(input) {
+      await withFileLock(missionClaimLockPath(input.missionId, input.storeId), async () => {
+        const claim = await readMissionClaim(input.missionId, input.storeId);
+        if (claim === undefined) return;
+        if (claim.jobId !== input.jobId || claim.draftId !== input.draftId) {
+          throw invalidState("The mounted draft does not match the durable Mission claim.");
+        }
+        await rm(missionClaimPath(input.missionId, input.storeId), { force: true });
+      });
+    },
+
     async list(filter = {}) {
-      return (await readAllJobs())
-        .filter(
-          (job) =>
-            (filter.storeId === undefined || job.request.storeId === filter.storeId) &&
-            (filter.state === undefined || job.state === filter.state),
-        )
-        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const jobs = (await readAllJobs()).filter(
+        (job) =>
+          (filter.storeId === undefined || job.request.storeId === filter.storeId) &&
+          (filter.state === undefined || job.state === filter.state),
+      );
+      const reconciled: ContextStoreRevisionJob[] = [];
+      for (const job of jobs) {
+        try {
+          await recoverOrphanedClaim(job);
+          reconciled.push(job.missionId === undefined ? job : await readJob(job.id));
+        } catch (error) {
+          options.warn?.("A knowledge revision Mission claim could not be reconciled.", error);
+          reconciled.push(job);
+        }
+      }
+      return reconciled.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
 
     async get(jobId) {
-      return await readJob(jobId);
+      const job = await readJob(jobId);
+      await recoverOrphanedClaim(job);
+      return job.missionId === undefined ? job : await readJob(job.id);
     },
 
     async approve(jobId, expectedRevision) {
@@ -537,18 +912,57 @@ export function createContextStoreRevisionService(options: {
       return await createDraft(input.storeId, input.name);
     },
 
+    async listDraftsWithRecovery(filter = {}) {
+      const drafts = (await readAllDrafts()).filter(
+        (draft) =>
+          (filter.storeId === undefined || draft.storeId === filter.storeId) &&
+          (filter.state === undefined || draft.state === filter.state),
+      );
+      const reconciled: ContextStoreRevisionDraftListEntry[] = [];
+      for (const draft of drafts) {
+        try {
+          const recovery = await recoverOrphanedClaim({
+            draftId: draft.id,
+            missionId: draft.activeMissionId,
+          });
+          reconciled.push({
+            draft: draft.activeMissionId === undefined ? draft : await readDraft(draft.id),
+            ...(recovery === undefined ? {} : { recovery }),
+          });
+        } catch (error) {
+          options.warn?.("A knowledge revision draft claim could not be reconciled.", error);
+          reconciled.push({
+            draft,
+            recovery: {
+              code: "mission_unreadable",
+              message: "The linked Mission could not be reconciled. The draft was left unchanged.",
+            },
+          });
+        }
+      }
+      return reconciled.toSorted((left, right) =>
+        right.draft.updatedAt.localeCompare(left.draft.updatedAt),
+      );
+    },
+
     async listDrafts(filter = {}) {
-      return (await readAllDrafts())
-        .filter(
-          (draft) =>
-            (filter.storeId === undefined || draft.storeId === filter.storeId) &&
-            (filter.state === undefined || draft.state === filter.state),
-        )
-        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      return (await api.listDraftsWithRecovery(filter)).map((entry) => entry.draft);
+    },
+
+    async getDraftWithRecovery(draftId) {
+      const draft = await readDraft(draftId);
+      const recovery = await recoverOrphanedClaim({
+        draftId: draft.id,
+        missionId: draft.activeMissionId,
+      });
+      return {
+        draft: draft.activeMissionId === undefined ? draft : await readDraft(draft.id),
+        ...(recovery === undefined ? {} : { recovery }),
+      };
     },
 
     async getDraft(draftId) {
-      return await readDraft(draftId);
+      return (await api.getDraftWithRecovery(draftId)).draft;
     },
 
     async getDraftChangeSet(draftId) {
@@ -791,9 +1205,18 @@ export function createContextStoreRevisionService(options: {
       }));
     },
 
+    async releaseMissionClaim(input) {
+      await releaseMissionClaim(input);
+    },
+
+    async recoverMissionClaimReleases() {
+      await recoverMissionClaimReleases();
+    },
+
     async processPending() {
       if (processing !== undefined) return await processing;
       const run = (async () => {
+        await recoverMissionClaimReleases();
         const pausedDrafts = (await api.list()).filter(
           (job) =>
             job.state === "needs_attention" &&

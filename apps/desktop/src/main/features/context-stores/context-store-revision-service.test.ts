@@ -28,6 +28,7 @@ async function fixture(
         }) => Promise<void>)
       | undefined;
     readonly generator?: ContextStoreRevisionGenerator | undefined;
+    readonly isMissionAvailable?: ((missionId: string) => Promise<boolean>) | undefined;
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-store-revisions-"));
@@ -63,6 +64,7 @@ async function fixture(
         };
       },
     },
+    isMissionAvailable: options.isMissionAvailable,
     onRevisionDetached: options.onRevisionDetached,
   });
   const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
@@ -337,6 +339,206 @@ describe("context store sparse draft revisions", () => {
     const detachedDraft = await service.getDraft(submitted.id);
     expect(detachedDraft.state).toBe("pending_review");
     expect(detachedDraft.activeMissionId).toBeUndefined();
+  });
+
+  it("preserves an orphaned draft while releasing its missing Mission claim", async () => {
+    const { service, store } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Preserve the orphaned draft",
+      source: "user",
+    });
+    const missionId = "22222222-2222-4222-8222-222222222229";
+    await service.attachMission(job.id, missionId);
+    const resolved = await service.resolveDraft(job.draftId);
+    await resolved.store.addContext({ id: "items/orphan.md", content: "Keep this" });
+
+    await service.releaseMissionClaim({
+      draftId: job.draftId,
+      missionId,
+      jobId: job.id,
+      reason: "mission_orphaned",
+    });
+
+    const recoveredDraft = await service.getDraft(job.draftId);
+    expect(recoveredDraft).toMatchObject({
+      state: "editing",
+      overlay: { files: [{ id: "items/orphan.md", content: "Keep this" }] },
+    });
+    expect(recoveredDraft.activeMissionId).toBeUndefined();
+    const recoveredJob = await service.get(job.id);
+    expect(recoveredJob).toMatchObject({
+      state: "needs_attention",
+      error: { code: "mission_orphaned" },
+    });
+    expect(recoveredJob.missionId).toBeUndefined();
+  });
+
+  it("repairs a deleted Mission claim when its task is read", async () => {
+    const missionId = "22222222-2222-4222-8222-222222222238";
+    const { service, store } = await fixture({
+      isMissionAvailable: async (candidate) => candidate !== missionId,
+    });
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Keep the editable overlay after the Mission is removed",
+      source: "user",
+    });
+    await service.attachMission(job.id, missionId);
+    const draft = await service.resolveDraft(job.draftId);
+    await draft.store.addContext({ id: "items/keep.md", content: "Keep this overlay" });
+
+    const [recoveredJob] = await service.list();
+    expect(recoveredJob).toMatchObject({
+      id: job.id,
+      state: "needs_attention",
+      error: { code: "mission_orphaned" },
+    });
+    expect(recoveredJob?.missionId).toBeUndefined();
+    expect((await service.getDraft(job.draftId)).activeMissionId).toBeUndefined();
+    await expect(draft.store.readContext({ id: "items/keep.md" })).resolves.toMatchObject({
+      ok: true,
+      value: expect.objectContaining({ content: "Keep this overlay" }),
+    });
+  });
+
+  it("replays an interrupted Mission-claim release", async () => {
+    const { directory, service, store } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Recover the release journal",
+      source: "user",
+    });
+    const missionId = "22222222-2222-4222-8222-222222222230";
+    await service.attachMission(job.id, missionId);
+    const journals = join(directory, "state", "context-store-revisions", "claim-releases");
+    await mkdir(journals, { recursive: true });
+    await writeFile(
+      join(journals, `${job.draftId}-${job.id}-${missionId}.json`),
+      `${JSON.stringify({
+        schemaVersion: "pragma.context-store-revision-claim-release/v1",
+        draftId: job.draftId,
+        jobId: job.id,
+        missionId,
+        reason: "mission_orphaned",
+      })}\n`,
+    );
+
+    await service.recoverMissionClaimReleases();
+
+    expect((await service.getDraft(job.draftId)).activeMissionId).toBeUndefined();
+    const recoveredJob = await service.get(job.id);
+    expect(recoveredJob).toMatchObject({
+      state: "needs_attention",
+      error: { code: "mission_orphaned" },
+    });
+    expect(recoveredJob.missionId).toBeUndefined();
+  });
+
+  it("recovers one durable Mission claim after interruption before the Mission mount", async () => {
+    const { contextStores, directory, store, service } = await fixture();
+    const missionId = "22222222-2222-4222-8222-222222222231";
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      storeId: store.id,
+      prompt: "First attempt interrupted before mount",
+      source: "user" as const,
+    };
+
+    const claimed = await service.startForMission({ request, missionId });
+    const restarted = createContextStoreRevisionService({
+      statePath: join(directory, "state", "context-store-revisions"),
+      draftsPath: join(directory, "data", "context-store-drafts"),
+      contextStores,
+      generator: { generate: async () => undefined },
+    });
+
+    // A process restart must not create another task merely because the Mission mount was not written.
+    const recovered = await restarted.getMissionActiveJob({ missionId, storeId: store.id });
+    expect(recovered).toMatchObject({ id: claimed.id, draftId: claimed.draftId, missionId });
+    const retry = await restarted.startForMission({
+      missionId,
+      request: { ...request, prompt: "Different retry input must reuse the same claim" },
+    });
+    expect(retry.id).toBe(claimed.id);
+    await restarted.completeMissionClaimMount({
+      missionId,
+      storeId: store.id,
+      jobId: claimed.id,
+      draftId: claimed.draftId,
+    });
+    await expect(restarted.getMissionActiveJob({ missionId, storeId: store.id })).resolves.toMatchObject({
+      id: claimed.id,
+    });
+  });
+
+  it("serializes concurrent changed-input starts to one Mission claim", async () => {
+    const { service, store } = await fixture();
+    const missionId = "22222222-2222-4222-8222-222222222232";
+    const start = (prompt: string) =>
+      service.startForMission({
+        missionId,
+        request: {
+          schemaVersion: "pragma.context-store-revision-request/v1",
+          storeId: store.id,
+          prompt,
+          source: "user",
+        },
+      });
+
+    const [first, second] = await Promise.all([start("First prompt"), start("Second prompt")]);
+    expect(second).toMatchObject({ id: first.id, draftId: first.draftId, missionId });
+    await expect(service.list({ storeId: store.id })).resolves.toEqual([
+      expect.objectContaining({ id: first.id }),
+    ]);
+    await expect(service.listDrafts({ storeId: store.id })).resolves.toEqual([
+      expect.objectContaining({ id: first.draftId, activeMissionId: missionId }),
+    ]);
+  });
+
+  it("keeps unreadable linked Missions isolated to their individual draft records", async () => {
+    const missionId = "22222222-2222-4222-8222-222222222233";
+    const { service, store } = await fixture({
+      isMissionAvailable: async (candidate) => {
+        if (candidate === missionId) throw new Error("Mission storage is temporarily unreadable.");
+        return true;
+      },
+    });
+    const claimed = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "Keep the draft available for direct recovery",
+      source: "user",
+    });
+    await service.attachMission(claimed.id, missionId);
+    const healthy = await service.createDraft({ storeId: store.id, name: "Healthy" });
+
+    await expect(service.list()).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: claimed.id })]),
+    );
+    await expect(service.listDraftsWithRecovery()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          draft: expect.objectContaining({ id: claimed.draftId }),
+          recovery: expect.objectContaining({ code: "mission_unreadable" }),
+        }),
+        expect.objectContaining({ draft: expect.objectContaining({ id: healthy.id }) }),
+      ]),
+    );
+  });
+
+  it("continues listing healthy drafts when one draft record is malformed", async () => {
+    const { draftsPath, service, store } = await fixture();
+    const healthy = await service.createDraft({ storeId: store.id, name: "Healthy" });
+    await mkdir(join(draftsPath, "broken"), { recursive: true });
+    await writeFile(join(draftsPath, "broken", "draft.json"), "{invalid");
+
+    await expect(service.listDrafts()).resolves.toEqual([
+      expect.objectContaining({ id: healthy.id }),
+    ]);
   });
 
   it("does not revive submitted or terminal revisions when attaching a Mission", async () => {

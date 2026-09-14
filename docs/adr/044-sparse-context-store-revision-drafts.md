@@ -68,10 +68,12 @@ The mount remains the authority for ownership, later-Session indexing, recovery,
 existence alone never grants write access.
 
 One Store Revision Mission may claim drafts for multiple mounted knowledge bases. Claims and writable
-namespaces are unique per Store, and each draft is rebased and submitted independently. Starting a
-second active draft for the same Store is rejected. Managed background revision Missions use the same
-claimed draft mounts. The attached running revision job is the stable transition journal: startup
-recovery completes a missing Mission mount or detaches a job whose Mission no longer exists.
+namespaces are unique per Store, and each draft is rebased and submitted independently. A durable,
+per-(Mission, Store) claim journal is written before creating or attaching the draft and job, so
+concurrent starts with different inputs converge on one claim. Managed background revision Missions
+use the same claimed draft mounts. On the next access to that Mission target, recovery materializes
+the exact journaled job and draft, completes a missing mount, or releases a claim whose Mission no
+longer exists; startup never scans every Mission or revision job.
 
 Draft mounts are Host-owned and are never offered by Home, Mission settings, branches, or other user
 resource pickers. A Store Revision Agent can continue an existing draft by passing its `draftId` to
@@ -79,6 +81,14 @@ resource pickers. A Store Revision Agent can continue an existing draft by passi
 previous Mission has no active execution or queued prompt: the previous Mission restores its
 published Store mount, then the new Mission receives the same revision job and draft. Active work is
 never preempted, and transfer failure restores the previous claim when it is still unowned.
+
+Mission-claim release is journaled after the Mission deletion owner transaction commits, or when a
+missing Mission is recovered. This ordering never marks a live Mission's draft as deleted if owner
+deletion aborts. A release preserves the sparse overlay, clears both draft and job claims, and moves
+unfinished work to `needs_attention` with a stable `mission_deleted` or `mission_orphaned` error. It
+never automatically discards user changes or re-runs the revision. Draft and revision lists isolate
+unreadable records so one damaged or stale association cannot block healthy records or the recovery
+controls.
 
 Revision Missions retain the authoritative `system-store-revision` origin and are shown as managed
 automation Missions in Tasks. They retain their conversation and tool trace after completion. The
