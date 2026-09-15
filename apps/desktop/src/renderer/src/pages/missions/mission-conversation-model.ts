@@ -465,18 +465,47 @@ function mergeStaleRefreshMetadata(
 ): MissionChatSnapshot {
   const latestEntriesById = new Map(latest.entries.map((entry) => [entry.id, entry] as const));
   const currentEntryIds = new Set(current.entries.map((entry) => entry.id));
-  const entries = [
-    ...current.entries.map((entry) => {
-      const incoming = latestEntriesById.get(entry.id);
-      return incoming === undefined ? entry : preserveAppendOnlyEntryContent(entry, incoming);
-    }),
-    ...latest.entries.filter((entry) => !currentEntryIds.has(entry.id)),
-  ];
-  return mergeLatestChatPage(current, {
+  const entries = current.entries.map((entry) => {
+    const incoming = latestEntriesById.get(entry.id);
+    return incoming === undefined ? entry : preserveAppendOnlyEntryContent(entry, incoming);
+  });
+  // Keep the painted order, but recover missing history beside the shared entries in
+  // the older snapshot. Appending it would put earlier expert thinking after a live
+  // final answer. A stale suffix belongs before the newer live tail. Without a
+  // shared anchor, the turn sequence still keeps already-loaded older turns first.
+  const lastShared = latest.entries.findLast((entry) => currentEntryIds.has(entry.id));
+  let insertionIndex =
+    lastShared === undefined ? 0 : entries.findIndex((entry) => entry.id === lastShared.id) + 1;
+  for (let index = latest.entries.length - 1; index >= 0; index -= 1) {
+    const entry = latest.entries[index]!;
+    if (currentEntryIds.has(entry.id)) {
+      insertionIndex = entries.findIndex((candidate) => candidate.id === entry.id);
+    } else {
+      if (lastShared === undefined && entry.timelineSequence !== undefined) {
+        const sequence = entry.timelineSequence;
+        insertionIndex =
+          entries.findLastIndex(
+            (candidate) =>
+              candidate.timelineSequence !== undefined && candidate.timelineSequence < sequence,
+          ) + 1;
+      }
+      entries.splice(insertionIndex, 0, entry);
+    }
+  }
+  const merged = mergeLatestChatPage(current, {
     ...latest,
     revision: current.revision,
     entries,
   });
+  return {
+    ...merged,
+    // This list already retains all current entries. The degraded-history fallback
+    // must not prepend the old list again and undo the recovered ordering.
+    entries,
+    // A stale latest-page response cannot replace the cursor for history that the
+    // user has already loaded. Use its page only when it actually extends the front.
+    page: entries[0]?.id === current.entries[0]?.id ? current.page : merged.page,
+  };
 }
 
 function preserveAppendOnlyEntryContent(

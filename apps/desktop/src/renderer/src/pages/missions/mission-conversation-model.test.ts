@@ -380,6 +380,121 @@ describe("mission conversation model", () => {
     expect(merged.snapshot.entries[1]).toMatchObject({ content: "answer" });
   });
 
+  it.each([
+    { queued: false, degraded: false },
+    { queued: true, degraded: false },
+    { queued: false, degraded: true },
+  ])(
+    "inserts recovered expert thinking before a shared answer ($queued, $degraded)",
+    ({ queued, degraded }) => {
+      const base = streamingSnapshot("Final answer", 8);
+      const answer = base.entries[0]!;
+      if (answer.kind !== "assistant") throw new Error("Expected an assistant fixture.");
+      const thinking = [0, 1, 2].map((index) => ({
+        ...answer,
+        id: `research-thinking-${index}`,
+        invocationId: "00000000-0000-4000-8000-000000000003",
+        kind: "thinking" as const,
+        content: `Research ${index}`,
+        streaming: false,
+      }));
+      const stale: MissionChatSnapshot = {
+        ...base,
+        revision: 7,
+        entries: [...thinking, { ...answer, content: "Final" }],
+        ...(degraded
+          ? {
+              syncIssues: [
+                {
+                  code: "execution_state_unavailable" as const,
+                  section: "history" as const,
+                  retryable: true,
+                },
+              ],
+            }
+          : {}),
+      };
+      const pending: MissionChatUpdate[] = queued
+        ? [
+            {
+              missionId: base.missionId,
+              revision: 9,
+              kind: "patch",
+              patches: [{ type: "entry.append", entryId: answer.id, field: "content", delta: "!" }],
+            },
+          ]
+        : [];
+      const result = reconcileMissionChatRefresh(base, stale, pending);
+      expect(result.snapshot.entries.map((entry) => entry.id)).toEqual([
+        ...thinking.map((entry) => entry.id),
+        answer.id,
+      ]);
+      expect(result.snapshot.entries.at(-1)).toMatchObject({
+        content: queued ? "Final answer!" : "Final answer",
+      });
+    },
+  );
+
+  it("keeps a recovered stale suffix before newer live messages", () => {
+    const base = streamingSnapshot("Final answer", 8);
+    const answer = base.entries[0]!;
+    if (answer.kind !== "assistant") throw new Error("Expected an assistant fixture.");
+    const first = { ...answer, id: "first", content: "First" };
+    const missing = { ...answer, id: "missing", kind: "thinking" as const, content: "Research" };
+    const current = { ...base, entries: [first, answer] };
+    const stale = { ...base, revision: 7, entries: [first, missing] };
+    expect(
+      reconcileMissionChatRefresh(current, stale, []).snapshot.entries.map((entry) => entry.id),
+    ).toEqual(["first", "missing", "answer"]);
+    expect(
+      reconcileMissionChatRefresh(
+        base,
+        { ...stale, entries: [first, missing] },
+        [],
+      ).snapshot.entries.map((entry) => entry.id),
+    ).toEqual(["first", "missing", "answer"]);
+  });
+
+  it("preserves loaded history and its cursor when a stale latest page returns", () => {
+    const base = streamingSnapshot("Answer", 8);
+    const answer = { ...base.entries[0]!, timelineSequence: 3 };
+    const earlier = { ...answer, id: "earlier", timelineSequence: 1 };
+    const current = {
+      ...base,
+      entries: [earlier, answer],
+      page: {
+        oldestSequence: 1,
+        newestSequence: 3,
+        nextBeforeCursor: "older-page",
+      },
+    };
+    const stale = {
+      ...base,
+      revision: 7,
+      entries: [answer],
+      page: {
+        oldestSequence: 3,
+        newestSequence: 3,
+        nextBeforeCursor: "latest-page",
+      },
+    };
+    const merged = reconcileMissionChatRefresh(current, stale, []).snapshot;
+    expect(merged.entries.map((entry) => entry.id)).toEqual(["earlier", "answer"]);
+    expect(merged.page).toEqual(current.page);
+  });
+
+  it("places a disjoint recovered turn between loaded older history and live output", () => {
+    const base = streamingSnapshot("Answer", 8);
+    const answer = { ...base.entries[0]!, timelineSequence: 3 };
+    const earlier = { ...answer, id: "earlier", timelineSequence: 1 };
+    const recovered = { ...answer, id: "recovered", timelineSequence: 2 };
+    const current = { ...base, entries: [earlier, answer] };
+    const stale = { ...base, revision: 7, entries: [recovered] };
+    expect(
+      reconcileMissionChatRefresh(current, stale, []).snapshot.entries.map((entry) => entry.id),
+    ).toEqual(["earlier", "recovered", "answer"]);
+  });
+
   it("hides only synthetic interrupted execution fallbacks from the conversation", () => {
     const createdAt = "2026-07-11T00:00:00.000Z";
     const executionId = "00000000-0000-4000-8000-000000000010";
