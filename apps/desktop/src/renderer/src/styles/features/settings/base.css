@@ -230,10 +230,14 @@
 }
 
 .agent-context-window-controls {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  flex: 0 1 280px;
+  gap: 4px;
+}
+
+.agent-context-window-hint {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
 }
 
 .agent-context-window-input {

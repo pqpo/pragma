@@ -52,8 +52,13 @@ export const settings = {
     agentContextWindowDescription:
       "Default working-context budget for Pi Agents. A model with a smaller hard limit always uses that smaller limit. Changes apply when a Pi session is opened or resumed.",
     agentContextWindowUnit: "tokens",
-    agentContextWindowSave: "Save window",
-    agentContextWindowInvalid: "Enter a positive whole number of tokens.",
+    agentContextWindowHint: "Minimum {{min}} tokens. Saves automatically when you leave the field.",
+    agentContextWindowInvalid: "Enter a whole number of at least {{min}}.",
+    agentContextWindowStatus: {
+      saving: "Saving…",
+      saved: "Saved automatically",
+      error: "Could not save. Press Enter or leave the field to retry.",
+    },
     settingsMigrationError:
       "Desktop settings could not be upgraded. Your original settings were retained; restore a settings backup or update Pragma, then restart.",
     settingsVersionTooNew:

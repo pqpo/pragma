@@ -15,6 +15,9 @@ import { SelectMenu, type SelectMenuOption } from "../../components/SelectMenu.t
 import { desktopSettingsErrorKey } from "../../lib/desktop-settings-errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
+// UI editing limit; existing persisted settings remain readable.
+const MIN_AGENT_CONTEXT_WINDOW_TOKENS = 64_000;
+
 const languageOptions: readonly {
   readonly value: DesktopLocalePreference;
   readonly label: string;
@@ -38,7 +41,10 @@ export function GeneralSettingsFragment() {
   const [agentContextWindowTouched, setAgentContextWindowTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
-  const agentContextWindowInputRef = useRef<HTMLInputElement>(null);
+  const agentContextWindowSavePending = useRef(false);
+  const [agentContextWindowSaveState, setAgentContextWindowSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
 
   useEffect(() => {
     let cancelled = false;
@@ -129,13 +135,12 @@ export function GeneralSettingsFragment() {
   };
 
   const updateAgentContextWindow = async () => {
-    if (settings === undefined) return;
+    if (settings === undefined || agentContextWindowSavePending.current) return;
     setAgentContextWindowTouched(true);
-    if (!agentContextWindowIsValid) {
-      agentContextWindowInputRef.current?.focus();
-      return;
-    }
+    if (!agentContextWindowIsValid) return;
     if (agentContextWindow === settings.agentContextWindow) return;
+    agentContextWindowSavePending.current = true;
+    setAgentContextWindowSaveState("saving");
     setSaving(true);
     setError(undefined);
     try {
@@ -143,9 +148,12 @@ export function GeneralSettingsFragment() {
       setSettings(snapshot);
       setAgentContextWindowDraft(String(snapshot.agentContextWindow));
       setAgentContextWindowTouched(false);
+      setAgentContextWindowSaveState("saved");
     } catch (cause) {
+      setAgentContextWindowSaveState("error");
       setError(t(`general.${desktopSettingsErrorKey(cause)}`, { ns: "settings" }));
     } finally {
+      agentContextWindowSavePending.current = false;
       setSaving(false);
     }
   };
@@ -207,10 +215,14 @@ export function GeneralSettingsFragment() {
   const workspaceName = workspace.split(/[\\/]/).at(-1);
   const agentContextWindow = Number(agentContextWindowDraft);
   const agentContextWindowIsValid =
-    Number.isSafeInteger(agentContextWindow) && agentContextWindow > 0;
+    Number.isSafeInteger(agentContextWindow) &&
+    agentContextWindow >= MIN_AGENT_CONTEXT_WINDOW_TOKENS;
   const agentContextWindowError =
     agentContextWindowTouched && !agentContextWindowIsValid
-      ? t("general.agentContextWindowInvalid", { ns: "settings" })
+      ? t("general.agentContextWindowInvalid", {
+          ns: "settings",
+          min: MIN_AGENT_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US"),
+        })
       : undefined;
   const selectedRevisionRuntime = runtimes.find((runtime) => runtime.id === revisionRuntimeId);
   const selectedEvaluationRuntime = runtimes.find((runtime) => runtime.id === evaluationRuntimeId);
@@ -314,30 +326,34 @@ export function GeneralSettingsFragment() {
             <strong>{t("general.agentContextWindow", { ns: "settings" })}</strong>
             <span>{t("general.agentContextWindowDescription", { ns: "settings" })}</span>
           </span>
-          <form
-            className="agent-context-window-controls"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void updateAgentContextWindow();
-            }}
-          >
+          <div className="agent-context-window-controls">
             <div className="agent-context-window-input">
               <div className="agent-context-window-field">
                 <input
-                  ref={agentContextWindowInputRef}
                   aria-label={t("general.agentContextWindow", { ns: "settings" })}
                   aria-describedby={
-                    agentContextWindowError === undefined ? undefined : "agent-context-window-error"
+                    agentContextWindowError === undefined
+                      ? "agent-context-window-hint"
+                      : "agent-context-window-error agent-context-window-hint"
                   }
                   aria-invalid={agentContextWindowError === undefined ? undefined : true}
                   type="number"
-                  min={1}
+                  min={MIN_AGENT_CONTEXT_WINDOW_TOKENS}
                   step={1}
                   inputMode="numeric"
                   value={agentContextWindowDraft}
                   disabled={settings === undefined || saving}
-                  onBlur={() => setAgentContextWindowTouched(true)}
-                  onChange={(event) => setAgentContextWindowDraft(event.target.value)}
+                  onBlur={() => void updateAgentContextWindow()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      void updateAgentContextWindow();
+                    }
+                  }}
+                  onChange={(event) => {
+                    setAgentContextWindowDraft(event.target.value);
+                    setAgentContextWindowSaveState("idle");
+                  }}
                 />
                 <span>{t("general.agentContextWindowUnit", { ns: "settings" })}</span>
               </div>
@@ -351,19 +367,27 @@ export function GeneralSettingsFragment() {
                 </span>
               )}
             </div>
-            <button
-              className="secondary-button"
-              type="submit"
-              disabled={
-                settings === undefined ||
-                saving ||
-                !agentContextWindowIsValid ||
-                agentContextWindow === settings.agentContextWindow
-              }
-            >
-              {t("general.agentContextWindowSave", { ns: "settings" })}
-            </button>
-          </form>
+            <span id="agent-context-window-hint" className="agent-context-window-hint">
+              {t("general.agentContextWindowHint", {
+                ns: "settings",
+                min: MIN_AGENT_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US"),
+              })}
+            </span>
+            {agentContextWindowSaveState === "idle" ? null : (
+              <span
+                className={
+                  agentContextWindowSaveState === "error"
+                    ? "agent-context-window-error"
+                    : "agent-context-window-hint"
+                }
+                role={agentContextWindowSaveState === "error" ? "alert" : "status"}
+              >
+                {t(`general.agentContextWindowStatus.${agentContextWindowSaveState}`, {
+                  ns: "settings",
+                })}
+              </span>
+            )}
+          </div>
         </div>
         <div className="setting-row general-workspace-setting">
           <span className="setting-copy">

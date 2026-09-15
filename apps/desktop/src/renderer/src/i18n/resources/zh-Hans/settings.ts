@@ -51,8 +51,13 @@ export const settings = {
     agentContextWindowDescription:
       "Pi Agent 的默认工作上下文预算。模型硬上限更小时始终以该更小值为准。更改会在 Pi 会话新建或恢复时生效。",
     agentContextWindowUnit: "tokens",
-    agentContextWindowSave: "保存窗口",
-    agentContextWindowInvalid: "请输入正整数 Token 数。",
+    agentContextWindowHint: "至少 {{min}} tokens，离开输入框后自动保存。",
+    agentContextWindowInvalid: "请输入不小于 {{min}} 的整数。",
+    agentContextWindowStatus: {
+      saving: "正在保存…",
+      saved: "已自动保存",
+      error: "保存失败，请按 Enter 或离开输入框重试。",
+    },
     settingsMigrationError:
       "无法升级桌面设置。原设置已保留；请从设置备份恢复或更新 Pragma，然后重新启动。",
     settingsVersionTooNew:
