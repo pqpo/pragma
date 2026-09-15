@@ -54,6 +54,38 @@ describe("Mission owner scope", () => {
     );
   });
 
+  it("keeps a late operation bound to its original guard after force revocation", async () => {
+    const originalGuard = {
+      claimId: "11111111-1111-4111-8111-111111111111",
+      fencingToken: "1",
+    };
+    const controller = {
+      claim: vi.fn(async () => ({
+        ...originalGuard,
+        acquiredAt: "2026-08-27T00:00:00.000Z",
+        renewedAt: "2026-08-27T00:00:00.000Z",
+        expiresAt: "2026-08-27T00:01:00.000Z",
+      })),
+      revoke: vi.fn(async () => ({
+        ...originalGuard,
+        acquiredAt: "2026-08-27T00:00:00.000Z",
+        renewedAt: "2026-08-27T00:00:00.000Z",
+        expiresAt: "2026-08-27T00:01:00.000Z",
+      })),
+    } as unknown as MissionControllerStore;
+    const scope = createMissionOwnerScope({ controller, leaseMs: 60_000 });
+    const missionId = "22222222-2222-4222-8222-222222222222";
+    const guard = await scope.acquire(missionId);
+
+    await scope.runWithGuard(missionId, guard, async () => {
+      await scope.forceRevoke(missionId);
+      await expect(scope.acquire(missionId)).resolves.toEqual(originalGuard);
+    });
+
+    expect(controller.claim).toHaveBeenCalledOnce();
+    expect(controller.revoke).toHaveBeenCalledOnce();
+  });
+
   it("rejects attaching an Inbox consumer after an owner was acquired without command ingress", async () => {
     const controller = {
       claim: vi.fn(async () => ({

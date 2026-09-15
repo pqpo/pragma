@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import { createIntegrationError } from "@pragma/shared/integration";
@@ -12,8 +13,19 @@ import type {
 export interface MissionOwnerScope {
   bindConsumer(consumer: MissionCommandConsumer): void;
   acquire(missionId: string, claimId?: string): Promise<MissionControllerGuard>;
+  /**
+   * Binds semantic writes performed by one command/run to the guard that
+   * started it. A fenced late task must never acquire a successor lease.
+   */
+  runWithGuard<T>(
+    missionId: string,
+    guard: MissionControllerGuard,
+    operation: () => Promise<T>,
+  ): Promise<T>;
   currentGuard(missionId: string): MissionControllerGuard | undefined;
   release(missionId: string): Promise<void>;
+  /** Explicitly fences the current owner, including a live owner in another process. */
+  forceRevoke(missionId: string): Promise<void>;
   releaseAfterLowerLevel(missionId: string, releaseLowerLevel: () => Promise<void>): Promise<void>;
   /**
    * Deletes an owned aggregate after its owner graph has been journaled.
@@ -69,6 +81,10 @@ export function createMissionOwnerScope(options: {
   const pollers = new Map<string, { stop(): Promise<void> }>();
   const acquiring = new Map<string, Promise<MissionControllerGuard>>();
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const operationGuard = new AsyncLocalStorage<{
+    readonly missionId: string;
+    readonly guard: MissionControllerGuard;
+  }>();
   let boundConsumer: MissionCommandConsumer | undefined;
 
   const cancelRecovery = (missionId: string): void => {
@@ -263,7 +279,12 @@ export function createMissionOwnerScope(options: {
       const current = active.get(missionId);
       return current === undefined || current.stopped ? undefined : current.guard;
     },
+    async runWithGuard(missionId, guard, operation) {
+      return await operationGuard.run({ missionId, guard }, operation);
+    },
     async acquire(missionId, claimId) {
+      const scoped = operationGuard.getStore();
+      if (scoped?.missionId === missionId) return scoped.guard;
       cancelRecovery(missionId);
       const existing = active.get(missionId);
       if (existing !== undefined && !existing.stopped) {
@@ -326,6 +347,11 @@ export function createMissionOwnerScope(options: {
       } finally {
         if (active.get(missionId) === current) active.delete(missionId);
       }
+    },
+    async forceRevoke(missionId) {
+      cancelRecovery(missionId);
+      await stopWithoutCallback(missionId, true);
+      await options.controller.revoke({ missionId });
     },
     async releaseAfterLowerLevel(missionId, releaseLowerLevel) {
       cancelRecovery(missionId);

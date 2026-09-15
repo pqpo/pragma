@@ -277,13 +277,13 @@ it(
     const interrupted = child(
       root,
       "apply-then-hang",
-      `${target}|00000000-0000-4000-8000-000000000407|50|${deliveriesPath}|${sideEffectPath}`,
+      `${target}|00000000-0000-4000-8000-000000000407|500|${deliveriesPath}|${sideEffectPath}`,
     );
     await expect(waitForLine(interrupted)).resolves.toBe("side-effect");
     killProcessTree(interrupted, "SIGKILL");
     await waitForExit(interrupted, true);
 
-    await new Promise((resolve) => setTimeout(resolve, 70));
+    await new Promise((resolve) => setTimeout(resolve, 550));
     const recovered = child(
       root,
       "apply-once",

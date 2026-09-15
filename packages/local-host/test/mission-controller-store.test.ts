@@ -173,6 +173,62 @@ describe("MissionControllerStore", () => {
     expect(apply.mock.calls.map(([input]) => input.command.kind)).toEqual(["send", "interrupt"]);
   });
 
+  it("times out a stuck consumer, preserves applying state, and lets a new owner reconcile", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionControllerStore({
+      missionsPath: join(root, "missions"),
+      commandApplyTimeoutMs: 20,
+    });
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000035",
+      leaseMs: 10_000,
+    });
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000036");
+    await store.appendCommand(command);
+    let observedSignal: AbortSignal | undefined;
+
+    await expect(
+      store.processNext({
+        missionId,
+        guard,
+        consumer: {
+          apply: async ({ signal }) => {
+            observedSignal = signal;
+            return await new Promise<never>(() => undefined);
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+
+    expect(observedSignal?.aborted).toBe(true);
+    await expect(
+      store.getOperation({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "applying" });
+    await expect(
+      store.getCommand({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "accepted" });
+    await expect(store.assertWriteGuard({ missionId, guard })).rejects.toMatchObject({
+      code: "MISSION_FENCING_REJECTED",
+    });
+    const takeover = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000037",
+      leaseMs: 10_000,
+    });
+    expect(takeover.fencingToken).toBe("2");
+    await expect(
+      store.processNext({
+        missionId,
+        guard: takeover,
+        consumer: { apply: async () => ({ result: { reconciled: true } }) },
+      }),
+    ).resolves.toMatchObject({ request: { requestId: command.request.requestId } });
+    await expect(
+      store.getOperation({ missionId, requestId: command.request.requestId }),
+    ).resolves.toMatchObject({ state: "applied", result: { reconciled: true } });
+  });
+
   it("replays an interrupted v1 command Inbox upgrade and keeps an exact backup", async () => {
     const root = await temporaryRoot();
     const missionsPath = join(root, "missions");

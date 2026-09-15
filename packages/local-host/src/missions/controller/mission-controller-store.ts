@@ -162,6 +162,8 @@ export interface MissionCommandConsumer {
   apply(input: {
     readonly command: MissionCommand;
     readonly guard: MissionControllerGuard;
+    readonly signal: AbortSignal;
+    readonly deadlineAt: string;
   }): Promise<MissionCommandApplyResult>;
   /**
    * Schedules lower-level owner settlement after the durable command outcome
@@ -194,6 +196,12 @@ export interface MissionControllerStore {
     readonly missionId: string;
     readonly guard: MissionControllerGuard;
   }): Promise<void>;
+  /**
+   * Explicit recovery escape hatch. Revoking a lease fences every late write
+   * from the previous owner; callers must only use it for a user-confirmed
+   * recovery/termination action or after proving that the owner is orphaned.
+   */
+  revoke(input: { readonly missionId: string }): Promise<MissionControllerLease | undefined>;
   releaseAfterLowerLevel(input: {
     readonly missionId: string;
     readonly guard: MissionControllerGuard;
@@ -356,11 +364,17 @@ export function createMissionControllerStore(options: {
   readonly missionPath?: ((missionId: string) => string) | undefined;
   readonly clock?: MissionControlClock;
   readonly retention?: MissionRetentionOptions | undefined;
+  /** Maximum time a command consumer may hold the Inbox poller. */
+  readonly commandApplyTimeoutMs?: number | undefined;
   /** Test-only deterministic interruption hook for durable journal boundaries. */
   readonly onJournalPhase?:
     ((phase: MissionControllerJournalPhase) => Promise<void> | void) | undefined;
 }): MissionControllerStore {
   const clock = options.clock ?? { now: () => new Date() };
+  const commandApplyTimeoutMs = options.commandApplyTimeoutMs ?? 45_000;
+  if (!Number.isFinite(commandApplyTimeoutMs) || commandApplyTimeoutMs <= 0) {
+    throw new Error("Mission command apply timeout must be a finite positive number.");
+  }
   const retentionPolicy: MissionRetentionPolicy = resolveMissionRetentionPolicy(options.retention);
   const missionDirectory = (missionId: string) =>
     join(options.missionPath?.(missionId) ?? join(options.missionsPath, missionId), "local-host");
@@ -1080,6 +1094,18 @@ export function createMissionControllerStore(options: {
         await writeState(input.missionId, MissionAggregateStateSchema.parse(next));
       });
     },
+    async revoke(input) {
+      return await withAggregateLock(input.missionId, async () => {
+        await recoverTransactions(input.missionId);
+        const state = await readState(input.missionId);
+        const previous = state.lease;
+        if (previous === undefined) return undefined;
+        const next = { ...state };
+        delete next.lease;
+        await writeState(input.missionId, MissionAggregateStateSchema.parse(next));
+        return previous;
+      });
+    },
     async releaseAfterLowerLevel(input) {
       await input.releaseLowerLevel();
       await this.release({ missionId: input.missionId, guard: input.guard });
@@ -1440,9 +1466,47 @@ export function createMissionControllerStore(options: {
           }
         | undefined;
       try {
-        if (selected.kind === "steer" || selected.kind === "queue.steer")
-          await input.consumer.validateStrictTarget?.({ command: selected, guard: input.guard });
-        const applied = await input.consumer.apply({ command: selected, guard: input.guard });
+        const abort = new AbortController();
+        const deadlineAt = new Date(clock.now().getTime() + commandApplyTimeoutMs).toISOString();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedApplication = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            abort.abort("Mission command application timed out.");
+            reject(
+              createIntegrationError({
+                code: "COMMAND_RESULT_TIMEOUT",
+                category: "conflict",
+                message: `Mission command ${selected.commandId} did not settle before its deadline.`,
+                details: {
+                  missionId: input.missionId,
+                  commandId: selected.commandId,
+                  requestId: selected.request.requestId,
+                  deadlineAt,
+                },
+              }),
+            );
+          }, commandApplyTimeoutMs);
+          timer.unref();
+        });
+        const application = Promise.resolve().then(async () => {
+          if (selected.kind === "steer" || selected.kind === "queue.steer")
+            await input.consumer.validateStrictTarget?.({
+              command: selected,
+              guard: input.guard,
+            });
+          return await input.consumer.apply({
+            command: selected,
+            guard: input.guard,
+            signal: abort.signal,
+            deadlineAt,
+          });
+        });
+        // Always observe a late consumer failure after the timeout race has
+        // fenced its owner; it must never become an unhandled rejection.
+        void application.catch(() => undefined);
+        const applied = await Promise.race([application, timedApplication]).finally(() => {
+          if (timer !== undefined) clearTimeout(timer);
+        });
         let recorded = false;
         await withAggregateLock(input.missionId, async () => {
           await recoverTransactions(input.missionId);
@@ -1478,8 +1542,30 @@ export function createMissionControllerStore(options: {
         if (recorded) outcome = { state: "applied", result: applied.result };
       } catch (error) {
         if (error instanceof MissionSemanticWritePendingError) throw error;
-        let recorded = false;
         const integrationError = toIntegrationError(error);
+        if (integrationError.code === "COMMAND_RESULT_TIMEOUT") {
+          // The lower-level side effect may still be live when a consumer
+          // ignores AbortSignal. Keep the durable command accepted/applying
+          // so a successor owner can reconcile it idempotently. Releasing the
+          // exact guard is the only state transition here; publishing a false
+          // rejected outcome would make safe recovery impossible.
+          try {
+            await this.release({ missionId: input.missionId, guard: input.guard });
+          } catch (releaseError) {
+            if (!isFencingError(releaseError)) throw releaseError;
+          }
+          throw createIntegrationError({
+            code: "MISSION_FENCING_REJECTED",
+            category: "conflict",
+            message: "The Mission owner was fenced after a command application timeout.",
+            details: {
+              missionId: input.missionId,
+              requestId: selected.request.requestId,
+              causeCode: integrationError.code,
+            },
+          });
+        }
+        let recorded = false;
         await withAggregateLock(input.missionId, async () => {
           await recoverTransactions(input.missionId);
           const state = await readState(input.missionId);
