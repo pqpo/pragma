@@ -378,6 +378,19 @@
   opacity: 0.65;
 }
 
+.mission-recovery-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.mission-recovery-actions .primary-button,
+.mission-recovery-actions .danger-button {
+  min-height: 32px;
+  padding-inline: 10px;
+}
+
 .mission-detail-tabs {
   display: flex;
   flex: none;

@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   Mission,
   MissionChatSnapshot,
@@ -23,6 +23,7 @@ import {
   MissionChatEntryView,
   MissionChatSkeleton,
   MISSION_CHAT_PAGE_SIZE,
+  MISSION_RECOVERY_WATCHDOG_MS,
   MISSION_WORK_CONVERSATION_PAGE_SIZE,
   MISSION_WORK_RECORD_PAGE_SIZE,
   MissionDetailFragment,
@@ -47,6 +48,7 @@ import {
   resolveMissionComposerAction,
   unavailableMcpToolName,
   upsertMissionSummary,
+  withMissionUiWatchdog,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
 import { resolveMissionHumanResponseAttempt } from "./use-mission-human-interaction.ts";
@@ -742,6 +744,7 @@ describe("MissionDetailFragment", () => {
   });
 
   it("keeps the composer loading until an active execution becomes interruptible", () => {
+    expect(MISSION_RECOVERY_WATCHDOG_MS).toBe(60_000);
     expect(
       resolveMissionComposerAction({
         draft: "",
@@ -772,6 +775,29 @@ describe("MissionDetailFragment", () => {
         hasPendingQueuedMessage: false,
       }),
     ).toBe("interrupt");
+    expect(
+      resolveMissionComposerAction({
+        draft: "",
+        sending: false,
+        executionActive: true,
+        interruptible: false,
+        recoveryAvailable: true,
+        awaitingRequest: false,
+        hasPendingQueuedMessage: false,
+      }),
+    ).toBe("recover");
+  });
+
+  it("releases UI loading after the 60-second watchdog while work remains unsettled", async () => {
+    vi.useFakeTimers();
+    try {
+      const watched = withMissionUiWatchdog(new Promise<never>(() => undefined));
+      const rejected = expect(watched).rejects.toThrow("60-second UI wait limit");
+      await vi.advanceTimersByTimeAsync(MISSION_RECOVERY_WATCHDOG_MS);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders loading instead of an inactive interrupt control while connecting", () => {

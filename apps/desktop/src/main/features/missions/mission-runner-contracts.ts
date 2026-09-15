@@ -64,6 +64,7 @@ export interface MissionRunner {
   refreshMemoryContextBindings(): Promise<void>;
   get(id: string): Promise<Mission>;
   run(id: string): Promise<Mission>;
+  recover(id: string, expectedExecutionId?: string): Promise<Mission>;
   startLocalHostRun(input: {
     readonly request: LocalHostRunRequest;
     readonly executor: ResolvedRunExecutor;
@@ -131,6 +132,7 @@ export interface MissionRunner {
     listener: (notification: MissionCommandOutcomeNotification) => void,
   ): () => void;
   interrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
+  forceInterrupt(id: string, expectedExecutionId?: string): Promise<Mission>;
   stopLocalController(id: string): Promise<void>;
   getCanonicalStrictTarget(
     id: string,

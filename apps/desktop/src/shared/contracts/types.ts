@@ -182,6 +182,7 @@ import {
   MissionContextMountSchema,
   MissionContextWindowStateSchema,
   MissionHumanInteractionSchema,
+  MissionExecutionActionSchema,
   MissionLifecycleStatusSchema,
   MissionModelOptionsSchema,
   MissionAttachmentsManifestSchema,
@@ -597,6 +598,7 @@ export type PickMissionAttachmentsResult = z.infer<typeof PickMissionAttachments
 export type DiscardMissionAttachmentDrafts = z.infer<typeof DiscardMissionAttachmentDraftsSchema>;
 export type StageMissionClipboardImage = z.infer<typeof StageMissionClipboardImageSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
+export type MissionExecutionAction = z.infer<typeof MissionExecutionActionSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type CreateMissionBranch = z.infer<typeof CreateMissionBranchSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;

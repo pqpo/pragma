@@ -21,6 +21,7 @@ import {
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
   MissionActionSchema,
+  MissionExecutionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionContextCompactionResultSchema,
@@ -183,6 +184,10 @@ export const missionsApi = {
     ),
   runMission: async (id) =>
     MissionSchema.parse(await invokeMutation("missions:run", MissionActionSchema.parse({ id }))),
+  recoverMission: async (input) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:recover", MissionExecutionActionSchema.parse(input)),
+    ),
   sendMissionMessage: async (input) =>
     MissionCommandReceiptSchema.parse(
       await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
@@ -219,9 +224,13 @@ export const missionsApi = {
     ipcRenderer.on("missions:chat:updated", handler);
     return () => ipcRenderer.removeListener("missions:chat:updated", handler);
   },
-  interruptMission: async (id) =>
+  interruptMission: async (input) =>
     MissionSchema.parse(
-      await invokeMutation("missions:interrupt", MissionActionSchema.parse({ id })),
+      await invokeMutation("missions:interrupt", MissionExecutionActionSchema.parse(input)),
+    ),
+  forceInterruptMission: async (input) =>
+    MissionSchema.parse(
+      await invokeMutation("missions:interrupt:force", MissionExecutionActionSchema.parse(input)),
     ),
   resumeMissionQueue: async (id) =>
     MissionSchema.parse(
@@ -294,6 +303,7 @@ export const missionsApi = {
   | "updateMissionOptions"
   | "updateMissionContextMounts"
   | "runMission"
+  | "recoverMission"
   | "sendMissionMessage"
   | "trySteerQueuedMissionMessage"
   | "removeQueuedMissionMessage"
@@ -302,6 +312,7 @@ export const missionsApi = {
   | "subscribeMissionChatUpdates"
   | "subscribeMissionChat"
   | "interruptMission"
+  | "forceInterruptMission"
   | "resumeMissionQueue"
   | "getMissionWork"
   | "getMissionWorkConversation"

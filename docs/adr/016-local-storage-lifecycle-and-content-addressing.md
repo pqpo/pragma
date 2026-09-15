@@ -40,6 +40,10 @@ session isolation rules.
 Terminal Executions materialize their bounded Mission-visible projection before Canonical Event data moves to bounded
 diagnostic archives. Mission deletion is an owner-graph transaction: it writes a stable journal and moves uniquely
 owned ExpertSession, Execution, Runtime Session, ownership claim and archive data to managed trash.
+Desktop persists a versioned, owner-validated deletion intent inside the Mission owner directory before waiting for
+Runtime and observer quiescence. If the process exits before the owner-graph move journal is created, the Mission is
+reported as `deletion_pending` and the same explicit delete action resumes the bounded cleanup without losing the
+operator's intent.
 
 Completed trash entries are retained until the first configured age, total-size or entry-count bound is reached.
 Incomplete or invalid deletion journals are retained for recovery. Desktop performs targeted maintenance after the

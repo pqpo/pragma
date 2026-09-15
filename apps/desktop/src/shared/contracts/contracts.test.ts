@@ -19,6 +19,7 @@ import {
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
+  MissionExecutionActionSchema,
   MissionContextMountsSchema,
   MissionModelOptionsSchema,
   MissionQueuePromptActionSchema,
@@ -822,6 +823,19 @@ describe("capability delete contracts", () => {
 });
 
 describe("mission contracts", () => {
+  it("requires recovery and interruption actions to fence an exact execution", () => {
+    const action = {
+      id: "00000000-0000-4000-8000-000000000001",
+      requestId: "00000000-0000-4000-8000-000000000002",
+      expectedExecutionId: "00000000-0000-4000-8000-000000000003",
+    };
+    expect(MissionExecutionActionSchema.parse(action)).toEqual(action);
+    expect(
+      MissionExecutionActionSchema.safeParse({ id: action.id, requestId: action.requestId })
+        .success,
+    ).toBe(false);
+  });
+
   it("requires optimistic source identifiers when creating a Mission branch", () => {
     const input = {
       sourceMissionId: "00000000-0000-4000-8000-000000000001",
@@ -1094,6 +1108,12 @@ describe("mission contracts", () => {
           id: "00000000-0000-4000-8000-000000000010",
           status: "running",
           interruptible: true,
+        },
+        controlHealth: {
+          state: "healthy_active",
+          executionId: "00000000-0000-4000-8000-000000000010",
+          observedAt: "2026-08-24T00:00:00.000Z",
+          availableActions: [],
         },
         contextWindow: {
           supportsInspection: true,

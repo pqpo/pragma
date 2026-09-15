@@ -439,6 +439,13 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
 }
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const MissionExecutionActionSchema = z
+  .object({
+    id: MissionIdSchema,
+    requestId: z.string().uuid(),
+    expectedExecutionId: z.string().uuid(),
+  })
+  .strict();
 export const CreateMissionBranchSchema = z.object({
   sourceMissionId: MissionIdSchema,
   expectedExecutionId: z.string().uuid().nullable(),
@@ -640,6 +647,23 @@ export const MissionChatExecutionSchema = z.object({
   error: z.string().max(10_000).optional(),
 });
 
+export const MissionControlHealthSchema = z.object({
+  state: z.enum([
+    "idle",
+    "healthy_active",
+    "reconciling",
+    "orphaned",
+    "interrupt_uncertain",
+    "recovery_failed",
+    "deletion_pending",
+  ]),
+  reasonCode: z.string().min(1).optional(),
+  executionId: z.string().uuid().optional(),
+  observedAt: z.string().datetime(),
+  staleSince: z.string().datetime().optional(),
+  availableActions: z.array(z.enum(["recover", "force_interrupt", "force_remove"])),
+});
+
 export const MissionContextWindowUsageSchema = RuntimeContextWindowUsageSchema;
 
 export const MissionContextWindowStateSchema = z.object({
@@ -689,6 +713,7 @@ export const MissionChatSnapshotSchema = z.object({
     })
     .optional(),
   execution: MissionChatExecutionSchema.optional(),
+  controlHealth: MissionControlHealthSchema.optional(),
   contextWindow: MissionContextWindowStateSchema.optional(),
   syncIssues: z.array(MissionChatSyncIssueSchema).max(3).optional(),
 });

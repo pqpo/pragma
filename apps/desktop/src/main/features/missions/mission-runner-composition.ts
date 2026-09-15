@@ -146,6 +146,10 @@ import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
 import { MissionCommandService } from "./mission-command-service.ts";
 import { MissionSessionService } from "./mission-session-service.ts";
 import { MISSION_EXECUTION_PROJECTION_ORDERING_VERSION } from "./mission-execution-projection.ts";
+import {
+  hasMissionDeletionIntent,
+  persistMissionDeletionIntent,
+} from "./mission-deletion-intent.ts";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -383,7 +387,9 @@ export function createMissionRunner(options: {
   readonly adapterHostForMission?:
     ((mission: Mission, defaultHost: PragmaAdapterHost) => PragmaAdapterHost) | undefined;
   /** Local Host owner scope used by legacy Desktop-only persistence writes. */
-  readonly ownerScope?: Pick<MissionOwnerScope, "acquire" | "terminalDelete"> | undefined;
+  readonly ownerScope?:
+    | Pick<MissionOwnerScope, "acquire" | "forceRevoke" | "runWithGuard" | "terminalDelete">
+    | undefined;
 }): MissionRunner {
   const logger = createPragmaLogger(options.loggerProvider, {
     component: "desktop.mission-runner",
@@ -885,9 +891,33 @@ export function createMissionRunner(options: {
     });
 
   const startMission = (id: string): Promise<Mission> => {
-    return lifecycleService.startRun(id, () =>
-      withMissionController(id, async () => await runMission(id)),
+    return lifecycleService.startRun(id, (generation) =>
+      withMissionController(id, async () => {
+        if (!lifecycleService.isRunGenerationCurrent(id, generation)) {
+          throw createIntegrationError({
+            code: "MISSION_FENCING_REJECTED",
+            category: "conflict",
+            message: "This Mission run was superseded before it acquired its controller lease.",
+            details: { missionId: id, runGeneration: generation },
+          });
+        }
+        return await runMission(id, generation);
+      }),
     );
+  };
+
+  const assertRunGenerationCurrent = (
+    missionId: string,
+    runGeneration: number,
+    phase: string,
+  ): void => {
+    if (lifecycleService.isRunGenerationCurrent(missionId, runGeneration)) return;
+    throw createIntegrationError({
+      code: "MISSION_FENCING_REJECTED",
+      category: "conflict",
+      message: `Mission recovery was superseded ${phase}.`,
+      details: { missionId, runGeneration, phase },
+    });
   };
 
   const emitChatPatches = (
@@ -1433,6 +1463,7 @@ export function createMissionRunner(options: {
   const trackExecution = (input: {
     readonly mission: Mission;
     readonly handle: DesktopExecutionHandle;
+    readonly runGeneration?: number | undefined;
     readonly startedAt: string;
     readonly inputMessageId: string;
     readonly sessionId?: string | undefined;
@@ -1441,6 +1472,13 @@ export function createMissionRunner(options: {
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
     const missionId = input.mission.id;
+    if (
+      input.runGeneration !== undefined &&
+      !lifecycleService.isRunGenerationCurrent(missionId, input.runGeneration)
+    ) {
+      void input.handle.cancel("Superseded Mission recovery generation.").catch(() => undefined);
+      return;
+    }
     const audience = missionSurfaceAudience(input.mission);
     const resolveExecutorName = createMissionExecutorNameResolver(
       input.mission,
@@ -1600,7 +1638,7 @@ export function createMissionRunner(options: {
           settlementKind !== "checkpointed",
         );
       });
-    lifecycleService.setActive(missionId, {
+    const activeExecution = {
       handle: input.handle,
       settlement,
       audience,
@@ -1609,7 +1647,16 @@ export function createMissionRunner(options: {
         releaseCheckpoint();
         await settlement;
       },
-    });
+    };
+    const installed =
+      input.runGeneration === undefined
+        ? (lifecycleService.setActive(missionId, activeExecution), true)
+        : lifecycleService.setActiveForRun(missionId, input.runGeneration, activeExecution);
+    if (!installed) {
+      void input.handle.cancel("Superseded Mission recovery generation.").catch(() => undefined);
+      void live.close().catch(() => undefined);
+      return;
+    }
     invalidateChat(missionId, audience);
     invalidateWork(missionId, audience);
     void settlement.catch((error: unknown) => {
@@ -1622,7 +1669,7 @@ export function createMissionRunner(options: {
     });
   };
 
-  const runMission = async (id: string): Promise<Mission> => {
+  const runMission = async (id: string, runGeneration: number): Promise<Mission> => {
     const acceptedAt = performance.now();
     logger.info("mission.message_accepted", "Mission request accepted", {
       missionId: id,
@@ -1633,6 +1680,7 @@ export function createMissionRunner(options: {
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
     const mission = await options.missions.get(id);
+    assertRunGenerationCurrent(mission.id, runGeneration, "before loading its execution context");
     await options.assertExecutorReady?.(mission.executor.ref);
     if (mission.branch !== undefined && mission.execution === undefined) {
       throw new Error("Continue a branched Mission by sending a new message.");
@@ -1654,6 +1702,7 @@ export function createMissionRunner(options: {
     let phaseStartedAt = performance.now();
     const compiled = await compileMissionExecutor(mission, runtimes);
     const compiledIdentity = await compilationIdentity(mission);
+    assertRunGenerationCurrent(mission.id, runGeneration, "while compiling its executor");
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
     const executorMetadata = await getExecutorMetadataOrFallback(mission, "live");
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
@@ -1711,6 +1760,18 @@ export function createMissionRunner(options: {
             input: mission.flowInput!,
             runtime,
           });
+      if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
+        await settlementOutcomeWithin(
+          handle.cancel("Superseded Mission recovery generation."),
+          5_000,
+        );
+        throw createIntegrationError({
+          code: "MISSION_FENCING_REJECTED",
+          category: "conflict",
+          message: "Mission recovery was superseded while opening its Flow execution.",
+          details: { missionId: mission.id, executionId: handle.executionId, runGeneration },
+        });
+      }
       if (!recoverable) {
         await options.missions.appendExecutionReference({
           missionId: mission.id,
@@ -1731,6 +1792,7 @@ export function createMissionRunner(options: {
       trackExecution({
         mission,
         handle,
+        runGeneration,
         executorMetadata,
         startedAt: executionStartedAt,
         inputMessageId,
@@ -1746,6 +1808,7 @@ export function createMissionRunner(options: {
     phaseStartedAt = performance.now();
     const memoryBindingsChanged = sessionService.consumeMemoryBindingsChanged(mission.id);
     let session = sessionService.session(mission.id);
+    let openedSessionForRun = false;
     if (memoryBindingsChanged && session !== undefined) {
       await session.close("Memory policy changed.");
       sessionService.deleteSession(mission.id);
@@ -1763,10 +1826,40 @@ export function createMissionRunner(options: {
             modelSelection,
             createSuccessorOnMismatch: true,
           });
+      openedSessionForRun = true;
     }
+    const assertOpenedSessionCurrent = async (phase: string): Promise<void> => {
+      if (lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) return;
+      if (memoryBindingsChanged) sessionService.markMemoryBindingsChanged(mission.id);
+      if (openedSessionForRun) {
+        const closing = session.close("Superseded Mission recovery generation.");
+        const closeOutcome = await settlementOutcomeWithin(closing, 5_000);
+        if (session.sessionId !== mission.execution?.sessionId) {
+          const removeUnlinkedSession = async (): Promise<void> => {
+            await expertSessionStore.delete(session.sessionId);
+          };
+          if (closeOutcome.status === "fulfilled") {
+            await removeUnlinkedSession();
+          } else {
+            void closing
+              .then(removeUnlinkedSession)
+              .catch((error: unknown) =>
+                logger.warn(
+                  "mission.superseded_session_cleanup_failed",
+                  `Superseded unlinked ExpertSession ${session.sessionId} could not be removed.`,
+                  { error, missionId: mission.id, sessionId: session.sessionId },
+                ),
+              );
+          }
+        }
+      }
+      assertRunGenerationCurrent(mission.id, runGeneration, phase);
+    };
+    await assertOpenedSessionCurrent("while opening its ExpertSession");
     if (memoryBindingsChanged) {
       await interruptSupersededMissionSession(mission);
     }
+    await assertOpenedSessionCurrent("before installing its ExpertSession");
     logMissionPhase(logger, mission.id, "expert_session_open", phaseStartedAt, acceptedAt, {
       cacheHit: sessionService.session(mission.id) !== undefined,
     });
@@ -1793,6 +1886,14 @@ export function createMissionRunner(options: {
       ? mission.execution!.inputMessageId
       : mission.initialMessageId;
     const promptAttachments = recoverable ? [] : await options.missions.getAttachments(mission.id);
+    if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
+      throw createIntegrationError({
+        code: "MISSION_FENCING_REJECTED",
+        category: "conflict",
+        message: "Mission recovery was superseded before its Expert turn started.",
+        details: { missionId: mission.id, runGeneration },
+      });
+    }
     phaseStartedAt = performance.now();
     const turn =
       recoveredTurn ??
@@ -1810,6 +1911,15 @@ export function createMissionRunner(options: {
           ...(promptAttachments.length === 0 ? {} : { attachments: promptAttachments }),
         },
       ));
+    if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
+      await settlementOutcomeWithin(turn.cancel("Superseded Mission recovery generation."), 5_000);
+      throw createIntegrationError({
+        code: "MISSION_FENCING_REJECTED",
+        category: "conflict",
+        message: "Mission recovery was superseded while opening its Expert turn.",
+        details: { missionId: mission.id, executionId: turn.executionId, runGeneration },
+      });
+    }
     logMissionPhase(logger, mission.id, "expert_session_prompt", phaseStartedAt, acceptedAt);
     const executionStartedAt =
       recoveredTurn === undefined ? startedAt : mission.execution!.startedAt;
@@ -1831,6 +1941,7 @@ export function createMissionRunner(options: {
     trackExecution({
       mission,
       handle: turn,
+      runGeneration,
       executorMetadata,
       startedAt: executionStartedAt,
       inputMessageId,
@@ -2231,31 +2342,50 @@ export function createMissionRunner(options: {
     if (session !== undefined) {
       const closed = await settlementOutcomeWithin(session.close("Mission deleted."), 15_000);
       if (closed.status === "timed_out") {
-        throw new Error(
-          `Mission ${mission.id} could not be deleted because its Session did not stop safely.`,
+        logger.warn(
+          "mission.delete_session_close_uncertain",
+          `Mission ${mission.id} Session did not stop before forced removal continued.`,
+          {
+            missionId: mission.id,
+            sessionId: session.sessionId,
+            code: "MISSION_INTERRUPT_UNCERTAIN",
+          },
         );
       }
       if (closed.status === "rejected") {
         if (containsAgentLifecycleQuiescenceError(closed.error)) {
-          throw new Error(
-            `Mission ${mission.id} could not be deleted because background Runtime work is still active.`,
-            { cause: closed.error },
+          logger.warn(
+            "mission.delete_runtime_quiescence_uncertain",
+            `Mission ${mission.id} Runtime work did not quiesce before forced removal continued.`,
+            {
+              error: closed.error,
+              missionId: mission.id,
+              sessionId: session.sessionId,
+              code: "MISSION_INTERRUPT_UNCERTAIN",
+            },
           );
-        }
-        logger.warn(
-          "mission.delete_session_close_failed",
-          `Mission ${mission.id} Session reported cleanup failures after stopping.`,
-          { error: closed.error, missionId: mission.id, sessionId: session.sessionId },
-        );
+        } else
+          logger.warn(
+            "mission.delete_session_close_failed",
+            `Mission ${mission.id} Session reported cleanup failures after stopping.`,
+            { error: closed.error, missionId: mission.id, sessionId: session.sessionId },
+          );
       }
-      sessionService.deleteSession(id);
-      sessionService.clearCompilation(id);
+      if (sessionService.deleteSessionIfCurrent(id, session)) {
+        sessionService.clearCompilation(id);
+      }
     }
     if (active !== undefined) {
       const settled = await settlementOutcomeWithin(active.settlement, 8_000);
       if (settled.status === "timed_out") {
-        throw new Error(
-          `Mission ${mission.id} could not be deleted because its execution observer is still active.`,
+        logger.warn(
+          "mission.delete_execution_observer_uncertain",
+          `Mission ${mission.id} execution observer did not settle before forced removal continued.`,
+          {
+            missionId: mission.id,
+            executionId: active.handle.executionId,
+            code: "MISSION_INTERRUPT_UNCERTAIN",
+          },
         );
       }
       if (settled.status === "rejected") {
@@ -2326,6 +2456,7 @@ export function createMissionRunner(options: {
     }
     options.usage?.markSubjectDeleted("mission", id);
     sessionService.deleteExecutionContext(id);
+    lifecycleService.clearControlIssue(id);
     options.onStorageTrashed?.();
   };
 
@@ -2683,6 +2814,73 @@ export function createMissionRunner(options: {
           },
         };
       });
+    const projectedExecutionActive =
+      latestMission.execution !== undefined &&
+      ["queued", "running", "waiting"].includes(latestMission.execution.status);
+    const healthCurrent = lifecycleService.active(mission.id);
+    const activeHandleMatches =
+      projectedExecutionActive && healthCurrent?.handle.executionId === latestMission.execution?.id;
+    const persistedExecution =
+      projectedExecutionActive && latestMission.execution !== undefined
+        ? await executionStore.get(latestMission.execution.id).catch(() => undefined)
+        : undefined;
+    const controlIssue = lifecycleService.controlIssue(mission.id);
+    const deletionPending =
+      controlIssue?.state === "deletion_pending" ||
+      (await hasMissionDeletionIntent(options.missions.storagePath?.(mission.id), mission.id));
+    const controlHealth: MissionChatSnapshot["controlHealth"] = deletionPending
+      ? {
+          state: "deletion_pending",
+          reasonCode: "MISSION_DELETION_PENDING",
+          ...(latestMission.execution === undefined
+            ? {}
+            : { executionId: latestMission.execution.id }),
+          observedAt: controlIssue?.observedAt ?? new Date().toISOString(),
+          availableActions: ["force_remove"],
+        }
+      : !projectedExecutionActive
+        ? {
+            state: "idle",
+            observedAt: new Date().toISOString(),
+            availableActions: [],
+          }
+        : controlIssue !== undefined
+          ? {
+              state: controlIssue.state,
+              reasonCode: controlIssue.reasonCode,
+              executionId: latestMission.execution!.id,
+              observedAt: controlIssue.observedAt,
+              staleSince: latestMission.execution!.startedAt,
+              availableActions: ["recover", "force_interrupt", "force_remove"],
+            }
+          : activeHandleMatches
+            ? {
+                state: "healthy_active",
+                executionId: latestMission.execution!.id,
+                observedAt: new Date().toISOString(),
+                availableActions: [],
+              }
+            : lifecycleService.run(mission.id) !== undefined
+              ? {
+                  state: "reconciling",
+                  reasonCode: "MISSION_RECOVERY_IN_PROGRESS",
+                  executionId: latestMission.execution!.id,
+                  observedAt: new Date().toISOString(),
+                  staleSince: latestMission.execution!.startedAt,
+                  availableActions: ["force_interrupt", "force_remove"],
+                }
+              : {
+                  state: "orphaned",
+                  reasonCode:
+                    persistedExecution !== undefined &&
+                    isFinalExecutionStatus(persistedExecution.status)
+                      ? "MISSION_EXECUTION_PROJECTION_STALE"
+                      : "MISSION_EXECUTION_ORPHANED",
+                  executionId: latestMission.execution!.id,
+                  observedAt: new Date().toISOString(),
+                  staleSince: latestMission.execution!.startedAt,
+                  availableActions: ["recover", "force_interrupt", "force_remove"],
+                };
     return {
       missionId: mission.id,
       revision,
@@ -2695,6 +2893,7 @@ export function createMissionRunner(options: {
           : { nextBeforeCursor: history.nextBeforeCursor }),
       },
       pendingInteractions,
+      controlHealth,
       queue: {
         ...visibleQueueState,
         supportsSteer,
@@ -2757,35 +2956,206 @@ export function createMissionRunner(options: {
         },
       });
     }
-    const session = sessionService.session(id);
-    if (session !== undefined) {
-      await session.cancelPromptQueue("Stopped and cleared by user.");
-      await lifecycleService.active(id)?.settlement.catch(() => undefined);
-      invalidateChat(id, missionSurfaceAudience(mission));
-      return await options.missions.get(id);
-    }
-    const current = lifecycleService.active(id);
-    if (current === undefined || current.handle.executionId !== mission.execution?.id) {
-      const executionId = mission.execution.id;
+    const persistForcedInterrupt = async (reason: string): Promise<Mission> => {
+      const executionId = mission.execution!.id;
       const persisted = await executionStore.get(executionId);
       if (persisted !== undefined && !isFinalExecutionStatus(persisted.status)) {
-        await new ExecutionController(executionId, executionStore).cancel("Interrupted by user.");
+        await new ExecutionController(executionId, executionStore).cancel(reason);
       }
       const updated = await options.missions.updateExecution(
         id,
         {
-          ...mission.execution,
+          ...mission.execution!,
           status: "cancelled",
           finishedAt: new Date().toISOString(),
         },
         { executionId, statuses: ["queued", "running", "waiting"] },
       );
+      lifecycleService.clearControlIssue(id);
       invalidateChat(id, missionSurfaceAudience(mission));
       return updated;
+    };
+    const session = sessionService.session(id);
+    if (session !== undefined) {
+      const cancellation = await settlementOutcomeWithin(
+        session.cancelPromptQueue("Stopped and cleared by user."),
+        5_000,
+      );
+      const active = lifecycleService.active(id);
+      const settlement =
+        active === undefined
+          ? ({ status: "fulfilled" } as const)
+          : await settlementOutcomeWithin(active.settlement, 30_000);
+      if (cancellation.status !== "fulfilled" || settlement.status !== "fulfilled") {
+        lifecycleService.setControlIssue(id, {
+          state: "interrupt_uncertain",
+          reasonCode: "MISSION_INTERRUPT_UNCERTAIN",
+          observedAt: new Date().toISOString(),
+        });
+        logger.warn(
+          "mission.interrupt_settlement_uncertain",
+          `Mission ${id} did not settle cooperatively and will be force-interrupted.`,
+          {
+            missionId: id,
+            executionId: mission.execution.id,
+            cancellation: cancellation.status,
+            settlement: settlement.status,
+            code: "MISSION_INTERRUPT_UNCERTAIN",
+          },
+        );
+        if (active !== undefined) {
+          await settlementOutcomeWithin(
+            active.handle.cancel("Forced Mission interruption."),
+            5_000,
+          );
+          lifecycleService.deleteActiveIfCurrent(id, active);
+        }
+        if (sessionService.deleteSessionIfCurrent(id, session)) {
+          sessionService.clearCompilation(id);
+        }
+        return await persistForcedInterrupt(
+          "Forced Mission interruption after settlement timeout.",
+        );
+      }
+      invalidateChat(id, missionSurfaceAudience(mission));
+      return await options.missions.get(id);
     }
-    await current.handle.cancel("Interrupted by user.");
-    await current.settlement;
+    const current = lifecycleService.active(id);
+    if (current === undefined || current.handle.executionId !== mission.execution?.id) {
+      return await persistForcedInterrupt("Interrupted by user.");
+    }
+    const cancellation = await settlementOutcomeWithin(
+      current.handle.cancel("Interrupted by user."),
+      5_000,
+    );
+    const settlement = await settlementOutcomeWithin(current.settlement, 30_000);
+    if (cancellation.status !== "fulfilled" || settlement.status !== "fulfilled") {
+      lifecycleService.setControlIssue(id, {
+        state: "interrupt_uncertain",
+        reasonCode: "MISSION_INTERRUPT_UNCERTAIN",
+        observedAt: new Date().toISOString(),
+      });
+      lifecycleService.deleteActiveIfCurrent(id, current);
+      return await persistForcedInterrupt("Forced Mission interruption after settlement timeout.");
+    }
     return await options.missions.get(id);
+  };
+
+  const recoverMission = async (id: string, expectedExecutionId?: string): Promise<Mission> => {
+    const mission = await options.missions.get(id);
+    if (expectedExecutionId !== undefined && mission.execution?.id !== expectedExecutionId) {
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message: "The expected execution is no longer active.",
+        details: {
+          reason: "execution_target_changed",
+          missionId: id,
+          expectedExecutionId,
+          ...(mission.execution?.id === undefined ? {} : { executionId: mission.execution.id }),
+        },
+      });
+    }
+    if (
+      mission.execution === undefined ||
+      !["queued", "running", "waiting"].includes(mission.execution.status)
+    ) {
+      return mission;
+    }
+    if (lifecycleService.active(id)?.handle.executionId === mission.execution.id) return mission;
+    lifecycleService.clearControlIssue(id);
+
+    const persisted = await executionStore.get(mission.execution.id);
+    if (persisted !== undefined && isFinalExecutionStatus(persisted.status)) {
+      const repaired = await options.missions.updateExecution(
+        id,
+        {
+          ...mission.execution,
+          status:
+            persisted.status === "succeeded"
+              ? "succeeded"
+              : persisted.status === "failed"
+                ? "failed"
+                : "cancelled",
+          finishedAt: persisted.updatedAt,
+        },
+        { executionId: mission.execution.id, statuses: ["queued", "running", "waiting"] },
+      );
+      invalidateChat(id, missionSurfaceAudience(mission));
+      logger.info(
+        "mission.execution_projection_repaired",
+        `Repaired stale Mission execution projection ${mission.execution.id}.`,
+        {
+          missionId: id,
+          executionId: mission.execution.id,
+          code: "MISSION_EXECUTION_PROJECTION_STALE",
+        },
+      );
+      return repaired;
+    }
+
+    const inFlight = lifecycleService.run(id);
+    if (inFlight !== undefined) {
+      const settled = await settlementOutcomeWithin(inFlight, 45_000);
+      if (settled.status === "fulfilled") return await options.missions.get(id);
+      lifecycleService.setControlIssue(id, {
+        state: "recovery_failed",
+        reasonCode: "MISSION_RECOVERY_FAILED",
+        observedAt: new Date().toISOString(),
+      });
+      throw createIntegrationError({
+        code: "EXECUTION_FAILED",
+        category: "execution",
+        retryable: true,
+        message: "Mission recovery did not settle; force interruption is available.",
+        details: {
+          reason: "MISSION_RECOVERY_FAILED",
+          missionId: id,
+          executionId: mission.execution.id,
+        },
+      });
+    }
+    try {
+      const recovered = await startMission(id);
+      lifecycleService.clearControlIssue(id);
+      return recovered;
+    } catch (error) {
+      lifecycleService.setControlIssue(id, {
+        state: "recovery_failed",
+        reasonCode: "MISSION_RECOVERY_FAILED",
+        observedAt: new Date().toISOString(),
+      });
+      throw error;
+    }
+  };
+
+  const forceInterruptMission = async (
+    id: string,
+    expectedExecutionId?: string,
+  ): Promise<Mission> => {
+    const beforeFence = await options.missions.get(id);
+    if (expectedExecutionId !== undefined && beforeFence.execution?.id !== expectedExecutionId) {
+      throw createIntegrationError({
+        code: "COMMAND_REJECTED",
+        category: "conflict",
+        message: "The expected execution is no longer active.",
+        details: {
+          reason: "execution_target_changed",
+          missionId: id,
+          expectedExecutionId,
+          ...(beforeFence.execution?.id === undefined
+            ? {}
+            : { executionId: beforeFence.execution.id }),
+        },
+      });
+    }
+    lifecycleService.forgetRun(id);
+    await options.ownerScope?.forceRevoke(id);
+    return await withMissionController(
+      id,
+      async () => await interruptMission(id, expectedExecutionId),
+      true,
+    );
   };
 
   const resumeMissionQueue = async (id: string): Promise<Mission> => {
@@ -2966,7 +3336,7 @@ export function createMissionRunner(options: {
     readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
   }): Promise<LocalHostRunHandle> => {
     await assertLocalHostRunAllowed(input);
-    await runMission(input.missionId);
+    await startMission(input.missionId);
     const current = lifecycleService.active(input.missionId);
     if (current === undefined) {
       throw createIntegrationError({
@@ -3241,9 +3611,22 @@ export function createMissionRunner(options: {
 
     const consumer: MissionCommandConsumer = {
       validateStrictTarget,
-      async apply({ command }) {
-        await validateStrictTarget({ command });
-        return { result: await apply(command) };
+      async apply({ command, guard, signal }) {
+        const execute = async () => {
+          if (signal.aborted) {
+            throw createIntegrationError({
+              code: "COMMAND_RESULT_TIMEOUT",
+              category: "conflict",
+              message: "Mission command application was cancelled before dispatch.",
+              details: { missionId: command.missionId, commandId: command.commandId },
+            });
+          }
+          await validateStrictTarget({ command });
+          return { result: await apply(command) };
+        };
+        return options.ownerScope === undefined
+          ? await execute()
+          : await options.ownerScope.runWithGuard(command.missionId, guard, execute);
       },
       afterOutcome: async (outcome) => {
         const notification: MissionCommandOutcomeNotification = {
@@ -3564,16 +3947,25 @@ export function createMissionRunner(options: {
   const withMissionController = async <T>(
     missionId: string,
     operation: () => Promise<T>,
+    allowDeletionPending = false,
   ): Promise<T> => {
-    if (lifecycleService.leaseWasLost(missionId)) {
+    if (
+      !allowDeletionPending &&
+      (lifecycleService.controlIssue(missionId)?.state === "deletion_pending" ||
+        (await hasMissionDeletionIntent(options.missions.storagePath?.(missionId), missionId)))
+    ) {
       throw createIntegrationError({
-        code: "MISSION_FENCING_REJECTED",
+        code: "COMMAND_REJECTED",
         category: "conflict",
-        message: "This local Mission controller lost its lease and cannot perform semantic writes.",
+        message: "Mission deletion is pending; only the explicit removal retry is available.",
+        details: { missionId, reason: "MISSION_DELETION_PENDING" },
       });
     }
-    await options.ownerScope?.acquire(missionId);
-    return await operation();
+    if (options.ownerScope === undefined) {
+      return await operation();
+    }
+    const guard = await options.ownerScope.acquire(missionId);
+    return await options.ownerScope.runWithGuard(missionId, guard, operation);
   };
 
   return {
@@ -3587,6 +3979,9 @@ export function createMissionRunner(options: {
     refreshMemoryContextBindings,
     async run(id) {
       return await startMission(id);
+    },
+    async recover(id, expectedExecutionId) {
+      return await recoverMission(id, expectedExecutionId);
     },
     startLocalHostRun,
     assertLocalHostRunAllowed,
@@ -3718,29 +4113,42 @@ export function createMissionRunner(options: {
         async () => await interruptMission(id, expectedExecutionId),
       );
     },
+    async forceInterrupt(id, expectedExecutionId) {
+      return await forceInterruptMission(id, expectedExecutionId);
+    },
     async stopLocalController(id) {
       lifecycleService.markLeaseLost(id);
       const current = lifecycleService.active(id);
-      if (current !== undefined) {
-        await current.handle.cancel("Mission controller lease was lost.").catch(() => undefined);
-        await current.settlement.catch(() => undefined);
-      }
       const session = sessionService.session(id);
+      const executionContext = sessionService.executionContext(id);
+      if (current !== undefined) {
+        await settlementOutcomeWithin(
+          current.handle.cancel("Mission controller lease was lost."),
+          5_000,
+        );
+        await settlementOutcomeWithin(current.settlement, 30_000);
+        lifecycleService.deleteActiveIfCurrent(id, current);
+      }
       if (session !== undefined) {
-        await session
-          .cancelPromptQueue("Mission controller lease was lost.")
-          .catch(() => undefined);
-        await session.releaseAfterTerminal().catch((error: unknown) => {
+        await settlementOutcomeWithin(
+          session.cancelPromptQueue("Mission controller lease was lost."),
+          5_000,
+        );
+        const release = await settlementOutcomeWithin(session.releaseAfterTerminal(), 10_000);
+        if (release.status === "rejected") {
           logger.warn(
             "mission.controller_session_release_failed",
             `Mission ${id} could not release its ExpertSession after the controller lease was lost.`,
-            { error, missionId: id, sessionId: session.sessionId },
+            { error: release.error, missionId: id, sessionId: session.sessionId },
           );
-        });
-        sessionService.deleteSession(id);
-        sessionService.clearCompilation(id);
+        }
+        if (sessionService.deleteSessionIfCurrent(id, session)) {
+          sessionService.clearCompilation(id);
+        }
       }
-      sessionService.deleteExecutionContext(id);
+      if (executionContext !== undefined) {
+        sessionService.deleteExecutionContextIfCurrent(id, executionContext);
+      }
     },
     async getCanonicalStrictTarget(id) {
       const mission = await options.missions.get(id);
@@ -3764,14 +4172,29 @@ export function createMissionRunner(options: {
       return await getWorkConversation(input);
     },
     async delete(id) {
-      const inFlight = lifecycleService.run(id);
-      if (inFlight !== undefined) await settlesWithin(inFlight, 4_000);
-      const liveChat = chatService.live(id);
-      if (liveChat !== undefined) await chatService.closeLiveIfCurrent(id, liveChat);
-      await (options.ownerScope?.terminalDelete(id, async () => await deleteMission(id)) ??
-        deleteMission(id));
-      await chatService.clear(id);
-      workService.clear(id);
+      await lifecycleService.startDeletion(id, async () => {
+        lifecycleService.setControlIssue(id, {
+          state: "deletion_pending",
+          reasonCode: "MISSION_DELETION_PENDING",
+          observedAt: new Date().toISOString(),
+        });
+        await persistMissionDeletionIntent(options.missions.storagePath?.(id), id);
+        const inFlight = lifecycleService.run(id);
+        lifecycleService.forgetRun(id);
+        await options.ownerScope?.forceRevoke(id);
+        if (inFlight !== undefined) await settlesWithin(inFlight, 4_000);
+        const liveChat = chatService.live(id);
+        if (liveChat !== undefined) await chatService.closeLiveIfCurrent(id, liveChat);
+        await withMissionController(
+          id,
+          async () =>
+            await (options.ownerScope?.terminalDelete(id, async () => await deleteMission(id)) ??
+              deleteMission(id)),
+          true,
+        );
+        await chatService.clear(id);
+        workService.clear(id);
+      });
     },
     async listHumanInteractions(id) {
       return await listMissionPendingHumanInteractions(await options.missions.get(id));

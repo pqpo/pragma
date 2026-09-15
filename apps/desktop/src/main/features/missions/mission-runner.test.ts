@@ -72,6 +72,7 @@ import {
 } from "./mission-runner-composition.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
+import { persistMissionDeletionIntent } from "./mission-deletion-intent.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
@@ -3016,6 +3017,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       async () => {
         const chat = await runner.getChat({ id: mission.id, limit: 50 });
         expect(chat.execution?.interruptible).toBe(true);
+        expect(chat.controlHealth).toMatchObject({ state: "healthy_active" });
         expect(chat.entries).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
@@ -3050,6 +3052,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const settledChat = await runner.getChat({ id: mission.id, limit: 50 });
     expect(settledChat.syncIssues).toBeUndefined();
     expect(settledChat.execution?.interruptible).toBe(false);
+    expect(settledChat.controlHealth).toMatchObject({ state: "idle" });
     expect(settledChat.entries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
@@ -3086,6 +3089,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ]),
     );
 
+    await runner.stopLocalController(mission.id);
+    const restartedAfterLeaseLoss = await runner.run(mission.id);
+    expect(restartedAfterLeaseLoss.execution).toMatchObject({ status: "running" });
+    await expect(
+      runner.forceInterrupt(mission.id, "00000000-0000-4000-8000-000000000099"),
+    ).rejects.toMatchObject({ code: "COMMAND_REJECTED" });
+    expect((await missions.get(mission.id)).execution?.status).toBe("running");
+    await expect(
+      runner.forceInterrupt(mission.id, restartedAfterLeaseLoss.execution!.id),
+    ).resolves.toMatchObject({ execution: { status: "cancelled" } });
+
     const doomed = await missions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Delete while still running",
@@ -3102,6 +3116,11 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       },
       { timeout: settlementTimeoutMs },
     );
+    await persistMissionDeletionIntent(missions.storagePath?.(doomed.id), doomed.id);
+    await expect(runner.getChat({ id: doomed.id, limit: 50 })).resolves.toMatchObject({
+      controlHealth: { state: "deletion_pending", availableActions: ["force_remove"] },
+    });
+    await expect(runner.run(doomed.id)).rejects.toMatchObject({ code: "COMMAND_REJECTED" });
     await expect(runner.delete(doomed.id)).resolves.toBeUndefined();
     await expect(missions.get(doomed.id)).rejects.toThrow();
     expect(cancelTurn.mock.calls.length).toBeGreaterThan(cancellationCalls);

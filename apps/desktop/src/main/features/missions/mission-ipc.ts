@@ -28,6 +28,7 @@ import {
   HomeExecutorPreferenceSchema,
   HomeMissionExecutorCatalogSchema,
   MissionActionSchema,
+  MissionExecutionActionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOptionsRequestSchema,
@@ -470,6 +471,14 @@ export function installMissionHandlers(options: {
       if (mission.branch !== undefined && mission.execution === undefined) {
         throw new Error("Continue a branched Mission by sending a new message.");
       }
+      if (
+        mission.execution !== undefined &&
+        ["queued", "running", "waiting"].includes(mission.execution.status)
+      ) {
+        const recovered = await options.runner.recover(missionId, mission.execution.id);
+        await publishMission(recovered);
+        return recovered;
+      }
       const executor = (await options.localHost.listExecutors()).find(
         (candidate) => candidate.ref === mission.executor.ref,
       );
@@ -498,6 +507,15 @@ export function installMissionHandlers(options: {
       const refreshed = await getManagedMission(missionId);
       await publishMission(refreshed);
       return refreshed;
+    }),
+  );
+  ipcMain.handle("missions:recover", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = MissionExecutionActionSchema.parse(input);
+      const missionId = await assertManagedMission(parsed.id);
+      const recovered = await options.runner.recover(missionId, parsed.expectedExecutionId);
+      await publishMission(recovered);
+      return recovered;
     }),
   );
   ipcMain.handle("missions:options:update", (_event, input: unknown) =>
@@ -614,17 +632,30 @@ export function installMissionHandlers(options: {
   );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
     runDesktopMutation(async () => {
-      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
-      const requestId = randomUUID();
+      const parsed = MissionExecutionActionSchema.parse(input);
+      const missionId = await assertManagedMission(parsed.id);
       await runLocalHostCommand({
         missionId,
-        requestId,
+        requestId: parsed.requestId,
         kind: "interrupt",
+        target: { executionId: parsed.expectedExecutionId },
         payload: { kind: "interrupt" },
       });
       const mission = await getManagedMission(missionId);
       await publishMission(mission);
       return mission;
+    }),
+  );
+  ipcMain.handle("missions:interrupt:force", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const parsed = MissionExecutionActionSchema.parse(input);
+      const missionId = await assertManagedMission(parsed.id);
+      const interrupted = await options.runner.forceInterrupt(
+        missionId,
+        parsed.expectedExecutionId,
+      );
+      await publishMission(interrupted);
+      return interrupted;
     }),
   );
   ipcMain.handle("missions:queue:resume", (_event, input: unknown) =>
@@ -707,6 +738,23 @@ export function installMissionHandlers(options: {
     runDesktopMutation(async () => {
       const missionId = MissionActionSchema.parse(input).id;
       await assertManagedMission(missionId);
+      const mission = await getManagedMission(missionId);
+      if (
+        mission.execution !== undefined &&
+        ["queued", "running", "waiting"].includes(mission.execution.status)
+      ) {
+        try {
+          await options.runner.forceInterrupt(missionId, mission.execution.id);
+        } catch (error) {
+          const refreshed = await getManagedMission(missionId);
+          if (
+            refreshed.execution !== undefined &&
+            ["queued", "running", "waiting"].includes(refreshed.execution.status)
+          ) {
+            throw error;
+          }
+        }
+      }
       await options.runner.delete(missionId);
       publishRemoval(missionId);
     }),

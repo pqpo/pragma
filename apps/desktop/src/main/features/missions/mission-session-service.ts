@@ -48,6 +48,12 @@ export class MissionSessionService<TExecutionContext, TExecutorMetadata = never>
     this.#sessions.delete(missionId);
   }
 
+  deleteSessionIfCurrent(missionId: string, expected: ExpertSession): boolean {
+    if (this.#sessions.get(missionId) !== expected) return false;
+    this.#sessions.delete(missionId);
+    return true;
+  }
+
   sessionEntries(): IterableIterator<[string, ExpertSession]> {
     return this.#sessions.entries();
   }

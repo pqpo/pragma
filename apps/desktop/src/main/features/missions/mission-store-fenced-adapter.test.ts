@@ -35,7 +35,10 @@ describe("Desktop fenced MissionStore adapter", () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const controller = createMissionControllerStore({ missionsPath });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: rawStore.storagePath,
+    });
     const ownerScope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
     const fencedStore = createFencedMissionStore(rawStore, {
       controller,
@@ -72,7 +75,10 @@ describe("Desktop fenced MissionStore adapter", () => {
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
     });
-    const controller = createMissionControllerStore({ missionsPath });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: rawStore.storagePath,
+    });
     const ownerScope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
     const fencedStore = createFencedMissionStore(rawStore, {
       controller,
@@ -108,6 +114,41 @@ describe("Desktop fenced MissionStore adapter", () => {
       events: [expect.objectContaining({ type: "mission.options.updated" })],
     });
     await ownerScope.release(mission.id);
+  });
+
+  it("rejects a late scoped write instead of letting it acquire a successor lease", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-fenced-late-write-"));
+    roots.push(root);
+    const missionsPath = join(root, "missions");
+    const rawStore = createMissionStore({ missionsPath });
+    const mission = await rawStore.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Fence a late write",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const controller = createMissionControllerStore({
+      missionsPath,
+      missionPath: rawStore.storagePath,
+    });
+    const ownerScope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const fencedStore = createFencedMissionStore(rawStore, {
+      controller,
+      ownerScope,
+      setSemanticWriteReplay: () => undefined,
+    });
+    const guard = await ownerScope.acquire(mission.id);
+
+    await ownerScope.runWithGuard(mission.id, guard, async () => {
+      await ownerScope.forceRevoke(mission.id);
+      await expect(
+        fencedStore.updateOptions(mission.id, { toolPermissionMode: "full-access" }),
+      ).rejects.toMatchObject({ code: "MISSION_FENCING_REJECTED" });
+    });
+
+    await expect(rawStore.get(mission.id)).resolves.toMatchObject({
+      toolPermissionMode: "request-approval",
+    });
   });
 });
 

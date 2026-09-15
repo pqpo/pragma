@@ -757,22 +757,65 @@ export function MissionsPage(props: {
               const api = desktopApi();
               if (api === undefined) return;
               try {
-                replaceMission(await api.runMission(selectedMission.id));
+                const executionActive =
+                  selectedMission.execution !== undefined &&
+                  ["queued", "running", "waiting"].includes(selectedMission.execution.status);
+                replaceMission(
+                  await (executionActive
+                    ? api.recoverMission({
+                        id: selectedMission.id,
+                        requestId: crypto.randomUUID(),
+                        expectedExecutionId: selectedMission.execution!.id,
+                      })
+                    : api.runMission(selectedMission.id)),
+                );
                 setError(null);
               } catch (runError) {
                 setError(missionError(runError));
+                throw runError;
               }
             }}
             onInterrupt={async () => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
-                replaceMission(await api.interruptMission(selectedMission.id));
+                if (selectedMission.execution === undefined) return;
+                replaceMission(
+                  await api.interruptMission({
+                    id: selectedMission.id,
+                    requestId: crypto.randomUUID(),
+                    expectedExecutionId: selectedMission.execution.id,
+                  }),
+                );
                 setError(null);
               } catch (interruptError) {
                 setError(missionError(interruptError));
               }
             }}
+            onForceInterrupt={async () => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              try {
+                if (selectedMission.execution === undefined) return;
+                replaceMission(
+                  await api.forceInterruptMission({
+                    id: selectedMission.id,
+                    requestId: crypto.randomUUID(),
+                    expectedExecutionId: selectedMission.execution.id,
+                  }),
+                );
+                setError(null);
+              } catch (interruptError) {
+                setError(missionError(interruptError));
+                throw interruptError;
+              }
+            }}
+            onForceRemove={() =>
+              setDeleteCandidate(
+                missions.find((candidate) => candidate.id === selectedMission.id) ??
+                  missionToSummary(selectedMission),
+              )
+            }
             onHumanResponded={async () => {
               const api = desktopApi();
               if (api !== undefined) replaceMission(await api.getMission(selectedMission.id));
@@ -878,8 +921,7 @@ export function MissionsPage(props: {
             const api = desktopApi();
             if (api === undefined) return;
             setDeleting(true);
-            void api
-              .deleteMission(deleteCandidate.id)
+            void withMissionUiWatchdog(api.deleteMission(deleteCandidate.id))
               .then(async () => {
                 const storedMissions = await api.listMissions();
                 writeMissionDraft(window.localStorage, deleteCandidate.id, "");
@@ -1338,9 +1380,6 @@ function MissionRailGroup(props: {
       ) : (
         <>
           {props.missions.map((mission) => {
-            const executionActive =
-              mission.execution !== undefined &&
-              ["queued", "running", "waiting"].includes(mission.execution.status);
             const isActiveMission = mission.lifecycleStatus === "active";
             const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
             const showStatusDot = props.unreadMissionOutputIds.has(mission.id);
@@ -1426,12 +1465,7 @@ function MissionRailGroup(props: {
                     <button
                       className="mission-row-icon-action is-danger"
                       type="button"
-                      disabled={executionActive}
-                      title={
-                        executionActive
-                          ? i18n.t("waitToDelete", { ns: "missions" })
-                          : i18n.t("deleteMission", { ns: "missions" })
-                      }
+                      title={i18n.t("deleteMission", { ns: "missions" })}
                       aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
                       onClick={() => props.onDelete(mission)}
                     >
@@ -1469,19 +1503,42 @@ function comparePinnedMissions(
   return right.updatedAt.localeCompare(left.updatedAt);
 }
 
-export type MissionComposerAction = "send" | "loading" | "interrupt";
+export type MissionComposerAction = "send" | "loading" | "interrupt" | "recover";
+export const MISSION_RECOVERY_WATCHDOG_MS = 60_000;
+
+export async function withMissionUiWatchdog<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return await Promise.race([
+    operation,
+    new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              "Mission operation exceeded the 60-second UI wait limit and continues in the background.",
+            ),
+          ),
+        MISSION_RECOVERY_WATCHDOG_MS,
+      );
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
 
 export function resolveMissionComposerAction(input: {
   readonly draft: string;
   readonly sending: boolean;
   readonly executionActive: boolean;
   readonly interruptible: boolean;
+  readonly recoveryAvailable?: boolean;
   readonly awaitingRequest: boolean;
   readonly hasPendingQueuedMessage: boolean;
 }): MissionComposerAction {
   if (input.sending) return "loading";
   if (input.draft.trim() !== "") return "send";
   if (input.executionActive && input.interruptible) return "interrupt";
+  if (input.executionActive && input.recoveryAvailable === true) return "recover";
   if (input.executionActive || input.awaitingRequest || input.hasPendingQueuedMessage) {
     return "loading";
   }
@@ -1501,6 +1558,8 @@ export function MissionDetailFragment(props: {
   readonly onDismissError?: (() => void) | undefined;
   readonly onRun?: () => void | Promise<void>;
   readonly onInterrupt?: () => void | Promise<void>;
+  readonly onForceInterrupt?: () => void | Promise<void>;
+  readonly onForceRemove?: () => void;
   readonly onSend?: (
     content: string,
     requestId: string,
@@ -1599,6 +1658,7 @@ export function MissionDetailFragment(props: {
   const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
   const [contextStoresSaving, setContextStoresSaving] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  const [recoveryTimedOut, setRecoveryTimedOut] = useState(false);
   const [chatRefreshRevision, setChatRefreshRevision] = useState(0);
   const {
     optimisticMessages,
@@ -2082,7 +2142,33 @@ export function MissionDetailFragment(props: {
     if (interrupting || !interruptible) return;
     setInterrupting(true);
     try {
-      await props.onInterrupt?.();
+      await withMissionUiWatchdog(Promise.resolve(props.onInterrupt?.()));
+    } finally {
+      setInterrupting(false);
+    }
+  };
+
+  const retryRecovery = async () => {
+    const operationToken = beginClientOperation("restoring");
+    if (operationToken === undefined) return;
+    try {
+      await withMissionUiWatchdog(Promise.resolve(props.onRun?.()));
+      await refreshLatestChat();
+    } catch {
+      setRecoveryTimedOut(true);
+    } finally {
+      finishClientOperation(operationToken);
+    }
+  };
+
+  const forceInterrupt = async () => {
+    if (interrupting) return;
+    setInterrupting(true);
+    try {
+      await withMissionUiWatchdog(Promise.resolve(props.onForceInterrupt?.()));
+      await refreshLatestChat();
+    } catch {
+      setRecoveryTimedOut(true);
     } finally {
       setInterrupting(false);
     }
@@ -2200,14 +2286,39 @@ export function MissionDetailFragment(props: {
       : `${lastContextOperation.id}:${lastContextOperation.status}`;
   const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
   const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
+  const backendRecoveryAvailable =
+    chat?.controlHealth !== undefined &&
+    ["orphaned", "interrupt_uncertain", "recovery_failed", "deletion_pending"].includes(
+      chat.controlHealth.state,
+    );
+  const recoveryAvailable = recoveryTimedOut || backendRecoveryAvailable;
+  const recoveryActions = new Set(
+    recoveryTimedOut
+      ? ["recover", "force_interrupt", "force_remove"]
+      : (chat?.controlHealth?.availableActions ?? []),
+  );
   const composerAction = resolveMissionComposerAction({
     draft,
     sending: clientOperation.kind === "sending",
     executionActive,
     interruptible,
+    recoveryAvailable,
     awaitingRequest: awaitingRequestId !== null,
     hasPendingQueuedMessage: pendingQueuedMessages.length > 0,
   });
+
+  useEffect(() => {
+    if (!executionActive || interruptible) {
+      setRecoveryTimedOut(false);
+      return;
+    }
+    setRecoveryTimedOut(false);
+    const timer = window.setTimeout(() => {
+      setRecoveryTimedOut(true);
+      resetClientOperation();
+    }, MISSION_RECOVERY_WATCHDOG_MS);
+    return () => window.clearTimeout(timer);
+  }, [executionActive, interruptible, props.mission.execution?.id, resetClientOperation]);
 
   useEffect(() => {
     const executionStatus = props.mission.execution?.status;
@@ -2288,6 +2399,7 @@ export function MissionDetailFragment(props: {
     void Promise.resolve(props.onRun?.())
       .catch((restoreError: unknown) => {
         console.error("Failed to auto-restore Mission execution.", restoreError);
+        setRecoveryTimedOut(true);
       })
       .finally(() => finishClientOperation(operationToken));
   }, [
@@ -2424,11 +2536,52 @@ export function MissionDetailFragment(props: {
           )}
         </button>
       </p>
-      {props.mission.lifecycleStatus === "active" &&
-      (props.mission.execution === undefined ||
-        (!executionActive && isFlow) ||
-        (executionActive && !interruptible)) &&
-      !(props.mission.branch !== undefined && props.mission.execution === undefined) ? (
+      {recoveryAvailable &&
+      (chat?.controlHealth?.state === "deletion_pending" || (executionActive && !interruptible)) ? (
+        <div
+          className="mission-recovery-actions"
+          role="group"
+          aria-label={t("recoveryActions", { ns: "missions" })}
+        >
+          {recoveryActions.has("recover") ? (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={clientOperationBusy}
+              onClick={() => void retryRecovery()}
+            >
+              <ArrowCounterClockwise size={17} />
+              {t("resume", { ns: "missions" })}
+            </button>
+          ) : null}
+          {recoveryActions.has("force_interrupt") ? (
+            <button
+              className="danger-button"
+              type="button"
+              disabled={clientOperationBusy || interrupting}
+              onClick={() => void forceInterrupt()}
+            >
+              <Stop size={17} weight="fill" />
+              {t("forceInterrupt", { ns: "missions" })}
+            </button>
+          ) : null}
+          {recoveryActions.has("force_remove") ? (
+            <button
+              className="danger-button"
+              type="button"
+              disabled={clientOperationBusy}
+              onClick={() => props.onForceRemove?.()}
+            >
+              <Trash size={17} />
+              {t("forceRemove", { ns: "missions" })}
+            </button>
+          ) : null}
+        </div>
+      ) : props.mission.lifecycleStatus === "active" &&
+        (props.mission.execution === undefined ||
+          (!executionActive && isFlow) ||
+          (executionActive && !interruptible)) &&
+        !(props.mission.branch !== undefined && props.mission.execution === undefined) ? (
         <button
           className="primary-button"
           type="button"
@@ -2671,7 +2824,17 @@ export function MissionDetailFragment(props: {
                   <button
                     className="text-button"
                     type="button"
-                    onClick={() => void desktopApi()?.resumeMissionQueue(props.mission.id)}
+                    disabled={clientOperationBusy}
+                    onClick={() => {
+                      const api = desktopApi();
+                      if (api === undefined) return;
+                      void api
+                        .resumeMissionQueue(props.mission.id)
+                        .then(async () => await refreshLatestChat())
+                        .catch((resumeError: unknown) =>
+                          setOptionsError(missionError(resumeError)),
+                        );
+                    }}
                   >
                     {t("resumeQueue", { ns: "missions" })}
                   </button>
@@ -3048,6 +3211,17 @@ export function MissionDetailFragment(props: {
                               onClick={() => void interrupt()}
                             >
                               <Stop size={17} weight="fill" aria-hidden="true" />
+                            </button>
+                          ) : composerAction === "recover" ? (
+                            <button
+                              className="is-recovery"
+                              type="button"
+                              aria-label={t("resume", { ns: "missions" })}
+                              title={t("resume", { ns: "missions" })}
+                              disabled={clientOperationBusy}
+                              onClick={() => void retryRecovery()}
+                            >
+                              <ArrowCounterClockwise size={19} aria-hidden="true" />
                             </button>
                           ) : composerAction === "loading" ? (
                             <button
