@@ -66,10 +66,12 @@ import {
 import {
   decodeMissionChatPageCursor,
   encodeMissionChatPageCursor,
+  finalizeHistoricalChatEntries,
   mergeMissionChatEntriesWithLive,
   orderMissionExecutionEntries,
 } from "./mission-runner-composition.ts";
 import { createMissionStore } from "./mission-store.ts";
+import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { createContextStoreStore } from "../context-stores/context-store-store.ts";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
@@ -410,7 +412,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ...(completed
         ? { value: { stopReason: "stop", content: [{ type: "text", text: content }] } }
         : { delta: content }),
-      occurredAt: "2026-08-24T00:00:00.000Z",
+      occurredAt: runId === "run-a" ? "2026-08-24T00:00:00.000Z" : "2026-08-24T00:00:01.000Z",
     });
 
     consumeLiveChatOutput(chat, output("run-a", "thought", "Reasoning"));
@@ -436,6 +438,213 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(
       consumeLiveChatOutput(chat, output("run-d", "thought", "After intermediate")),
     ).toHaveLength(1);
+  });
+
+  it("inserts late teammate thinking before the coordinator final answer", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const coordinatorBase: ExecutionOutputItem = {
+      sourceEventId: "coordinator-delta",
+      executionId: chat.executionId,
+      invocationId: "coordinator",
+      contextId: "coordinator-context",
+      runId: "coordinator-run",
+      source: { kind: "runtime", runId: "coordinator-run", path: [] },
+      channel: "message",
+      delta: "Final answer",
+      occurredAt: "2026-08-24T00:00:00.000Z",
+    };
+
+    consumeLiveChatOutput(chat, coordinatorBase);
+    consumeLiveChatOutput(chat, {
+      ...coordinatorBase,
+      sourceEventId: "coordinator-completed",
+      delta: undefined,
+      value: {
+        stopReason: "stop",
+        content: [{ type: "text", text: "Final answer" }],
+      },
+    });
+    const finalAnswerId = chat.entries[0]!.id;
+
+    const patches = consumeLiveChatOutput(chat, {
+      sourceEventId: "teammate-late-thinking",
+      executionId: chat.executionId,
+      invocationId: "teammate",
+      parentInvocationId: "coordinator",
+      executorId: "developer-researcher",
+      contextId: "teammate-context",
+      runId: "teammate-run",
+      source: { kind: "runtime", runId: "teammate-run", path: [] },
+      channel: "thought",
+      delta: "Searching Android repositories",
+      occurredAt: "2026-08-24T00:00:01.000Z",
+    });
+
+    expect(patches).toEqual([
+      expect.objectContaining({ type: "entry.upsert", beforeEntryId: finalAnswerId }),
+    ]);
+    expect(chat.entries).toMatchObject([
+      {
+        kind: "thinking",
+        invocationId: "teammate",
+        content: "Searching Android repositories",
+      },
+      { id: finalAnswerId, kind: "assistant", invocationId: "coordinator" },
+    ]);
+
+    const lateCoordinatorToolPatches = consumeLiveChatOutput(chat, {
+      ...coordinatorBase,
+      sourceEventId: "coordinator-late-tool",
+      channel: "tool",
+      delta: undefined,
+      value: {
+        toolCallId: "late-tool",
+        toolName: "inspect_result",
+        outputPreview: "done",
+      },
+    });
+    expect(lateCoordinatorToolPatches[0]).toMatchObject({
+      type: "entry.upsert",
+      beforeEntryId: finalAnswerId,
+    });
+    expect(chat.entries.at(-1)).toMatchObject({ id: finalAnswerId, kind: "assistant" });
+
+    const staleRootPatches = consumeLiveChatOutput(chat, {
+      ...coordinatorBase,
+      sourceEventId: "stale-root-tool",
+      runId: "older-coordinator-run",
+      source: { kind: "runtime", runId: "older-coordinator-run", path: [] },
+      channel: "tool",
+      delta: undefined,
+      value: {
+        toolCallId: "stale-tool",
+        toolName: "inspect_earlier_result",
+        outputPreview: "done",
+      },
+      occurredAt: "2026-08-23T23:59:59.000Z",
+    });
+    expect(staleRootPatches[0]).toMatchObject({
+      type: "entry.upsert",
+      beforeEntryId: finalAnswerId,
+    });
+    expect(chat.entries.at(-1)).toMatchObject({ id: finalAnswerId, kind: "assistant" });
+
+    consumeLiveChatOutput(chat, {
+      ...coordinatorBase,
+      sourceEventId: "coordinator-continuation",
+      runId: "coordinator-continuation-run",
+      source: { kind: "runtime", runId: "coordinator-continuation-run", path: [] },
+      channel: "thought",
+      delta: "Synthesizing the teammate result",
+      occurredAt: "2026-08-24T00:00:02.000Z",
+    });
+    expect(chat.entries.at(-1)).toMatchObject({
+      kind: "thinking",
+      invocationId: "coordinator",
+      content: "Synthesizing the teammate result",
+    });
+  });
+
+  it("keeps completion-only answers from a later coordinator run", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+      readDurableEntries: async () => [],
+    };
+    const completed = (runId: string, content: string): ExecutionOutputItem => ({
+      sourceEventId: `${runId}:completed`,
+      executionId: chat.executionId,
+      invocationId: "coordinator",
+      contextId: "coordinator-context",
+      runId,
+      source: { kind: "runtime", runId, path: [] },
+      channel: "message",
+      value: { stopReason: "stop", content: [{ type: "text", text: content }] },
+      occurredAt: runId === "run-a" ? "2026-08-24T00:00:00.000Z" : "2026-08-24T00:00:01.000Z",
+    });
+
+    consumeLiveChatOutput(chat, completed("run-a", "First answer"));
+    const patches = consumeLiveChatOutput(chat, completed("run-b", "Final answer"));
+
+    expect(patches).toEqual([
+      expect.objectContaining({
+        type: "entry.upsert",
+        entry: expect.objectContaining({ content: "Final answer", finalAnswer: true }),
+      }),
+    ]);
+    expect(chat.entries).toMatchObject([
+      { content: "First answer", finalAnswer: true },
+      { content: "Final answer", finalAnswer: true },
+    ]);
+
+    const lateTeammatePatches = consumeLiveChatOutput(chat, {
+      sourceEventId: "late-teammate",
+      executionId: chat.executionId,
+      invocationId: "teammate",
+      parentInvocationId: "coordinator",
+      contextId: "teammate-context",
+      runId: "teammate-run",
+      source: { kind: "runtime", runId: "teammate-run", path: [] },
+      channel: "thought",
+      delta: "Late work",
+      occurredAt: "2026-08-24T00:00:01.000Z",
+    });
+    expect(lateTeammatePatches[0]).toMatchObject({
+      type: "entry.upsert",
+      beforeEntryId: chat.entries.at(-1)?.id,
+    });
+  });
+
+  it("keeps post-final teammate output before the final answer after terminal refresh", () => {
+    const entries = [
+      {
+        id: "coordinator-final",
+        executionId: "execution-1",
+        invocationId: "coordinator",
+        kind: "assistant" as const,
+        content: "Final answer",
+        streaming: false,
+        finalAnswer: true,
+        createdAt: "2026-08-24T00:00:00.000Z",
+      },
+      {
+        id: "teammate-late-thinking",
+        executionId: "execution-1",
+        invocationId: "teammate",
+        kind: "thinking" as const,
+        content: "Late diagnostic reasoning",
+        streaming: false,
+        createdAt: "2026-08-24T00:00:01.000Z",
+      },
+    ];
+
+    expect(finalizeHistoricalChatEntries(entries, true, "coordinator")).toEqual([
+      entries[1],
+      entries[0],
+    ]);
+    expect(finalizeHistoricalChatEntries(entries, true)).toEqual([entries[1], entries[0]]);
+    expect(finalizeHistoricalChatEntries(entries, false, "coordinator")).toEqual(entries);
+
+    const intermediateRootMessage = {
+      id: "coordinator-intermediate",
+      executionId: "execution-1",
+      invocationId: "coordinator",
+      kind: "assistant" as const,
+      content: "I will delegate this work",
+      streaming: false,
+      createdAt: "2026-08-24T00:00:00.000Z",
+    };
+    expect(
+      finalizeHistoricalChatEntries([intermediateRootMessage, entries[1]!], true, "coordinator"),
+    ).toEqual([intermediateRootMessage, entries[1]]);
   });
 
   it("keeps live thinking before a durable final answer during refresh", () => {
@@ -601,11 +810,120 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(
       await missions.readExecutionProjectionPage(mission.id, executionId, { limit: 50 }),
     ).toMatchObject({
-      orderingVersion: 2,
+      orderingVersion: 3,
       entries: [{ kind: "thinking" }, { kind: "assistant", finalAnswer: true }],
     });
     const backup = await readFile(`${projectionPath}.before-order-repair`, "utf8");
     expect(backup).toBe(await readFile(historicalProjection, "utf8"));
+  });
+
+  it("upgrades a v2 projection before paging and keeps the coordinator final answer last", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-final-boundary-repair-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expert = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expert],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Repair late teammate output",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expert),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000123";
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: "2026-08-24T00:00:00.000Z",
+    });
+    const projectionDirectory = join(missions.storagePath!(mission.id), "execution-projections");
+    const projectionPath = join(projectionDirectory, `${executionId}.jsonl`);
+    await writeMissionExecutionProjection(
+      projectionPath,
+      executionId,
+      [
+        {
+          id: "coordinator-intermediate",
+          executionId,
+          invocationId: "coordinator-root",
+          eventSequence: 1,
+          kind: "assistant",
+          content: "I will delegate this work",
+          streaming: false,
+          createdAt: "2026-08-24T00:00:00.000Z",
+        },
+        {
+          id: "coordinator-final",
+          executionId,
+          invocationId: "coordinator-root",
+          eventSequence: 2,
+          kind: "assistant",
+          content: "Final answer",
+          streaming: false,
+          finalAnswer: true,
+          createdAt: "2026-08-24T00:00:01.000Z",
+        },
+        {
+          id: "teammate-late-thinking",
+          executionId,
+          invocationId: "teammate",
+          eventSequence: 3,
+          kind: "thinking",
+          content: "Late diagnostic reasoning",
+          streaming: false,
+          createdAt: "2026-08-24T00:00:02.000Z",
+        },
+      ],
+      2,
+    );
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    const latest = await runner.getChat({ id: mission.id, limit: 2 });
+    expect(latest.entries.map((entry) => entry.id)).toEqual([
+      "teammate-late-thinking",
+      "coordinator-final",
+    ]);
+    const earlier = await runner.getChat({
+      id: mission.id,
+      beforeCursor: latest.page.nextBeforeCursor,
+      limit: 2,
+    });
+    expect(earlier.entries.map((entry) => entry.id)).toEqual([
+      mission.initialMessageId,
+      "coordinator-intermediate",
+    ]);
+    expect(
+      await missions.readExecutionProjectionPage(mission.id, executionId, { limit: 10 }),
+    ).toMatchObject({
+      orderingVersion: 3,
+      entries: [
+        { id: "coordinator-intermediate" },
+        { id: "teammate-late-thinking" },
+        { id: "coordinator-final", finalAnswer: true },
+      ],
+    });
+    expect(await readFile(`${projectionPath}.before-order-v3-repair`, "utf8")).toContain(
+      '"orderingVersion":2',
+    );
   });
 
   it("orders durable thinking and final replies by event sequence", () => {
@@ -5207,9 +5525,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       this: StoredExecutionView,
       options?: Parameters<StoredExecutionView["listEvents"]>[0],
     ) {
+      const page = await originalListEvents.call(this, options);
       listEventsCalls += 1;
       if (listEventsCalls === 2) throw new Error("transient event-log read failure");
-      const page = await originalListEvents.call(this, options);
       if (listEventsCalls === 1) initialSeedFinished();
       return page;
     });

@@ -178,8 +178,13 @@ export function applyMissionChatPatches(
     if (patch.type === "entry.upsert") {
       const existingIndex = entryIndexById.get(patch.entry.id);
       if (existingIndex === undefined) {
-        entryIndexById.set(patch.entry.id, entries.length);
-        entries.push({ ...patch.entry });
+        const beforeIndex =
+          patch.beforeEntryId === undefined
+            ? entries.length
+            : entryIndexById.get(patch.beforeEntryId);
+        if (beforeIndex === undefined) return null;
+        entries.splice(beforeIndex, 0, { ...patch.entry });
+        refreshMissionChatEntryIndexes(entryIndexById, entries, beforeIndex);
       } else {
         const existing = entries[existingIndex]!;
         const incoming = {
@@ -195,6 +200,18 @@ export function applyMissionChatPatches(
             : {}),
         };
         entries[existingIndex] = preserveAppendOnlyEntryContent(existing, incoming);
+        if (patch.beforeEntryId !== undefined) {
+          const beforeIndex = entryIndexById.get(patch.beforeEntryId);
+          if (beforeIndex === undefined) return null;
+          if (existingIndex > beforeIndex) {
+            const [moved] = entries.splice(existingIndex, 1);
+            if (moved === undefined) return null;
+            const nextBeforeIndex = entries.findIndex((entry) => entry.id === patch.beforeEntryId);
+            if (nextBeforeIndex < 0) return null;
+            entries.splice(nextBeforeIndex, 0, moved);
+            refreshMissionChatEntryIndexes(entryIndexById, entries, nextBeforeIndex);
+          }
+        }
       }
       continue;
     }
@@ -221,6 +238,16 @@ export function applyMissionChatPatches(
     };
   }
   return { ...snapshot, revision, entries };
+}
+
+function refreshMissionChatEntryIndexes(
+  indexes: Map<string, number>,
+  entries: readonly MissionChatEntry[],
+  fromIndex: number,
+): void {
+  for (let index = fromIndex; index < entries.length; index += 1) {
+    indexes.set(entries[index]!.id, index);
+  }
 }
 
 export interface MissionChatUpdateBatchResult {

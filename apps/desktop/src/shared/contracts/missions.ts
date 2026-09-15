@@ -697,6 +697,7 @@ export const MissionChatPatchSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("entry.upsert"),
     entry: MissionChatEntrySchema,
+    beforeEntryId: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal("entry.append"),

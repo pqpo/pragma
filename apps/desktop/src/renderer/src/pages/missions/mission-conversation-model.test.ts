@@ -129,6 +129,50 @@ describe("mission conversation model", () => {
     expect([...result.changedEntryIds]).toEqual(["next-thinking"]);
   });
 
+  it("inserts a late teammate entry before the coordinator final-answer anchor", () => {
+    const current = {
+      ...streamingSnapshot("Final answer", 1),
+      entries: [
+        {
+          ...streamingSnapshot("Final answer", 1).entries[0]!,
+          id: "coordinator-final",
+          streaming: false,
+        },
+      ],
+    };
+    const teammate = {
+      id: "teammate-thinking",
+      kind: "thinking" as const,
+      content: "Searching Android repositories",
+      streaming: true,
+      createdAt: "2026-07-11T00:00:01.000Z",
+    };
+
+    expect(
+      applyMissionChatPatches(
+        current,
+        [{ type: "entry.upsert", entry: teammate, beforeEntryId: "coordinator-final" }],
+        2,
+      )?.entries.map((entry) => entry.id),
+    ).toEqual(["teammate-thinking", "coordinator-final"]);
+    expect(
+      applyMissionChatPatches(
+        current,
+        [{ type: "entry.upsert", entry: teammate, beforeEntryId: "missing-final" }],
+        2,
+      ),
+    ).toBeNull();
+
+    const misplaced = { ...current, entries: [current.entries[0]!, teammate] };
+    expect(
+      applyMissionChatPatches(
+        misplaced,
+        [{ type: "entry.upsert", entry: teammate, beforeEntryId: "coordinator-final" }],
+        2,
+      )?.entries.map((entry) => entry.id),
+    ).toEqual(["teammate-thinking", "coordinator-final"]);
+  });
+
   it("ignores a refresh that completed behind the painted revision", () => {
     const current = streamingSnapshot("complete streamed answer", 8);
     const stale = {

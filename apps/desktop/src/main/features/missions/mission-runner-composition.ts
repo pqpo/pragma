@@ -145,6 +145,7 @@ import { MissionWorkService } from "./mission-work-service.ts";
 import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
 import { MissionCommandService } from "./mission-command-service.ts";
 import { MissionSessionService } from "./mission-session-service.ts";
+import { MISSION_EXECUTION_PROJECTION_ORDERING_VERSION } from "./mission-execution-projection.ts";
 
 function readPersistedPromptQueueState(
   activeExecutionId: string | undefined,
@@ -259,6 +260,11 @@ export interface LiveMissionChat {
   readonly entries: MissionChatEntry[];
   readonly messageOrdinals: Map<string, number>;
   completedAnswerRuns?: Set<string>;
+  finalAnswerBoundary?: {
+    readonly entryId: string;
+    readonly runKey: string;
+    readonly occurredAt: string;
+  };
   close: () => Promise<void>;
   readDurableEntries: (timelineSequence: number) => Promise<readonly MissionChatEntry[]>;
 }
@@ -4298,26 +4304,38 @@ async function readMissionChatTurnPage(input: {
       projection === undefined ? undefined : await input.executionStore.get(input.turn.executionId);
     const projectionSyncIssues: MissionChatSyncIssue[] = [];
     if (
-      projection?.orderingVersion === 1 &&
+      projection !== undefined &&
+      projection.orderingVersion < MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
       input.cursor === undefined &&
-      executionState !== undefined &&
-      isFinalExecutionStatus(executionState.status)
+      (executionState === undefined || isFinalExecutionStatus(executionState.status))
     ) {
       try {
-        const canonical = await readDurableMissionChatEntries(
-          new StoredExecutionView(input.turn.executionId, input.executionStore),
-          input.turn.sequence,
-        );
         const previous =
           (await input.missions.readExecutionProjection(input.missionId, input.turn.executionId)) ??
           [];
-        if (canonical.length === 0 && previous.length > 0) {
-          throw new Error("Execution event history is unavailable for projection repair.");
+        let repaired = finalizeHistoricalChatEntries(
+          orderMissionExecutionEntries(previous),
+          true,
+          executionState?.rootInvocationId,
+        );
+        if (executionState !== undefined) {
+          const canonical = await readDurableMissionChatEntries(
+            new StoredExecutionView(input.turn.executionId, input.executionStore),
+            input.turn.sequence,
+          );
+          if (canonical.length === 0 && previous.length > 0) {
+            throw new Error("Execution event history is unavailable for projection repair.");
+          }
+          repaired = finalizeHistoricalChatEntries(
+            mergeMissionChatEntriesWithLive(previous, canonical),
+            true,
+            executionState.rootInvocationId,
+          );
         }
         await input.missions.writeExecutionProjection(
           input.missionId,
           input.turn.executionId,
-          mergeMissionChatEntriesWithLive(previous, canonical),
+          repaired,
         );
         projection = await input.missions.readExecutionProjectionPage(
           input.missionId,
@@ -4328,11 +4346,16 @@ async function readMissionChatTurnPage(input: {
         projectionSyncIssues.push(missionChatSyncIssue("history"));
       }
     }
-    if (projection?.orderingVersion === 1 && projectionSyncIssues.length === 0) {
+    if (
+      projection !== undefined &&
+      projection.orderingVersion < MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
+      projectionSyncIssues.length === 0
+    ) {
       projectionSyncIssues.push(missionChatSyncIssue("history"));
     }
     const projectionIsCurrent =
       projection !== undefined &&
+      projection.orderingVersion === MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
       (executionState === undefined || executionState.updatedAt <= projection.createdAt);
     if (projectionIsCurrent && projection !== undefined) {
       const projectedEntries = projection.entries.map((entry) => ({
@@ -4619,7 +4642,7 @@ async function readMissionChatHistory(
     if (state === undefined) {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
-        entries.push(...projection);
+        entries.push(...finalizeHistoricalChatEntries(projection, true));
         continue;
       }
       syncIssues.push(missionChatSyncIssue("history"));
@@ -4646,7 +4669,7 @@ async function readMissionChatHistory(
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
-        entries.push(...projection);
+        entries.push(...finalizeHistoricalChatEntries(projection, true, state.rootInvocationId));
         continue;
       }
       syncIssues.push(missionChatSyncIssue("history"));
@@ -4674,6 +4697,7 @@ async function readMissionChatHistory(
         ...activityEntries,
       ]),
       isFinalExecutionStatus(state.status),
+      state.rootInvocationId,
     );
     entries.push(...richEntries);
     if (
@@ -4835,12 +4859,13 @@ function readErrorMessage(error: unknown): string {
   return error === undefined ? "" : String(error).trim();
 }
 
-function finalizeHistoricalChatEntries(
+export function finalizeHistoricalChatEntries(
   entries: readonly MissionChatEntry[],
   executionTerminal = true,
+  rootInvocationId?: string,
 ): MissionChatEntry[] {
   if (!executionTerminal) return [...entries];
-  return entries.map((entry) =>
+  const finalized = entries.map((entry): MissionChatEntry =>
     entry.kind === "tool" && entry.status === "running"
       ? {
           ...entry,
@@ -4855,6 +4880,20 @@ function finalizeHistoricalChatEntries(
           }
         : entry,
   );
+  const finalAnswerIndex = finalized.findLastIndex(
+    (entry) =>
+      entry.kind === "assistant" &&
+      (rootInvocationId === undefined || entry.invocationId === rootInvocationId) &&
+      entry.streaming === false &&
+      entry.finalAnswer === true,
+  );
+  if (finalAnswerIndex < 0 || finalAnswerIndex === finalized.length - 1) return finalized;
+  const finalAnswer = finalized[finalAnswerIndex]!;
+  return [
+    ...finalized.slice(0, finalAnswerIndex),
+    ...finalized.slice(finalAnswerIndex + 1),
+    finalAnswer,
+  ];
 }
 
 function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEntry[] {
@@ -5165,6 +5204,7 @@ async function readDurableMissionChatEntries(
       ...activityEntries,
     ]),
     isFinalExecutionStatus(state.status),
+    state.rootInvocationId,
   );
 }
 
@@ -5284,6 +5324,7 @@ export function consumeLiveChatOutput(
     readonly resolveExecutorAvatarId?: ExecutorAvatarIdResolver;
   } = {},
 ): MissionChatPatch[] {
+  clearSupersededFinalAnswerBoundary(chat, item);
   const executorName =
     item.executorId === undefined ? undefined : options.resolveExecutorName?.(item.executorId);
   const executorAvatarId =
@@ -5347,10 +5388,7 @@ export function consumeLiveChatOutput(
             error: truncate(readString(payload, "error"), MISSION_CHAT_ERROR_MAX_LENGTH),
           }),
     };
-    const index = chat.entries.findIndex((candidate) => candidate.id === id);
-    if (index === -1) chat.entries.push(entry);
-    else chat.entries[index] = entry;
-    return [{ type: "entry.upsert", entry }];
+    return [upsertLiveMissionChatEntry(chat, entry)];
   }
   if (item.channel === "progress") {
     if (!isRootMissionRuntimeOutput(item)) return [];
@@ -5380,17 +5418,14 @@ export function consumeLiveChatOutput(
         : { error: truncate(data.errorMessage, MISSION_CHAT_ERROR_MAX_LENGTH) }),
       createdAt: existing?.createdAt ?? item.occurredAt,
     };
-    const index = chat.entries.findIndex((candidate) => candidate.id === id);
-    if (index === -1) chat.entries.push(entry);
-    else chat.entries[index] = entry;
-    return [{ type: "entry.upsert", entry }];
+    return [upsertLiveMissionChatEntry(chat, entry)];
   }
   if (item.source.parentSessionId !== undefined && options.includeNestedSource !== true) return [];
   if (item.channel === "thought") {
     if (chat.completedAnswerRuns?.has(missionAnswerRunKey(item))) return [];
     const content = item.delta ?? formatValue(item.value, 200_000);
     if (content === "") return [];
-    const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "thinking");
+    const current = findStreamingMessageEntryForRun(chat.entries, item, "thinking");
     if (current !== undefined) {
       const canAppend = current.content.length + content.length <= 200_000;
       const nextContent = truncate(current.content + content, 200_000);
@@ -5414,17 +5449,18 @@ export function consumeLiveChatOutput(
         content: truncate(content, 200_000),
         streaming: true,
       };
-      chat.entries.push(entry);
-      return [{ type: "entry.upsert", entry: { ...entry } }];
+      return [upsertLiveMissionChatEntry(chat, entry)];
     }
   }
   if (item.channel === "message") {
     const content = item.delta ?? completedMessageText(item.value);
-    const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
-    if (item.delta === undefined && isFinalMissionAnswer(item.value)) {
+    const finalAnswer = item.delta === undefined && isFinalMissionAnswer(item.value);
+    const patches = markRunThinkingComplete(chat.entries, item);
+    if (finalAnswer) {
       (chat.completedAnswerRuns ??= new Set()).add(missionAnswerRunKey(item));
     }
-    const current = findStreamingInvocationEntry(chat.entries, item.invocationId, "assistant");
+    const current = findStreamingMessageEntryForRun(chat.entries, item, "assistant");
+    const existingForRun = findAssistantEntryForRun(chat.entries, item);
     // Codex can deliver an item/completed notification before a queued delta is
     // drained. The completed item already owns the final text; treating that late
     // delta as a new stream would create a second assistant row for the same run.
@@ -5447,15 +5483,18 @@ export function consumeLiveChatOutput(
             : { type: "entry.upsert", entry: { ...current } },
         );
       }
-    } else if (
-      item.delta === undefined &&
-      chat.entries.some(
-        (entry) => entry.kind === "assistant" && entry.invocationId === item.invocationId,
-      )
-    ) {
+    } else if (item.delta === undefined && existingForRun !== undefined) {
       if (current !== undefined) {
         current.streaming = false;
-        patches.push({ type: "entry.streaming", entryId: current.id, streaming: false });
+        if (finalAnswer) current.finalAnswer = true;
+        patches.push(
+          finalAnswer
+            ? upsertLiveMissionChatEntry(chat, current)
+            : { type: "entry.streaming", entryId: current.id, streaming: false },
+        );
+      } else if (finalAnswer && existingForRun.finalAnswer !== true) {
+        existingForRun.finalAnswer = true;
+        patches.push(upsertLiveMissionChatEntry(chat, existingForRun));
       }
     } else if (content !== "") {
       const entry = {
@@ -5470,9 +5509,19 @@ export function consumeLiveChatOutput(
         kind: "assistant" as const,
         content: truncate(content, 200_000),
         streaming: item.delta !== undefined,
+        ...(finalAnswer ? { finalAnswer: true } : {}),
       };
-      chat.entries.push(entry);
-      patches.push({ type: "entry.upsert", entry: { ...entry } });
+      patches.push(upsertLiveMissionChatEntry(chat, entry));
+    }
+    if (finalAnswer && isRootMissionRuntimeOutput(item)) {
+      const finalEntry = findAssistantEntryForRun(chat.entries, item);
+      if (finalEntry !== undefined) {
+        chat.finalAnswerBoundary = {
+          entryId: finalEntry.id,
+          runKey: missionAnswerRunKey(item),
+          occurredAt: item.occurredAt,
+        };
+      }
     }
     return patches;
   }
@@ -5517,9 +5566,9 @@ export function consumeLiveChatOutput(
         existing.status = "succeeded";
         existing.outputPreview = preview(payload["outputPreview"]);
       }
-      return [{ type: "entry.upsert", entry: { ...existing } }];
+      return [upsertLiveMissionChatEntry(chat, existing)];
     }
-    const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
+    const patches = markRunThinkingComplete(chat.entries, item);
     const entry: MissionChatEntry = {
       ...base,
       id: `tool:${item.executionId}:${toolCallId}`,
@@ -5549,20 +5598,15 @@ export function consumeLiveChatOutput(
             ),
           }),
     };
-    chat.entries.push(entry);
-    patches.push({ type: "entry.upsert", entry: { ...entry } });
+    patches.push(upsertLiveMissionChatEntry(chat, entry));
     return patches;
   }
   if (item.channel === "result") {
     (chat.completedAnswerRuns ??= new Set()).add(missionAnswerRunKey(item));
-    const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
+    const patches = markRunThinkingComplete(chat.entries, item);
     const content = formatValue(item.value, 200_000);
-    if (
-      content !== "" &&
-      !chat.entries.some(
-        (entry) => entry.kind === "assistant" && entry.invocationId === item.invocationId,
-      )
-    ) {
+    let finalEntry = findAssistantEntryForRun(chat.entries, item);
+    if (content !== "" && finalEntry === undefined) {
       const entry = {
         ...base,
         id: nextMessageEntryId(
@@ -5575,9 +5619,22 @@ export function consumeLiveChatOutput(
         kind: "assistant" as const,
         content,
         streaming: false,
+        finalAnswer: true,
       };
-      chat.entries.push(entry);
-      return [...patches, { type: "entry.upsert", entry: { ...entry } }];
+      const upsert = upsertLiveMissionChatEntry(chat, entry);
+      patches.push(upsert);
+      finalEntry = entry;
+    } else if (finalEntry !== undefined && finalEntry.finalAnswer !== true) {
+      finalEntry.streaming = false;
+      finalEntry.finalAnswer = true;
+      patches.push(upsertLiveMissionChatEntry(chat, finalEntry));
+    }
+    if (isRootMissionRuntimeOutput(item) && finalEntry !== undefined) {
+      chat.finalAnswerBoundary = {
+        entryId: finalEntry.id,
+        runKey: missionAnswerRunKey(item),
+        occurredAt: item.occurredAt,
+      };
     }
     return patches;
   }
@@ -5586,6 +5643,56 @@ export function consumeLiveChatOutput(
 
 function missionAnswerRunKey(item: Pick<ExecutionOutputItem, "invocationId" | "runId">): string {
   return JSON.stringify([item.invocationId, item.runId]);
+}
+
+function clearSupersededFinalAnswerBoundary(
+  chat: LiveMissionChat,
+  item: Pick<
+    ExecutionOutputItem,
+    "channel" | "parentInvocationId" | "runId" | "invocationId" | "occurredAt" | "source"
+  >,
+): void {
+  const boundary = chat.finalAnswerBoundary;
+  if (
+    boundary !== undefined &&
+    isRootMissionRuntimeOutput(item) &&
+    item.channel !== "telemetry" &&
+    missionAnswerRunKey(item) !== boundary.runKey &&
+    item.occurredAt > boundary.occurredAt
+  ) {
+    delete chat.finalAnswerBoundary;
+  }
+}
+
+function upsertLiveMissionChatEntry(
+  chat: LiveMissionChat,
+  entry: MissionChatEntry,
+): Extract<MissionChatPatch, { readonly type: "entry.upsert" }> {
+  const existingIndex = chat.entries.findIndex((candidate) => candidate.id === entry.id);
+  const boundaryId =
+    chat.finalAnswerBoundary?.entryId === entry.id ? undefined : chat.finalAnswerBoundary?.entryId;
+  const boundaryIndex =
+    boundaryId === undefined
+      ? -1
+      : chat.entries.findIndex((candidate) => candidate.id === boundaryId);
+
+  if (existingIndex === -1) {
+    if (boundaryIndex === -1) chat.entries.push(entry);
+    else chat.entries.splice(boundaryIndex, 0, entry);
+  } else {
+    chat.entries[existingIndex] = entry;
+    if (boundaryIndex >= 0 && existingIndex > boundaryIndex) {
+      chat.entries.splice(existingIndex, 1);
+      const nextBoundaryIndex = chat.entries.findIndex((candidate) => candidate.id === boundaryId);
+      chat.entries.splice(nextBoundaryIndex, 0, entry);
+    }
+  }
+
+  return {
+    type: "entry.upsert",
+    entry: { ...entry },
+    ...(boundaryIndex === -1 ? {} : { beforeEntryId: boundaryId }),
+  };
 }
 
 function isFinalMissionAnswer(value: unknown): boolean {
@@ -5609,14 +5716,31 @@ function hasCompletedMessageForRun(
   );
 }
 
-function findStreamingInvocationEntry<K extends "assistant" | "thinking">(
+function findAssistantEntryForRun(
   entries: readonly MissionChatEntry[],
-  invocationId: string,
+  item: Pick<ExecutionOutputItem, "executionId" | "invocationId" | "runId">,
+): Extract<MissionChatEntry, { readonly kind: "assistant" }> | undefined {
+  const prefix = `message:${item.executionId}:${item.invocationId}:${item.runId}:assistant:`;
+  return entries.findLast(
+    (entry): entry is Extract<MissionChatEntry, { readonly kind: "assistant" }> =>
+      entry.kind === "assistant" && entry.id.startsWith(prefix),
+  );
+}
+
+function findStreamingMessageEntryForRun<K extends "assistant" | "thinking">(
+  entries: readonly MissionChatEntry[],
+  item: Pick<ExecutionOutputItem, "executionId" | "invocationId" | "runId">,
   kind: K,
 ): Extract<MissionChatEntry, { kind: K }> | undefined {
+  const prefix = `message:${item.executionId}:${item.invocationId}:${item.runId}:${kind}:`;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry?.kind === kind && entry.invocationId === invocationId && entry.streaming) {
+    if (
+      entry?.kind === kind &&
+      entry.invocationId === item.invocationId &&
+      entry.streaming &&
+      entry.id.startsWith(prefix)
+    ) {
       return entry as Extract<MissionChatEntry, { kind: K }>;
     }
   }
@@ -5694,13 +5818,19 @@ function normalizeToolDelta(delta: string): string {
   }
 }
 
-function markInvocationThinkingComplete(
+function markRunThinkingComplete(
   entries: MissionChatEntry[],
-  invocationId: string,
+  item: Pick<ExecutionOutputItem, "executionId" | "invocationId" | "runId">,
 ): MissionChatPatch[] {
   const patches: MissionChatPatch[] = [];
+  const prefix = `message:${item.executionId}:${item.invocationId}:${item.runId}:thinking:`;
   for (const entry of entries) {
-    if (entry.kind === "thinking" && entry.invocationId === invocationId && entry.streaming) {
+    if (
+      entry.kind === "thinking" &&
+      entry.invocationId === item.invocationId &&
+      entry.streaming &&
+      entry.id.startsWith(prefix)
+    ) {
       entry.streaming = false;
       patches.push({ type: "entry.streaming", entryId: entry.id, streaming: false });
     }

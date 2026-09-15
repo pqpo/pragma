@@ -14,6 +14,14 @@ export const MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH = 32_000;
 export const MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH = 4_000;
 
 const ProjectionSchemaVersion = "pragma.mission-execution-projection/v2";
+export const MISSION_EXECUTION_PROJECTION_ORDERING_VERSION = 3 as const;
+
+const ProjectionOrderingVersionSchema = z.union([
+  z.literal(1),
+  z.literal(2),
+  z.literal(MISSION_EXECUTION_PROJECTION_ORDERING_VERSION),
+]);
+type ProjectionOrderingVersion = z.infer<typeof ProjectionOrderingVersionSchema>;
 
 const ProjectionTruncatedFieldSchema = z.object({
   field: z.enum(["content", "inputPreview", "outputPreview", "error", "label"]),
@@ -23,7 +31,7 @@ const ProjectionTruncatedFieldSchema = z.object({
 const ProjectionHeaderSchema = z.object({
   schemaVersion: z.literal(ProjectionSchemaVersion),
   recordType: z.literal("header"),
-  orderingVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+  orderingVersion: ProjectionOrderingVersionSchema.optional(),
   executionId: z.string().min(1),
   createdAt: z.string().datetime(),
   limits: z.object({
@@ -61,14 +69,14 @@ export class MissionExecutionProjectionError extends Error {
 export interface MissionExecutionProjectionPage {
   readonly entries: readonly MissionChatEntry[];
   readonly createdAt: string;
-  readonly orderingVersion: 1 | 2;
+  readonly orderingVersion: ProjectionOrderingVersion;
   readonly nextBeforeOffset?: number | undefined;
 }
 
 export async function readMissionExecutionProjectionOrderingVersion(
   path: string,
   executionId: string,
-): Promise<1 | 2 | undefined> {
+): Promise<ProjectionOrderingVersion | undefined> {
   const metadata = await stat(path).catch((error: unknown) => {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
@@ -216,7 +224,7 @@ export async function writeMissionExecutionProjection(
   path: string,
   executionId: string,
   entries: readonly MissionChatEntry[],
-  orderingVersion: 1 | 2 = 2,
+  orderingVersion: ProjectionOrderingVersion = MISSION_EXECUTION_PROJECTION_ORDERING_VERSION,
 ): Promise<void> {
   const records = createBoundedProjection(executionId, entries, orderingVersion);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -243,7 +251,7 @@ async function readProjectionHeader(
 ): Promise<{
   readonly entriesOffset: number;
   readonly createdAt: string;
-  readonly orderingVersion: 1 | 2;
+  readonly orderingVersion: ProjectionOrderingVersion;
 }> {
   const maximumHeaderBytes = Math.min(size, 64 * 1024);
   const bytes = Buffer.allocUnsafe(maximumHeaderBytes);
@@ -346,7 +354,7 @@ function completeLineRanges(
 function createBoundedProjection(
   executionId: string,
   entries: readonly MissionChatEntry[],
-  orderingVersion: 1 | 2,
+  orderingVersion: ProjectionOrderingVersion,
 ): readonly [ProjectionHeader, ...ProjectionEntry[]] {
   const parsed = MissionChatEntrySchema.array().parse(entries);
   const bounded = parsed.map((entry) => boundEntry(executionId, entry));
