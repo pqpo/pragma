@@ -14,6 +14,9 @@
 - [ ] `pnpm check`
 - [ ] `pnpm build` when package exports or application entry points changed
 
+- [ ] `pnpm test:revision` for knowledge revision changes
+- [ ] Critical Runtime paths include a real Runtime smoke record (entry point, target, write, and review result)
+
 ## Impact
 
 <!-- Check and explain every applicable item. -->
@@ -23,6 +26,10 @@
 - [ ] Security, permission, credential, or privacy impact
 - [ ] Runtime Adapter or plugin compatibility impact
 - [ ] Documentation or ADR update required
+
+## Existing behavior
+
+<!-- Identify removed entry points, narrowed support, or success assertions changed to failures, with the explicit requirement authorizing each change. Bug fixes must preserve existing supported behavior. Recovery changes must test healthy first use as well as damaged state. -->
 
 ## Checklist
 

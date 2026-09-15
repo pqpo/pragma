@@ -30,6 +30,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test:core",
     "test:core": "turbo run test:core",
+    "test:revision": "turbo run build --filter=\"@pragma/desktop^...\" && pnpm --filter @pragma/built-in-agents exec vitest run test/pragma-management-tools.test.ts && pnpm --filter @pragma/desktop exec vitest run src/main/features/context-stores/knowledge-revision-capability.test.ts src/main/features/context-stores/context-store-revision-service.test.ts && pnpm --filter @pragma/desktop exec vitest run src/main/features/missions/mission-runner.test.ts -t \"unmounted target|edits multiple drafts|managed knowledge draft|revision claim\"",
     "test:all": "turbo run test",
     "runtime:probe": "pnpm --filter @pragma/examples runtime:probe --",
     "runtime:features:generate": "node ./packages/core/scripts/generate-runtime-feature-checklist.mjs",

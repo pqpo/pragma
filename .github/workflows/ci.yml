@@ -62,5 +62,11 @@ jobs:
           CI: "true"
         run: pnpm test:core
 
+      - name: Knowledge revision regression tests
+        env:
+          PRAGMA_LOG_LEVEL: error
+          CI: "true"
+        run: pnpm test:revision
+
       - name: Build
         run: pnpm build

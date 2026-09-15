@@ -1042,3 +1042,10 @@ docs/conventions/coding-conventions.md
 - `pnpm test` 通过。
 - `pnpm build` 通过。
 - 非法 import 可被 ESLint 拦截。
+
+### 用户能力回归保护
+
+- Bugfix 必须保留既有支持的用户入口；删除入口、收紧支持范围或把成功断言改为失败，必须在 PR 中列出明确的需求依据，禁止作为修复的隐含变化。
+- claim、恢复、删除与迁移修改必须同时验证正常首次使用和异常恢复路径。
+- 知识库修订修改执行 `pnpm test:revision`，独立于快速 `test:core`；PR CI 和 Desktop Release 必须执行该业务回归门禁。
+- 关键 Runtime 业务链路发布前记录真实 Runtime 的入口、目标、实际写入及审核结果，不能以 mock 成功代替。
