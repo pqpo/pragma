@@ -1,7 +1,6 @@
 import {
   ArrowClockwise,
   ArrowLeft,
-  ArrowRight,
   Check,
   ClockCounterClockwise,
   FileText,
@@ -533,53 +532,14 @@ export function ContextStoreRevisionFragment(props: {
                         {formatRevisionTimestamp(job.updatedAt, i18n.language)}
                       </time>
                     </button>
-                    <div className="revision-task-actions">
-                      {canOpen ? (
-                        <button
-                          className="revision-task-view"
-                          type="button"
-                          onClick={() => openJob(job.id)}
-                        >
-                          {openLabel}
-                          <ArrowRight size={14} aria-hidden="true" />
-                        </button>
-                      ) : null}
-                      {(job.state === "needs_attention" && !awaitingConfirmation) ||
-                      job.state === "rejected" ? (
-                        <button
-                          className="revision-task-icon-button"
-                          type="button"
-                          aria-label={t("retryRevision")}
-                          title={t("retryRevision")}
-                          disabled={busy === job.id}
-                          onClick={() => void act(job, "retry")}
-                        >
-                          <ArrowClockwise size={16} aria-hidden="true" />
-                        </button>
-                      ) : null}
-                      {draft !== undefined && draft.state !== "merged" ? (
-                        <button
-                          className="revision-task-icon-button is-danger"
-                          type="button"
-                          aria-label={t("discardRevisionDraft")}
-                          title={t("discardRevisionDraft")}
-                          disabled={busy !== null}
-                          onClick={() => setPendingDiscard(draft)}
-                        >
-                          <Trash size={16} aria-hidden="true" />
-                        </button>
-                      ) : null}
-                      <button
-                        className="revision-task-icon-button is-danger"
-                        type="button"
-                        aria-label={t("deleteRevisionTask")}
-                        title={t("deleteRevisionTask")}
-                        disabled={busy === job.id}
-                        onClick={() => setPendingDelete(job)}
-                      >
-                        <Trash size={16} aria-hidden="true" />
-                      </button>
-                    </div>
+                    <ContextStoreRevisionTaskActions
+                      job={job}
+                      draft={draft}
+                      busy={busy}
+                      onRetry={() => void act(job, "retry")}
+                      onDiscard={setPendingDiscard}
+                      onDelete={() => setPendingDelete(job)}
+                    />
                   </article>
                 );
               })}
@@ -716,10 +676,6 @@ export function ContextStoreManualRevisionRow(props: {
         </time>
       </button>
       <div className="revision-task-actions">
-        <button className="revision-task-view" type="button" onClick={props.onOpen}>
-          {t("viewRevisionChanges")}
-          <ArrowRight size={14} aria-hidden="true" />
-        </button>
         <button
           className="revision-task-icon-button is-danger"
           type="button"
@@ -732,6 +688,63 @@ export function ContextStoreManualRevisionRow(props: {
         </button>
       </div>
     </article>
+  );
+}
+
+export function ContextStoreRevisionTaskActions(props: {
+  readonly job: ContextStoreRevisionJob;
+  readonly draft: ContextStoreDraft | undefined;
+  readonly busy: string | null;
+  readonly onRetry: () => void;
+  readonly onDiscard: (draft: ContextStoreDraft) => void;
+  readonly onDelete: () => void;
+}) {
+  const { t } = useTranslation("studio");
+  const awaitingConfirmation = isDraftAwaitingConfirmation(props.job);
+  const discardableDraft =
+    props.draft !== undefined && props.draft.state !== "merged" ? props.draft : undefined;
+  const canRetry =
+    (props.job.state === "needs_attention" && !awaitingConfirmation) ||
+    props.job.state === "rejected";
+
+  return (
+    <div className="revision-task-actions">
+      {canRetry ? (
+        <button
+          className="revision-task-icon-button"
+          type="button"
+          aria-label={t("retryRevision")}
+          title={t("retryRevision")}
+          disabled={props.busy === props.job.id}
+          onClick={props.onRetry}
+        >
+          <ArrowClockwise size={16} aria-hidden="true" />
+        </button>
+      ) : null}
+      {discardableDraft !== undefined ? (
+        <button
+          className="revision-task-icon-button is-danger"
+          type="button"
+          aria-label={t("discardRevisionDraft")}
+          title={t("discardRevisionDraft")}
+          disabled={props.busy !== null}
+          onClick={() => props.onDiscard(discardableDraft)}
+        >
+          <Trash size={16} aria-hidden="true" />
+        </button>
+      ) : (
+        <button
+          className="revision-task-icon-button is-danger"
+          type="button"
+          aria-label={t("deleteRevisionTask")}
+          title={t("deleteRevisionTask")}
+          disabled={props.busy === props.job.id}
+          onClick={props.onDelete}
+        >
+          <Trash size={16} aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 

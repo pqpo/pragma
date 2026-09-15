@@ -6,6 +6,7 @@ import {
   buildRevisionLineDiff,
   ContextStoreRevisionDiffFragment,
   ContextStoreRevisionFragment,
+  ContextStoreRevisionTaskActions,
   ContextStoreManualRevisionRow,
   draftOverlayOperations,
 } from "./ContextStoreRevisionFragment.tsx";
@@ -78,7 +79,62 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("产品知识");
     expect(html).toContain("修订版本 2");
     expect(html).toContain("手动修改");
+    expect(html).toContain('aria-label="查看变更"');
+    expect(html).not.toContain("revision-task-view");
     expect(html).toContain('aria-label="删除记录"');
+  });
+
+  it("shows one removal action when a revision task still has an unmerged draft", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const job = {
+      schemaVersion: "pragma.context-store-revision-job/v2",
+      id: "10000000-0000-4000-8000-000000000004",
+      revision: 3,
+      draftId: "20000000-0000-4000-8000-000000000004",
+      request: {
+        schemaVersion: "pragma.context-store-revision-request/v1",
+        storeId: "00000000-0000-4000-8000-000000000004",
+        prompt: "等待审批的修订",
+        source: "user",
+      },
+      state: "pending_review",
+      createdAt: "2026-08-05T07:24:00.000Z",
+      updatedAt: "2026-08-05T07:29:00.000Z",
+    } as const;
+    const draft = {
+      schemaVersion: "pragma.context-store-draft/v1" as const,
+      id: job.draftId,
+      revision: 2,
+      name: "等待审批的修订",
+      storeId: job.request.storeId,
+      baseRevision: 4,
+      baseSnapshotHash: "0".repeat(64),
+      state: "pending_review" as const,
+      submittedRevision: 2,
+      summary: "更新审批规范",
+      overlay: {
+        files: [],
+        deletedFiles: [],
+        directories: [],
+        deletedDirectories: [],
+      },
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    };
+    const html = renderToStaticMarkup(
+      <ContextStoreRevisionTaskActions
+        job={job}
+        draft={draft}
+        busy={null}
+        onRetry={() => undefined}
+        onDiscard={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="丢弃草稿"');
+    expect(html).not.toContain('aria-label="删除任务"');
+    expect(html).not.toContain("revision-task-view");
   });
 
   it("renders review-only documents before the changed files", async () => {

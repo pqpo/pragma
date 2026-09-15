@@ -232,7 +232,9 @@
 .agent-context-window-controls {
   display: grid;
   flex: 0 1 280px;
+  justify-items: end;
   gap: 4px;
+  margin-inline-start: auto;
 }
 
 .agent-context-window-hint {

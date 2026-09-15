@@ -50,7 +50,7 @@ export const settings = {
     },
     agentContextWindow: "Agent context window",
     agentContextWindowDescription:
-      "Default working-context budget for Pi Agents. A model with a smaller hard limit always uses that smaller limit. Changes apply when a Pi session is opened or resumed.",
+      "Default working-context budget for the built-in runtime. If the model's hard limit is lower, that limit applies. Takes effect when a session is created or resumed.",
     agentContextWindowUnit: "tokens",
     agentContextWindowHint: "Minimum {{min}} tokens. Saves automatically when you leave the field.",
     agentContextWindowInvalid: "Enter a whole number of at least {{min}}.",

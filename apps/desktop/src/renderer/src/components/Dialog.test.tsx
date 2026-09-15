@@ -9,6 +9,7 @@ describe("Dialog", () => {
       <Dialog
         title="Configure"
         description="Update the current configuration."
+        headerAction={<button type="button" aria-label="Close" />}
         onCancel={() => undefined}
       >
         <input aria-label="Name" />
@@ -19,6 +20,7 @@ describe("Dialog", () => {
     expect(html).toContain('aria-modal="true"');
     expect(html).toMatch(/aria-labelledby="([^"]+)"/);
     expect(html).toContain("Update the current configuration.");
+    expect(html).toContain('aria-label="Close"');
   });
 
   it("uses a restrained alert dialog for destructive confirmation", () => {

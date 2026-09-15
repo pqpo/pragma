@@ -13,7 +13,7 @@ const projects: readonly HomeProject[] = Array.from({ length: 7 }, (_, index) =>
 }));
 
 describe("HomeProjects", () => {
-  it("keeps the compact home list free of per-project edit actions and centers More", () => {
+  it("caps the compact home list at six projects without per-project edit actions", () => {
     const html = renderToStaticMarkup(
       <HomeProjects
         projects={projects}
@@ -22,19 +22,19 @@ describe("HomeProjects", () => {
         selectedId={undefined}
         onSelect={() => undefined}
         onEdit={() => undefined}
-        onMore={() => undefined}
+        maxVisibleProjects={6}
       />,
     );
 
     expect(html).not.toContain("home-favorites-manage-button");
-    expect(html).toContain('class="text-button home-project-more"');
-    expect(html).toContain("More (1)");
+    expect(html.match(/class="home-project-item"/g)).toHaveLength(6);
+    expect(html.match(/<button/g)).toHaveLength(6);
   });
 
   it("shows edit actions in the project manager list", () => {
     const html = renderToStaticMarkup(
       <HomeProjects
-        projects={projects.slice(0, 2)}
+        projects={projects}
         executors={[]}
         stores={[]}
         selectedId={undefined}
@@ -44,7 +44,7 @@ describe("HomeProjects", () => {
       />,
     );
 
-    expect(html.match(/home-favorites-manage-button/g)).toHaveLength(2);
+    expect(html.match(/home-favorites-manage-button/g)).toHaveLength(7);
     expect(html).toContain("Configure Project 1");
   });
 

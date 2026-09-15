@@ -926,7 +926,7 @@
 
 /* Knowledge-base revision tasks */
 .context-store-revisions {
-  --revision-task-actions-width: 168px;
+  --revision-task-actions-width: 80px;
   --revision-task-content-columns: minmax(260px, 1.25fr) minmax(220px, 1fr) 92px;
   container-name: context-store-revisions;
   container-type: inline-size;
@@ -1225,31 +1225,6 @@
   min-height: 34px;
   padding: 0 10px;
   font-size: 12px;
-}
-
-.revision-task-view {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--ui-radius-sm);
-  background: transparent;
-  color: var(--ui-accent-strong);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.revision-task-view:hover {
-  background: var(--ui-selection);
-}
-
-.revision-task-view:focus-visible {
-  outline: 2px solid var(--ui-focus);
-  outline-offset: 2px;
 }
 
 .revision-task-icon-button {

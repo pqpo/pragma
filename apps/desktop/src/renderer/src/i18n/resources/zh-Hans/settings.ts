@@ -49,7 +49,7 @@ export const settings = {
     },
     agentContextWindow: "Agent 上下文窗口",
     agentContextWindowDescription:
-      "Pi Agent 的默认工作上下文预算。模型硬上限更小时始终以该更小值为准。更改会在 Pi 会话新建或恢复时生效。",
+      "内置运行时的默认工作上下文预算。模型硬上限较低时，以模型上限为准。会话新建或恢复时生效。",
     agentContextWindowUnit: "tokens",
     agentContextWindowHint: "至少 {{min}} tokens，离开输入框后自动保存。",
     agentContextWindowInvalid: "请输入不小于 {{min}} 的整数。",

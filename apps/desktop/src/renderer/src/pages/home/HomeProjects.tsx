@@ -7,8 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { DotsSixVertical, Folder, GearSix, Plus, CaretDown } from "@phosphor-icons/react";
-import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
+import { DotsSixVertical, Folder, GearSix, CaretDown } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import {
   HomeProjectInputSchema,
@@ -19,7 +18,6 @@ import type {
   ContextStore,
   HomeMissionExecutorOption,
 } from "../../../../shared/contracts/index.ts";
-import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog, ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
@@ -33,8 +31,8 @@ export function HomeProjects(props: {
   selectedId: string | undefined;
   onSelect: (project: HomeProject) => void;
   onEdit: (project: HomeProject | null) => void;
-  onMore?: () => void;
   onReorder?: (orderedProjectIds: readonly string[]) => void;
+  maxVisibleProjects?: number;
   showEditActions?: boolean;
   disabled?: boolean;
 }) {
@@ -50,6 +48,10 @@ export function HomeProjects(props: {
   const projectItemPositions = useRef(new Map<string, DOMRect>());
   const canReorder = props.showEditActions === true && props.onReorder !== undefined;
   const orderedProjects = orderHomeProjects(props.projects, dragOrder);
+  const visibleProjects =
+    props.maxVisibleProjects === undefined
+      ? orderedProjects
+      : orderedProjects.slice(0, props.maxVisibleProjects);
 
   useLayoutEffect(() => {
     if (draggedProjectId === undefined) {
@@ -182,20 +184,11 @@ export function HomeProjects(props: {
     return (
       <div className="home-project-empty">
         <p>{t("homeProjectsEmpty")}</p>
-        <button
-          type="button"
-          className="text-button"
-          disabled={props.disabled}
-          onClick={() => props.onEdit(null)}
-        >
-          <Plus size={16} />
-          {t("homeProjectCreate")}
-        </button>
       </div>
     );
   return (
     <div className="home-project-list">
-      {(props.onMore ? orderedProjects.slice(0, 6) : orderedProjects).map((project) => {
+      {visibleProjects.map((project) => {
         const unavailable =
           !props.executors.some((item) => item.ref === project.executorRef) ||
           project.contextStoreIds.some((id) => !props.stores.some((store) => store.id === id));
@@ -254,11 +247,6 @@ export function HomeProjects(props: {
           </div>
         );
       })}
-      {props.onMore && props.projects.length > 6 ? (
-        <button type="button" className="text-button home-project-more" onClick={props.onMore}>
-          {t("homeFavoritesMore", { count: props.projects.length - 6 })}
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -400,15 +388,15 @@ export function HomeProjectEditor(props: {
                 setError(undefined);
               }}
             />
-            <CharacterCount value={name} max={PRAGMA_TEXT_LIMITS.defaultMetadata.name} />
           </div>
           <div className="home-workspace-context home-project-bindings">
             <div
               className="home-project-field"
+              role="group"
+              aria-label={t("homeProjectExecutor")}
               ref={executorFieldRef}
               aria-describedby={attempted && missingExecutor ? errorId : undefined}
             >
-              <span>{t("homeProjectExecutor")}</span>
               {props.renderExecutorPicker(
                 executorRef,
                 (value) => {
@@ -420,10 +408,11 @@ export function HomeProjectEditor(props: {
             </div>
             <div
               className="home-project-field"
+              role="group"
+              aria-label={t("taskWorkspace")}
               ref={workspaceFieldRef}
               aria-describedby={attempted && !workspace ? errorId : undefined}
             >
-              <span>{t("taskWorkspace")}</span>
               <WorkspacePicker
                 defaultWorkspace={props.defaultWorkspace}
                 recentWorkspaces={props.recentWorkspaces}
@@ -441,10 +430,11 @@ export function HomeProjectEditor(props: {
           </div>
           <div
             className="home-project-field"
+            role="group"
+            aria-label={t("homeProjectKnowledge")}
             ref={knowledgeFieldRef}
             aria-describedby={attempted && missingStoreIds.length > 0 ? errorId : undefined}
           >
-            <span>{t("homeProjectKnowledge")}</span>
             <button
               type="button"
               className="home-project-knowledge-trigger"
@@ -467,18 +457,6 @@ export function HomeProjectEditor(props: {
                 {t("homeProjectRemoveUnavailableKnowledge", { count: missingStoreIds.length })}
               </button>
             ) : null}
-            <p className="home-project-hint">
-              {storeIds.length === 0
-                ? t("homeProjectKnowledgeHint")
-                : storeIds
-                    .slice(0, 2)
-                    .map(
-                      (id) =>
-                        props.stores.find((store) => store.id === id)?.name ??
-                        t("homeProjectUnavailable"),
-                    )
-                    .join(" · ")}
-            </p>
           </div>
           {error ? (
             <p id={errorId} className="form-error" role="alert">

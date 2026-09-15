@@ -31,6 +31,7 @@ import {
   MagnifyingGlass,
   Star,
   Plus,
+  Trash,
   User,
   UsersThree,
   X,
@@ -75,6 +76,7 @@ import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./S
 const HOME_TIP_KEYS = ["context", "favorite", "approval", "attachment"] as const;
 const HOME_GREETING_KEYS = ["context", "task", "collaboration", "focus"] as const;
 const HOME_GREETING_INDEX = Math.floor(Math.random() * HOME_GREETING_KEYS.length);
+const HOME_SHORTCUTS_VISIBLE_COUNT = 6;
 
 function homeTimeGreetingKey(hour = new Date().getHours()): "morning" | "afternoon" | "evening" {
   if (hour >= 5 && hour < 12) return "morning";
@@ -181,6 +183,20 @@ export function HomePage(props: {
   const [homeProjects, setHomeProjects] = useState<readonly HomeProject[]>([]);
   const [homeProjectsReady, setHomeProjectsReady] = useState(false);
   const [homeTab, setHomeTab] = useState<"projects" | "favorites">("projects");
+  const [favoriteMoreOpen, setFavoriteMoreOpen] = useState(false);
+  const homeProjectOverflowCount = Math.max(0, homeProjects.length - HOME_SHORTCUTS_VISIBLE_COUNT);
+  const homeFavoriteOverflowCount = Math.max(
+    0,
+    rankFavoriteHomeExecutors(executors).length - HOME_SHORTCUTS_VISIBLE_COUNT,
+  );
+  const managerButtonLabel =
+    homeTab === "projects"
+      ? homeProjectOverflowCount > 0
+        ? t("homeProjectManagerWithOverflow", { count: homeProjectOverflowCount })
+        : t("homeProjectManager")
+      : homeFavoriteOverflowCount > 0
+        ? t("homeFavoritesManagerWithOverflow", { count: homeFavoriteOverflowCount })
+        : t("homeFavoritesManager");
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
   const [projectEditor, setProjectEditor] = useState<HomeProject | null>();
   const [selectedProjectId, setSelectedProjectId] = useState<string>();
@@ -807,6 +823,7 @@ export function HomePage(props: {
             onChange={selectExecutor}
             onPreferenceChange={updateExecutorPreference}
             onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
+            managerTitle={t("homeFavoritesAdd")}
             managerOpen={executorManagerOpen}
             onManagerOpenChange={setExecutorManagerOpen}
           />
@@ -982,7 +999,10 @@ export function HomePage(props: {
                   aria-selected={homeTab === tab}
                   aria-controls={`home-${tab}-panel`}
                   tabIndex={homeTab === tab ? 0 : -1}
-                  onClick={() => setHomeTab(tab)}
+                  onClick={() => {
+                    setHomeTab(tab);
+                    setFavoriteMoreOpen(false);
+                  }}
                   onKeyDown={(event) => {
                     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
                       event.preventDefault();
@@ -995,6 +1015,7 @@ export function HomePage(props: {
                               ? "favorites"
                               : "projects";
                       setHomeTab(next);
+                      setFavoriteMoreOpen(false);
                       document.getElementById(`home-${next}-tab`)?.focus();
                     }
                   }}
@@ -1004,41 +1025,59 @@ export function HomePage(props: {
               ))}
             </div>
             <div className="home-shortcuts-actions">
-              {homeTab === "projects" ? (
-                <button
-                  className="home-favorites-manage-button"
-                  type="button"
-                  disabled={!homeProjectsReady || !loaded || !contextStoresReady || saving}
-                  aria-label={t("homeProjectCreate")}
-                  title={t("homeProjectCreate")}
-                  onClick={() => editProject(null)}
-                >
-                  <Plus size={16} />
-                </button>
-              ) : null}
               <button
                 className="home-favorites-manage-button"
                 type="button"
                 disabled={
-                  homeTab === "projects" &&
-                  (!homeProjectsReady || !loaded || !contextStoresReady || saving)
-                }
-                aria-label={t(homeTab === "projects" ? "homeProjectEdit" : "manageExecutors")}
-                title={t(homeTab === "projects" ? "homeProjectEdit" : "manageExecutors")}
-                onClick={() =>
                   homeTab === "projects"
-                    ? setProjectManagerOpen(true)
-                    : setExecutorManagerOpen(true)
+                    ? !homeProjectsReady || !loaded || !contextStoresReady || saving
+                    : !loaded || saving
+                }
+                aria-label={homeTab === "projects" ? t("homeProjectCreate") : t("homeFavoritesAdd")}
+                title={homeTab === "projects" ? t("homeProjectCreate") : t("homeFavoritesAdd")}
+                onClick={() =>
+                  homeTab === "projects" ? editProject(null) : setExecutorManagerOpen(true)
                 }
               >
-                <GearSix size={16} />
+                <Plus size={16} aria-hidden="true" />
+              </button>
+              <button
+                className="home-favorites-manage-button home-shortcuts-manager-button"
+                type="button"
+                disabled={
+                  homeTab === "projects"
+                    ? !homeProjectsReady || !loaded || !contextStoresReady || saving
+                    : !loaded || saving
+                }
+                aria-label={managerButtonLabel}
+                title={managerButtonLabel}
+                onClick={() =>
+                  homeTab === "projects" ? setProjectManagerOpen(true) : setFavoriteMoreOpen(true)
+                }
+              >
+                <GearSix size={16} aria-hidden="true" />
+                {homeTab === "projects" && homeProjectOverflowCount > 0 ? (
+                  <span className="home-shortcuts-overflow-badge" aria-hidden="true">
+                    {homeProjectOverflowCount}
+                  </span>
+                ) : homeTab === "favorites" && homeFavoriteOverflowCount > 0 ? (
+                  <span className="home-shortcuts-overflow-badge" aria-hidden="true">
+                    {homeFavoriteOverflowCount}
+                  </span>
+                ) : null}
               </button>
             </div>
           </div>
-          <div id={`home-${homeTab}-panel`} role="tabpanel" aria-labelledby={`home-${homeTab}-tab`}>
+          <div
+            className="home-shortcuts-panel"
+            id={`home-${homeTab}-panel`}
+            role="tabpanel"
+            aria-labelledby={`home-${homeTab}-tab`}
+          >
             {homeTab === "projects" ? (
               <HomeProjects
                 projects={homeProjects}
+                maxVisibleProjects={HOME_SHORTCUTS_VISIBLE_COUNT}
                 disabled={!loaded || !contextStoresReady || !homeProjectsReady || saving}
                 executors={executors}
                 stores={contextStores}
@@ -1056,12 +1095,14 @@ export function HomePage(props: {
                   if (!saving) void applyProject(project);
                 }}
                 onEdit={editProject}
-                onMore={() => setProjectManagerOpen(true)}
               />
             ) : (
               <HomeFavorites
                 executors={executors}
+                dialogOpen={favoriteMoreOpen}
+                onDialogOpenChange={setFavoriteMoreOpen}
                 onSelect={selectExecutor}
+                onRemoveFavorite={(ref) => updateExecutorPreference(ref, { favoriteScope: "none" })}
                 onReorder={(orderedRefs) => void reorderFavorites(orderedRefs)}
               />
             )}
@@ -1070,31 +1111,21 @@ export function HomePage(props: {
         {projectManagerOpen ? (
           <Dialog
             className="home-project-manager"
+            backdropClassName="home-favorites-backdrop"
             title={t("homeProjects")}
             description={t("homeProjectsDialogDescription")}
-            onCancel={() => setProjectManagerOpen(false)}
-            footer={
-              <>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setProjectManagerOpen(false)}
-                >
-                  {tCommon("actions.close")}
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={projectOrderSaving}
-                  onClick={() => {
-                    setProjectManagerOpen(false);
-                    editProject(null);
-                  }}
-                >
-                  {t("homeProjectCreate")}
-                </button>
-              </>
+            headerAction={
+              <button
+                className="home-project-manager-close"
+                type="button"
+                aria-label={tCommon("actions.close")}
+                data-dialog-initial-focus
+                onClick={() => setProjectManagerOpen(false)}
+              >
+                <X size={19} aria-hidden="true" />
+              </button>
             }
+            onCancel={() => setProjectManagerOpen(false)}
           >
             <HomeProjects
               projects={homeProjects}
@@ -1195,13 +1226,17 @@ export function HomePage(props: {
 
 function HomeFavorites(props: {
   readonly executors: readonly HomeMissionExecutorOption[];
+  readonly dialogOpen: boolean;
+  readonly onDialogOpenChange: (open: boolean) => void;
   readonly onSelect: (ref: string) => void;
+  readonly onRemoveFavorite: (ref: string) => Promise<boolean>;
   readonly onReorder: (orderedRefs: readonly string[]) => void;
 }) {
   const { t } = useTranslation("missions");
   const { t: tCommon } = useTranslation("common");
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const { dialogOpen, onDialogOpenChange } = props;
   const [draggedRef, setDraggedRef] = useState<string>();
+  const [removingFavoriteRef, setRemovingFavoriteRef] = useState<string>();
   const [dragOrder, setDragOrder] = useState<readonly string[]>();
   const dragOrderRef = useRef<readonly string[] | undefined>(undefined);
   const dragInitialOrderRef = useRef<readonly string[] | undefined>(undefined);
@@ -1213,8 +1248,7 @@ function HomeFavorites(props: {
   const favoriteItemPositions = useRef(new Map<string, DOMRect>());
   const favorites = rankFavoriteHomeExecutors(props.executors);
   const orderedFavorites = orderFavoriteHomeExecutors(favorites, dragOrder);
-  const compactFavorites =
-    orderedFavorites.length > 6 ? orderedFavorites.slice(0, 5) : orderedFavorites.slice(0, 6);
+  const compactFavorites = orderedFavorites.slice(0, HOME_SHORTCUTS_VISIBLE_COUNT);
   const pragmaCopy = {
     name: tCommon("builtInExperts.pragma.name"),
     description: tCommon("builtInExperts.pragma.description"),
@@ -1229,14 +1263,24 @@ function HomeFavorites(props: {
         ? t("expertTeam")
         : t("flow");
 
+  const removeFavorite = async (ref: string) => {
+    if (removingFavoriteRef !== undefined) return;
+    setRemovingFavoriteRef(ref);
+    try {
+      await props.onRemoveFavorite(ref);
+    } finally {
+      setRemovingFavoriteRef(undefined);
+    }
+  };
+
   useEffect(() => {
     if (!dialogOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDialogOpen(false);
+      if (event.key === "Escape") onDialogOpenChange(false);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [dialogOpen]);
+  }, [dialogOpen, onDialogOpenChange]);
 
   useLayoutEffect(() => {
     if (draggedRef === undefined) {
@@ -1384,12 +1428,11 @@ function HomeFavorites(props: {
     return () => window.clearTimeout(timer);
   }, [dragOrder, draggedRef, favorites]);
 
-  if (favorites.length === 0) return <p className="home-project-hint">{t("homeFavoritesEmpty")}</p>;
-
   const renderFavorite = (
     executor: HomeMissionExecutorOption,
     draggable = false,
     dragHandle = draggable,
+    showRemove = false,
   ) => {
     const Icon = executorIcon(executor);
     const copy = displayCopy(executor);
@@ -1439,7 +1482,7 @@ function HomeFavorites(props: {
               return;
             }
             props.onSelect(executor.ref);
-            setDialogOpen(false);
+            onDialogOpenChange(false);
           }}
         >
           <span className="home-favorite-avatar">
@@ -1458,6 +1501,18 @@ function HomeFavorites(props: {
             <small>{workspaceName ?? kindLabel(executor)}</small>
           </span>
         </button>
+        {showRemove && !executor.alwaysVisible ? (
+          <button
+            className="home-favorite-remove"
+            type="button"
+            aria-label={t("homeFavoriteRemoveNamed", { name: copy.name })}
+            title={t("homeFavoriteRemoveNamed", { name: copy.name })}
+            disabled={removingFavoriteRef !== undefined}
+            onClick={() => void removeFavorite(executor.ref)}
+          >
+            <Trash size={16} aria-hidden="true" />
+          </button>
+        ) : null}
       </article>
     );
   };
@@ -1465,26 +1520,20 @@ function HomeFavorites(props: {
   return (
     <>
       <section className="home-favorites" aria-label={t("homeFavorites")}>
-        <div className="home-favorites-list">
-          {compactFavorites.map((executor) => renderFavorite(executor, true, false))}
-          {favorites.length > 6 ? (
-            <button
-              className="home-favorite-more"
-              type="button"
-              draggable={false}
-              onClick={() => setDialogOpen(true)}
-            >
-              {t("homeFavoritesMore", { count: favorites.length - compactFavorites.length })}
-            </button>
-          ) : null}
-        </div>
+        {favorites.length === 0 ? (
+          <p className="home-project-hint">{t("homeFavoritesEmpty")}</p>
+        ) : (
+          <div className="home-favorites-list">
+            {compactFavorites.map((executor) => renderFavorite(executor, true, false))}
+          </div>
+        )}
       </section>
       {dialogOpen ? (
         <div
           className="home-favorites-backdrop"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setDialogOpen(false);
+            if (event.target === event.currentTarget) onDialogOpenChange(false);
           }}
         >
           <section
@@ -1501,13 +1550,17 @@ function HomeFavorites(props: {
               <button
                 type="button"
                 aria-label={tCommon("actions.close")}
-                onClick={() => setDialogOpen(false)}
+                onClick={() => onDialogOpenChange(false)}
               >
                 <X size={19} aria-hidden="true" />
               </button>
             </header>
             <div className="home-favorites-dialog-list" role="list">
-              {orderedFavorites.map((executor) => renderFavorite(executor, true))}
+              {orderedFavorites.length > 0 ? (
+                orderedFavorites.map((executor) => renderFavorite(executor, true, true, true))
+              ) : (
+                <p className="home-project-hint">{t("homeFavoritesEmpty")}</p>
+              )}
             </div>
           </section>
         </div>
@@ -1546,6 +1599,7 @@ function MissionExecutorPicker(props: {
     },
   ) => Promise<boolean>;
   readonly onChooseFavoriteWorkspace: (ref: string) => Promise<boolean>;
+  readonly managerTitle?: string;
   readonly managerOpen: boolean;
   readonly onManagerOpenChange: Dispatch<SetStateAction<boolean>>;
 }) {
@@ -1877,7 +1931,9 @@ function MissionExecutorPicker(props: {
           >
             <header>
               <div>
-                <h2 id="mission-executor-manager-title">{t("manageExecutors")}</h2>
+                <h2 id="mission-executor-manager-title">
+                  {props.managerTitle ?? t("manageExecutors")}
+                </h2>
                 <p id="mission-executor-manager-description">
                   {t("executorManagementDescription")}
                 </p>

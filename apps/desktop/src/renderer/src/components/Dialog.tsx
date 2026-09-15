@@ -5,6 +5,7 @@ export function Dialog(props: {
   readonly title: string;
   readonly description?: string | undefined;
   readonly children?: ReactNode | undefined;
+  readonly headerAction?: ReactNode | undefined;
   readonly footer?: ReactNode | undefined;
   readonly className?: string | undefined;
   readonly backdropClassName?: string | undefined;
@@ -72,8 +73,11 @@ export function Dialog(props: {
       >
         {props.hideHeader ? null : (
           <header className="ui-dialog-header">
-            <h2 id={titleId}>{props.title}</h2>
-            {props.description ? <p id={descriptionId}>{props.description}</p> : null}
+            <div className="ui-dialog-header-copy">
+              <h2 id={titleId}>{props.title}</h2>
+              {props.description ? <p id={descriptionId}>{props.description}</p> : null}
+            </div>
+            {props.headerAction}
           </header>
         )}
         {props.children ? <div className="ui-dialog-body">{props.children}</div> : null}
