@@ -554,6 +554,10 @@ export const studio = {
   retryRevision: "Retry",
   deleteRevisionTask: "Delete task",
   deleteRevisionTaskTitle: "Delete this revision task?",
+  deleteRevisionRecord: "Delete record",
+  deleteRevisionRecordTitle: "Delete this manual revision record?",
+  deleteRevisionRecordDescription:
+    "“{{name}}” will be removed from the revision history list. Deleting the record does not roll back applied changes or delete the knowledge base or historical snapshot.",
   discardRevisionDraft: "Discard draft",
   discardRevisionDraftTitle: "Discard this revision draft?",
   discardRevisionDraftDescription: "{{name}} and its unmerged changes will be moved to the trash.",

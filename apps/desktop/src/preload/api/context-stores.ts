@@ -13,6 +13,7 @@ import {
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
   DeleteContextStoreEntrySchema,
+  DeleteContextStoreRevisionRecordSchema,
   DeleteContextStoreSchema,
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,
@@ -142,6 +143,12 @@ export const contextStoresApi = {
         ListContextStoreRevisionRecordsSchema.parse(input),
       ),
     ),
+  deleteContextStoreRevisionRecord: async (input) => {
+    await ipcRenderer.invoke(
+      "context-stores:delete-revision-record",
+      DeleteContextStoreRevisionRecordSchema.parse(input),
+    );
+  },
   submitContextStoreRevision: async (input) =>
     ContextStoreRevisionJobSchema.parse(
       await ipcRenderer.invoke(
@@ -288,6 +295,7 @@ export const contextStoresApi = {
   | "commitContextStoreEditorDraft"
   | "discardContextStoreEditorDraft"
   | "listContextStoreRevisionRecords"
+  | "deleteContextStoreRevisionRecord"
   | "getContextStoreRevisionDiff"
   | "submitContextStoreRevision"
   | "listContextStoreRevisions"

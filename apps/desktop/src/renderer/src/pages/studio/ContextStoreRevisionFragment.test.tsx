@@ -48,6 +48,7 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreManualRevisionRow
         onOpen={() => undefined}
+        onDelete={() => undefined}
         store={{
           schemaVersion: "pragma.context-store/v4",
           id: "00000000-0000-4000-8000-000000000001",
@@ -77,6 +78,7 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("产品知识");
     expect(html).toContain("修订版本 2");
     expect(html).toContain("手动修改");
+    expect(html).toContain('aria-label="删除记录"');
   });
 
   it("renders review-only documents before the changed files", async () => {

@@ -144,6 +144,9 @@ export function ContextStoreRevisionFragment(props: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ContextStoreRevisionJob | null>(null);
+  const [pendingRecordDelete, setPendingRecordDelete] = useState<ContextStoreRevisionRecord | null>(
+    null,
+  );
   const [pendingDiscard, setPendingDiscard] = useState<ContextStoreDraft | null>(null);
 
   const load = async () => {
@@ -242,6 +245,30 @@ export function ContextStoreRevisionFragment(props: {
       if (activeStoreId.current !== storeId) return;
       setPendingDiscard(null);
       setSelectedJobId(null);
+      await load();
+    } catch (caught) {
+      if (activeStoreId.current === storeId) {
+        setError(localizedContextStoreRevisionError(caught, translateRevisionError));
+      }
+    } finally {
+      setBusy((current) => (current === actionId ? null : current));
+    }
+  };
+
+  const deleteRecord = async (record: ContextStoreRevisionRecord) => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    const actionId = `record:${record.storeId}:${record.revision}`;
+    setBusy(actionId);
+    try {
+      await api.deleteContextStoreRevisionRecord({
+        storeId: record.storeId,
+        revision: record.revision,
+        snapshotHash: record.snapshotHash,
+      });
+      if (activeStoreId.current !== storeId) return;
+      setPendingRecordDelete(null);
+      setSelectedRecord(null);
       await load();
     } catch (caught) {
       if (activeStoreId.current === storeId) {
@@ -440,7 +467,9 @@ export function ContextStoreRevisionFragment(props: {
                       store={props.stores.find(
                         (candidate) => candidate.id === entry.record.storeId,
                       )}
+                      busy={busy === `record:${entry.record.storeId}:${entry.record.revision}`}
                       onOpen={() => openRecord(entry.record)}
+                      onDelete={() => setPendingRecordDelete(entry.record)}
                     />
                   );
                 const job = entry.job;
@@ -618,6 +647,22 @@ export function ContextStoreRevisionFragment(props: {
           action="delete"
         />
       ) : null}
+      {pendingRecordDelete !== null ? (
+        <StudioConfirmationDialog
+          className="revision-task-delete-dialog"
+          title={t("deleteRevisionRecordTitle")}
+          description={t("deleteRevisionRecordDescription", {
+            name: pendingRecordDelete.summary,
+          })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteRevisionRecord")}
+          busyLabel={t("deleting")}
+          busy={busy === `record:${pendingRecordDelete.storeId}:${pendingRecordDelete.revision}`}
+          onCancel={() => setPendingRecordDelete(null)}
+          onConfirm={() => void deleteRecord(pendingRecordDelete)}
+          action="delete"
+        />
+      ) : null}
       {pendingDiscard !== null ? (
         <StudioConfirmationDialog
           className="revision-task-delete-dialog"
@@ -639,6 +684,8 @@ export function ContextStoreRevisionFragment(props: {
 export function ContextStoreManualRevisionRow(props: {
   readonly record: ContextStoreRevisionRecord;
   readonly onOpen: () => void;
+  readonly onDelete: () => void;
+  readonly busy?: boolean | undefined;
   readonly store: ContextStore | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
@@ -672,6 +719,16 @@ export function ContextStoreManualRevisionRow(props: {
         <button className="revision-task-view" type="button" onClick={props.onOpen}>
           {t("viewRevisionChanges")}
           <ArrowRight size={14} aria-hidden="true" />
+        </button>
+        <button
+          className="revision-task-icon-button is-danger"
+          type="button"
+          aria-label={t("deleteRevisionRecord")}
+          title={t("deleteRevisionRecord")}
+          disabled={props.busy}
+          onClick={props.onDelete}
+        >
+          <Trash size={16} aria-hidden="true" />
         </button>
       </div>
     </article>

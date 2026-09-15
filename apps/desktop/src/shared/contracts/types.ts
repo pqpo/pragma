@@ -103,6 +103,7 @@ import {
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
   DeleteContextStoreEntrySchema,
+  DeleteContextStoreRevisionRecordSchema,
   DeleteContextStoreSchema,
   ExpertContextStoreMountSchema,
   GetContextStoreContentSchema,
@@ -451,6 +452,9 @@ export type ContextStoreSnapshot = z.infer<typeof ContextStoreSnapshotSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ContextStoreRevisionRecord = z.infer<typeof ContextStoreRevisionRecordSchema>;
 export type ListContextStoreRevisionRecords = z.infer<typeof ListContextStoreRevisionRecordsSchema>;
+export type DeleteContextStoreRevisionRecord = z.infer<
+  typeof DeleteContextStoreRevisionRecordSchema
+>;
 export type ContextStoreEditorDraft = z.infer<typeof ContextStoreEditorDraftSchema>;
 export type GetContextStoreEditorDraft = z.infer<typeof GetContextStoreEditorDraftSchema>;
 export type CommitContextStoreEditorDraft = z.infer<typeof CommitContextStoreEditorDraftSchema>;

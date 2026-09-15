@@ -42,6 +42,14 @@ import {
 const FILE_CONTENT_MAX_BYTES = 1_000_000;
 const MIGRATION_READY_FILE = ".pragma-migration-ready.json";
 const SNAPSHOT_STORAGE_MARKER = "snapshot-storage.json";
+const REVISION_LIST_STATE_FILE = "revision-list-state.json";
+
+const ContextStoreRevisionListStateSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-revision-list-state/v1"),
+    deletedRevisions: z.array(z.number().int().min(2)).max(100_000),
+  })
+  .strict();
 
 const ContextStoreSnapshotManifestV2Schema = z.object({
   schemaVersion: z.literal("pragma.context-store-snapshot-manifest/v2"),
@@ -208,6 +216,11 @@ export interface ContextStoreStore {
     author: ContextStoreRevisionRecord["author"],
   ): Promise<ContextStore>;
   history(storeId: string): Promise<readonly ContextStoreRevisionRecord[]>;
+  deleteRevisionRecord(
+    storeId: string,
+    revision: number,
+    expectedSnapshotHash: string,
+  ): Promise<void>;
   withRevisionLock<T>(storeId: string, operation: () => Promise<T>): Promise<T>;
   resolve(storeId: string): Promise<{
     readonly revision: string;
@@ -305,6 +318,7 @@ export function createContextStoreStore(options: {
     join(revisionRoot(id, revision), "snapshot.json");
   const revisionRecordPath = (id: string, revision: number) =>
     join(revisionRoot(id, revision), "record.json");
+  const revisionListStatePath = (id: string) => join(storePath(id), REVISION_LIST_STATE_FILE);
   const snapshotStorageMarkerPath = (id: string) => join(storePath(id), SNAPSHOT_STORAGE_MARKER);
   const snapshotObjects = new ContentAddressedStore(
     join(dirname(options.storesPath), "objects", "sha256"),
@@ -319,6 +333,25 @@ export function createContextStoreStore(options: {
   const withRevisionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> => {
     const canonicalId = z.string().uuid().parse(id);
     return await withFileLock(revisionLockPath(canonicalId), operation);
+  };
+
+  const readRevisionListState = async (id: string) => {
+    try {
+      return ContextStoreRevisionListStateSchema.parse(
+        parseJson(
+          await readFile(revisionListStatePath(id), "utf8"),
+          `${id}/${REVISION_LIST_STATE_FILE}`,
+        ),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return {
+          schemaVersion: "pragma.context-store-revision-list-state/v1" as const,
+          deletedRevisions: [],
+        };
+      }
+      throw error;
+    }
   };
 
   const migrateFileStore = async (
@@ -1586,8 +1619,64 @@ export function createContextStoreStore(options: {
       });
     },
 
+    async deleteRevisionRecord(storeId, revision, expectedSnapshotHash) {
+      const canonicalStoreId = z.string().uuid().parse(storeId);
+      const canonicalRevision = z.number().int().min(2).parse(revision);
+      const canonicalSnapshotHash = z
+        .string()
+        .regex(/^[a-f0-9]{64}$/u)
+        .parse(expectedSnapshotHash);
+      await withRevisionLock(canonicalStoreId, async () => {
+        const current = await readStore(canonicalStoreId);
+        if (canonicalRevision > current.contentRevision) {
+          throw new ContextStoreStoreError(
+            "revision_conflict",
+            "The knowledge base revision no longer exists.",
+          );
+        }
+        const record = ContextStoreRevisionRecordSchema.parse(
+          parseJson(
+            await readFile(revisionRecordPath(canonicalStoreId, canonicalRevision), "utf8"),
+            `${canonicalStoreId}/revisions/${canonicalRevision}/record.json`,
+          ),
+        );
+        if (
+          record.storeId !== canonicalStoreId ||
+          record.revision !== canonicalRevision ||
+          record.snapshotHash !== canonicalSnapshotHash
+        ) {
+          throw new ContextStoreStoreError(
+            "revision_conflict",
+            "The knowledge base revision changed. Refresh and try again.",
+          );
+        }
+        if (record.author !== "user" || record.parentRevision === null) {
+          throw new ContextStoreStoreError(
+            "invalid_entry",
+            "Only manually saved revision records can be deleted from the list.",
+          );
+        }
+        const state = await readRevisionListState(canonicalStoreId);
+        if (state.deletedRevisions.includes(canonicalRevision)) return;
+        await writeJsonAtomic(revisionListStatePath(canonicalStoreId), {
+          ...state,
+          deletedRevisions: [...state.deletedRevisions, canonicalRevision].toSorted(
+            (left, right) => left - right,
+          ),
+        });
+      });
+    },
+
     async history(storeId) {
       const current = await readStore(storeId);
+      const listState = await readRevisionListState(storeId);
+      if (listState.deletedRevisions.some((revision) => revision > current.contentRevision)) {
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          `Knowledge base ${storeId} has invalid revision list state.`,
+        );
+      }
+      const deletedRevisions = new Set(listState.deletedRevisions);
       const records: ContextStoreRevisionRecord[] = [];
       for (let revision = current.contentRevision; revision >= 1; revision -= 1) {
         try {
@@ -1615,7 +1704,7 @@ export function createContextStoreStore(options: {
               `Knowledge base ${storeId} has an inconsistent revision ${revision}.`,
             );
           }
-          records.push(record);
+          if (!deletedRevisions.has(revision)) records.push(record);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") {
             throw new ContextStoreStoreError(

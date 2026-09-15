@@ -10,6 +10,7 @@ import {
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
   DeleteContextStoreEntrySchema,
+  DeleteContextStoreRevisionRecordSchema,
   DeleteContextStoreSchema,
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,
@@ -95,6 +96,10 @@ export function installContextStoreHandlers(
     if (parsed.storeId !== undefined) return await store.history(parsed.storeId);
     const stores = await store.list();
     return (await Promise.all(stores.map(async (item) => await store.history(item.id)))).flat();
+  });
+  ipcMain.handle("context-stores:delete-revision-record", async (_event, input: unknown) => {
+    const parsed = DeleteContextStoreRevisionRecordSchema.parse(input);
+    await store.deleteRevisionRecord(parsed.storeId, parsed.revision, parsed.snapshotHash);
   });
   ipcMain.handle("context-stores:create-folder", async (_event, input: unknown) => {
     const parsed = CreateContextStoreFolderSchema.parse(input);

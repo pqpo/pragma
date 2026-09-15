@@ -511,6 +511,10 @@ export const studio = {
   retryRevision: "重试",
   deleteRevisionTask: "删除任务",
   deleteRevisionTaskTitle: "删除此修订任务？",
+  deleteRevisionRecord: "删除记录",
+  deleteRevisionRecordTitle: "删除此手动修订记录？",
+  deleteRevisionRecordDescription:
+    "“{{name}}”将从修订记录列表中移除。删除记录不会回滚已经应用的变更，也不会删除知识库或历史快照。",
   discardRevisionDraft: "丢弃草稿",
   discardRevisionDraftTitle: "丢弃此修订草稿？",
   discardRevisionDraftDescription: "“{{name}}”及其未合并修改将移入回收站。",

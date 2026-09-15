@@ -202,6 +202,14 @@ export const ListContextStoreRevisionRecordsSchema = z.object({
   storeId: ContextStoreIdSchema.optional(),
 });
 
+export const DeleteContextStoreRevisionRecordSchema = z
+  .object({
+    storeId: ContextStoreIdSchema,
+    revision: z.number().int().min(2),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  })
+  .strict();
+
 const CreateContextStoreBaseShape = {
   name: KnowledgeBaseNameSchema,
   description: KnowledgeBaseDescriptionSchema,

@@ -700,6 +700,32 @@ describe("managed context store", () => {
     expect(secondByName.get("a.md")?.hash).not.toBe(firstByName.get("a.md")?.hash);
   });
 
+  it("removes a manual revision from the history list without deleting its snapshot", async () => {
+    const { storesPath, store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Manual history", description: "" });
+    await store.createFile(created.id, "guide.md", "# Guide\n");
+    const record = (await store.history(created.id)).find((item) => item.revision === 2)!;
+
+    await store.deleteRevisionRecord(created.id, record.revision, record.snapshotHash);
+
+    await expect(store.history(created.id)).resolves.toEqual([
+      expect.objectContaining({ revision: 1 }),
+    ]);
+    await expect(store.getSnapshot(created.id, 2)).resolves.toMatchObject({
+      revision: 2,
+      snapshotHash: record.snapshotHash,
+      files: [expect.objectContaining({ id: "guide.md", content: "# Guide\n" })],
+    });
+    await expect(store.getContent(created.id, "guide.md")).resolves.toMatchObject({
+      content: "# Guide\n",
+    });
+
+    const reopened = createContextStoreStore({ storesPath });
+    await expect(reopened.history(created.id)).resolves.toEqual([
+      expect.objectContaining({ revision: 1 }),
+    ]);
+  });
+
   it("upgrades full historical snapshots to compact manifests on first owner access", async () => {
     const { storesPath, store } = await createStore();
     const created = await store.createFromSnapshot({

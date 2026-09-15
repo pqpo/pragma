@@ -511,6 +511,10 @@ export const studio = {
   retryRevision: "重試",
   deleteRevisionTask: "刪除任務",
   deleteRevisionTaskTitle: "刪除此修訂任務？",
+  deleteRevisionRecord: "刪除記錄",
+  deleteRevisionRecordTitle: "刪除此手動修訂記錄？",
+  deleteRevisionRecordDescription:
+    "「{{name}}」將從修訂記錄列表中移除。刪除記錄不會回復已套用的變更，也不會刪除知識庫或歷史快照。",
   discardRevisionDraft: "丟棄草稿",
   discardRevisionDraftTitle: "丟棄此修訂草稿？",
   discardRevisionDraftDescription: "「{{name}}」及其未合併修改將移至回收桶。",
