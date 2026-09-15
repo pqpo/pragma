@@ -1078,12 +1078,13 @@ export function HomePage(props: {
               selectedId={undefined}
               onSelect={(project) => {
                 setProjectManagerOpen(false);
-                editProject(project);
+                if (!saving) void applyProject(project);
               }}
               onEdit={(project) => {
                 setProjectManagerOpen(false);
                 editProject(project);
               }}
+              showEditActions
             />
           </Dialog>
         ) : null}
@@ -1740,6 +1741,7 @@ function MissionExecutorPicker(props: {
                   <SelectMenu<"all" | HomeMissionExecutorOption["kind"]>
                     ariaLabel={t("filterExecutorKind")}
                     className="form-select"
+                    menuClassName="home-project-executor-filter-menu"
                     overlayOwnerId={overlayOwnerId}
                     value={selectionKind}
                     options={[
@@ -1757,6 +1759,7 @@ function MissionExecutorPicker(props: {
                     <SelectMenu
                       ariaLabel={t("filterExecutorTag")}
                       className="form-select"
+                      menuClassName="home-project-executor-filter-menu"
                       overlayOwnerId={overlayOwnerId}
                       value={selectionTag}
                       options={[

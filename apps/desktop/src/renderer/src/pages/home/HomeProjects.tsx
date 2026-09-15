@@ -25,6 +25,7 @@ export function HomeProjects(props: {
   onSelect: (project: HomeProject) => void;
   onEdit: (project: HomeProject | null) => void;
   onMore?: () => void;
+  showEditActions?: boolean;
   disabled?: boolean;
 }) {
   const { t } = useTranslation("missions");
@@ -67,21 +68,23 @@ export function HomeProjects(props: {
                 </small>
               </span>
             </button>
-            <button
-              className="home-favorites-manage-button"
-              type="button"
-              title={t("homeProjectEditNamed", { name: project.name })}
-              aria-label={t("homeProjectEditNamed", { name: project.name })}
-              disabled={props.disabled}
-              onClick={() => props.onEdit(project)}
-            >
-              <GearSix size={16} />
-            </button>
+            {props.showEditActions ? (
+              <button
+                className="home-favorites-manage-button"
+                type="button"
+                title={t("homeProjectEditNamed", { name: project.name })}
+                aria-label={t("homeProjectEditNamed", { name: project.name })}
+                disabled={props.disabled}
+                onClick={() => props.onEdit(project)}
+              >
+                <GearSix size={16} />
+              </button>
+            ) : null}
           </div>
         );
       })}
       {props.onMore && props.projects.length > 6 ? (
-        <button type="button" className="text-button" onClick={props.onMore}>
+        <button type="button" className="text-button home-project-more" onClick={props.onMore}>
           {t("homeFavoritesMore", { count: props.projects.length - 6 })}
         </button>
       ) : null}
