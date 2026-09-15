@@ -23,9 +23,9 @@ export function Dialog(props: {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     requestAnimationFrame(() => {
-      const preferred = surfaceRef.current?.querySelector<HTMLElement>(
-        "[data-dialog-initial-focus], input, textarea, [role=combobox], button",
-      );
+      const preferred =
+        surfaceRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]") ??
+        surfaceRef.current?.querySelector<HTMLElement>("input, textarea, [role=combobox], button");
       preferred?.focus();
     });
     return () => {

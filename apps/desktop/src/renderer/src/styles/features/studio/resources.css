@@ -1406,6 +1406,18 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
   height: min(560px, calc(100vh - 56px));
 }
 
+.context-store-picker-dialog > .ui-dialog-body {
+  display: contents;
+}
+
+.context-store-picker-dialog .expert-picker-search > input:focus-visible {
+  outline: 0;
+}
+
+.context-store-picker-backdrop {
+  z-index: 120;
+}
+
 .expert-picker-dialog.has-resource-filters {
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
 }

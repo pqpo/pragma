@@ -15,6 +15,7 @@ const HomeDraftSchema = z.object({
       basename: z.string().min(1),
     })
     .optional(),
+  contextStoreIds: z.array(z.string().uuid()).optional(),
   goal: z.string().max(100_000),
   flowInput: z.record(z.string(), z.unknown()),
   toolPermissionMode: DesktopToolPermissionModeSchema,

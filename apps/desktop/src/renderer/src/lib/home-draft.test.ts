@@ -24,6 +24,16 @@ describe("home draft persistence", () => {
     expect(readHomeDraft({ getItem: () => serialized })).toEqual(draft);
   });
 
+  it("preserves project knowledge selections without invalidating older drafts", () => {
+    const projectDraft = { ...draft, contextStoreIds: ["11111111-1111-4111-8111-111111111111"] };
+    const setItem = vi.fn();
+    writeHomeDraft({ setItem }, projectDraft);
+    expect(readHomeDraft({ getItem: () => setItem.mock.calls[0]?.[1] as string })).toEqual(
+      projectDraft,
+    );
+    expect(readHomeDraft({ getItem: () => JSON.stringify(draft) })).toEqual(draft);
+  });
+
   it("ignores malformed or unavailable storage", () => {
     expect(readHomeDraft({ getItem: () => "{bad-json" })).toBeUndefined();
     expect(readHomeDraft({ getItem: () => JSON.stringify({ executorRef: "" }) })).toBeUndefined();

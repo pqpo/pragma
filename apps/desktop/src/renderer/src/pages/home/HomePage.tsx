@@ -1,3 +1,6 @@
+import { Dialog } from "../../components/Dialog.tsx";
+import { HomeProjects, HomeProjectEditor } from "./HomeProjects.tsx";
+import type { HomeProject } from "../../../../shared/contracts/home-projects.ts";
 import {
   useCallback,
   useEffect,
@@ -26,6 +29,7 @@ import {
   Lightbulb,
   MagnifyingGlass,
   Star,
+  Plus,
   User,
   UsersThree,
   X,
@@ -141,6 +145,7 @@ export function HomePage(props: {
   readonly onOpenKnowledgeBases?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
+  const { t: tCommon } = useTranslation("common");
   const timeGreeting = t(`homeTimeGreetings.${homeTimeGreetingKey()}`);
   const [executors, setExecutors] = useState<readonly HomeMissionExecutorOption[]>([]);
   const [defaultWorkspace, setDefaultWorkspace] = useState<WorkspaceSelection>();
@@ -150,6 +155,7 @@ export function HomePage(props: {
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
+  const [contextStoresReady, setContextStoresReady] = useState(false);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [contextStoreIds, setContextStoreIds] = useState<readonly string[]>([]);
   const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
@@ -171,6 +177,32 @@ export function HomePage(props: {
   const [modelResetRequired, setModelResetRequired] = useState(false);
   const [persistenceReady, setPersistenceReady] = useState(false);
   const [appVersion, setAppVersion] = useState<string>();
+  const [homeProjects, setHomeProjects] = useState<readonly HomeProject[]>([]);
+  const [homeProjectsReady, setHomeProjectsReady] = useState(false);
+  const [homeTab, setHomeTab] = useState<"projects" | "favorites">("projects");
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false);
+  const [projectEditor, setProjectEditor] = useState<HomeProject | null>();
+  const [selectedProjectId, setSelectedProjectId] = useState<string>();
+  const projectSelectionRequest = useRef(0);
+  const [projectApplying, setProjectApplying] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void window.pragmaDesktop
+      .listHomeProjects()
+      .then((projects) => {
+        if (!cancelled) {
+          setHomeProjects(projects);
+          setHomeProjectsReady(true);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(errorMessage(cause));
+      });
+    return () => {
+      cancelled = true;
+      projectSelectionRequest.current += 1;
+    };
+  }, []);
   const [executorManagerOpen, setExecutorManagerOpen] = useState(false);
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const inputExecutorRef = useRef(props.initialExecutorRef ?? "");
@@ -189,6 +221,7 @@ export function HomePage(props: {
       .then((stores) => {
         if (!cancelled) {
           setContextStores(stores);
+          setContextStoresReady(true);
         }
       })
       .catch((loadError: unknown) => {
@@ -249,8 +282,10 @@ export function HomePage(props: {
         setDefaultExecutorRef(defaults.executorRef);
         setToolPermissionMode(persisted?.toolPermissionMode ?? defaults.toolPermissionMode);
         const restoredWorkspace =
-          selected?.preference.lastWorkspace ?? persisted?.workspaceOverride;
+          (restoresPersistedInput ? persisted.workspaceOverride : undefined) ??
+          selected?.preference.lastWorkspace;
         setWorkspaceOverride(restoredWorkspace);
+        setContextStoreIds(restoresPersistedInput ? (persisted.contextStoreIds ?? []) : []);
         setExecutorRef(selected?.ref ?? "");
         inputExecutorRef.current = selected?.ref ?? "";
         workspaceAssociationRequestRef.current = selected?.ref ?? "";
@@ -418,6 +453,7 @@ export function HomePage(props: {
     const persistedModelOverride = modelOverride ?? pendingModelOverrideRef.current;
     writeHomeDraft(typeof window === "undefined" ? undefined : window.localStorage, {
       executorRef,
+      contextStoreIds: [...contextStoreIds],
       ...(workspaceOverride === undefined ? {} : { workspaceOverride }),
       goal,
       flowInput,
@@ -425,6 +461,7 @@ export function HomePage(props: {
       ...(persistedModelOverride === undefined ? {} : { modelOverride: persistedModelOverride }),
     });
   }, [
+    contextStoreIds,
     executorRef,
     flowInput,
     goal,
@@ -435,11 +472,17 @@ export function HomePage(props: {
     workspaceOverride,
   ]);
 
+  const changeWorkspace = (workspace: WorkspaceSelection | undefined) => {
+    projectSelectionRequest.current += 1;
+    workspaceAssociationRequestRef.current = "";
+    setProjectApplying(false);
+    setWorkspaceOverride(workspace);
+  };
   const pickWorkspace = async () => {
     try {
       const result = await window.pragmaDesktop.pickWorkspace();
       if (result.ok && result.path !== undefined && result.basename !== undefined) {
-        setWorkspaceOverride({ path: result.path, basename: result.basename });
+        changeWorkspace({ path: result.path, basename: result.basename });
         setError(null);
       } else if (result.reason !== "cancelled") {
         setError(result.error ?? t("workspaceUnavailable"));
@@ -450,6 +493,9 @@ export function HomePage(props: {
   };
 
   const selectExecutor = (ref: string) => {
+    projectSelectionRequest.current += 1;
+    setProjectApplying(false);
+    setSelectedProjectId(undefined);
     const next = executors.find((executor) => executor.ref === ref);
     workspaceAssociationRequestRef.current = ref;
     setExecutorRef(ref);
@@ -468,6 +514,51 @@ export function HomePage(props: {
         void clearExecutorWorkspaceAssociation(ref, setExecutors);
       })
       .catch(() => undefined);
+  };
+
+  const editProject = (project: HomeProject | null) => {
+    projectSelectionRequest.current += 1;
+    setProjectApplying(false);
+    setProjectEditor(project);
+  };
+
+  const applyProject = async (project: HomeProject) => {
+    const request = ++projectSelectionRequest.current;
+    setProjectApplying(false);
+    workspaceAssociationRequestRef.current = "";
+    const next = executors.find((executor) => executor.ref === project.executorRef);
+    if (
+      next === undefined ||
+      project.contextStoreIds.some((id) => !contextStores.some((store) => store.id === id))
+    ) {
+      setError(t("homeProjectRepair"));
+      setProjectEditor(project);
+      return;
+    }
+    setProjectApplying(true);
+    try {
+      const validation = await window.pragmaDesktop.validateWorkspace(project.workspace.path);
+      if (request !== projectSelectionRequest.current) return;
+      if (!validation.ok) {
+        setError(t("workspaceUnavailable"));
+        setProjectEditor(project);
+        return;
+      }
+      inputExecutorRef.current = next.ref;
+      setExecutorRef(next.ref);
+      setFlowInput(
+        next.kind === "flow" && next.inputSchema ? createSchemaInputValue(next.inputSchema) : {},
+      );
+      if (next.kind === "flow") clearAttachmentDrafts();
+      setWorkspaceOverride(project.workspace);
+      setContextStoreIds(project.contextStoreIds);
+      setSelectedProjectId(project.id);
+      setError(null);
+    } catch (cause) {
+      if (request === projectSelectionRequest.current) setError(errorMessage(cause));
+    } finally {
+      if (request === projectSelectionRequest.current) setProjectApplying(false);
+    }
   };
 
   const clearAttachmentDrafts = () => {
@@ -612,9 +703,11 @@ export function HomePage(props: {
     if (
       workspace === undefined ||
       !hasValidExecutor ||
+      executorConfigurationUnavailable ||
       (!hasStructuredFlowInput && goal.trim() === "") ||
       !structuredFlowInputValid ||
-      saving
+      saving ||
+      projectApplying
     )
       return;
     setSaving(true);
@@ -700,8 +793,8 @@ export function HomePage(props: {
             selection={workspaceOverride}
             defaultSelected={workspaceOverride === undefined}
             onChoose={() => void pickWorkspace()}
-            onSelect={setWorkspaceOverride}
-            onUseDefault={() => setWorkspaceOverride(undefined)}
+            onSelect={changeWorkspace}
+            onUseDefault={() => changeWorkspace(undefined)}
           />
           {showExecutorConfigurationTip ? (
             <HomeExecutorConfigurationTip
@@ -840,6 +933,7 @@ export function HomePage(props: {
               title={saving ? t("starting") : t("startMission")}
               disabled={
                 saving ||
+                projectApplying ||
                 !loaded ||
                 defaultWorkspace === undefined ||
                 !hasValidExecutor ||
@@ -853,12 +947,184 @@ export function HomePage(props: {
             </button>
           </footer>
         </div>
-        <HomeFavorites
-          executors={executors}
-          onSelect={selectExecutor}
-          onReorder={(orderedRefs) => void reorderFavorites(orderedRefs)}
-          onManage={() => setExecutorManagerOpen(true)}
-        />
+        <section className="home-shortcuts">
+          <div className="home-shortcuts-heading">
+            <div className="home-shortcuts-tabs" role="tablist" aria-label={t("homeShortcuts")}>
+              {(["projects", "favorites"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  id={`home-${tab}-tab`}
+                  type="button"
+                  role="tab"
+                  aria-selected={homeTab === tab}
+                  aria-controls={`home-${tab}-panel`}
+                  tabIndex={homeTab === tab ? 0 : -1}
+                  onClick={() => setHomeTab(tab)}
+                  onKeyDown={(event) => {
+                    if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                      event.preventDefault();
+                      const next =
+                        event.key === "Home"
+                          ? "projects"
+                          : event.key === "End"
+                            ? "favorites"
+                            : homeTab === "projects"
+                              ? "favorites"
+                              : "projects";
+                      setHomeTab(next);
+                      document.getElementById(`home-${next}-tab`)?.focus();
+                    }
+                  }}
+                >
+                  {t(tab === "projects" ? "homeProjects" : "homeFavorites")}
+                </button>
+              ))}
+            </div>
+            <div className="home-shortcuts-actions">
+              {homeTab === "projects" ? (
+                <button
+                  className="home-favorites-manage-button"
+                  type="button"
+                  disabled={!homeProjectsReady || !loaded || !contextStoresReady || saving}
+                  aria-label={t("homeProjectCreate")}
+                  title={t("homeProjectCreate")}
+                  onClick={() => editProject(null)}
+                >
+                  <Plus size={16} />
+                </button>
+              ) : null}
+              <button
+                className="home-favorites-manage-button"
+                type="button"
+                disabled={
+                  homeTab === "projects" &&
+                  (!homeProjectsReady || !loaded || !contextStoresReady || saving)
+                }
+                aria-label={t(homeTab === "projects" ? "homeProjectEdit" : "manageExecutors")}
+                title={t(homeTab === "projects" ? "homeProjectEdit" : "manageExecutors")}
+                onClick={() =>
+                  homeTab === "projects"
+                    ? setProjectManagerOpen(true)
+                    : setExecutorManagerOpen(true)
+                }
+              >
+                <GearSix size={16} />
+              </button>
+            </div>
+          </div>
+          <div id={`home-${homeTab}-panel`} role="tabpanel" aria-labelledby={`home-${homeTab}-tab`}>
+            {homeTab === "projects" ? (
+              <HomeProjects
+                projects={homeProjects}
+                disabled={!loaded || !contextStoresReady || !homeProjectsReady || saving}
+                executors={executors}
+                stores={contextStores}
+                selectedId={
+                  homeProjects.find(
+                    (project) =>
+                      project.id === selectedProjectId &&
+                      project.executorRef === executorRef &&
+                      project.workspace.path === (workspaceOverride ?? defaultWorkspace)?.path &&
+                      project.contextStoreIds.length === contextStoreIds.length &&
+                      project.contextStoreIds.every((id) => contextStoreIds.includes(id)),
+                  )?.id
+                }
+                onSelect={(project) => {
+                  if (!saving) void applyProject(project);
+                }}
+                onEdit={editProject}
+                onMore={() => setProjectManagerOpen(true)}
+              />
+            ) : (
+              <HomeFavorites
+                executors={executors}
+                onSelect={selectExecutor}
+                onReorder={(orderedRefs) => void reorderFavorites(orderedRefs)}
+              />
+            )}
+          </div>
+        </section>
+        {projectManagerOpen ? (
+          <Dialog
+            className="home-project-manager"
+            title={t("homeProjects")}
+            onCancel={() => setProjectManagerOpen(false)}
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setProjectManagerOpen(false)}
+                >
+                  {tCommon("actions.close")}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    setProjectManagerOpen(false);
+                    editProject(null);
+                  }}
+                >
+                  {t("homeProjectCreate")}
+                </button>
+              </>
+            }
+          >
+            <HomeProjects
+              projects={homeProjects}
+              executors={executors}
+              stores={contextStores}
+              selectedId={undefined}
+              onSelect={(project) => {
+                setProjectManagerOpen(false);
+                editProject(project);
+              }}
+              onEdit={(project) => {
+                setProjectManagerOpen(false);
+                editProject(project);
+              }}
+            />
+          </Dialog>
+        ) : null}
+        {projectEditor !== undefined ? (
+          <HomeProjectEditor
+            renderExecutorPicker={(value, onChange, workspace) => (
+              <MissionExecutorPicker
+                executors={executors}
+                value={value}
+                defaultExecutorRef={defaultExecutorRef}
+                workspace={workspace}
+                recentWorkspaces={recentWorkspaces}
+                onChange={onChange}
+                onPreferenceChange={updateExecutorPreference}
+                onChooseFavoriteWorkspace={chooseFavoriteWorkspace}
+                managerOpen={false}
+                onManagerOpenChange={setExecutorManagerOpen}
+              />
+            )}
+            project={projectEditor}
+            executors={executors}
+            stores={contextStores}
+            defaultWorkspace={defaultWorkspace}
+            recentWorkspaces={recentWorkspaces}
+            onClose={() => setProjectEditor(undefined)}
+            onSave={async (input) => {
+              const saved = await window.pragmaDesktop.saveHomeProject(input);
+              setHomeProjects((current) =>
+                input.id === undefined
+                  ? [...current, saved]
+                  : current.map((item) => (item.id === saved.id ? saved : item)),
+              );
+              if (selectedProjectId === saved.id) setSelectedProjectId(undefined);
+            }}
+            onDelete={async (id) => {
+              await window.pragmaDesktop.deleteHomeProject(id);
+              setHomeProjects((current) => current.filter((item) => item.id !== id));
+              if (selectedProjectId === id) setSelectedProjectId(undefined);
+            }}
+          />
+        ) : null}
         {loaded && executors.length === 0 ? (
           <p className="mission-form-note">{t("createFirst")}</p>
         ) : null}
@@ -886,7 +1152,11 @@ export function HomePage(props: {
           selectedStoreIds={contextStoreIds}
           description={t("missionKnowledgePickerDescription")}
           footerHint={t("missionKnowledgeCreateHint")}
-          onSelectedStoreIdsChange={setContextStoreIds}
+          onSelectedStoreIdsChange={(ids) => {
+            projectSelectionRequest.current += 1;
+            setProjectApplying(false);
+            setContextStoreIds(ids);
+          }}
           onClose={() => setContextStorePickerOpen(false)}
           onGoToKnowledgeBases={props.onOpenKnowledgeBases}
         />
@@ -899,7 +1169,6 @@ function HomeFavorites(props: {
   readonly executors: readonly HomeMissionExecutorOption[];
   readonly onSelect: (ref: string) => void;
   readonly onReorder: (orderedRefs: readonly string[]) => void;
-  readonly onManage: () => void;
 }) {
   const { t } = useTranslation("missions");
   const { t: tCommon } = useTranslation("common");
@@ -1087,7 +1356,7 @@ function HomeFavorites(props: {
     return () => window.clearTimeout(timer);
   }, [dragOrder, draggedRef, favorites]);
 
-  if (favorites.length === 0) return null;
+  if (favorites.length === 0) return <p className="home-project-hint">{t("homeFavoritesEmpty")}</p>;
 
   const renderFavorite = (
     executor: HomeMissionExecutorOption,
@@ -1167,22 +1436,7 @@ function HomeFavorites(props: {
 
   return (
     <>
-      <section className="home-favorites" aria-labelledby="home-favorites-title">
-        <div className="home-favorites-heading">
-          <div>
-            <h2 id="home-favorites-title">{t("homeFavorites")}</h2>
-            <button
-              className="home-favorites-manage-button"
-              type="button"
-              aria-label={t("manageExecutors")}
-              title={t("manageExecutors")}
-              onClick={props.onManage}
-            >
-              <GearSix size={15} aria-hidden="true" />
-            </button>
-          </div>
-          <span>{t("homeFavoritesHint")}</span>
-        </div>
+      <section className="home-favorites" aria-label={t("homeFavorites")}>
         <div className="home-favorites-list">
           {compactFavorites.map((executor) => renderFavorite(executor, true, false))}
           {favorites.length > 6 ? (
@@ -1405,6 +1659,13 @@ function MissionExecutorPicker(props: {
       <div
         className={open ? "mission-executor-picker is-open" : "mission-executor-picker"}
         data-ui-overlay-id={overlayOwnerId}
+        onKeyDown={(event) => {
+          if (open && event.key === "Escape") {
+            event.stopPropagation();
+            setOpen(false);
+            triggerRef.current?.focus();
+          }
+        }}
         ref={rootRef}
       >
         <button

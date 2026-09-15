@@ -11,6 +11,8 @@ export function WorkspacePicker(props: {
   readonly defaultWorkspace?: WorkspaceSelection | undefined;
   readonly recentWorkspaces: readonly WorkspaceSelection[];
   readonly selection?: WorkspaceSelection | undefined;
+  readonly chooseDescription?: string | undefined;
+  readonly unselected?: boolean | undefined;
   readonly defaultSelected: boolean;
   readonly onChoose: () => void;
   readonly onSelect: (workspace: WorkspaceSelection) => void;
@@ -19,7 +21,7 @@ export function WorkspacePicker(props: {
   const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const workspace = props.selection ?? props.defaultWorkspace;
+  const workspace = props.unselected ? undefined : (props.selection ?? props.defaultWorkspace);
   const className = ["mission-workspace-picker", props.className, open ? "is-open" : undefined]
     .filter((value) => value !== undefined)
     .join(" ");
@@ -27,7 +29,17 @@ export function WorkspacePicker(props: {
   useDismissableMenu(open, rootRef, () => setOpen(false));
 
   return (
-    <div className={className} ref={rootRef}>
+    <div
+      className={className}
+      ref={rootRef}
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape") {
+          event.stopPropagation();
+          setOpen(false);
+          rootRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+        }
+      }}
+    >
       <button
         className="mission-workspace-trigger"
         type="button"
@@ -42,7 +54,9 @@ export function WorkspacePicker(props: {
               ? t("useDefaultWorkspace")
               : workspace?.basename || t("taskWorkspace")}
           </strong>
-          <small>{workspace?.path ?? t("loadingWorkspace")}</small>
+          <small>
+            {workspace?.path ?? (props.unselected ? t("chooseWorkspace") : t("loadingWorkspace"))}
+          </small>
         </span>
         <CaretDown size={16} aria-hidden="true" />
       </button>
@@ -103,7 +117,7 @@ export function WorkspacePicker(props: {
             <FolderOpen size={18} aria-hidden="true" />
             <span>
               <strong>{t("chooseDifferentWorkspace")}</strong>
-              <small>{t("workspaceOverrideDescription")}</small>
+              <small>{props.chooseDescription ?? t("workspaceOverrideDescription")}</small>
             </span>
           </button>
         </div>
