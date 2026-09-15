@@ -11,6 +11,7 @@ import {
   FileText,
   FloppyDisk,
   Folder,
+  FolderOpen,
   FolderPlus,
   ListBullets,
   MagnifyingGlass,
@@ -188,6 +189,22 @@ export function rebaseEntryId(
   if (currentId === sourceId) return nextId;
   if (!currentId.startsWith(`${sourceId}/`)) return undefined;
   return `${nextId}${currentId.slice(sourceId.length)}`;
+}
+
+function filterCollapsedContextStoreEntries(
+  entries: readonly ContextStoreEntry[],
+  collapsedDirectoryIds: ReadonlySet<string>,
+): readonly ContextStoreEntry[] {
+  if (collapsedDirectoryIds.size === 0) return entries;
+
+  return entries.filter((entry) => {
+    let ancestorId = parentId(entry.id);
+    while (ancestorId !== "") {
+      if (collapsedDirectoryIds.has(ancestorId)) return false;
+      ancestorId = parentId(ancestorId);
+    }
+    return true;
+  });
 }
 
 function withMarkdownExtension(value: string): string {
@@ -389,6 +406,9 @@ export function ContextStoreDetailFragment(props: {
 }) {
   const { t } = useTranslation("studio");
   const [entries, setEntries] = useState<readonly ContextStoreEntry[]>([]);
+  const [collapsedDirectoryIds, setCollapsedDirectoryIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [selectedEntry, setSelectedEntry] = useState<ContextStoreEntry | null>(null);
   const [selectedDirectory, setSelectedDirectory] = useState("");
   const [content, setContent] = useState<ContextStoreContent | null>(null);
@@ -417,6 +437,10 @@ export function ContextStoreDetailFragment(props: {
   const [dropTargetDirectory, setDropTargetDirectory] = useState<string | null>(null);
   const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles,
+  );
+  const visibleEntries = useMemo(
+    () => filterCollapsedContextStoreEntries(entries, collapsedDirectoryIds),
+    [collapsedDirectoryIds, entries],
   );
   const [autosaveVersion, setAutosaveVersion] = useState(0);
   const editVersionRef = useRef(0);
@@ -628,6 +652,10 @@ export function ContextStoreDetailFragment(props: {
   }, [loadEntries, loadFile, props.onGetEditorDraft, props.onSubscribe, props.store.id]);
 
   useEffect(() => {
+    setCollapsedDirectoryIds(new Set());
+  }, [props.store.id]);
+
+  useEffect(() => {
     let cancelled = false;
     void props.onGetEditorDraft(props.store.id).then((editorDraft) => {
       if (!cancelled) setDraftDirty(editorDraft !== undefined);
@@ -656,6 +684,12 @@ export function ContextStoreDetailFragment(props: {
         setSelectedEntry(entry);
         setSelectedDirectory(entry.id);
         setContent(null);
+        setCollapsedDirectoryIds((current) => {
+          const next = new Set(current);
+          if (next.has(entry.id)) next.delete(entry.id);
+          else next.add(entry.id);
+          return next;
+        });
       }
       return;
     }
@@ -1130,9 +1164,11 @@ export function ContextStoreDetailFragment(props: {
               if (draggedEntry !== null) proposeMove(draggedEntry, "");
             }}
           >
-            {entries.map((entry) => {
+            {visibleEntries.map((entry) => {
               const depth = entry.id.split("/").length - 1;
-              const Icon = entry.kind === "directory" ? Folder : FileText;
+              const isExpanded = entry.kind === "directory" && !collapsedDirectoryIds.has(entry.id);
+              const Icon =
+                entry.kind === "directory" ? (isExpanded ? FolderOpen : Folder) : FileText;
               return (
                 <div
                   key={`${entry.kind}:${entry.id}`}
@@ -1173,6 +1209,7 @@ export function ContextStoreDetailFragment(props: {
                     type="button"
                     role="treeitem"
                     aria-selected={selectedEntry?.id === entry.id}
+                    aria-expanded={entry.kind === "directory" ? isExpanded : undefined}
                     draggable
                     onClick={() => void openEntry(entry)}
                     onDragStart={(event) => {
