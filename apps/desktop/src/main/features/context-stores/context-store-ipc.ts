@@ -37,6 +37,7 @@ import {
 import type { ContextStoreStore } from "./context-store-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import type { ContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
+import { getContextStoreRevisionDiff } from "./context-store-revision-diff.ts";
 
 interface ContextStoreWatchSubscription {
   readonly sender: WebContents;
@@ -86,6 +87,9 @@ export function installContextStoreHandlers(
     const parsed = ListContextStoreEntriesSchema.parse(input);
     return (editorDrafts ?? store).listEntries(parsed.storeId);
   });
+  ipcMain.handle("context-stores:get-revision-diff", (_event, input: unknown) =>
+    getContextStoreRevisionDiff(store, input),
+  );
   ipcMain.handle("context-stores:list-revision-records", async (_event, input: unknown) => {
     const parsed = ListContextStoreRevisionRecordsSchema.parse(input ?? {});
     if (parsed.storeId !== undefined) return await store.history(parsed.storeId);

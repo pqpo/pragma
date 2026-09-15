@@ -11,7 +11,7 @@ import {
   X,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -19,6 +19,7 @@ import type {
   ContextStoreChangeSet,
   ContextStoreDraft,
   ContextStoreRevisionRecord,
+  ContextStoreRevisionDiff,
   ContextStoreRevisionJob,
 } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -26,6 +27,14 @@ import { localizedContextStoreRevisionError } from "../../lib/context-store-revi
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
+
+import {
+  filterRevisionEntries,
+  isDraftAwaitingConfirmation,
+  revisionEntries,
+  revisionPage,
+  snapshotDiffItems,
+} from "./context-store-revision-model.ts";
 
 type RevisionOperation =
   | {
@@ -101,14 +110,6 @@ export function buildRevisionLineDiff(before: string, after: string): readonly R
   return lines;
 }
 
-export function manualContextStoreRevisionRecords(
-  records: readonly ContextStoreRevisionRecord[],
-): readonly ContextStoreRevisionRecord[] {
-  return records
-    .filter((record) => record.author === "user" && record.parentRevision !== null)
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
-}
-
 export function ContextStoreRevisionFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly initialStoreId?: string | undefined;
@@ -123,6 +124,22 @@ export function ContextStoreRevisionFragment(props: {
   const [jobs, setJobs] = useState<readonly ContextStoreRevisionJob[]>([]);
   const [drafts, setDrafts] = useState<readonly ContextStoreDraft[]>([]);
   const [revisionRecords, setRevisionRecords] = useState<readonly ContextStoreRevisionRecord[]>([]);
+  const [stateFilter, setStateFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [selectedRecord, setSelectedRecord] = useState<ContextStoreRevisionRecord | null>(null);
+  const loadGeneration = useRef(0);
+  const activeStoreId = useRef<string | null>(storeId);
+  useLayoutEffect(() => {
+    activeStoreId.current = storeId;
+    return () => {
+      activeStoreId.current = null;
+    };
+  }, [storeId]);
+  const scrollPosition = useRef(0);
+  const frameScrollPosition = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -131,21 +148,28 @@ export function ContextStoreRevisionFragment(props: {
 
   const load = async () => {
     const api = desktopApi();
-    if (api === undefined) return;
+    if (api === undefined || activeStoreId.current !== storeId) return;
+    const generation = ++loadGeneration.current;
     const [jobsResult, allJobsResult, draftsResult, recordsResult] = await Promise.allSettled([
       api.listContextStoreRevisions(storeId === "" ? {} : { storeId }),
       storeId === "" ? undefined : api.listContextStoreRevisions(),
       api.listContextStoreDrafts(storeId === "" ? {} : { storeId }),
       api.listContextStoreRevisionRecords(storeId === "" ? {} : { storeId }),
     ]);
+    if (generation !== loadGeneration.current || activeStoreId.current !== storeId) return;
     if (jobsResult.status === "fulfilled") {
       setJobs(jobsResult.value);
-      props.onCountChanged?.(
-        (allJobsResult.status === "fulfilled" && allJobsResult.value !== undefined
-          ? allJobsResult.value
-          : jobsResult.value
-        ).filter((job) => !["merged", "rejected"].includes(job.state)).length,
-      );
+      const globalJobs =
+        storeId === ""
+          ? jobsResult.value
+          : allJobsResult.status === "fulfilled"
+            ? allJobsResult.value
+            : undefined;
+      if (globalJobs !== undefined) {
+        props.onCountChanged?.(
+          globalJobs.filter((job) => !["merged", "rejected"].includes(job.state)).length,
+        );
+      }
     }
     if (draftsResult.status === "fulfilled") setDrafts(draftsResult.value);
     if (recordsResult.status === "fulfilled") setRevisionRecords(recordsResult.value);
@@ -163,9 +187,18 @@ export function ContextStoreRevisionFragment(props: {
     setStoreId(props.initialStoreId ?? "");
   }, [props.initialStoreId]);
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 2_000);
-    return () => window.clearInterval(timer);
+    let active = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      await load();
+      if (active) timer = window.setTimeout(() => void poll(), 2_000);
+    };
+    void poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      loadGeneration.current += 1;
+    };
   }, [storeId]);
 
   const act = async (
@@ -181,15 +214,18 @@ export function ContextStoreRevisionFragment(props: {
       else if (action === "reject") await api.rejectContextStoreRevision(input);
       else if (action === "retry") await api.retryContextStoreRevision(input);
       else await api.deleteContextStoreRevision(input);
+      if (activeStoreId.current !== storeId) return;
       if (action === "delete") {
         setSelectedJobId(null);
         setPendingDelete(null);
       }
       await load();
     } catch (caught) {
-      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
+      if (activeStoreId.current === storeId) {
+        setError(localizedContextStoreRevisionError(caught, translateRevisionError));
+      }
     } finally {
-      setBusy(null);
+      setBusy((current) => (current === job.id ? null : current));
     }
   };
 
@@ -203,19 +239,66 @@ export function ContextStoreRevisionFragment(props: {
         draftId: draft.id,
         expectedRevision: draft.revision,
       });
+      if (activeStoreId.current !== storeId) return;
       setPendingDiscard(null);
       setSelectedJobId(null);
       await load();
     } catch (caught) {
-      setError(localizedContextStoreRevisionError(caught, translateRevisionError));
+      if (activeStoreId.current === storeId) {
+        setError(localizedContextStoreRevisionError(caught, translateRevisionError));
+      }
     } finally {
-      setBusy(null);
+      setBusy((current) => (current === actionId ? null : current));
     }
   };
 
+  const entries = useMemo(
+    () => filterRevisionEntries(revisionEntries(jobs, revisionRecords), "", "", storeId),
+    [jobs, revisionRecords, storeId],
+  );
+  const filtered = useMemo(
+    () => filterRevisionEntries(entries, stateFilter, sourceFilter),
+    [entries, stateFilter, sourceFilter],
+  );
+  const { items: pageItems, currentPage, pageCount } = revisionPage(filtered, page, pageSize);
+  useEffect(() => {
+    setPage(currentPage);
+  }, [currentPage]);
+  useEffect(() => {
+    setPage(1);
+    scrollPosition.current = 0;
+    listRef.current?.scrollTo?.(0, 0);
+  }, [storeId, stateFilter, sourceFilter, pageSize]);
+  useEffect(() => {
+    if (selectedJobId === null && selectedRecord === null && listRef.current !== null) {
+      listRef.current.scrollTop = scrollPosition.current;
+      const frame = listRef.current.closest(".context-store-revisions");
+      if (frame !== null) frame.scrollTop = frameScrollPosition.current;
+    }
+  }, [selectedJobId, selectedRecord]);
+  const rememberScroll = () => {
+    scrollPosition.current = listRef.current?.scrollTop ?? 0;
+    frameScrollPosition.current =
+      listRef.current?.closest(".context-store-revisions")?.scrollTop ?? 0;
+  };
+  const openJob = (id: string) => {
+    rememberScroll();
+    setSelectedJobId(id);
+  };
+  const openRecord = (record: ContextStoreRevisionRecord) => {
+    rememberScroll();
+    setSelectedRecord(record);
+  };
   const selectedJob = jobs.find((job) => job.id === selectedJobId);
   const selectedDraft = drafts.find((draft) => draft.id === selectedJob?.draftId);
-  const manualRecords = manualContextStoreRevisionRecords(revisionRecords);
+  if (selectedRecord !== null)
+    return (
+      <ContextStoreManualRevisionDiffFragment
+        record={selectedRecord}
+        store={props.stores.find((store) => store.id === selectedRecord.storeId)}
+        onBack={() => setSelectedRecord(null)}
+      />
+    );
   if (selectedJob !== undefined && selectedDraft !== undefined) {
     return (
       <ContextStoreRevisionDiffFragment
@@ -250,7 +333,7 @@ export function ContextStoreRevisionFragment(props: {
                 <p>{t("contextStoreRevisionsDescription")}</p>
               </div>
               <span className="revision-task-count">
-                {t("revisionTaskCount", { count: jobs.length + manualRecords.length })}
+                {t("revisionTaskCount", { count: entries.length })}
               </span>
             </div>
           </div>
@@ -270,14 +353,77 @@ export function ContextStoreRevisionFragment(props: {
       }
     >
       <div className="revision-task-content">
-        {jobs.length === 0 && manualRecords.length === 0 ? (
+        <div className="revision-task-toolbar">
+          <SelectMenu
+            ariaLabel={t("revisionStatusFilter")}
+            value={stateFilter}
+            onChange={setStateFilter}
+            options={[
+              { value: "", label: t("revisionAllStates") },
+              { value: "actionable", label: t("revisionActionable") },
+              ...[
+                "editing",
+                "awaiting_confirmation",
+                "running",
+                "pending_review",
+                "merging",
+                "merged",
+                "rejected",
+                "needs_rebase",
+                "needs_attention",
+              ].map((value) => ({
+                value,
+                label:
+                  value === "awaiting_confirmation"
+                    ? t("revisionDraftAwaitingConfirmation")
+                    : value === "needs_attention"
+                      ? t("revisionErrors")
+                      : value === "merged"
+                        ? t("revisionApplied")
+                        : t(`revisionState.${value}`),
+              })),
+            ]}
+          />
+          <SelectMenu
+            ariaLabel={t("revisionSourceFilter")}
+            value={sourceFilter}
+            onChange={setSourceFilter}
+            options={[
+              { value: "", label: t("revisionAllSources") },
+              ...["manual", "user", "memory-learning", "expert-reflection"].map((value) => ({
+                value,
+                label: t(`revisionSource.${value}`),
+              })),
+            ]}
+          />
+        </div>
+        {filtered.length === 0 ? (
           <div className="revision-task-empty">
             <ClockCounterClockwise size={28} aria-hidden="true" />
-            <h3>{t("noStoreRevisionTasks")}</h3>
-            <p>{t("noStoreRevisionTasksDescription")}</p>
+            <h3>{t(entries.length === 0 ? "noStoreRevisionTasks" : "revisionNoMatches")}</h3>
+            <p>
+              {t(
+                entries.length === 0
+                  ? "noStoreRevisionTasksDescription"
+                  : "revisionNoMatchesDescription",
+              )}
+            </p>
+            {entries.length > 0 || storeId !== "" || stateFilter !== "" || sourceFilter !== "" ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setStoreId("");
+                  setStateFilter("");
+                  setSourceFilter("");
+                }}
+              >
+                {t("revisionClearFilters")}
+              </button>
+            ) : null}
           </div>
         ) : (
-          <div className="revision-task-table">
+          <div className="revision-task-table" ref={listRef}>
             <div className="revision-task-list-header" aria-hidden="true">
               <span>{t("revisionTaskColumn")}</span>
               <span>{t("status")}</span>
@@ -285,14 +431,19 @@ export function ContextStoreRevisionFragment(props: {
               <span>{t("actions")}</span>
             </div>
             <div className="revision-task-list" role="list">
-              {manualRecords.map((record) => (
-                <ContextStoreManualRevisionRow
-                  key={`${record.storeId}:${record.revision}`}
-                  record={record}
-                  store={props.stores.find((candidate) => candidate.id === record.storeId)}
-                />
-              ))}
-              {jobs.map((job) => {
+              {pageItems.map((entry) => {
+                if (entry.kind === "manual")
+                  return (
+                    <ContextStoreManualRevisionRow
+                      key={entry.key}
+                      record={entry.record}
+                      store={props.stores.find(
+                        (candidate) => candidate.id === entry.record.storeId,
+                      )}
+                      onOpen={() => openRecord(entry.record)}
+                    />
+                  );
+                const job = entry.job;
                 const store = props.stores.find(
                   (candidate) => candidate.id === job.request.storeId,
                 );
@@ -310,12 +461,12 @@ export function ContextStoreRevisionFragment(props: {
                       type="button"
                       disabled={!canOpen}
                       aria-label={canOpen ? openLabel : undefined}
-                      onClick={() => canOpen && setSelectedJobId(job.id)}
+                      onClick={() => canOpen && openJob(job.id)}
                     >
                       <span className="revision-task-summary">
                         <strong title={job.request.prompt}>{job.request.prompt}</strong>
-                        <small title={store?.name ?? job.request.storeId}>
-                          {store?.name ?? job.request.storeId} ·{" "}
+                        <small title={store?.name ?? t("unavailableKnowledgeBase")}>
+                          {store?.name ?? t("unavailableKnowledgeBase")} ·{" "}
                           {t(`revisionSource.${job.request.source}`)}
                         </small>
                       </span>
@@ -358,7 +509,7 @@ export function ContextStoreRevisionFragment(props: {
                         <button
                           className="revision-task-view"
                           type="button"
-                          onClick={() => setSelectedJobId(job.id)}
+                          onClick={() => openJob(job.id)}
                         >
                           {openLabel}
                           <ArrowRight size={14} aria-hidden="true" />
@@ -406,6 +557,49 @@ export function ContextStoreRevisionFragment(props: {
             </div>
           </div>
         )}
+        <nav className="revision-task-pagination" aria-label={t("revisionPagination")}>
+          <span>
+            {t("revisionPageRange", {
+              start: filtered.length === 0 ? 0 : (currentPage - 1) * pageSize + 1,
+              end: Math.min(currentPage * pageSize, filtered.length),
+              count: filtered.length,
+            })}
+          </span>
+          <SelectMenu
+            ariaLabel={t("revisionPageSize")}
+            value={String(pageSize)}
+            onChange={(value) => setPageSize(Number(value))}
+            options={[20, 50, 100].map((value) => ({
+              value: String(value),
+              label: t("revisionPerPage", { count: value }),
+            }))}
+          />
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={currentPage <= 1}
+            onClick={() => {
+              setPage(currentPage - 1);
+              listRef.current?.scrollTo?.(0, 0);
+            }}
+          >
+            {t("revisionPreviousPage")}
+          </button>
+          <span>
+            {currentPage} / {pageCount}
+          </span>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={currentPage >= pageCount}
+            onClick={() => {
+              setPage(currentPage + 1);
+              listRef.current?.scrollTo?.(0, 0);
+            }}
+          >
+            {t("revisionNextPage")}
+          </button>
+        </nav>
         {error !== null ? <p className="form-error">{error}</p> : null}
       </div>
       {pendingDelete !== null ? (
@@ -444,12 +638,18 @@ export function ContextStoreRevisionFragment(props: {
 
 export function ContextStoreManualRevisionRow(props: {
   readonly record: ContextStoreRevisionRecord;
+  readonly onOpen: () => void;
   readonly store: ContextStore | undefined;
 }) {
   const { t, i18n } = useTranslation("studio");
   return (
     <article className="revision-task-row" role="listitem">
-      <div className="revision-task-open">
+      <button
+        className="revision-task-open"
+        type="button"
+        onClick={props.onOpen}
+        aria-label={t("viewRevisionChanges")}
+      >
         <span className="revision-task-summary">
           <strong>{props.record.summary}</strong>
           <small>
@@ -467,8 +667,13 @@ export function ContextStoreManualRevisionRow(props: {
         >
           {formatRevisionTimestamp(props.record.createdAt, i18n.language)}
         </time>
+      </button>
+      <div className="revision-task-actions">
+        <button className="revision-task-view" type="button" onClick={props.onOpen}>
+          {t("viewRevisionChanges")}
+          <ArrowRight size={14} aria-hidden="true" />
+        </button>
       </div>
-      <div className="revision-task-actions" />
     </article>
   );
 }
@@ -773,22 +978,7 @@ export function ContextStoreRevisionDiffFragment(props: {
                   <p>{t("revisionDiffUnavailable")}</p>
                 </div>
               ) : (
-                <div className="revision-diff-code" role="table">
-                  {diff.map((line, index) => (
-                    <div
-                      className={`revision-diff-line is-${line.kind}`}
-                      role="row"
-                      key={`${line.kind}:${index}`}
-                    >
-                      <span role="cell">{line.oldLine ?? ""}</span>
-                      <span role="cell">{line.newLine ?? ""}</span>
-                      <b aria-hidden="true">
-                        {line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : ""}
-                      </b>
-                      <code role="cell">{line.content || " "}</code>
-                    </div>
-                  ))}
-                </div>
+                <RevisionDiffCode lines={diff} />
               )}
             </div>
           </section>
@@ -796,13 +986,6 @@ export function ContextStoreRevisionDiffFragment(props: {
         {props.error !== null ? <p className="form-error">{props.error}</p> : null}
       </div>
     </StudioScreenFrame>
-  );
-}
-
-function isDraftAwaitingConfirmation(job: ContextStoreRevisionJob): boolean {
-  return (
-    (job.state === "editing" && job.missionId !== undefined) ||
-    (job.state === "needs_attention" && job.error?.code === "draft_not_submitted")
   );
 }
 
@@ -900,4 +1083,160 @@ function formatRevisionTimestamp(value: string, locale: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+export function RevisionDiffCode({ lines }: { readonly lines: readonly RevisionDiffLine[] }) {
+  return (
+    <div className="revision-diff-code" role="table">
+      {lines.map((line, index) => (
+        <div
+          className={`revision-diff-line is-${line.kind}`}
+          role="row"
+          key={`${line.kind}:${index}`}
+        >
+          <span role="cell">{line.oldLine ?? ""}</span>
+          <span role="cell">{line.newLine ?? ""}</span>
+          <b aria-hidden="true">
+            {line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : ""}
+          </b>
+          <code role="cell">{line.content || " "}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ContextStoreManualRevisionDiffFragment(props: {
+  readonly record: ContextStoreRevisionRecord;
+  readonly store: ContextStore | undefined;
+  readonly onBack: () => void;
+}) {
+  const { t, i18n } = useTranslation("studio");
+  const [snapshots, setSnapshots] = useState<ContextStoreRevisionDiff>();
+  const [error, setError] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
+  const [selectedKey, setSelectedKey] = useState<string>();
+  useEffect(() => {
+    let active = true;
+    setSnapshots(undefined);
+    setError(undefined);
+    const api = desktopApi();
+    if (api === undefined) {
+      setError(t("revisionDiffUnavailable"));
+      return;
+    }
+    void api
+      .getContextStoreRevisionDiff({
+        storeId: props.record.storeId,
+        revision: props.record.revision,
+      })
+      .then((value) => {
+        if (active) setSnapshots(value);
+      })
+      .catch(() => {
+        if (active) setError(t("revisionDiffLoadFailed"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [props.record.storeId, props.record.revision, attempt, t]);
+  const items = useMemo(
+    () => (snapshots === undefined ? [] : snapshotDiffItems(snapshots)),
+    [snapshots],
+  );
+  const selected = items.find((item) => `${item.kind}:${item.id}` === selectedKey) ?? items[0];
+  const lines = useMemo(
+    () => (selected === undefined ? [] : buildRevisionLineDiff(selected.before, selected.after)),
+    [selected],
+  );
+  return (
+    <StudioScreenFrame
+      className="context-store-revision-detail"
+      labelledBy="manual-revision-title"
+      header={
+        <header className="revision-diff-heading">
+          <button className="back-link" type="button" onClick={props.onBack}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("backRevisionTasks")}
+          </button>
+          <div className="revision-diff-title-row">
+            <div>
+              <h1 id="manual-revision-title">{t("revisionSource.manual")}</h1>
+              <p>
+                {props.store?.name ?? t("unavailableKnowledgeBase")} ·{" "}
+                {t("knowledgeRevisionNumber", { count: props.record.parentRevision })} →{" "}
+                {t("knowledgeRevisionNumber", { count: props.record.revision })} ·{" "}
+                {formatRevisionTimestamp(props.record.createdAt, i18n.language)}
+              </p>
+              <p>{props.record.summary}</p>
+            </div>
+          </div>
+        </header>
+      }
+    >
+      <div className="revision-diff-content">
+        {error !== undefined ? (
+          <div role="alert">
+            <p className="form-error">{error}</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setAttempt((value) => value + 1)}
+            >
+              {t("retryRevision")}
+            </button>
+          </div>
+        ) : snapshots === undefined ? (
+          <p role="status">{t("revisionLoadingDiff")}</p>
+        ) : items.length === 0 ? (
+          <p>{t("revisionNoChanges")}</p>
+        ) : (
+          <div className="revision-diff-workspace">
+            <aside className="revision-diff-files" aria-label={t("revisionReviewContents")}>
+              <div className="revision-diff-files-heading">{t("revisionReviewContents")}</div>
+              <nav>
+                {items.map((item) => (
+                  <button
+                    key={`${item.kind}:${item.id}`}
+                    type="button"
+                    className={item === selected ? "is-active" : undefined}
+                    onClick={() => setSelectedKey(`${item.kind}:${item.id}`)}
+                  >
+                    <FileText size={17} aria-hidden="true" />
+                    <span>
+                      <strong>{item.id}</strong>
+                      <small>
+                        {t(`revisionDiffKind.${item.kind}`)} ·{" "}
+                        {t(`revisionDiffOperation.${item.operation}`)}
+                      </small>
+                    </span>
+                  </button>
+                ))}
+              </nav>
+            </aside>
+            <section className="revision-diff-view" aria-label={t("revisionDiff")}>
+              <header>
+                <div className="revision-diff-view-heading">
+                  <FileText size={16} aria-hidden="true" />
+                  <span>
+                    <strong>{selected?.id}</strong>
+                    <small>
+                      {selected === undefined ? "" : t(`revisionDiffKind.${selected.kind}`)}
+                    </small>
+                  </span>
+                </div>
+                <span className="revision-diff-stats">
+                  <b>+{lines.filter((line) => line.kind === "addition").length}</b>
+                  <i>−{lines.filter((line) => line.kind === "deletion").length}</i>
+                </span>
+              </header>
+              <div className="revision-diff-scroll-area">
+                <RevisionDiffCode lines={lines} />
+              </div>
+            </section>
+          </div>
+        )}
+      </div>
+    </StudioScreenFrame>
+  );
 }

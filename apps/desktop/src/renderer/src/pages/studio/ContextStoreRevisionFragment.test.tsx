@@ -8,7 +8,6 @@ import {
   ContextStoreRevisionFragment,
   ContextStoreManualRevisionRow,
   draftOverlayOperations,
-  manualContextStoreRevisionRecords,
 } from "./ContextStoreRevisionFragment.tsx";
 
 afterEach(async () => {
@@ -27,7 +26,7 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain('class="revision-task-empty"');
     expect(html).toContain("Back to knowledge bases");
     expect(html).toContain("All knowledge bases");
-    expect(html).not.toContain("revision-task-toolbar");
+    expect(html).toContain("revision-task-toolbar");
     expect(html).not.toContain("New revision task");
     expect(html).not.toContain("Store Revision Agent");
   });
@@ -48,6 +47,7 @@ describe("ContextStoreRevisionFragment", () => {
     await i18n.changeLanguage("zh-Hans");
     const html = renderToStaticMarkup(
       <ContextStoreManualRevisionRow
+        onOpen={() => undefined}
         store={{
           schemaVersion: "pragma.context-store/v4",
           id: "00000000-0000-4000-8000-000000000001",
@@ -77,23 +77,6 @@ describe("ContextStoreRevisionFragment", () => {
     expect(html).toContain("产品知识");
     expect(html).toContain("修订版本 2");
     expect(html).toContain("手动修改");
-  });
-
-  it("keeps only later user saves in manual revision history", () => {
-    const record = {
-      schemaVersion: "pragma.context-store-revision-record/v1" as const,
-      storeId: "00000000-0000-4000-8000-000000000001",
-      snapshotHash: "1".repeat(64),
-      summary: "Saved",
-      createdAt: "2026-08-05T07:29:00.000Z",
-    };
-    expect(
-      manualContextStoreRevisionRecords([
-        { ...record, revision: 1, parentRevision: null, author: "user" },
-        { ...record, revision: 2, parentRevision: 1, author: "store-revision-agent" },
-        { ...record, revision: 3, parentRevision: 2, author: "user" },
-      ]),
-    ).toEqual([expect.objectContaining({ revision: 3, author: "user" })]);
   });
 
   it("renders review-only documents before the changed files", async () => {

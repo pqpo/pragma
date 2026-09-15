@@ -7,6 +7,8 @@ import {
   ContextStoreImportInspectionSchema,
   ContextStoreSchema,
   ContextStoreRevisionRecordSchema,
+  GetContextStoreRevisionDiffSchema,
+  ContextStoreRevisionDiffSchema,
   CreateContextStoreFileSchema,
   CreateContextStoreFolderSchema,
   CreateContextStoreSchema,
@@ -126,6 +128,13 @@ export const contextStoresApi = {
       DiscardContextStoreEditorDraftSchema.parse(input),
     );
   },
+  getContextStoreRevisionDiff: async (input) =>
+    ContextStoreRevisionDiffSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:get-revision-diff",
+        GetContextStoreRevisionDiffSchema.parse(input),
+      ),
+    ),
   listContextStoreRevisionRecords: async (input = {}) =>
     ContextStoreRevisionRecordSchema.array().parse(
       await ipcRenderer.invoke(
@@ -279,6 +288,7 @@ export const contextStoresApi = {
   | "commitContextStoreEditorDraft"
   | "discardContextStoreEditorDraft"
   | "listContextStoreRevisionRecords"
+  | "getContextStoreRevisionDiff"
   | "submitContextStoreRevision"
   | "listContextStoreRevisions"
   | "getContextStoreRevision"

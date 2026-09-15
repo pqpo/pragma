@@ -186,6 +186,18 @@ export const ContextStoreRevisionRecordSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
+export const GetContextStoreRevisionDiffSchema = z
+  .object({
+    storeId: ContextStoreIdSchema,
+    revision: z.number().int().min(2),
+  })
+  .strict();
+
+export const ContextStoreRevisionDiffSchema = z.object({
+  before: ContextStoreSnapshotSchema,
+  after: ContextStoreSnapshotSchema,
+});
+
 export const ListContextStoreRevisionRecordsSchema = z.object({
   storeId: ContextStoreIdSchema.optional(),
 });

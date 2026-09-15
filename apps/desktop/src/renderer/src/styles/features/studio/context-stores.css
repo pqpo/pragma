@@ -933,7 +933,10 @@
 }
 
 .context-store-revisions .studio-screen-body {
-  padding: 0 0 48px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
 }
 
 .revision-task-heading {
@@ -975,8 +978,41 @@
 }
 
 .revision-task-content {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.revision-task-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.revision-task-toolbar .ui-select {
+  min-width: 160px;
+}
+
+.revision-task-pagination {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 16px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.revision-task-pagination .ui-select {
+  min-width: 120px;
 }
 
 .revision-task-select {
@@ -994,7 +1030,9 @@
 
 .revision-task-empty {
   display: grid;
-  min-height: 230px;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
   place-items: center;
   align-content: center;
   gap: 8px;
@@ -1018,6 +1056,9 @@
 
 .revision-task-table {
   min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
 }
 
 .revision-task-list-header {
@@ -1748,6 +1789,13 @@
   .revision-task-actions {
     justify-content: flex-start;
     padding: 0 0 8px;
+  }
+}
+
+@media (max-height: 700px) {
+  .context-store-revisions {
+    grid-template-rows: auto minmax(320px, 1fr);
+    overflow-y: auto;
   }
 }
 

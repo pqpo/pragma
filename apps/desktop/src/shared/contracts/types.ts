@@ -93,6 +93,8 @@ import {
   ContextStoreSchema,
   ContextStoreSnapshotSchema,
   ContextStoreRevisionRecordSchema,
+  GetContextStoreRevisionDiffSchema,
+  ContextStoreRevisionDiffSchema,
   ContextStoreEditorDraftSchema,
   CommitContextStoreEditorDraftSchema,
   DiscardContextStoreEditorDraftSchema,
@@ -638,3 +640,6 @@ export type CapabilityTestRequest = z.infer<typeof CapabilityTestRequestSchema>;
 export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
 export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
 export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSchema>;
+
+export type GetContextStoreRevisionDiff = z.infer<typeof GetContextStoreRevisionDiffSchema>;
+export type ContextStoreRevisionDiff = z.infer<typeof ContextStoreRevisionDiffSchema>;
