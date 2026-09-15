@@ -2,6 +2,7 @@ import {
   HomeProjectSchema,
   SaveHomeProjectSchema,
   HomeProjectIdSchema,
+  ReorderHomeProjectsSchema,
 } from "../../shared/contracts/home-projects.ts";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
@@ -64,6 +65,13 @@ export const missionsApi = {
   saveHomeProject: async (input) =>
     HomeProjectSchema.parse(
       await invokeMutation("missions:home-projects:save", SaveHomeProjectSchema.parse(input)),
+    ),
+  reorderHomeProjects: async (projectIds) =>
+    HomeProjectSchema.array().parse(
+      await invokeMutation(
+        "missions:home-projects:reorder",
+        ReorderHomeProjectsSchema.parse(projectIds),
+      ),
     ),
   deleteHomeProject: async (id) => {
     await invokeMutation("missions:home-projects:delete", HomeProjectIdSchema.parse(id));
@@ -283,6 +291,7 @@ export const missionsApi = {
   | "updateHomeExecutorPreference"
   | "listHomeProjects"
   | "saveHomeProject"
+  | "reorderHomeProjects"
   | "deleteHomeProject"
   | "getMissionModelOptions"
   | "getMissionCreationDefaults"

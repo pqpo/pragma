@@ -53,6 +53,33 @@ describe("Home project persistence", () => {
     ]);
     expect(await store.list()).toHaveLength(2);
   });
+  it("persists a complete project order and rejects stale or incomplete orders", async () => {
+    const { path, store } = await setup();
+    const first = await store.save(input);
+    const second = await store.save({ ...input, name: "另一个项目" });
+    const third = await store.save({ ...input, name: "第三个项目" });
+
+    await expect(store.reorder([third.id, first.id, second.id])).resolves.toEqual([
+      third,
+      first,
+      second,
+    ]);
+    await expect(createHomeProjectStore(path).list()).resolves.toEqual([third, first, second]);
+    await expect(store.reorder([first.id, second.id])).rejects.toThrow("every current project");
+    await expect(
+      store.reorder([first.id, second.id, "00000000-0000-4000-8000-000000000099"]),
+    ).rejects.toThrow("every current project");
+    await expect(store.list()).resolves.toEqual([third, first, second]);
+  });
+  it("rejects duplicate or malformed project IDs without changing the saved order", async () => {
+    const { store } = await setup();
+    const first = await store.save(input);
+    const second = await store.save({ ...input, name: "另一个项目" });
+
+    await expect(store.reorder([first.id, first.id])).rejects.toThrow();
+    await expect(store.reorder([first.id, "invalid"])).rejects.toThrow();
+    await expect(store.list()).resolves.toEqual([first, second]);
+  });
   it("refuses malformed or future data and preserves the original file", async () => {
     const { path, store } = await setup();
     for (const raw of [

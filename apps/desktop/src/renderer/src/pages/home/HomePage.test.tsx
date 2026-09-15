@@ -18,7 +18,6 @@ import {
   isHomeExecutorFavorite,
   missionModelOverrideAvailable,
   orderFavoriteHomeExecutors,
-  previewFavoriteDragOrder,
   preferredWorkspaceForExecutorSelection,
   rankFavoriteHomeExecutors,
   rankHomeMissionExecutors,
@@ -26,6 +25,7 @@ import {
   uniqueWorkspaces,
   workspacePathsEqual,
 } from "./HomePage.tsx";
+import { previewHomeItemDragOrder } from "./home-ordering.ts";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 describe("homeExecutorConfigurationUnavailable", () => {
@@ -405,13 +405,13 @@ describe("mission executor search", () => {
   });
 
   it("previews a favorite reorder before the pointer fully covers its target", () => {
-    expect(previewFavoriteDragOrder(["a", "b", "c", "d"], "a", "c", false)).toEqual([
+    expect(previewHomeItemDragOrder(["a", "b", "c", "d"], "a", "c", false)).toEqual([
       "b",
       "a",
       "c",
       "d",
     ]);
-    expect(previewFavoriteDragOrder(["a", "b", "c", "d"], "a", "c", true)).toEqual([
+    expect(previewHomeItemDragOrder(["a", "b", "c", "d"], "a", "c", true)).toEqual([
       "b",
       "c",
       "a",

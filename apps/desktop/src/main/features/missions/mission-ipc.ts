@@ -1,6 +1,7 @@
 import type { HomeProjectStore } from "./home-project-store.ts";
 import {
   HomeProjectIdSchema,
+  ReorderHomeProjectsSchema,
   SaveHomeProjectSchema,
 } from "../../../shared/contracts/home-projects.ts";
 import { randomUUID } from "node:crypto";
@@ -286,6 +287,9 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:home-projects:list", () => options.homeProjects.list());
   ipcMain.handle("missions:home-projects:save", (_event, input: unknown) =>
     runDesktopMutation(() => options.homeProjects.save(SaveHomeProjectSchema.parse(input))),
+  );
+  ipcMain.handle("missions:home-projects:reorder", (_event, ids: unknown) =>
+    runDesktopMutation(() => options.homeProjects.reorder(ReorderHomeProjectsSchema.parse(ids))),
   );
   ipcMain.handle("missions:home-projects:delete", (_event, id: unknown) =>
     runDesktopMutation(() => options.homeProjects.delete(HomeProjectIdSchema.parse(id))),

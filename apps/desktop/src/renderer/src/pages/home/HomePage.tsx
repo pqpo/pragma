@@ -1,5 +1,6 @@
 import { Dialog } from "../../components/Dialog.tsx";
 import { HomeProjects, HomeProjectEditor } from "./HomeProjects.tsx";
+import { orderHomeProjects, previewHomeItemDragOrder } from "./home-ordering.ts";
 import type { HomeProject } from "../../../../shared/contracts/home-projects.ts";
 import {
   useCallback,
@@ -183,6 +184,8 @@ export function HomePage(props: {
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
   const [projectEditor, setProjectEditor] = useState<HomeProject | null>();
   const [selectedProjectId, setSelectedProjectId] = useState<string>();
+  const [projectOrderSaving, setProjectOrderSaving] = useState(false);
+  const projectOrderSavingRef = useRef(false);
   const projectSelectionRequest = useRef(0);
   const [projectApplying, setProjectApplying] = useState(false);
   useEffect(() => {
@@ -520,6 +523,26 @@ export function HomePage(props: {
     projectSelectionRequest.current += 1;
     setProjectApplying(false);
     setProjectEditor(project);
+  };
+
+  const reorderProjects = async (orderedProjectIds: readonly string[]): Promise<void> => {
+    if (projectOrderSavingRef.current) return;
+    const currentProjects = homeProjects;
+    const reorderedProjects = orderHomeProjects(currentProjects, orderedProjectIds);
+    if (reorderedProjects === currentProjects) return;
+    projectOrderSavingRef.current = true;
+    setProjectOrderSaving(true);
+    setHomeProjects(reorderedProjects);
+    try {
+      setHomeProjects(await window.pragmaDesktop.reorderHomeProjects([...orderedProjectIds]));
+      setError(null);
+    } catch (cause) {
+      setHomeProjects(currentProjects);
+      setError(errorMessage(cause));
+    } finally {
+      projectOrderSavingRef.current = false;
+      setProjectOrderSaving(false);
+    }
   };
 
   const applyProject = async (project: HomeProject) => {
@@ -1048,6 +1071,7 @@ export function HomePage(props: {
           <Dialog
             className="home-project-manager"
             title={t("homeProjects")}
+            description={t("homeProjectsDialogDescription")}
             onCancel={() => setProjectManagerOpen(false)}
             footer={
               <>
@@ -1061,6 +1085,7 @@ export function HomePage(props: {
                 <button
                   type="button"
                   className="primary-button"
+                  disabled={projectOrderSaving}
                   onClick={() => {
                     setProjectManagerOpen(false);
                     editProject(null);
@@ -1076,6 +1101,7 @@ export function HomePage(props: {
               executors={executors}
               stores={contextStores}
               selectedId={undefined}
+              disabled={projectOrderSaving || saving || projectApplying}
               onSelect={(project) => {
                 setProjectManagerOpen(false);
                 if (!saving) void applyProject(project);
@@ -1084,6 +1110,7 @@ export function HomePage(props: {
                 setProjectManagerOpen(false);
                 editProject(project);
               }}
+              onReorder={reorderProjects}
               showEditActions
             />
           </Dialog>
@@ -1330,7 +1357,7 @@ function HomeFavorites(props: {
       const placeAfter = isHorizontalCard
         ? event.clientX >= nearestTarget.bounds.left + nearestTarget.bounds.width / 2
         : event.clientY >= nearestTarget.bounds.top + nearestTarget.bounds.height / 2;
-      const next = previewFavoriteDragOrder(current, draggedRef, nearestTarget.ref, placeAfter);
+      const next = previewHomeItemDragOrder(current, draggedRef, nearestTarget.ref, placeAfter);
       if (next.every((ref, index) => ref === current[index])) return;
       dragOrderRef.current = next;
       setDragOrder(next);
@@ -1487,22 +1514,6 @@ function HomeFavorites(props: {
       ) : null}
     </>
   );
-}
-
-export function previewFavoriteDragOrder(
-  order: readonly string[],
-  sourceRef: string,
-  targetRef: string,
-  placeAfter: boolean,
-): readonly string[] {
-  if (sourceRef === targetRef) return order;
-  const sourceIndex = order.indexOf(sourceRef);
-  if (sourceIndex < 0 || !order.includes(targetRef)) return order;
-  const withoutSource = order.filter((ref) => ref !== sourceRef);
-  const targetIndex = withoutSource.indexOf(targetRef);
-  const next = [...withoutSource];
-  next.splice(targetIndex + (placeAfter ? 1 : 0), 0, sourceRef);
-  return next;
 }
 
 export function missionModelOverrideAvailable(

@@ -1928,6 +1928,41 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.home-project-manager .home-project-item.is-dragging {
+  opacity: 0.72;
+}
+
+.home-project-drag {
+  display: grid;
+  width: 24px;
+  min-width: 24px;
+  min-height: 40px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-text-disabled);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.home-project-drag:active {
+  cursor: grabbing;
+}
+
+.home-project-drag:hover,
+.home-project-drag:focus-visible {
+  outline: 0;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.home-project-drag:disabled {
+  cursor: default;
+}
+
 body > .ui-select-menu.home-project-executor-filter-menu {
   z-index: 110;
 }

@@ -1,4 +1,4 @@
-import type { HomeProject, SaveHomeProject } from "./home-projects.ts";
+import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
 import type { DesktopRendererLog } from "./logging.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
@@ -511,6 +511,7 @@ export interface PragmaDesktopAPI {
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
   listHomeProjects: () => Promise<HomeProject[]>;
   saveHomeProject: (input: SaveHomeProject) => Promise<HomeProject>;
+  reorderHomeProjects: (projectIds: ReorderHomeProjects) => Promise<HomeProject[]>;
   deleteHomeProject: (id: string) => Promise<void>;
   getHomeMissionExecutorCatalog: () => Promise<HomeMissionExecutorCatalog>;
   updateHomeExecutorPreference: (

@@ -6,6 +6,10 @@ import { MissionWorkspaceSchema } from "./mission-base.ts";
 
 // Home projects are task presets, independent of the DSL Project revision aggregate.
 export const HomeProjectIdSchema = z.string().uuid();
+export const ReorderHomeProjectsSchema = z
+  .array(HomeProjectIdSchema)
+  .max(1_000)
+  .refine((ids) => new Set(ids).size === ids.length);
 export const HomeProjectInputSchema = z
   .object({
     name: z
@@ -27,3 +31,4 @@ export const SaveHomeProjectSchema = HomeProjectInputSchema.extend({
 });
 export type HomeProject = z.infer<typeof HomeProjectSchema>;
 export type SaveHomeProject = z.infer<typeof SaveHomeProjectSchema>;
+export type ReorderHomeProjects = z.infer<typeof ReorderHomeProjectsSchema>;

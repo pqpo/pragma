@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   HomeProjectIdSchema,
   HomeProjectSchema,
+  ReorderHomeProjectsSchema,
   SaveHomeProjectSchema,
   type HomeProject,
   type SaveHomeProject,
@@ -65,6 +66,19 @@ export function createHomeProjectStore(path: string) {
           : projects.map((item) => (item.id === project.id ? project : item));
       });
       return project;
+    },
+    async reorder(ids: readonly string[]) {
+      const orderedIds = ReorderHomeProjectsSchema.parse(ids);
+      return mutate((projects) => {
+        if (
+          orderedIds.length !== projects.length ||
+          projects.some((project) => !orderedIds.includes(project.id))
+        ) {
+          throw new Error("Home project order must include every current project exactly once.");
+        }
+        const projectsById = new Map(projects.map((project) => [project.id, project]));
+        return orderedIds.map((id) => projectsById.get(id)!);
+      });
     },
     async delete(id: string) {
       const parsed = HomeProjectIdSchema.parse(id);

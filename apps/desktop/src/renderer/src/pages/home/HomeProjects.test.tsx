@@ -47,4 +47,22 @@ describe("HomeProjects", () => {
     expect(html.match(/home-favorites-manage-button/g)).toHaveLength(2);
     expect(html).toContain("Configure Project 1");
   });
+
+  it("shows project drag handles only when the full project manager can reorder items", () => {
+    const html = renderToStaticMarkup(
+      <HomeProjects
+        projects={projects.slice(0, 2)}
+        executors={[]}
+        stores={[]}
+        selectedId={undefined}
+        onSelect={() => undefined}
+        onEdit={() => undefined}
+        onReorder={() => undefined}
+        showEditActions
+      />,
+    );
+
+    expect(html.match(/class="home-project-drag"/g)).toHaveLength(2);
+    expect(html).toContain("Reorder Project 1");
+  });
 });

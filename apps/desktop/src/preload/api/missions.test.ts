@@ -27,6 +27,33 @@ describe("missionsApi", () => {
     ).rejects.toThrow();
   });
 
+  it("validates and persists the complete Home project order", async () => {
+    const first = {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "First",
+      executorRef: "expert:0000000000pragma",
+      contextStoreIds: [],
+      workspace: { path: "/work/first", basename: "first" },
+    };
+    const second = { ...first, id: "00000000-0000-4000-8000-000000000002", name: "Second" };
+    mocks.invokeMutation.mockResolvedValueOnce([second, first]);
+
+    await expect(missionsApi.reorderHomeProjects([second.id, first.id])).resolves.toEqual([
+      second,
+      first,
+    ]);
+    expect(mocks.invokeMutation).toHaveBeenCalledWith("missions:home-projects:reorder", [
+      second.id,
+      first.id,
+    ]);
+  });
+
+  it("rejects duplicate project IDs before invoking the reorder mutation", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000001";
+    await expect(missionsApi.reorderHomeProjects([projectId, projectId])).rejects.toThrow();
+    expect(mocks.invokeMutation).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "getMissionListSource",

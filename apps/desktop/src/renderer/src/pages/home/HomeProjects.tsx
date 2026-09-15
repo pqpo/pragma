@@ -1,5 +1,13 @@
-import { useId, useRef, useState, type ReactNode } from "react";
-import { Folder, GearSix, Plus, CaretDown } from "@phosphor-icons/react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+import { DotsSixVertical, Folder, GearSix, Plus, CaretDown } from "@phosphor-icons/react";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,6 +24,7 @@ import { Dialog, ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import { orderHomeProjects, previewHomeItemDragOrder } from "./home-ordering.ts";
 
 export function HomeProjects(props: {
   projects: readonly HomeProject[];
@@ -25,10 +34,150 @@ export function HomeProjects(props: {
   onSelect: (project: HomeProject) => void;
   onEdit: (project: HomeProject | null) => void;
   onMore?: () => void;
+  onReorder?: (orderedProjectIds: readonly string[]) => void;
   showEditActions?: boolean;
   disabled?: boolean;
 }) {
   const { t } = useTranslation("missions");
+  const [draggedProjectId, setDraggedProjectId] = useState<string>();
+  const [dragOrder, setDragOrder] = useState<readonly string[]>();
+  const dragOrderRef = useRef<readonly string[] | undefined>(undefined);
+  const dragInitialOrderRef = useRef<readonly string[] | undefined>(undefined);
+  const dragPointerRef = useRef<
+    { readonly clientX: number; readonly clientY: number; moved: boolean } | undefined
+  >(undefined);
+  const projectItemRefs = useRef(new Map<string, HTMLElement>());
+  const projectItemPositions = useRef(new Map<string, DOMRect>());
+  const canReorder = props.showEditActions === true && props.onReorder !== undefined;
+  const orderedProjects = orderHomeProjects(props.projects, dragOrder);
+
+  useLayoutEffect(() => {
+    if (draggedProjectId === undefined) {
+      projectItemPositions.current.clear();
+      return;
+    }
+    const previousPositions = projectItemPositions.current;
+    const nextPositions = new Map<string, DOMRect>();
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const [projectId, item] of projectItemRefs.current) {
+      const nextPosition = item.getBoundingClientRect();
+      nextPositions.set(projectId, nextPosition);
+      const previousPosition = previousPositions.get(projectId);
+      const horizontalDistance =
+        previousPosition?.left === undefined ? 0 : previousPosition.left - nextPosition.left;
+      const verticalDistance =
+        previousPosition?.top === undefined ? 0 : previousPosition.top - nextPosition.top;
+      if ((horizontalDistance !== 0 || verticalDistance !== 0) && !reduceMotion) {
+        item.animate(
+          [
+            { transform: `translate(${horizontalDistance}px, ${verticalDistance}px)` },
+            { transform: "translate(0, 0)" },
+          ],
+          { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+        );
+      }
+    }
+    projectItemPositions.current = nextPositions;
+  }, [draggedProjectId, dragOrder]);
+
+  const clearDragPreview = () => {
+    setDraggedProjectId(undefined);
+    setDragOrder(undefined);
+    dragPointerRef.current = undefined;
+    dragOrderRef.current = undefined;
+    dragInitialOrderRef.current = undefined;
+    projectItemPositions.current.clear();
+  };
+
+  const commitDragPreview = () => {
+    const orderedIds = dragOrderRef.current;
+    const initialOrder = dragInitialOrderRef.current;
+    if (
+      orderedIds === undefined ||
+      initialOrder === undefined ||
+      orderedIds.every((id, index) => id === initialOrder[index])
+    ) {
+      clearDragPreview();
+      return;
+    }
+    const onReorder = props.onReorder;
+    clearDragPreview();
+    onReorder?.(orderedIds);
+  };
+
+  const beginProjectDrag = (projectId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || !event.isPrimary || props.disabled || !canReorder) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const initialOrder = props.projects.map((project) => project.id);
+    dragPointerRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      moved: false,
+    };
+    setDraggedProjectId(projectId);
+    dragOrderRef.current = initialOrder;
+    dragInitialOrderRef.current = initialOrder;
+    setDragOrder(initialOrder);
+  };
+
+  useEffect(() => {
+    if (draggedProjectId === undefined) return;
+    const updatePreview = (event: PointerEvent) => {
+      const pointer = dragPointerRef.current;
+      if (pointer !== undefined && !pointer.moved) {
+        if (Math.hypot(event.clientX - pointer.clientX, event.clientY - pointer.clientY) < 6) {
+          return;
+        }
+        pointer.moved = true;
+      }
+      const current = dragOrderRef.current ?? props.projects.map((project) => project.id);
+      const targetItems = [...projectItemRefs.current]
+        .filter(([id]) => id !== draggedProjectId)
+        .map(([id, item]) => ({ id, bounds: item.getBoundingClientRect() }));
+      const target = targetItems
+        .filter(
+          ({ bounds }) =>
+            event.clientX >= bounds.left &&
+            event.clientX <= bounds.right &&
+            event.clientY >= bounds.top &&
+            event.clientY <= bounds.bottom,
+        )
+        .at(0);
+      const nearestTarget =
+        target ??
+        targetItems
+          .map((item) => ({
+            ...item,
+            distance: Math.hypot(
+              event.clientX - (item.bounds.left + item.bounds.width / 2),
+              event.clientY - (item.bounds.top + item.bounds.height / 2),
+            ),
+          }))
+          .toSorted((left, right) => left.distance - right.distance)[0];
+      if (nearestTarget === undefined) return;
+      const placeAfter =
+        event.clientY >= nearestTarget.bounds.top + nearestTarget.bounds.height / 2;
+      const next = previewHomeItemDragOrder(
+        current,
+        draggedProjectId,
+        nearestTarget.id,
+        placeAfter,
+      );
+      if (next.every((id, index) => id === current[index])) return;
+      dragOrderRef.current = next;
+      setDragOrder(next);
+    };
+    window.addEventListener("pointermove", updatePreview);
+    window.addEventListener("pointerup", commitDragPreview, { once: true });
+    window.addEventListener("pointercancel", clearDragPreview, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", updatePreview);
+      window.removeEventListener("pointerup", commitDragPreview);
+      window.removeEventListener("pointercancel", clearDragPreview);
+    };
+  }, [clearDragPreview, commitDragPreview, draggedProjectId, props.projects]);
+
   if (props.projects.length === 0)
     return (
       <div className="home-project-empty">
@@ -46,12 +195,34 @@ export function HomeProjects(props: {
     );
   return (
     <div className="home-project-list">
-      {(props.onMore ? props.projects.slice(0, 6) : props.projects).map((project) => {
+      {(props.onMore ? orderedProjects.slice(0, 6) : orderedProjects).map((project) => {
         const unavailable =
           !props.executors.some((item) => item.ref === project.executorRef) ||
           project.contextStoreIds.some((id) => !props.stores.some((store) => store.id === id));
         return (
-          <div className="home-project-item" key={project.id}>
+          <div
+            className={
+              draggedProjectId === project.id
+                ? "home-project-item is-dragging"
+                : "home-project-item"
+            }
+            key={project.id}
+            ref={(item) => {
+              if (item === null) projectItemRefs.current.delete(project.id);
+              else projectItemRefs.current.set(project.id, item);
+            }}
+          >
+            {canReorder ? (
+              <button
+                className="home-project-drag"
+                type="button"
+                aria-label={t("homeProjectDragNamed", { name: project.name })}
+                disabled={props.disabled}
+                onPointerDown={(event) => beginProjectDrag(project.id, event)}
+              >
+                <DotsSixVertical size={20} aria-hidden="true" />
+              </button>
+            ) : null}
             <button
               type="button"
               className={`home-project-button${props.selectedId === project.id ? " is-active" : ""}`}
