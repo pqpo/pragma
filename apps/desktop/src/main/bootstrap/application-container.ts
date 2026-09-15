@@ -1,3 +1,4 @@
+import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -343,6 +344,7 @@ export async function createDesktopApplicationContainer(
   });
   const missionStore = createMissionStore({
     missionsPath,
+    getRevisionSource: async (jobId) => (await storeRevisions.get(jobId)).request.source,
     onReadIssue: ({ missionId, error }) =>
       mainLogger.warn(
         "mission.list_entry_unavailable",
@@ -622,8 +624,8 @@ export async function createDesktopApplicationContainer(
           storeId,
           draftId,
           revisionJobId: jobId,
+          preserveSession: true,
         });
-        await missionRunnerRef.current?.invalidateContextBindings(missionId);
       } catch (error) {
         if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found")
           throw error;
@@ -1132,7 +1134,7 @@ export async function createDesktopApplicationContainer(
             contextStores,
             pragmaManagement: {
               ...pragmaManagementPortsRef.current,
-              knowledgeRevisions: pragmaManagementKnowledgeRevisions,
+              ...(knowledgeRevisions === undefined ? {} : { knowledgeRevisions }),
             },
           },
           mission.workspace.path,
@@ -1356,6 +1358,7 @@ export async function createDesktopApplicationContainer(
     run: localHost.run,
   };
   installMissionHandlers({
+    homeProjects: createHomeProjectStore(join(pragmaPaths.dataRoot(), "home-projects.json")),
     localHost: desktopLocalHost,
     missions: missionStore,
     creator: missionCreator,

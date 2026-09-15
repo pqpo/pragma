@@ -1,3 +1,5 @@
+import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
+import { resolveMissionListSource } from "./mission-list-source.ts";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -30,6 +32,7 @@ import {
   MissionBranchHistorySchema,
   latestMissionBranchableReply,
   MissionUserMessageSchema,
+  type ContextStoreRevisionRequest,
   type Mission,
   type MissionContextMount,
   type MissionExecutor,
@@ -79,6 +82,7 @@ export interface MissionStore {
   readonly storagePath?: ((id: string) => string) | undefined;
   readonly forget?: ((id: string) => void) | undefined;
   list(): Promise<MissionSummary[]>;
+  getListSource(mission: Mission): Promise<MissionSummary["source"]>;
   resolveExecutionTitles(executionIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
   get(id: string): Promise<Mission>;
   backfillAutomationOrigin(id: string, automationRef: string): Promise<Mission>;
@@ -118,12 +122,16 @@ export interface MissionStore {
   mountManagedRevisionDraft(input: {
     readonly id: string;
     readonly expectedExecutorRef: string;
+    readonly allowUnmountedTarget?: boolean;
+    /** The Host has already registered dynamic namespaces for this draft. */
+    readonly preserveSession?: boolean;
     readonly storeId: string;
     readonly draftId: string;
     readonly revisionJobId: string;
   }): Promise<Mission>;
   restoreManagedRevisionStore(input: {
     readonly id: string;
+    readonly preserveSession?: boolean;
     readonly storeId: string;
     readonly draftId: string;
     readonly revisionJobId: string;
@@ -233,8 +241,28 @@ const MissionPathMigrationTransactionSchema = z
 
 export function createMissionStore(options: {
   readonly missionsPath: string;
+  readonly getRevisionSource?:
+    ((jobId: string) => Promise<ContextStoreRevisionRequest["source"]>) | undefined;
   readonly onReadIssue?: ((issue: MissionStoreReadIssue) => void) | undefined;
 }): MissionStore {
+  const getListSource = async (mission: Mission): Promise<MissionSummary["source"]> => {
+    try {
+      return await resolveMissionListSource(mission, async (jobId) => {
+        if (options.getRevisionSource === undefined)
+          throw new Error("Revision source resolver is unavailable.");
+        return await options.getRevisionSource(jobId);
+      });
+    } catch (cause) {
+      options.onReadIssue?.({
+        missionId: mission.id,
+        error: new MissionStoreError(
+          "projection_invalid",
+          `mission_revision_source_unavailable: ${mission.origin.type === "system-store-revision" ? mission.origin.jobId : mission.id}: ${String(cause)}`,
+        ),
+      });
+      return { type: "internal" };
+    }
+  };
   const missionPath = (id: string) => join(options.missionsPath, encodePragmaPathSegment(id));
   const legacyMissionPath = (id: string) => join(options.missionsPath, id);
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
@@ -893,6 +921,7 @@ export function createMissionStore(options: {
         }
       });
     },
+    getListSource,
     async list() {
       try {
         const missionIds = await listMissionIds();
@@ -914,9 +943,14 @@ export function createMissionStore(options: {
           failures.push(issue);
           options.onReadIssue?.(issue);
         }
-        const summaries = missions
-          .filter((mission) => isUserFacingMissionOrigin(mission.origin))
-          .map(toMissionSummary)
+        const summaries = (
+          await Promise.all(
+            missions
+              .filter((mission) => isUserFacingMissionOrigin(mission.origin))
+              .map(async (mission) => toMissionSummary(mission, await getListSource(mission))),
+          )
+        )
+          .filter((mission) => mission.source.type !== "internal")
           .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
         if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
         return summaries;
@@ -1318,19 +1352,24 @@ export function createMissionStore(options: {
             mount.draftId === input.draftId &&
             mount.revisionJobId === undefined,
         );
-        if (!publishedStoreMounted && !selectedDraftMounted) {
+        if (
+          !publishedStoreMounted &&
+          !selectedDraftMounted &&
+          input.allowUnmountedTarget !== true
+        ) {
           throw new MissionStoreError(
             "config_invalid",
             "The selected knowledge base is not mounted in this Mission.",
           );
         }
-        return {
+        const updated: Mission = {
           ...current,
           contextMounts: [
             ...current.contextMounts.filter(
               (mount) =>
                 !(mount.kind === "context-store-draft" && mount.draftId === input.draftId) &&
-                !(mount.kind === "context-store" && mount.storeId === input.storeId),
+                (input.preserveSession === true ||
+                  !(mount.kind === "context-store" && mount.storeId === input.storeId)),
             ),
             {
               kind: "context-store-draft" as const,
@@ -1340,6 +1379,17 @@ export function createMissionStore(options: {
           ],
           updatedAt: timestamp,
         };
+        // Persist the acknowledged binding fingerprint in the same atomic write as
+        // the claim, so recovery also keeps the existing Team Session and contexts.
+        return input.preserveSession === true && updated.execution !== undefined
+          ? {
+              ...updated,
+              execution: {
+                ...updated.execution,
+                contextMountsFingerprint: missionContextMountsFingerprint(updated),
+              },
+            }
+          : updated;
       });
     },
     async restoreManagedRevisionStore(input) {
@@ -1351,7 +1401,7 @@ export function createMissionStore(options: {
             mount.revisionJobId === input.revisionJobId,
         );
         if (!claimed) return current;
-        return {
+        const updated: Mission = {
           ...current,
           contextMounts: [
             ...current.contextMounts.filter(
@@ -1366,6 +1416,15 @@ export function createMissionStore(options: {
           ],
           updatedAt: timestamp,
         };
+        return input.preserveSession === true && updated.execution !== undefined
+          ? {
+              ...updated,
+              execution: {
+                ...updated.execution,
+                contextMountsFingerprint: missionContextMountsFingerprint(updated),
+              },
+            }
+          : updated;
       });
     },
     async isContextStoreReferenced(storeId) {
@@ -1852,7 +1911,7 @@ function imageExtension(mimeType: "image/gif" | "image/jpeg" | "image/png" | "im
   }
 }
 
-function toMissionSummary(mission: Mission): MissionSummary {
+function toMissionSummary(mission: Mission, source: MissionSummary["source"]): MissionSummary {
   return {
     id: mission.id,
     title: mission.title,
@@ -1872,17 +1931,7 @@ function toMissionSummary(mission: Mission): MissionSummary {
               : { waitReason: mission.execution.waitReason }),
           },
         }),
-    source:
-      mission.origin.type === "automation"
-        ? { type: "automation", automationRef: mission.origin.automationRef }
-        : mission.origin.type === "system-store-revision"
-          ? {
-              type: "managed-automation",
-              kind: "knowledge-revision",
-              jobId: mission.origin.jobId,
-              storeId: mission.origin.storeId,
-            }
-          : { type: "task" },
+    source,
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
   };

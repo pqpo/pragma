@@ -96,6 +96,29 @@ const WritableNamespaceSchema = z
     "Writable Context namespace for this draft in the current Mission. Pass it unchanged to Expert Context tools.",
   );
 
+export const KnowledgeRevisionStartResultSchema = z.object({
+  jobId: z.string().uuid(),
+  draftId: DraftIdSchema,
+  missionId: z.string().uuid().optional(),
+  state: z.string().min(1),
+  target: KnowledgeRevisionTargetSchema,
+  writableNamespace: WritableNamespaceSchema.optional(),
+});
+
+export type KnowledgeRevisionStartResult = z.infer<typeof KnowledgeRevisionStartResultSchema>;
+
+/** Host failures with an explicit public classification, independent of message wording. */
+export class KnowledgeRevisionToolError extends Error {
+  constructor(
+    readonly code: z.infer<typeof PragmaManagementErrorSchema>["code"],
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "KnowledgeRevisionToolError";
+  }
+}
+
 const KnowledgeRevisionDraftRecoverySchema = z
   .object({
     code: z.enum(["mission_orphaned", "mission_unreadable"]),
@@ -315,7 +338,7 @@ export interface KnowledgeRevisionSubmissionPort {
   ): Promise<z.infer<typeof KnowledgeRevisionDraftPageSchema>>;
   start(
     input: KnowledgeRevisionToolInvocation & z.infer<typeof KnowledgeRevisionStartInputSchema>,
-  ): Promise<unknown>;
+  ): Promise<KnowledgeRevisionStartResult>;
   getDraft(
     input: KnowledgeRevisionToolInvocation & z.input<typeof KnowledgeRevisionGetDraftInputSchema>,
   ): Promise<KnowledgeRevisionGetDraftResult>;
@@ -385,16 +408,9 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   ),
   definition(
     KNOWLEDGE_REVISION_START_TOOL_NAME,
-    "Start a revision in a new named draft or continue an existing draft by draftId, transferring an idle earlier Mission claim when necessary. Returns the writable Context namespace for immediate same-turn editing inside a Store Revision Mission; never changes formal knowledge.",
+    "Start or continue a revision for any listed target; a current Mission mount is not required. In a Store Revision Mission with that target mounted, returns writableNamespace for immediate editing. Otherwise schedules a background Store Revision Mission and omits writableNamespace: follow the returned job/draft through existing listings, do not guess a namespace or start again. Include complete requirements and source content in prompt; read required Mission Board materials before calling, because background Missions do not inherit the caller's board or relative paths. Never changes formal knowledge.",
     KnowledgeRevisionStartInputSchema,
-    z.object({
-      jobId: z.string().uuid(),
-      draftId: DraftIdSchema,
-      missionId: z.string().uuid().optional(),
-      state: z.string().min(1),
-      target: KnowledgeRevisionTargetSchema,
-      writableNamespace: WritableNamespaceSchema,
-    }),
+    KnowledgeRevisionStartResultSchema,
     { reason: "Start a managed knowledge revision Mission." },
   ),
   definition(
@@ -574,24 +590,32 @@ function result(details: unknown): ExpertAgentToolCallResult {
 
 function managementErrorResult(error: unknown, toolName: string): ExpertAgentToolCallResult {
   const rawMessage = error instanceof Error ? error.message : "Unknown management tool failure.";
+  const hostCode = error instanceof Error && "code" in error ? error.code : undefined;
+  const parsedHostCode = PragmaManagementErrorSchema.shape.code.safeParse(hostCode);
   const code =
-    error instanceof z.ZodError
-      ? "invalid_input"
-      : rawMessage === "cursor_invalid" || rawMessage === "cursor_expired"
-        ? rawMessage
-        : rawMessage === "response_too_large"
-          ? "response_too_large"
-          : /revision|stale|conflict/iu.test(rawMessage)
-            ? "revision_conflict"
-            : /not found|missing/iu.test(rawMessage)
-              ? "not_found"
-              : /permission|denied|not mounted/iu.test(rawMessage)
-                ? "permission_denied"
-                : /already.*attach/iu.test(rawMessage)
-                  ? "already_attached"
-                  : /unavailable/iu.test(rawMessage)
-                    ? "unavailable"
-                    : "internal_error";
+    error instanceof KnowledgeRevisionToolError
+      ? error.code
+      : parsedHostCode.success
+        ? parsedHostCode.data
+        : hostCode === "invalid_state"
+          ? "unavailable"
+          : error instanceof z.ZodError
+            ? "invalid_input"
+            : rawMessage === "cursor_invalid" || rawMessage === "cursor_expired"
+              ? rawMessage
+              : rawMessage === "response_too_large"
+                ? "response_too_large"
+                : /stale|conflict/iu.test(rawMessage)
+                  ? "revision_conflict"
+                  : /not found|missing/iu.test(rawMessage)
+                    ? "not_found"
+                    : /permission|denied|not mounted/iu.test(rawMessage)
+                      ? "permission_denied"
+                      : /already.*attach/iu.test(rawMessage)
+                        ? "already_attached"
+                        : /unavailable/iu.test(rawMessage)
+                          ? "unavailable"
+                          : "internal_error";
   const payload = PragmaManagementErrorSchema.parse({
     schemaVersion: "pragma.management-error/v1",
     code,
@@ -600,8 +624,12 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
         ? "The management tool failed unexpectedly."
         : rawMessage.slice(0, 2_000),
     retryable:
-      ["revision_conflict", "cursor_expired"].includes(code) ||
-      (code === "unavailable" && !rawMessage.includes("execution_context")),
+      error instanceof KnowledgeRevisionToolError
+        ? error.retryable
+        : ["revision_conflict", "cursor_expired"].includes(code) ||
+          (code === "unavailable" &&
+            hostCode !== "invalid_state" &&
+            !/execution_context|mission_unavailable/u.test(rawMessage)),
     ...(error instanceof z.ZodError ? { details: { issues: error.issues } } : {}),
     ...(code === "cursor_expired"
       ? { recovery: { tool: toolName, reason: "Run the same listing again without cursor." } }

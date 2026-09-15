@@ -279,6 +279,7 @@ export const MissionSummarySchema = z.object({
     })
     .optional(),
   source: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("internal") }),
     z.object({ type: z.literal("task") }),
     z.object({
       type: z.literal("automation"),
@@ -307,6 +308,7 @@ export const MissionUpdateSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/** Detail/interaction access only. Top-level list placement is resolved by the Host. */
 export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSchema>): boolean {
   return (
     origin.type === "user" ||

@@ -9,6 +9,7 @@ import {
 
 import {
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
+  KnowledgeRevisionToolError,
   createPragmaManagementTools,
 } from "../src/pragma-management-tools.ts";
 
@@ -96,11 +97,13 @@ describe("Pragma management tools", () => {
       reason: "Discard this knowledge draft and reject its unfinished revision Mission.",
     });
     await tools[0]!.call({}, undefined, context);
-    await tools[2]!.call(
+    const started = await tools[2]!.call(
       { targetRef: target.targetRef, prompt: "Record the retry invariant." },
       undefined,
       context,
     );
+    expect(started.isError).not.toBe(true);
+    expect(started.details).toEqual(await start());
     await tools
       .find((tool) => tool.name === "knowledge_revision_discard_draft")!
       .call(
@@ -137,6 +140,54 @@ describe("Pragma management tools", () => {
     });
   });
 
+  it.each([
+    [new Error("knowledge_revision_mission_unavailable"), "unavailable", false],
+    [
+      Object.assign(new Error("Stopped revision cannot run"), { code: "invalid_state" }),
+      "unavailable",
+      false,
+    ],
+    [Object.assign(new Error("Revision record absent"), { code: "not_found" }), "not_found", false],
+    [
+      new KnowledgeRevisionToolError("not_found", "knowledge_revision_target_unavailable", false),
+      "not_found",
+      false,
+    ],
+    [
+      new KnowledgeRevisionToolError(
+        "permission_denied",
+        "knowledge_revision_target_not_mounted",
+        false,
+      ),
+      "permission_denied",
+      false,
+    ],
+    [
+      new KnowledgeRevisionToolError("revision_conflict", "Expected revision differs", true),
+      "revision_conflict",
+      true,
+    ],
+  ])("classifies revision errors explicitly: %s", async (error, code, retryable) => {
+    const tools = createPragmaManagementTools({
+      knowledgeRevisions: revisionPort({
+        listTargets: vi.fn(async () => {
+          throw error;
+        }),
+      }),
+    });
+    const result = await tools[0]!.call({}, undefined, {
+      toolCallId: "call",
+      runContext: {
+        attributes: {
+          [EXECUTION_ID_ATTR]: "execution",
+          [INVOCATION_ID_ATTR]: "invocation",
+          [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "0000000000000002",
+        },
+      },
+    });
+    expect(result).toMatchObject({ isError: true, details: { code, retryable } });
+  });
+
   it("fails closed outside an execution tool call", async () => {
     const tools = createPragmaManagementTools({
       knowledgeRevisions: revisionPort(),
@@ -152,7 +203,8 @@ function revisionPort(overrides: Record<string, unknown> = {}) {
   return {
     listTargets: vi.fn(async () => ({ items: [] })),
     listDrafts: vi.fn(async () => ({ items: [] })),
-    start: vi.fn(async () => ({})),
+    start:
+      vi.fn<import("../src/pragma-management-tools.ts").KnowledgeRevisionSubmissionPort["start"]>(),
     getDraft: vi.fn(),
     inspectRebase: vi.fn(),
     getRebaseConflict: vi.fn(),

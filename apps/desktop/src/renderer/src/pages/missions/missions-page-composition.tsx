@@ -1,3 +1,4 @@
+import { resolveUnlistedMissionSelection } from "./mission-list-selection.ts";
 import {
   useCallback,
   useEffect,
@@ -134,7 +135,7 @@ import {
   SIDEBAR_WIDTH_PREFERENCES,
   usePersistentSidebarWidth,
 } from "../../lib/sidebar-width-preference.ts";
-import { pruneMissionDrafts, writeMissionDraft } from "../../lib/mission-draft.ts";
+import { removeMissionDrafts, writeMissionDraft } from "../../lib/mission-draft.ts";
 import {
   markMissionOutputReadIds,
   missionChatUpdateHasUserVisibleOutput,
@@ -178,9 +179,15 @@ export function resolveMissionsPageInitialState(input: {
 }): MissionsPageInitialState {
   const cachedMissions = input.memoryState?.missions ?? [];
   if (input.initialMission !== undefined) {
-    const source = missionListSourceForMission(input.initialMission);
+    const cached = cachedMissions.find((mission) => mission.id === input.initialMission!.id);
+    const source =
+      (cached === undefined ? undefined : missionListSourceForSummary(cached)) ??
+      missionListSourceForMission(input.initialMission);
     return {
-      missions: upsertMissionSummary(cachedMissions, missionToSummary(input.initialMission)),
+      missions: upsertMissionSummary(
+        cachedMissions,
+        missionToSummary(input.initialMission, cached?.source),
+      ),
       selectedMission: input.initialMission,
       selectedMissionId: input.initialMission.id,
       activeSource: source,
@@ -503,14 +510,51 @@ export function MissionsPage(props: {
           );
           return retained.length === current.length ? current : retained;
         });
-        pruneMissionDrafts(
+        removeMissionDrafts(
           typeof window === "undefined" ? undefined : window.localStorage,
           new Set(
             storedMissions
-              .filter((mission) => mission.lifecycleStatus === "active")
+              .filter((mission) => mission.lifecycleStatus === "completed")
               .map((mission) => mission.id),
           ),
         );
+        const selectedId = selectedMissionIdRef.current;
+        if (
+          selectedId !== null &&
+          !refreshedMissions.some((mission) => mission.id === selectedId)
+        ) {
+          const selectedSource = activeSourceRef.current;
+          const selection = await resolveUnlistedMissionSelection({
+            id: selectedId,
+            getSource: api.getMissionListSource,
+            isCurrent: () =>
+              !cancelled &&
+              selectedMissionIdRef.current === selectedId &&
+              activeSourceRef.current === selectedSource,
+          });
+          if (cancelled) return;
+          if (selection === "stale") {
+            setHasResolvedInitialLoad(true);
+            return;
+          }
+          if (selection === "detail") {
+            await openMission(selectedId, { silent: true });
+            setHasResolvedInitialLoad(true);
+            return;
+          }
+        }
+        if (selectedId !== null) {
+          const selectedSummary = refreshedMissions.find((mission) => mission.id === selectedId);
+          const selectedSource =
+            selectedSummary === undefined
+              ? undefined
+              : missionListSourceForSummary(selectedSummary);
+          if (selectedSource !== undefined && props.initialMission?.id === selectedId) {
+            activeSourceRef.current = selectedSource;
+            setActiveSource(selectedSource);
+            selectedMissionIdsRef.current[selectedSource] = selectedId;
+          }
+        }
         const sourceMissions = refreshedMissions.filter(
           (mission) => missionListSourceForSummary(mission) === activeSourceRef.current,
         );
@@ -550,7 +594,7 @@ export function MissionsPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [openMission, updateUnreadMissionOutputIds]);
+  }, [openMission, updateUnreadMissionOutputIds, props.initialMission?.id]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -642,9 +686,7 @@ export function MissionsPage(props: {
         onSearch={setSearch}
         onSourceChange={changeSource}
         onCreate={props.onCreate}
-        onOpen={(summary) =>
-          openMission(summary.id, { source: missionListSourceForSummary(summary) })
-        }
+        onOpen={(summary) => openMission(summary.id, { source: activeSource })}
         onTogglePin={(summary) =>
           updatePinnedMissionIds((current) => togglePinnedMissionId(current, summary.id))
         }
@@ -4669,12 +4711,13 @@ export function missionStatusLabel(mission: Mission | MissionSummary, preparing 
 }
 
 function missionListSourceForMission(mission: Mission): MissionListSource {
-  return ["automation", "system-store-revision"].includes(mission.origin.type)
-    ? "automation"
-    : "task";
+  return mission.origin.type === "automation" ? "automation" : "task";
 }
 
-export function missionListSourceForSummary(mission: MissionSummary): MissionListSource {
+export function missionListSourceForSummary(
+  mission: MissionSummary,
+): MissionListSource | undefined {
+  if (mission.source.type === "internal") return undefined;
   return mission.source.type === "task" ? "task" : "automation";
 }
 
@@ -4699,14 +4742,9 @@ function missionToSummary(
   mission: Mission,
   source: MissionSummary["source"] = mission.origin.type === "automation"
     ? { type: "automation", automationRef: mission.origin.automationRef }
-    : mission.origin.type === "system-store-revision"
-      ? {
-          type: "managed-automation",
-          kind: "knowledge-revision",
-          jobId: mission.origin.jobId,
-          storeId: mission.origin.storeId,
-        }
-      : { type: "task" },
+    : mission.origin.type === "user"
+      ? { type: "task" }
+      : { type: "internal" },
 ): MissionSummary {
   return {
     id: mission.id,

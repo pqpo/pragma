@@ -122,7 +122,7 @@ function revisionPort(overrides: Record<string, unknown> = {}) {
   return {
     listTargets: vi.fn(async () => ({ items: [] })),
     listDrafts: vi.fn(async () => ({ items: [] })),
-    start: vi.fn(async () => ({})),
+    start: vi.fn<import("@pragma/built-in-agents").KnowledgeRevisionSubmissionPort["start"]>(),
     getDraft: vi.fn(),
     inspectRebase: vi.fn(),
     getRebaseConflict: vi.fn(),

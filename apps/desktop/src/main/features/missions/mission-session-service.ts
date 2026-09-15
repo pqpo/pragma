@@ -6,7 +6,7 @@ export class MissionSessionService<TExecutionContext, TExecutorMetadata = never>
   readonly #compilationIdentities = new Map<string, string>();
   readonly #definitionFingerprints = new Map<string, string>();
   readonly #successorRequired = new Set<string>();
-  readonly #contextBindingsChanging = new Set<string>();
+  readonly #contextBindingsChanging = new Map<string, number>();
   readonly #memoryBindingsChanged = new Set<string>();
   readonly #executorMetadata = new Map<string, TExecutorMetadata>();
 
@@ -85,14 +85,17 @@ export class MissionSessionService<TExecutionContext, TExecutorMetadata = never>
     this.#successorRequired.delete(missionId);
   }
 
-  beginContextBindingChange(missionId: string): boolean {
-    if (this.#contextBindingsChanging.has(missionId)) return false;
-    this.#contextBindingsChanging.add(missionId);
-    return true;
+  beginContextBindingChange(missionId: string): void {
+    this.#contextBindingsChanging.set(
+      missionId,
+      (this.#contextBindingsChanging.get(missionId) ?? 0) + 1,
+    );
   }
 
   finishContextBindingChange(missionId: string): void {
-    this.#contextBindingsChanging.delete(missionId);
+    const remaining = (this.#contextBindingsChanging.get(missionId) ?? 1) - 1;
+    if (remaining === 0) this.#contextBindingsChanging.delete(missionId);
+    else this.#contextBindingsChanging.set(missionId, remaining);
   }
 
   contextBindingChangeInProgress(missionId: string): boolean {

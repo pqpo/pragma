@@ -502,7 +502,11 @@ describe("built-in Pragma Agent DSL", () => {
       }),
     ]);
     expect(resource.spec.instructions).toContain("edit_expert_context");
-    expect(resource.spec.instructions).toContain("draftId and writableNamespace; copy both");
+    expect(resource.spec.instructions).toContain(
+      "draftId and writableNamespace for work in this Mission",
+    );
+    expect(resource.spec.instructions).toContain("delegated teammate");
+    expect(resource.spec.instructions).toContain("Do not create another Mission for this work");
     expect(resource.spec.instructions).toContain("Inspect and edit only writableNamespace");
     expect(resource.spec.instructions).toContain("do not start");
     expect(resource.spec.instructions).toContain("After compaction, recover draftId");

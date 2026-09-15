@@ -1,9 +1,11 @@
+import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
   STORE_REVISION_EXPERT_REF,
+  KnowledgeRevisionToolError,
   type KnowledgeRevisionSubmissionPort,
   type PragmaManagementToolPorts,
 } from "@pragma/built-in-agents";
@@ -44,6 +46,7 @@ import {
   type ExpertAgentHumanResponse,
   type ExpertDefinition,
   type ExpertAgentContextStoreRegistrationInput,
+  readExecutionRunScope,
   type HostContextBindingsResolver,
   type ExpertSession,
   type MutableExecution,
@@ -537,62 +540,57 @@ export function createMissionRunner(options: {
               required: false,
             },
           ];
-    const missionKnowledgeBindings: readonly ExpertAgentContextStoreRegistrationInput[] = (
-      await Promise.all(
-        mission.contextMounts.map(async (mount) => {
-          if (mount.kind === "context-store") {
-            if (options.contextStores === undefined) {
-              throw new Error(`Mission Knowledge Store is unavailable: ${mount.storeId}`);
+    const resolveMissionKnowledgeBindings = async (): Promise<
+      readonly ExpertAgentContextStoreRegistrationInput[]
+    > => {
+      const current = await options.missions.get(mission.id);
+      return (
+        await Promise.all(
+          current.contextMounts.map(async (mount) => {
+            if (mount.kind === "context-store") {
+              if (options.contextStores === undefined) {
+                throw new Error(`Mission Knowledge Store is unavailable: ${mount.storeId}`);
+              }
+              const resolved = await options.contextStores.resolve(mount.storeId);
+              return {
+                namespace: missionKnowledgeNamespace(mount.storeId),
+                storeName: resolved.name,
+                store: new ReadOnlyContextStore(resolved.store),
+                required: true,
+                mutationApproval: "none" as const,
+              };
             }
-            const resolved = await options.contextStores.resolve(mount.storeId);
+            if (options.contextStoreRevisions === undefined) {
+              throw new Error(`Mission Knowledge Draft is unavailable: ${mount.draftId}`);
+            }
+            if (mount.revisionJobId !== undefined) {
+              return undefined;
+            }
+            const resolved = await options.contextStoreRevisions.resolveDraft(mount.draftId);
             return {
-              namespace: missionKnowledgeNamespace(mount.storeId),
+              namespace: missionKnowledgeDraftNamespace(mount.draftId),
               storeName: resolved.name,
               store: new ReadOnlyContextStore(resolved.store),
               required: true,
               mutationApproval: "none" as const,
             };
-          }
-          if (options.contextStoreRevisions === undefined) {
-            throw new Error(`Mission Knowledge Draft is unavailable: ${mount.draftId}`);
-          }
-          if (
-            mount.revisionJobId !== undefined &&
-            mission.executor.ref === STORE_REVISION_EXPERT_REF
-          ) {
-            return undefined;
-          }
-          const resolved = await options.contextStoreRevisions.resolveDraft(mount.draftId);
-          return {
-            namespace: missionKnowledgeDraftNamespace(mount.draftId),
-            storeName: resolved.name,
-            store: new ReadOnlyContextStore(resolved.store),
-            required: true,
-            mutationApproval: "none" as const,
-          };
-        }),
-      )
-    ).filter((binding): binding is NonNullable<typeof binding> => binding !== undefined);
-    const revisionTargetStoreIds =
-      mission.executor.ref !== STORE_REVISION_EXPERT_REF ||
-      options.contextStoreRevisions === undefined
-        ? []
-        : [
-            ...new Set(
-              await Promise.all(
-                mission.contextMounts.map(async (mount) =>
-                  mount.kind === "context-store"
-                    ? mount.storeId
-                    : (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
-                ),
-              ),
-            ),
-          ];
-    const activeKnowledgeRevisionBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
-      revisionTargetStoreIds.map((storeId) => ({
+          }),
+        )
+      ).filter((binding): binding is NonNullable<typeof binding> => binding !== undefined);
+    };
+    // Pre-register draft namespaces so a tool can claim a target and edit it in the
+    // same Invocation. The resolver below enforces the durable owner on every call.
+    const resolveActiveKnowledgeRevisionBindings = async (): Promise<
+      readonly ExpertAgentContextStoreRegistrationInput[]
+    > => {
+      const revisionTargetStoreIds =
+        options.contextStoreRevisions === undefined
+          ? []
+          : ((await options.contextStores?.list()) ?? []).map((store) => store.id);
+      return revisionTargetStoreIds.map((storeId) => ({
         namespace: activeMissionKnowledgeDraftNamespace(storeId),
         storeName: "Active Mission Knowledge draft",
-        store: new DynamicContextStore(async (operation) => {
+        store: new DynamicContextStore(async (operation, runContext) => {
           const currentMission = await options.missions.get(mission.id);
           const claimedMounts = currentMission.contextMounts.filter(
             (
@@ -638,6 +636,32 @@ export function createMissionRunner(options: {
               "The active knowledge revision draft is not owned by this Mission.",
             );
           }
+          const scope = readExecutionRunScope(runContext);
+          const caller =
+            scope.executionId === undefined || scope.invocationId === undefined
+              ? undefined
+              : await executionStore.getInvocation(scope.executionId, scope.invocationId);
+          const provenance = job.request.provenance;
+          const owner =
+            provenance === undefined
+              ? undefined
+              : await executionStore.getInvocation(provenance.executionId, provenance.invocationId);
+          const ownsDraft =
+            caller !== undefined &&
+            (mission.executor.ref === STORE_REVISION_EXPERT_REF
+              ? caller.parentInvocationId === undefined
+              : owner !== undefined &&
+                (caller.contextId === owner.contextId ||
+                  (owner.parentInvocationId === undefined &&
+                    caller.parentInvocationId === undefined)));
+          if (!ownsDraft) {
+            if (operation === "list" || operation === "search")
+              return ok(new StaticContextStore([]));
+            return error(
+              "permission_denied",
+              "This revision draft belongs to another Runtime Context.",
+            );
+          }
           if (["add", "edit", "delete"].includes(operation) && draft.state !== "editing") {
             return error(
               "permission_denied",
@@ -649,6 +673,7 @@ export function createMissionRunner(options: {
         required: false,
         mutationApproval: "none" as const,
       }));
+    };
     const branchHistory = await options.missions.readBranchHistory(mission.id);
     const branchHistoryBindings: readonly ExpertAgentContextStoreRegistrationInput[] =
       branchHistory === undefined
@@ -675,8 +700,8 @@ export function createMissionRunner(options: {
       ...legacyExecutionOutputBindings,
       ...branchHistoryBindings,
       ...board.bindings,
-      ...missionKnowledgeBindings,
-      ...activeKnowledgeRevisionBindings,
+      ...(await resolveMissionKnowledgeBindings()),
+      ...(await resolveActiveKnowledgeRevisionBindings()),
     ];
     const hostContextBindings = await resolveHostContextBindings();
     const seenNamespaces = new Set<string>();
@@ -962,22 +987,6 @@ export function createMissionRunner(options: {
     mission: Mission,
     runtimes: RuntimeResolver,
   ): Promise<CompiledResource<InvocableResource>> => {
-    const mountedStoreIds =
-      options.contextStoreRevisions === undefined
-        ? new Set(
-            mission.contextMounts.flatMap((mount) =>
-              mount.kind === "context-store" ? [mount.storeId] : [],
-            ),
-          )
-        : new Set(
-            await Promise.all(
-              mission.contextMounts.map(async (mount) =>
-                mount.kind === "context-store"
-                  ? mount.storeId
-                  : (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
-              ),
-            ),
-          );
     const knowledgeRevisions =
       options.contextStores === undefined || options.contextStoreRevisions === undefined
         ? undefined
@@ -986,174 +995,202 @@ export function createMissionRunner(options: {
             contextStores: options.contextStores,
             revisions: options.contextStoreRevisions,
             additionalMountResources: options.knowledgeRevisionMountResources,
-            ...(mission.executor.ref !== STORE_REVISION_EXPERT_REF
-              ? {}
-              : {
-                  inlineMission: {
-                    id: mission.id,
-                    allowedStoreIds: mountedStoreIds,
-                    activeRevisionJobIdForStore: async (storeId) =>
-                      (
-                        await options.contextStoreRevisions!.getMissionActiveJob({
-                          missionId: mission.id,
-                          storeId,
-                        })
-                      )?.id,
-                    writableNamespaceForStore: activeMissionKnowledgeDraftNamespace,
-                    mountDraft: async ({ storeId, draftId, revisionJobId, previousMissionId }) => {
-                      sessionService.beginContextBindingChange(mission.id);
-                      if (previousMissionId !== undefined) {
-                        sessionService.beginContextBindingChange(previousMissionId);
-                      }
-                      let previousRestored = false;
-                      let mountedHere = false;
-                      try {
-                        const session = sessionService.session(mission.id);
-                        const queued = (await session?.getPromptQueue())?.some(
-                          (prompt) => prompt.status === "queued",
-                        );
-                        if (queued === true) {
-                          throw new Error(
-                            "Remove or finish queued Mission messages before starting a knowledge revision.",
-                          );
-                        }
-                        if (previousMissionId !== undefined) {
-                          const previousMission = await options.missions.get(previousMissionId);
-                          const previousSession = sessionService.session(previousMissionId);
-                          const previousHasQueuedPrompts = (
-                            (await previousSession?.getPromptQueue()) ?? []
-                          ).some(
-                            (prompt) => prompt.status === "queued" || prompt.status === "running",
-                          );
-                          if (
-                            lifecycleService.hasActive(previousMissionId) ||
-                            previousHasQueuedPrompts ||
-                            (previousMission.execution !== undefined &&
-                              ["queued", "running", "waiting"].includes(
-                                previousMission.execution.status,
-                              ))
-                          ) {
-                            throw new Error("knowledge_revision_previous_mission_active");
-                          }
-                          const previousOwnsDraft = previousMission.contextMounts.some(
-                            (mount) =>
-                              mount.kind === "context-store-draft" &&
-                              mount.draftId === draftId &&
-                              mount.revisionJobId === revisionJobId,
-                          );
-                          if (
-                            previousMission.executor.ref !== STORE_REVISION_EXPERT_REF ||
-                            !previousOwnsDraft
-                          ) {
-                            throw new Error("knowledge_revision_previous_claim_invalid");
-                          }
+            inlineMission: {
+              id: mission.id,
+              assertOwnership: async (job, input) => {
+                const provenance = job.request.provenance;
+                const [owner, caller] = await Promise.all([
+                  provenance === undefined
+                    ? undefined
+                    : executionStore.getInvocation(provenance.executionId, provenance.invocationId),
+                  executionStore.getInvocation(input.executionId, input.invocationId),
+                ]);
+                const ownsDraft =
+                  caller !== undefined &&
+                  (mission.executor.ref === STORE_REVISION_EXPERT_REF
+                    ? caller.parentInvocationId === undefined
+                    : job.missionId === mission.id &&
+                      owner !== undefined &&
+                      (caller.contextId === owner.contextId ||
+                        (owner.parentInvocationId === undefined &&
+                          caller.parentInvocationId === undefined)));
+                if (!ownsDraft) {
+                  throw new KnowledgeRevisionToolError(
+                    "revision_conflict",
+                    "knowledge_revision_owned_by_another_context",
+                    false,
+                  );
+                }
+              },
+              activeRevisionJobIdForStore: async (storeId) =>
+                (
+                  await options.contextStoreRevisions!.getMissionActiveJob({
+                    missionId: mission.id,
+                    storeId,
+                  })
+                )?.id,
+              writableNamespaceForStore: activeMissionKnowledgeDraftNamespace,
+              mountDraft: async ({ storeId, draftId, revisionJobId, previousMissionId }) => {
+                sessionService.beginContextBindingChange(mission.id);
+                if (previousMissionId !== undefined) {
+                  sessionService.beginContextBindingChange(previousMissionId);
+                }
+                let previousRestored = false;
+                let mountedHere = false;
+                try {
+                  const session = sessionService.session(mission.id);
+                  const queued = (await session?.getPromptQueue())?.some(
+                    (prompt) => prompt.status === "queued",
+                  );
+                  if (queued === true) {
+                    throw new KnowledgeRevisionToolError(
+                      "already_attached",
+                      "Remove or finish queued Mission messages before starting a knowledge revision.",
+                      false,
+                    );
+                  }
+                  if (previousMissionId !== undefined) {
+                    const previousMission = await options.missions.get(previousMissionId);
+                    const previousSession = sessionService.session(previousMissionId);
+                    const previousHasQueuedPrompts = (
+                      (await previousSession?.getPromptQueue()) ?? []
+                    ).some((prompt) => prompt.status === "queued" || prompt.status === "running");
+                    if (
+                      lifecycleService.hasActive(previousMissionId) ||
+                      previousHasQueuedPrompts ||
+                      (previousMission.execution !== undefined &&
+                        ["queued", "running", "waiting"].includes(previousMission.execution.status))
+                    ) {
+                      throw new KnowledgeRevisionToolError(
+                        "already_attached",
+                        "knowledge_revision_previous_mission_active",
+                        false,
+                      );
+                    }
+                    const previousOwnsDraft = previousMission.contextMounts.some(
+                      (mount) =>
+                        mount.kind === "context-store-draft" &&
+                        mount.draftId === draftId &&
+                        mount.revisionJobId === revisionJobId,
+                    );
+                    if (!previousOwnsDraft) {
+                      throw new KnowledgeRevisionToolError(
+                        "unavailable",
+                        "knowledge_revision_previous_claim_invalid",
+                        false,
+                      );
+                    }
 
-                          await options.missions.restoreManagedRevisionStore({
-                            id: previousMissionId,
-                            storeId,
-                            draftId,
-                            revisionJobId,
-                          });
-                          previousRestored = true;
-                          await options.contextStoreRevisions!.detachMission(
-                            revisionJobId,
-                            previousMissionId,
-                          );
-                          await options.contextStoreRevisions!.attachMission(
-                            revisionJobId,
-                            mission.id,
-                          );
-                        } else {
-                          await options.contextStoreRevisions!.attachMission(
-                            revisionJobId,
-                            mission.id,
-                          );
-                        }
-                        await options.missions.mountManagedRevisionDraft({
-                          id: mission.id,
-                          expectedExecutorRef: STORE_REVISION_EXPERT_REF,
-                          storeId,
-                          draftId,
-                          revisionJobId,
-                        });
-                        mountedHere = true;
-                        const [attachedJob, attachedDraft, attachedMission] = await Promise.all([
-                          options.contextStoreRevisions!.get(revisionJobId),
-                          options.contextStoreRevisions!.getDraft(draftId),
-                          options.missions.get(mission.id),
-                        ]);
-                        const claimMounted = attachedMission.contextMounts.some(
-                          (mount) =>
-                            mount.kind === "context-store-draft" &&
-                            mount.draftId === draftId &&
-                            mount.revisionJobId === revisionJobId,
-                        );
-                        if (
-                          !claimMounted ||
-                          attachedJob.state !== "running" ||
-                          attachedJob.missionId !== mission.id ||
-                          attachedDraft.activeMissionId !== mission.id
-                        ) {
-                          throw new Error("knowledge_revision_mount_incomplete");
-                        }
-                        await options.contextStoreRevisions!.completeMissionClaimMount({
-                          missionId: mission.id,
-                          storeId,
-                          jobId: revisionJobId,
-                          draftId,
-                        });
-                        await invalidateContextBindings(mission.id);
-                        if (previousMissionId !== undefined) {
-                          await invalidateContextBindings(previousMissionId);
-                        }
-                        return {
-                          writableNamespace: activeMissionKnowledgeDraftNamespace(storeId),
-                        };
-                      } catch (error) {
-                        if (mountedHere) {
-                          await options.missions.restoreManagedRevisionStore({
-                            id: mission.id,
-                            storeId,
-                            draftId,
-                            revisionJobId,
-                          });
-                        }
-                        if (previousMissionId !== undefined && previousRestored) {
-                          let current = await options.contextStoreRevisions!.get(revisionJobId);
-                          if (current.missionId === mission.id) {
-                            await options.contextStoreRevisions!.detachMission(
-                              revisionJobId,
-                              mission.id,
-                            );
-                            current = await options.contextStoreRevisions!.get(revisionJobId);
-                          }
-                          if (current.missionId === undefined) {
-                            await options.contextStoreRevisions!.attachMission(
-                              revisionJobId,
-                              previousMissionId,
-                            );
-                            current = await options.contextStoreRevisions!.get(revisionJobId);
-                          }
-                          if (current.missionId === previousMissionId) {
-                            await options.missions.mountManagedRevisionDraft({
-                              id: previousMissionId,
-                              expectedExecutorRef: STORE_REVISION_EXPERT_REF,
-                              storeId,
-                              draftId,
-                              revisionJobId,
-                            });
-                          }
-                        }
-                        throw error;
-                      } finally {
-                        sessionService.finishContextBindingChange(mission.id);
-                        if (previousMissionId !== undefined) {
-                          sessionService.finishContextBindingChange(previousMissionId);
-                        }
-                      }
-                    },
-                  },
-                }),
+                    await options.missions.restoreManagedRevisionStore({
+                      id: previousMissionId,
+                      storeId,
+                      draftId,
+                      revisionJobId,
+                    });
+                    previousRestored = true;
+                    await options.contextStoreRevisions!.detachMission(
+                      revisionJobId,
+                      previousMissionId,
+                    );
+                    await options.contextStoreRevisions!.attachMission(revisionJobId, mission.id);
+                  } else {
+                    await options.contextStoreRevisions!.attachMission(revisionJobId, mission.id);
+                  }
+                  const beforeMount = await options.missions.get(mission.id);
+                  const preserveSession = !beforeMount.contextMounts.some(
+                    (mount) =>
+                      mount.kind === "context-store-draft" &&
+                      mount.draftId === draftId &&
+                      mount.revisionJobId === undefined,
+                  );
+                  await options.missions.mountManagedRevisionDraft({
+                    id: mission.id,
+                    preserveSession,
+                    expectedExecutorRef: mission.executor.ref,
+                    storeId,
+                    allowUnmountedTarget: true,
+                    draftId,
+                    revisionJobId,
+                  });
+                  mountedHere = true;
+                  const [attachedJob, attachedDraft, attachedMission] = await Promise.all([
+                    options.contextStoreRevisions!.get(revisionJobId),
+                    options.contextStoreRevisions!.getDraft(draftId),
+                    options.missions.get(mission.id),
+                  ]);
+                  const claimMounted = attachedMission.contextMounts.some(
+                    (mount) =>
+                      mount.kind === "context-store-draft" &&
+                      mount.draftId === draftId &&
+                      mount.revisionJobId === revisionJobId,
+                  );
+                  if (
+                    !claimMounted ||
+                    attachedJob.state !== "running" ||
+                    attachedJob.missionId !== mission.id ||
+                    attachedDraft.activeMissionId !== mission.id
+                  ) {
+                    throw new KnowledgeRevisionToolError(
+                      "unavailable",
+                      "knowledge_revision_mount_incomplete",
+                      false,
+                    );
+                  }
+                  await options.contextStoreRevisions!.completeMissionClaimMount({
+                    missionId: mission.id,
+                    storeId,
+                    jobId: revisionJobId,
+                    draftId,
+                  });
+                  if (!preserveSession) await invalidateContextBindings(mission.id);
+                  if (previousMissionId !== undefined) {
+                    await invalidateContextBindings(previousMissionId);
+                  }
+                  return {
+                    writableNamespace: activeMissionKnowledgeDraftNamespace(storeId),
+                  };
+                } catch (error) {
+                  if (mountedHere) {
+                    await options.missions.restoreManagedRevisionStore({
+                      id: mission.id,
+                      storeId,
+                      draftId,
+                      revisionJobId,
+                    });
+                  }
+                  if (previousMissionId !== undefined && previousRestored) {
+                    let current = await options.contextStoreRevisions!.get(revisionJobId);
+                    if (current.missionId === mission.id) {
+                      await options.contextStoreRevisions!.detachMission(revisionJobId, mission.id);
+                      current = await options.contextStoreRevisions!.get(revisionJobId);
+                    }
+                    if (current.missionId === undefined) {
+                      await options.contextStoreRevisions!.attachMission(
+                        revisionJobId,
+                        previousMissionId,
+                      );
+                      current = await options.contextStoreRevisions!.get(revisionJobId);
+                    }
+                    if (current.missionId === previousMissionId) {
+                      await options.missions.mountManagedRevisionDraft({
+                        id: previousMissionId,
+                        expectedExecutorRef: (await options.missions.get(previousMissionId))
+                          .executor.ref,
+                        storeId,
+                        draftId,
+                        revisionJobId,
+                      });
+                    }
+                  }
+                  throw error;
+                } finally {
+                  sessionService.finishContextBindingChange(mission.id);
+                  if (previousMissionId !== undefined) {
+                    sessionService.finishContextBindingChange(previousMissionId);
+                  }
+                }
+              },
+            },
           });
     const system = await options.compileSystemExecutor?.({ mission, runtimes, knowledgeRevisions });
     if (system !== undefined) return system;
@@ -3847,26 +3884,6 @@ function toRuntimeModelSelection(
       };
 }
 
-function missionContextMountsFingerprint(mission: Mission): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        mission.contextMounts
-          .map((mount) =>
-            mount.kind === "context-store"
-              ? { kind: mount.kind, storeId: mount.storeId }
-              : {
-                  kind: mount.kind,
-                  draftId: mount.draftId,
-                  revisionJobId: mount.revisionJobId ?? null,
-                },
-          )
-          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
-      ),
-    )
-    .digest("hex");
-}
-
 function missionContextMountsNeedSuccessor(mission: Mission, fingerprint: string): boolean {
   if (mission.execution?.sessionId === undefined) return false;
   if (mission.execution.contextMountsFingerprint === undefined) return false;
@@ -4905,8 +4922,7 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
             kind: "assistant",
             content: truncate(content.text, 200_000),
             streaming: false,
-            ...(assistantMessage.stopReason === "stop" ||
-            assistantMessage.stopReason === "length"
+            ...(assistantMessage.stopReason === "stop" || assistantMessage.stopReason === "length"
               ? { finalAnswer: true }
               : {}),
           });

@@ -21,8 +21,11 @@ spec:
     1. List targets or drafts and copy the exact targetRef or draftId. Continue a matching editable
     draft instead of creating a duplicate. Follow nextCursor when more results exist.
     2. Call knowledge_revision_start with targetRef and the full request. draftName is optional for a
-    new draft. For an existing draft, provide draftId and omit draftName. The result directly contains
-    draftId and writableNamespace; copy both.
+    new draft. For an existing draft, provide draftId and omit draftName. The result always contains
+    draftId and writableNamespace for work in this Mission. Copy both and edit here, including when
+    you are a delegated teammate. Any listed target may be revised, even if not mounted here.
+    Do not create another Mission for this work. If the writable namespace is unavailable, inspect
+    the returned diagnostic and report the issue; never guess a namespace or start a duplicate.
     3. After compaction, recover draftId and writableNamespace with the list/get tools; do not start
     another draft.
     4. Inspect and edit only writableNamespace. Inspect with list_expert_context,

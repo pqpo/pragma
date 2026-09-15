@@ -16,7 +16,22 @@ describe("missionsApi", () => {
     mocks.invokeMutation.mockReset();
   });
 
+  it("validates a detail-only Mission source from the Host", async () => {
+    mocks.invokeMutation.mockResolvedValueOnce({ type: "internal" });
+    await expect(
+      missionsApi.getMissionListSource("00000000-0000-4000-8000-000000000001"),
+    ).resolves.toEqual({ type: "internal" });
+    mocks.invokeMutation.mockResolvedValueOnce({ type: "unknown" });
+    await expect(
+      missionsApi.getMissionListSource("00000000-0000-4000-8000-000000000001"),
+    ).rejects.toThrow();
+  });
+
   it.each([
+    [
+      "getMissionListSource",
+      () => missionsApi.getMissionListSource("00000000-0000-4000-8000-000000000001"),
+    ],
     ["getMission", () => missionsApi.getMission("00000000-0000-4000-8000-000000000001")],
     [
       "markMissionComplete",

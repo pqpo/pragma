@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   KnowledgeRevisionDraftFileSchema,
+  KnowledgeRevisionToolError,
   KnowledgeRevisionDraftInspectionSchema,
   KnowledgeRevisionDraftSummarySchema,
   KnowledgeRevisionDraftReceiptSchema,
@@ -11,6 +12,7 @@ import {
 } from "@pragma/built-in-agents";
 import type {
   ContextStoreDraft,
+  ContextStoreRevisionJob,
   KnowledgeRevisionSubmissionPort,
   KnowledgeRevisionTarget,
   KnowledgeRevisionToolInvocation,
@@ -36,10 +38,22 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   readonly contextStores: ContextStoreStore;
   readonly revisions: ContextStoreRevisionService;
   readonly additionalMountResources?: (() => readonly PragmaResource[]) | undefined;
+  readonly continueMission?:
+    | ((input: {
+        readonly missionId: string;
+        readonly jobId: string;
+        readonly draftId: string;
+        readonly prompt: string;
+        readonly requestId: string;
+      }) => Promise<void>)
+    | undefined;
   readonly inlineMission?:
     | {
         readonly id: string;
-        readonly allowedStoreIds: ReadonlySet<string>;
+        readonly assertOwnership?: (
+          job: ContextStoreRevisionJob,
+          input: KnowledgeRevisionToolInvocation,
+        ) => Promise<void>;
         readonly activeRevisionJobIdForStore: (storeId: string) => Promise<string | undefined>;
         readonly writableNamespaceForStore: (storeId: string) => string;
         readonly mountDraft: (input: {
@@ -86,6 +100,38 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       );
   };
 
+  const assertDraftOwnership = async (
+    input: KnowledgeRevisionToolInvocation & { readonly draftId: string },
+  ) => {
+    if (options.inlineMission?.assertOwnership === undefined) return;
+    const draft = await options.revisions.getDraft(input.draftId);
+    if (draft.activeMissionId === undefined) return;
+    if (draft.activeMissionId !== options.inlineMission.id) {
+      throw new KnowledgeRevisionToolError(
+        "revision_conflict",
+        "knowledge_revision_owned_by_another_mission",
+        false,
+      );
+    }
+    const jobId = await options.inlineMission.activeRevisionJobIdForStore(draft.storeId);
+    if (jobId === undefined) {
+      throw new KnowledgeRevisionToolError(
+        "unavailable",
+        "knowledge_revision_owner_unavailable",
+        false,
+      );
+    }
+    const job = await options.revisions.get(jobId);
+    if (job.draftId !== draft.id || job.missionId !== options.inlineMission.id) {
+      throw new KnowledgeRevisionToolError(
+        "revision_conflict",
+        "knowledge_revision_owner_mismatch",
+        false,
+      );
+    }
+    await options.inlineMission.assertOwnership(job, input);
+  };
+
   return {
     async listTargets(input) {
       const query = input.query?.toLocaleLowerCase();
@@ -116,7 +162,11 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           : (await targets()).find((candidate) => candidate.target.targetRef === input.targetRef)
               ?.storeId;
       if (input.targetRef !== undefined && selectedStoreId === undefined) {
-        throw new Error("knowledge_revision_target_unavailable");
+        throw new KnowledgeRevisionToolError(
+          "not_found",
+          "knowledge_revision_target_unavailable",
+          false,
+        );
       }
       const drafts = await options.revisions.listDraftsWithRecovery(
         selectedStoreId === undefined ? {} : { storeId: selectedStoreId },
@@ -136,9 +186,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
               ? {}
               : { activeMissionId: draft.activeMissionId }),
             ...(recovery === undefined ? {} : { recovery }),
-            ...(inlineMission !== undefined &&
-            draft.activeMissionId === inlineMission.id &&
-            inlineMission.allowedStoreIds.has(draft.storeId)
+            ...(inlineMission !== undefined && draft.activeMissionId === inlineMission.id
               ? { writableNamespace: inlineMission.writableNamespaceForStore(draft.storeId) }
               : {}),
             ...(draft.submittedRevision === undefined
@@ -171,15 +219,98 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       const selected = (await targets()).find(
         (candidate) => candidate.target.targetRef === input.targetRef,
       );
-      if (selected === undefined) throw new Error("knowledge_revision_target_unavailable");
-      if (inlineMission === undefined) throw new Error("knowledge_revision_mission_unavailable");
-      if (!inlineMission.allowedStoreIds.has(selected.storeId)) {
-        throw new Error("knowledge_revision_target_not_mounted");
+      if (selected === undefined) {
+        throw new KnowledgeRevisionToolError(
+          "not_found",
+          "knowledge_revision_target_unavailable",
+          false,
+        );
       }
       const sourceDigest = digestSubmission(input, selected.storeId, input.prompt, input.draftId);
+      const request = {
+        schemaVersion: "pragma.context-store-revision-request/v1" as const,
+        storeId: selected.storeId,
+        prompt: input.prompt,
+        source: "expert-reflection" as const,
+        sourceDigest,
+        provenance: {
+          executionId: input.executionId,
+          invocationId: input.invocationId,
+          expertId: input.expertId,
+          ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
+        },
+      };
+      if (inlineMission === undefined) {
+        if (input.draftId !== undefined) {
+          const { recovery } = await options.revisions.getDraftWithRecovery(input.draftId);
+          if (recovery?.code === "mission_unreadable") {
+            throw new KnowledgeRevisionToolError("unavailable", recovery.message, false);
+          }
+        }
+        const job = await options.revisions.start(request, {
+          ...(input.draftId === undefined ? {} : { draftId: input.draftId }),
+          ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
+        });
+        if (input.draftId !== undefined && job.request.sourceDigest !== sourceDigest) {
+          if (job.missionId === undefined) {
+            if (!["editing", "running"].includes(job.state)) {
+              throw new KnowledgeRevisionToolError(
+                "unavailable",
+                "The revision task is not editable. Inspect its state and finish review or recovery before continuing.",
+                false,
+              );
+            }
+            throw new KnowledgeRevisionToolError(
+              "already_attached",
+              "This draft already has a task awaiting its Mission. Wait for that task to start before sending another request.",
+              false,
+            );
+          }
+          if (options.continueMission === undefined) {
+            throw new KnowledgeRevisionToolError(
+              "unavailable",
+              "knowledge_revision_mission_continuation_unavailable",
+              false,
+            );
+          }
+          // One durable Mission prompt per tool operation, including retries after uncertain delivery.
+          const requestId = `${sourceDigest.slice(0, 8)}-${sourceDigest.slice(8, 12)}-4${sourceDigest.slice(13, 16)}-8${sourceDigest.slice(17, 20)}-${sourceDigest.slice(20, 32)}`;
+          await options.continueMission({
+            missionId: job.missionId,
+            jobId: job.id,
+            draftId: job.draftId,
+            prompt: input.prompt,
+            requestId,
+          });
+        } else if (["editing", "running"].includes(job.state)) {
+          options.revisions.scheduleProcessing();
+        } else if (job.state === "needs_attention") {
+          throw new KnowledgeRevisionToolError(
+            "unavailable",
+            "The revision task needs attention. Inspect its Mission and recover the task before retrying.",
+            false,
+          );
+        }
+
+        return {
+          jobId: job.id,
+          draftId: job.draftId,
+          ...(job.missionId === undefined ? {} : { missionId: job.missionId }),
+          state: job.state,
+          target: selected.target,
+        };
+      }
       const activeRevisionJobId = await inlineMission.activeRevisionJobIdForStore(selected.storeId);
       if (activeRevisionJobId !== undefined) {
         const active = await options.revisions.get(activeRevisionJobId);
+        await inlineMission.assertOwnership?.(active, input);
+        if (input.draftId !== undefined && input.draftId !== active.draftId) {
+          throw new KnowledgeRevisionToolError(
+            "revision_conflict",
+            "A different draft is already active for this Mission target. Continue that draft or finish it first.",
+            false,
+          );
+        }
         const { writableNamespace } = await inlineMission.mountDraft({
           storeId: selected.storeId,
           draftId: active.draftId,
@@ -195,23 +326,12 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
         };
       }
       const job = await options.revisions.startForMission({
-        request: {
-          schemaVersion: "pragma.context-store-revision-request/v1",
-          storeId: selected.storeId,
-          prompt: input.prompt,
-          source: "expert-reflection",
-          sourceDigest,
-          provenance: {
-            executionId: input.executionId,
-            invocationId: input.invocationId,
-            expertId: input.expertId,
-            ...(input.teamId === undefined ? {} : { teamId: input.teamId }),
-          },
-        },
+        request,
         missionId: inlineMission.id,
         ...(input.draftId === undefined ? {} : { draftId: input.draftId }),
         ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
       });
+      await inlineMission.assertOwnership?.(job, input);
       const previousMissionId =
         job.missionId === undefined || job.missionId === inlineMission.id
           ? undefined
@@ -235,9 +355,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
     async getDraft(input) {
       const { draft, recovery } = await options.revisions.getDraftWithRecovery(input.draftId);
       const writableNamespace =
-        options.inlineMission !== undefined &&
-        draft.activeMissionId === options.inlineMission.id &&
-        options.inlineMission.allowedStoreIds.has(draft.storeId)
+        options.inlineMission !== undefined && draft.activeMissionId === options.inlineMission.id
           ? options.inlineMission.writableNamespaceForStore(draft.storeId)
           : undefined;
       if (input.fileId !== undefined) {
@@ -346,6 +464,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       });
     },
     async rebase(input) {
+      await assertDraftOwnership(input);
       const draft = await options.revisions.rebase({
         draftId: input.draftId,
         expectedRevision: input.expectedRevision,
@@ -354,6 +473,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       return await draftReceipt(draft, options.contextStores);
     },
     async submitDraft(input) {
+      await assertDraftOwnership(input);
       const draft = await options.revisions.submitDraft(
         input.draftId,
         input.expectedRevision,
@@ -362,6 +482,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
       return await draftReceipt(draft, options.contextStores);
     },
     async discardDraft(input) {
+      await assertDraftOwnership(input);
       await options.revisions.discardDraft(input.draftId, input.expectedRevision);
       return { draftId: input.draftId, discarded: true };
     },

@@ -55,19 +55,26 @@ Mission Knowledge is the authority and recovery model for both published Stores 
 Mission schema v10 replaces `contextStoreIds` with typed `contextMounts`; the adjacent v9-to-v10
 migration converts every old id to a published Store mount using a backup, stable journal, and atomic
 replacement. Published Store mounts and ordinary draft mounts are read-only. A draft mount is
-writable only when it carries a revision-job claim and the current Mission is owned by that job's
-Store Revision Agent.
+writable only when it carries a revision-job claim owned by the current Mission. Context operations
+also verify the caller's durable Runtime Context against the job's originating Invocation. For a
+standalone Store Revision Mission, only its root Invocation can access the claimed draft. A Mission's
+root caller retains its root-owned draft after context binding changes rebuild its Runtime Context;
+this continuity does not grant another teammate access.
 
-When Store Revision is selected directly and starts a revision for an already mounted published
-Store, the Host attaches the draft to the same Mission and replaces that Store mount with a claimed
-draft mount before returning. The Invocation pre-registers one dynamic writable namespace for every
-eligible knowledge base. Each Context operation resolves that knowledge base's current claimed draft,
+When an Expert or Team member starts a revision inside a Mission, the Host attaches the draft to
+that same Mission before returning. With pre-registered dynamic draft namespaces, the existing
+published Store mount remains read-only for other members; an explicitly selected, previously
+unmounted target receives a claimed draft mount. The Host acknowledges the new mount fingerprint
+in that same atomic Mission write and retains the ExpertSession, so a later `continue_expert`
+still resolves the original teammate Context, including after reopening storage. Concurrent mounts
+keep the message gate closed until all changes finish. The eligible namespace list is refreshed
+for every Invocation, including knowledge bases created after the Mission started. Each Context operation resolves that knowledge base's current claimed draft,
 so `start -> edit -> submit` works in one turn even though the Invocation's original Context index was
 assembled before the draft existed. `knowledge_revision_start` returns the exact writable namespace.
 The mount remains the authority for ownership, later-Session indexing, recovery, and cleanup; draft
 existence alone never grants write access.
 
-One Store Revision Mission may claim drafts for multiple mounted knowledge bases. Claims and writable
+One Mission may claim drafts for multiple explicitly selected knowledge bases. Claims and writable
 namespaces are unique per Store, and each draft is rebased and submitted independently. A durable,
 per-(Mission, Store) claim journal is written before creating or attaching the draft and job, so
 concurrent starts with different inputs converge on one claim. Managed background revision Missions
@@ -90,10 +97,19 @@ never automatically discards user changes or re-runs the revision. Draft and rev
 unreadable records so one damaged or stale association cannot block healthy records or the recovery
 controls.
 
-Revision Missions retain the authoritative `system-store-revision` origin and are shown as managed
-automation Missions in Tasks. They retain their conversation and tool trace after completion. The
-revision job and Mission link to each other without inventing an Automation resource id. One draft
-has at most one active Agent Mission; user edits remain concurrent and are protected by CAS.
+The Tasks automation list is an inbox for independent background work whose process is not already
+visible in the user's current Mission. Automation-triggered Missions, user-submitted Knowledge
+revisions, and Memory learning's Knowledge revisions appear there. Background revision Missions
+retain `system-store-revision` origin and link to their job without inventing an Automation ref.
+Foreground Expert/Team revisions stay in their originating Mission and create no extra Mission.
+Historical independent revisions with job source `expert-reflection` remain accessible through
+Knowledge revision details but are excluded from both top-level task lists. Host list queries and
+updates share one source resolver; unreadable source records report `mission_revision_source_unavailable`
+and do not block unrelated tasks. A filtered task list is not evidence of deletion: composer cleanup
+only removes confirmed completed/deleted entries, and an asynchronous detail-source lookup must
+not override a newer selection. No historical Mission, Execution, or Session is rewritten.
+Memory Curator extraction is a future addition to this inbox; its visibility is unchanged here.
+One draft has at most one active Mission; concurrent user edits remain protected by CAS.
 
 The v2 revision-job reader performs a statically registered v1-to-v2 migration. Pending review
 change sets become sparse overlays; active legacy work becomes a draft plus runnable Mission; terminal
@@ -111,3 +127,50 @@ unmerged, undiscarded drafts; deleting a Mission does not delete its draft.
 - Human and Agent editing share one Context Store protocol and one conflict model.
 - Review, rebase, Mission history, and publication become independently observable stages.
 - Hosts must preserve pinned base snapshots while a live draft references them.
+
+## Revision entry points and regression protection (#246)
+
+An authorized caller may request a revision of any listed knowledge base, including an unmounted
+target. Mission-bound submissions use the original Mission and return its writable namespace;
+no missing mount or teammate call implicitly starts background work. Unknown or unavailable targets
+fail with an actionable error. The caller must retain access through the revision's Runtime Context;
+another teammate does not inherit draft writes merely by sharing the Mission.
+Submissions without a Mission (Knowledge UI and Memory learning) retain the managed background path.
+Background Missions do not inherit another Mission's Board or relative paths.
+
+`pnpm test:revision` protects both entry points in PR and release CI, independently of `test:core`.
+The #241 regression changed existing successful entry-point tests to assert rejection; narrowing
+supported behavior requires an explicit product requirement, not merely updated implementation tests.
+
+### Historical verification for #246 (2026-09-15, before foreground ownership update)
+
+- The business regression suite covers ordinary Experts, Team delegation to Store Revision Agent,
+  unmounted targets, inline writes, historical jobs, deletion recovery, and requests arriving during
+  background processing. It uses temporary stores and the real Host services with a test Runtime.
+- Reintroducing the #241 `inlineMission === undefined` rejection makes the unmounted-target
+  regression test fail with `knowledge_revision_mission_unavailable`. Restoring the fix passes it.
+- Real Runtime acceptance is still outstanding: Qoder CLI exited with code 41 before completing the
+  flow; Antigravity reported that it was not signed in. Neither attempt counts as successful smoke
+  validation. After authenticating Antigravity outside Pragma, rerun the isolated smoke:
+
+```sh
+PRAGMA_LOG_LEVEL=error PRAGMA_REVISION_REAL_SMOKE=1 pnpm --filter @pragma/desktop exec vitest run src/main/features/missions/mission-runner.test.ts -t 'background Mission from expert:0000000000000002'
+```
+
+The smoke uses a temporary knowledge base and Antigravity's real Runtime adapter. Management-tool
+approval is disabled only in this opt-in test fixture. Success requires a background Mission, a
+written draft in `pending_review`, and an unchanged formal Store snapshot; no publication occurs.
+
+### Follow-up code review
+
+- Continuing an attached background draft now enqueues the new prompt on its existing Mission
+  through the Host controller, with a stable request ID per tool operation. Replayed deliveries are
+  detected in the persisted prompt history, including after the draft reaches review. A task that
+  has not acquired a Mission reports an actionable rejection instead of silently dropping new input.
+- Explicit draft selection is checked inside the Mission claim lock as well as at the tool entry
+  point, preventing concurrent callers from receiving a different draft than requested.
+- Submission resolves the active task by draft and Mission ownership. It never revives the first
+  historical task returned by filesystem enumeration. Stopped Mission owners must be recovered
+  before another task can be created for their draft.
+- The background drain also rechecks wakeups during completion cleanup so requests cannot be lost
+  between resolving the drain promise and clearing its active marker.

@@ -1,3 +1,8 @@
+import type { HomeProjectStore } from "./home-project-store.ts";
+import {
+  HomeProjectIdSchema,
+  SaveHomeProjectSchema,
+} from "../../../shared/contracts/home-projects.ts";
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
@@ -87,6 +92,7 @@ export function installMissionHandlers(options: {
   readonly localHost: DesktopLocalHostApplication;
   readonly creator: MissionCreator;
   readonly executors: MissionExecutorCatalog;
+  readonly homeProjects: HomeProjectStore;
   readonly homeExecutors: HomeExecutorCatalog;
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
@@ -138,20 +144,11 @@ export function installMissionHandlers(options: {
       throw error;
     }
   };
-  const sourceForMission = (mission: Mission): MissionSummary["source"] => {
-    if (mission.origin.type === "automation") {
-      return { type: "automation", automationRef: mission.origin.automationRef };
-    }
-    if (mission.origin.type === "system-store-revision") {
-      return {
-        type: "managed-automation",
-        kind: "knowledge-revision",
-        jobId: mission.origin.jobId,
-        storeId: mission.origin.storeId,
-      };
-    }
-    const automationRef = legacyAutomationMissionSources.get(mission.id);
-    return automationRef === undefined ? { type: "task" } : { type: "automation", automationRef };
+  const sourceForMission = async (mission: Mission): Promise<MissionSummary["source"]> => {
+    const source = await options.missions.getListSource(mission);
+    const automationRef =
+      mission.origin.type === "user" ? legacyAutomationMissionSources.get(mission.id) : undefined;
+    return automationRef === undefined ? source : { type: "automation", automationRef };
   };
   const publishMission = async (
     mission: Awaited<ReturnType<MissionStore["get"]>>,
@@ -160,7 +157,7 @@ export function installMissionHandlers(options: {
     publishMissionUpdate(() => options.getWindow()?.webContents ?? null, {
       kind: "upsert",
       mission,
-      source: sourceForMission(mission),
+      source: await sourceForMission(mission),
     });
   };
   const publishRemoval = (missionId: string): void => {
@@ -253,6 +250,11 @@ export function installMissionHandlers(options: {
         : { ...mission, source: { type: "automation" as const, automationRef } };
     });
   });
+  ipcMain.handle("missions:source:get", (_event, id: unknown) =>
+    runDesktopMutation(async () =>
+      sourceForMission(await getManagedMission(MissionIdSchema.parse(id))),
+    ),
+  );
   ipcMain.handle("missions:get", (_event, id: unknown) =>
     runDesktopMutation(async () => await getManagedMission(MissionIdSchema.parse(id))),
   );
@@ -279,6 +281,13 @@ export function installMissionHandlers(options: {
   });
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.localHost.listExecutors()),
+  );
+  ipcMain.handle("missions:home-projects:list", () => options.homeProjects.list());
+  ipcMain.handle("missions:home-projects:save", (_event, input: unknown) =>
+    runDesktopMutation(() => options.homeProjects.save(SaveHomeProjectSchema.parse(input))),
+  );
+  ipcMain.handle("missions:home-projects:delete", (_event, id: unknown) =>
+    runDesktopMutation(() => options.homeProjects.delete(HomeProjectIdSchema.parse(id))),
   );
   ipcMain.handle("missions:home-executors:get", async () =>
     HomeMissionExecutorCatalogSchema.parse({

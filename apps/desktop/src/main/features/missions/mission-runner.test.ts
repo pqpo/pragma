@@ -11,6 +11,7 @@ import {
   createStaticRuntimeResolver,
   createNoopLoggerProvider,
   defineExpert,
+  defineExpertTeam,
   ExecutionWorkHistoryReader,
   fingerprintExpertExecutionDefinition,
   InMemoryContextStore,
@@ -432,7 +433,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ...output("run-d", "message", "Intermediate", true),
       value: "Intermediate",
     });
-    expect(consumeLiveChatOutput(chat, output("run-d", "thought", "After intermediate"))).toHaveLength(1);
+    expect(
+      consumeLiveChatOutput(chat, output("run-d", "thought", "After intermediate")),
+    ).toHaveLength(1);
   });
 
   it("keeps live thinking before a durable final answer during refresh", () => {
@@ -1485,6 +1488,298 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(restoreSession).not.toHaveBeenCalled();
   });
 
+  it.each(["expert:0000000000000002", STORE_REVISION_EXPERT_REF, "team:0000000000000003"])(
+    "revises an unmounted target inside the original Mission from %s",
+    async (executorRef) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-background-revision-"));
+      temporaryPaths.push(root);
+      const pragmaHome = join(root, "state");
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture()],
+      });
+      const contextStores = createContextStoreStore({ storesPath: join(root, "stores") });
+      const target = await contextStores.create({
+        mode: "blank",
+        name: "Unattached target",
+        description: "",
+      });
+      const original = await contextStores.getSnapshot(target.id);
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const generate = vi.fn(async () => undefined);
+      const revisions = createContextStoreRevisionService({
+        statePath: join(root, "revisions"),
+        draftsPath: join(root, "drafts"),
+        contextStores,
+        generator: { generate },
+      });
+      const realSmoke = process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1";
+      const preparedContent = "# Tracking\nPackage tracking instructions prepared by the caller.\n";
+      const caller = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: `Use knowledge_revision_list_targets to find Unattached target, then call knowledge_revision_start exactly once with that targetRef and this complete prompt: Add items/tracking.md with exactly this content: ${preparedContent}. Edit the draft in this Mission and submit it for review.`,
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: {
+          kind: executorRef.startsWith("team:") ? "team" : "expert",
+          ref: executorRef,
+          name: "Caller",
+        },
+        contextMounts: [],
+      });
+      let jobId: string | undefined;
+      let draftId: string | undefined;
+      let teammateContextId: string | undefined;
+
+      const fakeRuntime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: (context) => ({ context }),
+        readSession: () => ({ runtimeSessionId: "runtime" }),
+        async startTurn(session, turn) {
+          const tools = session.context.agent.tools ?? [];
+          if (session.context.agent.id === "0000000000000004") {
+            const context = { execution: session.context.request.executionContext };
+            const spawned =
+              teammateContextId === undefined
+                ? await tools
+                    .find((tool) => tool.name === "spawn_expert")!
+                    .call({ expertId: "0000000000st0rev", task: caller.goal }, turn.signal, context)
+                : await tools
+                    .find((tool) => tool.name === "continue_expert")!
+                    .call(
+                      { contextId: teammateContextId, task: "Continue and submit this draft" },
+                      turn.signal,
+                      context,
+                    );
+            expect(spawned.isError, spawned.text).not.toBe(true);
+            const { invocationId, contextId } = spawned.details as {
+              invocationId: string;
+              contextId: string;
+            };
+            teammateContextId ??= contextId;
+            await tools
+              .find((tool) => tool.name === "wait_experts")!
+              .call({ invocationIds: [invocationId] }, turn.signal, context);
+            const read = session.context.agent
+              .createDefaultTools()
+              .find((tool) => tool.name === "read_expert_context")!;
+            const denied = await read.call(
+              {
+                namespace: activeMissionKnowledgeDraftNamespace(target.id),
+                id: "items/tracking.md",
+              },
+              turn.signal,
+              context,
+            );
+            expect(denied.isError).toBe(true);
+            return { outputText: "Delegated revision", runtimeSessionId: "runtime" };
+          }
+
+          const call = async (name: string, input: unknown, operationId = name) => {
+            const tool = tools.find((candidate) => candidate.name === name)!;
+            const result = await tool.call(input, turn.signal, {
+              runContext: session.context.runContext,
+              toolCallId: operationId,
+            });
+            expect(result.isError, result.text).not.toBe(true);
+            return result.details;
+          };
+          const listed = (await call("knowledge_revision_list_targets", {})) as {
+            items: { targetRef: string; name: string }[];
+          };
+          const targetRef = listed.items.find((item) => item.name === target.name)!.targetRef;
+          const resuming = jobId !== undefined;
+          const startInput = {
+            targetRef,
+            prompt: preparedContent,
+            ...(resuming ? { draftId } : {}),
+          };
+          const started = (await call("knowledge_revision_start", startInput)) as {
+            jobId: string;
+            draftId: string;
+            missionId: string;
+            writableNamespace: string;
+          };
+          jobId = started.jobId;
+          draftId = started.draftId;
+          expect(started.missionId).toBe(caller.id);
+          expect(started.writableNamespace).toBe(activeMissionKnowledgeDraftNamespace(target.id));
+          const replay = await call("knowledge_revision_start", startInput);
+          expect(replay).toMatchObject({ jobId, draftId });
+          const add = session.context.agent
+            .createDefaultTools()
+            .find((tool) => tool.name === "add_expert_context")!;
+          if (!resuming) {
+            const written = await add.call(
+              {
+                namespace: started.writableNamespace,
+                id: "items/tracking.md",
+                content: preparedContent,
+              },
+              turn.signal,
+              { execution: session.context.request.executionContext },
+            );
+            expect(written.isError, written.text).not.toBe(true);
+          }
+          if (executorRef.startsWith("team:")) {
+            const execution = session.context.request.executionContext!;
+            const denied = await add.call(
+              {
+                namespace: started.writableNamespace,
+                id: "items/forbidden.md",
+                content: "Must not be written by the coordinator",
+              },
+              turn.signal,
+              {
+                execution: { ...execution, invocationId: execution.executionId },
+              },
+            );
+            expect(denied.isError).toBe(true);
+            expect(denied.text).toContain("another Runtime Context");
+          }
+          if (!resuming && executorRef !== STORE_REVISION_EXPERT_REF) {
+            return { outputText: "Draft saved for continuation", runtimeSessionId: "runtime" };
+          }
+          const inspection = (await call("knowledge_revision_get_draft", { draftId })) as {
+            draft: { revision: number };
+          };
+          await call("knowledge_revision_submit_draft", {
+            draftId,
+            expectedRevision: inspection.draft.revision,
+            summary: "Add tracking instructions",
+          });
+          return { outputText: "Revision accepted", runtimeSessionId: "runtime" };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const runtime = realSmoke
+        ? (await import("@pragma/runtime-antigravity")).createAntigravityRuntime({
+            descriptor: { id: "fake" },
+            permissionMode: "auto-approve",
+            defaultModelName: "gemini-3.6-flash-low",
+          })
+        : fakeRuntime;
+      const runtimes = createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      });
+      const runner = createMissionRunner({
+        missions,
+        project,
+        contextStores,
+        contextStoreRevisions: revisions,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome,
+        runtimes,
+        assertStorageWriteAllowed: async () => undefined,
+        compileSystemExecutor: async ({ mission, knowledgeRevisions }) => {
+          const expert = await defineExpert({
+            id:
+              mission.executor.kind === "team"
+                ? "0000000000st0rev"
+                : mission.executor.ref.slice("expert:".length),
+            name: "Revision test",
+            description: "",
+            tags: [],
+            scope:
+              "Revise only the temporary test knowledge base. For a background Store Revision Mission: list targets, call knowledge_revision_start to get the current writableNamespace, add items/tracking.md with the exact Tracking content from the request using add_expert_context, inspect with knowledge_revision_get_draft, then submit with the latest expectedRevision and a summary. Do not use filesystem or shell tools. For every request, start, edit in the returned writableNamespace, and submit in the same Mission.",
+            workspace: mission.workspace.path,
+            pragmaHome,
+            defaultRuntimeId: "fake",
+            tools: createPragmaManagementTools({ knowledgeRevisions }).map((tool) =>
+              realSmoke ? { ...tool, approval: { mode: "none" as const } } : tool,
+            ),
+          });
+          const value =
+            mission.executor.kind === "team"
+              ? defineExpertTeam({
+                  id: "0000000000000003",
+                  coordinator: await defineExpert({
+                    id: "0000000000000004",
+                    name: "Coordinator",
+                    description: "",
+                    tags: [],
+                    scope: "Delegate",
+                    workspace: mission.workspace.path,
+                    pragmaHome,
+                    defaultRuntimeId: "fake",
+                  }),
+                  members: [expert],
+                  delegation: {},
+                })
+              : expert;
+          return {
+            ref: mission.executor.ref,
+            value,
+            fingerprint: "a".repeat(64),
+            projectFingerprint: "b".repeat(64),
+            environmentFingerprint: {
+              environmentId: "desktop",
+              projectFingerprint: "b".repeat(64),
+              value: "c".repeat(64),
+              resources: [],
+              plugins: [],
+            },
+            rootRuntimeId: "fake",
+            dependencies: [],
+          };
+        },
+      });
+      await runner.run(caller.id);
+      await vi.waitFor(
+        async () =>
+          expect(["succeeded", "failed", "cancelled"]).toContain(
+            (await missions.get(caller.id)).execution?.status,
+          ),
+        { timeout: realSmoke ? 180_000 : 30_000, interval: 100 },
+      );
+      const callerExecution = (await missions.get(caller.id)).execution;
+      expect(callerExecution?.status, callerExecution?.error).toBe("succeeded");
+      if (!realSmoke && executorRef !== STORE_REVISION_EXPERT_REF) {
+        expect((await revisions.get(jobId!)).state).toBe("running");
+        await runner.sendMessage({
+          id: caller.id,
+          content: "Continue and submit this draft",
+          requestId: "33333333-3333-4333-8333-333333333333",
+        });
+        await vi.waitFor(
+          async () => {
+            const current = await missions.get(caller.id);
+            expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+            expect((await revisions.get(jobId!)).state).toBe("pending_review");
+          },
+          { timeout: 30_000, interval: 100 },
+        );
+      }
+      await revisions.processPending();
+      if (realSmoke) jobId = (await revisions.list())[0]?.id;
+      expect(jobId).toBeDefined();
+      const job = await revisions.get(jobId!);
+      expect(job.state, JSON.stringify(job.error)).toBe("pending_review");
+      if (executorRef.startsWith("team:")) {
+        expect(job.request.provenance).toMatchObject({
+          teamId: "0000000000000003",
+          expertId: "0000000000st0rev",
+        });
+      }
+      expect(job.missionId).toBeDefined();
+      expect(job.missionId).toBe(caller.id);
+      expect(await missions.list()).toHaveLength(1);
+      expect(await revisions.list()).toHaveLength(1);
+      expect(generate).not.toHaveBeenCalled();
+      const draft = await revisions.resolveDraft(job.draftId);
+      expect(await draft.store.readContext({ id: "items/tracking.md" })).toMatchObject({
+        ok: true,
+        value: { content: preparedContent },
+      });
+      expect((await contextStores.getSnapshot(target.id)).snapshotHash).toBe(original.snapshotHash);
+    },
+    process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1" ? 300_000 : 60_000,
+  );
+
   it("edits multiple drafts in one turn and transfers one to a later Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-live-knowledge-draft-"));
     temporaryPaths.push(root);
@@ -1510,6 +1805,15 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       draftsPath: join(root, "context-store-drafts"),
       contextStores,
       generator: { generate: async () => undefined },
+      onRevisionDetached: async ({ missionId, storeId, draftId, jobId }) => {
+        await missions.restoreManagedRevisionStore({
+          id: missionId,
+          storeId,
+          draftId,
+          revisionJobId: jobId,
+          preserveSession: true,
+        });
+      },
     });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
     const mission = await missions.create({
@@ -1553,7 +1857,12 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           }
         ).items;
         const continuing = turn.rawQuery === "Continue the first knowledge draft";
-        const targetStores = continuing ? [firstStore] : [firstStore, secondStore];
+        const targetStores =
+          turn.rawQuery === "Revise a newly created knowledge base"
+            ? [laterStore!]
+            : continuing
+              ? [firstStore]
+              : [firstStore, secondStore];
         let outputText = "";
         for (const [index, targetStore] of targetStores.entries()) {
           const target = targets.find((candidate) => candidate.name === targetStore.name);
@@ -1573,6 +1882,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
               toolCallId: `start-revision-${index + 1}`,
             },
           );
+          expect(started.isError, started.text).not.toBe(true);
           const details = started.details as {
             readonly draftId: string;
             readonly writableNamespace: string;
@@ -1592,6 +1902,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
             turn.signal,
             { execution: session.context.request.executionContext },
           );
+          expect(added.isError, added.text).not.toBe(true);
           outputText = added.text;
         }
         return { outputText, runtimeSessionId: "runtime" };
@@ -1658,7 +1969,47 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         value: { content: `# Same turn ${index + 1}\n` },
       });
     }
+    const firstSessionId = (await missions.get(mission.id)).execution!.sessionId;
+    const submittedId = createdDraftIds.get(secondStore.id)!;
+    const submittedDraft = await revisions.getDraft(submittedId);
+    await revisions.submitDraft(
+      submittedId,
+      submittedDraft.revision,
+      "Approve the second draft only",
+    );
+    const submittedJob = (await revisions.list()).find((job) => job.draftId === submittedId)!;
+    expect((await revisions.approve(submittedJob.id, submittedJob.revision)).state).toBe("merged");
+
+    const laterStore = await contextStores.create({
+      mode: "blank",
+      name: "Created after the first turn",
+      description: "",
+    });
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Revise a newly created knowledge base",
+      requestId: "10000000-0000-4000-8000-000000000008",
+    });
+    await vi.waitFor(
+      async () => {
+        const current = await missions.get(mission.id);
+        expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+        expect(createdDraftIds.has(laterStore!.id)).toBe(true);
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    expect((await missions.get(mission.id)).execution!.sessionId).toBe(firstSessionId);
+    const laterDraft = await revisions.resolveDraft(createdDraftIds.get(laterStore.id)!);
+    expect(await laterDraft.store.readContext({ id: "items/same-turn-1.md" })).toMatchObject({
+      ok: true,
+    });
     const firstMissionAfterEditing = await missions.get(mission.id);
+    expect(firstMissionAfterEditing.contextMounts).toEqual(
+      expect.arrayContaining([
+        { kind: "context-store", storeId: firstStore.id },
+        { kind: "context-store", storeId: secondStore.id },
+      ]),
+    );
     await expect(
       runner.updateContextMounts({
         id: mission.id,
@@ -1700,9 +2051,9 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       contextMounts: expect.arrayContaining([{ kind: "context-store", storeId: firstStore.id }]),
     });
     await expect(missions.get(continuedMission.id)).resolves.toMatchObject({
-      contextMounts: [
+      contextMounts: expect.arrayContaining([
         expect.objectContaining({ kind: "context-store-draft", draftId: firstDraftId }),
-      ],
+      ]),
     });
   });
 

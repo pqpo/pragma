@@ -1,3 +1,8 @@
+import {
+  HomeProjectSchema,
+  SaveHomeProjectSchema,
+  HomeProjectIdSchema,
+} from "../../shared/contracts/home-projects.ts";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
@@ -53,6 +58,15 @@ import {
 } from "../../shared/contracts/context-store-browser.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
 export const missionsApi = {
+  listHomeProjects: async () =>
+    HomeProjectSchema.array().parse(await ipcRenderer.invoke("missions:home-projects:list")),
+  saveHomeProject: async (input) =>
+    HomeProjectSchema.parse(
+      await invokeMutation("missions:home-projects:save", SaveHomeProjectSchema.parse(input)),
+    ),
+  deleteHomeProject: async (id) => {
+    await invokeMutation("missions:home-projects:delete", HomeProjectIdSchema.parse(id));
+  },
   listMissions: async () =>
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   listMissionExecutors: async () =>
@@ -78,6 +92,10 @@ export const missionsApi = {
     ),
   getMissionCreationDefaults: async () =>
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
+  getMissionListSource: async (id) =>
+    MissionSummarySchema.shape.source.parse(
+      await invokeMutation("missions:source:get", MissionIdSchema.parse(id)),
+    ),
   getMission: async (id) =>
     MissionSchema.parse(await invokeMutation("missions:get", MissionIdSchema.parse(id))),
   getMissionMentionCandidates: async (id) =>
@@ -254,8 +272,12 @@ export const missionsApi = {
   | "listMissionExecutors"
   | "getHomeMissionExecutorCatalog"
   | "updateHomeExecutorPreference"
+  | "listHomeProjects"
+  | "saveHomeProject"
+  | "deleteHomeProject"
   | "getMissionModelOptions"
   | "getMissionCreationDefaults"
+  | "getMissionListSource"
   | "getMission"
   | "getMissionMentionCandidates"
   | "getMissionContextStore"

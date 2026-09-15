@@ -213,6 +213,7 @@ export function createContextStoreRevisionService(options: {
     join(missionClaimsPath, `${missionId}-${storeId}.lock`);
   const missionClaimsLockPath = join(missionClaimsPath, ".claims.lock");
   let processing: Promise<void> | undefined;
+  let processingRequested = false;
   const notifyRevisionDetached = async (input: {
     readonly missionId: string;
     readonly jobId: string;
@@ -473,9 +474,7 @@ export function createContextStoreRevisionService(options: {
   ): Promise<ContextStoreRevisionJob | undefined> => {
     const matches = (await readAllJobs()).filter(
       (job) =>
-        job.missionId === missionId &&
-        job.request.storeId === storeId &&
-        isActiveMissionJob(job),
+        job.missionId === missionId && job.request.storeId === storeId && isActiveMissionJob(job),
     );
     if (matches.length > 1) {
       throw invalidState("More than one active knowledge revision claims this Mission target.");
@@ -514,7 +513,10 @@ export function createContextStoreRevisionService(options: {
     try {
       draft = await readDraft(claim.draftId);
     } catch (error) {
-      if (!(error instanceof ContextStoreRevisionServiceError) || error.code !== "draft_not_found") {
+      if (
+        !(error instanceof ContextStoreRevisionServiceError) ||
+        error.code !== "draft_not_found"
+      ) {
         throw error;
       }
       draft = await createDraft(
@@ -717,6 +719,11 @@ export function createContextStoreRevisionService(options: {
             !["merged", "rejected", "needs_attention"].includes(job.state),
         );
         if (active !== undefined) return active;
+        if (draft.state !== "editing" || draft.activeMissionId !== undefined) {
+          throw invalidState(
+            "The draft cannot start another task. Recover its owning Mission or finish its review first.",
+          );
+        }
         const timestamp = new Date().toISOString();
         const job = ContextStoreRevisionJobSchema.parse({
           schemaVersion: "pragma.context-store-revision-job/v2",
@@ -735,49 +742,57 @@ export function createContextStoreRevisionService(options: {
 
     async startForMission(input) {
       const request = ContextStoreRevisionRequestSchema.parse(input.request);
-      return await withFileLock(missionClaimsLockPath, async () =>
-        await withFileLock(missionClaimLockPath(input.missionId, request.storeId), async () => {
-          const existingClaim = await readMissionClaim(input.missionId, request.storeId);
-          if (existingClaim !== undefined) {
-            const job = await materializeMissionClaim(existingClaim);
-            if (isActiveMissionJob(job)) return job;
-            await rm(missionClaimPath(input.missionId, request.storeId), { force: true });
-          }
+      return await withFileLock(
+        missionClaimsLockPath,
+        async () =>
+          await withFileLock(missionClaimLockPath(input.missionId, request.storeId), async () => {
+            const verifySelectedDraft = (job: ContextStoreRevisionJob): ContextStoreRevisionJob => {
+              if (input.draftId !== undefined && job.draftId !== input.draftId) {
+                throw invalidState("A different draft is already active for this Mission target.");
+              }
+              return job;
+            };
+            const existingClaim = await readMissionClaim(input.missionId, request.storeId);
+            if (existingClaim !== undefined) {
+              const job = await materializeMissionClaim(existingClaim);
+              if (isActiveMissionJob(job)) return verifySelectedDraft(job);
+              await rm(missionClaimPath(input.missionId, request.storeId), { force: true });
+            }
 
-          const existingForMission = await findMissionActiveJob(input.missionId, request.storeId);
-          if (existingForMission !== undefined) return existingForMission;
+            const existingForMission = await findMissionActiveJob(input.missionId, request.storeId);
+            if (existingForMission !== undefined) return verifySelectedDraft(existingForMission);
 
-          const existingForRequest =
-            request.sourceDigest === undefined
-              ? undefined
-              : (await readAllJobs()).find(
-                  (job) =>
-                    job.request.storeId === request.storeId &&
-                    job.request.source === request.source &&
-                    job.request.sourceDigest === request.sourceDigest &&
-                    isActiveMissionJob(job),
-                );
-          const existingForDraft =
-            input.draftId === undefined
-              ? undefined
-              : (await readAllJobs()).find(
-                  (job) => job.draftId === input.draftId && isActiveMissionJob(job),
-                );
-          const existing = existingForRequest ?? existingForDraft;
-          if (existing !== undefined && existing.missionId !== undefined) return existing;
+            const existingForRequest =
+              request.sourceDigest === undefined
+                ? undefined
+                : (await readAllJobs()).find(
+                    (job) =>
+                      job.request.storeId === request.storeId &&
+                      job.request.source === request.source &&
+                      job.request.sourceDigest === request.sourceDigest &&
+                      isActiveMissionJob(job),
+                  );
+            const existingForDraft =
+              input.draftId === undefined
+                ? undefined
+                : (await readAllJobs()).find(
+                    (job) => job.draftId === input.draftId && isActiveMissionJob(job),
+                  );
+            const existing = existingForRequest ?? existingForDraft;
+            if (existing !== undefined && existing.missionId !== undefined) return existing;
 
-          const claim = MissionClaimJournalSchema.parse({
-            schemaVersion: "pragma.context-store-revision-mission-claim/v1",
-            missionId: input.missionId,
-            storeId: request.storeId,
-            jobId: existing?.id ?? randomUUID(),
-            draftId: existing?.draftId ?? input.draftId ?? randomUUID(),
-            request,
-            ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
-          });
-          await writeJsonAtomic(missionClaimPath(input.missionId, request.storeId), claim);
-          return await materializeMissionClaim(claim);
-        }),
+            const claim = MissionClaimJournalSchema.parse({
+              schemaVersion: "pragma.context-store-revision-mission-claim/v1",
+              missionId: input.missionId,
+              storeId: request.storeId,
+              jobId: existing?.id ?? randomUUID(),
+              draftId: existing?.draftId ?? input.draftId ?? randomUUID(),
+              request,
+              ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
+            });
+            await writeJsonAtomic(missionClaimPath(input.missionId, request.storeId), claim);
+            return await materializeMissionClaim(claim);
+          }),
       );
     },
 
@@ -1044,6 +1059,18 @@ export function createContextStoreRevisionService(options: {
           }
           throw error;
         }
+        const owners = (await readAllJobs()).filter(
+          (candidate) =>
+            candidate.draftId === draftId &&
+            isActiveMissionJob(candidate) &&
+            candidate.missionId === current.activeMissionId,
+        );
+        if (owners.length > 1 || (current.activeMissionId !== undefined && owners.length === 0)) {
+          throw invalidState(
+            "The draft does not have a unique active revision task for its Mission.",
+          );
+        }
+        const job = owners[0];
         const revision = current.revision + 1;
         const next = ContextStoreDraftSchema.parse({
           ...current,
@@ -1054,7 +1081,6 @@ export function createContextStoreRevisionService(options: {
           updatedAt: new Date().toISOString(),
         });
         await writeDraft(next);
-        const job = (await readAllJobs()).find((candidate) => candidate.draftId === draftId);
         if (job !== undefined && job.state !== "pending_review") {
           await mutateJob(job.id, job.revision, () => ({
             state: "pending_review",
@@ -1249,7 +1275,7 @@ export function createContextStoreRevisionService(options: {
 
     async processPending() {
       if (processing !== undefined) return await processing;
-      const run = (async () => {
+      const processBatch = async () => {
         await recoverMissionClaimReleases();
         const pausedDrafts = (await api.list()).filter(
           (job) =>
@@ -1352,16 +1378,27 @@ export function createContextStoreRevisionService(options: {
             }
           }
         }
+      };
+      const run = (async () => {
+        do {
+          processingRequested = false;
+          await processBatch();
+        } while (processingRequested);
       })();
       processing = run;
       try {
         await run;
       } finally {
-        if (processing === run) processing = undefined;
+        if (processing === run) {
+          processing = undefined;
+          // A request can arrive after the drain resolves but before this cleanup microtask.
+          if (processingRequested) api.scheduleProcessing();
+        }
       }
     },
 
     scheduleProcessing() {
+      processingRequested = true;
       void api.processPending().catch((error: unknown) => {
         options.warn?.("Context Store revision processing failed.", error);
       });

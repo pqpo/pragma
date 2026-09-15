@@ -40,15 +40,16 @@ export function writeMissionDraft(
   }
 }
 
-export function pruneMissionDrafts(
+/** A filtered task list cannot prove that an absent Mission was deleted. */
+export function removeMissionDrafts(
   storage: MissionDraftWriter | undefined,
-  activeMissionIds: ReadonlySet<string>,
+  removedMissionIds: ReadonlySet<string>,
 ): void {
   try {
     const drafts = readMissionDrafts(storage);
     const retained = Object.fromEntries(
       Object.entries(drafts).filter(([missionId, draft]) => {
-        return activeMissionIds.has(missionId) && draft !== "";
+        return !removedMissionIds.has(missionId) && draft !== "";
       }),
     );
     if (Object.keys(retained).length === 0) storage?.removeItem(missionDraftStorageKey);

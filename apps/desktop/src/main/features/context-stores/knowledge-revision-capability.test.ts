@@ -102,7 +102,10 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     draftId: "00000000-0000-4000-8000-000000000301",
     state: "editing",
     missionId,
-    request,
+    request:
+      !inline && activeSourceDigest !== undefined
+        ? { ...request, sourceDigest: activeSourceDigest }
+        : request,
   }));
   const startForMission = vi.fn(async ({ request, missionId: claimedMissionId }) => {
     const job = await start(request);
@@ -114,6 +117,8 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     };
   });
   const scheduleProcessing = vi.fn();
+  const continueMission = vi.fn(async () => undefined);
+  const assertOwnership = vi.fn(async () => undefined);
   const attachMission = vi.fn(async (_jobId: string, nextMissionId: string) => {
     missionId = nextMissionId;
   });
@@ -154,16 +159,18 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     })),
   } as unknown as ContextStoreRevisionService;
   return {
+    assertOwnership,
     port: createDesktopKnowledgeRevisionSubmissionPort({
       project,
       contextStores,
       revisions,
+      continueMission,
       additionalMountResources: () => [systemExpert, systemContextResource],
       ...(inline
         ? {
             inlineMission: {
               id: "00000000-0000-4000-8000-000000000401",
-              allowedStoreIds: new Set([STORE_ID]),
+              assertOwnership,
               activeRevisionJobIdForStore: async (storeId) =>
                 activeSourceDigest !== undefined && storeId === STORE_ID ? "job-1" : undefined,
               writableNamespaceForStore: (storeId) => `mission-knowledge-draft:${storeId}`,
@@ -174,6 +181,7 @@ function fixture(inline = false, activeSourceDigest?: string, ownerMissionId?: s
     }),
     start,
     startForMission,
+    continueMission,
     scheduleProcessing,
     targetRef,
     attachMission,
@@ -193,6 +201,27 @@ const invocation = {
 };
 
 describe("Desktop Pragma management knowledge revision tools", () => {
+  it.each(["rebase", "submitDraft", "discardDraft"] as const)(
+    "rejects %s when a claimed draft has no verifiable owner",
+    async (operation) => {
+      const { port, getDraft, assertOwnership } = fixture(true);
+      getDraft.mockResolvedValue({
+        id: "00000000-0000-4000-8000-000000000301",
+        storeId: STORE_ID,
+        activeMissionId: "00000000-0000-4000-8000-000000000401",
+      } as Awaited<ReturnType<ContextStoreRevisionService["getDraft"]>>);
+      const input = {
+        ...invocation,
+        draftId: "00000000-0000-4000-8000-000000000301",
+        expectedRevision: 1,
+        summary: "Submit",
+        resolutions: [],
+      };
+      await expect(port[operation](input)).rejects.toThrow("knowledge_revision_owner_unavailable");
+      expect(assertOwnership).not.toHaveBeenCalled();
+    },
+  );
+
   it("lists every knowledge base with descriptions and current Expert or Team mounts", async () => {
     const { port, targetRef } = fixture();
 
@@ -395,22 +424,92 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     });
   });
 
-  it("does not start a writable revision outside a Store Revision Mission", async () => {
-    const { port, start, scheduleProcessing } = fixture();
-    const unmounted = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
-      (target) => target.name === "Unattached knowledge",
-    )!;
+  it.each([false, true])(
+    "uses background submission only without a Mission binding (inline=%s)",
+    async (inline) => {
+      const { port, start, startForMission, mountDraft, scheduleProcessing } = fixture(inline);
+      const target = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
+        (candidate) => candidate.name === "Unattached knowledge",
+      )!;
+      const request = {
+        ...invocation,
+        teamId: TEAM_ID,
+        targetRef: target.targetRef,
+        prompt: "Record invariant",
+        draftName: "Review invariant",
+      };
+      if (inline) {
+        await expect(port.start(request)).resolves.toMatchObject({
+          state: "running",
+          writableNamespace: `mission-knowledge-draft:${UNMOUNTED_STORE_ID}`,
+        });
+        expect(startForMission).toHaveBeenCalledOnce();
+        expect(scheduleProcessing).not.toHaveBeenCalled();
+        expect(mountDraft).toHaveBeenCalledOnce();
+        return;
+      }
+      const result = await port.start(request);
+      expect(result).toMatchObject({ draftId: expect.any(String), state: "editing", target });
+      expect(result.writableNamespace).toBeUndefined();
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storeId: UNMOUNTED_STORE_ID,
+          provenance: expect.objectContaining({ expertId: EXPERT_ID, teamId: TEAM_ID }),
+        }),
+        { draftName: "Review invariant" },
+      );
+      expect(scheduleProcessing).toHaveBeenCalledOnce();
+      expect(startForMission).not.toHaveBeenCalled();
+      expect(mountDraft).not.toHaveBeenCalled();
+    },
+  );
 
+  it("delivers an explicit background continuation with a stable request id", async () => {
+    const missionId = "00000000-0000-4000-8000-000000000499";
+    const { port, targetRef, continueMission, scheduleProcessing } = fixture(
+      false,
+      "a".repeat(64),
+      missionId,
+    );
+    const request = {
+      ...invocation,
+      targetRef,
+      draftId: "00000000-0000-4000-8000-000000000301",
+      prompt: "Finish the prepared draft",
+    };
+    await port.start(request);
+    await port.start(request);
+    expect(continueMission).toHaveBeenCalledTimes(2);
+    expect(continueMission.mock.calls[0]).toEqual(continueMission.mock.calls[1]);
+    expect(continueMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        missionId,
+        draftId: request.draftId,
+        prompt: request.prompt,
+        requestId: expect.stringMatching(/^[a-f0-9-]{36}$/u),
+      }),
+    );
+    expect(scheduleProcessing).not.toHaveBeenCalled();
+  });
+
+  it("does not report an undelivered follow-up to a job still awaiting its Mission as accepted", async () => {
+    const { port, targetRef, start, continueMission } = fixture(false);
+    start.mockResolvedValueOnce({
+      id: "job-1",
+      draftId: "00000000-0000-4000-8000-000000000301",
+      state: "running",
+      missionId: undefined,
+      request: { sourceDigest: "a".repeat(64) },
+    });
     await expect(
       port.start({
         ...invocation,
-        teamId: TEAM_ID,
-        targetRef: unmounted.targetRef,
-        prompt: "Record invariant",
+        targetRef,
+        draftId: "00000000-0000-4000-8000-000000000301",
+        prompt: "New request",
       }),
-    ).rejects.toThrow("knowledge_revision_mission_unavailable");
-    expect(start).not.toHaveBeenCalled();
-    expect(scheduleProcessing).not.toHaveBeenCalled();
+    ).rejects.toMatchObject({ code: "already_attached", retryable: false });
+    expect(continueMission).not.toHaveBeenCalled();
   });
 
   it("discards an unmerged draft through the revision service", async () => {
@@ -442,7 +541,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
         targetRef: unmounted.targetRef,
         prompt: "Record invariant",
       }),
-    ).rejects.toThrow("knowledge_revision_mission_unavailable");
+    ).resolves.toMatchObject({ state: "editing", target: unmounted });
   });
 
   it("claims a selected Mission Knowledge target before mounting it", async () => {
@@ -490,6 +589,19 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     });
   });
 
+  it("does not silently replace an explicitly selected draft with the active draft", async () => {
+    const { port, targetRef, mountDraft } = fixture(true, "a".repeat(64));
+    await expect(
+      port.start({
+        ...invocation,
+        targetRef,
+        prompt: "Continue",
+        draftId: "00000000-0000-4000-8000-000000000399",
+      }),
+    ).rejects.toMatchObject({ code: "revision_conflict", retryable: false });
+    expect(mountDraft).not.toHaveBeenCalled();
+  });
+
   it("asks the Host to transfer an existing draft claim from an earlier Mission", async () => {
     const previousMissionId = "00000000-0000-4000-8000-000000000499";
     const { port, targetRef, attachMission, mountDraft } = fixture(
@@ -512,16 +624,5 @@ describe("Desktop Pragma management knowledge revision tools", () => {
       revisionJobId: "job-1",
       previousMissionId,
     });
-  });
-
-  it("rejects a direct revision target that is not mounted in the Mission", async () => {
-    const { port } = fixture(true);
-    const target = (await port.listTargets({ ...invocation, limit: 25 })).items.find(
-      (candidate) => candidate.name === "Unattached knowledge",
-    )!;
-
-    await expect(
-      port.start({ ...invocation, targetRef: target.targetRef, prompt: "Do not fork" }),
-    ).rejects.toThrow("knowledge_revision_target_not_mounted");
   });
 });

@@ -28,6 +28,8 @@ async function fixture(
         }) => Promise<void>)
       | undefined;
     readonly generator?: ContextStoreRevisionGenerator | undefined;
+    readonly failPrompt?: string;
+    readonly beforeGenerate?: (prompt: string) => Promise<void>;
     readonly isMissionAvailable?: ((missionId: string) => Promise<boolean>) | undefined;
   } = {},
 ) {
@@ -43,6 +45,8 @@ async function fixture(
     contextStores,
     generator: options.generator ?? {
       async generate({ request, snapshot }) {
+        await options.beforeGenerate?.(request.prompt);
+        if (request.prompt === options.failPrompt) throw new Error("Runtime failed");
         return {
           schemaVersion: "pragma.context-store-change-set/v1" as const,
           storeId: request.storeId,
@@ -72,6 +76,77 @@ async function fixture(
 }
 
 describe("context store sparse draft revisions", () => {
+  it.each(["merged", "discarded", "failed", "orphaned"] as const)(
+    "starts another revision after a %s historical job",
+    async (history) => {
+      const { service, store } = await fixture({
+        isMissionAvailable: async () => false,
+        failPrompt: "Fail",
+      });
+      const request = {
+        schemaVersion: "pragma.context-store-revision-request/v1" as const,
+        storeId: store.id,
+        prompt: "Record a fact",
+        source: "expert-reflection" as const,
+        provenance: {
+          executionId: "execution",
+          invocationId: "invocation",
+          expertId: "0000000000000002",
+        },
+      };
+      const first = await service.start({
+        ...request,
+        prompt: history === "failed" ? "Fail" : request.prompt,
+        sourceDigest: "a".repeat(64),
+      });
+      if (history === "merged") {
+        await service.processPending();
+        const reviewed = await service.get(first.id);
+        await service.approve(first.id, reviewed.revision);
+      } else if (history === "discarded") {
+        const draft = await service.getDraft(first.draftId);
+        await service.discardDraft(draft.id, draft.revision);
+      } else if (history === "failed") {
+        await service.processPending();
+        expect((await service.get(first.id)).state).toBe("needs_attention");
+      } else {
+        await service.attachMission(first.id, "22222222-2222-4222-8222-222222222226");
+        await service.getDraftWithRecovery(first.draftId);
+      }
+      const next = await service.start({ ...request, sourceDigest: "b".repeat(64) });
+      expect(next.id).not.toBe(first.id);
+      expect(next.draftId).not.toBe(first.draftId);
+      expect((await service.start({ ...request, sourceDigest: "b".repeat(64) })).id).toBe(next.id);
+      await service.processPending();
+      expect((await service.get(next.id)).state).toBe("pending_review");
+    },
+  );
+
+  it("drains a new background request scheduled while another revision is processing", async () => {
+    const { service, store } = await fixture({
+      beforeGenerate: async (prompt) => {
+        if (prompt !== "First") return;
+        await service.start({
+          schemaVersion: "pragma.context-store-revision-request/v1",
+          storeId: store.id,
+          prompt: "Second",
+          source: "user",
+        });
+        service.scheduleProcessing();
+      },
+    });
+    await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v1",
+      storeId: store.id,
+      prompt: "First",
+      source: "user",
+    });
+    await service.processPending();
+    const jobs = await service.list();
+    expect(jobs).toHaveLength(2);
+    expect(jobs.every((job) => job.state === "pending_review")).toBe(true);
+  });
+
   it("keeps an intentionally unsubmitted Agent draft editable and attached", async () => {
     const missionId = "22222222-2222-4222-8222-222222222226";
     const serviceRef: { current?: ContextStoreRevisionService } = {};
@@ -501,9 +576,110 @@ describe("context store sparse draft revisions", () => {
       jobId: claimed.id,
       draftId: claimed.draftId,
     });
-    await expect(restarted.getMissionActiveJob({ missionId, storeId: store.id })).resolves.toMatchObject({
+    await expect(
+      restarted.getMissionActiveJob({ missionId, storeId: store.id }),
+    ).resolves.toMatchObject({
       id: claimed.id,
     });
+  });
+
+  it("does not create another job for a draft still owned by a failed Mission", async () => {
+    const { service, store } = await fixture({
+      beforeGenerate: async () => {
+        await service.attachMission(job.id, "22222222-2222-4222-8222-222222222253");
+        throw new Error("Runtime failed after Mission attachment");
+      },
+    });
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      storeId: store.id,
+      prompt: "Revise",
+      source: "user" as const,
+    };
+    const job = await service.start(request);
+    await service.processPending();
+    expect((await service.get(job.id)).state).toBe("needs_attention");
+    await expect(
+      service.start({ ...request, prompt: "Try again" }, { draftId: job.draftId }),
+    ).rejects.toMatchObject({ code: "invalid_state" });
+    expect(await service.list()).toHaveLength(1);
+    expect((await service.getDraft(job.draftId)).activeMissionId).toBeDefined();
+  });
+
+  it("submits the active task rather than reviving an earlier stopped task for the same draft", async () => {
+    const { service, store, directory } = await fixture();
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      storeId: store.id,
+      prompt: "Revise",
+      source: "user" as const,
+    };
+    const old = await service.start(request);
+    const oldMission = "22222222-2222-4222-8222-222222222251";
+    await service.attachMission(old.id, oldMission);
+    await service.releaseMissionClaim({
+      draftId: old.draftId,
+      jobId: old.id,
+      missionId: oldMission,
+      reason: "mission_orphaned",
+    });
+    // Ensure the historical record is enumerated before the current owner, independently of UUID randomness.
+    const jobsPath = join(directory, "state", "context-store-revisions", "jobs");
+    const stopped = JSON.parse(await readFile(join(jobsPath, `${old.id}.json`), "utf8"));
+    const oldId = "00000000-0000-4000-8000-000000000001";
+    await writeFile(join(jobsPath, `${oldId}.json`), JSON.stringify({ ...stopped, id: oldId }));
+    await rm(join(jobsPath, `${old.id}.json`));
+    const active = await service.startForMission({
+      request,
+      draftId: old.draftId,
+      missionId: "22222222-2222-4222-8222-222222222252",
+    });
+    const resolved = await service.resolveDraft(old.draftId);
+    expect(
+      await resolved.store.addContext({ id: "items/recovered.md", content: "# Recovered\n" }),
+    ).toMatchObject({ ok: true });
+    const draft = await service.getDraft(old.draftId);
+    await service.submitDraft(draft.id, draft.revision, "Recovered changes");
+    expect((await service.get(active.id)).state).toBe("pending_review");
+    expect((await service.get(oldId)).state).toBe("needs_attention");
+  });
+
+  it("rejects a different explicit draft inside the Mission claim lock", async () => {
+    const { service, store } = await fixture();
+    const drafts = await Promise.all(
+      ["First", "Second"].map((name) => service.createDraft({ storeId: store.id, name })),
+    );
+    const missionId = "22222222-2222-4222-8222-222222222250";
+    const request = {
+      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      storeId: store.id,
+      prompt: "Continue",
+      source: "user" as const,
+    };
+    const results = await Promise.allSettled(
+      drafts.map((draft) => service.startForMission({ request, missionId, draftId: draft.id })),
+    );
+    const accepted = results.filter((result) => result.status === "fulfilled");
+    expect(accepted).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      reason: {
+        code: "invalid_state",
+        message: "A different draft is already active for this Mission target.",
+      },
+    });
+    const job = accepted[0]!.value;
+    await service.completeMissionClaimMount({
+      missionId,
+      storeId: store.id,
+      jobId: job.id,
+      draftId: job.draftId,
+    });
+    const other = drafts.find((draft) => draft.id !== job.draftId)!;
+    await expect(
+      service.startForMission({ request, missionId, draftId: other.id }),
+    ).rejects.toMatchObject({ code: "invalid_state" });
+    expect((await service.getDraft(other.id)).activeMissionId).toBeUndefined();
   });
 
   it("serializes concurrent changed-input starts to one Mission claim", async () => {

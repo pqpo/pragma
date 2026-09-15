@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { pruneMissionDrafts, readMissionDraft, writeMissionDraft } from "./mission-draft.ts";
+import { removeMissionDrafts, readMissionDraft, writeMissionDraft } from "./mission-draft.ts";
 
 function memoryStorage(initial?: string) {
   let value = initial ?? null;
@@ -30,8 +30,17 @@ describe("Mission composer draft persistence", () => {
   });
 
   it("prunes completed or deleted Missions", () => {
-    const storage = memoryStorage(JSON.stringify({ active: "Keep", completed: "Drop" }));
-    pruneMissionDrafts(storage, new Set(["active"]));
+    const storage = memoryStorage(
+      JSON.stringify({
+        active: "Keep",
+        hiddenRevision: "Unsaved revision message",
+        completed: "Drop",
+        deleted: "Drop",
+      }),
+    );
+    removeMissionDrafts(storage, new Set(["completed", "deleted"]));
+    expect(readMissionDraft(storage, "hiddenRevision")).toBe("Unsaved revision message");
+    expect(readMissionDraft(storage, "deleted")).toBe("");
 
     expect(readMissionDraft(storage, "active")).toBe("Keep");
     expect(readMissionDraft(storage, "completed")).toBe("");

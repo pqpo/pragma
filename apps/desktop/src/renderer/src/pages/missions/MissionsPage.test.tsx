@@ -79,13 +79,9 @@ describe("MissionsPage", () => {
         "不可用成员",
       ),
     ).toBe("@评审专家请检查实现");
-    expect(
-      formatMissionListTitle(
-        "<@expert:1xddvess309a6gme>请检查实现",
-        [],
-        "不可用成员",
-      ),
-    ).toBe("@不可用成员请检查实现");
+    expect(formatMissionListTitle("<@expert:1xddvess309a6gme>请检查实现", [], "不可用成员")).toBe(
+      "@不可用成员请检查实现",
+    );
   });
 
   it("uses bounded initial pages for Mission conversations", () => {
@@ -296,6 +292,22 @@ describe("MissionsPage", () => {
     expect(html).not.toContain("mission-detail-loading");
   });
 
+  it("does not invent automation membership when a revision detail is opened", () => {
+    const mission = {
+      ...missionFixture("expert"),
+      origin: {
+        type: "system-store-revision" as const,
+        jobId: "00000000-0000-4000-8000-000000000101",
+        storeId: "00000000-0000-4000-8000-000000000102",
+      },
+    };
+    const state = resolveMissionsPageInitialState({ initialMission: mission });
+    expect(state.selectedMission).toBe(mission);
+    expect(state.missions.find((entry) => entry.id === mission.id)?.source).toEqual({
+      type: "internal",
+    });
+  });
+
   it("shows only the selected Mission source in the rail", () => {
     const task = missionSummaryFixture({
       id: "task-mission",
@@ -322,10 +334,16 @@ describe("MissionsPage", () => {
       },
       updatedAt: "2026-07-11T00:00:00.000Z",
     });
+    const internal = missionSummaryFixture({
+      id: "internal-revision",
+      title: "Teammate revision",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+      source: { type: "internal" },
+    });
     const taskHtml = renderToStaticMarkup(
       <MissionsPage
         initialMemoryState={{
-          missions: [task, automation, revision],
+          missions: [task, automation, revision, internal],
           selectedMission: null,
           selectedMissionId: null,
           activeSource: "task",
@@ -336,7 +354,7 @@ describe("MissionsPage", () => {
     const automationHtml = renderToStaticMarkup(
       <MissionsPage
         initialMemoryState={{
-          missions: [task, automation, revision],
+          missions: [task, automation, revision, internal],
           selectedMission: null,
           selectedMissionId: null,
           activeSource: "automation",
@@ -345,6 +363,8 @@ describe("MissionsPage", () => {
       />,
     );
 
+    expect(taskHtml).not.toContain("Teammate revision");
+    expect(automationHtml).not.toContain("Teammate revision");
     expect(taskHtml).toContain("Manual review");
     expect(taskHtml).not.toContain("Scheduled review");
     expect(taskHtml).not.toContain("Knowledge revision");

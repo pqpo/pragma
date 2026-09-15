@@ -1,4 +1,5 @@
 import type {
+  ExpertAgentRunContext,
   ExpertAgentContextItemListInput,
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSummary,
@@ -18,6 +19,7 @@ export type DynamicContextStoreOperation = "list" | "read" | "add" | "edit" | "d
 
 export type DynamicContextStoreResolver = (
   operation: DynamicContextStoreOperation,
+  context: ExpertAgentRunContext | undefined,
 ) => Promise<ExpertAgentContextResult<ExpertAgentContextStore>>;
 
 /**
@@ -31,42 +33,42 @@ export class DynamicContextStore implements ExpertAgentContextStore {
   async listContext(
     input: ExpertAgentContextItemListInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
-    const resolved = await this.resolve("list");
+    const resolved = await this.resolve("list", input.context);
     return resolved.ok ? await resolved.value.listContext(input) : resolved;
   }
 
   async readContext(
     input: ExpertAgentStoredContextItemReadInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
-    const resolved = await this.resolve("read");
+    const resolved = await this.resolve("read", input.context);
     return resolved.ok ? await resolved.value.readContext(input) : resolved;
   }
 
   async addContext(
     input: ExpertAgentStoredContextRegisterInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
-    const resolved = await this.resolve("add");
+    const resolved = await this.resolve("add", input.context);
     return resolved.ok ? await resolved.value.addContext(input) : resolved;
   }
 
   async editContext(
     input: ExpertAgentStoredContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
-    const resolved = await this.resolve("edit");
+    const resolved = await this.resolve("edit", input.context);
     return resolved.ok ? await resolved.value.editContext(input) : resolved;
   }
 
   async deleteContext(
     input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
-    const resolved = await this.resolve("delete");
+    const resolved = await this.resolve("delete", input.context);
     return resolved.ok ? await resolved.value.deleteContext(input) : resolved;
   }
 
   async searchContext(
     input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
-    const resolved = await this.resolve("search");
+    const resolved = await this.resolve("search", input.context);
     return resolved.ok ? await resolved.value.searchContext(input) : resolved;
   }
 }

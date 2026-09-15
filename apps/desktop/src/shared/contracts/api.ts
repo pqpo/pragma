@@ -1,3 +1,4 @@
+import type { HomeProject, SaveHomeProject } from "./home-projects.ts";
 import type { DesktopRendererLog } from "./logging.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
@@ -505,6 +506,9 @@ export interface PragmaDesktopAPI {
   ) => Promise<AutomationSchedulePreview>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
+  listHomeProjects: () => Promise<HomeProject[]>;
+  saveHomeProject: (input: SaveHomeProject) => Promise<HomeProject>;
+  deleteHomeProject: (id: string) => Promise<void>;
   getHomeMissionExecutorCatalog: () => Promise<HomeMissionExecutorCatalog>;
   updateHomeExecutorPreference: (
     input: UpdateHomeExecutorPreference,
@@ -516,6 +520,7 @@ export interface PragmaDesktopAPI {
   subscribeRuntimeModelCatalog: (listener: (runtimeId: string) => void) => () => void;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
+  getMissionListSource: (id: string) => Promise<MissionSummary["source"]>;
   getMissionMentionCandidates: (id: string) => Promise<MissionMentionCandidates>;
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
   subscribeMissionCommandOutcomes: (

@@ -1,3 +1,4 @@
+import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   appendFile,
@@ -953,6 +954,61 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     expect(Array.from(created.title)).toHaveLength(MISSION_TITLE_MAX_LENGTH);
     expect(created.title.endsWith("…")).toBe(true);
+  });
+
+  it("atomically preserves the Session fingerprint and published mounts when adding a dynamic draft", async () => {
+    const root = await temporaryRoot();
+    const options = { missionsPath: join(root, "missions") };
+    const store = createMissionStore(options);
+    const storeId = "00000000-0000-4000-8000-000000000021";
+    const mission = await store.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Revise in the Team",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [{ kind: "context-store", storeId }],
+    });
+    const sessionId = "00000000-0000-4000-8000-000000000022";
+    await store.updateExecution(mission.id, {
+      id: "00000000-0000-4000-8000-000000000023",
+      sessionId,
+      inputMessageId: mission.initialMessageId,
+      status: "running",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      contextMountsFingerprint: missionContextMountsFingerprint(mission),
+    });
+    await store.mountManagedRevisionDraft({
+      id: mission.id,
+      expectedExecutorRef: mission.executor.ref,
+      storeId,
+      draftId: "00000000-0000-4000-8000-000000000024",
+      revisionJobId: "00000000-0000-4000-8000-000000000025",
+      preserveSession: true,
+    });
+    const reopened = await createMissionStore(options).get(mission.id);
+    expect(reopened.execution).toMatchObject({
+      sessionId,
+      contextMountsFingerprint: missionContextMountsFingerprint(reopened),
+    });
+    expect(reopened.contextMounts).toEqual(
+      expect.arrayContaining([
+        { kind: "context-store", storeId },
+        expect.objectContaining({ kind: "context-store-draft" }),
+      ]),
+    );
+    await store.restoreManagedRevisionStore({
+      id: mission.id,
+      storeId,
+      draftId: "00000000-0000-4000-8000-000000000024",
+      revisionJobId: "00000000-0000-4000-8000-000000000025",
+      preserveSession: true,
+    });
+    const restored = await createMissionStore(options).get(mission.id);
+    expect(restored.execution).toMatchObject({
+      sessionId,
+      contextMountsFingerprint: missionContextMountsFingerprint(restored),
+    });
+    expect(restored.contextMounts).toEqual([{ kind: "context-store", storeId }]);
   });
 
   it("updates idle Mission options without changing pinned Mission identity", async () => {

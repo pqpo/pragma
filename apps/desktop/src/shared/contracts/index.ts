@@ -23,3 +23,4 @@ export * from "./skill-learning.ts";
 export * from "./types.ts";
 export * from "./usage.ts";
 export * from "./workflow-layout.ts";
+export * from "./home-projects.ts";
