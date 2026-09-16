@@ -69,7 +69,11 @@ export function TeamMentionComposer(props: {
 
   useLayoutEffect(() => {
     const editor = editorRef.current;
-    if (editor === null || serializeMentionEditor(editor) === props.value) return;
+    if (editor === null) return;
+    if (serializeMentionEditor(editor) === props.value) {
+      refreshMentionEditorChips(editor, candidateByRef, props.unavailableLabel);
+      return;
+    }
     const focused = document.activeElement === editor;
     replaceMentionEditorContents(editor, props.value, candidateByRef, props.unavailableLabel);
     queryRef.current = null;
@@ -389,6 +393,29 @@ export function findExpertMentionQuery(
     start: textBeforeCaret.length - match[2]!.length - 1,
     query: match[2]!,
   };
+}
+
+export function refreshMentionEditorChips(
+  editor: HTMLElement,
+  candidates: ReadonlyMap<string, ExpertMentionCandidate>,
+  unavailableLabel: string,
+): void {
+  for (const chip of editor.querySelectorAll<HTMLElement>("[data-expert-mention]")) {
+    const ref = chip.dataset.expertMention;
+    if (ref === undefined) continue;
+
+    const candidate = candidates.get(ref);
+    const label = `@${candidate?.name ?? unavailableLabel}`;
+    if (chip.getAttribute("aria-label") !== label) chip.setAttribute("aria-label", label);
+
+    const image = chip.querySelector<HTMLImageElement>(".pragma-avatar img");
+    const avatarSource = expertAvatarSource(candidate?.avatarId);
+    if (image !== null && image.getAttribute("src") !== avatarSource)
+      image.setAttribute("src", avatarSource);
+
+    const name = chip.querySelector<HTMLElement>("span:last-child");
+    if (name !== null && name.textContent !== label) name.textContent = label;
+  }
 }
 
 function replaceMentionEditorContents(
