@@ -42,6 +42,7 @@ export function TeamMentionComposer(props: {
   readonly variant: "home" | "mission";
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const queryRef = useRef<ActiveMentionQuery | null>(null);
   const escapeDismissedRef = useRef(false);
   const listboxId = `${useId().replaceAll(":", "")}-mentions`;
@@ -90,6 +91,13 @@ export function TeamMentionComposer(props: {
       document.removeEventListener("scroll", reposition, true);
     };
   }, [query]);
+
+  useLayoutEffect(() => {
+    if (query === null) return;
+    menuRef.current
+      ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, query, visibleCandidates]);
 
   const assignRef = (element: HTMLDivElement | null) => {
     editorRef.current = element;
@@ -267,6 +275,7 @@ export function TeamMentionComposer(props: {
       ? null
       : createPortal(
           <div
+            ref={menuRef}
             className="team-mention-menu"
             id={listboxId}
             role="listbox"
