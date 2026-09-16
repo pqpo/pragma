@@ -27,6 +27,8 @@ export function observeMissionExecution(
   sessionId?: string,
   onTerminal?: ((input: MissionExecutionTerminalOutcome) => void | Promise<void>) | undefined,
   checkpoint?: Promise<void> | undefined,
+  onMaterialize?: ((input: MissionExecutionTerminalOutcome) => void | Promise<void>) | undefined,
+  onSideEffectError?: ((error: unknown) => void) | undefined,
 ): Promise<"terminal" | "checkpointed"> {
   return (async () => {
     let status: MissionExecutionTerminalOutcome["status"] = "succeeded";
@@ -58,28 +60,50 @@ export function observeMissionExecution(
         failure = error;
       }
     }
-    await onFinished();
-    if (checkpointed) return "checkpointed";
-    await onTerminal?.({
+    if (checkpointed) {
+      await onFinished();
+      return "checkpointed";
+    }
+    // The Core result is the terminal fact. Project it into the canonical
+    // Mission event feed first; the v10 Mission snapshot and cleanup are
+    // independent recovery projections and cannot roll it back.
+    const terminal = {
       status,
       ...(result === undefined ? {} : { result }),
       ...(failure === undefined ? {} : { error: failure }),
-    });
-    await missions.updateExecution(
-      missionId,
-      {
-        id: execution.executionId,
-        inputMessageId,
-        ...(sessionId === undefined ? {} : { sessionId }),
-        status,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        ...(status === "failed"
-          ? { error: failure instanceof Error ? failure.message : String(failure) }
-          : {}),
-      },
-      { executionId: execution.executionId, statuses: ["queued", "running", "waiting"] },
-    );
+    } satisfies MissionExecutionTerminalOutcome;
+    for (const sideEffect of [
+      async () => await onTerminal?.(terminal),
+      async () =>
+        await missions.updateExecution(
+          missionId,
+          {
+            id: execution.executionId,
+            inputMessageId,
+            ...(sessionId === undefined ? {} : { sessionId }),
+            status,
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            ...(status === "failed"
+              ? { error: failure instanceof Error ? failure.message : String(failure) }
+              : {}),
+          },
+          { executionId: execution.executionId, statuses: ["queued", "running", "waiting"] },
+        ),
+      onFinished,
+      async () => await onMaterialize?.(terminal),
+    ]) {
+      try {
+        await sideEffect();
+      } catch (error) {
+        try {
+          onSideEffectError?.(error);
+        } catch {
+          // Error reporting is also a side effect and cannot roll back a
+          // terminal status that has already committed.
+        }
+      }
+    }
     return "terminal";
   })();
 }

@@ -1,10 +1,14 @@
 import { JsonValueSchema } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
-import type { MissionControllerStore, MissionOwnerScope } from "@pragma/local-host";
+import {
+  missionRunEventId,
+  type MissionControllerStore,
+  type MissionOwnerScope,
+} from "@pragma/local-host";
 
 import type { Mission } from "../../../shared/contracts/index.ts";
 
-export interface MissionCommandExecutionProjector {
+export interface MissionExecutionEventProjector {
   link(input: {
     readonly mission: Mission;
     readonly executionId: string;
@@ -19,13 +23,11 @@ export interface MissionCommandExecutionProjector {
   }): Promise<void>;
 }
 
-/** Projects follow-up command executions into the same canonical feed as an initial run. */
-export function createMissionCommandExecutionProjector(options: {
+/** Projects every Desktop execution path into the shared durable Mission event feed. */
+export function createMissionExecutionEventProjector(options: {
   readonly controller: MissionControllerStore;
   readonly ownerScope: Pick<MissionOwnerScope, "currentGuard">;
-}): MissionCommandExecutionProjector {
-  const commandExecutionIds = new Set<string>();
-
+}): MissionExecutionEventProjector {
   const append = async (
     missionId: string,
     executionId: string,
@@ -33,7 +35,14 @@ export function createMissionCommandExecutionProjector(options: {
     data: Record<string, unknown>,
   ): Promise<void> => {
     const guard = options.ownerScope.currentGuard(missionId);
-    if (guard === undefined) return;
+    if (guard === undefined) {
+      throw createIntegrationError({
+        code: "MISSION_FENCING_REJECTED",
+        category: "conflict",
+        message: "Mission execution projection requires a live owner.",
+        details: { missionId, executionId, eventType: type },
+      });
+    }
     const snapshot = await options.controller.readSnapshot({ missionId });
     if (
       snapshot.events.some(
@@ -46,7 +55,7 @@ export function createMissionCommandExecutionProjector(options: {
       missionId,
       guard,
       operation: async ({ appendEvent }) => {
-        await appendEvent(type, { executionId, ...data });
+        await appendEvent(type, { executionId, ...data }, missionRunEventId(executionId, type));
       },
     });
   };
@@ -58,22 +67,28 @@ export function createMissionCommandExecutionProjector(options: {
         requestId,
       });
       if (operation?.kind !== "send" && operation?.kind !== "steer") return;
-      commandExecutionIds.add(executionId);
       await append(mission.id, executionId, "run.started", {});
     },
     async terminal({ mission, executionId, status, result, error }) {
-      if (!commandExecutionIds.has(executionId)) return;
+      const snapshot = await options.controller.readSnapshot({ missionId: mission.id });
+      const linked = snapshot.events.some(
+        (event) =>
+          (event.type === "run.started" || event.type === "execution.started") &&
+          event.data["executionId"] === executionId,
+      );
+      // A Core Execution can outlive the Desktop write that originally linked
+      // it. Re-establish the missing anchor before its terminal event so the
+      // Local Host projection can always recover from that partial commit.
+      if (!linked) await append(mission.id, executionId, "run.started", {});
       if (status === "succeeded") {
         const parsedResult = JsonValueSchema.safeParse(result);
         await append(mission.id, executionId, "run.succeeded", {
           result: parsedResult.success ? parsedResult.data : null,
         });
-        commandExecutionIds.delete(executionId);
         return;
       }
       if (status === "cancelled") {
         await append(mission.id, executionId, "run.interrupted", {});
-        commandExecutionIds.delete(executionId);
         return;
       }
       await append(mission.id, executionId, "run.failed", {
@@ -85,7 +100,6 @@ export function createMissionCommandExecutionProjector(options: {
           details: { missionId: mission.id, executionId },
         }),
       });
-      commandExecutionIds.delete(executionId);
     },
   };
 }

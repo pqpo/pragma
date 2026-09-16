@@ -100,7 +100,7 @@ export function createLocalHostMissionEventProjector(options: {
         {
           type,
           data: terminalData(redacted),
-          eventId: terminalEventId(redacted.executionId, type),
+          eventId: missionRunEventId(redacted.executionId, type),
         },
         false,
       );
@@ -157,7 +157,8 @@ function terminalData(terminal: LocalHostRunTerminal): JsonValue {
   } as unknown as JsonValue;
 }
 
-function terminalEventId(executionId: string, type: string): string {
+/** Stable identity shared by every Host path that projects one Core run fact. */
+export function missionRunEventId(executionId: string, type: string): string {
   const hex = createHash("sha256")
     .update(`pragma.local-host/mission-terminal\0${executionId}\0${type}`)
     .digest("hex")

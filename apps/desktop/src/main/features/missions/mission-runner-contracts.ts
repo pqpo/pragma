@@ -29,6 +29,7 @@ import type {
   UpdateMissionOptions,
 } from "../../../shared/contracts/index.ts";
 import type { RuntimeEnvironmentBinding } from "@pragma/shared";
+import type { MissionStatusNotification } from "./mission-status-service.ts";
 
 export type MissionSurfaceAudience = "user" | "internal";
 
@@ -128,6 +129,7 @@ export interface MissionRunner {
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
   subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
+  subscribeStatus(listener: (notification: MissionStatusNotification) => void): () => void;
   subscribeCommandOutcomes(
     listener: (notification: MissionCommandOutcomeNotification) => void,
   ): () => void;

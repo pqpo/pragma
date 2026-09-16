@@ -136,6 +136,14 @@ selected Runtime and authorized workspace. Mission storage, Execution events, ch
 approvals, and recovery are shared by every executor. System refs are reserved by the application;
 resource tags never grant immutability.
 
+Mission execution facts flow in one direction: Core Execution records are canonical, Local Host
+projects those facts into the durable Mission event view, and Desktop composes that view with its
+product metadata. Desktop chat files are rebuildable caches rather than terminal-state commit
+participants. Mission status, chat, and work use independent notification channels so a degraded
+content projection cannot leave the Mission rail in a false running state. Status notifications carry
+the Core-backed Execution identity and status; Desktop uses that fact to update the rail immediately,
+while bounded, per-Mission reconciliation repairs Local Host events and the v10 recovery snapshot.
+
 Local bridge placement:
 
 ```text

@@ -1296,6 +1296,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
     });
     const onExecutionLinked = vi.fn(async () => undefined);
+    const onExecutionContextLinked = vi.fn(async () => undefined);
     const onMissionActivity = vi.fn(async () => undefined);
     const onExecutionTerminal = vi.fn(async () => undefined);
     const runner = createMissionRunner({
@@ -1312,6 +1313,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       assertStorageWriteAllowed: async () => undefined,
       hostContextStores: [{ namespace: "memory", store: new InMemoryContextStore() }],
       onExecutionLinked,
+      onExecutionContextLinked,
       onMissionActivity,
       onExecutionTerminal,
     });
@@ -1344,6 +1346,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(onExecutionLinked).toHaveBeenCalledWith(
       expect.objectContaining({ requestId: "00000000-0000-4000-8000-000000000099" }),
     );
+    expect(onExecutionContextLinked).toHaveBeenCalledTimes(2);
     expect(onMissionActivity).toHaveBeenCalledTimes(2);
     await vi.waitFor(() => expect(onExecutionTerminal).toHaveBeenCalledTimes(2), {
       timeout: settlementTimeoutMs,
@@ -3825,6 +3828,87 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ]),
       execution: { status: "succeeded", interruptible: false },
     });
+  });
+
+  it("commits terminal status and accepts the next turn when Execution archival fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-terminal-archive-failure-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Finish despite an archive failure",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText: `answer:${turn.rawQuery}`,
+        runtimeSessionId: "runtime",
+      }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const executions = createFileExecutionStore({ pragmaHome });
+    const archive = executions.archive.bind(executions);
+    const archiveSpy = vi
+      .spyOn(executions, "archive")
+      .mockRejectedValueOnce(new Error("archive unavailable"))
+      .mockImplementation(async (executionId) => await archive(executionId));
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      executionStore: executions,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      loggerProvider: createNoopLoggerProvider(),
+    });
+    const statusNotifications: unknown[] = [];
+    runner.subscribeStatus((notification) => statusNotifications.push(notification));
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(statusNotifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          missionId: mission.id,
+          execution: expect.objectContaining({ status: "succeeded" }),
+        }),
+      ]),
+    );
+
+    const followupRequestId = "00000000-0000-4000-8000-000000000098";
+    await expect(
+      runner.sendMessage({
+        id: mission.id,
+        content: "Continue without interrupting",
+        requestId: followupRequestId,
+      }),
+    ).resolves.toMatchObject({ effectiveMode: "enqueue" });
+    await vi.waitFor(
+      async () =>
+        expect((await missions.get(mission.id)).execution).toMatchObject({
+          inputMessageId: followupRequestId,
+          status: "succeeded",
+        }),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(archiveSpy).toHaveBeenCalled();
   });
 
   it("deduplicates a persisted assistant message against its active live projection", async () => {

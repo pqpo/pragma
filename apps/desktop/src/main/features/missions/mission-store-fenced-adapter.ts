@@ -4,6 +4,7 @@ import {
   type MissionSemanticOperation,
 } from "@pragma/local-host";
 
+import type { Mission } from "../../../shared/contracts/index.ts";
 import type { MissionStore } from "./mission-store.ts";
 
 /**
@@ -23,6 +24,15 @@ export function createFencedMissionStore(
     readonly setSemanticWriteReplay: (
       replay: (operation: MissionSemanticOperation) => Promise<void>,
     ) => void;
+    readonly onExecutionChanged?:
+      | ((input: {
+          readonly missionId: string;
+          readonly execution: {
+            readonly id: string;
+            readonly status: NonNullable<Mission["execution"]>["status"];
+          };
+        }) => void)
+      | undefined;
   },
 ): MissionStore {
   const named = (name: string, input: Record<string, unknown>): MissionSemanticOperation => ({
@@ -50,13 +60,20 @@ export function createFencedMissionStore(
           operation.input.contextMounts as Parameters<MissionStore["updateContextMounts"]>[1],
         );
         return;
-      case "mission.execution.update":
-        await store.updateExecution(
+      case "mission.execution.update": {
+        const mission = await store.updateExecution(
           String(operation.input.id),
           operation.input.execution as Parameters<MissionStore["updateExecution"]>[1],
           operation.input.guard as Parameters<MissionStore["updateExecution"]>[2],
         );
+        if (mission.execution !== undefined) {
+          options.onExecutionChanged?.({
+            missionId: String(operation.input.id),
+            execution: { id: mission.execution.id, status: mission.execution.status },
+          });
+        }
         return;
+      }
       case "mission.timeline.user-message.append":
         await store.appendUserMessage(
           String(operation.input.id),
@@ -144,8 +161,8 @@ export function createFencedMissionStore(
         named("mission.context-stores.update", { id, contextMounts: [...contextMounts] }),
         async () => await store.updateContextMounts(id, contextMounts),
       ),
-    updateExecution: async (id, execution, guard) =>
-      await write(
+    updateExecution: async (id, execution, guard) => {
+      const mission = await write(
         id,
         "mission.execution.updated",
         named("mission.execution.update", {
@@ -154,7 +171,15 @@ export function createFencedMissionStore(
           ...(guard === undefined ? {} : { guard }),
         }),
         async () => await store.updateExecution(id, execution, guard),
-      ),
+      );
+      if (mission.execution !== undefined) {
+        options.onExecutionChanged?.({
+          missionId: id,
+          execution: { id: mission.execution.id, status: mission.execution.status },
+        });
+      }
+      return mission;
+    },
     appendUserMessage: async (id, message) =>
       await write(
         id,

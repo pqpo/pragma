@@ -70,7 +70,9 @@ import { createMissionImageDraftStore } from "./mission-image-drafts.ts";
 import {
   createMissionSummaryRefreshScheduler,
   forwardMissionChatNotification,
+  forwardMissionStatusNotification,
   forwardMissionWorkNotification,
+  projectMissionStatusNotification,
 } from "./mission-renderer-update-forwarder.ts";
 import { toLocalHostRunRequest } from "./local-host-mission-adapter.ts";
 import { toMissionQueueCommand } from "./mission-queue-command.ts";
@@ -763,13 +765,19 @@ export function installMissionHandlers(options: {
       publishRemoval(missionId);
     }),
   );
-  const refreshMissionSummary = createMissionSummaryRefreshScheduler(
-    async (missionId) => await publishMission(await getManagedMission(missionId)),
-  );
   options.runner.subscribeChat((notification) => {
     forwardMissionChatNotification({
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
+    });
+  });
+  const refreshMissionSummary = createMissionSummaryRefreshScheduler(async (notification) => {
+    const mission = await getManagedMission(notification.missionId);
+    await publishMission(projectMissionStatusNotification(mission, notification));
+  });
+  options.runner.subscribeStatus((notification) => {
+    forwardMissionStatusNotification({
+      notification,
       refreshMissionSummary,
       reportSummaryRefreshFailure: (error, missionId) => {
         console.warn(

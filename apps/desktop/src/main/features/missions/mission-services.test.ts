@@ -4,9 +4,26 @@ import { MissionChatService } from "./mission-chat-service.ts";
 import { MissionCommandService } from "./mission-command-service.ts";
 import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
 import { MissionSessionService } from "./mission-session-service.ts";
+import { MissionStatusService } from "./mission-status-service.ts";
 import { MissionWorkService, type MissionWorkProjection } from "./mission-work-service.ts";
 
 describe("Mission service state ownership", () => {
+  it("publishes Mission status independently from chat and work revisions", () => {
+    const listenerError = vi.fn();
+    const listener = vi.fn();
+    const service = new MissionStatusService(listenerError);
+    service.subscribe(listener);
+
+    service.publish("mission-1", "user", { id: "execution-1", status: "succeeded" });
+
+    expect(listener).toHaveBeenCalledWith({
+      missionId: "mission-1",
+      audience: "user",
+      execution: { id: "execution-1", status: "succeeded" },
+    });
+    expect(listenerError).not.toHaveBeenCalled();
+  });
+
   it("coalesces lifecycle work and releases it after settlement", async () => {
     const service = new MissionLifecycleService<string, string, { readonly id: string }>();
     let resolveRun!: (value: string) => void;

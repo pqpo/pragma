@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MissionControllerStore } from "@pragma/local-host";
 
 import { MissionSchema } from "../../../shared/contracts/index.ts";
-import { createMissionCommandExecutionProjector } from "./mission-command-execution-projector.ts";
+import { createMissionExecutionEventProjector } from "./mission-command-execution-projector.ts";
 
 const missionId = "22222222-2222-4222-8222-222222222222";
 const requestId = "33333333-3333-4333-8333-333333333333";
@@ -50,7 +50,7 @@ describe("Mission command execution projector", () => {
           }),
       ),
     } as unknown as MissionControllerStore;
-    const projector = createMissionCommandExecutionProjector({
+    const projector = createMissionExecutionEventProjector({
       controller,
       ownerScope: {
         currentGuard: () => ({
@@ -66,7 +66,16 @@ describe("Mission command execution projector", () => {
     });
     await projector.link({ mission: staleMission, executionId, requestId });
     await projector.link({ mission: staleMission, executionId, requestId });
-    await projector.terminal({
+    const restartedProjector = createMissionExecutionEventProjector({
+      controller,
+      ownerScope: {
+        currentGuard: () => ({
+          claimId: "66666666-6666-4666-8666-666666666666",
+          fencingToken: "1",
+        }),
+      },
+    });
+    await restartedProjector.terminal({
       mission: mission(),
       executionId,
       status: "succeeded",
@@ -80,20 +89,37 @@ describe("Mission command execution projector", () => {
     expect(controller.getOperation).toHaveBeenCalledWith({ missionId, requestId });
   });
 
-  it("ignores executions that were not created by a durable send or steer command", async () => {
-    const write = vi.fn();
+  it("repairs a missing run.started anchor before projecting the terminal event", async () => {
+    const events: Array<{ readonly type: string; readonly data: Record<string, unknown> }> = [];
     const controller = {
       getOperation: vi.fn(async () => undefined),
-      write,
+      readSnapshot: vi.fn(async () => ({ events })),
+      write: vi.fn(
+        async ({ operation }: { readonly operation: (context: unknown) => Promise<unknown> }) =>
+          await operation({
+            appendEvent: async (type: string, data: Record<string, unknown>) => {
+              events.push({ type, data });
+              return {};
+            },
+          }),
+      ),
     } as unknown as MissionControllerStore;
-    const projector = createMissionCommandExecutionProjector({
+    const projector = createMissionExecutionEventProjector({
       controller,
-      ownerScope: { currentGuard: () => undefined },
+      ownerScope: {
+        currentGuard: () => ({
+          claimId: "66666666-6666-4666-8666-666666666666",
+          fencingToken: "1",
+        }),
+      },
     });
 
     await projector.link({ mission: mission(), executionId, requestId });
     await projector.terminal({ mission: mission(), executionId, status: "cancelled" });
 
-    expect(write).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      { type: "run.started", data: { executionId } },
+      { type: "run.interrupted", data: { executionId } },
+    ]);
   });
 });

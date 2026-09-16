@@ -145,6 +145,7 @@ import { MissionWorkService } from "./mission-work-service.ts";
 import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
 import { MissionCommandService } from "./mission-command-service.ts";
 import { MissionSessionService } from "./mission-session-service.ts";
+import { MissionStatusService } from "./mission-status-service.ts";
 import { MISSION_EXECUTION_PROJECTION_ORDERING_VERSION } from "./mission-execution-projection.ts";
 import {
   hasMissionDeletionIntent,
@@ -322,6 +323,7 @@ const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
 
 export function createMissionRunner(options: {
   readonly missions: MissionStore;
+  readonly missionStatus?: MissionStatusService | undefined;
   readonly project: PragmaProjectStore;
   readonly capabilityStore: CapabilityStore;
   readonly capabilityCredentials: CapabilityCredentialStore;
@@ -373,6 +375,13 @@ export function createMissionRunner(options: {
         readonly requestId: string;
       }) => Promise<void>)
     | undefined;
+  readonly onExecutionContextLinked?:
+    | ((input: {
+        readonly mission: Mission;
+        readonly executionId: string;
+        readonly requestId: string;
+      }) => Promise<void>)
+    | undefined;
   readonly onMissionActivity?:
     ((input: { readonly mission: Mission }) => Promise<void>) | undefined;
   readonly onExecutionTerminal?:
@@ -402,7 +411,24 @@ export function createMissionRunner(options: {
     requestId: string,
   ): Promise<void> => {
     try {
-      await options.onExecutionLinked?.({ mission, executionId, requestId });
+      await retryMissionEventProjection(async () =>
+        options.onExecutionLinked?.({ mission, executionId, requestId }),
+      );
+    } catch (error) {
+      logger.warn(
+        "mission.execution_link_projection_degraded",
+        "The Core execution started, but its Mission event anchor needs recovery.",
+        {
+          error,
+          missionId: mission.id,
+          executionId,
+          errorCode: "MISSION_EXECUTION_LINK_PROJECTION_DEGRADED",
+          retryable: true,
+        },
+      );
+    }
+    try {
+      await options.onExecutionContextLinked?.({ mission, executionId, requestId });
     } catch (error) {
       logger.warn(
         "mission.memory_subject_registration_failed",
@@ -825,6 +851,16 @@ export function createMissionRunner(options: {
       { missionId },
     );
   });
+  const statusService =
+    options.missionStatus ??
+    new MissionStatusService(({ error, missionId }) => {
+      logger.error(
+        "mission.status_listener_failed",
+        `Failed to notify Mission status listeners for ${missionId}.`,
+        error,
+        { missionId },
+      );
+    });
 
   const refreshMemoryContextBindings = async (): Promise<void> => {
     for (const [missionId, session] of sessionService.sessionEntries()) {
@@ -937,7 +973,7 @@ export function createMissionRunner(options: {
     audience: MissionSurfaceAudience,
   ): Promise<void> {
     const session = sessionService.session(id);
-    if (session === undefined) return;
+    if (session === undefined || lifecycleService.hasActive(id)) return;
     if (sessionService.successorRequired(id)) {
       invalidateChat(id, audience);
       return;
@@ -971,6 +1007,7 @@ export function createMissionRunner(options: {
         }
       }
       if (nextPrompt !== undefined) {
+        if (lifecycleService.hasActive(id)) break;
         const turn = (await session.listTurns()).find(
           (candidate) => candidate.executionId === nextPrompt.executionId,
         );
@@ -1472,6 +1509,7 @@ export function createMissionRunner(options: {
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
     const missionId = input.mission.id;
+    if (lifecycleService.active(missionId)?.handle.executionId === input.handle.executionId) return;
     if (
       input.runGeneration !== undefined &&
       !lifecycleService.isRunGenerationCurrent(missionId, input.runGeneration)
@@ -1601,23 +1639,105 @@ export function createMissionRunner(options: {
       },
       input.sessionId,
       async (terminal) => {
-        await persistMissionExecutionProjection(
-          options.missions,
-          executionStore,
-          missionId,
-          input.handle.executionId,
-          terminal.status === "cancelled",
-          live.entries,
-        );
-        await options.onExecutionTerminal?.({
-          mission: await options.missions.get(missionId),
-          executionId: input.handle.executionId,
+        const mission = input.mission;
+        let canonicalProjectionFailure: unknown;
+        try {
+          await retryMissionEventProjection(async () =>
+            options.onExecutionTerminal?.({
+              mission,
+              executionId: input.handle.executionId,
+              status: terminal.status,
+              ...(terminal.result === undefined ? {} : { result: terminal.result }),
+              ...(terminal.error === undefined ? {} : { error: terminal.error }),
+            }),
+          );
+        } catch (error) {
+          canonicalProjectionFailure = error;
+          logger.error(
+            "mission.terminal_projection_degraded",
+            "The Core terminal state committed, but the Mission event projection needs recovery.",
+            error,
+            { missionId, executionId: input.handle.executionId, retryable: true },
+          );
+        }
+        statusService.publish(missionId, audience, {
+          id: input.handle.executionId,
           status: terminal.status,
-          ...(terminal.result === undefined ? {} : { result: terminal.result }),
-          ...(terminal.error === undefined ? {} : { error: terminal.error }),
         });
+        if (canonicalProjectionFailure !== undefined) throw canonicalProjectionFailure;
       },
       checkpoint,
+      async (terminal) => {
+        try {
+          const projectionState = await persistMissionExecutionProjection(
+            options.missions,
+            executionStore,
+            missionId,
+            input.handle.executionId,
+            terminal.status === "cancelled",
+            live.entries,
+          );
+          if (projectionState === "current") {
+            try {
+              await executionStore.archive(input.handle.executionId);
+            } catch (error) {
+              logger.warn(
+                "mission.execution_archive_degraded",
+                "Mission chat projection committed, but Execution archival needs a retry.",
+                {
+                  error,
+                  missionId,
+                  executionId: input.handle.executionId,
+                  errorCode: "MISSION_EXECUTION_ARCHIVE_DEGRADED",
+                  retryable: true,
+                },
+              );
+            }
+          }
+          if (projectionState === "current" && chatService.markSyncRecovered(missionId)) {
+            logger.info(
+              "mission.projection_rebuilt",
+              "Mission chat projection is current after terminal materialization.",
+              { missionId, executionId: input.handle.executionId },
+            );
+          }
+          if (projectionState === "partial") {
+            chatService.markSyncDegraded(missionId);
+            logger.warn(
+              "mission.projection_degraded",
+              "Mission cancellation snapshot committed, but canonical chat enrichment needs a retry.",
+              {
+                missionId,
+                executionId: input.handle.executionId,
+                errorCode: "MISSION_CHAT_PROJECTION_PARTIAL",
+                retryable: true,
+              },
+            );
+            invalidateChat(missionId, audience);
+          }
+        } catch (error) {
+          chatService.markSyncDegraded(missionId);
+          logger.warn(
+            "mission.projection_degraded",
+            "Mission reached a terminal state while its rebuildable chat projection remained unavailable.",
+            {
+              error,
+              missionId,
+              executionId: input.handle.executionId,
+              errorCode: "MISSION_CHAT_PROJECTION_DEGRADED",
+              retryable: true,
+            },
+          );
+          invalidateChat(missionId, audience);
+        }
+      },
+      (error) => {
+        logger.warn(
+          "mission.terminal_side_effect_failed",
+          "Mission terminal status committed while a terminal side effect failed.",
+          { error, missionId, executionId: input.handle.executionId, retryable: true },
+        );
+      },
     )
       .then((kind) => {
         settlementKind = kind;
@@ -1629,14 +1749,22 @@ export function createMissionRunner(options: {
           });
         }
       })
-      .then(async () => {
-        await forgetActive(
-          missionId,
-          input.handle,
-          live,
-          audience,
-          settlementKind !== "checkpointed",
-        );
+      .finally(async () => {
+        try {
+          await forgetActive(
+            missionId,
+            input.handle,
+            live,
+            audience,
+            settlementKind !== "checkpointed",
+          );
+        } catch (error) {
+          logger.warn(
+            "mission.execution_cleanup_failed",
+            "Mission execution settled, but observer cleanup needs a later retry.",
+            { error, missionId, executionId: input.handle.executionId },
+          );
+        }
       });
     const activeExecution = {
       handle: input.handle,
@@ -4104,6 +4232,9 @@ export function createMissionRunner(options: {
     subscribeWork(listener) {
       return workService.subscribe(listener);
     },
+    subscribeStatus(listener) {
+      return statusService.subscribe(listener);
+    },
     subscribeCommandOutcomes(listener) {
       return commandService.subscribe(listener);
     },
@@ -4469,7 +4600,7 @@ async function persistMissionExecutionProjection(
   executionId: string,
   cancelled: boolean,
   liveEntries: readonly MissionChatEntry[] = [],
-): Promise<void> {
+): Promise<"current" | "partial"> {
   const interruptedProjection = liveEntries
     .filter(
       (entry): entry is Exclude<MissionChatEntry, { readonly kind: "user" }> =>
@@ -4508,12 +4639,12 @@ async function persistMissionExecutionProjection(
     );
     for (const entry of interruptedProjection) projected.set(entry.id, entry);
     await retryMissionProjectionWrite(missions, missionId, executionId, [...projected.values()]);
-    await executionStore.archive(executionId);
+    return "current";
   } catch (error) {
     // The cancellation snapshot above is already durable and sufficient for
     // chat recovery. Canonical history enrichment is best-effort after that
     // commit because an interrupted Runtime may never finish its event stream.
-    if (cancelled) return;
+    if (cancelled) return "partial";
     throw error;
   }
 }
@@ -4536,6 +4667,19 @@ async function retryMissionProjectionWrite(
   throw new Error(`Mission execution projection could not be persisted: ${executionId}.`, {
     cause: failure,
   });
+}
+
+async function retryMissionEventProjection(operation: () => void | Promise<void>): Promise<void> {
+  let failure: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await operation();
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw new Error("Mission execution event projection could not be committed.", { cause: failure });
 }
 
 function finalizeInterruptedMissionEntry(

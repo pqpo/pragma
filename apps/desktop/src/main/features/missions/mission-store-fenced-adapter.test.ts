@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { createMissionControllerStore, createMissionOwnerScope } from "@pragma/local-host";
 import { PRAGMA_DSL_WRITE_API_VERSION, type PragmaExpertResource } from "@pragma/interpreter/ast";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
 import { createMissionStore } from "./mission-store.ts";
@@ -40,19 +40,35 @@ describe("Desktop fenced MissionStore adapter", () => {
       missionPath: rawStore.storagePath,
     });
     const ownerScope = createMissionOwnerScope({ controller, leaseMs: 1_000 });
+    const onExecutionChanged = vi.fn();
     const fencedStore = createFencedMissionStore(rawStore, {
       controller,
       ownerScope,
       setSemanticWriteReplay: () => undefined,
+      onExecutionChanged,
     });
 
     await ownerScope.acquire(mission.id);
     await fencedStore.updateOptions(mission.id, { toolPermissionMode: "full-access" });
+    const executionId = "22222222-2222-4222-8222-222222222222";
+    await fencedStore.updateExecution(mission.id, {
+      id: executionId,
+      inputMessageId: mission.initialMessageId,
+      status: "running",
+      startedAt: "2026-09-16T00:00:00.000Z",
+    });
     await expect(rawStore.get(mission.id)).resolves.toMatchObject({
       toolPermissionMode: "full-access",
     });
     await expect(controller.readSnapshot({ missionId: mission.id })).resolves.toMatchObject({
-      events: [expect.objectContaining({ type: "mission.options.updated" })],
+      events: expect.arrayContaining([
+        expect.objectContaining({ type: "mission.options.updated" }),
+        expect.objectContaining({ type: "mission.execution.updated" }),
+      ]),
+    });
+    expect(onExecutionChanged).toHaveBeenCalledWith({
+      missionId: mission.id,
+      execution: { id: executionId, status: "running" },
     });
     await ownerScope.release(mission.id);
 

@@ -105,10 +105,13 @@ import { installMissionContextStoreBrowserHandlers } from "../features/missions/
 import { createMissionContextStoreBrowserService } from "../features/missions/mission-context-store-browser.ts";
 import { createDesktopAdapterHost } from "../features/missions/mission-adapter-host.ts";
 import { createMissionRunner } from "../features/missions/mission-runner.ts";
-import { createMissionCommandExecutionProjector } from "../features/missions/mission-command-execution-projector.ts";
+import { createMissionExecutionEventProjector } from "../features/missions/mission-command-execution-projector.ts";
 import { createMissionStore, MissionStoreError } from "../features/missions/mission-store.ts";
 import { createFencedMissionStore } from "../features/missions/mission-store-fenced-adapter.ts";
+import { MissionStatusService } from "../features/missions/mission-status-service.ts";
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
+import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
+import { createMissionTerminalProjectionRepair } from "../features/missions/mission-terminal-projection-repair.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
 import {
   createDesktopMemoryCurator,
@@ -395,9 +398,16 @@ export async function createDesktopApplicationContainer(
     watch: missionWatch,
     ownerScope,
   } = missionLifecycle;
-  const commandExecutionProjector = createMissionCommandExecutionProjector({
+  const executionEventProjector = createMissionExecutionEventProjector({
     controller: missionControllerStore,
     ownerScope,
+  });
+  const missionStatus = new MissionStatusService(({ error, missionId }) => {
+    mainLogger.warn(
+      "mission.status_listener_failed",
+      "A Mission status listener failed; the canonical execution state remains available.",
+      { error, missionId },
+    );
   });
   const guardedMissionStore = createFencedMissionStore(missionStore, {
     controller: missionControllerStore,
@@ -405,6 +415,8 @@ export async function createDesktopApplicationContainer(
     setSemanticWriteReplay: (replay) => {
       semanticWriteReplayRef.current = replay;
     },
+    onExecutionChanged: ({ missionId, execution }) =>
+      missionStatus.publish(missionId, "user", execution),
   });
   const usageStore = await createDesktopUsageStore({
     databasePath: join(pragmaPaths.dataRoot(), "usage", "usage.sqlite"),
@@ -900,6 +912,7 @@ export async function createDesktopApplicationContainer(
   const memoryCuratorRef: { current?: DesktopMemoryCurator } = {};
   const missionRunner = createMissionRunner({
     missions: guardedMissionStore,
+    missionStatus,
     project: pragmaProjectStore,
     capabilityStore,
     capabilityCredentials,
@@ -938,7 +951,9 @@ export async function createDesktopApplicationContainer(
       await memoryPlane.deleteExecutionState(executionIds);
     },
     onExecutionLinked: async ({ mission, executionId, requestId }) => {
-      await commandExecutionProjector.link({ mission, executionId, requestId });
+      await executionEventProjector.link({ mission, executionId, requestId });
+    },
+    onExecutionContextLinked: async ({ mission, executionId }) => {
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       await memoryPlane.registerMemoryExecutionContext({
         executionId,
@@ -960,12 +975,20 @@ export async function createDesktopApplicationContainer(
         avatarId: expert.avatarId,
       })),
     onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
-      await commandExecutionProjector.terminal({ mission, executionId, status, result, error });
+      await executionEventProjector.terminal({ mission, executionId, status, result, error });
       if (!isUserFacingMissionOrigin(mission.origin)) return;
-      await memoryPlane.setMemoryConversationState({
-        missionId: mission.id,
-        state: mission.lifecycleStatus === "completed" ? "completed" : "active",
-      });
+      try {
+        await memoryPlane.setMemoryConversationState({
+          missionId: mission.id,
+          state: mission.lifecycleStatus === "completed" ? "completed" : "active",
+        });
+      } catch (memoryError) {
+        mainLogger.warn(
+          "mission.memory_terminal_projection_failed",
+          "Mission terminal state committed while its Memory conversation projection remained stale.",
+          { error: memoryError, missionId: mission.id, executionId, retryable: true },
+        );
+      }
     },
     getSystemExecutorFingerprint: async (mission) =>
       mission.executor.ref === MEMORY_CURATOR_REF
@@ -1263,6 +1286,66 @@ export async function createDesktopApplicationContainer(
     memory: memoryPlane,
     runner: missionRunner,
   });
+  const repairMissionTerminalProjection = createMissionTerminalProjectionRepair({
+    ownerScope,
+    missions: guardedMissionStore,
+    events: executionEventProjector,
+    status: missionStatus,
+    audienceForMission: (mission) =>
+      isUserFacingMissionOrigin(mission.origin) ? "user" : "internal",
+    reporter: {
+      eventFailure: (error, input) => {
+        mainLogger.warn(
+          "mission.terminal_event_repair_failed",
+          "The Core terminal state is visible, but its Mission event still needs repair.",
+          {
+            error,
+            missionId: input.mission.id,
+            executionId: input.executionId,
+            errorCode: "MISSION_TERMINAL_EVENT_REPAIR_FAILED",
+            retryable: true,
+          },
+        );
+      },
+      snapshotFailure: (error, input) => {
+        mainLogger.warn(
+          "mission.execution_snapshot_repair_failed",
+          "The Mission event is authoritative, but its v10 recovery snapshot remains stale.",
+          {
+            error,
+            missionId: input.mission.id,
+            executionId: input.executionId,
+            errorCode: "MISSION_EXECUTION_SNAPSHOT_REPAIR_FAILED",
+            retryable: true,
+          },
+        );
+      },
+      rebuilt: (input) => {
+        mainLogger.info(
+          "mission.terminal_projection_rebuilt",
+          "Rebuilt a stale Mission terminal projection from the Core execution record.",
+          {
+            missionId: input.mission.id,
+            executionId: input.executionId,
+            status: input.status,
+          },
+        );
+      },
+    },
+  });
+  const missionReadModel = createMissionReadModel({
+    missions: missionStore,
+    queryMission: missionQuery.queryMission,
+    executions: memoryPlane.executionStore,
+    onProjectionMismatch: repairMissionTerminalProjection,
+    onReadFailure: ({ missionId, error }) => {
+      mainLogger.warn(
+        "mission.read_projection_degraded",
+        "Mission metadata was returned with a degraded execution projection.",
+        { missionId, error, retryable: true },
+      );
+    },
+  });
   const localHost = createLocalHostNodeApplication({
     pragmaHome: pragmaPaths.root,
     runtimes,
@@ -1282,8 +1365,8 @@ export async function createDesktopApplicationContainer(
         listExecutors: async () => await missionExecutors.list(),
       },
       missions: {
-        get: async (missionId) => await missionStore.get(missionId),
-        list: async () => await missionStore.list(),
+        get: async (missionId) => await missionReadModel.get(missionId),
+        list: async () => await missionReadModel.list(),
         query: missionQuery.queryMission,
       },
       missionLifecycle,
