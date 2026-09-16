@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ContentAddressedStore } from "@pragma/core";
 
-import { createContextStoreStore } from "./context-store-store.ts";
+import { createContextStoreStore, hashSnapshotContent } from "./context-store-store.ts";
 
 const directories: string[] = [];
 
@@ -506,6 +506,56 @@ describe("managed context store", () => {
       readFile(join(storesPath, created.id, "store.json"), "utf8"),
     ).rejects.toMatchObject({
       code: "ENOENT",
+    });
+  });
+
+  it("rejects a prepared deletion after the knowledge base changes", async () => {
+    const { store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Concurrent", description: "" });
+    const prepared = await store.getSnapshot(created.id);
+    await store.createFile(created.id, "late.md", "Late edit", undefined);
+
+    await expect(
+      store.remove(created.id, {
+        revision: prepared.revision,
+        snapshotHash: prepared.snapshotHash,
+      }),
+    ).rejects.toMatchObject({ code: "revision_conflict" });
+    await expect(store.getContent(created.id, "late.md")).resolves.toMatchObject({
+      content: "Late edit",
+    });
+  });
+
+  it("commits synchronized content and metadata through one revision transaction", async () => {
+    const { store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Before", description: "Old" });
+    const prepared = await store.getSnapshot(created.id);
+    const files = [
+      {
+        id: "guide.md",
+        content: "# Synced\n",
+        metadata: { trigger: "always_on" as const, priority: "normal" as const },
+      },
+    ];
+
+    const committed = await store.appendSnapshot(
+      {
+        storeId: created.id,
+        baseRevision: prepared.revision,
+        baseSnapshotHash: prepared.snapshotHash,
+        snapshotHash: hashSnapshotContent(files, []),
+        directories: [],
+        files,
+        summary: "Synchronize knowledge from Git.",
+        name: "After",
+        description: "New",
+      },
+      "sync",
+    );
+
+    expect(committed).toMatchObject({ name: "After", description: "New", contentRevision: 2 });
+    await expect(store.getContent(created.id, "guide.md")).resolves.toMatchObject({
+      content: "# Synced\n",
     });
   });
 

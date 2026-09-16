@@ -51,6 +51,7 @@ import type {
   CreateContextStore,
   ExpertContextStoreMount,
   ContextStoreEditorDraft,
+  KnowledgeSyncOverview,
 } from "../../../../shared/contracts/index.ts";
 import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
@@ -235,10 +236,57 @@ export function ContextStoreDirectoryFragment(props: {
   readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly onOpen: (store: ContextStore) => void;
+  readonly syncOverview?: KnowledgeSyncOverview | undefined;
+  readonly onSync?: (() => Promise<KnowledgeSyncOverview>) | undefined;
+  readonly onConfigureSync?: (() => void) | undefined;
+  readonly onResolveSyncConflict?: (
+    storeId: string,
+    choice: "local" | "remote",
+  ) => Promise<KnowledgeSyncOverview>;
 }) {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncOverview, setSyncOverview] = useState(props.syncOverview);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null);
+  useEffect(() => setSyncOverview(props.syncOverview), [props.syncOverview]);
+  const selectedConflict = syncOverview?.conflicts.find(
+    (item) => item.storeId === selectedConflictId,
+  );
+  const localStoreIds = new Set(props.stores.map((store) => store.id));
+  const missingLocalConflicts =
+    syncOverview?.conflicts.filter((conflict) => !localStoreIds.has(conflict.storeId)) ?? [];
+  const runSync = async () => {
+    if (props.onSync === undefined) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const next = await props.onSync();
+      setSyncOverview(next);
+      setSyncError(next.errorMessage ?? null);
+    } catch (cause) {
+      setSyncError(errorMessage(cause));
+    } finally {
+      setSyncing(false);
+    }
+  };
+  const resolveSyncConflict = async (choice: "local" | "remote") => {
+    if (selectedConflict === undefined || props.onResolveSyncConflict === undefined) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const next = await props.onResolveSyncConflict(selectedConflict.storeId, choice);
+      setSyncOverview(next);
+      setSyncError(next.errorMessage ?? null);
+      setSelectedConflictId(null);
+    } catch (cause) {
+      setSyncError(errorMessage(cause));
+    } finally {
+      setSyncing(false);
+    }
+  };
   const stores = useMemo(
     () =>
       props.stores.filter((store) =>
@@ -258,6 +306,20 @@ export function ContextStoreDirectoryFragment(props: {
             <p>{t("knowledgeBasesDescription")}</p>
           </div>
           <div className="knowledge-directory-actions">
+            {props.onSync !== undefined ? (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={syncing}
+                onClick={() => {
+                  if (syncOverview?.configured) void runSync();
+                  else props.onConfigureSync?.();
+                }}
+              >
+                {syncing ? <SpinnerGap className="spin" size={17} /> : <ArrowClockwise size={17} />}
+                {syncOverview?.configured ? t("syncKnowledgeBases") : t("configureKnowledgeSync")}
+              </button>
+            ) : null}
             {props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
                 <ClockCounterClockwise size={17} aria-hidden="true" />
@@ -286,6 +348,21 @@ export function ContextStoreDirectoryFragment(props: {
         />
       </label>
 
+      {missingLocalConflicts.length > 0 ? (
+        <div className="knowledge-directory-actions">
+          {missingLocalConflicts.map((conflict) => (
+            <button
+              className="secondary-button"
+              type="button"
+              key={conflict.storeId}
+              onClick={() => setSelectedConflictId(conflict.storeId)}
+            >
+              {conflict.name} · {t("resolveSyncConflict")}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {stores.length === 0 ? (
         <div className="empty-state store-empty-state">
           <Database size={28} aria-hidden="true" />
@@ -313,7 +390,13 @@ export function ContextStoreDirectoryFragment(props: {
               className="store-list-row"
               key={store.id}
               type="button"
-              onClick={() => props.onOpen(store)}
+              onClick={() => {
+                if (syncOverview?.conflicts.some((item) => item.storeId === store.id)) {
+                  setSelectedConflictId(store.id);
+                } else {
+                  props.onOpen(store);
+                }
+              }}
             >
               <span className="store-list-name store-column-name">
                 <span className="store-icon" aria-hidden="true">
@@ -322,6 +405,13 @@ export function ContextStoreDirectoryFragment(props: {
                 <span>
                   <strong>{store.name}</strong>
                   <small>{store.description || t("noDescription")}</small>
+                  {syncOverview?.stores.find((item) => item.storeId === store.id) ? (
+                    <small>
+                      {t(
+                        `knowledgeSyncStatus.${syncOverview.stores.find((item) => item.storeId === store.id)!.status}`,
+                      )}
+                    </small>
+                  ) : null}
                 </span>
               </span>
               <span className="store-column-type">Markdown</span>
@@ -336,7 +426,11 @@ export function ContextStoreDirectoryFragment(props: {
                 <i className={store.status === "ready" ? "is-ready" : ""} />
                 {store.status === "ready" ? t("ready") : t("needsAttention")}
               </span>
-              <CaretRight className="store-column-action" size={17} aria-hidden="true" />
+              {syncOverview?.conflicts.some((item) => item.storeId === store.id) ? (
+                <span className="store-column-action form-error">{t("resolveSyncConflict")}</span>
+              ) : (
+                <CaretRight className="store-column-action" size={17} aria-hidden="true" />
+              )}
             </button>
           ))}
           <p className="directory-count">{t("knowledgeBaseCount", { count: stores.length })}</p>
@@ -354,6 +448,39 @@ export function ContextStoreDirectoryFragment(props: {
             props.onOpen(store);
           }}
         />
+      ) : null}
+      {syncError ? <p className="form-error">{syncError}</p> : null}
+      {selectedConflict !== undefined ? (
+        <Dialog
+          title={t("knowledgeSyncConflictTitle")}
+          description={t("knowledgeSyncConflictDescription", { name: selectedConflict.name })}
+          busy={syncing}
+          onCancel={() => setSelectedConflictId(null)}
+          footer={
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={syncing}
+                onClick={() => void resolveSyncConflict("remote")}
+              >
+                {t(selectedConflict.remoteExists ? "useRemoteKnowledge" : "useRemoteDeletion")}
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={syncing}
+                onClick={() => void resolveSyncConflict("local")}
+              >
+                {t(selectedConflict.localExists ? "keepLocalKnowledge" : "keepLocalDeletion")}
+              </button>
+            </>
+          }
+        >
+          <p>{t("localKnowledgeFileCount", { count: selectedConflict.localFiles.length })}</p>
+          <p>{t("remoteKnowledgeFileCount", { count: selectedConflict.remoteFiles.length })}</p>
+          <code>{selectedConflict.remoteRevision.slice(0, 12)}</code>
+        </Dialog>
       ) : null}
     </StudioScreenFrame>
   );

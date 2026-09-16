@@ -1,5 +1,22 @@
 export const settings = {
   navigationLabel: "設定分類",
+  knowledgeSync: {
+    navigation: "知識庫同步",
+    title: "知識庫同步",
+    description: "透過內容可直接閱讀的 Git 儲存庫同步已發佈知識庫。",
+    remote: "Git 位址",
+    branch: "分支（選填）",
+    defaultBranch: "遠端預設分支",
+    autoPush: "自動上傳已發佈的變更",
+    pushDeletions: "將本機刪除同步到遠端",
+    pushDeletionsHint: "預設關閉。本機刪除的知識庫會繼續保留在 Git 中，並在此裝置忽略。",
+    syncNow: "立即同步",
+    saveAndSync: "儲存並同步",
+    saving: "正在連線…",
+    remove: "移除知識庫同步設定",
+    ignoredRemote: "仍保留在 Git 中，此裝置已忽略",
+    restore: "從 Git 還原",
+  },
   bundleSources: {
     navigation: "Bundle 來源",
     title: "Bundle 來源",

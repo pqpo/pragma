@@ -1,5 +1,22 @@
 export const settings = {
   navigationLabel: "设置分类",
+  knowledgeSync: {
+    navigation: "知识库同步",
+    title: "知识库同步",
+    description: "通过内容可直接阅读的 Git 仓库同步已发布知识库。",
+    remote: "Git 地址",
+    branch: "分支（可选）",
+    defaultBranch: "远端默认分支",
+    autoPush: "自动上传已发布的变更",
+    pushDeletions: "将本机删除同步到远端",
+    pushDeletionsHint: "默认关闭。本机删除的知识库会继续保留在 Git 中，并在此设备忽略。",
+    syncNow: "立即同步",
+    saveAndSync: "保存并同步",
+    saving: "正在连接…",
+    remove: "移除知识库同步配置",
+    ignoredRemote: "仍保留在 Git 中，此设备已忽略",
+    restore: "从 Git 恢复",
+  },
   bundleSources: {
     navigation: "Bundle 源",
     title: "Bundle 源",

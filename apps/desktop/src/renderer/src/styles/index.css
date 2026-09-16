@@ -14,6 +14,7 @@
 @import "./features/settings/base.css";
 @import "./features/settings/model-providers.css";
 @import "./features/settings/bundle-registry.css";
+@import "./features/settings/knowledge-sync.css";
 @import "./features/settings/runtimes.css";
 @import "./features/settings/memory.css";
 

@@ -6,6 +6,7 @@ import { bundlesApi } from "./api/bundles.ts";
 import { bundleRegistryApi } from "./api/bundle-registry.ts";
 import { capabilitiesApi } from "./api/capabilities.ts";
 import { contextStoresApi } from "./api/context-stores.ts";
+import { knowledgeSyncApi } from "./api/knowledge-sync.ts";
 import { expertsApi } from "./api/experts.ts";
 import { evaluationsApi } from "./api/evaluations.ts";
 import { missionsApi } from "./api/missions.ts";
@@ -28,6 +29,7 @@ const api = {
   ...workspacesApi,
   ...modelProvidersApi,
   ...contextStoresApi,
+  ...knowledgeSyncApi,
   ...expertsApi,
   ...evaluationsApi,
   ...pluginsApi,

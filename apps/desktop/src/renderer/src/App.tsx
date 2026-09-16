@@ -58,6 +58,18 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const sync = () => {
+      void window.pragmaDesktop.refreshKnowledgeBases().catch(() => undefined);
+    };
+    window.addEventListener("focus", sync);
+    window.addEventListener("online", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("online", sync);
+    };
+  }, []);
+
+  useEffect(() => {
     if (memoryEnabled === false && activeView === "memory") setActiveView("home");
   }, [activeView, memoryEnabled]);
 
@@ -122,6 +134,11 @@ export function App() {
 
   const openMemorySettings = () => {
     setSettingsView("memory");
+    setActiveView("settings");
+  };
+
+  const openKnowledgeSyncSettings = () => {
+    setSettingsView("knowledge-sync");
     setActiveView("settings");
   };
 
@@ -202,6 +219,7 @@ export function App() {
           initialRevisionStoreId={studioRevisionStoreId}
           initialMemoryState={studioMemoryState}
           onMemoryStateChange={setStudioMemoryState}
+          onConfigureKnowledgeSync={openKnowledgeSyncSettings}
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}

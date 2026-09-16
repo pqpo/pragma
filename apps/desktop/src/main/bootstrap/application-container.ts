@@ -64,6 +64,11 @@ import {
 import { installSkillLearningHandlers } from "../features/capabilities/skill-learning-ipc.ts";
 import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
+import { installKnowledgeSyncHandlers } from "../features/context-stores/knowledge-sync-ipc.ts";
+import {
+  createKnowledgeSyncService,
+  type KnowledgeSyncService,
+} from "../features/context-stores/knowledge-sync-service.ts";
 import {
   createContextStoreRevisionService,
   type ContextStoreRevisionGenerator,
@@ -582,6 +587,7 @@ export async function createDesktopApplicationContainer(
   const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
   const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
+  const knowledgeSyncRef: { current?: KnowledgeSyncService } = {};
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
     trashItem: options.trashItem,
@@ -597,7 +603,9 @@ export async function createDesktopApplicationContainer(
     },
     onRemoved: async (storeId) => {
       await knowledgePromotionRef.current?.clearStoreBinding(storeId);
+      knowledgeSyncRef.current?.schedule("knowledge-store-removed");
     },
+    onPublished: () => knowledgeSyncRef.current?.schedule("knowledge-store-published"),
     hasActiveRevisions: async (storeId) =>
       (await storeRevisionsRef.current?.hasActiveJobs(storeId)) ?? false,
   });
@@ -605,6 +613,14 @@ export async function createDesktopApplicationContainer(
     draftsPath: join(pragmaPaths.stateRoot(), "context-store-editor-drafts"),
     stores: contextStores,
   });
+  const knowledgeSync = createKnowledgeSyncService({
+    configurationPath: join(pragmaPaths.stateRoot(), "knowledge-sync-settings.json"),
+    statePath: join(pragmaPaths.stateRoot(), "knowledge-sync-state.json"),
+    cacheRoot: join(pragmaPaths.cacheRoot(), "knowledge-sync", "git"),
+    stores: contextStores,
+    warn: (message, error) => mainLogger.warn("desktop.knowledge_sync_failed", message, { error }),
+  });
+  knowledgeSyncRef.current = knowledgeSync;
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {
     async generate(input) {
@@ -819,6 +835,7 @@ export async function createDesktopApplicationContainer(
     storeRevisions,
     contextStoreEditorDrafts,
   );
+  installKnowledgeSyncHandlers(knowledgeSync);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
@@ -1519,6 +1536,7 @@ export async function createDesktopApplicationContainer(
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
+      knowledgeSync.schedule("startup");
       runtimeProcessEnvironment.warmUp();
       // This starts only after the first window is available.  The three fixed
       // credential aggregates are targeted explicitly; it never scans Projects,

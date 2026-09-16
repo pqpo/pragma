@@ -1,5 +1,23 @@
 export const settings = {
   navigationLabel: "Settings sections",
+  knowledgeSync: {
+    navigation: "Knowledge Sync",
+    title: "Knowledge Sync",
+    description: "Synchronize published knowledge bases through a readable Git repository.",
+    remote: "Git remote",
+    branch: "Branch (optional)",
+    defaultBranch: "Remote default branch",
+    autoPush: "Automatically upload published changes",
+    pushDeletions: "Upload local knowledge-base deletions",
+    pushDeletionsHint:
+      "Off by default. Local deletions otherwise remain available in Git and are ignored on this device.",
+    syncNow: "Sync now",
+    saveAndSync: "Save and sync",
+    saving: "Connecting…",
+    remove: "Remove knowledge sync configuration",
+    ignoredRemote: "Kept in Git and ignored on this device",
+    restore: "Restore from Git",
+  },
   bundleSources: {
     navigation: "Bundle Sources",
     title: "Bundle Sources",

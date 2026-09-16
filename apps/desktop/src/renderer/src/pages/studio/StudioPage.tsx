@@ -21,6 +21,7 @@ import type {
   AutomationSummary,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
+  KnowledgeSyncOverview,
 } from "../../../../shared/contracts/index.ts";
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -86,6 +87,7 @@ export function StudioPage(props: {
   readonly onTryExpert: (expert: ExpertRecord) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
+  readonly onConfigureKnowledgeSync?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -118,6 +120,7 @@ export function StudioPage(props: {
   >();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [knowledgeSyncOverview, setKnowledgeSyncOverview] = useState<KnowledgeSyncOverview>();
   const [contextStoreBindings, setContextStoreBindings] = useState<
     readonly DesktopPragmaContextStoreBinding[]
   >([]);
@@ -207,6 +210,12 @@ export function StudioPage(props: {
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
       });
+    void api
+      .getKnowledgeSyncOverview()
+      .then((overview) => {
+        if (!cancelled) setKnowledgeSyncOverview(overview);
+      })
+      .catch(() => undefined);
     void api
       .listPragmaContextStoreBindings()
       .then((bindings) => {
@@ -857,6 +866,23 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "context-stores" ? (
           <ContextStoreDirectoryFragment
             stores={contextStores}
+            syncOverview={knowledgeSyncOverview}
+            onConfigureSync={props.onConfigureKnowledgeSync}
+            onSync={async () => {
+              const overview = await window.pragmaDesktop.syncKnowledgeBases();
+              setKnowledgeSyncOverview(overview);
+              setContextStores(await window.pragmaDesktop.listContextStores());
+              return overview;
+            }}
+            onResolveSyncConflict={async (storeId, choice) => {
+              const overview = await window.pragmaDesktop.resolveKnowledgeSyncConflict({
+                storeId,
+                choice,
+              });
+              setKnowledgeSyncOverview(overview);
+              setContextStores(await window.pragmaDesktop.listContextStores());
+              return overview;
+            }}
             onCreate={createContextStore}
             onInspectImport={inspectContextStoreImport}
             onPickFolder={pickContextStoreFolder}

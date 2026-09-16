@@ -12,9 +12,16 @@ import { MemorySettingsFragment } from "./MemorySettingsFragment.tsx";
 import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 import { BundleRegistrySourcesFragment } from "./BundleRegistrySourcesFragment.tsx";
+import { KnowledgeSyncSettingsFragment } from "./KnowledgeSyncSettingsFragment.tsx";
 
 export type SettingsView =
-  "general" | "memory" | "evaluations" | "bundle-sources" | "models" | "runtimes";
+  | "general"
+  | "memory"
+  | "evaluations"
+  | "bundle-sources"
+  | "knowledge-sync"
+  | "models"
+  | "runtimes";
 
 export function SettingsPage(
   props: {
@@ -94,6 +101,17 @@ export function SettingsPage(
         >
           {t("bundleSources.navigation")}
         </button>
+        <button
+          className={
+            activeView === "knowledge-sync" ? "settings-nav-item is-active" : "settings-nav-item"
+          }
+          type="button"
+          aria-selected={activeView === "knowledge-sync"}
+          aria-controls="knowledge-sync-panel"
+          onClick={() => setActiveView("knowledge-sync")}
+        >
+          {t("knowledgeSync.navigation")}
+        </button>
       </nav>
       <SidebarResizeHandle
         label={t("navigation.resize", { ns: "common" })}
@@ -109,6 +127,8 @@ export function SettingsPage(
           <MemorySettingsFragment onMemoryEnabledChange={props.onMemoryEnabledChange} />
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
+        ) : activeView === "knowledge-sync" ? (
+          <KnowledgeSyncSettingsFragment />
         ) : activeView === "bundle-sources" ? (
           <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (

@@ -161,7 +161,10 @@ export interface ContextStoreStore {
   list(): Promise<ContextStore[]>;
   create(input: CreateContextStore): Promise<ContextStore>;
   inspectImport(sourcePath: string): Promise<ContextStoreImportInspection>;
-  remove(storeId: string): Promise<void>;
+  remove(
+    storeId: string,
+    expected?: { readonly revision: number; readonly snapshotHash: string } | undefined,
+  ): Promise<void>;
   listEntries(storeId: string): Promise<readonly ContextStoreEntry[]>;
   createFolder(storeId: string, id: string): Promise<void>;
   createFile(
@@ -212,6 +215,8 @@ export interface ContextStoreStore {
       readonly directories: readonly string[];
       readonly files: ContextStoreSnapshot["files"];
       readonly summary: string;
+      readonly name?: string | undefined;
+      readonly description?: string | undefined;
     },
     author: ContextStoreRevisionRecord["author"],
   ): Promise<ContextStore>;
@@ -307,6 +312,7 @@ export function createContextStoreStore(options: {
   readonly trashItem?: TrashItem | undefined;
   readonly onRemoved?: ((storeId: string) => Promise<void>) | undefined;
   readonly hasActiveRevisions?: ((storeId: string) => Promise<boolean>) | undefined;
+  readonly onPublished?: ((storeId: string) => void) | undefined;
 }): ContextStoreStore {
   const storePath = (id: string) => join(options.storesPath, id);
   const manifestPath = (id: string) => join(storePath(id), "store.json");
@@ -906,6 +912,8 @@ export function createContextStoreStore(options: {
     readonly summary: string;
     readonly revisionJobId?: string | undefined;
     readonly expectedSnapshotHash?: string | undefined;
+    readonly name?: string | undefined;
+    readonly description?: string | undefined;
   }): Promise<ContextStore> => {
     const id = input.current.id;
     const timestamp = new Date().toISOString();
@@ -934,6 +942,8 @@ export function createContextStoreStore(options: {
       }
       const targetManifest = ContextStoreSchema.parse({
         ...input.current,
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.description === undefined ? {} : { description: input.description }),
         contentRevision: snapshot.revision,
         snapshotHash: snapshot.snapshotHash,
         updatedAt: timestamp,
@@ -959,7 +969,9 @@ export function createContextStoreStore(options: {
         record,
       });
       await writeJsonAtomic(join(storePath(id), "revision.json"), pending);
-      return await finalizeRevisionTransaction(id, pending);
+      const committed = await finalizeRevisionTransaction(id, pending);
+      options.onPublished?.(id);
+      return committed;
     } catch (error) {
       if (!(await pathExists(join(storePath(id), "revision.json")))) {
         await rm(stagedFilesPath, { recursive: true, force: true });
@@ -1048,6 +1060,7 @@ export function createContextStoreStore(options: {
       try {
         await writeJsonAtomic(join(storePath(id), "revision.json"), pending);
         await finalizeRevisionTransaction(id, pending);
+        options.onPublished?.(id);
         return result;
       } catch (error) {
         if (!(await pathExists(join(storePath(id), "revision.json")))) {
@@ -1231,6 +1244,7 @@ export function createContextStoreStore(options: {
         });
         await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
+        options.onPublished?.(id);
         return store;
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
@@ -1242,11 +1256,23 @@ export function createContextStoreStore(options: {
       return await inspectMarkdownSource(sourcePath);
     },
 
-    async remove(storeId: string): Promise<void> {
+    async remove(storeId, expected): Promise<void> {
       const id = z.string().uuid().parse(storeId);
       await withRevisionLock(id, async () => {
         if (!(await pathExists(storePath(id)))) {
           throw new ContextStoreStoreError("store_not_found", `Knowledge base not found: ${id}`);
+        }
+        if (expected !== undefined) {
+          const current = await readStore(id);
+          if (
+            current.contentRevision !== expected.revision ||
+            current.snapshotHash !== expected.snapshotHash
+          ) {
+            throw new ContextStoreStoreError(
+              "revision_conflict",
+              "The knowledge base changed after its deletion was prepared.",
+            );
+          }
         }
         if (await options.isReferenced?.(id)) {
           throw new ContextStoreStoreError(
@@ -1478,6 +1504,7 @@ export function createContextStoreStore(options: {
         });
         await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
+        options.onPublished?.(id);
         return store;
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
@@ -1599,6 +1626,12 @@ export function createContextStoreStore(options: {
       const directories = ContextStoreSnapshotSchema.shape.directories.parse(input.directories);
       const files = ContextStoreSnapshotSchema.shape.files.parse(input.files);
       const summary = z.string().trim().min(1).max(2_000).parse(input.summary);
+      const name =
+        input.name === undefined ? undefined : ContextStoreSchema.shape.name.parse(input.name);
+      const description =
+        input.description === undefined
+          ? undefined
+          : ContextStoreSchema.shape.description.parse(input.description);
       return await withRevisionLock(storeId, async () => {
         const current = await readStore(storeId);
         if (current.contentRevision !== baseRevision || current.snapshotHash !== baseSnapshotHash) {
@@ -1607,7 +1640,23 @@ export function createContextStoreStore(options: {
             "The knowledge base changed after this revision was prepared.",
           );
         }
-        if (current.snapshotHash === expectedSnapshotHash) return current;
+        if (current.snapshotHash === expectedSnapshotHash) {
+          if (
+            (name === undefined || current.name === name) &&
+            (description === undefined || current.description === description)
+          ) {
+            return current;
+          }
+          const next = ContextStoreSchema.parse({
+            ...current,
+            ...(name === undefined ? {} : { name }),
+            ...(description === undefined ? {} : { description }),
+            updatedAt: new Date().toISOString(),
+          });
+          await writeJsonAtomic(manifestPath(storeId), next);
+          options.onPublished?.(storeId);
+          return next;
+        }
         return await commitSnapshotRevision({
           current,
           directories,
@@ -1615,6 +1664,8 @@ export function createContextStoreStore(options: {
           author,
           summary,
           expectedSnapshotHash,
+          name,
+          description,
         });
       });
     },

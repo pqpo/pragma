@@ -2,6 +2,12 @@ import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-p
 import type { DesktopRendererLog } from "./logging.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
+  KnowledgeSyncOverview,
+  ResolveKnowledgeSyncConflict,
+  RestoreIgnoredRemoteKnowledgeBase,
+  UpdateKnowledgeSyncConfiguration,
+} from "./knowledge-sync.ts";
+import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeProcessEnvironmentStatus,
   DesktopBridgeSnapshot,
@@ -245,6 +251,19 @@ export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
+  getKnowledgeSyncOverview: () => Promise<KnowledgeSyncOverview>;
+  updateKnowledgeSyncConfiguration: (
+    input: UpdateKnowledgeSyncConfiguration,
+  ) => Promise<KnowledgeSyncOverview>;
+  removeKnowledgeSyncConfiguration: () => Promise<void>;
+  syncKnowledgeBases: () => Promise<KnowledgeSyncOverview>;
+  refreshKnowledgeBases: () => Promise<KnowledgeSyncOverview>;
+  resolveKnowledgeSyncConflict: (
+    input: ResolveKnowledgeSyncConflict,
+  ) => Promise<KnowledgeSyncOverview>;
+  restoreIgnoredRemoteKnowledgeBase: (
+    input: RestoreIgnoredRemoteKnowledgeBase,
+  ) => Promise<KnowledgeSyncOverview>;
   getGlobalMemoryPolicy: () => Promise<DesktopGlobalMemoryPolicySnapshot>;
   updateGlobalMemoryPolicy: (
     input: UpdateDesktopGlobalMemoryPolicy,

@@ -1,0 +1,80 @@
+.knowledge-sync-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.knowledge-sync-heading > div {
+  min-width: 0;
+}
+
+.knowledge-sync-form {
+  display: grid;
+  gap: 16px;
+}
+
+.knowledge-sync-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.knowledge-sync-form input:not([type="checkbox"]) {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.knowledge-sync-form .knowledge-sync-toggle {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-sync-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.knowledge-sync-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.knowledge-sync-card > div:first-child {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.knowledge-sync-card small {
+  color: var(--ui-text-tertiary);
+}
+
+@media (max-width: 720px) {
+  .knowledge-sync-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-sync-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
