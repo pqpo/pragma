@@ -584,11 +584,18 @@ export function createKnowledgeSyncService(options: {
 export function createGitContextStoreSyncProvider(
   cacheRoot: string,
   configuration: KnowledgeSyncConfiguration,
+  options: { readonly env?: NodeJS.ProcessEnv | undefined } = {},
 ): ContextStoreSyncProvider {
   const repositoryPath = join(cacheRoot, "repository");
+  const baseEnvironment = { ...process.env, ...options.env };
+  const git = (
+    repository: string | undefined,
+    args: readonly string[],
+    environmentOverrides: NodeJS.ProcessEnv = {},
+  ): Promise<string> => runGit(repository, args, { ...baseEnvironment, ...environmentOverrides });
 
   const readRemoteRevision = async (branch: string): Promise<string | undefined> => {
-    const heads = await runGit(repositoryPath, [
+    const heads = await git(repositoryPath, [
       "ls-remote",
       "--heads",
       "origin",
@@ -598,29 +605,29 @@ export function createGitContextStoreSyncProvider(
   };
 
   const prepare = async (): Promise<{ reference: string; revision?: string }> => {
-    await ensureGitRepository(repositoryPath, configuration.remote);
+    await ensureGitRepository(repositoryPath, configuration.remote, git);
     await installManagedPathAttributes(repositoryPath);
-    const advertised = await runGit(repositoryPath, ["ls-remote", "--symref", "origin", "HEAD"]);
+    const advertised = await git(repositoryPath, ["ls-remote", "--symref", "origin", "HEAD"]);
     const defaultBranch = /^ref: refs\/heads\/([^\s]+)\s+HEAD$/mu.exec(advertised)?.[1];
     const branch = configuration.branch ?? defaultBranch ?? "main";
-    await runGit(undefined, ["check-ref-format", "--branch", branch]);
+    await git(undefined, ["check-ref-format", "--branch", branch]);
     const revision = await readRemoteRevision(branch);
     if (revision !== undefined) {
-      await runGit(repositoryPath, [
+      await git(repositoryPath, [
         "fetch",
         "--force",
         "--depth=50",
         "origin",
         `refs/heads/${branch}`,
       ]);
-      await runGit(repositoryPath, ["checkout", "--detach", "--force", "FETCH_HEAD"]);
-      await runGit(repositoryPath, ["reset", "--hard", "FETCH_HEAD"]);
+      await git(repositoryPath, ["checkout", "--detach", "--force", "FETCH_HEAD"]);
+      await git(repositoryPath, ["reset", "--hard", "FETCH_HEAD"]);
     } else {
-      await runGit(repositoryPath, ["read-tree", "--empty"]);
+      await git(repositoryPath, ["read-tree", "--empty"]);
       await rm(join(repositoryPath, STORES_DIRECTORY), { recursive: true, force: true });
       await rm(join(repositoryPath, ROOT_MANIFEST), { force: true });
     }
-    await runGit(repositoryPath, ["clean", "-fd", "--", ROOT_MANIFEST, STORES_DIRECTORY]);
+    await git(repositoryPath, ["clean", "-fd", "--", ROOT_MANIFEST, STORES_DIRECTORY]);
     return { reference: branch, ...(revision === undefined ? {} : { revision }) };
   };
 
@@ -632,34 +639,35 @@ export function createGitContextStoreSyncProvider(
     async publish(input) {
       const prepared = await prepare();
       if (prepared.revision !== input.expectedRevision) return { status: "head_changed" };
-      await runGit(repositoryPath, ["config", "user.name", "Pragma Knowledge Sync"]);
-      await runGit(repositoryPath, ["config", "user.email", "knowledge-sync@pragma.local"]);
+      const identity = await readGlobalGitIdentity(git);
+      const identityEnvironment = {
+        GIT_AUTHOR_NAME: identity.name,
+        GIT_AUTHOR_EMAIL: identity.email,
+        GIT_COMMITTER_NAME: identity.name,
+        GIT_COMMITTER_EMAIL: identity.email,
+      };
 
       let alternateCommit: string | undefined;
       if (input.alternate !== undefined) {
         await writeWorkingRepository(repositoryPath, input.alternate);
-        await runGit(repositoryPath, ["add", "--", ROOT_MANIFEST, STORES_DIRECTORY]);
-        const tree = (await runGit(repositoryPath, ["write-tree"])).trim();
+        await git(repositoryPath, ["add", "--", ROOT_MANIFEST, STORES_DIRECTORY]);
+        const tree = (await git(repositoryPath, ["write-tree"])).trim();
         const args = ["commit-tree", tree];
         if (prepared.revision !== undefined) args.push("-p", prepared.revision);
         args.push("-m", `${input.message} (local candidate)`);
-        alternateCommit = (await runGit(repositoryPath, args)).trim();
+        alternateCommit = (await git(repositoryPath, args, identityEnvironment)).trim();
       }
 
       await writeWorkingRepository(repositoryPath, input.repository);
-      await runGit(repositoryPath, ["add", "--", ROOT_MANIFEST, STORES_DIRECTORY]);
-      const tree = (await runGit(repositoryPath, ["write-tree"])).trim();
+      await git(repositoryPath, ["add", "--", ROOT_MANIFEST, STORES_DIRECTORY]);
+      const tree = (await git(repositoryPath, ["write-tree"])).trim();
       const commitArgs = ["commit-tree", tree];
       if (prepared.revision !== undefined) commitArgs.push("-p", prepared.revision);
       if (alternateCommit !== undefined) commitArgs.push("-p", alternateCommit);
       commitArgs.push("-m", input.message);
-      const commit = (await runGit(repositoryPath, commitArgs)).trim();
+      const commit = (await git(repositoryPath, commitArgs, identityEnvironment)).trim();
       try {
-        await runGit(repositoryPath, [
-          "push",
-          "origin",
-          `${commit}:refs/heads/${prepared.reference}`,
-        ]);
+        await git(repositoryPath, ["push", "origin", `${commit}:refs/heads/${prepared.reference}`]);
       } catch (error) {
         let currentRevision: string | undefined;
         try {
@@ -670,7 +678,7 @@ export function createGitContextStoreSyncProvider(
         if (currentRevision !== prepared.revision) return { status: "head_changed" };
         throw error;
       }
-      await runGit(repositoryPath, ["checkout", "--detach", "--force", commit]);
+      await git(repositoryPath, ["checkout", "--detach", "--force", commit]);
       return { status: "published", revision: commit };
     },
   };
@@ -849,10 +857,35 @@ async function readDirectoryBounded(path: string, maximumEntries: number): Promi
   return entries;
 }
 
-async function ensureGitRepository(path: string, remote: string): Promise<void> {
+type GitRunner = (
+  repository: string | undefined,
+  args: readonly string[],
+  environmentOverrides?: NodeJS.ProcessEnv,
+) => Promise<string>;
+
+async function readGlobalGitIdentity(
+  git: GitRunner,
+): Promise<{ readonly name: string; readonly email: string }> {
+  try {
+    const [nameOutput, emailOutput] = await Promise.all([
+      git(undefined, ["config", "--global", "--get", "user.name"]),
+      git(undefined, ["config", "--global", "--get", "user.email"]),
+    ]);
+    const name = nameOutput.trim();
+    const email = emailOutput.trim();
+    if (name !== "" && email !== "") return { name, email };
+  } catch {
+    // Fall through to the stable, actionable configuration error below.
+  }
+  throw new Error(
+    "Knowledge sync requires global Git user.name and user.email. Configure them with git config --global before publishing.",
+  );
+}
+
+async function ensureGitRepository(path: string, remote: string, git: GitRunner): Promise<void> {
   try {
     await access(join(path, ".git"));
-    const current = (await runGit(path, ["config", "--get", "remote.origin.url"])).trim();
+    const current = (await git(path, ["config", "--get", "remote.origin.url"])).trim();
     if (canonicalRemote(current) !== canonicalRemote(remote)) {
       await rm(path, { recursive: true, force: true });
     } else return;
@@ -862,8 +895,8 @@ async function ensureGitRepository(path: string, remote: string): Promise<void> 
   const temporary = `${path}.${randomUUID()}.tmp`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   try {
-    await runGit(undefined, ["init", temporary]);
-    await runGit(temporary, ["remote", "add", "origin", remote]);
+    await git(undefined, ["init", temporary]);
+    await git(temporary, ["remote", "add", "origin", remote]);
     await rename(temporary, path);
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
@@ -881,15 +914,19 @@ async function installManagedPathAttributes(repositoryPath: string): Promise<voi
   );
 }
 
-async function runGit(repository: string | undefined, args: readonly string[]): Promise<string> {
+async function runGit(
+  repository: string | undefined,
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
   const command = repository === undefined ? [...args] : ["-C", repository, ...args];
   const { stdout } = await execFileAsync("git", command, {
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
     env: {
-      ...process.env,
+      ...environment,
       GIT_TERMINAL_PROMPT: "0",
-      ...(process.env.GIT_SSH_COMMAND === undefined
+      ...(environment.GIT_SSH_COMMAND === undefined
         ? { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" }
         : {}),
     },
@@ -1082,6 +1119,7 @@ function syncErrorCode(error: unknown): string {
     message.includes("protected branch")
   )
     return "git_push_rejected";
+  if (message.includes("global git user.name and user.email")) return "git_identity_missing";
   if (message.includes("manifest") || message.includes("schema") || error instanceof z.ZodError)
     return "sync_protocol_invalid";
   if (error instanceof KnowledgeSyncRetryError) return "remote_changed_too_often";

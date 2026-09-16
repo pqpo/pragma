@@ -62,4 +62,6 @@ manual sync is explicitly bidirectional, including when automatic upload is disa
 
 Git runs non-interactively and relies on the user's system Git credential helper or SSH agent.
 Credentials are never accepted in the configured remote URL or persisted by the synchronization
-service.
+service. Published commits use the user's global Git `user.name` and `user.email`; synchronization
+fails with an actionable configuration error when either value is missing. The managed checkout
+never substitutes a Pragma service identity for the local user's commit identity.

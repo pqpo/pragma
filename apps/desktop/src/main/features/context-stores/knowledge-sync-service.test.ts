@@ -40,6 +40,20 @@ async function temporaryRoot(): Promise<string> {
   return root;
 }
 
+async function gitIdentityEnvironment(
+  root: string,
+  name = "Desktop Git User",
+  email = "desktop-user@example.test",
+): Promise<NodeJS.ProcessEnv> {
+  const globalConfig = join(root, "gitconfig");
+  await writeFile(globalConfig, `[user]\n\tname = ${name}\n\temail = ${email}\n`, "utf8");
+  return {
+    HOME: root,
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+}
+
 function remoteStore(id: string, name: string, content: string) {
   return {
     id,
@@ -507,8 +521,13 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
       autoPush: true,
       pushDeletions: false,
     } satisfies KnowledgeSyncConfiguration;
-    const provider = createGitContextStoreSyncProvider(join(root, "cache"), configuration);
+    const cacheRoot = join(root, "cache");
+    const provider = createGitContextStoreSyncProvider(cacheRoot, configuration, {
+      env: await gitIdentityEnvironment(root),
+    });
     const head = await provider.readHead();
+    await git(join(cacheRoot, "repository"), "config", "user.name", "Pragma Knowledge Sync");
+    await git(join(cacheRoot, "repository"), "config", "user.email", "knowledge-sync@pragma.local");
     const store = remoteStore(localStoreId, "Readable", "# Directly readable\n");
     const published = await provider.publish({
       expectedRevision: head.revision,
@@ -530,6 +549,9 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
     expect(await readFile(join(checkout, "pragma-knowledge-sync.yaml"), "utf8")).toContain(
       "pragma.knowledge-sync/v1",
     );
+    expect((await git(checkout, "log", "-1", "--format=%an <%ae>")).trim()).toBe(
+      "Desktop Git User <desktop-user@example.test>",
+    );
   });
 
   it("preserves the server rejection instead of misreporting a remote head change", async () => {
@@ -549,7 +571,9 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
       autoPush: true,
       pushDeletions: false,
     } satisfies KnowledgeSyncConfiguration;
-    const provider = createGitContextStoreSyncProvider(join(root, "cache"), configuration);
+    const provider = createGitContextStoreSyncProvider(join(root, "cache"), configuration, {
+      env: await gitIdentityEnvironment(root),
+    });
     const head = await provider.readHead();
     const store = remoteStore(localStoreId, "Readable", "# Directly readable\n");
 
@@ -560,6 +584,38 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
         message: "Publish to a protected branch",
       }),
     ).rejects.toThrow(/checked out branch|branch is currently checked out/u);
+  });
+
+  it("fails with an actionable error when the global Git identity is missing", async () => {
+    const root = await temporaryRoot();
+    const remote = join(root, "remote.git");
+    const globalConfig = join(root, "empty-gitconfig");
+    await git(undefined, "init", "--bare", "--initial-branch=main", remote);
+    await writeFile(globalConfig, "", "utf8");
+    const configuration = {
+      schemaVersion: "pragma.knowledge-sync-settings/v1",
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    } satisfies KnowledgeSyncConfiguration;
+    const provider = createGitContextStoreSyncProvider(join(root, "cache"), configuration, {
+      env: {
+        HOME: root,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_NOSYSTEM: "1",
+      },
+    });
+    const head = await provider.readHead();
+    const store = remoteStore(localStoreId, "Readable", "# Directly readable\n");
+
+    await expect(
+      provider.publish({
+        expectedRevision: head.revision,
+        repository: { stores: new Map([[store.id, store]]) },
+        message: "Publish without a Git identity",
+      }),
+    ).rejects.toThrow("git config --global");
   });
 
   it("rejects oversized managed Markdown before loading repository content", async () => {
@@ -615,6 +671,10 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
   });
 });
 
-async function git(repository: string | undefined, ...args: string[]): Promise<void> {
-  await execFileAsync("git", repository === undefined ? args : ["-C", repository, ...args]);
+async function git(repository: string | undefined, ...args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "git",
+    repository === undefined ? args : ["-C", repository, ...args],
+  );
+  return stdout;
 }
