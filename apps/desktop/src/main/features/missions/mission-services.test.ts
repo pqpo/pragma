@@ -19,7 +19,21 @@ describe("Mission service state ownership", () => {
     expect(listener).toHaveBeenCalledWith({
       missionId: "mission-1",
       audience: "user",
+      revision: 1,
       execution: { id: "execution-1", status: "succeeded" },
+    });
+    service.publish("mission-1", "user", { id: "execution-1", status: "failed" });
+    service.publish("mission-2", "user");
+    expect(listener).toHaveBeenNthCalledWith(2, {
+      missionId: "mission-1",
+      audience: "user",
+      revision: 2,
+      execution: { id: "execution-1", status: "failed" },
+    });
+    expect(listener).toHaveBeenNthCalledWith(3, {
+      missionId: "mission-2",
+      audience: "user",
+      revision: 1,
     });
     expect(listenerError).not.toHaveBeenCalled();
   });

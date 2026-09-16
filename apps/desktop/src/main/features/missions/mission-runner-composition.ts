@@ -974,11 +974,22 @@ export function createMissionRunner(options: {
   ): Promise<void> {
     const session = sessionService.session(id);
     if (session === undefined || lifecycleService.hasActive(id)) return;
+    if (sessionService.contextBindingChangeInProgress(id)) {
+      invalidateChat(id, audience);
+      return;
+    }
     if (sessionService.successorRequired(id)) {
       invalidateChat(id, audience);
       return;
     }
     while (true) {
+      if (
+        sessionService.contextBindingChangeInProgress(id) ||
+        sessionService.successorRequired(id)
+      ) {
+        invalidateChat(id, audience);
+        break;
+      }
       const [mission, state, queue] = await Promise.all([
         options.missions.get(id),
         session.getState(),
@@ -1007,7 +1018,13 @@ export function createMissionRunner(options: {
         }
       }
       if (nextPrompt !== undefined) {
-        if (lifecycleService.hasActive(id)) break;
+        if (
+          lifecycleService.hasActive(id) ||
+          sessionService.contextBindingChangeInProgress(id) ||
+          sessionService.successorRequired(id)
+        ) {
+          break;
+        }
         const turn = (await session.listTurns()).find(
           (candidate) => candidate.executionId === nextPrompt.executionId,
         );
@@ -1054,6 +1071,32 @@ export function createMissionRunner(options: {
     invalidateChat(id, audience);
     invalidateWork(id, audience);
     if (attachNextTurn) await attachNextSessionTurn(id, audience);
+  };
+
+  const awaitTerminalLifecycleSettlement = async (mission: Mission): Promise<void> => {
+    if (
+      mission.execution === undefined ||
+      ["queued", "running", "waiting"].includes(mission.execution.status)
+    ) {
+      return;
+    }
+    const active = lifecycleService.active(mission.id);
+    if (active === undefined || active.handle.executionId !== mission.execution.id) return;
+    const outcome = await settlementOutcomeWithin(active.settlement, 5_000);
+    if (outcome.status === "timed_out") {
+      logger.warn(
+        "mission.terminal_cleanup_pending",
+        "Mission terminal state is visible while its bounded observer cleanup remains pending.",
+        { missionId: mission.id, executionId: mission.execution.id, retryable: true },
+      );
+    }
+    if (outcome.status === "rejected") {
+      logger.warn(
+        "mission.terminal_cleanup_failed",
+        "Mission terminal state is visible while its observer cleanup reported a failure.",
+        { error: outcome.error, missionId: mission.id, executionId: mission.execution.id },
+      );
+    }
   };
 
   const compileMissionExecutor = async (
@@ -1640,6 +1683,10 @@ export function createMissionRunner(options: {
       input.sessionId,
       async (terminal) => {
         const mission = input.mission;
+        statusService.publish(missionId, audience, {
+          id: input.handle.executionId,
+          status: terminal.status,
+        });
         let canonicalProjectionFailure: unknown;
         try {
           await retryMissionEventProjection(async () =>
@@ -1660,10 +1707,6 @@ export function createMissionRunner(options: {
             { missionId, executionId: input.handle.executionId, retryable: true },
           );
         }
-        statusService.publish(missionId, audience, {
-          id: input.handle.executionId,
-          status: terminal.status,
-        });
         if (canonicalProjectionFailure !== undefined) throw canonicalProjectionFailure;
       },
       checkpoint,
@@ -2097,7 +2140,9 @@ export function createMissionRunner(options: {
     await (options.assertStorageWriteAllowed?.() ??
       assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome })));
     logMissionPhase(logger, input.id, "storage_capacity_check", capacityCheckStartedAt, acceptedAt);
-    const mission = await options.missions.get(input.id);
+    let mission = await options.missions.get(input.id);
+    await awaitTerminalLifecycleSettlement(mission);
+    mission = await options.missions.get(input.id);
     const contextMountsFingerprint = missionContextMountsFingerprint(mission);
     if (missionContextMountsNeedSuccessor(mission, contextMountsFingerprint)) {
       sessionService.invalidateContextBindings(mission.id);
@@ -2217,7 +2262,11 @@ export function createMissionRunner(options: {
     phaseStartedAt = performance.now();
     if (session === undefined) {
       if (compiled === undefined) {
-        throw new Error("Mission Session cache was unavailable without a compiled executor.");
+        // A cached Session can be invalidated after the compilation cache lookup
+        // (for example when Memory or Mission Knowledge bindings change). Compile
+        // again before opening its successor instead of treating that valid cache
+        // transition as an impossible state.
+        compiled = await compileMissionExecutor(mission, runtimes);
       }
       if (definitionChanged || contextStoresChanged) {
         session = await createMissionExpertSession(compiled, app, { modelSelection });
@@ -2359,10 +2408,35 @@ export function createMissionRunner(options: {
     return updated;
   };
 
-  const updateMissionContextMounts = async (
+  const updateMissionContextMountsWithinChange = async (
     input: UpdateMissionContextMounts,
   ): Promise<Mission> => {
-    const mission = await options.missions.get(input.id);
+    let mission = await options.missions.get(input.id);
+    const assertNoPendingPrompts = async (candidate: Mission): Promise<void> => {
+      const sessionId =
+        sessionService.session(candidate.id)?.sessionId ?? candidate.execution?.sessionId;
+      if (sessionId === undefined) return;
+      const pendingPrompts = (await expertSessionStore.listPrompts(sessionId)).filter(
+        (prompt) =>
+          prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+      );
+      if (pendingPrompts.length > 0) {
+        throw new Error(
+          "Remove or finish queued Mission messages before changing Mission Knowledge Stores.",
+        );
+      }
+    };
+    if (
+      mission.execution !== undefined &&
+      !["queued", "running", "waiting"].includes(mission.execution.status)
+    ) {
+      // Inspect the durable queue before waiting for terminal observer cleanup.
+      // Otherwise that cleanup may dispatch a queued turn before this mutation
+      // gets a chance to reject it.
+      await assertNoPendingPrompts(mission);
+    }
+    await awaitTerminalLifecycleSettlement(mission);
+    mission = await options.missions.get(input.id);
     const existingDraftMounts = mission.contextMounts.filter(
       (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
         mount.kind === "context-store-draft",
@@ -2417,21 +2491,24 @@ export function createMissionRunner(options: {
         await options.contextStoreRevisions.resolveDraft(mount.draftId);
       }),
     );
-    const sessionId = sessionService.session(mission.id)?.sessionId ?? mission.execution?.sessionId;
-    if (sessionId !== undefined) {
-      const pendingPrompts = (await expertSessionStore.listPrompts(sessionId)).filter(
-        (prompt) =>
-          prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
-      );
-      if (pendingPrompts.length > 0) {
-        throw new Error(
-          "Remove or finish queued Mission messages before changing Mission Knowledge Stores.",
-        );
-      }
-    }
+    await assertNoPendingPrompts(mission);
     const updated = await options.missions.updateContextMounts(mission.id, input.contextMounts);
     await invalidateContextBindings(mission.id);
     return updated;
+  };
+
+  const updateMissionContextMounts = async (
+    input: UpdateMissionContextMounts,
+  ): Promise<Mission> => {
+    // Prevent terminal cleanup from dispatching the next queued turn while the
+    // mutation is waiting for that cleanup. The mutation must first inspect the
+    // stable queue and either reject without side effects or install new mounts.
+    sessionService.beginContextBindingChange(input.id);
+    try {
+      return await updateMissionContextMountsWithinChange(input);
+    } finally {
+      sessionService.finishContextBindingChange(input.id);
+    }
   };
 
   const deleteMission = async (id: string): Promise<void> => {
@@ -3940,7 +4017,9 @@ export function createMissionRunner(options: {
 
   const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
     const t0 = performance.now();
-    const mission = await options.missions.get(id);
+    let mission = await options.missions.get(id);
+    await awaitTerminalLifecycleSettlement(mission);
+    mission = await options.missions.get(id);
     const { projection, cacheHit } = await loadWorkProjection(mission);
     const t1 = performance.now();
     logger.info(
@@ -3961,7 +4040,9 @@ export function createMissionRunner(options: {
     input: GetMissionWorkConversation,
   ): Promise<MissionWorkConversationSnapshot> => {
     const t0 = performance.now();
-    const mission = await options.missions.get(input.id);
+    let mission = await options.missions.get(input.id);
+    await awaitTerminalLifecycleSettlement(mission);
+    mission = await options.missions.get(input.id);
     const { projection, cacheHit } = await loadWorkProjection(mission);
     const durableEntries = projection.entriesByRecordId.get(input.recordId);
     if (durableEntries === undefined) {

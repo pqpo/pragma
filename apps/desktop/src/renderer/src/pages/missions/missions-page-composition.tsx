@@ -57,6 +57,7 @@ import {
   type MissionChatSnapshot,
   type MissionContextWindowState,
   type MissionHumanInteraction,
+  type MissionStatusUpdate,
   type MissionSummary,
   type MissionWorkRecord,
   type DesktopMissionMemoryActivity,
@@ -298,27 +299,35 @@ export function MissionsPage(props: {
       { readonly mission: Mission; readonly source: MissionSummary["source"] } | null
     >(),
   );
+  const missionStatusUpdatesRef = useRef(new Map<string, MissionStatusUpdate>());
 
   const replaceMission = useCallback((updated: Mission, source?: MissionSummary["source"]) => {
+    const currentStatus = missionStatusUpdatesRef.current.get(updated.id);
+    const projected =
+      currentStatus === undefined
+        ? updated
+        : applyMissionStatusUpdateToMission(updated, currentStatus);
     if (
-      updated.execution !== undefined &&
-      !["queued", "running", "waiting"].includes(updated.execution.status)
+      projected.execution !== undefined &&
+      !["queued", "running", "waiting"].includes(projected.execution.status)
     ) {
-      setInitialRunRequest((current) => (current?.missionId === updated.id ? null : current));
+      setInitialRunRequest((current) => (current?.missionId === projected.id ? null : current));
     }
-    if (updated.lifecycleStatus === "completed") {
+    if (projected.lifecycleStatus === "completed") {
       writeMissionDraft(
         typeof window === "undefined" ? undefined : window.localStorage,
-        updated.id,
+        projected.id,
         "",
       );
     }
     setSelectedMission((current) =>
-      current?.id === updated.id && updated.updatedAt >= current.updatedAt ? updated : current,
+      current?.id === projected.id && projected.updatedAt >= current.updatedAt
+        ? projected
+        : current,
     );
     setMissions((current) => {
-      const knownSource = current.find((mission) => mission.id === updated.id)?.source;
-      return upsertMissionSummary(current, missionToSummary(updated, source ?? knownSource));
+      const knownSource = current.find((mission) => mission.id === projected.id)?.source;
+      return upsertMissionSummary(current, missionToSummary(projected, source ?? knownSource));
     });
   }, []);
 
@@ -372,7 +381,12 @@ export function MissionsPage(props: {
         return;
       }
       try {
-        const mission = await api.getMission(id);
+        const loadedMission = await api.getMission(id);
+        const statusUpdate = missionStatusUpdatesRef.current.get(id);
+        const mission =
+          statusUpdate === undefined
+            ? loadedMission
+            : applyMissionStatusUpdateToMission(loadedMission, statusUpdate);
         if (selectedMissionIdRef.current === id) {
           setSelectedMission((current) =>
             current === null || mission.updatedAt >= current.updatedAt ? mission : current,
@@ -417,6 +431,36 @@ export function MissionsPage(props: {
       );
     });
   }, [updateUnreadMissionOutputIds]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    return api.subscribeMissionStatusUpdates((update) => {
+      const current = missionStatusUpdatesRef.current.get(update.missionId);
+      if (current !== undefined && current.revision >= update.revision) return;
+      missionStatusUpdatesRef.current.set(update.missionId, update);
+      if (
+        update.execution !== undefined &&
+        !["queued", "running", "waiting"].includes(update.execution.status)
+      ) {
+        setInitialRunRequest((request) =>
+          request?.missionId === update.missionId ? null : request,
+        );
+      }
+      setMissions((missions) =>
+        missions.map((mission) =>
+          mission.id === update.missionId
+            ? applyMissionStatusUpdateToSummary(mission, update)
+            : mission,
+        ),
+      );
+      setSelectedMission((mission) =>
+        mission?.id === update.missionId
+          ? applyMissionStatusUpdateToMission(mission, update)
+          : mission,
+      );
+    });
+  }, []);
 
   useEffect(() => {
     const api = desktopApi();
@@ -492,7 +536,7 @@ export function MissionsPage(props: {
         missionUpdatesDuringRefreshRef.current.clear();
         const storedMissions = await api.listMissions();
         if (cancelled) return;
-        const refreshedMissions = [...missionUpdatesDuringRefreshRef.current.values()].reduce(
+        const refreshedFromStore = [...missionUpdatesDuringRefreshRef.current.values()].reduce(
           (current, updated) =>
             updated === null
               ? current
@@ -503,6 +547,12 @@ export function MissionsPage(props: {
               missionUpdatesDuringRefreshRef.current.get(mission.id) !== null,
           ),
         );
+        const refreshedMissions = refreshedFromStore.map((mission) => {
+          const statusUpdate = missionStatusUpdatesRef.current.get(mission.id);
+          return statusUpdate === undefined
+            ? mission
+            : applyMissionStatusUpdateToSummary(mission, statusUpdate);
+        });
         setMissions(refreshedMissions);
         updateUnreadMissionOutputIds((current) => {
           const retained = current.filter((missionId) =>
@@ -4929,6 +4979,7 @@ function missionToSummary(
       ? {}
       : {
           execution: {
+            id: mission.execution.id,
             status: mission.execution.status,
             ...(mission.execution.waitReason === undefined
               ? {}
@@ -4939,6 +4990,81 @@ function missionToSummary(
     lifecycleStatus: mission.lifecycleStatus,
     updatedAt: mission.updatedAt,
   };
+}
+
+export function applyMissionStatusUpdateToSummary(
+  mission: MissionSummary,
+  update: MissionStatusUpdate,
+): MissionSummary {
+  if (update.execution === undefined) return mission;
+  if (mission.execution?.id !== undefined && mission.execution.id !== update.execution.id) {
+    return mission;
+  }
+  if (
+    mission.execution !== undefined &&
+    isTerminalMissionExecutionStatus(mission.execution.status) &&
+    !isTerminalMissionExecutionStatus(update.execution.status)
+  ) {
+    return mission;
+  }
+  const waitReason =
+    update.execution.status === "waiting" ? mission.execution?.waitReason : undefined;
+  return {
+    ...mission,
+    execution: {
+      id: update.execution.id,
+      status: update.execution.status,
+      ...(waitReason === undefined ? {} : { waitReason }),
+    },
+  };
+}
+
+export function applyMissionStatusUpdateToMission(
+  mission: Mission,
+  update: MissionStatusUpdate,
+): Mission {
+  if (update.execution === undefined || mission.execution?.id !== update.execution.id) {
+    return mission;
+  }
+  if (
+    isTerminalMissionExecutionStatus(mission.execution.status) &&
+    !isTerminalMissionExecutionStatus(update.execution.status)
+  ) {
+    return mission;
+  }
+  const execution = {
+    id: mission.execution.id,
+    inputMessageId: mission.execution.inputMessageId,
+    ...(mission.execution.sessionId === undefined
+      ? {}
+      : { sessionId: mission.execution.sessionId }),
+    ...(mission.execution.contextMountsFingerprint === undefined
+      ? {}
+      : { contextMountsFingerprint: mission.execution.contextMountsFingerprint }),
+    startedAt: mission.execution.startedAt,
+    ...(mission.execution.finishedAt === undefined
+      ? {}
+      : { finishedAt: mission.execution.finishedAt }),
+  };
+  return {
+    ...mission,
+    execution: {
+      ...execution,
+      status: update.execution.status,
+      ...(update.execution.status === "failed" && mission.execution.error !== undefined
+        ? { error: mission.execution.error }
+        : {}),
+      ...(update.execution.status === "waiting" && mission.execution.waitReason !== undefined
+        ? { waitReason: mission.execution.waitReason }
+        : {}),
+    },
+  };
+}
+
+function isTerminalMissionExecutionStatus(
+  status: NonNullable<Mission["execution"]>["status"],
+): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 export function upsertMissionSummary(

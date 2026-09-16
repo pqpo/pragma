@@ -190,6 +190,7 @@ import {
   MissionBranchSourceSchema,
   MissionSchema,
   MissionSummarySchema,
+  MissionStatusUpdateSchema,
   MissionTimelineRecordSchema,
   MissionUpdateSchema,
   MissionUserMessageSchema,
@@ -572,6 +573,7 @@ export type MissionContextMount = z.infer<typeof MissionContextMountSchema>;
 export type MissionBranchSource = z.infer<typeof MissionBranchSourceSchema>;
 export type MissionBranchHistory = z.infer<typeof MissionBranchHistorySchema>;
 export type MissionSummary = z.infer<typeof MissionSummarySchema>;
+export type MissionStatusUpdate = z.infer<typeof MissionStatusUpdateSchema>;
 export type MissionUpdate = z.infer<typeof MissionUpdateSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type ExpertMentionCandidate = z.infer<typeof ExpertMentionCandidateSchema>;

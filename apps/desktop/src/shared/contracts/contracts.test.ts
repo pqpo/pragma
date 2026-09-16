@@ -24,6 +24,7 @@ import {
   MissionModelOptionsSchema,
   MissionQueuePromptActionSchema,
   MissionSchema,
+  MissionStatusUpdateSchema,
   MissionUpdateSchema,
   SendMissionMessageSchema,
   StageMissionClipboardImageSchema,
@@ -823,6 +824,26 @@ describe("capability delete contracts", () => {
 });
 
 describe("mission contracts", () => {
+  it("requires ordered, execution-scoped status updates", () => {
+    const update = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      execution: {
+        id: "00000000-0000-4000-8000-000000000001",
+        status: "succeeded",
+      },
+    };
+
+    expect(MissionStatusUpdateSchema.parse(update)).toEqual(update);
+    expect(MissionStatusUpdateSchema.safeParse({ ...update, revision: 0 }).success).toBe(false);
+    expect(
+      MissionStatusUpdateSchema.safeParse({
+        ...update,
+        execution: { ...update.execution, id: "not-an-execution-id" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires recovery and interruption actions to fence an exact execution", () => {
     const action = {
       id: "00000000-0000-4000-8000-000000000001",

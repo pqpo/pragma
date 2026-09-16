@@ -1,12 +1,23 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { createMissionControllerStore, createMissionOwnerScope } from "@pragma/local-host";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MissionSchema } from "../../../shared/contracts/index.ts";
-import type { MissionProjectionMismatch } from "./mission-read-model.ts";
-import { MissionStatusService } from "./mission-status-service.ts";
-import { createMissionTerminalProjectionRepair } from "./mission-terminal-projection-repair.ts";
+import {
+  createMissionTerminalProjectionRepair,
+  type MissionProjectionMismatch,
+} from "./mission-terminal-projection-repair.ts";
 
 const missionId = "22222222-2222-4222-8222-222222222222";
 const executionId = "44444444-4444-4444-8444-444444444444";
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true })));
+});
 
 function mismatch(): MissionProjectionMismatch {
   return {
@@ -50,13 +61,23 @@ function ownerScope() {
   } as never;
 }
 
+function controller() {
+  return {
+    claim: vi.fn(async (input: { readonly claimId: string }) => ({
+      claimId: input.claimId,
+      fencingToken: "2",
+      acquiredAt: "2026-09-16T00:00:00.000Z",
+      renewedAt: "2026-09-16T00:00:00.000Z",
+      expiresAt: "2026-09-16T00:00:05.000Z",
+    })),
+    release: vi.fn(async () => undefined),
+  };
+}
+
 describe("Mission terminal projection repair", () => {
   it("repairs the terminal event even when the v10 snapshot remains unavailable", async () => {
     const terminal = vi.fn(async () => undefined);
     const updateExecution = vi.fn(async () => await Promise.reject(new Error("snapshot failed")));
-    const listener = vi.fn();
-    const status = new MissionStatusService(vi.fn());
-    status.subscribe(listener);
     const reporter = {
       eventFailure: vi.fn(),
       snapshotFailure: vi.fn(),
@@ -64,10 +85,9 @@ describe("Mission terminal projection repair", () => {
     };
     const repair = createMissionTerminalProjectionRepair({
       ownerScope: ownerScope(),
+      controller: controller(),
       missions: { updateExecution } as never,
       events: { terminal },
-      status,
-      audienceForMission: () => "user",
       reporter,
     });
 
@@ -75,11 +95,6 @@ describe("Mission terminal projection repair", () => {
     expect(terminal).toHaveBeenCalledOnce();
     expect(updateExecution).toHaveBeenCalledTimes(3);
     expect(reporter.rebuilt).toHaveBeenCalledOnce();
-    expect(listener).toHaveBeenCalledWith({
-      audience: "user",
-      missionId,
-      execution: { id: executionId, status: "succeeded" },
-    });
   });
 
   it("repairs the v10 snapshot even when the terminal event remains unavailable", async () => {
@@ -92,10 +107,9 @@ describe("Mission terminal projection repair", () => {
     };
     const repair = createMissionTerminalProjectionRepair({
       ownerScope: ownerScope(),
+      controller: controller(),
       missions: { updateExecution } as never,
       events: { terminal },
-      status: new MissionStatusService(vi.fn()),
-      audienceForMission: () => "user",
       reporter,
     });
 
@@ -104,5 +118,72 @@ describe("Mission terminal projection repair", () => {
     expect(updateExecution).toHaveBeenCalledOnce();
     expect(reporter.eventFailure).toHaveBeenCalledOnce();
     expect(reporter.rebuilt).not.toHaveBeenCalled();
+  });
+
+  it("releases only the exact repair claim when no operation guard is in scope", async () => {
+    const scope = {
+      currentGuard: vi.fn(() => undefined),
+      runWithGuard: vi.fn(async (_missionId, _guard, operation: () => Promise<void>) => {
+        await operation();
+      }),
+    } as never;
+    const control = controller();
+    const repair = createMissionTerminalProjectionRepair({
+      ownerScope: scope,
+      controller: control,
+      missions: { updateExecution: vi.fn(async () => mismatch().mission) } as never,
+      events: { terminal: vi.fn(async () => undefined) },
+      reporter: { eventFailure: vi.fn(), snapshotFailure: vi.fn(), rebuilt: vi.fn() },
+    });
+
+    await repair(mismatch());
+
+    const claimedGuard = control.claim.mock.results[0]?.value;
+    const resolvedGuard = await claimedGuard;
+    expect(control.release).toHaveBeenCalledWith({ missionId, guard: resolvedGuard });
+  });
+
+  it("never borrows or releases a live owner while using the real controller fence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-terminal-repair-fence-"));
+    roots.push(root);
+    const controller = createMissionControllerStore({ missionsPath: root });
+    const scope = createMissionOwnerScope({ controller, leaseMs: 30_000 });
+    const liveGuard = await scope.acquire(missionId);
+    const terminal = vi.fn(
+      async (input: { readonly guard?: typeof liveGuard | undefined }) => {
+        await controller.write({
+          missionId,
+          guard: input.guard!,
+          operation: async ({ appendEvent }) => {
+            await appendEvent(
+              "run.succeeded",
+              { executionId },
+              "99999999-9999-4999-8999-999999999999",
+            );
+          },
+        });
+      },
+    );
+    const repair = createMissionTerminalProjectionRepair({
+      ownerScope: scope,
+      controller,
+      missions: { updateExecution: vi.fn(async () => mismatch().mission) } as never,
+      events: { terminal },
+      reporter: { eventFailure: vi.fn(), snapshotFailure: vi.fn(), rebuilt: vi.fn() },
+    });
+
+    await expect(repair(mismatch())).rejects.toMatchObject({ code: "MISSION_LEASE_HELD" });
+    await expect(controller.assertWriteGuard({ missionId, guard: liveGuard })).resolves.toBeUndefined();
+    expect(terminal).not.toHaveBeenCalled();
+
+    await scope.release(missionId);
+    await expect(repair(mismatch())).resolves.toBeUndefined();
+    expect(terminal).toHaveBeenCalledOnce();
+    const successor = await controller.claim({
+      missionId,
+      claimId: "88888888-8888-4888-8888-888888888888",
+      leaseMs: 30_000,
+    });
+    await controller.release({ missionId, guard: successor });
   });
 });

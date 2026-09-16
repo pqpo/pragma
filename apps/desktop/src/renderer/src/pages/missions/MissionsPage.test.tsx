@@ -10,6 +10,8 @@ import { i18n } from "../../i18n/index.ts";
 import { expertAvatarSource } from "../../components/ExpertAvatar.tsx";
 import {
   applyMissionUsageHintRevision,
+  applyMissionStatusUpdateToMission,
+  applyMissionStatusUpdateToSummary,
   copyMissionReply,
   CONTEXT_POPOVER_CLOSE_DELAY_MS,
   ContextWindowControl,
@@ -680,6 +682,49 @@ describe("MissionsPage", () => {
 
     expect(upsertMissionSummary([current], stale)).toEqual([current]);
     expect(upsertMissionSummary([current], newer)).toEqual([newer]);
+  });
+
+  it("applies status deltas only to the matching execution", () => {
+    const baseMission = missionFixture("expert");
+    const executionId = "00000000-0000-4000-8000-000000000098";
+    const mission: Mission = {
+      ...baseMission,
+      execution: {
+        id: executionId,
+        inputMessageId: baseMission.initialMessageId,
+        status: "running",
+        startedAt: baseMission.createdAt,
+      },
+    };
+    const running = missionSummaryFixture({
+      id: mission.id,
+      title: mission.title,
+      status: "running",
+      updatedAt: mission.updatedAt,
+    });
+    const summary = { ...running, execution: { id: executionId, status: "running" as const } };
+    const update = {
+      missionId: mission.id,
+      revision: 2,
+      execution: { id: executionId, status: "succeeded" as const },
+    };
+
+    expect(applyMissionStatusUpdateToMission(mission, update).execution?.status).toBe("succeeded");
+    expect(applyMissionStatusUpdateToSummary(summary, update).execution?.status).toBe("succeeded");
+    const terminalSummary = applyMissionStatusUpdateToSummary(summary, update);
+    expect(
+      applyMissionStatusUpdateToSummary(terminalSummary, {
+        ...update,
+        revision: 3,
+        execution: { id: executionId, status: "running" },
+      }),
+    ).toBe(terminalSummary);
+    expect(
+      applyMissionStatusUpdateToSummary(summary, {
+        ...update,
+        execution: { id: "00000000-0000-4000-8000-000000000099", status: "failed" },
+      }),
+    ).toBe(summary);
   });
 
   it("uses the required 500ms context popover grace period", () => {

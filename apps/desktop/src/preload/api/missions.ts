@@ -35,6 +35,7 @@ import {
   MissionQueueSteerResultSchema,
   MissionSchema,
   MissionSummarySchema,
+  MissionStatusUpdateSchema,
   MissionUpdateSchema,
   MissionWorkConversationSnapshotSchema,
   MissionWorkSnapshotSchema,
@@ -145,6 +146,13 @@ export const missionsApi = {
     };
     ipcRenderer.on("missions:updated", handler);
     return () => ipcRenderer.removeListener("missions:updated", handler);
+  },
+  subscribeMissionStatusUpdates: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(MissionStatusUpdateSchema.parse(value));
+    };
+    ipcRenderer.on("missions:status:updated", handler);
+    return () => ipcRenderer.removeListener("missions:status:updated", handler);
   },
   subscribeMissionCommandOutcomes: (listener) => {
     const handler = (_event: IpcRendererEvent, value: unknown) => {
@@ -303,6 +311,7 @@ export const missionsApi = {
   | "readMissionContextStoreEntry"
   | "searchMissionContextStore"
   | "subscribeMissionUpdates"
+  | "subscribeMissionStatusUpdates"
   | "subscribeMissionCommandOutcomes"
   | "createMission"
   | "createMissionBranch"

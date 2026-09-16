@@ -117,6 +117,7 @@ import { MissionStatusService } from "../features/missions/mission-status-servic
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
 import { createMissionTerminalProjectionRepair } from "../features/missions/mission-terminal-projection-repair.ts";
+import { createMissionTerminalReconciler } from "../features/missions/mission-terminal-reconciler.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
 import {
   createDesktopMemoryCurator,
@@ -1305,11 +1306,9 @@ export async function createDesktopApplicationContainer(
   });
   const repairMissionTerminalProjection = createMissionTerminalProjectionRepair({
     ownerScope,
+    controller: missionControllerStore,
     missions: guardedMissionStore,
     events: executionEventProjector,
-    status: missionStatus,
-    audienceForMission: (mission) =>
-      isUserFacingMissionOrigin(mission.origin) ? "user" : "internal",
     reporter: {
       eventFailure: (error, input) => {
         mainLogger.warn(
@@ -1352,13 +1351,26 @@ export async function createDesktopApplicationContainer(
   });
   const missionReadModel = createMissionReadModel({
     missions: missionStore,
-    queryMission: missionQuery.queryMission,
     executions: memoryPlane.executionStore,
-    onProjectionMismatch: repairMissionTerminalProjection,
     onReadFailure: ({ missionId, error }) => {
       mainLogger.warn(
         "mission.read_projection_degraded",
         "Mission metadata was returned with a degraded execution projection.",
+        { missionId, error, retryable: true },
+      );
+    },
+  });
+  const missionTerminalReconciler = createMissionTerminalReconciler({
+    missions: missionStore,
+    executions: memoryPlane.executionStore,
+    repair: repairMissionTerminalProjection,
+    status: missionStatus,
+    audienceForMission: (mission) =>
+      isUserFacingMissionOrigin(mission.origin) ? "user" : "internal",
+    reportFailure: ({ missionId, error }) => {
+      mainLogger.warn(
+        "mission.terminal_reconciliation_degraded",
+        "Mission terminal reconciliation was deferred without blocking renderer reads.",
         { missionId, error, retryable: true },
       );
     },
@@ -1382,8 +1394,24 @@ export async function createDesktopApplicationContainer(
         listExecutors: async () => await missionExecutors.list(),
       },
       missions: {
-        get: async (missionId) => await missionReadModel.get(missionId),
-        list: async () => await missionReadModel.list(),
+        get: async (missionId) => {
+          const mission = await missionReadModel.get(missionId);
+          missionTerminalReconciler.schedule([missionId]);
+          return mission;
+        },
+        list: async () => {
+          const summaries = await missionReadModel.list();
+          missionTerminalReconciler.schedule(
+            summaries
+              .filter(
+                (mission) =>
+                  mission.execution !== undefined &&
+                  ["queued", "running", "waiting"].includes(mission.execution.status),
+              )
+              .map((mission) => mission.id),
+          );
+          return summaries;
+        },
         query: missionQuery.queryMission,
       },
       missionLifecycle,

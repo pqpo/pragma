@@ -68,11 +68,9 @@ import type { HomeExecutorCatalog } from "./home-executor-catalog.ts";
 import { installMissionAttachmentProtocol } from "./mission-attachment-protocol.ts";
 import { createMissionImageDraftStore } from "./mission-image-drafts.ts";
 import {
-  createMissionSummaryRefreshScheduler,
   forwardMissionChatNotification,
   forwardMissionStatusNotification,
   forwardMissionWorkNotification,
-  projectMissionStatusNotification,
 } from "./mission-renderer-update-forwarder.ts";
 import { toLocalHostRunRequest } from "./local-host-mission-adapter.ts";
 import { toMissionQueueCommand } from "./mission-queue-command.ts";
@@ -771,25 +769,10 @@ export function installMissionHandlers(options: {
       getSender: () => options.getWindow()?.webContents ?? null,
     });
   });
-  const refreshMissionSummary = createMissionSummaryRefreshScheduler(async (notification) => {
-    const mission = await getManagedMission(notification.missionId);
-    await publishMission(projectMissionStatusNotification(mission, notification));
-  });
   options.runner.subscribeStatus((notification) => {
     forwardMissionStatusNotification({
       notification,
-      refreshMissionSummary,
-      reportSummaryRefreshFailure: (error, missionId) => {
-        console.warn(
-          JSON.stringify({
-            level: "warn",
-            component: "desktop.missions",
-            event: "mission_renderer_summary_refresh_failed",
-            message: error instanceof Error ? error.message : String(error),
-            missionId,
-          }),
-        );
-      },
+      getSender: () => options.getWindow()?.webContents ?? null,
     });
   });
   options.runner.subscribeWork((notification) => {

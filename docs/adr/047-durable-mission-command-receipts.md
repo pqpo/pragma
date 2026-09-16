@@ -26,17 +26,23 @@ acknowledgement timeout。命令可能已经持久化、被 owner 接收并继�
   不复制 command-kind switch。
 - Core Execution event 是执行状态和结果的权威来源；Desktop 初始和后续 turn 都写入同一 Mission event
   projection，Desktop/CLI query 读取同一投影语义。
-- Desktop Mission 读取边界把产品元数据与 Local Host Mission projection 组合；如果 Mission v10 的执行
-  快照或 Local Host projection 仍显示 active，而 Core 已经终态，Core 终态立即胜出，并对该 Mission
-  定向、幂等补写 terminal event。v10 `execution` 仅作为恢复链接和兼容快照，不再是列表状态事实源。
+- Mission 列表是可用性关键路径，只读取 Desktop 已持久化摘要，不按 Mission 获取 owner、查询 Local Host
+  aggregate、读取 Core Execution 或执行 repair。详情读取可以用 Core 终态覆盖旧快照，但必须有固定超时，
+  超时后返回已有元数据。终态校准由列表/详情读取之后调度的有界、按 Mission 合并后台队列完成。
+- 如果 Mission v10 的执行快照仍显示 active，而 Core 已经终态，Core 终态立即通过独立状态增量对 renderer
+  可见，随后在后台定向、幂等补写 terminal event 与 v10 recovery snapshot。v10 `execution` 是恢复链接和
+  列表摘要，不是 Canonical Execution 的替代权威。
 - terminal event、Mission 状态通知和 chat materialization 是三个独立阶段。聊天投影与 Execution 归档
   属于可重建派生工作，其失败必须报告 degraded 并允许重试，不能阻止终态可见或让 Mission 继续显示运行中。
-- Mission rail 只消费独立状态通知；chat/work invalidation 只刷新各自视图，禁止再次用聊天刷新作为状态
-  更新的隐式传输通道。状态通知携带 Core-backed execution id/status；即使读取派生投影暂时失败，Desktop
-  也可以把同一 Execution 的旧 active 快照覆盖为终态，并对完整摘要读取执行有界重试。
+- Mission rail 只消费带单 Mission 单调 revision 的独立状态增量；chat/work invalidation 只刷新各自视图，
+  禁止再次用聊天刷新作为状态更新的隐式传输通道。状态增量携带 Core-backed execution id/status，renderer
+  只覆盖同一 Execution，并拒绝旧 revision；状态事件不得反向触发完整 Mission 读取或 repair。
 - terminal repair 必须同时检查 Local Host event projection 与 v10 recovery snapshot。缺失 `run.started`
   anchor 时，在同一 Mission owner fence 下先幂等补齐 anchor，再补 terminal event；任一派生写入失败不得
   阻断另一写入，也不得记录虚假的 repair success。
+- repair 只能复用当前异步调用域中明确持有的 guard，或直接从 controller 获取一个唯一 repair claim；只
+  释放自己 claim 返回的精确 guard。禁止通过共享 owner scope 的按 Mission `acquire/release` 生命周期修复，
+  避免并发命令 owner 被 repair 误释放。
 - 当前 Mission storage 仍是 v10。本次重构没有改变合法 v10 数据语义，因此不虚增版本。v3-v9 历史
   Schema 和相邻转换移入静态 migrations 目录；历史数据、备份和旧 journal replay 均继续支持。
 

@@ -63,6 +63,8 @@ function truncateText(value: string, maximumLength: number): string {
 
 export function ExpertDirectoryFragment(props: {
   readonly experts: readonly ExpertRecord[];
+  readonly loading?: boolean | undefined;
+  readonly loadFailed?: boolean | undefined;
   readonly onCreate: () => void;
   readonly onOpen: (expert: ExpertRecord) => void;
 }) {
@@ -123,7 +125,12 @@ export function ExpertDirectoryFragment(props: {
               key={expert.ref ?? `expert:${expert.id}`}
               role="listitem"
             >
-              <button className="expert-card" type="button" onClick={() => props.onOpen(expert)}>
+              <button
+                className="expert-card"
+                type="button"
+                disabled={expert.definitionUnavailable === true}
+                onClick={() => props.onOpen(expert)}
+              >
                 <span className="expert-card-header">
                   <span className="expert-card-icon" aria-hidden="true">
                     <ProfiledExpertAvatar avatarId={expert.avatarId} size="md" />
@@ -156,7 +163,11 @@ export function ExpertDirectoryFragment(props: {
             </article>
           );
         })}
-        {matchingExperts.length === 0 ? (
+        {props.loading && matchingExperts.length === 0 ? (
+          <p className="studio-empty-copy" role="status">
+            {tCommon("loading")}
+          </p>
+        ) : matchingExperts.length === 0 && !props.loadFailed ? (
           <p className="studio-empty-copy">
             {query.trim() ? t("noMatchesFound") : t("noExpertsAvailable")}
           </p>

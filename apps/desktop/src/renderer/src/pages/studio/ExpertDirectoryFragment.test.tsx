@@ -375,6 +375,34 @@ describe("ExpertDetailFragment", () => {
 });
 
 describe("ExpertDirectoryFragment", () => {
+  it("shows loading instead of a false empty state while experts are unresolved", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDirectoryFragment
+        experts={[]}
+        loading
+        onCreate={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain("loading");
+    expect(html).not.toContain("No experts available");
+  });
+
+  it("does not report an empty catalog when loading failed", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDirectoryFragment
+        experts={[]}
+        loadFailed
+        onCreate={() => undefined}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("No experts available");
+  });
+
   it("uses a single search control without the inactive expert dropdown", () => {
     const html = renderToStaticMarkup(
       <ExpertDirectoryFragment

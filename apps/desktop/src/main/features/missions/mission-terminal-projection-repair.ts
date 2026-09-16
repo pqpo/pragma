@@ -1,9 +1,9 @@
-import type { MissionOwnerScope } from "@pragma/local-host";
+import { randomUUID } from "node:crypto";
+
+import type { MissionControllerStore, MissionOwnerScope } from "@pragma/local-host";
 
 import type { Mission } from "../../../shared/contracts/index.ts";
 import type { MissionExecutionEventProjector } from "./mission-command-execution-projector.ts";
-import type { MissionProjectionMismatch } from "./mission-read-model.ts";
-import type { MissionStatusService } from "./mission-status-service.ts";
 import type { MissionStore } from "./mission-store.ts";
 
 interface MissionTerminalProjectionRepairReporter {
@@ -12,26 +12,33 @@ interface MissionTerminalProjectionRepairReporter {
   rebuilt(input: MissionProjectionMismatch): void;
 }
 
+export interface MissionProjectionMismatch {
+  readonly mission: Mission;
+  readonly executionId: string;
+  readonly status: "succeeded" | "failed" | "cancelled";
+  readonly finishedAt: string;
+  readonly result?: unknown;
+  readonly error?: unknown;
+}
+
 /** Repairs the two durable Mission projections without coupling their failure domains. */
 export function createMissionTerminalProjectionRepair(options: {
-  readonly ownerScope: Pick<
-    MissionOwnerScope,
-    "currentGuard" | "acquire" | "runWithGuard" | "release"
-  >;
+  readonly ownerScope: Pick<MissionOwnerScope, "runWithGuard">;
+  readonly controller: Pick<MissionControllerStore, "claim" | "release">;
   readonly missions: Pick<MissionStore, "updateExecution">;
   readonly events: Pick<MissionExecutionEventProjector, "terminal">;
-  readonly status: MissionStatusService;
-  readonly audienceForMission: (mission: Mission) => "user" | "internal";
   readonly reporter: MissionTerminalProjectionRepairReporter;
 }): (input: MissionProjectionMismatch) => Promise<void> {
   return async (input) => {
-    const existingGuard = options.ownerScope.currentGuard(input.mission.id);
-    let acquired = false;
+    const repairClaimId = randomUUID();
+    const guard = await options.controller.claim({
+      missionId: input.mission.id,
+      claimId: repairClaimId,
+      leaseMs: 30_000,
+    });
     const failures: unknown[] = [];
     let eventProjectionCurrent = false;
     try {
-      const guard = existingGuard ?? (await options.ownerScope.acquire(input.mission.id));
-      acquired = existingGuard === undefined;
       await options.ownerScope.runWithGuard(input.mission.id, guard, async () => {
         try {
           await retryRepair(async () => {
@@ -41,6 +48,7 @@ export function createMissionTerminalProjectionRepair(options: {
               status: input.status,
               ...(input.result === undefined ? {} : { result: input.result }),
               ...(input.error === undefined ? {} : { error: input.error }),
+              guard,
             });
           });
           eventProjectionCurrent = true;
@@ -77,14 +85,7 @@ export function createMissionTerminalProjectionRepair(options: {
       });
       if (eventProjectionCurrent) options.reporter.rebuilt(input);
     } finally {
-      try {
-        if (acquired) await options.ownerScope.release(input.mission.id);
-      } finally {
-        options.status.publish(input.mission.id, options.audienceForMission(input.mission), {
-          id: input.executionId,
-          status: input.status,
-        });
-      }
+      await options.controller.release({ missionId: input.mission.id, guard });
     }
     if (failures.length > 0) {
       throw new AggregateError(failures, "Mission terminal projection repair remained degraded.");

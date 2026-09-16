@@ -96,6 +96,7 @@ import type {
   MissionCommandOutcome,
   MissionQueueSteerResult,
   MissionSummary,
+  MissionStatusUpdate,
   MissionUpdate,
   MissionExecutorOption,
   MissionMentionCandidates,
@@ -546,6 +547,7 @@ export interface PragmaDesktopAPI {
   getMissionListSource: (id: string) => Promise<MissionSummary["source"]>;
   getMissionMentionCandidates: (id: string) => Promise<MissionMentionCandidates>;
   subscribeMissionUpdates: (listener: (update: MissionUpdate) => void) => () => void;
+  subscribeMissionStatusUpdates: (listener: (update: MissionStatusUpdate) => void) => () => void;
   subscribeMissionCommandOutcomes: (
     listener: (outcome: MissionCommandOutcome) => void,
   ) => () => void;

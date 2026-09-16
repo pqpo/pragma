@@ -274,6 +274,7 @@ export const MissionSummarySchema = z.object({
   }),
   execution: z
     .object({
+      id: z.string().uuid().optional(),
       status: MissionExecutionStatusSchema,
       waitReason: z.enum(["experts", "human_input"]).optional(),
     })
@@ -307,6 +308,17 @@ export const MissionUpdateSchema = z.discriminatedUnion("kind", [
     missionId: MissionIdSchema,
   }),
 ]);
+
+export const MissionStatusUpdateSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().positive(),
+  execution: z
+    .object({
+      id: z.string().uuid(),
+      status: MissionExecutionStatusSchema,
+    })
+    .optional(),
+});
 
 /** Detail/interaction access only. Top-level list placement is resolved by the Host. */
 export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSchema>): boolean {

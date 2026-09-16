@@ -3911,6 +3911,78 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(archiveSpy).toHaveBeenCalled();
   });
 
+  it("publishes the Core terminal status before terminal projection settles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-terminal-status-first-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Publish terminal status first",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    let releaseProjection!: () => void;
+    let projectionStarted!: () => void;
+    const projectionGate = new Promise<void>((resolve) => {
+      releaseProjection = resolve;
+    });
+    const projectionStart = new Promise<void>((resolve) => {
+      projectionStarted = resolve;
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      loggerProvider: createNoopLoggerProvider(),
+      onExecutionTerminal: async () => {
+        projectionStarted();
+        await projectionGate;
+      },
+    });
+    const notifications: unknown[] = [];
+    runner.subscribeStatus((notification) => notifications.push(notification));
+
+    await runner.run(mission.id);
+    await projectionStart;
+    try {
+      expect(notifications).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            missionId: mission.id,
+            execution: expect.objectContaining({ status: "succeeded" }),
+          }),
+        ]),
+      );
+      await expect(missions.get(mission.id)).resolves.toMatchObject({
+        execution: { status: "running" },
+      });
+    } finally {
+      releaseProjection();
+    }
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+  });
+
   it("deduplicates a persisted assistant message against its active live projection", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-live-durable-"));
     temporaryPaths.push(root);

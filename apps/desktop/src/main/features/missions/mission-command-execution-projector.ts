@@ -2,6 +2,7 @@ import { JsonValueSchema } from "@pragma/shared";
 import { createIntegrationError } from "@pragma/shared/integration";
 import {
   missionRunEventId,
+  type MissionControllerGuard,
   type MissionControllerStore,
   type MissionOwnerScope,
 } from "@pragma/local-host";
@@ -20,6 +21,7 @@ export interface MissionExecutionEventProjector {
     readonly status: "succeeded" | "failed" | "cancelled";
     readonly result?: unknown;
     readonly error?: unknown;
+    readonly guard?: MissionControllerGuard | undefined;
   }): Promise<void>;
 }
 
@@ -33,8 +35,9 @@ export function createMissionExecutionEventProjector(options: {
     executionId: string,
     type: "run.started" | "run.succeeded" | "run.failed" | "run.interrupted",
     data: Record<string, unknown>,
+    explicitGuard?: MissionControllerGuard | undefined,
   ): Promise<void> => {
-    const guard = options.ownerScope.currentGuard(missionId);
+    const guard = explicitGuard ?? options.ownerScope.currentGuard(missionId);
     if (guard === undefined) {
       throw createIntegrationError({
         code: "MISSION_FENCING_REJECTED",
@@ -69,7 +72,7 @@ export function createMissionExecutionEventProjector(options: {
       if (operation?.kind !== "send" && operation?.kind !== "steer") return;
       await append(mission.id, executionId, "run.started", {});
     },
-    async terminal({ mission, executionId, status, result, error }) {
+    async terminal({ mission, executionId, status, result, error, guard }) {
       const snapshot = await options.controller.readSnapshot({ missionId: mission.id });
       const linked = snapshot.events.some(
         (event) =>
@@ -79,27 +82,39 @@ export function createMissionExecutionEventProjector(options: {
       // A Core Execution can outlive the Desktop write that originally linked
       // it. Re-establish the missing anchor before its terminal event so the
       // Local Host projection can always recover from that partial commit.
-      if (!linked) await append(mission.id, executionId, "run.started", {});
+      if (!linked) await append(mission.id, executionId, "run.started", {}, guard);
       if (status === "succeeded") {
         const parsedResult = JsonValueSchema.safeParse(result);
-        await append(mission.id, executionId, "run.succeeded", {
-          result: parsedResult.success ? parsedResult.data : null,
-        });
+        await append(
+          mission.id,
+          executionId,
+          "run.succeeded",
+          {
+            result: parsedResult.success ? parsedResult.data : null,
+          },
+          guard,
+        );
         return;
       }
       if (status === "cancelled") {
-        await append(mission.id, executionId, "run.interrupted", {});
+        await append(mission.id, executionId, "run.interrupted", {}, guard);
         return;
       }
-      await append(mission.id, executionId, "run.failed", {
-        error: createIntegrationError({
-          code: "EXECUTION_FAILED",
-          category: "execution",
-          retryable: true,
-          message: error instanceof Error ? error.message : String(error ?? "Execution failed"),
-          details: { missionId: mission.id, executionId },
-        }),
-      });
+      await append(
+        mission.id,
+        executionId,
+        "run.failed",
+        {
+          error: createIntegrationError({
+            code: "EXECUTION_FAILED",
+            category: "execution",
+            retryable: true,
+            message: error instanceof Error ? error.message : String(error ?? "Execution failed"),
+            details: { missionId: mission.id, executionId },
+          }),
+        },
+        guard,
+      );
     },
   };
 }

@@ -21,6 +21,8 @@ import type {
   AutomationSummary,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
+  ExpertDefinition,
+  ExpertSummary,
   KnowledgeSyncOverview,
 } from "../../../../shared/contracts/index.ts";
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
@@ -58,7 +60,7 @@ import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
 import { SquareDirectoryFragment } from "./SquareDirectoryFragment.tsx";
-import { DownloadSimple, Storefront, UploadSimple } from "@phosphor-icons/react";
+import { DownloadSimple, Storefront, UploadSimple, User } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
@@ -75,6 +77,52 @@ import {
 
 export interface StudioPageMemoryState {
   readonly activeView: StudioView;
+  readonly experts?: readonly ExpertRecord[] | undefined;
+}
+
+export function mergeLoadedExperts(
+  summaries: readonly ExpertSummary[],
+  definitions: readonly PromiseSettledResult<ExpertDefinition>[],
+  cached: readonly ExpertRecord[],
+): readonly ExpertRecord[] {
+  const cachedByRef = new Map(
+    cached.flatMap((expert) => (expert.ref === undefined ? [] : [[expert.ref, expert] as const])),
+  );
+  return summaries.flatMap((summary, index) => {
+    const definition = definitions[index];
+    if (definition?.status === "fulfilled") return [toExpertRecord(definition.value)];
+    const previous = cachedByRef.get(summary.ref);
+    return [previous ?? toUnavailableExpertRecord(summary)];
+  });
+}
+
+function toUnavailableExpertRecord(summary: ExpertSummary): ExpertRecord {
+  return {
+    id: summary.id,
+    ref: summary.ref,
+    name: summary.name,
+    avatarId: summary.avatarId,
+    description: summary.description,
+    tags: summary.tags,
+    scope: summary.scope,
+    instructions: "",
+    additionalInstructions: "",
+    origin: summary.origin,
+    readOnly: summary.readOnly,
+    customized: summary.customized,
+    model: null,
+    capabilities: [],
+    toolApprovals: {},
+    skills: 0,
+    tools: 0,
+    mcpServers: 0,
+    contextStoreMounts: [],
+    resourceTools: [],
+    plugins: [],
+    usesApproval: false,
+    icon: User,
+    definitionUnavailable: true,
+  };
 }
 
 export function StudioPage(props: {
@@ -108,8 +156,14 @@ export function StudioPage(props: {
     | "resource-edit"
     | "create"
   >(props.initialRevisionStoreId === undefined ? "directory" : "context-store-revisions");
-  const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
-  const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
+  const [experts, setExperts] = useState<readonly ExpertRecord[]>(
+    props.initialMemoryState?.experts ?? [],
+  );
+  const [expertsLoading, setExpertsLoading] = useState(true);
+  const [expertsLoadFailed, setExpertsLoadFailed] = useState(false);
+  const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(
+    props.initialMemoryState?.experts?.[0] ?? null,
+  );
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
   const [expertEditor, setExpertEditor] = useState<{
     readonly mode: ExpertEditorMode;
@@ -163,8 +217,8 @@ export function StudioPage(props: {
   const resourceSaveCompletedRef = useRef(false);
 
   useEffect(() => {
-    props.onMemoryStateChange?.({ activeView });
-  }, [activeView, props.onMemoryStateChange]);
+    props.onMemoryStateChange?.({ activeView, experts });
+  }, [activeView, experts, props.onMemoryStateChange]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -173,17 +227,35 @@ export function StudioPage(props: {
     void (async () => {
       try {
         const summaries = await api.listExperts();
-        const definitions = await Promise.all(
+        const definitions = await Promise.allSettled(
           summaries.map((summary) => api.getExpert(summary.ref)),
         );
-        const storedExperts = definitions.map(toExpertRecord);
         if (cancelled) return;
-        setExperts(storedExperts);
-        setSelectedExpert(storedExperts[0] ?? null);
-        setExpertError(null);
+        const firstFailure = definitions.find(
+          (definition): definition is PromiseRejectedResult => definition.status === "rejected",
+        );
+        const merged = mergeLoadedExperts(
+          summaries,
+          definitions,
+          props.initialMemoryState?.experts ?? [],
+        );
+        setExperts(merged);
+        setSelectedExpert((selected) =>
+          selected === null
+            ? (merged[0] ?? null)
+            : (merged.find((expert) => expert.ref === selected.ref) ?? merged[0] ?? null),
+        );
+        setExpertsLoadFailed(
+          firstFailure !== undefined &&
+            definitions.every((definition) => definition.status === "rejected"),
+        );
+        setExpertError(firstFailure === undefined ? null : errorMessage(firstFailure.reason));
       } catch (loadError) {
         if (cancelled) return;
+        setExpertsLoadFailed(true);
         setExpertError(errorMessage(loadError));
+      } finally {
+        if (!cancelled) setExpertsLoading(false);
       }
     })();
     void api
@@ -670,9 +742,11 @@ export function StudioPage(props: {
       api.listPlugins(),
       api.getRuntimeAvailability(),
     ]);
-    const definitions = await Promise.all(summaries.map((summary) => api.getExpert(summary.ref)));
+    const definitions = await Promise.allSettled(
+      summaries.map((summary) => api.getExpert(summary.ref)),
+    );
     setProject(nextProject);
-    setExperts(definitions.map(toExpertRecord));
+    setExperts((current) => mergeLoadedExperts(summaries, definitions, current));
     setCapabilities(nextCapabilities);
     setContextStores(nextStores);
     setContextStoreBindings(nextBindings);
@@ -854,6 +928,8 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "experts" ? (
           <ExpertDirectoryFragment
             experts={experts}
+            loading={expertsLoading}
+            loadFailed={expertsLoadFailed}
             onCreate={() => openCreate()}
             onOpen={(expert) => {
               setExpertDetailReturn(null);

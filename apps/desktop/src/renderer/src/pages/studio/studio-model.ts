@@ -53,6 +53,7 @@ export type ExpertRecord = {
   readonly plugins: ExpertDefinition["plugins"];
   readonly usesApproval: boolean;
   readonly icon: Icon;
+  readonly definitionUnavailable?: boolean | undefined;
   readonly persisted?: ExpertDefinition | undefined;
 };
 

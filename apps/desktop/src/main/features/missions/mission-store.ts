@@ -1925,6 +1925,7 @@ function toMissionSummary(mission: Mission, source: MissionSummary["source"]): M
       ? {}
       : {
           execution: {
+            id: mission.execution.id,
             status: mission.execution.status,
             ...(mission.execution.waitReason === undefined
               ? {}

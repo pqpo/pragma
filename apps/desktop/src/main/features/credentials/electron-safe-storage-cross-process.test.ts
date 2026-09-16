@@ -63,7 +63,7 @@ describe.runIf(process.platform === "darwin")("real Electron safeStorage migrati
 
       const writer = await invokeElectron(bundle, "write", root);
       expect(writer.exitCode).toBe(0);
-      expect(writer.stderr).toBe("");
+      expectNoUnexpectedElectronStderr(writer.stderr);
       expect(JSON.parse(writer.stdout)).toMatchObject({
         action: "write",
         safeStorage: "available",
@@ -80,7 +80,7 @@ describe.runIf(process.platform === "darwin")("real Electron safeStorage migrati
 
       const migrator = await invokeElectron(bundle, "migrate", root);
       expect(migrator.exitCode).toBe(0);
-      expect(migrator.stderr).toBe("");
+      expectNoUnexpectedElectronStderr(migrator.stderr);
       expect(JSON.parse(migrator.stdout)).toMatchObject({
         action: "migrate",
         safeStorage: "available",
@@ -124,7 +124,7 @@ describe.runIf(process.platform === "darwin")("real Electron safeStorage migrati
       if (bundleReady) {
         const cleanup = await invokeElectron(bundle, "cleanup", root);
         expect(cleanup.exitCode).toBe(0);
-        expect(cleanup.stderr).toBe("");
+        expectNoUnexpectedElectronStderr(cleanup.stderr);
       }
     }
   }, 120_000);
@@ -181,6 +181,21 @@ function invoke(
 
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function expectNoUnexpectedElectronStderr(stderr: string): void {
+  const unexpected = stderr
+    .split(/\r?\n/u)
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !/^\d{4}-\d{2}-\d{2} .* Electron\[\d+:\d+\] TISFileInterrogator /u.test(line) &&
+        !/^Keyboard Layouts: duplicate keyboard layout identifier -?\d+\.$/u.test(line) &&
+        !/^Keyboard Layouts: keyboard layout identifier -?\d+ has been replaced with -?\d+\.$/u.test(
+          line,
+        ),
+    );
+  expect(unexpected).toEqual([]);
 }
 
 interface ProcessResult {

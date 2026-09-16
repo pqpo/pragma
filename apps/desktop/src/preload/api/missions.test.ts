@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   invokeMutation: vi.fn(),
+  on: vi.fn(),
+  removeListener: vi.fn(),
 }));
 
-vi.mock("electron", () => ({ ipcRenderer: { invoke: mocks.invoke } }));
+vi.mock("electron", () => ({
+  ipcRenderer: { invoke: mocks.invoke, on: mocks.on, removeListener: mocks.removeListener },
+}));
 vi.mock("../invoke-mutation.ts", () => ({ invokeMutation: mocks.invokeMutation }));
 
 import { missionsApi } from "./missions.ts";
@@ -14,6 +18,38 @@ describe("missionsApi", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();
     mocks.invokeMutation.mockReset();
+    mocks.on.mockReset();
+    mocks.removeListener.mockReset();
+  });
+
+  it("validates direct Mission status deltas before forwarding them", () => {
+    const listener = vi.fn();
+    const unsubscribe = missionsApi.subscribeMissionStatusUpdates(listener);
+    const handler = mocks.on.mock.calls[0]?.[1] as
+      ((event: unknown, value: unknown) => void) | undefined;
+    expect(mocks.on).toHaveBeenCalledWith("missions:status:updated", expect.any(Function));
+
+    handler?.(
+      {},
+      {
+        missionId: "00000000-0000-4000-8000-000000000001",
+        revision: 3,
+        execution: {
+          id: "00000000-0000-4000-8000-000000000002",
+          status: "succeeded",
+        },
+      },
+    );
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revision: 3,
+        execution: { id: expect.any(String), status: "succeeded" },
+      }),
+    );
+    expect(() => handler?.({}, { missionId: "bad", revision: 0 })).toThrow();
+
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith("missions:status:updated", handler);
   });
 
   it("validates a detail-only Mission source from the Host", async () => {
