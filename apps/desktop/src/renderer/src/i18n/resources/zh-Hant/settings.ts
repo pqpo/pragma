@@ -20,7 +20,7 @@ export const settings = {
   bundleSources: {
     navigation: "Bundle 來源",
     title: "Bundle 來源",
-    description: "加入遵循 Pragma Bundle Source 格式的 Git 倉庫。私有倉庫使用系統 Git 憑證。",
+    description: "加入遵循 Pragma Bundle Source 格式的 Git 倉庫。",
     name: "來源名稱",
     remote: "Git 遠端位址",
     ref: "分支或標籤（選填）",

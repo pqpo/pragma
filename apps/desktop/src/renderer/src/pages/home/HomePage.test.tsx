@@ -197,6 +197,7 @@ describe("MissionModelOverrideControls", () => {
 
     expect(html).toContain("DeepSeek Model · High");
     expect(html).toContain("mission-model-control");
+    expect(html.match(/<svg/g)).toHaveLength(1);
     expect(html).not.toContain("Default model");
     expect(html).not.toContain("Default thinking depth");
     expect(html).not.toContain("runtimeId");

@@ -1,4 +1,4 @@
-import { Brain, CaretDown, CaretRight, Check } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, Check } from "@phosphor-icons/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -329,7 +329,6 @@ export function MissionModelOverrideControls(props: {
           setOpen((current) => !current);
         }}
       >
-        <Brain size={16} aria-hidden="true" />
         <span className="mission-model-control-value">{`${modelLabel} · ${thinkingLabel}`}</span>
         <CaretDown size={13} aria-hidden="true" />
       </button>

@@ -22,7 +22,7 @@ export const settings = {
     navigation: "Bundle Sources",
     title: "Bundle Sources",
     description:
-      "Add Git repositories that follow the Pragma Bundle Source format. Private repositories use your system Git credentials.",
+      "Add Git repositories that follow the Pragma Bundle Source format. ",
     name: "Source name",
     remote: "Git remote",
     ref: "Branch or tag (optional)",

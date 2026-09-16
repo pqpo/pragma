@@ -276,7 +276,6 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
           <div>
             <h2 id="runtimes-panel-heading">{t("runtimes.title", { ns: "settings" })}</h2>
             <p>{t("runtimes.description", { ns: "settings" })}</p>
-            <RuntimeProcessEnvironmentSummary status={environmentStatus} />
           </div>
           <button
             className="secondary-button"

@@ -121,9 +121,9 @@ export function BundleRegistrySourcesFragment() {
       labelledBy="bundle-sources-heading"
       className="bundle-registry-settings"
       header={
-        <header className="bundle-source-heading">
+        <header className="panel-heading panel-heading-with-action bundle-source-heading">
           <div>
-            <h1 id="bundle-sources-heading">{t("bundleSources.title")}</h1>
+            <h2 id="bundle-sources-heading">{t("bundleSources.title")}</h2>
             <p>{t("bundleSources.description")}</p>
           </div>
           <button

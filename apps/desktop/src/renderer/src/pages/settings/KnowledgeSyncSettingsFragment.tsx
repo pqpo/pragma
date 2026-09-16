@@ -1,4 +1,4 @@
-import { ArrowsClockwise, GitBranch, Trash } from "@phosphor-icons/react";
+import { ArrowsClockwise, GitBranchIcon, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -52,9 +52,9 @@ export function KnowledgeSyncSettingsFragment() {
       id="knowledge-sync-panel"
       labelledBy="knowledge-sync-heading"
       header={
-        <header className="knowledge-sync-heading">
+        <header className="panel-heading panel-heading-with-action knowledge-sync-heading">
           <div>
-            <h1 id="knowledge-sync-heading">{t("knowledgeSync.title")}</h1>
+            <h2 id="knowledge-sync-heading">{t("knowledgeSync.title")}</h2>
             <p>{t("knowledgeSync.description")}</p>
           </div>
           {overview?.configured ? (
@@ -123,17 +123,9 @@ export function KnowledgeSyncSettingsFragment() {
           />
           {t("knowledgeSync.pushDeletions")}
         </label>
-        <p>{t("knowledgeSync.pushDeletionsHint")}</p>
         {activeError !== undefined ? (
           <p className="form-error" id="knowledge-sync-error" role="alert">
             {activeError}
-          </p>
-        ) : null}
-        {overview?.configured ? (
-          <p>
-            <GitBranch size={16} />{" "}
-            {(overview.resolvedBranch ?? branch) || t("knowledgeSync.defaultBranch")}
-            {overview.revision ? ` · ${overview.revision.slice(0, 8)}` : ""}
           </p>
         ) : null}
         <div className="knowledge-sync-actions">
@@ -154,6 +146,13 @@ export function KnowledgeSyncSettingsFragment() {
               <Trash size={17} aria-hidden="true" />
             </button>
           ) : null}
+          {overview?.configured ? (
+          <p>
+            <GitBranchIcon size={16} />{" "}
+            {(overview.resolvedBranch ?? branch) || t("knowledgeSync.defaultBranch")}
+            {overview.revision ? ` · ${overview.revision.slice(0, 8)}` : ""}
+          </p>
+        ) : null}
         </div>
       </form>
       {(overview?.stores.filter((store) => store.status === "ignored_remote") ?? []).map(
