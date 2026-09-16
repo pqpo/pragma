@@ -1,7 +1,8 @@
 .primary-button,
 .secondary-button,
 .danger-button,
-.text-button {
+.text-button,
+.icon-button {
   display: inline-flex;
   min-height: 36px;
   align-items: center;
@@ -43,17 +44,44 @@
   color: #9d3f34;
 }
 
+.icon-button {
+  flex: 0 0 36px;
+  width: 36px;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--ui-line-strong);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+}
+
+.icon-button:hover:not(:disabled) {
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text);
+}
+
+.icon-button.is-danger {
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+}
+
+.icon-button.is-danger:hover:not(:disabled) {
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+}
+
 .primary-button:focus-visible,
 .secondary-button:focus-visible,
 .danger-button:focus-visible,
-.text-button:focus-visible {
+.text-button:focus-visible,
+.icon-button:focus-visible {
   outline: 2px solid var(--green);
   outline-offset: 2px;
 }
 
 .primary-button:disabled,
 .secondary-button:disabled,
-.danger-button:disabled {
+.danger-button:disabled,
+.icon-button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
@@ -84,6 +112,7 @@
 .secondary-button,
 .danger-button,
 .text-button,
+.icon-button,
 .studio-primary-action,
 .mission-new-button {
   border-radius: var(--ui-radius-md);
@@ -118,7 +147,8 @@
 .primary-button:focus-visible,
 .secondary-button:focus-visible,
 .danger-button:focus-visible,
-.text-button:focus-visible {
+.text-button:focus-visible,
+.icon-button:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 3px var(--ui-focus);
 }

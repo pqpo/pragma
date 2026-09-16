@@ -587,6 +587,16 @@ export function createGitContextStoreSyncProvider(
 ): ContextStoreSyncProvider {
   const repositoryPath = join(cacheRoot, "repository");
 
+  const readRemoteRevision = async (branch: string): Promise<string | undefined> => {
+    const heads = await runGit(repositoryPath, [
+      "ls-remote",
+      "--heads",
+      "origin",
+      `refs/heads/${branch}`,
+    ]);
+    return heads.trim().split(/\s+/u)[0] || undefined;
+  };
+
   const prepare = async (): Promise<{ reference: string; revision?: string }> => {
     await ensureGitRepository(repositoryPath, configuration.remote);
     await installManagedPathAttributes(repositoryPath);
@@ -594,13 +604,7 @@ export function createGitContextStoreSyncProvider(
     const defaultBranch = /^ref: refs\/heads\/([^\s]+)\s+HEAD$/mu.exec(advertised)?.[1];
     const branch = configuration.branch ?? defaultBranch ?? "main";
     await runGit(undefined, ["check-ref-format", "--branch", branch]);
-    const heads = await runGit(repositoryPath, [
-      "ls-remote",
-      "--heads",
-      "origin",
-      `refs/heads/${branch}`,
-    ]);
-    const revision = heads.trim().split(/\s+/u)[0] || undefined;
+    const revision = await readRemoteRevision(branch);
     if (revision !== undefined) {
       await runGit(repositoryPath, [
         "fetch",
@@ -657,14 +661,13 @@ export function createGitContextStoreSyncProvider(
           `${commit}:refs/heads/${prepared.reference}`,
         ]);
       } catch (error) {
-        const message = error instanceof Error ? error.message.toLowerCase() : "";
-        if (
-          message.includes("rejected") ||
-          message.includes("non-fast-forward") ||
-          message.includes("fetch first")
-        ) {
-          return { status: "head_changed" };
+        let currentRevision: string | undefined;
+        try {
+          currentRevision = await readRemoteRevision(prepared.reference);
+        } catch {
+          throw error;
         }
+        if (currentRevision !== prepared.revision) return { status: "head_changed" };
         throw error;
       }
       await runGit(repositoryPath, ["checkout", "--detach", "--force", commit]);
@@ -1073,6 +1076,12 @@ function syncErrorCode(error: unknown): string {
   if (isNodeError(error, "ENOENT") || message.includes("not found")) return "git_unavailable";
   if (message.includes("permission denied") || message.includes("authentication"))
     return "git_auth_failed";
+  if (
+    message.includes("remote rejected") ||
+    message.includes("pre-receive hook declined") ||
+    message.includes("protected branch")
+  )
+    return "git_push_rejected";
   if (message.includes("manifest") || message.includes("schema") || error instanceof z.ZodError)
     return "sync_protocol_invalid";
   if (error instanceof KnowledgeSyncRetryError) return "remote_changed_too_often";

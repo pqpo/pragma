@@ -419,6 +419,34 @@ describe("knowledge sync service", () => {
     expect(overview.errorMessage?.length).toBeLessThanOrEqual(2_000);
   });
 
+  it("reports a rejected push without retrying it as a remote change", async () => {
+    let publishCount = 0;
+    const provider: ContextStoreSyncProvider = {
+      async readHead() {
+        return { revision: "stable", reference: "main", repository: { stores: new Map() } };
+      },
+      async publish() {
+        publishCount += 1;
+        throw new Error("[remote rejected] main -> main (protected branch)");
+      },
+    };
+    const { stores, service } = await fixture(provider);
+    await stores.createFromSnapshot({
+      id: localStoreId,
+      name: "Local",
+      description: "Local description",
+      files: remoteStore(localStoreId, "Local", "# Local\n").files,
+      author: "import",
+      summary: "Create local fixture.",
+    });
+
+    const overview = await configure(service);
+
+    expect(publishCount).toBe(1);
+    expect(overview).toMatchObject({ status: "error", errorCode: "git_push_rejected" });
+    expect(overview.errorMessage).toContain("protected branch");
+  });
+
   it("truncates provider failures to the public error-message limit", async () => {
     const memory = memoryProvider([]);
     const { service } = await fixture(memory.provider);
@@ -502,6 +530,36 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
     expect(await readFile(join(checkout, "pragma-knowledge-sync.yaml"), "utf8")).toContain(
       "pragma.knowledge-sync/v1",
     );
+  });
+
+  it("preserves the server rejection instead of misreporting a remote head change", async () => {
+    const root = await temporaryRoot();
+    const remote = join(root, "remote");
+    await git(undefined, "init", "--initial-branch=main", remote);
+    await git(remote, "config", "user.name", "Fixture");
+    await git(remote, "config", "user.email", "fixture@example.test");
+    await writeFile(join(remote, "README.md"), "Protected repository content.\n", "utf8");
+    await git(remote, "add", "README.md");
+    await git(remote, "commit", "-m", "Seed repository");
+
+    const configuration = {
+      schemaVersion: "pragma.knowledge-sync-settings/v1",
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    } satisfies KnowledgeSyncConfiguration;
+    const provider = createGitContextStoreSyncProvider(join(root, "cache"), configuration);
+    const head = await provider.readHead();
+    const store = remoteStore(localStoreId, "Readable", "# Directly readable\n");
+
+    await expect(
+      provider.publish({
+        expectedRevision: head.revision,
+        repository: { stores: new Map([[store.id, store]]) },
+        message: "Publish to a protected branch",
+      }),
+    ).rejects.toThrow(/checked out branch|branch is currently checked out/u);
   });
 
   it("rejects oversized managed Markdown before loading repository content", async () => {

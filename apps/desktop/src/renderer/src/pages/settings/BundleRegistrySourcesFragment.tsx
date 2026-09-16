@@ -159,7 +159,7 @@ export function BundleRegistrySourcesFragment() {
                 </button>
                 {!source.official ? (
                   <button
-                    className="icon-button danger"
+                    className="icon-button is-danger"
                     type="button"
                     aria-label={t("bundleSources.remove", { name: source.name })}
                     disabled={busyId === source.id}
@@ -169,7 +169,7 @@ export function BundleRegistrySourcesFragment() {
                       )
                     }
                   >
-                    <Trash size={17} />
+                    <Trash size={17} aria-hidden="true" />
                   </button>
                 ) : null}
               </div>

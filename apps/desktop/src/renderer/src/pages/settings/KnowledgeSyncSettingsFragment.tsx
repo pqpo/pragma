@@ -142,7 +142,7 @@ export function KnowledgeSyncSettingsFragment() {
           </button>
           {overview?.configured ? (
             <button
-              className="icon-button danger"
+              className="icon-button is-danger"
               type="button"
               aria-label={t("knowledgeSync.remove")}
               title={t("knowledgeSync.remove")}
@@ -151,7 +151,7 @@ export function KnowledgeSyncSettingsFragment() {
                 void run(() => window.pragmaDesktop.removeKnowledgeSyncConfiguration())
               }
             >
-              <Trash size={17} />
+              <Trash size={17} aria-hidden="true" />
             </button>
           ) : null}
         </div>
