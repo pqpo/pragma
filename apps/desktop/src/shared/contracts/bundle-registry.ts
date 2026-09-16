@@ -54,6 +54,7 @@ export const DesktopBundleRegistrySourcesSchema = z
   .object({
     schemaVersion: z.literal("pragma.desktop-bundle-registry-sources/v1"),
     sources: z.array(DesktopBundleRegistrySourceSchema).max(100),
+    dismissedOfficialSourceIds: z.array(z.string().uuid()).max(100).optional(),
   })
   .strict();
 
@@ -81,6 +82,7 @@ export const UpdateDesktopBundleRegistrySourceSchema = z
   .object({
     sourceId: z.string().uuid(),
     name: z.string().trim().min(1).max(200).optional(),
+    remote: DesktopBundleRegistryRemoteSchema.optional(),
     ref: DesktopBundleRegistryRefSchema.nullable().optional(),
     enabled: z.boolean().optional(),
     order: z.number().int().nonnegative().optional(),
@@ -146,12 +148,22 @@ export const DesktopSquareBundleDownloadSchema = z
   })
   .strict();
 
-export const DesktopBundleRegistrySnapshotSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v3"),
-    commit: z.string().regex(/^[a-f0-9]{40,64}$/),
-    syncedAt: z.string().datetime(),
-    manifest: BundleSourceManifestSchema,
-    items: z.array(BundleSourceItemSummarySchema),
-  })
-  .strict();
+export const DesktopBundleRegistrySnapshotSchema = z.union([
+  z
+    .object({
+      schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v3"),
+      commit: z.string().regex(/^[a-f0-9]{40,64}$/),
+      syncedAt: z.string().datetime(),
+      manifest: BundleSourceManifestSchema,
+      items: z.array(BundleSourceItemSummarySchema),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v3"),
+      empty: z.literal(true),
+      syncedAt: z.string().datetime(),
+      items: z.array(BundleSourceItemSummarySchema).max(0),
+    })
+    .strict(),
+]);

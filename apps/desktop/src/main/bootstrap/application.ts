@@ -91,6 +91,10 @@ export function startDesktopApplication(): void {
           sendRuntimeModelCatalogUpdate: windows.sendRuntimeModelCatalogUpdate,
           trashItem: async (path) => await shell.trashItem(path),
           activateLogging: logging.activate,
+          officialBundleRegistrySource: {
+            name: "官方源",
+            remote: "git@github.com:pqpo/awesome-pragma.git",
+          },
         }),
       createWindow: windows.createWindow,
       onContainerReady: (created) => {

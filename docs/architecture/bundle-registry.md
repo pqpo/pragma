@@ -94,7 +94,12 @@ node scripts/validate-bundle-source.mjs /path/to/source
 Desktop 对每个启用源执行 shallow fetch + partial clone，锁定 `FETCH_HEAD` commit。刷新时通过
 `git ls-tree` 校验文件模式和路径，只读取 `pragma-source.yaml` 与 `config.yaml` blob；不会读取
 `.pragma`。成功后保存包含 manifest 和 items 的可重建快照。新 commit 无效时保留上一快照并标记
-stale。
+stale。空 Git 仓库也可以配置为 Source，并以零条目的可用状态展示；仓库产生首次提交后，后续刷新会
+按正常 Source 协议发现内容。修改已有 Source 的远端或 ref 时，Desktop 先在隔离缓存中验证新配置，
+验证成功后才替换现有配置和快照。
+
+Desktop 默认提供名称为“官方源”的 `git@github.com:pqpo/awesome-pragma.git`。它与用户添加的 Source
+一样可以删除；删除决定持久化到本机配置，后续启动不会自动恢复。所有 Source 删除都必须经用户确认。
 
 用户选择版本后，Desktop 才从该固定 commit 流式读取 `bundle.pragma`，实施大小限制，并由 Bundle
 decoder 校验内部文件哈希、fingerprint 和协议。随后核对 config 的 rootRef 与根资源类型，再把缓存

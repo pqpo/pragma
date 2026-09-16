@@ -1,9 +1,9 @@
-import { ArrowsClockwise, GitBranch, Plus, Trash } from "@phosphor-icons/react";
+import { ArrowsClockwise, GitBranch, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { DesktopBundleRegistrySourceStatus } from "../../../../shared/contracts/index.ts";
-import { Dialog } from "../../components/Dialog.tsx";
+import { ConfirmationDialog, Dialog } from "../../components/Dialog.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { desktopApi } from "../studio/studio-model.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
@@ -15,9 +15,13 @@ export function BundleRegistrySourcesFragment() {
   const [remote, setRemote] = useState("");
   const [ref, setRef] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DesktopBundleRegistrySourceStatus | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const reload = async () => {
@@ -30,26 +34,36 @@ export function BundleRegistrySourcesFragment() {
     void reload().catch((cause: unknown) => setError(errorMessage(cause)));
   }, []);
 
-  const addSource = async () => {
+  const saveSource = async () => {
     const api = desktopApi();
     if (api === undefined || name.trim() === "" || remote.trim() === "") return;
-    setAdding(true);
+    setSubmitting(true);
     setAddError(null);
     try {
-      await api.addBundleRegistrySource({
-        name,
-        remote,
-        ...(ref.trim() === "" ? {} : { ref }),
-      });
+      if (editingSourceId === null) {
+        await api.addBundleRegistrySource({
+          name,
+          remote,
+          ...(ref.trim() === "" ? {} : { ref }),
+        });
+      } else {
+        await api.updateBundleRegistrySource({
+          sourceId: editingSourceId,
+          name,
+          remote,
+          ref: ref.trim() === "" ? null : ref,
+        });
+      }
       setName("");
       setRemote("");
       setRef("");
+      setEditingSourceId(null);
       await reload();
       setAddDialogOpen(false);
     } catch (cause) {
       setAddError(errorMessage(cause));
     } finally {
-      setAdding(false);
+      setSubmitting(false);
     }
   };
 
@@ -72,6 +86,33 @@ export function BundleRegistrySourcesFragment() {
     setName("");
     setRemote("");
     setRef("");
+    setEditingSourceId(null);
+  };
+
+  const openEditDialog = (source: DesktopBundleRegistrySourceStatus) => {
+    setName(source.name);
+    setRemote(source.remote);
+    setRef(source.ref ?? "");
+    setEditingSourceId(source.id);
+    setAddError(null);
+    setAddDialogOpen(true);
+  };
+
+  const removeSource = async () => {
+    const source = pendingDelete;
+    if (source === null) return;
+    setBusyId(source.id);
+    setError(null);
+    try {
+      await window.pragmaDesktop.removeBundleRegistrySource({ sourceId: source.id });
+      setPendingDelete(null);
+      await reload();
+    } catch (cause) {
+      setPendingDelete(null);
+      setError(errorMessage(cause));
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -89,6 +130,10 @@ export function BundleRegistrySourcesFragment() {
             className="primary-button"
             type="button"
             onClick={() => {
+              setEditingSourceId(null);
+              setName("");
+              setRemote("");
+              setRef("");
               setAddError(null);
               setAddDialogOpen(true);
             }}
@@ -120,7 +165,9 @@ export function BundleRegistrySourcesFragment() {
                 <code>{source.remote}</code>
                 <small>
                   {source.commit === undefined
-                    ? t("bundleSources.notSynced")
+                    ? source.status === "ready" && source.itemCount === 0
+                      ? t("bundleSources.emptyRepository")
+                      : t("bundleSources.notSynced")
                     : t("bundleSources.synced", {
                         count: source.itemCount ?? 0,
                         commit: source.commit.slice(0, 8),
@@ -159,19 +206,24 @@ export function BundleRegistrySourcesFragment() {
                 </button>
                 {!source.official ? (
                   <button
-                    className="icon-button is-danger"
+                    className="icon-button"
                     type="button"
-                    aria-label={t("bundleSources.remove", { name: source.name })}
+                    aria-label={t("bundleSources.edit", { name: source.name })}
                     disabled={busyId === source.id}
-                    onClick={() =>
-                      void mutate(source.id, () =>
-                        window.pragmaDesktop.removeBundleRegistrySource({ sourceId: source.id }),
-                      )
-                    }
+                    onClick={() => openEditDialog(source)}
                   >
-                    <Trash size={17} aria-hidden="true" />
+                    <PencilSimple size={17} aria-hidden="true" />
                   </button>
                 ) : null}
+                <button
+                  className="icon-button is-danger"
+                  type="button"
+                  aria-label={t("bundleSources.remove", { name: source.name })}
+                  disabled={busyId === source.id}
+                  onClick={() => setPendingDelete(source)}
+                >
+                  <Trash size={17} aria-hidden="true" />
+                </button>
               </div>
             </article>
           ))
@@ -180,16 +232,20 @@ export function BundleRegistrySourcesFragment() {
       {addDialogOpen ? (
         <Dialog
           className="bundle-source-dialog"
-          title={t("bundleSources.addTitle")}
-          description={t("bundleSources.addDescription")}
-          busy={adding}
+          title={t(editingSourceId === null ? "bundleSources.addTitle" : "bundleSources.editTitle")}
+          description={t(
+            editingSourceId === null
+              ? "bundleSources.addDescription"
+              : "bundleSources.editDescription",
+          )}
+          busy={submitting}
           onCancel={closeAddDialog}
           footer={
             <>
               <button
                 className="secondary-button"
                 type="button"
-                disabled={adding}
+                disabled={submitting}
                 onClick={closeAddDialog}
               >
                 {t("bundleSources.cancel")}
@@ -198,10 +254,16 @@ export function BundleRegistrySourcesFragment() {
                 className="primary-button"
                 type="submit"
                 form="bundle-source-add-form"
-                disabled={adding}
+                disabled={submitting}
               >
-                <Plus size={17} />
-                {adding ? t("bundleSources.validating") : t("bundleSources.add")}
+                {editingSourceId === null ? <Plus size={17} /> : null}
+                {submitting
+                  ? t(
+                      editingSourceId === null
+                        ? "bundleSources.validating"
+                        : "bundleSources.saving",
+                    )
+                  : t(editingSourceId === null ? "bundleSources.add" : "bundleSources.save")}
               </button>
             </>
           }
@@ -211,14 +273,14 @@ export function BundleRegistrySourcesFragment() {
             className="bundle-source-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void addSource();
+              void saveSource();
             }}
           >
             <label>
               <span>{t("bundleSources.name")}</span>
               <input
                 value={name}
-                disabled={adding}
+                disabled={submitting}
                 data-dialog-initial-focus
                 onChange={(event) => setName(event.target.value)}
                 required
@@ -228,7 +290,7 @@ export function BundleRegistrySourcesFragment() {
               <span>{t("bundleSources.remote")}</span>
               <input
                 value={remote}
-                disabled={adding}
+                disabled={submitting}
                 onChange={(event) => setRemote(event.target.value)}
                 placeholder="git@github.com:organization/awesome-pragma.git"
                 required
@@ -238,7 +300,7 @@ export function BundleRegistrySourcesFragment() {
               <span>{t("bundleSources.ref")}</span>
               <input
                 value={ref}
-                disabled={adding}
+                disabled={submitting}
                 onChange={(event) => setRef(event.target.value)}
                 placeholder={t("bundleSources.refPlaceholder")}
               />
@@ -246,6 +308,18 @@ export function BundleRegistrySourcesFragment() {
             {addError ? <p className="form-error">{addError}</p> : null}
           </form>
         </Dialog>
+      ) : null}
+      {pendingDelete ? (
+        <ConfirmationDialog
+          title={t("bundleSources.deleteTitle")}
+          description={t("bundleSources.deleteDescription", { name: pendingDelete.name })}
+          cancelLabel={t("bundleSources.cancel")}
+          confirmLabel={t("bundleSources.deleteConfirm")}
+          busyLabel={t("bundleSources.deleting")}
+          busy={busyId === pendingDelete.id}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void removeSource()}
+        />
       ) : null}
     </SettingsScreenFrame>
   );

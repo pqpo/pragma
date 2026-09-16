@@ -103,6 +103,7 @@ export function createDesktopBundleRegistrySourceService(options: {
     await writeJsonAtomically(options.sourcesPath, {
       schemaVersion: "pragma.desktop-bundle-registry-sources/v1",
       sources: sources.sources,
+      dismissedOfficialSourceIds: sources.dismissedOfficialSourceIds ?? [],
     });
   };
 
@@ -126,7 +127,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       ...(snapshot === undefined
         ? { errorCode: "source_not_synced", errorMessage: "This source has not been synced." }
         : {
-            commit: snapshot.commit,
+            ...(isEmptySnapshot(snapshot) ? {} : { commit: snapshot.commit }),
             syncedAt: snapshot.syncedAt,
             itemCount: snapshot.items.length,
           }),
@@ -139,15 +140,36 @@ export function createDesktopBundleRegistrySourceService(options: {
     try {
       const repositoryPath = join(repositoriesRoot, source.id);
       await ensureRepository(repositoryPath, source.remote);
-      await runGit(repositoryPath, [
-        "fetch",
-        "--force",
-        "--prune",
-        "--depth=1",
-        "--filter=blob:none",
-        "origin",
-        source.ref ?? "HEAD",
-      ]);
+      try {
+        await runGit(repositoryPath, [
+          "fetch",
+          "--force",
+          "--prune",
+          "--depth=1",
+          "--filter=blob:none",
+          "origin",
+          source.ref ?? "HEAD",
+        ]);
+      } catch (error) {
+        if (!isMissingRemoteRef(error)) throw error;
+        const advertisedRefs = await runGit(repositoryPath, ["ls-remote", "origin"]);
+        if (advertisedRefs.trim() !== "") throw error;
+        const snapshot = DesktopBundleRegistrySnapshotSchema.parse({
+          schemaVersion: "pragma.desktop-bundle-source-snapshot/v3",
+          empty: true,
+          syncedAt: new Date().toISOString(),
+          items: [],
+        });
+        await writeJsonAtomically(snapshotPath(snapshotsRoot, source.id), snapshot);
+        const status: DesktopBundleRegistrySourceStatus = {
+          ...source,
+          status: "ready",
+          syncedAt: snapshot.syncedAt,
+          itemCount: 0,
+        };
+        transientStatuses.set(source.id, status);
+        return status;
+      }
       const commit = (await runGit(repositoryPath, ["rev-parse", "FETCH_HEAD"])).trim();
       const manifest = parseBundleSourceManifest(
         parse(await readGitBlob(repositoryPath, commit, "pragma-source.yaml", CONFIG_BLOB_LIMIT)),
@@ -190,7 +212,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         ...(previous === undefined
           ? {}
           : {
-              commit: previous.commit,
+              ...(isEmptySnapshot(previous) ? {} : { commit: previous.commit }),
               syncedAt: previous.syncedAt,
               itemCount: previous.items.length,
             }),
@@ -261,42 +283,93 @@ export function createDesktopBundleRegistrySourceService(options: {
       return status;
     },
     async updateSource(input) {
-      let updated: StoredSource | undefined;
-      await withFileLock(lockPath, async () => {
-        const current = await readSources();
-        const source = current.sources.find((candidate) => candidate.id === input.sourceId);
-        if (source === undefined) throw new Error("Bundle Source was not found.");
-        updated = {
-          ...source,
-          name: input.name ?? source.name,
-          enabled: input.enabled ?? source.enabled,
-          order: input.order ?? source.order,
-          ...(input.ref === null
-            ? { ref: undefined }
-            : input.ref === undefined
-              ? {}
-              : { ref: input.ref }),
-        };
-        await writeSources({
-          ...current,
-          sources: current.sources.map((candidate) =>
-            candidate.id === input.sourceId ? updated! : candidate,
-          ),
+      if (input.remote !== undefined) assertSafeRemote(input.remote);
+      const current = await readSources();
+      const source = current.sources.find((candidate) => candidate.id === input.sourceId);
+      if (source === undefined) throw new Error("Bundle Source was not found.");
+      if (
+        source.official &&
+        (input.name !== undefined || input.remote !== undefined || input.ref !== undefined)
+      ) {
+        throw new Error("The official Bundle Source configuration cannot be edited.");
+      }
+      const updated: StoredSource = {
+        ...source,
+        name: input.name ?? source.name,
+        remote: input.remote ?? source.remote,
+        enabled: input.enabled ?? source.enabled,
+        order: input.order ?? source.order,
+        ...(input.ref === null
+          ? { ref: undefined }
+          : input.ref === undefined
+            ? {}
+            : { ref: input.ref }),
+      };
+      assertRemoteIsUnique(current.sources, updated.remote, updated.id);
+      const sourceLocationChanged =
+        canonicalRemote(updated.remote) !== canonicalRemote(source.remote) ||
+        updated.ref !== source.ref;
+
+      if (!sourceLocationChanged) {
+        await withFileLock(lockPath, async () => {
+          const latest = await readSources();
+          assertSourceUnchanged(latest.sources, source);
+          assertRemoteIsUnique(latest.sources, updated.remote, updated.id);
+          await writeSources({
+            ...latest,
+            sources: latest.sources.map((candidate) =>
+              candidate.id === input.sourceId ? updated : candidate,
+            ),
+          });
         });
-      });
-      if (updated === undefined) throw new Error("Bundle Source update did not complete.");
-      transientStatuses.delete(updated.id);
-      return await statusFor(updated);
+        transientStatuses.delete(updated.id);
+        return await statusFor(updated);
+      }
+
+      const stagingId = randomUUID();
+      const stagedSource = { ...updated, id: stagingId };
+      const stagedStatus = await refresh(stagedSource);
+      try {
+        if (stagedStatus.status === "error") {
+          throw new Error(stagedStatus.errorMessage ?? "Bundle Source validation failed.");
+        }
+        await withFileLock(lockPath, async () => {
+          const latest = await readSources();
+          assertSourceUnchanged(latest.sources, source);
+          assertRemoteIsUnique(latest.sources, updated.remote, updated.id);
+          await rm(snapshotPath(snapshotsRoot, updated.id), { force: true });
+          await rm(join(repositoriesRoot, updated.id), { recursive: true, force: true });
+          await writeSources({
+            ...latest,
+            sources: latest.sources.map((candidate) =>
+              candidate.id === input.sourceId ? updated : candidate,
+            ),
+          });
+          await rename(join(repositoriesRoot, stagingId), join(repositoriesRoot, updated.id));
+          await rename(
+            snapshotPath(snapshotsRoot, stagingId),
+            snapshotPath(snapshotsRoot, updated.id),
+          );
+        });
+        transientStatuses.delete(updated.id);
+        return { ...stagedStatus, ...updated };
+      } finally {
+        transientStatuses.delete(stagingId);
+        await rm(join(repositoriesRoot, stagingId), { recursive: true, force: true });
+        await rm(snapshotPath(snapshotsRoot, stagingId), { force: true });
+      }
     },
     async removeSource(sourceId) {
       await withFileLock(lockPath, async () => {
         const current = await readSources();
         const source = current.sources.find((candidate) => candidate.id === sourceId);
-        if (source?.official === true)
-          throw new Error("The official Bundle Source cannot be removed.");
+        if (source === undefined) throw new Error("Bundle Source was not found.");
         await writeSources({
           ...current,
           sources: current.sources.filter((candidate) => candidate.id !== sourceId),
+          dismissedOfficialSourceIds: source.official
+            ? [...new Set([...(current.dismissedOfficialSourceIds ?? []), source.id])]
+            : current.dismissedOfficialSourceIds,
         });
       });
       transientStatuses.delete(sourceId);
@@ -321,7 +394,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       for (const source of sources) {
         if (!source.enabled) continue;
         const snapshot = await readSnapshot(source.id);
-        if (snapshot === undefined) continue;
+        if (snapshot === undefined || isEmptySnapshot(snapshot)) continue;
         items.push(
           ...snapshot.items.map((item) => ({
             ...item,
@@ -347,7 +420,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         (candidate) => candidate.id === input.sourceId,
       );
       const snapshot = await readSnapshot(input.sourceId);
-      if (source === undefined || snapshot === undefined)
+      if (source === undefined || snapshot === undefined || isEmptySnapshot(snapshot))
         throw new Error("Bundle Source is unavailable.");
       const item = findSnapshotItem(snapshot, input);
       return {
@@ -363,7 +436,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         (candidate) => candidate.id === input.sourceId,
       );
       const snapshot = await readSnapshot(input.sourceId);
-      if (source === undefined || snapshot === undefined)
+      if (source === undefined || snapshot === undefined || isEmptySnapshot(snapshot))
         throw new Error("Bundle Source is unavailable.");
       const item = findSnapshotItem(snapshot, input);
       if (!item.versions.includes(input.version))
@@ -525,6 +598,10 @@ function findSnapshotItem(
   return item;
 }
 
+function isEmptySnapshot(snapshot: Snapshot): snapshot is Extract<Snapshot, { empty: true }> {
+  return "empty" in snapshot && snapshot.empty;
+}
+
 async function validateDownloadedBundle(
   path: string,
   item: BundleSourceItemSummary,
@@ -573,7 +650,16 @@ function withOfficialSource(
     });
   }
   const id = officialSourceId(official.remote);
-  const storedOfficial = sources.sources.find((source) => source.official);
+  if (sources.dismissedOfficialSourceIds?.includes(id) === true) {
+    return DesktopBundleRegistrySourcesSchema.parse({
+      ...sources,
+      sources: sources.sources.filter((source) => !source.official),
+    });
+  }
+  const storedOfficial = sources.sources.find(
+    (source) =>
+      source.official || canonicalRemote(source.remote) === canonicalRemote(official.remote),
+  );
   const officialEntry: StoredSource = {
     id,
     name: official.name,
@@ -585,7 +671,13 @@ function withOfficialSource(
   };
   return DesktopBundleRegistrySourcesSchema.parse({
     ...sources,
-    sources: [officialEntry, ...sources.sources.filter((source) => !source.official)],
+    sources: [
+      officialEntry,
+      ...sources.sources.filter(
+        (source) =>
+          !source.official && canonicalRemote(source.remote) !== canonicalRemote(official.remote),
+      ),
+    ],
   });
 }
 
@@ -807,6 +899,31 @@ function canonicalRemote(remote: string): string {
     .toLowerCase();
 }
 
+function assertRemoteIsUnique(
+  sources: StoredSources["sources"],
+  remote: string,
+  sourceId: string,
+): void {
+  if (
+    sources.some(
+      (source) =>
+        source.id !== sourceId && canonicalRemote(source.remote) === canonicalRemote(remote),
+    )
+  ) {
+    throw new Error("This Git Bundle Source is already configured.");
+  }
+}
+
+function assertSourceUnchanged(sources: StoredSources["sources"], expected: StoredSource): void {
+  const current = sources.find((source) => source.id === expected.id);
+  if (current === undefined) throw new Error("Bundle Source was not found.");
+  if (JSON.stringify(current) !== JSON.stringify(expected)) {
+    throw new Error(
+      "Bundle Source changed while the update was being validated. Please try again.",
+    );
+  }
+}
+
 function assertGitObjectPath(path: string): void {
   if (
     path.startsWith("/") ||
@@ -843,6 +960,10 @@ function sourceErrorCode(error: unknown): string {
   if (message.includes("schema") || message.includes("parse") || message.includes("source"))
     return "source_protocol_invalid";
   return "source_sync_failed";
+}
+
+function isMissingRemoteRef(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes("couldn't find remote ref");
 }
 
 function isNodeError(error: unknown, code: string): boolean {

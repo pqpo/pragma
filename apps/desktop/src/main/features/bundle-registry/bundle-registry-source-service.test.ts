@@ -12,6 +12,7 @@ import {
   DesktopBundleRegistryRemoteSchema,
   DesktopSquareBundleDownloadSchema,
   DownloadDesktopSquareBundleSchema,
+  UpdateDesktopBundleRegistrySourceSchema,
 } from "../../../shared/contracts/index.ts";
 import { createDesktopBundleRegistrySourceService } from "./bundle-registry-source-service.ts";
 
@@ -25,27 +26,34 @@ afterEach(async () => {
 });
 
 describe("Desktop Bundle Registry sources", () => {
-  it("persists an official source toggle without trusting persisted official identity", async () => {
+  it("persists an official source toggle and allows the built-in source to be dismissed", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-registry-"));
     temporaryRoots.push(root);
     const options = {
       sourcesPath: join(root, "data", "sources.json"),
       cacheRoot: join(root, "cache"),
       officialSource: {
-        name: "Pragma Official",
-        remote: "https://github.com/example/pragma-registry.git",
+        name: "官方源",
+        remote: "git@github.com:pqpo/awesome-pragma.git",
       },
     } as const;
     const service = createDesktopBundleRegistrySourceService(options);
     const [official] = await service.listSources();
-    expect(official).toMatchObject({ official: true, enabled: true });
+    expect(official).toMatchObject({
+      name: "官方源",
+      remote: "git@github.com:pqpo/awesome-pragma.git",
+      official: true,
+      enabled: true,
+    });
 
     await service.updateSource({ sourceId: official!.id, enabled: false });
     const restarted = createDesktopBundleRegistrySourceService(options);
     await expect(restarted.listSources()).resolves.toEqual([
       expect.objectContaining({ official: true, enabled: false }),
     ]);
-    await expect(restarted.removeSource(official!.id)).rejects.toThrow(/cannot be removed/u);
+    await expect(restarted.removeSource(official!.id)).resolves.toBeUndefined();
+    const afterRemoval = createDesktopBundleRegistrySourceService(options);
+    await expect(afterRemoval.listSources()).resolves.toEqual([]);
 
     const withoutOfficial = createDesktopBundleRegistrySourceService({
       sourcesPath: options.sourcesPath,
@@ -72,6 +80,12 @@ describe("Desktop Bundle Registry sources", () => {
         ref: "--upload-pack=malicious",
       }).success,
     ).toBe(false);
+    expect(
+      UpdateDesktopBundleRegistrySourceSchema.safeParse({
+        sourceId: "11111111-1111-4111-8111-111111111111",
+        remote: "git@gitlab.example:team/updated-registry.git",
+      }).success,
+    ).toBe(true);
   });
 
   it("invalidates the generated Catalog snapshot and keys downloads by source, kind, item, and version", () => {
@@ -101,6 +115,99 @@ describe("Desktop Bundle Registry sources", () => {
         cached: false,
       }),
     ).toMatchObject({ rootRef: "context-store:kqh4nx7rx26mb3e7" });
+  });
+
+  it("configures an empty repository and discovers content after its first commit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-empty-source-"));
+    temporaryRoots.push(root);
+    const remote = join(root, "remote");
+    await mkdir(remote, { recursive: true });
+    await execFileAsync("git", ["-C", remote, "init"]);
+
+    const previous = [
+      process.env.GIT_CONFIG_COUNT,
+      process.env.GIT_CONFIG_KEY_0,
+      process.env.GIT_CONFIG_VALUE_0,
+    ] as const;
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "url.file:///.insteadOf";
+    process.env.GIT_CONFIG_VALUE_0 = "https://pragma-empty-source.test/";
+    try {
+      const options = {
+        sourcesPath: join(root, "data/sources.json"),
+        cacheRoot: join(root, "cache"),
+      } as const;
+      const service = createDesktopBundleRegistrySourceService(options);
+      const status = await service.addSource({
+        name: "Empty Source",
+        remote: `https://pragma-empty-source.test${remote}`,
+      });
+      expect(status).toMatchObject({ status: "ready", itemCount: 0 });
+      expect(status.commit).toBeUndefined();
+      await expect(service.getCatalog()).resolves.toMatchObject({ items: [], categories: [] });
+
+      const restarted = createDesktopBundleRegistrySourceService(options);
+      await expect(restarted.listSources()).resolves.toEqual([
+        expect.objectContaining({ status: "ready", itemCount: 0 }),
+      ]);
+
+      await mkdir(join(remote, "experts/general/reviewer/versions/1.0.0"), { recursive: true });
+      await writeFile(join(remote, "pragma-source.yaml"), sourceManifest(), "utf8");
+      await writeFile(
+        join(remote, "experts/general/reviewer/config.yaml"),
+        sourceItemConfig(),
+        "utf8",
+      );
+      await writeFile(
+        join(remote, "experts/general/reviewer/versions/1.0.0/bundle.pragma"),
+        "intentionally-not-a-bundle",
+      );
+      await commitAll(remote, "Initial source content");
+
+      await expect(restarted.refreshSource(status.id)).resolves.toMatchObject({
+        status: "ready",
+        itemCount: 1,
+        commit: expect.stringMatching(/^[a-f0-9]{40,64}$/u),
+      });
+      await expect(
+        restarted.updateSource({ sourceId: status.id, name: "Invalid Edit", ref: "missing" }),
+      ).rejects.toThrow(/couldn't find remote ref/u);
+      await expect(restarted.listSources()).resolves.toEqual([
+        expect.objectContaining({ name: "Empty Source", remote: expect.any(String) }),
+      ]);
+      await expect(restarted.getCatalog()).resolves.toMatchObject({
+        items: [expect.objectContaining({ id: "reviewer" })],
+      });
+
+      const replacementRemote = join(root, "replacement-remote");
+      await mkdir(replacementRemote, { recursive: true });
+      await execFileAsync("git", ["-C", replacementRemote, "init"]);
+      await expect(
+        restarted.updateSource({
+          sourceId: status.id,
+          name: "Renamed Empty Source",
+          remote: `https://pragma-empty-source.test${replacementRemote}`,
+          ref: null,
+        }),
+      ).resolves.toMatchObject({
+        id: status.id,
+        name: "Renamed Empty Source",
+        status: "ready",
+        itemCount: 0,
+      });
+      await expect(restarted.listSources()).resolves.toEqual([
+        expect.objectContaining({
+          name: "Renamed Empty Source",
+          remote: `https://pragma-empty-source.test${replacementRemote}`,
+          status: "ready",
+          itemCount: 0,
+        }),
+      ]);
+    } finally {
+      restoreEnvironment("GIT_CONFIG_COUNT", previous[0]);
+      restoreEnvironment("GIT_CONFIG_KEY_0", previous[1]);
+      restoreEnvironment("GIT_CONFIG_VALUE_0", previous[2]);
+    }
   });
 
   it("discovers configs without decoding Bundles and falls back to a stale snapshot", async () => {
