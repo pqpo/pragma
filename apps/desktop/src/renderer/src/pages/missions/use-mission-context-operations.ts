@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
-import type { MissionChatSnapshot, PragmaDesktopAPI } from "../../../../shared/contracts/index.ts";
+import type {
+  MissionConversationSnapshot,
+  PragmaDesktopAPI,
+} from "../../../../shared/contracts/index.ts";
 import {
   startMissionContextOperation,
   type LocalMissionContextOperation,
@@ -12,7 +15,7 @@ export function useMissionContextOperations(options: {
   readonly api?: PragmaDesktopAPI | undefined;
   readonly begin: () => string | undefined;
   readonly finish: (token: string) => void;
-  readonly updateChat: Dispatch<SetStateAction<MissionChatSnapshot | null>>;
+  readonly updateChat: Dispatch<SetStateAction<MissionConversationSnapshot | null>>;
   readonly formatError: (error: unknown) => string;
   readonly followLatest: () => void;
 }) {

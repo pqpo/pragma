@@ -13,6 +13,7 @@ export {
   mergeMissionExecutorMetadata,
   missionKnowledgeDraftNamespace,
   missionKnowledgeNamespace,
+  readMissionConversationSnapshot,
   toDesktopHumanRequest,
   type LiveMissionChat,
   type MissionChatNotification,

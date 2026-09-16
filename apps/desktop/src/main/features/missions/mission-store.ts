@@ -172,6 +172,7 @@ export interface MissionStore {
     id: string,
     executionId: string,
     entries: readonly MissionChatEntry[],
+    sourceUpdatedAt?: string,
   ): Promise<void>;
 }
 
@@ -906,13 +907,13 @@ export function createMissionStore(options: {
         }
       });
     },
-    async writeExecutionProjection(id, executionId, entries) {
+    async writeExecutionProjection(id, executionId, entries, sourceUpdatedAt) {
       const parsedId = MissionIdSchema.parse(id);
       await withMissionLock(parsedId, async () => {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
-          await projections.write(parsedId, executionId, entries);
+          await projections.write(parsedId, executionId, entries, sourceUpdatedAt);
         } catch (error) {
           if (error instanceof MissionExecutionProjectionError) {
             throw new MissionStoreError("projection_invalid", error.message);

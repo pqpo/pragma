@@ -10,7 +10,7 @@ import {
 import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
-  MissionChatSnapshot,
+  MissionConversationSnapshot,
   MissionHumanInteraction,
   PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
@@ -34,7 +34,7 @@ export function resolveMissionHumanResponseAttempt(
 export function useMissionHumanInteraction(options: {
   readonly missionId: string;
   readonly api?: PragmaDesktopAPI | undefined;
-  readonly updateChat: Dispatch<SetStateAction<MissionChatSnapshot | null>>;
+  readonly updateChat: Dispatch<SetStateAction<MissionConversationSnapshot | null>>;
   readonly onResponded?: (() => void | Promise<void>) | undefined;
   readonly onError: (error: unknown) => void;
 }) {

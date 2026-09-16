@@ -168,11 +168,14 @@ import {
 import {
   CreateMissionBranchSchema,
   CreateMissionSchema,
-  GetMissionChatSchema,
+  GetMissionChatPageSchema,
   GetMissionWorkConversationSchema,
   MissionChatEntrySchema,
   MissionChatPatchSchema,
-  MissionChatSnapshotSchema,
+  MissionChatPageSchema,
+  MissionContextWindowSnapshotSchema,
+  MissionConversationSnapshotSchema,
+  MissionConversationStateSchema,
   MissionCommandReceiptSchema,
   MissionCommandOutcomeSchema,
   MissionQueueSteerResultSchema,
@@ -613,8 +616,8 @@ export type MissionWorkSnapshot = z.infer<typeof MissionWorkSnapshotSchema>;
 export type GetMissionWorkConversation = z.infer<typeof GetMissionWorkConversationSchema>;
 export type MissionWorkConversationSnapshot = z.infer<typeof MissionWorkConversationSnapshotSchema>;
 export type MissionWorkUpdate = z.infer<typeof MissionWorkUpdateSchema>;
-export type GetMissionChat = z.input<typeof GetMissionChatSchema>;
-export type MissionChatQuery = z.output<typeof GetMissionChatSchema>;
+export type GetMissionChatPage = z.input<typeof GetMissionChatPageSchema>;
+export type MissionChatPageQuery = z.output<typeof GetMissionChatPageSchema>;
 export type SendMissionMessage = z.input<typeof SendMissionMessageSchema>;
 export type MissionQueuePromptAction = z.infer<typeof MissionQueuePromptActionSchema>;
 export type MissionCommandReceipt = z.infer<typeof MissionCommandReceiptSchema>;
@@ -622,7 +625,10 @@ export type MissionCommandOutcome = z.infer<typeof MissionCommandOutcomeSchema>;
 export type MissionQueueSteerResult = z.infer<typeof MissionQueueSteerResultSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
-export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionChatPage = z.infer<typeof MissionChatPageSchema>;
+export type MissionConversationState = z.infer<typeof MissionConversationStateSchema>;
+export type MissionContextWindowSnapshot = z.infer<typeof MissionContextWindowSnapshotSchema>;
+export type MissionConversationSnapshot = z.infer<typeof MissionConversationSnapshotSchema>;
 export type MissionContextCompactionResult = z.infer<typeof MissionContextCompactionResultSchema>;
 export type MissionContextWindowState = z.infer<typeof MissionContextWindowStateSchema>;
 export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;

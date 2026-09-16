@@ -1,7 +1,7 @@
 import type {
   MissionChatEntry,
   MissionChatPatch,
-  MissionChatSnapshot,
+  MissionConversationSnapshot,
   MissionChatUpdate,
 } from "../../../../shared/contracts/index.ts";
 
@@ -160,10 +160,10 @@ export function orderMissionConversationEntries(
 }
 
 export function applyMissionChatPatches(
-  snapshot: MissionChatSnapshot,
+  snapshot: MissionConversationSnapshot,
   patches: readonly MissionChatPatch[],
   revision: number,
-): MissionChatSnapshot | null {
+): MissionConversationSnapshot | null {
   const entries = [...snapshot.entries];
   const entryIndexById = new Map(entries.map((entry, index) => [entry.id, index] as const));
   for (const patch of patches) {
@@ -251,7 +251,7 @@ function refreshMissionChatEntryIndexes(
 }
 
 export interface MissionChatUpdateBatchResult {
-  readonly snapshot: MissionChatSnapshot;
+  readonly snapshot: MissionConversationSnapshot;
   readonly remaining: readonly MissionChatUpdate[];
   readonly needsRefresh: boolean;
   readonly requiresRender: boolean;
@@ -264,7 +264,7 @@ export interface MissionChatUpdateBatchResult {
  * while high-frequency append patches are compacted within the renderer frame.
  */
 export function applyMissionChatUpdateBatch(
-  base: MissionChatSnapshot,
+  base: MissionConversationSnapshot,
   pending: readonly MissionChatUpdate[],
 ): MissionChatUpdateBatchResult {
   const updates = pending.toSorted((left, right) => left.revision - right.revision);
@@ -352,7 +352,7 @@ export function missionChatPatchesRequireRender(patches: readonly MissionChatPat
 
 export function firstVisiblePatchExecutionId(
   update: MissionChatUpdate,
-  snapshot: MissionChatSnapshot | null,
+  snapshot: MissionConversationSnapshot | null,
 ): string | undefined {
   if (update.kind !== "patch") return undefined;
   for (const patch of update.patches) {
@@ -378,7 +378,7 @@ export function firstVisiblePatchExecutionId(
 }
 
 export function shouldClearMissionThinkingPlaceholder(
-  chat: MissionChatSnapshot,
+  chat: MissionConversationSnapshot,
   requestId: string,
 ): boolean {
   const userIndex = chat.entries.findIndex((entry) => entry.id === requestId);
@@ -395,7 +395,7 @@ export function shouldClearMissionThinkingPlaceholder(
 }
 
 export function shouldShowMissionThinkingPlaceholder(
-  chat: MissionChatSnapshot | null,
+  chat: MissionConversationSnapshot | null,
   requestId: string | null,
 ): boolean {
   return (
@@ -404,9 +404,9 @@ export function shouldShowMissionThinkingPlaceholder(
 }
 
 export function mergeLatestChatPage(
-  current: MissionChatSnapshot | null,
-  latest: MissionChatSnapshot,
-): MissionChatSnapshot {
+  current: MissionConversationSnapshot | null,
+  latest: MissionConversationSnapshot,
+): MissionConversationSnapshot {
   if (current === null || current.missionId !== latest.missionId) return latest;
   // A refresh can finish after newer IPC patches were already painted. Never let that older
   // request move the renderer revision or its append-only entries backwards.
@@ -458,8 +458,8 @@ export function mergeLatestChatPage(
  * would permanently discard visible text.
  */
 export function reconcileMissionChatRefresh(
-  current: MissionChatSnapshot | null,
-  latest: MissionChatSnapshot,
+  current: MissionConversationSnapshot | null,
+  latest: MissionConversationSnapshot,
   pending: readonly MissionChatUpdate[],
 ): MissionChatUpdateBatchResult {
   let base = current;
@@ -487,9 +487,9 @@ export function reconcileMissionChatRefresh(
 }
 
 function mergeStaleRefreshMetadata(
-  current: MissionChatSnapshot,
-  latest: MissionChatSnapshot,
-): MissionChatSnapshot {
+  current: MissionConversationSnapshot,
+  latest: MissionConversationSnapshot,
+): MissionConversationSnapshot {
   const latestEntriesById = new Map(latest.entries.map((entry) => [entry.id, entry] as const));
   const currentEntryIds = new Set(current.entries.map((entry) => entry.id));
   const entries = current.entries.map((entry) => {
@@ -555,9 +555,9 @@ function preserveAppendOnlyEntryContent(
 }
 
 export function prependChatPage(
-  current: MissionChatSnapshot,
-  earlier: MissionChatSnapshot,
-): MissionChatSnapshot {
+  current: MissionConversationSnapshot,
+  earlier: MissionConversationSnapshot,
+): MissionConversationSnapshot {
   return {
     ...current,
     revision: Math.max(current.revision, earlier.revision),

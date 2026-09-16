@@ -18,6 +18,7 @@ export function createMissionTerminalReconciler(options: {
   readonly repair: (input: MissionProjectionMismatch) => Promise<void>;
   readonly status: MissionStatusService;
   readonly audienceForMission: (mission: Mission) => "user" | "internal";
+  readonly canRepair?: ((missionId: string) => Promise<boolean>) | undefined;
   readonly reportFailure: (input: { readonly missionId: string; readonly error: unknown }) => void;
   readonly concurrency?: number | undefined;
   readonly timeoutMs?: number | undefined;
@@ -73,6 +74,7 @@ export function createMissionTerminalReconciler(options: {
     const execution = await options.executions.get(mission.execution.id);
     const status = terminalStatus(execution?.status);
     if (status === undefined || execution === undefined) return;
+    if (options.canRepair !== undefined && !(await options.canRepair(missionId))) return;
 
     options.status.publish(mission.id, options.audienceForMission(mission), {
       id: mission.execution.id,

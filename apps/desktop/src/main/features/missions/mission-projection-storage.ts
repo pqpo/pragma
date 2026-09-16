@@ -29,7 +29,12 @@ export interface MissionProjectionStorage {
     executionId: string,
     input: { readonly beforeOffset?: number | undefined; readonly limit: number },
   ): Promise<MissionExecutionProjectionPage | undefined>;
-  write(id: string, executionId: string, entries: readonly MissionChatEntry[]): Promise<void>;
+  write(
+    id: string,
+    executionId: string,
+    entries: readonly MissionChatEntry[],
+    sourceUpdatedAt?: string,
+  ): Promise<void>;
 }
 
 export function createMissionProjectionStorage(
@@ -81,7 +86,7 @@ export function createMissionProjectionStorage(
         input,
       );
     },
-    async write(id, executionId, entries) {
+    async write(id, executionId, entries, sourceUpdatedAt) {
       const path = currentPath(id, executionId);
       const previousOrderingVersion = await readMissionExecutionProjectionOrderingVersion(
         path,
@@ -99,7 +104,7 @@ export function createMissionProjectionStorage(
           if (!isNodeError(error, "EEXIST")) throw error;
         });
       }
-      await writeMissionExecutionProjection(path, executionId, entries);
+      await writeMissionExecutionProjection(path, executionId, entries, undefined, sourceUpdatedAt);
       await rm(legacyPath(id, executionId), { force: true });
     },
   };

@@ -13,10 +13,10 @@ import {
   CreateMissionSchema,
   CreateMissionBranchSchema,
   DeleteContextStoreSchema,
-  GetMissionChatSchema,
+  GetMissionChatPageSchema,
   HomeMissionExecutorCatalogSchema,
   latestMissionBranchableReply,
-  MissionChatSnapshotSchema,
+  MissionConversationSnapshotSchema,
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
   MissionExecutionActionSchema,
@@ -1089,7 +1089,7 @@ describe("mission contracts", () => {
 
   it("validates rich chat entries and interruptible execution state", () => {
     expect(
-      MissionChatSnapshotSchema.safeParse({
+      MissionConversationSnapshotSchema.safeParse({
         missionId: "00000000-0000-4000-8000-000000000000",
         revision: 4,
         entries: [
@@ -1152,10 +1152,10 @@ describe("mission contracts", () => {
     ).toBe(true);
   });
 
-  it("defaults Mission chat pages to 50 entries and caps them at 200", () => {
+  it("defaults and caps Mission chat pages at 50 entries", () => {
     const id = "00000000-0000-4000-8000-000000000000";
-    expect(GetMissionChatSchema.parse({ id }).limit).toBe(50);
-    expect(GetMissionChatSchema.parse({ id, limit: 200 }).limit).toBe(200);
-    expect(GetMissionChatSchema.safeParse({ id, limit: 201 }).success).toBe(false);
+    expect(GetMissionChatPageSchema.parse({ id }).limit).toBe(50);
+    expect(GetMissionChatPageSchema.parse({ id, limit: 50 }).limit).toBe(50);
+    expect(GetMissionChatPageSchema.safeParse({ id, limit: 51 }).success).toBe(false);
   });
 });

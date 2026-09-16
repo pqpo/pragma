@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { flushSync } from "react-dom";
 
 import type {
-  MissionChatSnapshot,
+  MissionChatPage,
   MissionChatUpdate,
+  MissionContextWindowSnapshot,
+  MissionConversationSnapshot,
+  MissionConversationState,
   PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
 import {
@@ -17,13 +19,15 @@ import { MISSION_CHAT_PAGE_SIZE } from "./mission-view-constants.ts";
 
 export function useMissionConversation(input: {
   readonly missionId: string;
+  readonly navigationId?: string | undefined;
   readonly api: PragmaDesktopAPI | undefined;
-  readonly cache?: Map<string, MissionChatSnapshot> | undefined;
+  readonly cache?: Map<string, MissionConversationSnapshot> | undefined;
+  readonly prefetchedPage?: Promise<MissionChatPage | undefined> | undefined;
   readonly refreshRevision: number;
   readonly syncUnavailableMessage: string;
   readonly formatError: (error: unknown) => string;
 }) {
-  const [chat, setChat] = useState<MissionChatSnapshot | null>(
+  const [chat, setChat] = useState<MissionConversationSnapshot | null>(
     () => input.cache?.get(input.missionId) ?? null,
   );
   const [initialLoading, setInitialLoading] = useState(
@@ -33,20 +37,21 @@ export function useMissionConversation(input: {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const liveEntryStore = useMemo(() => new MissionLiveEntryStore(), [input.missionId]);
-  const chatRef = useRef<MissionChatSnapshot | null>(null);
+  const chatRef = useRef<MissionConversationSnapshot | null>(null);
   const receivedFirstTokensRef = useRef(new Set<string>());
   const paintedFirstTokensRef = useRef(new Set<string>());
   const pendingFirstTokenPaintsRef = useRef(new Map<string, { readonly receivedAt: number }>());
   const firstTokenPaintFramesRef = useRef(new Map<string, number[]>());
+  const navigationIdRef = useRef(input.navigationId ?? crypto.randomUUID());
 
   const update = useCallback(
-    (value: SetStateAction<MissionChatSnapshot | null>) => {
+    (value: SetStateAction<MissionConversationSnapshot | null>) => {
       const next = typeof value === "function" ? value(chatRef.current) : value;
       chatRef.current = next;
       if (next === null) liveEntryStore.clear();
       else liveEntryStore.reset(next.entries);
       if (next !== null && next.missionId === input.missionId) {
-        input.cache?.set(input.missionId, next);
+        setCachedConversation(input.cache, input.missionId, next);
       }
       setChat(next);
     },
@@ -54,9 +59,9 @@ export function useMissionConversation(input: {
   );
 
   const advanceLive = useCallback(
-    (next: MissionChatSnapshot, changedEntryIds: ReadonlySet<string>) => {
+    (next: MissionConversationSnapshot, changedEntryIds: ReadonlySet<string>) => {
       chatRef.current = next;
-      input.cache?.set(input.missionId, next);
+      setCachedConversation(input.cache, input.missionId, next);
       if (changedEntryIds.size === 0) return;
       const changedEntries = new Map(
         next.entries
@@ -73,6 +78,18 @@ export function useMissionConversation(input: {
 
   useEffect(() => {
     const cached = input.cache?.get(input.missionId) ?? null;
+    const cacheHit = cached !== null;
+    const navigationStartedAt = performance.now();
+    const navigationId = input.navigationId ?? navigationIdRef.current;
+    let longTaskMs = 0;
+    const longTaskObserver =
+      typeof PerformanceObserver === "undefined" ||
+      !PerformanceObserver.supportedEntryTypes.includes("longtask")
+        ? undefined
+        : new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) longTaskMs += entry.duration;
+          });
+    longTaskObserver?.observe({ type: "longtask", buffered: true });
     update(cached);
     setInitialLoading(cached === null);
     setHistoryError(null);
@@ -80,11 +97,14 @@ export function useMissionConversation(input: {
     const api = input.api;
     if (api === undefined) {
       setInitialLoading(false);
+      longTaskObserver?.disconnect();
       return;
     }
     let cancelled = false;
     let refreshing = false;
     let refreshQueued = false;
+    let prefetchedPage = input.prefetchedPage;
+    let stateRequestGeneration = 0;
     let frame: number | undefined;
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPerformanceLogAt = 0;
@@ -97,7 +117,7 @@ export function useMissionConversation(input: {
     }
     firstTokenPaintFramesRef.current.clear();
 
-    const drainPending = (base: MissionChatSnapshot) => {
+    const drainPending = (base: MissionConversationSnapshot) => {
       const drained = applyMissionChatUpdateBatch(base, pending);
       pending = [...drained.remaining];
       return drained;
@@ -110,11 +130,15 @@ export function useMissionConversation(input: {
       }
       refreshing = true;
       try {
-        const snapshot = await api.getMissionChat({
-          id: input.missionId,
-          limit: MISSION_CHAT_PAGE_SIZE,
-        });
+        const page =
+          (await prefetchedPage) ??
+          (await api.getMissionChatPage({
+            id: input.missionId,
+            limit: MISSION_CHAT_PAGE_SIZE,
+          }));
+        prefetchedPage = undefined;
         if (!cancelled) {
+          const snapshot = conversationFromPage(page, chatRef.current);
           const drained = reconcileMissionChatRefresh(chatRef.current, snapshot, pending);
           pending = [...drained.remaining];
           update(drained.snapshot);
@@ -122,6 +146,43 @@ export function useMissionConversation(input: {
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
           );
           if (drained.needsRefresh) refreshQueued = true;
+          const pageReceivedAt = performance.now();
+          const characterCount = page.entries.reduce(
+            (total, entry) =>
+              total +
+              ("content" in entry ? entry.content.length : 0) +
+              (entry.kind === "tool" ? (entry.outputPreview?.length ?? 0) : 0),
+            0,
+          );
+          api.reportRendererLog({
+            level: "info",
+            event: "mission.chat_page_received",
+            message: `Mission chat page received (${page.entries.length} entries)`,
+            missionId: input.missionId,
+            navigationId,
+            elapsedMs: Math.round((pageReceivedAt - navigationStartedAt) * 100) / 100,
+            entryCount: page.entries.length,
+            characterCount,
+            cacheHit,
+          });
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (cancelled) return;
+              api.reportRendererLog({
+                level: "info",
+                event: "mission.chat_page_painted",
+                message: `Mission chat page painted (${page.entries.length} entries)`,
+                missionId: input.missionId,
+                navigationId,
+                elapsedMs: Math.round((performance.now() - pageReceivedAt) * 100) / 100,
+                entryCount: page.entries.length,
+                characterCount,
+                cacheHit,
+                longTaskMs: Math.round(longTaskMs * 100) / 100,
+              });
+              void refreshConversationState(api);
+            });
+          });
         }
       } catch (error) {
         if (!cancelled) setSyncError(input.formatError(error));
@@ -133,6 +194,32 @@ export function useMissionConversation(input: {
           void refresh();
         }
       }
+    };
+
+    const refreshConversationState = async (desktopApi: PragmaDesktopAPI): Promise<void> => {
+      const requestGeneration = ++stateRequestGeneration;
+      const startedAt = performance.now();
+      const [stateResult, contextResult] = await Promise.allSettled([
+        desktopApi.getMissionConversationState(input.missionId),
+        desktopApi.getMissionContextWindow(input.missionId),
+      ]);
+      if (cancelled || requestGeneration !== stateRequestGeneration) return;
+      if (stateResult.status === "fulfilled") {
+        update((current) => mergeConversationState(current, stateResult.value));
+      } else {
+        setSyncError(input.formatError(stateResult.reason));
+      }
+      if (contextResult.status === "fulfilled") {
+        update((current) => mergeContextWindow(current, contextResult.value));
+      }
+      desktopApi.reportRendererLog({
+        level: "info",
+        event: "mission.conversation_state_ready",
+        message: "Mission conversation background state resolved",
+        missionId: input.missionId,
+        navigationId,
+        elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
+      });
     };
 
     const flush = (): void => {
@@ -176,14 +263,6 @@ export function useMissionConversation(input: {
       frame = requestAnimationFrame(flush);
     };
 
-    const flushVisibleFirstPatch = (): void => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
-      frame = undefined;
-      hiddenTimer = undefined;
-      flushSync(flush);
-    };
-
     const unsubscribe = api.subscribeMissionChat(input.missionId, (updateValue) => {
       pending.push(updateValue);
       const executionId = firstVisiblePatchExecutionId(updateValue, chatRef.current);
@@ -196,11 +275,8 @@ export function useMissionConversation(input: {
           message: "Renderer received the first UI-visible Mission token",
           missionId: input.missionId,
           executionId,
+          navigationId,
         });
-        if (document.visibilityState !== "hidden" && chatRef.current !== null) {
-          flushVisibleFirstPatch();
-          return;
-        }
       }
       scheduleFlush();
     });
@@ -215,6 +291,7 @@ export function useMissionConversation(input: {
       }
       firstTokenPaintFramesRef.current.clear();
       unsubscribe();
+      longTaskObserver?.disconnect();
     };
   }, [
     advanceLive,
@@ -222,6 +299,8 @@ export function useMissionConversation(input: {
     input.cache,
     input.formatError,
     input.missionId,
+    input.navigationId,
+    input.prefetchedPage,
     input.refreshRevision,
     input.syncUnavailableMessage,
     update,
@@ -255,6 +334,7 @@ export function useMissionConversation(input: {
             message: "Renderer painted the first UI-visible Mission token",
             missionId: input.missionId,
             executionId,
+            navigationId: navigationIdRef.current,
             elapsedMs: Math.round((performance.now() - pendingPaint.receivedAt) * 100) / 100,
           });
         });
@@ -274,12 +354,15 @@ export function useMissionConversation(input: {
       setHistoryError(null);
       beforeLoad();
       try {
-        const earlier = await input.api.getMissionChat({
+        const earlier = await input.api.getMissionChatPage({
           id: input.missionId,
           beforeCursor,
           limit: MISSION_CHAT_PAGE_SIZE,
         });
-        update((current) => (current === null ? earlier : prependChatPage(current, earlier)));
+        update((current) => {
+          const snapshot = conversationFromPage(earlier, current);
+          return current === null ? snapshot : prependChatPage(current, snapshot);
+        });
       } catch (error) {
         setHistoryError(input.formatError(error));
       } finally {
@@ -300,4 +383,97 @@ export function useMissionConversation(input: {
     loadEarlier,
     observeFirstTokenPaint,
   };
+}
+
+export function conversationFromPage(
+  page: MissionChatPage,
+  current: MissionConversationSnapshot | null,
+): MissionConversationSnapshot {
+  if (current === null || current.missionId !== page.missionId) {
+    return {
+      missionId: page.missionId,
+      revision: page.revision,
+      entries: page.entries,
+      page: page.page,
+      pendingInteractions: [],
+      ...(page.syncIssues === undefined ? {} : { syncIssues: page.syncIssues }),
+    };
+  }
+  return {
+    ...current,
+    revision: page.revision,
+    entries: page.entries,
+    page: page.page,
+    syncIssues: mergeSyncIssues(current.syncIssues, page.syncIssues, "history"),
+  };
+}
+
+export function mergeConversationState(
+  current: MissionConversationSnapshot | null,
+  state: MissionConversationState,
+): MissionConversationSnapshot | null {
+  if (current === null || current.missionId !== state.missionId) return current;
+  if (current.stateRevision !== undefined && state.revision < current.stateRevision) return current;
+  const deliveries = new Map(
+    state.deliveries.map((item) => [item.entryId, item.delivery] as const),
+  );
+  const hidden = new Set(state.hiddenEntryIds);
+  return {
+    ...current,
+    stateRevision: state.revision,
+    entries: current.entries
+      .filter((entry) => !hidden.has(entry.id))
+      .map((entry) => {
+        if (entry.kind !== "user") return entry;
+        const delivery = deliveries.get(entry.id);
+        return delivery === undefined ? entry : { ...entry, delivery };
+      }),
+    pendingInteractions: state.pendingInteractions,
+    queue: state.queue,
+    execution: state.execution,
+    controlHealth: state.controlHealth,
+    syncIssues: mergeSyncIssues(current.syncIssues, state.syncIssues, "pending_interactions"),
+  };
+}
+
+export function mergeContextWindow(
+  current: MissionConversationSnapshot | null,
+  value: MissionContextWindowSnapshot,
+): MissionConversationSnapshot | null {
+  if (current === null || current.missionId !== value.missionId) return current;
+  if (current.contextRevision !== undefined && value.revision < current.contextRevision)
+    return current;
+  return {
+    ...current,
+    contextRevision: value.revision,
+    contextWindow: value.contextWindow,
+    syncIssues: mergeSyncIssues(current.syncIssues, value.syncIssues, "context_window"),
+  };
+}
+
+function mergeSyncIssues(
+  current: MissionConversationSnapshot["syncIssues"],
+  incoming: MissionConversationSnapshot["syncIssues"],
+  section: "history" | "pending_interactions" | "context_window",
+): MissionConversationSnapshot["syncIssues"] {
+  const merged = [
+    ...(current ?? []).filter((issue) => issue.section !== section),
+    ...(incoming ?? []).filter((issue) => issue.section === section),
+  ];
+  return merged.length === 0 ? undefined : merged;
+}
+
+function setCachedConversation(
+  cache: Map<string, MissionConversationSnapshot> | undefined,
+  missionId: string,
+  snapshot: MissionConversationSnapshot,
+): void {
+  if (cache === undefined) return;
+  cache.delete(missionId);
+  cache.set(missionId, snapshot);
+  while (cache.size > 8) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }

@@ -34,6 +34,7 @@ const ProjectionHeaderSchema = z.object({
   orderingVersion: ProjectionOrderingVersionSchema.optional(),
   executionId: z.string().min(1),
   createdAt: z.string().datetime(),
+  sourceUpdatedAt: z.string().datetime().optional(),
   limits: z.object({
     maxEntries: z.literal(MISSION_EXECUTION_PROJECTION_MAX_ENTRIES),
     maxBytes: z.literal(MISSION_EXECUTION_PROJECTION_MAX_BYTES),
@@ -69,6 +70,7 @@ export class MissionExecutionProjectionError extends Error {
 export interface MissionExecutionProjectionPage {
   readonly entries: readonly MissionChatEntry[];
   readonly createdAt: string;
+  readonly sourceUpdatedAt?: string | undefined;
   readonly orderingVersion: ProjectionOrderingVersion;
   readonly nextBeforeOffset?: number | undefined;
 }
@@ -143,6 +145,7 @@ export async function readMissionExecutionProjectionPage(
     return {
       entries: page.entries,
       createdAt: header.createdAt,
+      ...(header.sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt: header.sourceUpdatedAt }),
       orderingVersion: header.orderingVersion,
       ...(page.nextBeforeOffset === undefined ? {} : { nextBeforeOffset: page.nextBeforeOffset }),
     };
@@ -225,8 +228,9 @@ export async function writeMissionExecutionProjection(
   executionId: string,
   entries: readonly MissionChatEntry[],
   orderingVersion: ProjectionOrderingVersion = MISSION_EXECUTION_PROJECTION_ORDERING_VERSION,
+  sourceUpdatedAt?: string,
 ): Promise<void> {
-  const records = createBoundedProjection(executionId, entries, orderingVersion);
+  const records = createBoundedProjection(executionId, entries, orderingVersion, sourceUpdatedAt);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporaryPath, "wx", 0o600);
@@ -251,6 +255,7 @@ async function readProjectionHeader(
 ): Promise<{
   readonly entriesOffset: number;
   readonly createdAt: string;
+  readonly sourceUpdatedAt?: string | undefined;
   readonly orderingVersion: ProjectionOrderingVersion;
 }> {
   const maximumHeaderBytes = Math.min(size, 64 * 1024);
@@ -278,6 +283,7 @@ async function readProjectionHeader(
   return {
     entriesOffset: newline + 1,
     createdAt: header.createdAt,
+    ...(header.sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt: header.sourceUpdatedAt }),
     orderingVersion: header.orderingVersion ?? 1,
   };
 }
@@ -355,6 +361,7 @@ function createBoundedProjection(
   executionId: string,
   entries: readonly MissionChatEntry[],
   orderingVersion: ProjectionOrderingVersion,
+  sourceUpdatedAt?: string,
 ): readonly [ProjectionHeader, ...ProjectionEntry[]] {
   const parsed = MissionChatEntrySchema.array().parse(entries);
   const bounded = parsed.map((entry) => boundEntry(executionId, entry));
@@ -367,6 +374,7 @@ function createBoundedProjection(
       orderingVersion,
       executionId,
       createdAt: new Date().toISOString(),
+      ...(sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt }),
       limits: {
         maxEntries: MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
         maxBytes: MISSION_EXECUTION_PROJECTION_MAX_BYTES,

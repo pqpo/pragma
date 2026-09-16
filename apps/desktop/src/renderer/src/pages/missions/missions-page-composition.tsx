@@ -51,10 +51,11 @@ import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import {
   type Mission,
+  type MissionChatPage,
   type ContextStore,
   type MissionContextMount,
   type MissionChatEntry,
-  type MissionChatSnapshot,
+  type MissionConversationSnapshot,
   type MissionContextWindowState,
   type MissionHumanInteraction,
   type MissionStatusUpdate,
@@ -86,6 +87,7 @@ import {
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
+  type MissionConversationBlock,
 } from "./mission-conversation-model.ts";
 import { useMissionClientOperation } from "./mission-client-operation.ts";
 import { useMissionComposerState } from "./use-mission-composer-state.ts";
@@ -93,7 +95,11 @@ import { useMissionWork } from "./use-mission-work.ts";
 import { useMissionHumanInteraction } from "./use-mission-human-interaction.ts";
 import { useMissionOptions } from "./use-mission-options.ts";
 import { useMissionContextOperations } from "./use-mission-context-operations.ts";
-import { useMissionConversation } from "./use-mission-conversation.ts";
+import {
+  conversationFromPage,
+  mergeConversationState,
+  useMissionConversation,
+} from "./use-mission-conversation.ts";
 export {
   copyMissionReply,
   MissionChatEntryView,
@@ -289,7 +295,16 @@ export function MissionsPage(props: {
   const selectedMissionIdsRef = useRef<Partial<Record<MissionListSource, string>>>(
     initialState.selectedMissionIds,
   );
-  const missionChatCacheRef = useRef(new Map<string, MissionChatSnapshot>());
+  const missionChatCacheRef = useRef(new Map<string, MissionConversationSnapshot>());
+  const missionDetailCacheRef = useRef(
+    new Map<string, Mission>(
+      props.initialMission === undefined ? [] : [[props.initialMission.id, props.initialMission]],
+    ),
+  );
+  const missionChatPageRequestsRef = useRef(
+    new Map<string, Promise<MissionChatPage | undefined>>(),
+  );
+  const missionNavigationIdsRef = useRef(new Map<string, string>());
   const initialRunStartedRef = useRef(false);
   const hadInitialMemoryStateRef = useRef(props.initialMemoryState !== undefined);
   const removedMissionIdsRef = useRef(new Set<string>());
@@ -300,36 +315,49 @@ export function MissionsPage(props: {
     >(),
   );
   const missionStatusUpdatesRef = useRef(new Map<string, MissionStatusUpdate>());
-
-  const replaceMission = useCallback((updated: Mission, source?: MissionSummary["source"]) => {
-    const currentStatus = missionStatusUpdatesRef.current.get(updated.id);
-    const projected =
-      currentStatus === undefined
-        ? updated
-        : applyMissionStatusUpdateToMission(updated, currentStatus);
-    if (
-      projected.execution !== undefined &&
-      !["queued", "running", "waiting"].includes(projected.execution.status)
-    ) {
-      setInitialRunRequest((current) => (current?.missionId === projected.id ? null : current));
+  const cacheMissionDetail = useCallback((mission: Mission): void => {
+    missionDetailCacheRef.current.delete(mission.id);
+    missionDetailCacheRef.current.set(mission.id, mission);
+    while (missionDetailCacheRef.current.size > 8) {
+      const oldest = missionDetailCacheRef.current.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      missionDetailCacheRef.current.delete(oldest);
     }
-    if (projected.lifecycleStatus === "completed") {
-      writeMissionDraft(
-        typeof window === "undefined" ? undefined : window.localStorage,
-        projected.id,
-        "",
-      );
-    }
-    setSelectedMission((current) =>
-      current?.id === projected.id && projected.updatedAt >= current.updatedAt
-        ? projected
-        : current,
-    );
-    setMissions((current) => {
-      const knownSource = current.find((mission) => mission.id === projected.id)?.source;
-      return upsertMissionSummary(current, missionToSummary(projected, source ?? knownSource));
-    });
   }, []);
+
+  const replaceMission = useCallback(
+    (updated: Mission, source?: MissionSummary["source"]) => {
+      const currentStatus = missionStatusUpdatesRef.current.get(updated.id);
+      const projected =
+        currentStatus === undefined
+          ? updated
+          : applyMissionStatusUpdateToMission(updated, currentStatus);
+      if (
+        projected.execution !== undefined &&
+        !["queued", "running", "waiting"].includes(projected.execution.status)
+      ) {
+        setInitialRunRequest((current) => (current?.missionId === projected.id ? null : current));
+      }
+      if (projected.lifecycleStatus === "completed") {
+        writeMissionDraft(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          projected.id,
+          "",
+        );
+      }
+      cacheMissionDetail(projected);
+      setSelectedMission((current) =>
+        current?.id === projected.id && projected.updatedAt >= current.updatedAt
+          ? projected
+          : current,
+      );
+      setMissions((current) => {
+        const knownSource = current.find((mission) => mission.id === projected.id)?.source;
+        return upsertMissionSummary(current, missionToSummary(projected, source ?? knownSource));
+      });
+    },
+    [cacheMissionDetail],
+  );
 
   const updatePinnedMissionIds = useCallback((update: (current: readonly string[]) => string[]) => {
     setPinnedMissionIds((current) => {
@@ -367,11 +395,24 @@ export function MissionsPage(props: {
       options?: { readonly silent?: boolean; readonly source?: MissionListSource },
     ) => {
       const source = options?.source ?? activeSourceRef.current;
+      const cache = missionChatCacheRef.current;
+      for (const [cachedMissionId, cachedConversation] of cache) {
+        if (cachedMissionId === id || cachedConversation.entries.length <= 100) continue;
+        cache.set(cachedMissionId, {
+          ...cachedConversation,
+          entries: cachedConversation.entries.slice(-100),
+        });
+      }
       selectedMissionIdsRef.current = { ...selectedMissionIdsRef.current, [source]: id };
       selectedMissionIdRef.current = id;
       markMissionOutputRead(id);
       setSelectedMissionId(id);
-      setSelectedMission((current) => (current?.id === id ? current : null));
+      const cachedMission = missionDetailCacheRef.current.get(id);
+      if (cachedMission !== undefined) {
+        missionDetailCacheRef.current.delete(id);
+        missionDetailCacheRef.current.set(id, cachedMission);
+      }
+      setSelectedMission((current) => (current?.id === id ? current : (cachedMission ?? null)));
       setLoadingMissionId(id);
       if (!options?.silent) setError(null);
       writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
@@ -380,13 +421,55 @@ export function MissionsPage(props: {
         setLoadingMissionId((current) => (current === id ? null : current));
         return;
       }
+      const navigationStartedAt = performance.now();
+      const navigationId = crypto.randomUUID();
+      missionNavigationIdsRef.current.set(id, navigationId);
+      api.reportRendererLog({
+        level: "info",
+        event: "mission.navigation_started",
+        message: "Mission navigation started",
+        missionId: id,
+        navigationId,
+      });
+      requestAnimationFrame(() => {
+        api.reportRendererLog({
+          level: "info",
+          event: "mission.shell_painted",
+          message: "Mission detail shell painted",
+          missionId: id,
+          navigationId,
+          elapsedMs: Math.round((performance.now() - navigationStartedAt) * 100) / 100,
+        });
+      });
+      const missionPromise = api.getMission(id);
+      const chatPromise = api
+        .getMissionChatPage({ id, limit: MISSION_CHAT_PAGE_SIZE })
+        .then((page) => {
+          const existing = cache.get(id) ?? null;
+          cache.delete(id);
+          cache.set(id, mergeLatestChatPage(existing, conversationFromPage(page, existing)));
+          while (cache.size > 8) {
+            const oldest = cache.keys().next().value as string | undefined;
+            if (oldest === undefined) break;
+            cache.delete(oldest);
+          }
+          return page;
+        })
+        .catch(() => undefined);
+      missionChatPageRequestsRef.current.set(id, chatPromise);
+      void chatPromise.finally(() => {
+        if (missionChatPageRequestsRef.current.get(id) === chatPromise) {
+          missionChatPageRequestsRef.current.delete(id);
+        }
+      });
       try {
-        const loadedMission = await api.getMission(id);
+        const loadedMission = await missionPromise;
         const statusUpdate = missionStatusUpdatesRef.current.get(id);
         const mission =
           statusUpdate === undefined
             ? loadedMission
             : applyMissionStatusUpdateToMission(loadedMission, statusUpdate);
+        cacheMissionDetail(mission);
         if (selectedMissionIdRef.current === id) {
           setSelectedMission((current) =>
             current === null || mission.updatedAt >= current.updatedAt ? mission : current,
@@ -397,10 +480,11 @@ export function MissionsPage(props: {
           setError(missionError(loadError));
         }
       } finally {
+        void chatPromise;
         setLoadingMissionId((current) => (current === id ? null : current));
       }
     },
-    [markMissionOutputRead, missionError],
+    [cacheMissionDetail, markMissionOutputRead, missionError],
   );
 
   useEffect(() => {
@@ -454,13 +538,17 @@ export function MissionsPage(props: {
             : mission,
         ),
       );
+      const cachedMission = missionDetailCacheRef.current.get(update.missionId);
+      if (cachedMission !== undefined) {
+        cacheMissionDetail(applyMissionStatusUpdateToMission(cachedMission, update));
+      }
       setSelectedMission((mission) =>
         mission?.id === update.missionId
           ? applyMissionStatusUpdateToMission(mission, update)
           : mission,
       );
     });
-  }, []);
+  }, [cacheMissionDetail]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -482,6 +570,7 @@ export function MissionsPage(props: {
       );
       missionUpdatesDuringRefreshRef.current.set(update.missionId, null);
       removedMissionIdsRef.current.add(update.missionId);
+      missionDetailCacheRef.current.delete(update.missionId);
       updateUnreadMissionOutputIds((current) =>
         current.includes(update.missionId)
           ? current.filter((missionId) => missionId !== update.missionId)
@@ -534,6 +623,14 @@ export function MissionsPage(props: {
     const refreshFromStore = async () => {
       try {
         missionUpdatesDuringRefreshRef.current.clear();
+        const eagerMissionId = selectedMissionIdRef.current;
+        const eagerMissionLoad =
+          eagerMissionId === null
+            ? undefined
+            : openMission(eagerMissionId, {
+                silent: true,
+                source: activeSourceRef.current,
+              });
         const storedMissions = await api.listMissions();
         if (cancelled) return;
         const refreshedFromStore = [...missionUpdatesDuringRefreshRef.current.values()].reduce(
@@ -622,10 +719,14 @@ export function MissionsPage(props: {
           missionId = selectPreferredMissionId(sourceMissions, lastOpenedId);
         }
         if (missionId !== null) {
-          await openMission(missionId, {
-            silent: hadInitialMemoryStateRef.current,
-            source: activeSourceRef.current,
-          });
+          if (missionId === eagerMissionId && eagerMissionLoad !== undefined) {
+            await eagerMissionLoad;
+          } else {
+            await openMission(missionId, {
+              silent: hadInitialMemoryStateRef.current,
+              source: activeSourceRef.current,
+            });
+          }
         } else {
           writeLastOpenedMissionId(
             typeof window === "undefined" ? undefined : window.localStorage,
@@ -649,7 +750,9 @@ export function MissionsPage(props: {
   useEffect(() => {
     const api = desktopApi();
     if (api === undefined) return;
-    const teamMissions = missions.filter((mission) => mission.executor.kind === "team");
+    const teamMissions = missions.filter(
+      (mission) => mission.id === selectedMissionId && mission.executor.kind === "team",
+    );
     let cancelled = false;
     void Promise.all(
       teamMissions.map(async (mission) => {
@@ -665,7 +768,7 @@ export function MissionsPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [missions]);
+  }, [missions, selectedMissionId]);
 
   const presentedMissions = useMemo(
     () =>
@@ -772,9 +875,11 @@ export function MissionsPage(props: {
           <MissionDetailFragment
             key={selectedMission.id}
             mission={selectedMission}
+            navigationId={missionNavigationIdsRef.current.get(selectedMission.id)}
             initialComposerDraft={props.initialComposerDraft}
             memoryEnabled={props.memoryEnabled}
             chatCache={missionChatCacheRef.current}
+            prefetchedChatPage={missionChatPageRequestsRef.current.get(selectedMission.id)}
             initialThinkingRequestId={
               initialRunRequest?.missionId === selectedMission.id
                 ? initialRunRequest.requestId
@@ -938,12 +1043,16 @@ export function MissionsPage(props: {
               activeSourceRef.current = "task";
               setSelectedMissionId(mission.id);
               setSelectedMission(mission);
+              cacheMissionDetail(mission);
               writeLastOpenedMissionId(window.localStorage, mission.id);
               setError(null);
             }}
           />
         ) : loadingMissionId !== null && loadingMissionId === selectedMissionId ? (
-          <MissionDetailSkeleton label={t("loading", { ns: "missions" })} />
+          <MissionDetailSkeleton
+            label={t("loading", { ns: "missions" })}
+            title={presentedMissions.find((mission) => mission.id === selectedMissionId)?.title}
+          />
         ) : (
           <div className="mission-empty-detail">
             <h1>{t("empty", { ns: "missions" })}</h1>
@@ -1050,7 +1159,10 @@ export function MissionsPageSkeleton(props: {
   );
 }
 
-export function MissionDetailSkeleton(props: { readonly label: string }) {
+export function MissionDetailSkeleton(props: {
+  readonly label: string;
+  readonly title?: string | undefined;
+}) {
   return (
     <div
       className="mission-detail-loading"
@@ -1060,6 +1172,7 @@ export function MissionDetailSkeleton(props: { readonly label: string }) {
     >
       <div className="mission-detail-loading-content" aria-hidden="true">
         <header>
+          {props.title === undefined ? null : <h1>{props.title}</h1>}
           <span className="mission-skeleton-block mission-skeleton-meta" />
         </header>
         <div className="mission-skeleton-tabs">
@@ -1556,6 +1669,9 @@ function comparePinnedMissions(
 export type MissionComposerAction = "send" | "loading" | "interrupt" | "recover";
 export const MISSION_RECOVERY_WATCHDOG_MS = 60_000;
 
+let cachedMissionContextStores: readonly ContextStore[] | undefined;
+let missionContextStoresRequest: Promise<readonly ContextStore[]> | undefined;
+
 export async function withMissionUiWatchdog<T>(operation: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return await Promise.race([
@@ -1601,7 +1717,9 @@ export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
-  readonly chatCache?: Map<string, MissionChatSnapshot> | undefined;
+  readonly navigationId?: string | undefined;
+  readonly chatCache?: Map<string, MissionConversationSnapshot> | undefined;
+  readonly prefetchedChatPage?: Promise<MissionChatPage | undefined> | undefined;
   readonly initialComposerDraft?: string | undefined;
   readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
@@ -1699,7 +1817,9 @@ export function MissionDetailFragment(props: {
     Extract<MissionChatEntry, { kind: "assistant" }> | undefined
   >();
   const [branching, setBranching] = useState(false);
-  const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [contextStores, setContextStores] = useState<readonly ContextStore[]>(
+    () => cachedMissionContextStores ?? [],
+  );
   const [contextStoreIds, setContextStoreIds] = useState<readonly string[]>(
     props.mission.contextMounts.flatMap((mount) =>
       mount.kind === "context-store" ? [mount.storeId] : [],
@@ -1708,7 +1828,6 @@ export function MissionDetailFragment(props: {
   const [contextStorePickerOpen, setContextStorePickerOpen] = useState(false);
   const [contextStoresSaving, setContextStoresSaving] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
-  const [recoveryTimedOut, setRecoveryTimedOut] = useState(false);
   const [chatRefreshRevision, setChatRefreshRevision] = useState(0);
   const {
     optimisticMessages,
@@ -1739,8 +1858,10 @@ export function MissionDetailFragment(props: {
     observeFirstTokenPaint,
   } = useMissionConversation({
     missionId: props.mission.id,
+    navigationId: props.navigationId,
     api: desktopApi(),
     cache: props.chatCache,
+    prefetchedPage: props.prefetchedChatPage,
     refreshRevision: chatRefreshRevision,
     syncUnavailableMessage: t("chatSyncUnavailable", { ns: "missions" }),
     formatError: missionError,
@@ -1750,12 +1871,9 @@ export function MissionDetailFragment(props: {
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const chatListRef = useRef<HTMLDivElement | null>(null);
-  const chatBottomRef = useRef<HTMLSpanElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
   const composerInputRef = useRef<HTMLTextAreaElement | HTMLDivElement | null>(null);
   const queuedMessageActionsRef = useRef<Set<string>>(new Set());
-  const autoRestoreExecutionRef = useRef<string | null>(null);
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
@@ -1791,23 +1909,43 @@ export function MissionDetailFragment(props: {
   }, [props.mission.executor.kind, props.mission.id, props.mission.project.revision]);
 
   useEffect(() => {
+    if (!contextStorePickerOpen) return;
     let cancelled = false;
     const api = desktopApi();
     if (api === undefined) return;
-    void api
-      .listContextStores()
+    missionContextStoresRequest ??= api.listContextStores().then((stores) => {
+      cachedMissionContextStores = stores;
+      return stores;
+    });
+    void missionContextStoresRequest
       .then((stores) => {
         if (!cancelled) {
           setContextStores(stores);
         }
       })
       .catch((loadError: unknown) => {
+        missionContextStoresRequest = undefined;
         if (!cancelled) setOptionsError(missionError(loadError));
       });
     return () => {
       cancelled = true;
     };
-  }, [missionError, props.mission.id]);
+  }, [contextStorePickerOpen, missionError]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined || contextStores.length === 0) return;
+    const invalidate = (): void => {
+      cachedMissionContextStores = undefined;
+      missionContextStoresRequest = undefined;
+    };
+    const unsubscribes = contextStores.map((store) =>
+      api.subscribeContextStoreChanges(store.id, invalidate),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  }, [contextStores]);
 
   const memoryStoreSource = useMemo<ContextStoreBrowserSource>(() => {
     const target = { missionId: props.mission.id, storeId: "memory" } as const;
@@ -1859,7 +1997,6 @@ export function MissionDetailFragment(props: {
         }),
     };
   }, [props.mission.id]);
-  const prependScrollHeightRef = useRef<number | null>(null);
   const {
     questionIndex: humanQuestionIndex,
     setQuestionIndex: setHumanQuestionIndex,
@@ -1897,7 +2034,8 @@ export function MissionDetailFragment(props: {
     followLatestFrameRef.current = requestAnimationFrame(() => {
       followLatestFrameRef.current = undefined;
       if (!followLatestRef.current) return;
-      chatBottomRef.current?.scrollIntoView({ block: "end" });
+      const scroller = scrollRef.current;
+      if (scroller !== null) scroller.scrollTop = scroller.scrollHeight;
     });
   }, []);
 
@@ -1911,16 +2049,13 @@ export function MissionDetailFragment(props: {
     [],
   );
 
-  useEffect(() => {
-    const list = chatListRef.current;
-    if (activeTab !== "chat" || list === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (prependScrollHeightRef.current === null) scheduleFollowLatest();
-    });
-    observer.observe(list);
-    return () => observer.disconnect();
-  }, [activeTab, props.mission.id, scheduleFollowLatest]);
-  const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
+  const missionExecutionStatus = props.mission.execution?.status;
+  const conversationExecutionStatus = chat?.execution?.status;
+  const executionStatus =
+    missionExecutionStatus !== undefined &&
+    ["succeeded", "failed", "cancelled"].includes(missionExecutionStatus)
+      ? missionExecutionStatus
+      : (conversationExecutionStatus ?? missionExecutionStatus);
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
   const optionsSaving = clientOperation.kind === "saving_options";
@@ -1989,7 +2124,6 @@ export function MissionDetailFragment(props: {
     setOptionsError(null);
     queuedMessageActionsRef.current = new Set();
     setQueuedMessageActions(queuedMessageActionsRef.current);
-    autoRestoreExecutionRef.current = null;
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -2115,26 +2249,10 @@ export function MissionDetailFragment(props: {
       await props.onSend?.(content, requestId, optimistic.attachments, "enqueue");
       setDeliveryNotice(undefined);
       if (shouldPrepareQueuedMessage) {
-        const api = desktopApi();
-        const snapshot =
-          api === undefined
-            ? undefined
-            : await api
-                .getMissionChat({ id: props.mission.id, limit: MISSION_CHAT_PAGE_SIZE })
-                .catch(() => undefined);
-        if (snapshot !== undefined) {
-          updateChat((current) => mergeLatestChatPage(current, snapshot));
-        }
+        await refreshLatestChat().catch(() => undefined);
       }
     } catch {
-      const api = desktopApi();
-      const snapshot =
-        api === undefined
-          ? undefined
-          : await api
-              .getMissionChat({ id: props.mission.id, limit: MISSION_CHAT_PAGE_SIZE })
-              .catch(() => undefined);
-      if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
+      const snapshot = await refreshLatestChat().catch(() => undefined);
       const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
       if (persisted) discardSubmission(requestId);
       discardSentDrafts = persisted;
@@ -2204,8 +2322,6 @@ export function MissionDetailFragment(props: {
     try {
       await withMissionUiWatchdog(Promise.resolve(props.onRun?.()));
       await refreshLatestChat();
-    } catch {
-      setRecoveryTimedOut(true);
     } finally {
       finishClientOperation(operationToken);
     }
@@ -2217,21 +2333,31 @@ export function MissionDetailFragment(props: {
     try {
       await withMissionUiWatchdog(Promise.resolve(props.onForceInterrupt?.()));
       await refreshLatestChat();
-    } catch {
-      setRecoveryTimedOut(true);
     } finally {
       setInterrupting(false);
     }
   };
 
-  const refreshLatestChat = async (): Promise<void> => {
+  const refreshLatestChat = async (): Promise<MissionConversationSnapshot | undefined> => {
     const api = desktopApi();
-    if (api === undefined) return;
-    const snapshot = await api.getMissionChat({
-      id: props.mission.id,
-      limit: MISSION_CHAT_PAGE_SIZE,
+    if (api === undefined) return undefined;
+    const [page, state] = await Promise.all([
+      api.getMissionChatPage({
+        id: props.mission.id,
+        limit: MISSION_CHAT_PAGE_SIZE,
+      }),
+      api.getMissionConversationState(props.mission.id),
+    ]);
+    let result: MissionConversationSnapshot | undefined;
+    updateChat((current) => {
+      const next = mergeConversationState(
+        mergeLatestChatPage(current, conversationFromPage(page, current)),
+        state,
+      );
+      result = next ?? undefined;
+      return next;
     });
-    updateChat((current) => mergeLatestChatPage(current, snapshot));
+    return result;
   };
 
   const steerQueuedMessage = async (queueItemRequestId: string): Promise<void> => {
@@ -2341,12 +2467,8 @@ export function MissionDetailFragment(props: {
     ["orphaned", "interrupt_uncertain", "recovery_failed", "deletion_pending"].includes(
       chat.controlHealth.state,
     );
-  const recoveryAvailable = recoveryTimedOut || backendRecoveryAvailable;
-  const recoveryActions = new Set(
-    recoveryTimedOut
-      ? ["recover", "force_interrupt", "force_remove"]
-      : (chat?.controlHealth?.availableActions ?? []),
-  );
+  const recoveryAvailable = backendRecoveryAvailable;
+  const recoveryActions = new Set(chat?.controlHealth?.availableActions ?? []);
   const composerAction = resolveMissionComposerAction({
     draft,
     sending: clientOperation.kind === "sending",
@@ -2356,19 +2478,6 @@ export function MissionDetailFragment(props: {
     awaitingRequest: awaitingRequestId !== null,
     hasPendingQueuedMessage: pendingQueuedMessages.length > 0,
   });
-
-  useEffect(() => {
-    if (!executionActive || interruptible) {
-      setRecoveryTimedOut(false);
-      return;
-    }
-    setRecoveryTimedOut(false);
-    const timer = window.setTimeout(() => {
-      setRecoveryTimedOut(true);
-      resetClientOperation();
-    }, MISSION_RECOVERY_WATCHDOG_MS);
-    return () => window.clearTimeout(timer);
-  }, [executionActive, interruptible, props.mission.execution?.id, resetClientOperation]);
 
   useEffect(() => {
     const executionStatus = props.mission.execution?.status;
@@ -2432,53 +2541,26 @@ export function MissionDetailFragment(props: {
     }
   }, [awaitingRequestId, chat]);
 
-  useEffect(() => {
-    const executionId = props.mission.execution?.id;
-    if (
-      props.mission.lifecycleStatus !== "active" ||
-      executionId === undefined ||
-      !executionActive ||
-      interruptible ||
-      autoRestoreExecutionRef.current === executionId
-    ) {
-      return;
-    }
-    const operationToken = beginClientOperation("restoring");
-    if (operationToken === undefined) return;
-    autoRestoreExecutionRef.current = executionId;
-    void Promise.resolve(props.onRun?.())
-      .catch((restoreError: unknown) => {
-        console.error("Failed to auto-restore Mission execution.", restoreError);
-        setRecoveryTimedOut(true);
-      })
-      .finally(() => finishClientOperation(operationToken));
-  }, [
-    beginClientOperation,
-    executionActive,
-    finishClientOperation,
-    interruptible,
-    props.mission.execution?.id,
-    props.mission.lifecycleStatus,
-    props.onRun,
-  ]);
-
   const loadEarlier = async (): Promise<void> => {
+    const scroller = scrollRef.current;
+    const previousScrollTop = scroller?.scrollTop ?? 0;
+    const previousScrollHeight = scroller?.scrollHeight ?? 0;
     await loadEarlierChat(() => {
-      const element = scrollRef.current;
-      prependScrollHeightRef.current = element?.scrollHeight ?? null;
       followLatestRef.current = false;
+    });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const currentScroller = scrollRef.current;
+        if (currentScroller === null) return;
+        currentScroller.scrollTop =
+          previousScrollTop + Math.max(0, currentScroller.scrollHeight - previousScrollHeight);
+      });
     });
   };
 
   useEffect(() => {
     const element = scrollRef.current;
     if (element === null) return;
-    if (prependScrollHeightRef.current !== null) {
-      element.scrollTop += element.scrollHeight - prependScrollHeightRef.current;
-      prependScrollHeightRef.current = null;
-      setShowJumpToLatest(true);
-      return;
-    }
     if (followLatestRef.current) {
       scheduleFollowLatest();
       setShowJumpToLatest(false);
@@ -2717,14 +2799,13 @@ export function MissionDetailFragment(props: {
               ref={scrollRef}
               onScroll={(event) => {
                 const element = event.currentTarget;
-                chatScrollTopRef.current = element.scrollTop;
-                const nearBottom =
-                  element.scrollHeight - element.scrollTop - element.clientHeight < 72;
-                followLatestRef.current = nearBottom;
-                if (nearBottom) setShowJumpToLatest(false);
+                const atBottom =
+                  element.scrollHeight - element.scrollTop - element.clientHeight <= 24;
+                followLatestRef.current = atBottom;
+                setShowJumpToLatest(!atBottom);
               }}
             >
-              <div className="mission-chat-list" ref={chatListRef}>
+              <div className="mission-chat-virtual-header">
                 {chatInitialLoading && !showThinkingPlaceholder ? (
                   <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
                 ) : null}
@@ -2756,43 +2837,52 @@ export function MissionDetailFragment(props: {
                     {historyError}
                   </p>
                 )}
-                {conversationBlocks.map((block) => {
+              </div>
+              <div className="mission-chat-list">
+                {conversationBlocks.map((block, index) => {
+                  const key = missionConversationBlockKey(props.mission.id, index, block);
                   if (block.type === "tools") {
                     return (
                       <MissionToolCallBlock
+                        key={key}
                         collapsed={block.collapsed}
                         entries={block.entries}
-                        key={`tools:${block.entries[0]!.id}`}
                         mentionCandidates={mentionCandidates}
                       />
                     );
                   }
-                  return block.item.type === "local" ? (
-                    <LocalMissionUserMessageView
-                      message={block.item.entry}
-                      missionId={props.mission.id}
-                      mentionCandidates={mentionCandidates}
-                      key={block.item.entry.id}
-                      retryDisabled={clientOperationBusy}
-                      onRetry={
-                        block.item.entry.retryMode !== undefined
-                          ? (message) => void send(message)
-                          : undefined
-                      }
-                    />
-                  ) : block.item.type === "context-operation" ? (
-                    <MissionContextOperationEntry
-                      operation={block.item.entry}
-                      key={block.item.entry.id}
-                      retryDisabled={
-                        clientOperationBusy || chat?.contextWindow?.canCompact !== true
-                      }
-                      onRetry={() => void compactContext(block.item.entry.id)}
-                    />
-                  ) : (
+                  if (block.item.type === "local") {
+                    return (
+                      <LocalMissionUserMessageView
+                        key={key}
+                        message={block.item.entry}
+                        missionId={props.mission.id}
+                        mentionCandidates={mentionCandidates}
+                        retryDisabled={clientOperationBusy}
+                        onRetry={
+                          block.item.entry.retryMode !== undefined
+                            ? (message) => void send(message)
+                            : undefined
+                        }
+                      />
+                    );
+                  }
+                  if (block.item.type === "context-operation") {
+                    return (
+                      <MissionContextOperationEntry
+                        key={key}
+                        operation={block.item.entry}
+                        retryDisabled={
+                          clientOperationBusy || chat?.contextWindow?.canCompact !== true
+                        }
+                        onRetry={() => void compactContext(block.item.entry.id)}
+                      />
+                    );
+                  }
+                  return (
                     <MissionChatEntryView
+                      key={key}
                       entry={block.item.entry}
-                      key={block.item.entry.id}
                       liveEntryStore={liveEntryStore}
                       missionId={props.mission.id}
                       mentionCandidates={mentionCandidates}
@@ -2813,30 +2903,28 @@ export function MissionDetailFragment(props: {
                     />
                   );
                 })}
+              </div>
+              <div className="mission-chat-virtual-footer">
                 {showThinkingPlaceholder ? (
                   <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
                 ) : null}
-                <span
-                  aria-hidden="true"
-                  className="mission-chat-bottom-anchor"
-                  ref={chatBottomRef}
-                />
+                <span aria-hidden="true" className="mission-chat-bottom-anchor" />
               </div>
-              {showJumpToLatest ? (
-                <button
-                  className="mission-jump-latest"
-                  type="button"
-                  onClick={() => {
-                    followLatestRef.current = true;
-                    scheduleFollowLatest();
-                    setShowJumpToLatest(false);
-                  }}
-                >
-                  <CaretDown size={15} aria-hidden="true" />
-                  {t("jumpLatest", { ns: "missions" })}
-                </button>
-              ) : null}
             </div>
+            {showJumpToLatest ? (
+              <button
+                className="mission-jump-latest"
+                type="button"
+                onClick={() => {
+                  followLatestRef.current = true;
+                  scheduleFollowLatest();
+                  setShowJumpToLatest(false);
+                }}
+              >
+                <CaretDown size={15} aria-hidden="true" />
+                {t("jumpLatest", { ns: "missions" })}
+              </button>
+            ) : null}
             <div className="mission-chat-footer">
               {presentedError !== null && presentedError !== undefined ? (
                 <MissionErrorBanner
@@ -4813,11 +4901,29 @@ function entryContentLength(entry: MissionChatEntry): number {
   return entry.content.length;
 }
 
-function missionFooterTip(mission: Mission, chat: MissionChatSnapshot | null): string | null {
+export function missionConversationBlockKey(
+  missionId: string,
+  index: number,
+  block: MissionConversationBlock,
+): string {
+  if (block.type === "tools") {
+    return `tools:${block.entries[0]?.id ?? `${missionId}:${index}`}`;
+  }
+  return block.item.entry.id;
+}
+
+function missionFooterTip(
+  mission: Mission,
+  chat: MissionConversationSnapshot | null,
+): string | null {
   if (mission.lifecycleStatus === "completed") {
     return i18n.t("reopenToContinue", { ns: "missions" });
   }
-  const execution = chat?.execution ?? mission.execution;
+  const execution =
+    mission.execution !== undefined &&
+    ["succeeded", "failed", "cancelled"].includes(mission.execution.status)
+      ? mission.execution
+      : (chat?.execution ?? mission.execution);
   if (execution === undefined) return null;
   if (execution.status === "failed")
     return execution.error ?? i18n.t("executionFailed", { ns: "missions" });

@@ -30,7 +30,7 @@ import {
   DesktopMemoryExtractionTaskDetailSchema,
   DesktopMemoryExtractionActiveTaskListSchema,
   DesktopMemoryExtractionRunRefSchema,
-  MissionChatSnapshotSchema,
+  MissionConversationSnapshotSchema,
   MemoryKnowledgeInitializationCandidateSchema,
   ListMemoryKnowledgeInitializationCandidatesSchema,
   MemoryKnowledgeInitializationCandidateRefSchema,
@@ -143,7 +143,7 @@ export function installMemoryPolicyHandlers(
       DesktopMemoryExtractionRunRefSchema.parse(input).runId,
     );
     if (chat === undefined) throw new Error("memory_extraction_run_not_found");
-    return MissionChatSnapshotSchema.parse(chat);
+    return MissionConversationSnapshotSchema.parse(chat);
   });
   options.curator.subscribeRunChat((update) => {
     options.getWindow()?.webContents.send("memory-extraction-run-chat:updated", update);

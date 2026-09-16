@@ -17,10 +17,13 @@ import type {
 import type {
   GetMissionWorkConversation,
   Mission,
-  MissionChatQuery,
-  MissionChatSnapshot,
+  MissionChatPage,
+  MissionChatPageQuery,
   MissionChatUpdate,
   MissionContextCompactionResult,
+  MissionContextWindowSnapshot,
+  MissionConversationSnapshot,
+  MissionConversationState,
   MissionHumanInteraction,
   MissionWorkConversationSnapshot,
   MissionWorkSnapshot,
@@ -104,7 +107,9 @@ export interface MissionRunner {
   }): Promise<MissionMessageApplicationResult>;
   steerQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
   removeQueuedMessage(input: { readonly id: string; readonly requestId: string }): Promise<Mission>;
-  getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
+  getChatPage(input: MissionChatPageQuery): Promise<MissionChatPage>;
+  getConversationState(id: string): Promise<MissionConversationState>;
+  getContextWindow(id: string): Promise<MissionContextWindowSnapshot>;
   getTerminalRuntimeFailure(id: string): Promise<
     | {
         readonly message: string;
@@ -151,4 +156,42 @@ export interface MissionRunner {
     readonly requestId: string;
     readonly response: HumanInteractionResponse;
   }): Promise<void>;
+}
+
+export async function readMissionConversationSnapshot(
+  runner: Pick<MissionRunner, "getChatPage" | "getConversationState" | "getContextWindow">,
+  id: string,
+): Promise<MissionConversationSnapshot> {
+  const page = await runner.getChatPage({ id, limit: 50 });
+  const [state, context] = await Promise.all([
+    runner.getConversationState(id),
+    runner.getContextWindow(id),
+  ]);
+  const deliveries = new Map(
+    state.deliveries.map((item) => [item.entryId, item.delivery] as const),
+  );
+  const hidden = new Set(state.hiddenEntryIds);
+  const syncIssues = [
+    ...(page.syncIssues ?? []),
+    ...(state.syncIssues ?? []),
+    ...(context.syncIssues ?? []),
+  ];
+  return {
+    missionId: page.missionId,
+    revision: Math.max(page.revision, state.revision, context.revision),
+    entries: page.entries
+      .filter((entry) => !hidden.has(entry.id))
+      .map((entry) => {
+        if (entry.kind !== "user") return entry;
+        const delivery = deliveries.get(entry.id);
+        return delivery === undefined ? entry : { ...entry, delivery };
+      }),
+    page: page.page,
+    pendingInteractions: state.pendingInteractions,
+    queue: state.queue,
+    execution: state.execution,
+    controlHealth: state.controlHealth,
+    contextWindow: context.contextWindow,
+    ...(syncIssues.length === 0 ? {} : { syncIssues }),
+  };
 }

@@ -142,7 +142,7 @@ function missionHarness(completeImmediately: boolean): {
       records.set(id, finished);
       return finished;
     },
-    async getChat(input: Parameters<MissionRunner["getChat"]>[0]) {
+    async getChatPage(input: Parameters<MissionRunner["getChatPage"]>[0]) {
       const mission = records.get(input.id)!;
       const output =
         mission.origin.type === "system-evaluation" && mission.origin.phase === "judge"

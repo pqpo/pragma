@@ -123,11 +123,14 @@ import type {
   GetMissionWorkConversation,
   MissionWorkConversationSnapshot,
   MissionWorkUpdate,
-  GetMissionChat,
+  GetMissionChatPage,
   SendMissionMessage,
   MissionQueuePromptAction,
   MissionHumanInteraction,
-  MissionChatSnapshot,
+  MissionChatPage,
+  MissionContextWindowSnapshot,
+  MissionConversationSnapshot,
+  MissionConversationState,
   MissionContextCompactionResult,
   MissionChatUpdate,
   RespondMissionHumanInteraction,
@@ -286,7 +289,7 @@ export interface PragmaDesktopAPI {
   ) => Promise<DesktopMemoryExtractionTaskDetail>;
   getMemoryExtractionRunChat: (
     input: DesktopMemoryExtractionRunRef,
-  ) => Promise<MissionChatSnapshot>;
+  ) => Promise<MissionConversationSnapshot>;
   subscribeMemoryExtractionRunChat: (
     listener: (update: DesktopMemoryExtractionRunChatUpdate) => void,
   ) => () => void;
@@ -567,7 +570,9 @@ export interface PragmaDesktopAPI {
     input: MissionQueuePromptAction,
   ) => Promise<MissionQueueSteerResult>;
   removeQueuedMissionMessage: (input: MissionQueuePromptAction) => Promise<Mission>;
-  getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
+  getMissionChatPage: (input: GetMissionChatPage) => Promise<MissionChatPage>;
+  getMissionConversationState: (id: string) => Promise<MissionConversationState>;
+  getMissionContextWindow: (id: string) => Promise<MissionContextWindowSnapshot>;
   compactMissionContext: (id: string) => Promise<MissionContextCompactionResult>;
   subscribeMissionChatUpdates: (listener: (update: MissionChatUpdate) => void) => () => void;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;

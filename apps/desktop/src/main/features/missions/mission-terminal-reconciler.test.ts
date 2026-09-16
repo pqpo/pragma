@@ -78,6 +78,35 @@ describe("Mission terminal reconciler", () => {
     await repair.mock.results[0]?.value;
   });
 
+  it("does not compete with a live controller lease for terminal repair", async () => {
+    const repair = vi.fn(async () => undefined);
+    const status = new MissionStatusService(vi.fn());
+    const listener = vi.fn();
+    status.subscribe(listener);
+    const reconciler = createMissionTerminalReconciler({
+      missions: { get: async () => mission() },
+      executions: {
+        get: async () =>
+          ({
+            executionId,
+            status: "succeeded",
+            updatedAt: "2026-09-16T00:01:00.000Z",
+          }) as never,
+      },
+      repair,
+      status,
+      audienceForMission: () => "user",
+      canRepair: async () => false,
+      reportFailure: vi.fn(),
+    });
+
+    reconciler.schedule([missionId]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(repair).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it("frees worker capacity after a bounded wait without duplicating the stuck Mission", async () => {
     const secondMissionId = "33333333-3333-4333-8333-333333333333";
     const secondExecutionId = "55555555-5555-4555-8555-555555555555";

@@ -24,7 +24,7 @@ import {
   CreateMissionSchema,
   CreateMissionBranchSchema,
   DiscardMissionAttachmentDraftsSchema,
-  GetMissionChatSchema,
+  GetMissionChatPageSchema,
   GetMissionWorkConversationSchema,
   HomeExecutorPreferenceSchema,
   HomeMissionExecutorCatalogSchema,
@@ -413,14 +413,17 @@ export function installMissionHandlers(options: {
       if (source.executor.kind === "flow") {
         throw new Error("Flow missions cannot create conversation branches.");
       }
-      const newest = await options.runner.getChat({ id: source.id, limit: 100 });
+      const [newest, state] = await Promise.all([
+        options.runner.getChatPage({ id: source.id, limit: 50 }),
+        options.runner.getConversationState(source.id),
+      ]);
       if (
-        (newest.execution?.id ?? null) !== parsed.expectedExecutionId ||
-        (newest.execution !== undefined &&
-          !["succeeded", "failed", "cancelled"].includes(newest.execution.status)) ||
-        (newest.queue?.state ?? "idle") !== "idle" ||
-        (newest.queue?.pendingCount ?? 0) !== 0 ||
-        newest.pendingInteractions.length !== 0
+        (state.execution?.id ?? null) !== parsed.expectedExecutionId ||
+        (state.execution !== undefined &&
+          !["succeeded", "failed", "cancelled"].includes(state.execution.status)) ||
+        (state.queue?.state ?? "idle") !== "idle" ||
+        (state.queue?.pendingCount ?? 0) !== 0 ||
+        state.pendingInteractions.length !== 0
       ) {
         throw new Error("Wait for the source Mission to become idle before creating a branch.");
       }
@@ -430,10 +433,10 @@ export function installMissionHandlers(options: {
       const pages = [newest];
       let beforeCursor = newest.page.nextBeforeCursor;
       while (beforeCursor !== undefined) {
-        const page = await options.runner.getChat({
+        const page = await options.runner.getChatPage({
           id: source.id,
           beforeCursor,
-          limit: 100,
+          limit: 50,
         });
         if (page.syncIssues !== undefined && page.syncIssues.length > 0) {
           throw new Error(
@@ -621,10 +624,16 @@ export function installMissionHandlers(options: {
       return mission;
     }),
   );
-  ipcMain.handle("missions:chat:get", async (_event, input: unknown) => {
-    const parsed = GetMissionChatSchema.parse(input);
-    await assertManagedMission(parsed.id);
-    return await options.runner.getChat(parsed);
+  ipcMain.handle("missions:chat:page:get", async (_event, input: unknown) => {
+    return await options.runner.getChatPage(GetMissionChatPageSchema.parse(input));
+  });
+  ipcMain.handle("missions:conversation-state:get", async (_event, input: unknown) => {
+    const parsed = MissionActionSchema.parse(input);
+    return await options.runner.getConversationState(parsed.id);
+  });
+  ipcMain.handle("missions:context-window:get", async (_event, input: unknown) => {
+    const parsed = MissionActionSchema.parse(input);
+    return await options.runner.getContextWindow(parsed.id);
   });
   ipcMain.handle("missions:context:compact", (_event, input: unknown) =>
     runDesktopMutation(

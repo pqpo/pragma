@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type {
   Mission,
-  MissionChatSnapshot,
+  MissionConversationSnapshot,
   MissionSummary,
   MissionWorkRecord,
 } from "../../../../shared/contracts/index.ts";
@@ -89,7 +89,7 @@ describe("MissionsPage", () => {
   });
 
   it("uses bounded initial pages for Mission conversations", () => {
-    expect(MISSION_CHAT_PAGE_SIZE).toBe(200);
+    expect(MISSION_CHAT_PAGE_SIZE).toBe(50);
     expect(MISSION_WORK_CONVERSATION_PAGE_SIZE).toBe(50);
     expect(MISSION_WORK_RECORD_PAGE_SIZE).toBe(20);
   });
@@ -418,7 +418,7 @@ describe("MissionsPage", () => {
 
   it("renders a compact, stepwise question flow", () => {
     const mission = missionFixture("expert");
-    const chat: MissionChatSnapshot = {
+    const chat: MissionConversationSnapshot = {
       missionId: mission.id,
       revision: 1,
       entries: [],
@@ -733,6 +733,52 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("does not expose recovery controls when Mission detail is already terminal", () => {
+    const mission = {
+      ...missionFixture("expert"),
+      execution: {
+        id: "00000000-0000-4000-8000-000000000010",
+        inputMessageId: "00000000-0000-4000-8000-000000000001",
+        status: "succeeded" as const,
+        startedAt: "2026-07-11T00:00:00.000Z",
+        finishedAt: "2026-07-11T00:01:00.000Z",
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={mission}
+        chatCache={
+          new Map([
+            [
+              mission.id,
+              {
+                missionId: mission.id,
+                revision: 3,
+                entries: [],
+                page: {},
+                pendingInteractions: [],
+                execution: {
+                  id: mission.execution.id,
+                  status: "running",
+                  interruptible: false,
+                },
+                controlHealth: {
+                  state: "orphaned",
+                  executionId: mission.execution.id,
+                  observedAt: "2026-07-11T00:01:00.000Z",
+                  availableActions: ["recover", "force_interrupt", "force_remove"],
+                },
+              } satisfies MissionConversationSnapshot,
+            ],
+          ])
+        }
+      />,
+    );
+
+    expect(html).not.toContain("mission-recovery-actions");
+    expect(html).not.toContain("is-recovery");
+  });
+
   it("shows a shimmering chat skeleton only while the initial conversation snapshot is missing", () => {
     const mission = missionFixture("expert");
     const loadingHtml = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
@@ -749,7 +795,7 @@ describe("MissionDetailFragment", () => {
                 entries: [],
                 page: {},
                 pendingInteractions: [],
-              } satisfies MissionChatSnapshot,
+              } satisfies MissionConversationSnapshot,
             ],
           ])
         }
@@ -854,7 +900,7 @@ describe("MissionDetailFragment", () => {
       status: "running",
       startedAt: "2026-07-11T00:00:01.000Z",
     };
-    const chat: MissionChatSnapshot = {
+    const chat: MissionConversationSnapshot = {
       missionId: mission.id,
       revision: 1,
       entries: [],
@@ -1137,7 +1183,7 @@ describe("MissionDetailFragment", () => {
       status: "running",
       startedAt: "2026-07-11T00:00:01.000Z",
     };
-    const chat: MissionChatSnapshot = {
+    const chat: MissionConversationSnapshot = {
       missionId: mission.id,
       revision: 1,
       entries: [],
@@ -1176,7 +1222,7 @@ describe("MissionDetailFragment", () => {
 
   it("hides queued steer when the Runtime does not support it", () => {
     const mission = missionFixture("expert");
-    const chat: MissionChatSnapshot = {
+    const chat: MissionConversationSnapshot = {
       missionId: mission.id,
       revision: 1,
       entries: [],
@@ -1651,7 +1697,7 @@ describe("Mission chat patches", () => {
   it("keeps loaded entries from the same long turn when the latest page refreshes", () => {
     const missionId = "00000000-0000-4000-8000-000000000000";
     const createdAt = "2026-07-11T00:00:00.000Z";
-    const current: MissionChatSnapshot = {
+    const current: MissionConversationSnapshot = {
       missionId,
       revision: 1,
       entries: [
@@ -1675,7 +1721,7 @@ describe("Mission chat patches", () => {
       page: { oldestSequence: 7, newestSequence: 7, nextBeforeCursor: "older-cursor" },
       pendingInteractions: [],
     };
-    const latest: MissionChatSnapshot = {
+    const latest: MissionConversationSnapshot = {
       missionId,
       revision: 2,
       entries: [current.entries[1]!],
@@ -1692,7 +1738,7 @@ describe("Mission chat patches", () => {
   it("does not replace append-only live output with a shorter refreshed prefix", () => {
     const missionId = "00000000-0000-4000-8000-000000000000";
     const createdAt = "2026-07-11T00:00:00.000Z";
-    const current: MissionChatSnapshot = {
+    const current: MissionConversationSnapshot = {
       missionId,
       revision: 4,
       entries: [
@@ -1707,7 +1753,7 @@ describe("Mission chat patches", () => {
       page: {},
       pendingInteractions: [],
     };
-    const staleProjection: MissionChatSnapshot = {
+    const staleProjection: MissionConversationSnapshot = {
       missionId,
       revision: 5,
       entries: [
@@ -1736,7 +1782,7 @@ describe("Mission chat patches", () => {
   });
 
   it("preserves known history and interaction state when a refresh is degraded", () => {
-    const current: MissionChatSnapshot = {
+    const current: MissionConversationSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
       revision: 1,
       entries: [
@@ -1766,7 +1812,7 @@ describe("Mission chat patches", () => {
         },
       ],
     };
-    const degraded: MissionChatSnapshot = {
+    const degraded: MissionConversationSnapshot = {
       missionId: current.missionId,
       revision: 2,
       entries: [],
@@ -1794,7 +1840,7 @@ describe("Mission chat patches", () => {
   });
 
   it("applies streaming deltas without replacing the accumulated entry", () => {
-    const snapshot: MissionChatSnapshot = {
+    const snapshot: MissionConversationSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
       revision: 1,
       entries: [
@@ -1851,7 +1897,7 @@ describe("Mission chat patches", () => {
   });
 
   it("keeps executor presentation metadata when a live upsert omits it", () => {
-    const snapshot: MissionChatSnapshot = {
+    const snapshot: MissionConversationSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
       revision: 1,
       entries: [
@@ -1899,7 +1945,7 @@ describe("Mission chat patches", () => {
   });
 
   it("applies a live context-window patch without replacing chat entries", () => {
-    const snapshot: MissionChatSnapshot = {
+    const snapshot: MissionConversationSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
       revision: 1,
       entries: [],
@@ -2271,7 +2317,7 @@ describe("Mission Expert output labels", () => {
       startedAt: "2026-07-11T00:02:00.000Z",
       finishedAt: "2026-07-11T00:03:00.000Z",
     };
-    const chat: MissionChatSnapshot = {
+    const chat: MissionConversationSnapshot = {
       missionId: mission.id,
       revision: 1,
       entries: [
@@ -2321,7 +2367,7 @@ describe("Mission Expert output labels", () => {
       cutoffMessageId: "assistant:source",
       createdAt,
     };
-    const chat: MissionChatSnapshot = {
+    const chat: MissionConversationSnapshot = {
       missionId: mission.id,
       revision: 1,
       entries: [
@@ -2434,7 +2480,7 @@ describe("Mission thinking placeholder", () => {
   });
 
   it("stays visible while a newly persisted message still sees the previous execution", () => {
-    const snapshot: MissionChatSnapshot = {
+    const snapshot: MissionConversationSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
       revision: 1,
       entries: [
@@ -2459,7 +2505,7 @@ describe("Mission thinking placeholder", () => {
   });
 
   it("clears after the matching execution finishes without producing a response entry", () => {
-    const snapshot: MissionChatSnapshot = {
+    const snapshot: MissionConversationSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
       revision: 2,
       entries: [

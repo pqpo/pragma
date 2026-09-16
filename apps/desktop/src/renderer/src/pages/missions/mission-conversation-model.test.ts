@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { MissionChatSnapshot, MissionChatUpdate } from "../../../../shared/contracts/index.ts";
+import type {
+  MissionConversationSnapshot,
+  MissionChatUpdate,
+} from "../../../../shared/contracts/index.ts";
 
 import {
   applyMissionChatPatches,
@@ -13,9 +16,10 @@ import {
   reconcileMissionChatRefresh,
   startMissionContextOperation,
 } from "./mission-conversation-model.ts";
+import { mergeContextWindow, mergeConversationState } from "./use-mission-conversation.ts";
 
 describe("mission conversation model", () => {
-  const streamingSnapshot = (content = "hel", revision = 1): MissionChatSnapshot => ({
+  const streamingSnapshot = (content = "hel", revision = 1): MissionConversationSnapshot => ({
     missionId: "00000000-0000-4000-8000-000000000000",
     revision,
     entries: [
@@ -58,6 +62,81 @@ describe("mission conversation model", () => {
       requiresRender: false,
     });
     expect([...result.changedEntryIds]).toEqual(["answer"]);
+  });
+
+  it("does not advance the content revision when delayed state projections arrive", () => {
+    const current = streamingSnapshot("hello", 4);
+    const withState = mergeConversationState(current, {
+      missionId: current.missionId,
+      revision: 7,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    const withContext = mergeContextWindow(withState, {
+      missionId: current.missionId,
+      revision: 8,
+    });
+
+    expect(withContext?.revision).toBe(4);
+    expect(withContext).toMatchObject({ stateRevision: 7, contextRevision: 8 });
+    const patched = applyMissionChatUpdateBatch(withContext!, [
+      {
+        missionId: current.missionId,
+        revision: 5,
+        kind: "patch",
+        patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "!" }],
+      },
+    ]);
+    expect(patched.snapshot.entries[0]).toMatchObject({ content: "hello!" });
+  });
+
+  it("rejects stale conversation state and context responses independently", () => {
+    const current = streamingSnapshot("hello", 10);
+    const freshState = mergeConversationState(current, {
+      missionId: current.missionId,
+      revision: 12,
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+      execution: {
+        id: "00000000-0000-4000-8000-000000000001",
+        status: "succeeded",
+        interruptible: false,
+      },
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    const staleState = mergeConversationState(freshState, {
+      missionId: current.missionId,
+      revision: 11,
+      pendingInteractions: [],
+      queue: { state: "running", pendingCount: 1, supportsSteer: false, items: [] },
+      execution: {
+        id: "00000000-0000-4000-8000-000000000001",
+        status: "running",
+        interruptible: true,
+      },
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    const freshContext = mergeContextWindow(staleState, {
+      missionId: current.missionId,
+      revision: 14,
+      contextWindow: {
+        supportsInspection: true,
+        supportsCompaction: true,
+        canCompact: true,
+      },
+    });
+    const staleContext = mergeContextWindow(freshContext, {
+      missionId: current.missionId,
+      revision: 13,
+    });
+
+    expect(staleState).toBe(freshState);
+    expect(staleState?.execution).toMatchObject({ status: "succeeded", interruptible: false });
+    expect(staleContext).toBe(freshContext);
+    expect(staleContext?.contextWindow?.canCompact).toBe(true);
   });
 
   it("keeps a revision gap pending for an authoritative refresh", () => {
@@ -207,7 +286,7 @@ describe("mission conversation model", () => {
     const staleProjection = {
       ...streamingSnapshot("hello", 7),
       entries: [{ ...current.entries[0]!, content: "hello", streaming: false }],
-    } as MissionChatSnapshot;
+    } as MissionConversationSnapshot;
 
     expect(reconcileMissionChatRefresh(current, staleProjection, pending)).toMatchObject({
       snapshot: {
@@ -229,7 +308,7 @@ describe("mission conversation model", () => {
           streaming: false,
         },
       ],
-    } as MissionChatSnapshot;
+    } as MissionConversationSnapshot;
 
     expect(reconcileMissionChatRefresh(current, stale, [])).toMatchObject({
       snapshot: {
@@ -388,7 +467,7 @@ describe("mission conversation model", () => {
   });
 
   it("keeps a newer live answer after thinking when an older refresh arrives", () => {
-    const current: MissionChatSnapshot = {
+    const current: MissionConversationSnapshot = {
       ...streamingSnapshot("answer", 8),
       entries: [
         {
@@ -404,7 +483,7 @@ describe("mission conversation model", () => {
         },
       ],
     };
-    const stale: MissionChatSnapshot = {
+    const stale: MissionConversationSnapshot = {
       ...current,
       revision: 7,
       entries: [
@@ -442,7 +521,7 @@ describe("mission conversation model", () => {
         content: `Research ${index}`,
         streaming: false,
       }));
-      const stale: MissionChatSnapshot = {
+      const stale: MissionConversationSnapshot = {
         ...base,
         revision: 7,
         entries: [...thinking, { ...answer, content: "Final" }],

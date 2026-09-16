@@ -36,14 +36,14 @@ import {
 } from "@pragma/memory";
 import type { MemoryExtractionFailureDiagnostic } from "@pragma/shared";
 
-import type { MissionRunner } from "../missions/mission-runner.ts";
+import { readMissionConversationSnapshot, type MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { z } from "zod";
 import type {
   DesktopMemoryExtractionRun,
   DesktopMemoryExtractionRunChatUpdate,
-  MissionChatSnapshot,
+  MissionConversationSnapshot,
 } from "../../../shared/contracts/index.ts";
 import {
   createMemoryExtractionRunArchive,
@@ -81,7 +81,7 @@ export interface DesktopMemoryCurator {
     readonly module: DesktopMemoryExtractionRun["module"];
     readonly jobId: string;
   }): Promise<readonly DesktopMemoryExtractionRun[]>;
-  getRunChat(runId: string): Promise<MissionChatSnapshot | undefined>;
+  getRunChat(runId: string): Promise<MissionConversationSnapshot | undefined>;
   subscribeRunChat(listener: (update: DesktopMemoryExtractionRunChatUpdate) => void): () => void;
 }
 
@@ -194,16 +194,14 @@ export function createDesktopMemoryCurator(options: {
             revision: input.missionId,
             fingerprint: createHash("sha256")
               .update(
-                JSON.stringify(
-                  {
-                    missionId: input.missionId,
-                    tools: tools.map((tool) => ({
-                      name: tool.name,
-                      inputSchema: tool.inputSchema,
-                      approval: tool.approval?.mode,
-                    })),
-                  },
-                ),
+                JSON.stringify({
+                  missionId: input.missionId,
+                  tools: tools.map((tool) => ({
+                    name: tool.name,
+                    inputSchema: tool.inputSchema,
+                    approval: tool.approval?.mode,
+                  })),
+                }),
               )
               .digest("hex"),
             value: { contribution: { tools } },
@@ -266,7 +264,7 @@ export function createDesktopMemoryCurator(options: {
     async getRunChat(runId) {
       const active = [...activeRuns.values()].find((run) => run.runId === runId);
       if (active !== undefined) {
-        return await options.runner.getChat({ id: active.missionId, limit: 100 });
+        return await readMissionConversationSnapshot(options.runner, active.missionId);
       }
       return (await runArchive.get(runId))?.chat;
     },
@@ -431,7 +429,7 @@ async function runCuratorMission(input: {
       finalStatus = finished.execution?.status === "cancelled" ? "cancelled" : "failed";
       throw error;
     }
-    const chat = await input.options.runner.getChat({ id: mission.id, limit: 100 });
+    const chat = await input.options.runner.getChatPage({ id: mission.id, limit: 50 });
     const content = chat.entries
       .filter((entry) => entry.kind === "assistant")
       .map((entry) => entry.content)
@@ -470,7 +468,7 @@ async function runCuratorMission(input: {
   } finally {
     input.signal?.removeEventListener("abort", interrupt);
     const [chat] = await Promise.all([
-      input.options.runner.getChat({ id: mission.id, limit: 100 }).catch(() => undefined),
+      readMissionConversationSnapshot(input.options.runner, mission.id).catch(() => undefined),
     ]);
     await input.runArchive
       .save({

@@ -399,11 +399,29 @@
 .mission-chat-list {
   min-width: 0;
   max-width: 100%;
-  padding: 30px var(--mission-detail-inline-padding) 24px;
+  padding: 22px var(--mission-detail-inline-padding) 24px;
+}
+
+.mission-chat-virtual-header {
+  padding: 30px var(--mission-detail-inline-padding) 0;
+}
+
+.mission-chat-virtual-header > * + *,
+.mission-chat-virtual-footer > * + * {
+  margin-top: 22px;
+}
+
+.mission-chat-virtual-footer {
+  padding: 0 var(--mission-detail-inline-padding) 24px;
 }
 
 .mission-chat-list > * + * {
   margin-top: 22px;
+}
+
+.mission-chat-list > * {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 180px;
 }
 
 .mission-chat-list > .mission-chat-bottom-anchor {

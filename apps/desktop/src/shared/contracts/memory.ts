@@ -14,7 +14,7 @@ import {
 } from "@pragma/shared";
 import { z } from "zod";
 import { ContextStoreIdSchema, ContextStoreSnapshotFileSchema } from "./context-stores.ts";
-import { MissionChatSnapshotSchema, MissionChatUpdateSchema } from "./missions.ts";
+import { MissionConversationSnapshotSchema, MissionChatUpdateSchema } from "./missions.ts";
 
 export const DesktopMemoryPolicyTargetSchema = MemorySubjectRefSchema.refine(
   (target) =>
@@ -250,7 +250,7 @@ export const DesktopMemoryExtractionRunSchema = z
     providerId: z.string().min(1).optional(),
     modelId: z.string().min(1).optional(),
     failure: MemoryExtractionFailureDiagnosticSchema.optional(),
-    chat: MissionChatSnapshotSchema.optional(),
+    chat: MissionConversationSnapshotSchema.optional(),
   })
   .strict();
 

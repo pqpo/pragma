@@ -473,10 +473,10 @@ export const MissionQueuePromptActionSchema = z
     message: "Queue actions require a requestId distinct from the queue item requestId.",
     path: ["requestId"],
   });
-export const GetMissionChatSchema = z.object({
+export const GetMissionChatPageSchema = z.object({
   id: MissionIdSchema,
   beforeCursor: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(200).default(50),
+  limit: z.number().int().min(1).max(50).default(50),
 });
 export const GetMissionWorkConversationSchema = z.object({
   id: MissionIdSchema,
@@ -697,15 +697,31 @@ export const MissionChatSyncIssueSchema = z.object({
   retryable: z.literal(true),
 });
 
-export const MissionChatSnapshotSchema = z.object({
+const MissionChatPageInfoSchema = z.object({
+  oldestSequence: z.number().int().positive().optional(),
+  newestSequence: z.number().int().positive().optional(),
+  nextBeforeCursor: z.string().min(1).max(2_048).optional(),
+});
+
+const MissionMessageDeliverySchema = z.object({
+  requestedMode: z.enum(["enqueue", "steer"]),
+  effectiveMode: z.enum(["enqueue", "steer"]),
+  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]),
+  fallbackReason: z.string().min(1).optional(),
+  removed: z.boolean().optional(),
+});
+
+export const MissionChatPageSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
   entries: z.array(MissionChatEntrySchema),
-  page: z.object({
-    oldestSequence: z.number().int().positive().optional(),
-    newestSequence: z.number().int().positive().optional(),
-    nextBeforeCursor: z.string().min(1).max(2_048).optional(),
-  }),
+  page: MissionChatPageInfoSchema,
+  syncIssues: z.array(MissionChatSyncIssueSchema).max(1).optional(),
+});
+
+export const MissionConversationStateSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().nonnegative(),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   queue: z
     .object({
@@ -724,6 +740,37 @@ export const MissionChatSnapshotSchema = z.object({
       pausedAfterRequestId: z.string().min(1).optional(),
     })
     .optional(),
+  execution: MissionChatExecutionSchema.optional(),
+  controlHealth: MissionControlHealthSchema.optional(),
+  deliveries: z
+    .array(
+      z.object({
+        entryId: z.string().min(1),
+        delivery: MissionMessageDeliverySchema,
+      }),
+    )
+    .default([]),
+  hiddenEntryIds: z.array(z.string().min(1)).default([]),
+  syncIssues: z.array(MissionChatSyncIssueSchema).max(1).optional(),
+});
+
+export const MissionContextWindowSnapshotSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().nonnegative(),
+  contextWindow: MissionContextWindowStateSchema.optional(),
+  syncIssues: z.array(MissionChatSyncIssueSchema).max(1).optional(),
+});
+
+/** Renderer-side aggregate assembled progressively from the independent read models. */
+export const MissionConversationSnapshotSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().nonnegative(),
+  stateRevision: z.number().int().nonnegative().optional(),
+  contextRevision: z.number().int().nonnegative().optional(),
+  entries: z.array(MissionChatEntrySchema),
+  page: MissionChatPageInfoSchema,
+  pendingInteractions: z.array(MissionHumanInteractionSchema),
+  queue: MissionConversationStateSchema.shape.queue,
   execution: MissionChatExecutionSchema.optional(),
   controlHealth: MissionControlHealthSchema.optional(),
   contextWindow: MissionContextWindowStateSchema.optional(),

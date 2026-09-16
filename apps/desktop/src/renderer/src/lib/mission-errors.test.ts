@@ -50,7 +50,7 @@ describe("localizedMissionError", () => {
     expect(
       localizedMissionError(
         new Error(
-          "Error invoking remote method 'missions:chat:get': Mission timeline sequence conflict: expected 3, received 4.",
+          "Error invoking remote method 'missions:chat:page:get': Mission timeline sequence conflict: expected 3, received 4.",
         ),
         translate,
       ),

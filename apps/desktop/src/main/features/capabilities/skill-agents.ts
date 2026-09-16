@@ -177,7 +177,7 @@ export function createDesktopSkillAgents(options: {
       const finished = await options.missions.get(mission.id);
       if (finished.execution?.status !== "succeeded")
         throw new Error(`skill_agent_failed:${finished.execution?.error ?? "unknown"}`);
-      const chat = await options.runner.getChat({ id: mission.id, limit: 100 });
+      const chat = await options.runner.getChatPage({ id: mission.id, limit: 50 });
       const output = chat.entries
         .filter((entry) => entry.kind === "assistant")
         .map((entry) => entry.content)

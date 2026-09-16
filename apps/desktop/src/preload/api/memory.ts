@@ -38,7 +38,7 @@ import {
   UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "../../shared/contracts/memory.ts";
 import { ContextStoreSchema } from "../../shared/contracts/context-stores.ts";
-import { MissionChatSnapshotSchema } from "../../shared/contracts/missions.ts";
+import { MissionConversationSnapshotSchema } from "../../shared/contracts/missions.ts";
 import {
   ExpertMemoryContextStoreContentSchema,
   ExpertMemoryContextStoreDescriptorSchema,
@@ -111,7 +111,7 @@ export const memoryApi = {
       ),
     ),
   getMemoryExtractionRunChat: async (input) =>
-    MissionChatSnapshotSchema.parse(
+    MissionConversationSnapshotSchema.parse(
       await ipcRenderer.invoke(
         "memory-extraction-run-chat:get",
         DesktopMemoryExtractionRunRefSchema.parse(input),

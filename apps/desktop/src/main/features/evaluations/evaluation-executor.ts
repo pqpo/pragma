@@ -254,7 +254,7 @@ async function runMission(input: {
   readonly signal: AbortSignal;
 }): Promise<{
   readonly output: string;
-  readonly entries: Awaited<ReturnType<MissionRunner["getChat"]>>["entries"];
+  readonly entries: Awaited<ReturnType<MissionRunner["getChatPage"]>>["entries"];
 }> {
   throwIfCancelled(input.signal);
   const mission = await input.missions.create({
@@ -285,7 +285,7 @@ async function runMission(input: {
     if (finished.execution?.status !== "succeeded") {
       throw new Error(finished.execution?.error ?? `${input.phase} execution failed.`);
     }
-    const chat = await input.runner.getChat({ id: mission.id, limit: 100 });
+    const chat = await input.runner.getChatPage({ id: mission.id, limit: 50 });
     const output = chat.entries
       .filter((entry) => entry.kind === "assistant")
       .map((entry) => entry.content)
@@ -325,7 +325,7 @@ function throwIfCancelled(signal: AbortSignal): void {
 }
 
 function traceFromMission(
-  entries: Awaited<ReturnType<MissionRunner["getChat"]>>["entries"],
+  entries: Awaited<ReturnType<MissionRunner["getChatPage"]>>["entries"],
 ): AgentEvaluationToolTrace[] {
   return entries.flatMap((entry) =>
     entry.kind !== "tool" || (entry.status !== "succeeded" && entry.status !== "failed")

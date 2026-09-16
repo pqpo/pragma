@@ -9,7 +9,12 @@ export const DesktopRendererLogSchema = z
     stack: z.string().max(32_768).optional(),
     missionId: z.string().min(1).optional(),
     executionId: z.string().min(1).optional(),
+    navigationId: z.string().uuid().optional(),
     elapsedMs: z.number().nonnegative().finite().optional(),
+    entryCount: z.number().int().nonnegative().optional(),
+    characterCount: z.number().int().nonnegative().optional(),
+    cacheHit: z.boolean().optional(),
+    longTaskMs: z.number().nonnegative().finite().optional(),
   })
   .strict();
 export type DesktopRendererLog = z.infer<typeof DesktopRendererLogSchema>;

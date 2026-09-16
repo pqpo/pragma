@@ -19,11 +19,13 @@ import {
   CreateMissionSchema,
   CreateMissionBranchSchema,
   DiscardMissionAttachmentDraftsSchema,
-  GetMissionChatSchema,
+  GetMissionChatPageSchema,
   GetMissionWorkConversationSchema,
   MissionActionSchema,
   MissionExecutionActionSchema,
-  MissionChatSnapshotSchema,
+  MissionChatPageSchema,
+  MissionContextWindowSnapshotSchema,
+  MissionConversationStateSchema,
   MissionChatUpdateSchema,
   MissionContextCompactionResultSchema,
   MissionHumanInteractionSchema,
@@ -216,9 +218,20 @@ export const missionsApi = {
     MissionSchema.parse(
       await invokeMutation("missions:queue:remove", MissionQueuePromptActionSchema.parse(input)),
     ),
-  getMissionChat: async (input) =>
-    MissionChatSnapshotSchema.parse(
-      await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
+  getMissionChatPage: async (input) =>
+    MissionChatPageSchema.parse(
+      await ipcRenderer.invoke("missions:chat:page:get", GetMissionChatPageSchema.parse(input)),
+    ),
+  getMissionConversationState: async (id) =>
+    MissionConversationStateSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:conversation-state:get",
+        MissionActionSchema.parse({ id }),
+      ),
+    ),
+  getMissionContextWindow: async (id) =>
+    MissionContextWindowSnapshotSchema.parse(
+      await ipcRenderer.invoke("missions:context-window:get", MissionActionSchema.parse({ id })),
     ),
   compactMissionContext: async (id) =>
     MissionContextCompactionResultSchema.parse(
@@ -325,7 +338,9 @@ export const missionsApi = {
   | "sendMissionMessage"
   | "trySteerQueuedMissionMessage"
   | "removeQueuedMissionMessage"
-  | "getMissionChat"
+  | "getMissionChatPage"
+  | "getMissionConversationState"
+  | "getMissionContextWindow"
   | "compactMissionContext"
   | "subscribeMissionChatUpdates"
   | "subscribeMissionChat"

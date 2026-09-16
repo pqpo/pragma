@@ -1367,6 +1367,10 @@ export async function createDesktopApplicationContainer(
     status: missionStatus,
     audienceForMission: (mission) =>
       isUserFacingMissionOrigin(mission.origin) ? "user" : "internal",
+    canRepair: async (missionId) => {
+      const { snapshot } = await missionControllerStore.readSnapshot({ missionId });
+      return snapshot.lease === undefined || Date.parse(snapshot.lease.expiresAt) <= Date.now();
+    },
     reportFailure: ({ missionId, error }) => {
       mainLogger.warn(
         "mission.terminal_reconciliation_degraded",

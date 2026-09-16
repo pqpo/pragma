@@ -24,7 +24,7 @@ import type {
   DesktopMemoryItem,
   DesktopMemoryPlaneStatus,
   ListDesktopMemoryExtractionJobs,
-  MissionChatSnapshot,
+  MissionConversationSnapshot,
   MemoryKnowledgeInitializationCandidate,
   MemorySkillCandidate,
 } from "../../../../shared/contracts/index.ts";
@@ -1165,7 +1165,7 @@ function MemoryExtractionTaskDetails(props: {
   const [selectedKey, setSelectedKey] = useState<string>();
   const [detail, setDetail] = useState<DesktopMemoryExtractionTaskDetail>();
   const [selectedRunId, setSelectedRunId] = useState<string>();
-  const [chat, setChat] = useState<MissionChatSnapshot>();
+  const [chat, setChat] = useState<MissionConversationSnapshot>();
   const [loadError, setLoadError] = useState(false);
   const detailRequestVersion = useRef(0);
   const detailLoadingKey = useRef<string | undefined>(undefined);
