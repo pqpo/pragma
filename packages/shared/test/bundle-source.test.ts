@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BundleSourceItemSchema,
   BundleSourceManifestSchema,
+  BundleSourceTagSchema,
   bundleSourceItemDirectory,
   parseBundleSourceItem,
   parseBundleSourceManifest,
@@ -10,6 +11,28 @@ import {
 } from "../src/index.ts";
 
 describe("Bundle Source protocol", () => {
+  it("accepts localized Bundle Source tags while keeping tags non-empty and bounded", () => {
+    expect(BundleSourceTagSchema.parse("研发")).toBe("研发");
+    expect(BundleSourceTagSchema.safeParse(" ").success).toBe(false);
+    expect(BundleSourceTagSchema.safeParse("a".repeat(81)).success).toBe(false);
+    expect(
+      BundleSourceItemSchema.parse({
+        schemaVersion: "pragma.bundle-source-item/v2",
+        id: "reviewer",
+        rootRef: "expert:1234567890abcdef",
+        name: { default: "Reviewer" },
+        summary: { default: "Reviews code." },
+        description: { default: "Reviews code carefully." },
+        author: { name: "Pragma" },
+        license: "MIT",
+        tags: ["研发", "团队"],
+        latestVersion: "1.0.0",
+        createdAt: "2026-08-31T00:00:00.000Z",
+        updatedAt: "2026-08-31T00:00:00.000Z",
+      }),
+    ).toMatchObject({ tags: ["研发", "团队"] });
+  });
+
   it("defines type-specific governed categories", () => {
     expect(
       BundleSourceManifestSchema.parse({

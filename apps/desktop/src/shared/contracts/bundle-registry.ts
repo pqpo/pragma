@@ -6,6 +6,7 @@ import {
   BundleSourceRootRefSchema,
   BundleSourceSemverSchema,
   BundleSourceSlugSchema,
+  BundleSourceTagSchema,
   PRAGMA_TEXT_LIMITS,
   PragmaAvatarIdSchema,
 } from "@pragma/shared";
@@ -204,7 +205,7 @@ const BundleSourcePublicationMetadataShape = {
 export const BundleSourcePublicationMetadataSchema = z
   .object({
     ...BundleSourcePublicationMetadataShape,
-    tags: z.array(BundleSourceSlugSchema).max(30),
+    tags: z.array(BundleSourceTagSchema).max(30),
   })
   .strict();
 
@@ -311,7 +312,7 @@ export function prepareBundleSourcePublicationTags(values: readonly string[]): s
   const tags: string[] = [];
   for (const value of values) {
     const normalized = normalizeBundleSourcePublicationTag(value);
-    const prepared = BundleSourceSlugSchema.safeParse(normalized).success
+    const prepared = BundleSourceTagSchema.safeParse(normalized).success
       ? normalized
       : value.trim();
     if (!tags.includes(prepared)) tags.push(prepared);

@@ -9,6 +9,9 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
+  type FocusEvent as ReactFocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
   type SetStateAction,
 } from "react";
 
@@ -19,6 +22,7 @@ import {
   CaretLeft,
   CaretRight,
   CheckCircle,
+  Circle,
   Database,
   DotsThreeVertical,
   File,
@@ -40,6 +44,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -73,7 +78,7 @@ import {
 import { localizedMissionError } from "../../lib/mission-errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
-import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
+import { formatMissionDateTime } from "../../lib/mission-time.ts";
 import {
   createMissionSendAttempt,
   mergeMissionQueuedMessages,
@@ -291,7 +296,6 @@ export function MissionsPage(props: {
   const [error, setError] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const [initialRunRequest, setInitialRunRequest] = useState<{
     readonly missionId: string;
     readonly requestId: string;
@@ -620,11 +624,6 @@ export function MissionsPage(props: {
   }, [replaceMission, updateUnreadMissionOutputIds]);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     if (props.initialMission === undefined) return;
     writeLastOpenedMissionId(
       typeof window === "undefined" ? undefined : window.localStorage,
@@ -864,7 +863,6 @@ export function MissionsPage(props: {
         missions={visibleMissions}
         source={activeSource}
         search={search}
-        now={now}
         pinnedMissionIds={pinnedMissionIds}
         unreadMissionOutputIds={unreadMissionOutputIds}
         selectedMissionId={selectedMissionId}
@@ -1264,7 +1262,6 @@ function MissionRail(props: {
   readonly missions: readonly MissionSummary[];
   readonly source: MissionListSource;
   readonly search: string;
-  readonly now: number;
   readonly pinnedMissionIds: readonly string[];
   readonly unreadMissionOutputIds: readonly string[];
   readonly selectedMissionId: string | null;
@@ -1416,7 +1413,6 @@ function MissionRail(props: {
           emptyLabel={t("noWaitingInput")}
           missions={missionGroups.waitingInput.visibleMissions}
           hiddenCount={missionGroups.waitingInput.hiddenCount}
-          now={props.now}
           pinnedMissionIds={pinnedMissionIdSet}
           unreadMissionOutputIds={unreadMissionOutputIdSet}
           selectedMissionId={props.selectedMissionId}
@@ -1432,7 +1428,6 @@ function MissionRail(props: {
         emptyLabel={t(props.source === "automation" ? "noActiveAutomations" : "noActive")}
         missions={missionGroups.active.visibleMissions}
         hiddenCount={missionGroups.active.hiddenCount}
-        now={props.now}
         pinnedMissionIds={pinnedMissionIdSet}
         unreadMissionOutputIds={unreadMissionOutputIdSet}
         selectedMissionId={props.selectedMissionId}
@@ -1448,7 +1443,6 @@ function MissionRail(props: {
         variant="completed"
         missions={missionGroups.completed.visibleMissions}
         hiddenCount={missionGroups.completed.hiddenCount}
-        now={props.now}
         pinnedMissionIds={pinnedMissionIdSet}
         unreadMissionOutputIds={unreadMissionOutputIdSet}
         selectedMissionId={props.selectedMissionId}
@@ -1549,13 +1543,346 @@ export function resolveMissionSearchCollapsed(input: {
   return distance > 0;
 }
 
+export type MissionRowIndicator = "failed" | "interrupted" | "unread";
+
+export function resolveMissionRowIndicator(
+  mission: MissionSummary,
+  hasUnreadOutput: boolean,
+): MissionRowIndicator | null {
+  if (mission.execution?.status === "failed") return "failed";
+  if (mission.execution?.status === "cancelled") return "interrupted";
+  return hasUnreadOutput ? "unread" : null;
+}
+
+export const MISSION_ROW_PREVIEW_HOVER_DELAY_MS = 500;
+const MISSION_ROW_PREVIEW_GAP = 8;
+const MISSION_ROW_PREVIEW_VIEWPORT_MARGIN = 12;
+
+type MissionRowPreviewPlacement = "right" | "left" | "bottom" | "top";
+
+export interface MissionRowPreviewRect {
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface MissionRowPreviewPosition {
+  readonly left: number;
+  readonly top: number;
+  readonly placement: MissionRowPreviewPlacement;
+}
+
+function clampMissionRowPreview(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+}
+
+export function positionMissionRowPreview(input: {
+  readonly anchor: MissionRowPreviewRect;
+  readonly card: Pick<MissionRowPreviewRect, "width" | "height">;
+  readonly viewport: { readonly width: number; readonly height: number };
+  readonly gap?: number | undefined;
+  readonly margin?: number | undefined;
+}): MissionRowPreviewPosition {
+  const gap = input.gap ?? MISSION_ROW_PREVIEW_GAP;
+  const margin = input.margin ?? MISSION_ROW_PREVIEW_VIEWPORT_MARGIN;
+  const available: Record<MissionRowPreviewPlacement, number> = {
+    right: input.viewport.width - margin - input.anchor.right - gap,
+    left: input.anchor.left - margin - gap,
+    bottom: input.viewport.height - margin - input.anchor.bottom - gap,
+    top: input.anchor.top - margin - gap,
+  };
+  const required: Record<MissionRowPreviewPlacement, number> = {
+    right: input.card.width,
+    left: input.card.width,
+    bottom: input.card.height,
+    top: input.card.height,
+  };
+  const preferred: readonly MissionRowPreviewPlacement[] = ["right", "left", "bottom", "top"];
+  const placement =
+    preferred.find((candidate) => available[candidate] >= required[candidate]) ??
+    preferred.reduce((best, candidate) =>
+      available[candidate] > available[best] ? candidate : best,
+    );
+
+  let left = input.anchor.right + gap;
+  let top = input.anchor.top + (input.anchor.height - input.card.height) / 2;
+  if (placement === "left") left = input.anchor.left - gap - input.card.width;
+  if (placement === "bottom") {
+    left = input.anchor.left + (input.anchor.width - input.card.width) / 2;
+    top = input.anchor.bottom + gap;
+  }
+  if (placement === "top") {
+    left = input.anchor.left + (input.anchor.width - input.card.width) / 2;
+    top = input.anchor.top - gap - input.card.height;
+  }
+
+  return {
+    placement,
+    left: clampMissionRowPreview(left, margin, input.viewport.width - margin - input.card.width),
+    top: clampMissionRowPreview(top, margin, input.viewport.height - margin - input.card.height),
+  };
+}
+
+const useMissionRowPreviewLayoutEffect =
+  typeof document === "undefined" ? useEffect : useLayoutEffect;
+
+function MissionRowPreviewCard(props: {
+  readonly anchorRef: RefObject<HTMLDivElement | null>;
+  readonly id: string;
+  readonly mission: MissionSummary;
+  readonly open: boolean;
+}) {
+  const { t } = useTranslation("missions");
+  const cardRef = useRef<HTMLElement>(null);
+  const [position, setPosition] = useState<MissionRowPreviewPosition | null>(null);
+
+  const updatePosition = useCallback(() => {
+    const anchor = props.anchorRef.current?.getBoundingClientRect();
+    const card = cardRef.current?.getBoundingClientRect();
+    if (anchor === undefined || card === undefined) return;
+    setPosition(
+      positionMissionRowPreview({
+        anchor,
+        card,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }),
+    );
+  }, [props.anchorRef]);
+
+  useMissionRowPreviewLayoutEffect(() => {
+    if (props.open) updatePosition();
+  }, [props.open, updatePosition]);
+
+  useEffect(() => {
+    if (!props.open) {
+      setPosition(null);
+      return;
+    }
+    const reposition = () => updatePosition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    const observer =
+      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(reposition);
+    if (props.anchorRef.current !== null) observer?.observe(props.anchorRef.current);
+    if (cardRef.current !== null) observer?.observe(cardRef.current);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      observer?.disconnect();
+    };
+  }, [props.anchorRef, props.open, updatePosition]);
+
+  if (!props.open) return null;
+  const content = (
+    <aside
+      className={position === null ? "mission-row-preview" : "mission-row-preview is-positioned"}
+      data-placement={position?.placement}
+      id={props.id}
+      ref={cardRef}
+      role="tooltip"
+      style={
+        position === null
+          ? undefined
+          : ({ left: position.left, top: position.top } satisfies CSSProperties)
+      }
+    >
+      <strong>{props.mission.title}</strong>
+      <dl>
+        <div>
+          <dt>{t("missionPreviewExecutor")}</dt>
+          <dd className="is-single-line" title={props.mission.executor.name}>
+            {props.mission.executor.name}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("missionPreviewStatus")}</dt>
+          <dd>{missionStatusLabel(props.mission)}</dd>
+        </div>
+        <div>
+          <dt>{t("missionPreviewWorkspace")}</dt>
+          <dd className="is-single-line" title={props.mission.workspace.basename}>
+            {props.mission.workspace.basename}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("missionPreviewUpdated")}</dt>
+          <dd>
+            <time dateTime={props.mission.updatedAt}>
+              {formatMissionDateTime(props.mission.updatedAt)}
+            </time>
+          </dd>
+        </div>
+      </dl>
+    </aside>
+  );
+  return typeof document === "undefined" ? content : createPortal(content, document.body);
+}
+
+export function MissionRailRow(props: {
+  readonly mission: MissionSummary;
+  readonly completed: boolean;
+  readonly pinned: boolean;
+  readonly unread: boolean;
+  readonly selected: boolean;
+  readonly onOpen: (mission: MissionSummary) => void;
+  readonly onTogglePin: (mission: MissionSummary) => void;
+  readonly onMarkComplete: (mission: MissionSummary) => void | Promise<void>;
+  readonly onDelete: (mission: MissionSummary) => void;
+}) {
+  const previewId = useId();
+  const rowRef = useRef<HTMLDivElement>(null);
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const indicator = resolveMissionRowIndicator(props.mission, props.unread);
+  const running = props.mission.execution?.status === "running";
+
+  const hidePreview = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = undefined;
+    setPreviewOpen(false);
+  }, []);
+  const showPreview = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = undefined;
+    setPreviewOpen(true);
+  }, []);
+  const schedulePreview = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = setTimeout(showPreview, MISSION_ROW_PREVIEW_HOVER_DELAY_MS);
+  }, [showPreview]);
+
+  useEffect(
+    () => () => {
+      if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    },
+    [],
+  );
+
+  const handleBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (event.relatedTarget !== null && event.currentTarget.contains(event.relatedTarget as Node)) {
+      return;
+    }
+    hidePreview();
+  };
+  const handleFocus = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (event.target instanceof HTMLElement && event.target.matches(":focus-visible")) {
+      showPreview();
+    }
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Escape") return;
+    hidePreview();
+  };
+
+  return (
+    <div
+      className={[
+        "mission-row",
+        props.selected ? "is-active" : "",
+        props.pinned ? "is-pinned" : "",
+        props.completed ? "is-completed" : "",
+        running ? "has-loading" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      ref={rowRef}
+      onBlur={handleBlur}
+      onFocus={handleFocus}
+      onKeyDown={handleKeyDown}
+      onMouseDown={hidePreview}
+      onMouseEnter={schedulePreview}
+      onMouseLeave={hidePreview}
+    >
+      <button
+        aria-describedby={previewOpen ? previewId : undefined}
+        aria-label={i18n.t("missionRowAccessibleLabel", {
+          ns: "missions",
+          title: props.mission.title,
+          status: missionStatusLabel(props.mission),
+        })}
+        className="mission-row-open"
+        type="button"
+        onClick={() => props.onOpen(props.mission)}
+      >
+        <span className="mission-status-slot" aria-hidden="true">
+          {indicator === null ? null : (
+            <Circle className={`mission-status-dot is-${indicator}`} size={8} weight="fill" />
+          )}
+        </span>
+        <strong>{props.mission.title}</strong>
+      </button>
+      {running ? (
+        <span className="mission-row-loading" aria-hidden="true">
+          <SpinnerGap size={14} />
+        </span>
+      ) : null}
+      <div className="mission-row-actions">
+        {!props.completed ? (
+          <>
+            <button
+              className="mission-row-icon-action"
+              type="button"
+              title={
+                props.pinned
+                  ? i18n.t("unpinMission", { ns: "missions" })
+                  : i18n.t("pinMission", { ns: "missions" })
+              }
+              aria-label={i18n.t(props.pinned ? "unpinNamed" : "pinNamed", {
+                ns: "missions",
+                title: props.mission.title,
+              })}
+              aria-pressed={props.pinned}
+              onClick={() => props.onTogglePin(props.mission)}
+            >
+              <PushPin size={18} weight={props.pinned ? "fill" : "regular"} aria-hidden="true" />
+            </button>
+            <button
+              className="mission-row-icon-action"
+              type="button"
+              title={i18n.t("markComplete", { ns: "missions" })}
+              aria-label={i18n.t("markCompleteNamed", {
+                ns: "missions",
+                title: props.mission.title,
+              })}
+              onClick={() => void props.onMarkComplete(props.mission)}
+            >
+              <CheckCircle size={18} aria-hidden="true" />
+            </button>
+          </>
+        ) : (
+          <button
+            className="mission-row-icon-action is-danger"
+            type="button"
+            title={i18n.t("deleteMission", { ns: "missions" })}
+            aria-label={i18n.t("deleteNamed", {
+              ns: "missions",
+              title: props.mission.title,
+            })}
+            onClick={() => props.onDelete(props.mission)}
+          >
+            <Trash size={18} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      <MissionRowPreviewCard
+        anchorRef={rowRef}
+        id={previewId}
+        mission={props.mission}
+        open={previewOpen}
+      />
+    </div>
+  );
+}
+
 function MissionRailGroup(props: {
   readonly label: string;
   readonly emptyLabel: string;
   readonly variant?: "default" | "completed";
   readonly missions: readonly MissionSummary[];
   readonly hiddenCount: number;
-  readonly now: number;
   readonly pinnedMissionIds: ReadonlySet<string>;
   readonly unreadMissionOutputIds: ReadonlySet<string>;
   readonly selectedMissionId: string | null;
@@ -1577,103 +1904,23 @@ function MissionRailGroup(props: {
           {props.missions.map((mission) => {
             const isActiveMission = mission.lifecycleStatus === "active";
             const isPinned = isActiveMission && props.pinnedMissionIds.has(mission.id);
-            const showStatusDot = props.unreadMissionOutputIds.has(mission.id);
             return (
-              <div
-                className={[
-                  "mission-row",
-                  mission.id === props.selectedMissionId ? "is-active" : "",
-                  isPinned ? "is-pinned" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
+              <MissionRailRow
                 key={mission.id}
-              >
-                <button
-                  className={showStatusDot ? "mission-row-open has-status-dot" : "mission-row-open"}
-                  type="button"
-                  onClick={() => props.onOpen(mission)}
-                >
-                  {showStatusDot ? (
-                    <span className="mission-status-dot is-active" aria-hidden="true" />
-                  ) : null}
-                  <span className={completed ? "mission-row-completed-content" : undefined}>
-                    <strong>{mission.title}</strong>
-                    {completed ? (
-                      <time
-                        dateTime={mission.updatedAt}
-                        title={formatMissionDateTime(mission.updatedAt)}
-                      >
-                        {formatMissionTime(mission.updatedAt, props.now)}
-                      </time>
-                    ) : (
-                      <small>
-                        <span>{missionStatusLabel(mission)}</span>
-                        <time
-                          dateTime={mission.updatedAt}
-                          title={formatMissionDateTime(mission.updatedAt)}
-                        >
-                          {formatMissionTime(mission.updatedAt, props.now)}
-                        </time>
-                      </small>
-                    )}
-                  </span>
-                </button>
-                <div className="mission-row-actions">
-                  {isActiveMission ? (
-                    <>
-                      <button
-                        className="mission-row-icon-action"
-                        type="button"
-                        title={
-                          isPinned
-                            ? i18n.t("unpinMission", { ns: "missions" })
-                            : i18n.t("pinMission", { ns: "missions" })
-                        }
-                        aria-label={i18n.t(isPinned ? "unpinNamed" : "pinNamed", {
-                          ns: "missions",
-                          title: mission.title,
-                        })}
-                        aria-pressed={isPinned}
-                        onClick={() => props.onTogglePin(mission)}
-                      >
-                        <PushPin
-                          size={15}
-                          weight={isPinned ? "fill" : "regular"}
-                          aria-hidden="true"
-                        />
-                      </button>
-                      <button
-                        className="mission-row-icon-action"
-                        type="button"
-                        title={i18n.t("markComplete", { ns: "missions" })}
-                        aria-label={i18n.t("markCompleteNamed", {
-                          ns: "missions",
-                          title: mission.title,
-                        })}
-                        onClick={() => void props.onMarkComplete(mission)}
-                      >
-                        <CheckCircle size={15} aria-hidden="true" />
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="mission-row-icon-action is-danger"
-                      type="button"
-                      title={i18n.t("deleteMission", { ns: "missions" })}
-                      aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
-                      onClick={() => props.onDelete(mission)}
-                    >
-                      <Trash size={15} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-              </div>
+                completed={completed}
+                mission={mission}
+                pinned={isPinned}
+                selected={mission.id === props.selectedMissionId}
+                unread={props.unreadMissionOutputIds.has(mission.id)}
+                onDelete={props.onDelete}
+                onMarkComplete={props.onMarkComplete}
+                onOpen={props.onOpen}
+                onTogglePin={props.onTogglePin}
+              />
             );
           })}
           {props.hiddenCount > 0 ? (
             <button className="mission-rail-load-more" type="button" onClick={props.onLoadMore}>
-              <CaretDown size={14} aria-hidden="true" />
               {i18n.t("loadMoreMissions", { ns: "missions" })}
             </button>
           ) : null}

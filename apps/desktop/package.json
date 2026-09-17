@@ -9,7 +9,7 @@
   "scripts": {
     "prepare:electron": "install-electron",
     "prepare:plugins": "node ./scripts/package-built-in-plugins.mjs",
-    "predev": "pnpm run prepare:electron && pnpm run prepare:plugins",
+    "predev": "pnpm exec turbo run build --filter=\"@pragma/desktop^...\" && pnpm run prepare:electron && pnpm run prepare:plugins",
     "dev": "electron-vite dev --watch",
     "prebuild": "pnpm --filter \"@pragma/desktop^...\" build && pnpm run prepare:plugins",
     "build": "electron-vite build && pnpm run verify:styles && pnpm run verify:main && pnpm run verify:preload",

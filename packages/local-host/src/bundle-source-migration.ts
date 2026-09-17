@@ -6,6 +6,7 @@ import {
   BundleSourceItemSchema,
   BundleSourceManifestSchema,
   BundleSourceSlugSchema,
+  BundleSourceTagSchema,
   bundleSourceItemDirectory,
   type BundleSourceCategory,
   type BundleSourceKind,
@@ -57,7 +58,7 @@ const LegacyPackageSchema = z
     license: z.string().trim().min(1),
     homepage: z.string().url().optional(),
     primaryCategory: z.string().trim().min(1),
-    tags: z.array(BundleSourceSlugSchema).default([]),
+    tags: z.array(BundleSourceTagSchema).default([]),
     readme: z.string().trim().min(1),
     media: z
       .object({ icon: z.string().optional(), screenshots: z.array(z.unknown()).default([]) })

@@ -1603,7 +1603,7 @@ export const studio = {
       required: "{{field}}不能为空。",
       tooLong: "{{field}}不能超过 {{count}} 个字符。",
       invalidVersion: "请输入类似 1.2.3 的语义化版本号。",
-      invalidTag: "标签只能包含小写英文字母、数字和连字符。",
+      invalidTag: "标签不能为空。",
       duplicateTag: "该标签已添加。",
       tooManyTags: "最多添加 {{count}} 个标签。",
       field: {

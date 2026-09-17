@@ -31,6 +31,7 @@ import {
   MissionDetailFragment,
   MissionDetailSkeleton,
   MissionMemoryActivity,
+  MissionRailRow,
   MissionThinkingEntry,
   MissionToolCallBlock,
   MissionWorkGrid,
@@ -43,6 +44,9 @@ import {
   missionWorkPageRecords,
   missionWorkRecordTitle,
   missionStatusLabel,
+  MISSION_ROW_PREVIEW_HOVER_DELAY_MS,
+  positionMissionRowPreview,
+  resolveMissionRowIndicator,
   workStatusLabel,
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
@@ -711,6 +715,107 @@ describe("MissionsPage", () => {
     expect(afterLoadMore.active.hiddenCount).toBe(0);
     expect(afterLoadMore.completed.visibleMissions).toHaveLength(16);
     expect(afterLoadMore.completed.hiddenCount).toBe(0);
+  });
+
+  it("gives failed and interrupted states priority over unread output", () => {
+    const failed = missionSummaryFixture({
+      id: "failed",
+      title: "Failed Mission",
+      status: "failed",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const interrupted = missionSummaryFixture({
+      id: "interrupted",
+      title: "Interrupted Mission",
+      status: "cancelled",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const unread = missionSummaryFixture({
+      id: "unread",
+      title: "Unread Mission",
+      status: "succeeded",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+
+    expect(resolveMissionRowIndicator(failed, true)).toBe("failed");
+    expect(resolveMissionRowIndicator(interrupted, true)).toBe("interrupted");
+    expect(resolveMissionRowIndicator(unread, true)).toBe("unread");
+    expect(resolveMissionRowIndicator(unread, false)).toBeNull();
+  });
+
+  it("renders a compact one-line Mission row with loading and existing actions", async () => {
+    await i18n.changeLanguage("en");
+    const mission = missionSummaryFixture({
+      id: "running",
+      title: "A long running mission",
+      status: "running",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+    const html = renderToStaticMarkup(
+      <MissionRailRow
+        completed={false}
+        mission={mission}
+        pinned={false}
+        selected={false}
+        unread
+        onDelete={vi.fn()}
+        onMarkComplete={vi.fn()}
+        onOpen={vi.fn()}
+        onTogglePin={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("mission-row-loading");
+    expect(html).toContain("has-loading");
+    expect(html).toContain("mission-status-dot is-unread");
+    expect(html).toContain('aria-label="Pin A long running mission"');
+    expect(html).toContain('aria-label="Mark A long running mission complete"');
+    expect(html).not.toContain("<small");
+    expect(html).not.toContain("<time");
+  });
+
+  it("does not reserve the loading slot for a selected settled Mission", async () => {
+    await i18n.changeLanguage("en");
+    const html = renderToStaticMarkup(
+      <MissionRailRow
+        completed={false}
+        mission={missionSummaryFixture({
+          id: "selected-settled",
+          title: "Selected settled mission",
+          status: "succeeded",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        })}
+        pinned={false}
+        selected
+        unread={false}
+        onDelete={vi.fn()}
+        onMarkComplete={vi.fn()}
+        onOpen={vi.fn()}
+        onTogglePin={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("is-active");
+    expect(html).not.toContain("has-loading");
+    expect(html).not.toContain("mission-row-loading");
+  });
+
+  it("positions Mission previews beside the row and falls back within the viewport", () => {
+    expect(MISSION_ROW_PREVIEW_HOVER_DELAY_MS).toBe(500);
+    expect(
+      positionMissionRowPreview({
+        anchor: { top: 100, right: 300, bottom: 140, left: 20, width: 280, height: 40 },
+        card: { width: 320, height: 180 },
+        viewport: { width: 1_000, height: 700 },
+      }),
+    ).toEqual({ placement: "right", left: 308, top: 30 });
+    expect(
+      positionMissionRowPreview({
+        anchor: { top: 620, right: 980, bottom: 660, left: 700, width: 280, height: 40 },
+        card: { width: 320, height: 180 },
+        viewport: { width: 1_000, height: 700 },
+      }),
+    ).toEqual({ placement: "left", left: 372, top: 508 });
   });
 
   it("applies global Mission updates without allowing stale events to regress the rail", () => {

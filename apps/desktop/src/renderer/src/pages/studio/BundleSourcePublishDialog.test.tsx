@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { bundleSourcePublicationSummary } from "../../../../shared/contracts/index.ts";
+import {
+  BundleSourcePublicationMetadataSchema,
+  bundleSourcePublicationSummary,
+} from "../../../../shared/contracts/index.ts";
 
 import {
   initialPublicationSourceSelection,
@@ -48,12 +51,20 @@ describe("Bundle Source publication selection", () => {
     );
   });
 
-  it("normalizes optional tags and reports invalid or duplicate values", () => {
+  it("normalizes optional tags and accepts non-latin values", () => {
     expect(normalizePublicationTag(" Release_Candidate ")).toBe("release-candidate");
-    expect(pendingPublicationTags([], "通用研发")).toMatchObject({
-      tags: [],
-      error: { code: "invalidTag" },
-    });
+    expect(pendingPublicationTags([], "通用研发")).toEqual({ tags: ["通用研发"] });
+    expect(
+      BundleSourcePublicationMetadataSchema.parse({
+        itemId: "reviewer",
+        name: "Reviewer",
+        summary: "Reviews changes",
+        description: "Reviews changes.",
+        authorName: "Pragma",
+        license: "MIT",
+        tags: ["研发", "团队"],
+      }),
+    ).toMatchObject({ tags: ["研发", "团队"] });
     expect(pendingPublicationTags(["release"], "RELEASE")).toMatchObject({
       tags: ["release"],
       error: { code: "duplicateTag" },

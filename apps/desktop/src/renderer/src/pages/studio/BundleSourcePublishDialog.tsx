@@ -7,7 +7,7 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import { BundleSourceSemverSchema, BundleSourceSlugSchema } from "@pragma/shared";
+import { BundleSourceSemverSchema, BundleSourceTagSchema } from "@pragma/shared";
 import type { TFunction } from "i18next";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
@@ -301,6 +301,7 @@ export function BundleSourcePublishDialog(props: {
                         <span>{t("bundlePublish.category")}</span>
                         <SelectMenu
                           className="bundle-publish-category"
+                          menuClassName="bundle-publish-category-menu"
                           ariaLabel={t("bundlePublish.categoryFor", { name: source.source.name })}
                           disabled={
                             !selected.has(source.source.id) ||
@@ -648,7 +649,7 @@ export function validatePublicationFields(
     errors.tags = { code: "tooManyTags", limit: FIELD_LIMITS.tags };
   else if (
     metadata.tags.some(
-      (tag) => tag.length > FIELD_LIMITS.tag || !BundleSourceSlugSchema.safeParse(tag).success,
+      (tag) => tag.length > FIELD_LIMITS.tag || !BundleSourceTagSchema.safeParse(tag).success,
     )
   )
     errors.tags = { code: "invalidTag" };
@@ -683,7 +684,7 @@ export function pendingPublicationTags(
       tags: [...tags],
       error: { code: "tooLong", field: "tag", limit: FIELD_LIMITS.tag },
     };
-  if (!BundleSourceSlugSchema.safeParse(normalized).success)
+  if (!BundleSourceTagSchema.safeParse(normalized).success)
     return {
       tags: [...tags],
       error: { code: "invalidTag" },

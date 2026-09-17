@@ -1317,3 +1317,44 @@ The lifecycle and recovery actions are now hidden behind one three-dot trigger p
 - No P0/P1 functional or accessibility findings remain in automated checks.
 
 final result: blocked
+
+# Mission list single-line UI design QA
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-59fc70db-1ab2-4daf-b9d4-178e3da54066.png` (annotated Codex-style list/preview reference) and `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-5664b0b7-f5ab-4282-8ca5-f862dc85c251.png` (compact list-density reference)
+- Implementation screenshot: `/tmp/pragma-mission-row-browser-final.jpg`
+- Full-view comparison: `/tmp/pragma-mission-row-comparison-final.jpg`
+- Viewport: `1080 × 700` CSS px for the final narrow-rail pass; `1440 × 900` CSS px for the normalized side-by-side comparison
+- Pixels and density: source images are `1344 × 1030` and `758 × 1748`; implementation focused capture is `650 × 440`; browser device pixel ratio was `2`, and the comparison used the references at their 2× CSS-equivalent scale
+- State: 240px minimum Mission rail, failed Mission row hovered, preview card open, action controls visible
+
+## Findings
+
+No actionable P0/P1/P2 differences remain for the approved design plan.
+
+- Typography: 14px/500 single-line row titles follow the Desktop UI scale; completed rows use 400 and muted color. Long titles ellipsize without changing row height.
+- Spacing and layout: rows remain 40px high at the minimum 240px rail width. The fixed status slot keeps titles aligned, and the preview card opens to the right without viewport overflow.
+- Colors and tokens: failed, interrupted, and unread states use semantic danger, warning, and info tokens. Hover and selection use existing subtle/selection surfaces without elevation.
+- Image/assets: this list contains no raster imagery. Phosphor supplies the status, loading, pin, completion, and delete icons; no placeholder or handcrafted SVG asset was introduced.
+- Copy/content: visible rows contain only titles and state signals. The preview provides executor, status, workspace, and exact last-updated time. “Load more” is left aligned, faint, and icon-free.
+- Accessibility and interaction: row labels include the textual status; keyboard focus opens the preview immediately; Escape closes it; action buttons replace the running spinner on hover/focus; reduced motion disables spinner rotation.
+
+## Comparison history
+
+1. Initial pass found two P2 density issues: the English “Last updated” label could wrap, and always reserving two action buttons made titles too short at the 240px rail minimum.
+2. Increased the preview label column from 72px to 80px. Changed the action area to overlay the title tail only while visible, preserving a wider default title without layout shift.
+3. Re-captured the 240px rail. The long-title content width increased from 110px to 142px, the 320px preview stayed within the 1080px viewport, loading opacity became `0` while action opacity became `1`, and the console reported no warnings or errors.
+
+## Interaction checks
+
+- Hover delay opens the detail preview after 300ms.
+- Focus opens the preview immediately; Escape closes it.
+- Running spinner is hidden whenever row actions are shown.
+- Failed status overrides unread red; interrupted overrides unread yellow; unread-only remains blue.
+- Long titles truncate at both default and minimum rail widths.
+- Browser console errors checked: none.
+
+## Follow-up polish
+
+No P3 follow-up is required for this scope.
+
+final result: passed

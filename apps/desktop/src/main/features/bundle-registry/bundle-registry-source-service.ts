@@ -435,6 +435,13 @@ export function createDesktopBundleRegistrySourceService(options: {
           }
         }
       }
+      if (categories.length === 0) {
+        for (const kind of ["expert", "expert-team", "flow", "knowledge-base"] as const) {
+          for (const category of defaultPublicationCategories()) {
+            categories.push({ ...category, kind });
+          }
+        }
+      }
       return { items, categories, sources: statuses };
     },
     async getItem(input) {
@@ -520,10 +527,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         sources.map(async (source) => {
           const status = await statusFor(source);
           const snapshot = await readSnapshot(source.id);
-          const categories =
-            snapshot === undefined || isEmptySnapshot(snapshot)
-              ? defaultPublicationCategories()
-              : snapshot.manifest.sections[kind].categories;
+          const categories = publicationCategories(snapshot, kind);
           const existingItem = snapshot?.items.find(
             (item) => item.kind === kind && item.rootRef === rootRef,
           );
@@ -982,6 +986,21 @@ export async function readSystemGitIdentity(): Promise<{
 
 function defaultPublicationCategories(): BundleSourceCategory[] {
   return defaultBundleSourceCategories();
+}
+
+function publicationCategories(
+  snapshot: Snapshot | undefined,
+  kind: BundleSourceKind,
+): BundleSourceCategory[] {
+  if (snapshot === undefined || isEmptySnapshot(snapshot)) return defaultPublicationCategories();
+  const sourceCategories = snapshot.manifest.sections[kind].categories;
+  if (sourceCategories.length === 0) return defaultPublicationCategories();
+
+  const categories = new Map(
+    defaultPublicationCategories().map((category) => [category.id, category]),
+  );
+  for (const category of sourceCategories) categories.set(category.id, category);
+  return [...categories.values()];
 }
 
 function publicationFailure(

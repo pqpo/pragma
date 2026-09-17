@@ -1606,7 +1606,7 @@ export const studio = {
       required: "{{field}}不能為空。",
       tooLong: "{{field}}不能超過 {{count}} 個字元。",
       invalidVersion: "請輸入類似 1.2.3 的語意化版本號。",
-      invalidTag: "標籤只能包含小寫英文字母、數字和連字號。",
+      invalidTag: "標籤不能為空白。",
       duplicateTag: "此標籤已加入。",
       tooManyTags: "最多加入 {{count}} 個標籤。",
       field: {

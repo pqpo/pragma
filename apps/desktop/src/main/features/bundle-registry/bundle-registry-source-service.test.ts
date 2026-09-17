@@ -227,7 +227,13 @@ describe("Desktop Bundle Registry sources", () => {
       });
       expect(status).toMatchObject({ status: "ready", itemCount: 0 });
       expect(status.commit).toBeUndefined();
-      await expect(service.getCatalog()).resolves.toMatchObject({ items: [], categories: [] });
+      await expect(service.getCatalog()).resolves.toMatchObject({
+        items: [],
+        categories: expect.arrayContaining([
+          expect.objectContaining({ kind: "expert", id: "general" }),
+          expect.objectContaining({ kind: "knowledge-base", id: "education" }),
+        ]),
+      });
 
       const restarted = createDesktopBundleRegistrySourceService(options);
       await expect(restarted.listSources()).resolves.toEqual([
@@ -268,6 +274,17 @@ describe("Desktop Bundle Registry sources", () => {
         itemCount: 1,
         commit: expect.stringMatching(/^[a-f0-9]{40,64}$/u),
       });
+      await expect(
+        restarted.preparePublicationSources("expert", "expert:1234567890abcdef"),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          categories: expect.arrayContaining([
+            expect.objectContaining({ id: "general" }),
+            expect.objectContaining({ id: "software-development" }),
+            expect.objectContaining({ id: "education" }),
+          ]),
+        }),
+      ]);
       await expect(
         restarted.updateSource({ sourceId: status.id, name: "Invalid Edit", branch: "missing" }),
       ).rejects.toThrow(/branch was not found/u);

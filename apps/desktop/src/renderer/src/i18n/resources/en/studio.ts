@@ -1686,7 +1686,7 @@ export const studio = {
       required: "{{field}} is required.",
       tooLong: "{{field}} must be at most {{count}} characters.",
       invalidVersion: "Use a semantic version such as 1.2.3.",
-      invalidTag: "Tags may contain only lowercase letters, numbers, and hyphens.",
+      invalidTag: "Tags cannot be empty.",
       duplicateTag: "This tag has already been added.",
       tooManyTags: "Use at most {{count}} tags.",
       field: {

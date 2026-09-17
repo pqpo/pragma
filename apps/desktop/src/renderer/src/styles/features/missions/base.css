@@ -96,75 +96,12 @@
   font: inherit;
 }
 
-.mission-rail-group {
-  margin-top: 30px;
-}
-
-.mission-rail-group h2 {
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.mission-rail-empty {
-  padding: 14px 8px;
-  color: var(--faint);
-  font-size: 12px;
-}
-
-.mission-row {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
-  width: 100%;
-  align-items: start;
-  gap: 10px;
-  padding: 13px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  text-align: left;
-}
-
-.mission-row:hover,
-.mission-row.is-active {
-  background: var(--surface-muted);
-}
-
-.mission-row > span:last-child {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.mission-row strong {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mission-row small {
-  color: var(--green-dark);
-  font-size: 12px;
-}
-
-.mission-status-dot,
 .mission-ready-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
-  background: #aeb4af;
+  border-radius: var(--ui-radius-round);
 }
 
-.mission-status-dot {
-  margin-top: 6px;
-}
-
-.mission-status-dot.is-active,
 .mission-ready-dot {
   background: var(--lime);
 }
@@ -848,138 +785,209 @@
 }
 
 .mission-rail-group {
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
 .mission-rail-group h2 {
-  padding: 0 6px 5px;
+  padding: 0 8px 4px;
   border-bottom: 0;
   color: var(--muted);
   font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .mission-rail-group.is-completed {
-  margin-top: 6px;
+  margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgb(88 121 104 / 12%);
+  border-top: 1px solid var(--ui-line);
 }
 
 .mission-rail-group.is-completed h2 {
   color: var(--faint);
-  font-weight: 560;
 }
 
 .mission-rail-empty {
   padding: 8px 6px;
+  color: var(--faint);
+  font-size: 12px;
 }
 
 .mission-rail-load-more {
   display: flex;
   width: fit-content;
-  min-height: 24px;
+  min-height: 32px;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  margin: 1px auto 0;
-  padding: 0 7px;
+  margin: 0 0 0 24px;
+  padding: 0;
   border: 0;
-  border-radius: 7px;
   background: transparent;
-  color: var(--muted);
+  color: var(--faint);
   cursor: pointer;
   font-size: 12px;
-  font-weight: 560;
+  font-weight: 500;
 }
 
-.mission-rail-load-more:hover,
+.mission-rail-load-more:hover {
+  color: var(--muted);
+}
+
 .mission-rail-load-more:focus-visible {
-  background: rgb(88 121 104 / 9%);
-  color: var(--green-dark);
+  border-radius: var(--ui-radius-sm);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+  color: var(--text);
 }
 
 .mission-row {
   position: relative;
   display: block;
-  grid-template-columns: 8px minmax(0, 1fr);
-  margin-top: 2px;
+  min-height: 40px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  transition: background 140ms ease-out;
 }
 
 .mission-row-open {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: 8px minmax(0, 1fr);
   width: 100%;
-  align-items: start;
-  gap: 0;
-  padding: 8px;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
   border: 0;
   border-radius: inherit;
   background: transparent;
   color: var(--text);
   cursor: pointer;
   text-align: left;
-  transition: padding-right 140ms ease;
 }
 
-.mission-row-open.has-status-dot {
-  grid-template-columns: 8px minmax(0, 1fr);
-  gap: 8px;
+.mission-row.has-loading .mission-row-open {
+  padding-right: 40px;
 }
 
-.mission-row-open > span:last-child {
-  display: grid;
+.mission-row-open:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-row-open strong {
   min-width: 0;
-  gap: 2px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-status-slot {
+  display: grid;
+  width: 8px;
+  height: 8px;
+  place-items: center;
+}
+
+.mission-status-dot {
+  display: block;
+}
+
+.mission-status-dot.is-failed {
+  color: var(--ui-danger);
+}
+
+.mission-status-dot.is-interrupted {
+  color: var(--ui-warning);
+}
+
+.mission-status-dot.is-unread {
+  color: var(--ui-info);
+}
+
+.mission-row-loading {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--muted);
+  opacity: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 140ms ease-out;
+}
+
+.mission-row-loading > svg {
+  animation: mission-thinking-spin 900ms linear infinite;
 }
 
 .mission-row-actions {
   position: absolute;
-  top: 50%;
-  right: 5px;
+  top: 0;
+  right: 0;
   display: flex;
+  height: 40px;
   align-items: center;
-  gap: 2px;
+  gap: 0;
+  padding-left: 0;
   opacity: 0;
-  transform: translateY(-50%);
+  pointer-events: none;
+  transition: opacity 140ms ease-out;
 }
 
 .mission-row-icon-action {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--ui-radius-md);
   background: transparent;
   color: var(--faint);
   cursor: pointer;
 }
 
-.mission-row:hover .mission-row-actions {
+.mission-row:hover .mission-row-actions,
+.mission-row:has(:focus-visible) .mission-row-actions {
+  background: var(--ui-surface-subtle);
   opacity: 1;
+  pointer-events: auto;
 }
 
-.mission-row:hover .mission-row-open {
-  padding-right: 58px;
+.mission-row.is-active .mission-row-actions {
+  background: var(--ui-selection);
+}
+
+.mission-row:hover .mission-row-loading,
+.mission-row:has(:focus-visible) .mission-row-loading {
+  opacity: 0;
 }
 
 .mission-row-icon-action[aria-pressed="true"] {
-  color: var(--green-dark);
+  color: var(--ui-accent-strong);
 }
 
 .mission-row-icon-action:hover:not(:disabled) {
-  background: rgb(88 121 104 / 10%);
-  color: var(--green-dark);
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+}
+
+.mission-row-icon-action:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
 .mission-row-icon-action.is-danger:hover:not(:disabled) {
-  background: #fff0ee;
-  color: #a5453c;
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
 }
 
 .mission-row-icon-action:disabled {
@@ -987,73 +995,96 @@
   opacity: 0.35;
 }
 
-.mission-row:hover {
-  background: #fff;
-  box-shadow: 0 3px 10px rgb(20 31 25 / 5%);
-  transform: translateY(-1px);
+.mission-row:hover,
+.mission-row:focus-within {
+  background: var(--ui-surface-subtle);
 }
 
 .mission-row.is-active {
-  background: #fff;
-  box-shadow: 0 4px 12px rgb(20 31 25 / 6%);
-}
-
-.mission-row small {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  color: var(--muted);
-}
-
-.mission-row small > span {
-  color: var(--green-dark);
-}
-
-.mission-row time {
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
+  background: var(--ui-selection);
 }
 
 .mission-rail-group.is-completed .mission-row {
-  margin-top: 0;
-  border-radius: 6px;
+  border-radius: var(--ui-radius-md);
 }
 
-.mission-rail-group.is-completed .mission-row-open {
-  align-items: center;
-  padding: 5px 8px;
-}
-
-.mission-row-open > span.mission-row-completed-content {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.mission-row-completed-content strong {
-  min-width: 0;
+.mission-row.is-completed .mission-row-open strong {
   color: var(--muted);
   font-weight: 400;
 }
 
-.mission-row-completed-content time {
-  flex: none;
-  font-size: 11px;
-}
-
-.mission-rail-group.is-completed .mission-row:hover .mission-row-open {
-  padding-right: 34px;
-}
-
-.mission-status-dot.is-active,
 .mission-ready-dot,
 .online-dot,
 .status-copy.is-active .status-dot {
   background: var(--green);
   box-shadow: 0 0 0 3px rgb(88 121 104 / 12%);
+}
+
+.mission-row-preview {
+  position: fixed;
+  z-index: 220;
+  top: 0;
+  left: 0;
+  width: min(320px, calc(100vw - 24px));
+  padding: 16px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-overlay);
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mission-row-preview.is-positioned {
+  opacity: 1;
+}
+
+.mission-row-preview > strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.mission-row-preview dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.mission-row-preview dl > div {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.mission-row-preview dt,
+.mission-row-preview dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.mission-row-preview dt {
+  color: var(--muted);
+}
+
+.mission-row-preview dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.mission-row-preview dd.is-single-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mission-main {
@@ -1581,5 +1612,9 @@
   .flow-step-add-handle,
   .flow-step-add-handle > svg {
     transition: none;
+  }
+
+  .mission-row-loading > svg {
+    animation: none;
   }
 }

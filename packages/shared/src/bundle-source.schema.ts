@@ -8,6 +8,8 @@ export const BundleSourceSlugSchema = z
   .min(1)
   .max(80);
 
+export const BundleSourceTagSchema = z.string().trim().min(1).max(80);
+
 export const BundleSourceSemverSchema = z
   .string()
   .regex(
@@ -140,7 +142,7 @@ const BundleSourceItemCommonShape = {
     .strict(),
   license: z.string().trim().min(1).max(100),
   homepage: z.string().url().max(2_000).optional(),
-  tags: z.array(BundleSourceSlugSchema).max(30).default([]),
+  tags: z.array(BundleSourceTagSchema).max(30).default([]),
   avatarId: PragmaAvatarIdSchema.optional(),
   latestVersion: BundleSourceSemverSchema,
   createdAt: z.string().datetime({ offset: true }),
