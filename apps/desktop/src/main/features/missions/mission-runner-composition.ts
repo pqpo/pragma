@@ -871,6 +871,19 @@ export function createMissionRunner(options: {
     };
   };
 
+  const readSystemExecutorMetadata = (): readonly MissionExecutorPresentationMetadata[] => {
+    try {
+      return options.getSystemExecutorMetadata?.() ?? [];
+    } catch (error) {
+      logger.warn(
+        "mission.system_executor_names_unavailable",
+        "System Expert presentation metadata could not be read.",
+        { error },
+      );
+      return [];
+    }
+  };
+
   const getExecutorMetadata = async (
     mission: Pick<Mission, "project">,
   ): Promise<ExecutorMetadata> => {
@@ -878,10 +891,7 @@ export function createMissionRunner(options: {
     const existing = sessionService.executorMetadata(projectKey);
     const projectMetadata = existing ?? (await readExecutorMetadata(mission));
     if (existing === undefined) sessionService.setExecutorMetadata(projectKey, projectMetadata);
-    return mergeMissionExecutorMetadata(
-      projectMetadata,
-      options.getSystemExecutorMetadata?.() ?? [],
-    );
+    return mergeMissionExecutorMetadata(projectMetadata, readSystemExecutorMetadata());
   };
 
   const getExecutorMetadataOrFallback = async (
@@ -891,10 +901,17 @@ export function createMissionRunner(options: {
     await getExecutorMetadata(mission).catch((error: unknown) => {
       logger.warn(
         "mission.executor_names_unavailable",
-        `Mission ${mission.id} will use Expert IDs for ${surface} output labels.`,
+        `Mission ${mission.id} could not read Project Expert names for ${surface} output labels.`,
         { error, missionId: mission.id },
       );
-      return { names: new Map<string, string>(), avatarIds: new Map<string, string>() };
+      // Keep built-in/system identities available even when the pinned Project Revision cannot be
+      // opened. The root Expert can still resolve from the immutable Mission executor snapshot;
+      // any remaining identity stays unresolved so the renderer can use a localized unavailable
+      // label instead of exposing an opaque resource id.
+      return mergeMissionExecutorMetadata(
+        { names: new Map<string, string>(), avatarIds: new Map<string, string>() },
+        readSystemExecutorMetadata(),
+      );
     });
 
   const startMission = (id: string): Promise<Mission> => {
@@ -933,8 +950,11 @@ export function createMissionRunner(options: {
     patches: readonly MissionChatPatch[],
   ): void => chatService.emitPatches(id, audience, patches);
 
-  const invalidateChat = (id: string, audience: MissionSurfaceAudience): void =>
-    chatService.invalidate(id, audience);
+  const invalidateChat = (
+    id: string,
+    audience: MissionSurfaceAudience,
+    options: { readonly userVisibleOutput?: true | undefined } = {},
+  ): void => chatService.invalidate(id, audience, options);
 
   const invalidateWork = (id: string, audience: MissionSurfaceAudience): void =>
     workService.invalidate(id, audience);
@@ -1034,12 +1054,13 @@ export function createMissionRunner(options: {
     expectedLive: LiveMissionChat,
     audience: MissionSurfaceAudience,
     attachNextTurn = true,
+    userVisibleOutput = false,
   ): Promise<void> => {
     if (lifecycleService.active(id)?.handle === handle) lifecycleService.deleteActive(id);
     await chatService.closeLiveIfCurrent(id, expectedLive);
     workService.clearLive(id);
     chatService.clearContextWindow(id);
-    invalidateChat(id, audience);
+    invalidateChat(id, audience, userVisibleOutput ? { userVisibleOutput: true } : {});
     invalidateWork(id, audience);
     if (attachNextTurn) await attachNextSessionTurn(id, audience);
   };
@@ -1643,6 +1664,7 @@ export function createMissionRunner(options: {
       releaseCheckpoint = resolve;
     });
     let settlementKind: "terminal" | "checkpointed" = "terminal";
+    let terminalInvalidationHasUserVisibleOutput = false;
     const settlement = observeMissionExecution(
       options.missions,
       missionId,
@@ -1685,7 +1707,7 @@ export function createMissionRunner(options: {
       checkpoint,
       async (terminal) => {
         try {
-          const projectionState = await persistMissionExecutionProjection(
+          const projectionResult = await persistMissionExecutionProjection(
             options.missions,
             executionStore,
             missionId,
@@ -1693,6 +1715,8 @@ export function createMissionRunner(options: {
             terminal.status === "cancelled",
             live.entries,
           );
+          const projectionState = projectionResult.status;
+          terminalInvalidationHasUserVisibleOutput ||= projectionResult.userVisibleOutput;
           if (projectionState === "current") {
             try {
               await executionStore.archive(input.handle.executionId);
@@ -1773,6 +1797,7 @@ export function createMissionRunner(options: {
             live,
             audience,
             settlementKind !== "checkpointed",
+            terminalInvalidationHasUserVisibleOutput,
           );
         } catch (error) {
           logger.warn(
@@ -2795,6 +2820,7 @@ export function createMissionRunner(options: {
     if (!isUserFacingMissionOrigin(mission.origin)) {
       throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
     }
+    const executorMetadataPromise = getExecutorMetadataOrFallback(mission, "historical");
     const capturedLive = chatService.live(mission.id);
     let inheritedHistoryPromise: ReturnType<MissionStore["readBranchHistory"]> | undefined;
     const history = await readMissionChatHistoryPage({
@@ -2814,7 +2840,13 @@ export function createMissionRunner(options: {
             executionStore,
             missions: options.missions,
           })
-            .then(() => invalidateChat(mission.id, missionSurfaceAudience(mission)))
+            .then((userVisibleOutput) =>
+              invalidateChat(
+                mission.id,
+                missionSurfaceAudience(mission),
+                userVisibleOutput ? { userVisibleOutput: true } : {},
+              ),
+            )
             .catch((error: unknown) => {
               logger.warn(
                 "mission.chat_projection_repair_failed",
@@ -2838,6 +2870,7 @@ export function createMissionRunner(options: {
     const entries = [...history.entries];
     const historyReadAt = performance.now();
     const syncIssues = [...history.syncIssues];
+    const executorMetadata = await executorMetadataPromise;
     // Capture the revision and live entries in one synchronous turn. Keep using the live object
     // retained at the beginning of the read: settlement may already have removed it from the map,
     // but its final output still belongs in this snapshot.
@@ -2851,7 +2884,24 @@ export function createMissionRunner(options: {
               : {}),
           })) ?? [])
         : [];
-    const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries);
+    const resolveExecutorName = createMissionExecutorNameResolver(mission, executorMetadata.names);
+    const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
+      executorMetadata.avatarIds,
+    );
+    const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries).map(
+      (entry) => {
+        if (entry.executorId === undefined) return entry;
+        const executorName = entry.executorName ?? resolveExecutorName(entry.executorId);
+        const executorAvatarId =
+          entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
+        if (entry.executorName !== undefined && entry.executorAvatarId !== undefined) return entry;
+        return {
+          ...entry,
+          ...(executorName === undefined ? {} : { executorName }),
+          ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
+        };
+      },
+    );
     const uniqueSyncIssues = [
       ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
     ];
@@ -2885,6 +2935,7 @@ export function createMissionRunner(options: {
         ...(history.nextBeforeCursor === undefined
           ? {}
           : { nextBeforeCursor: history.nextBeforeCursor }),
+        ...(history.historyStatus === undefined ? {} : { historyStatus: history.historyStatus }),
       },
       ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
     };
@@ -4736,7 +4787,10 @@ async function persistMissionExecutionProjection(
   executionId: string,
   cancelled: boolean,
   liveEntries: readonly MissionChatEntry[] = [],
-): Promise<"current" | "partial"> {
+): Promise<{
+  readonly status: "current" | "partial";
+  readonly userVisibleOutput: boolean;
+}> {
   const interruptedProjection = liveEntries
     .filter(
       (entry): entry is Exclude<MissionChatEntry, { readonly kind: "user" }> =>
@@ -4782,13 +4836,49 @@ async function persistMissionExecutionProjection(
       [...projected.values()],
       source?.updatedAt,
     );
-    return "current";
+    return {
+      status: "current",
+      userVisibleOutput: missionProjectionAddsUserVisibleOutput(liveEntries, [
+        ...projected.values(),
+      ]),
+    };
   } catch (error) {
     // The cancellation snapshot above is already durable and sufficient for
     // chat recovery. Canonical history enrichment is best-effort after that
     // commit because an interrupted Runtime may never finish its event stream.
-    if (cancelled) return "partial";
+    if (cancelled) return { status: "partial", userVisibleOutput: false };
     throw error;
+  }
+}
+
+export function missionProjectionAddsUserVisibleOutput(
+  previous: readonly MissionChatEntry[],
+  next: readonly MissionChatEntry[],
+): boolean {
+  const previousById = new Map(previous.map((entry) => [entry.id, entry] as const));
+  return next.some((entry) => {
+    const fingerprint = missionChatEntryUnreadFingerprint(entry);
+    if (fingerprint === undefined) return false;
+    const previousEntry = previousById.get(entry.id);
+    return (
+      previousEntry === undefined ||
+      missionChatEntryUnreadFingerprint(previousEntry) !== fingerprint
+    );
+  });
+}
+
+function missionChatEntryUnreadFingerprint(entry: MissionChatEntry): string | undefined {
+  switch (entry.kind) {
+    case "assistant":
+    case "thinking":
+      return `${entry.kind}:${entry.content}`;
+    case "tool":
+      return `${entry.kind}:${entry.status}:${entry.outputPreview ?? ""}:${entry.error ?? ""}`;
+    case "agent_activity":
+      return `${entry.kind}:${entry.action}:${entry.phase}:${entry.error ?? ""}`;
+    case "user":
+    case "context_operation":
+      return undefined;
   }
 }
 
@@ -4874,9 +4964,9 @@ async function repairMissionExecutionProjection(input: {
   readonly turn: MissionTimelineTurn & { readonly executionId: string };
   readonly executionStore: ReturnType<typeof createFileExecutionStore>;
   readonly missions: MissionStore;
-}): Promise<void> {
+}): Promise<boolean> {
   const executionState = await input.executionStore.get(input.turn.executionId);
-  if (executionState !== undefined && !isFinalExecutionStatus(executionState.status)) return;
+  if (executionState !== undefined && !isFinalExecutionStatus(executionState.status)) return false;
   const previous =
     (await input.missions.readExecutionProjection(input.missionId, input.turn.executionId)) ?? [];
   let repaired = finalizeHistoricalChatEntries(
@@ -4904,6 +4994,7 @@ async function repairMissionExecutionProjection(input: {
     repaired,
     executionState?.updatedAt,
   );
+  return missionProjectionAddsUserVisibleOutput(previous, repaired);
 }
 
 async function readMissionChatHistoryPage(input: {
@@ -4918,6 +5009,7 @@ async function readMissionChatHistoryPage(input: {
 }): Promise<{
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
+  readonly historyStatus?: "repairing" | undefined;
   readonly oldestSequence?: number | undefined;
   readonly newestSequence?: number | undefined;
   readonly nextBeforeCursor?: string | undefined;
@@ -4947,6 +5039,7 @@ async function readMissionChatHistoryPage(input: {
   let remaining = input.query.limit;
   let collected: MissionChatEntry[] = [];
   const syncIssues: MissionChatSyncIssue[] = [];
+  let historyStatus: "repairing" | undefined;
   let nextBeforeCursor: string | undefined;
   let firstTimelineRead = true;
 
@@ -4979,6 +5072,7 @@ async function readMissionChatHistoryPage(input: {
       });
       collected = [...page.entries, ...collected];
       syncIssues.push(...page.syncIssues);
+      if (page.historyStatus === "repairing") historyStatus = "repairing";
       remaining -= page.entries.length;
       if (page.nextCursor !== undefined) {
         nextBeforeCursor = encodeMissionChatPageCursor(page.nextCursor);
@@ -5009,6 +5103,7 @@ async function readMissionChatHistoryPage(input: {
   return {
     entries: collected,
     syncIssues,
+    ...(historyStatus === undefined ? {} : { historyStatus }),
     ...(sequences.length === 0 ? {} : { oldestSequence: Math.min(...sequences) }),
     ...(sequences.length === 0 ? {} : { newestSequence: Math.max(...sequences) }),
     ...(nextBeforeCursor === undefined ? {} : { nextBeforeCursor }),
@@ -5029,6 +5124,7 @@ async function readMissionChatTurnPage(input: {
 }): Promise<{
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
+  readonly historyStatus?: "repairing" | undefined;
   readonly nextCursor?: MissionChatPageCursor | undefined;
 }> {
   const userEntry: MissionChatEntry = {
@@ -5072,7 +5168,6 @@ async function readMissionChatTurnPage(input: {
       projection.sourceUpdatedAt !== undefined &&
       (executionState === undefined || executionState.updatedAt <= projection.sourceUpdatedAt);
     if (!projectionIsCurrent) {
-      projectionSyncIssues.push(missionChatSyncIssue("history"));
       input.scheduleProjectionRepair?.({ ...input.turn, executionId: input.turn.executionId });
     }
     if (projection !== undefined) {
@@ -5084,6 +5179,7 @@ async function readMissionChatTurnPage(input: {
         return {
           entries: projectedEntries,
           syncIssues: projectionSyncIssues,
+          ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
           nextCursor: {
             version: 1,
             kind: "projection",
@@ -5096,14 +5192,22 @@ async function readMissionChatTurnPage(input: {
         return {
           entries: projectedEntries,
           syncIssues: projectionSyncIssues,
+          ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
           nextCursor: { version: 1, kind: "turn-start", sequence: input.turn.sequence },
         };
       }
-      return { entries: [userEntry, ...projectedEntries], syncIssues: projectionSyncIssues };
+      return {
+        entries: [userEntry, ...projectedEntries],
+        syncIssues: projectionSyncIssues,
+        ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
+      };
     }
     if (input.cursor?.kind === "projection") {
       throw new Error("Mission chat page cursor is no longer available.");
     }
+    // An outdated projection is still a readable conversation snapshot and can be repaired in the
+    // background. Only report degraded history when no durable or projected content is available.
+    projectionSyncIssues.push(missionChatSyncIssue("history"));
     return { entries: [userEntry], syncIssues: projectionSyncIssues };
   }
 
@@ -5356,13 +5460,17 @@ async function readMissionChatHistory(
     });
     if (turn.executionId === undefined) continue;
 
-    // The live projection is already fed by replayable output/event subscriptions. Reading the
-    // durable Execution here would scan its complete message and event history on every cold
-    // latest-page load. The caller merges activeChat.entries after this lightweight pass.
-    if (turn.executionId === activeChat?.executionId) continue;
+    const activeEntries =
+      turn.executionId === activeChat?.executionId ? activeChat.entries : undefined;
+    // Once the live projection has visible output it is the cheapest and freshest source for an
+    // active Execution. Before its replayable subscription catches up, read the durable history so
+    // a cold navigation cannot briefly show only the user prompt. Completion-only and oversized
+    // results have no live entry, so they still take the durable path and receive finalization.
+    if (activeEntries !== undefined && activeEntries.length > 0) continue;
 
     const view = new StoredExecutionView(turn.executionId, executionStore);
     const state = await view.getState().catch(() => undefined);
+    if (activeEntries !== undefined && state === undefined) continue;
     if (state === undefined) {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
@@ -5772,7 +5880,8 @@ function createMissionExecutorNameResolver(
   names: ReadonlyMap<string, string>,
 ): ExecutorNameResolver {
   // A Team or Flow name identifies the invocable resource, not the concrete Expert producing an
-  // entry. Their Experts must resolve through the pinned Project Revision or fall back to IDs.
+  // entry. Their Experts resolve through the pinned Project Revision; an unresolved identity is
+  // left empty for the renderer's localized unavailable label rather than exposing its raw id.
   const rootExpertId =
     mission.executor.kind === "expert" && mission.executor.ref.startsWith("expert:")
       ? mission.executor.ref.slice("expert:".length)

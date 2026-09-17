@@ -75,8 +75,15 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     this.#emit(missionId, audience, { kind: "patch", patches });
   }
 
-  invalidate(missionId: string, audience: MissionSurfaceAudience): void {
-    this.#emit(missionId, audience, { kind: "invalidate" });
+  invalidate(
+    missionId: string,
+    audience: MissionSurfaceAudience,
+    options: { readonly userVisibleOutput?: true | undefined } = {},
+  ): void {
+    this.#emit(missionId, audience, {
+      kind: "invalidate",
+      ...(options.userVisibleOutput === true ? { userVisibleOutput: true } : {}),
+    });
   }
 
   subscribe(listener: (notification: MissionChatNotification) => void): () => void {
@@ -98,14 +105,19 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     audience: MissionSurfaceAudience,
     update:
       | { readonly kind: "patch"; readonly patches: readonly MissionChatPatch[] }
-      | { readonly kind: "invalidate" },
+      | { readonly kind: "invalidate"; readonly userVisibleOutput?: true | undefined },
   ): void {
     const revision = this.revision(missionId) + 1;
     this.#revisions.set(missionId, revision);
     const value: MissionChatUpdate =
       update.kind === "patch"
         ? { missionId, revision, kind: "patch", patches: [...update.patches] }
-        : { missionId, revision, kind: "invalidate" };
+        : {
+            missionId,
+            revision,
+            kind: "invalidate",
+            ...(update.userVisibleOutput === true ? { userVisibleOutput: true } : {}),
+          };
     for (const listener of this.#listeners) {
       try {
         listener({ audience, update: value });

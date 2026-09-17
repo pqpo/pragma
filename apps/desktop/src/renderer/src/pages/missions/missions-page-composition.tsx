@@ -87,6 +87,7 @@ import {
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
+  touchMissionConversationCache,
   type MissionConversationBlock,
 } from "./mission-conversation-model.ts";
 import { useMissionClientOperation } from "./mission-client-operation.ts";
@@ -396,13 +397,7 @@ export function MissionsPage(props: {
     ) => {
       const source = options?.source ?? activeSourceRef.current;
       const cache = missionChatCacheRef.current;
-      for (const [cachedMissionId, cachedConversation] of cache) {
-        if (cachedMissionId === id || cachedConversation.entries.length <= 100) continue;
-        cache.set(cachedMissionId, {
-          ...cachedConversation,
-          entries: cachedConversation.entries.slice(-100),
-        });
-      }
+      touchMissionConversationCache(cache, id);
       selectedMissionIdsRef.current = { ...selectedMissionIdsRef.current, [source]: id };
       selectedMissionIdRef.current = id;
       markMissionOutputRead(id);

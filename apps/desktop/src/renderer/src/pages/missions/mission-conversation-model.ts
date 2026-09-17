@@ -412,6 +412,8 @@ export function mergeLatestChatPage(
   // request move the renderer revision or its append-only entries backwards.
   if (latest.revision < current.revision) return current;
   const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
+  const preserveCurrentHistory =
+    unavailableSections.has("history") || latest.page.historyStatus === "repairing";
   const latestOldest = latest.page.oldestSequence;
   const latestEntryIds = new Set(latest.entries.map((entry) => entry.id));
   const currentEntriesById = new Map(current.entries.map((entry) => [entry.id, entry] as const));
@@ -428,14 +430,20 @@ export function mergeLatestChatPage(
             (entry.timelineSequence < latestOldest ||
               (entry.timelineSequence === latestOldest && !latestEntryIds.has(entry.id))),
         );
-  const retainedUnavailableHistory = unavailableSections.has("history") ? current.entries : [];
+  const retainedUnavailableHistory = preserveCurrentHistory ? current.entries : [];
   const latestPageWithoutCursor = { ...latest.page };
   delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
     entries: uniqueChatEntries([...retainedOlder, ...retainedUnavailableHistory, ...latestEntries]),
-    page:
-      retainedOlder.length === 0
+    page: preserveCurrentHistory
+      ? {
+          ...latestPageWithoutCursor,
+          ...(current.page.nextBeforeCursor === undefined
+            ? {}
+            : { nextBeforeCursor: current.page.nextBeforeCursor }),
+        }
+      : retainedOlder.length === 0
         ? latest.page
         : {
             ...latestPageWithoutCursor,
@@ -450,6 +458,18 @@ export function mergeLatestChatPage(
       ? { contextWindow: current.contextWindow }
       : {}),
   };
+}
+
+export function touchMissionConversationCache(
+  cache: Map<string, MissionConversationSnapshot>,
+  missionId: string,
+): void {
+  const conversation = cache.get(missionId);
+  if (conversation === undefined) return;
+  // Loaded entries and nextBeforeCursor describe one pagination state. Trimming only the entries
+  // makes an exhausted cursor look complete after A -> B -> A navigation, hiding older messages.
+  cache.delete(missionId);
+  cache.set(missionId, conversation);
 }
 
 /**

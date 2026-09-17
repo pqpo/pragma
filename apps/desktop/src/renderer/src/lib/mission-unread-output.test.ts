@@ -36,9 +36,26 @@ describe("Mission unread output state", () => {
     expect(recordMissionOutputIds(["mission-a"], "mission-a", "mission-a")).toEqual([]);
   });
 
+  it("does not resurrect a cleared dot when an invalidation arrives after switching away", () => {
+    const base = { missionId: "mission-a", revision: 2 } as const;
+    const afterOpen = markMissionOutputReadIds(["mission-a"], "mission-a");
+    const afterSwitch = missionChatUpdateHasUserVisibleOutput({ ...base, kind: "invalidate" })
+      ? recordMissionOutputIds(afterOpen, "mission-a", "mission-b")
+      : afterOpen;
+
+    expect(afterSwitch).toEqual([]);
+  });
+
   it("recognizes visible Agent output but ignores user and bookkeeping-only patches", () => {
     const base = { missionId: "00000000-0000-4000-8000-000000000001", revision: 1 } as const;
-    expect(missionChatUpdateHasUserVisibleOutput({ ...base, kind: "invalidate" })).toBe(true);
+    expect(missionChatUpdateHasUserVisibleOutput({ ...base, kind: "invalidate" })).toBe(false);
+    expect(
+      missionChatUpdateHasUserVisibleOutput({
+        ...base,
+        kind: "invalidate",
+        userVisibleOutput: true,
+      }),
+    ).toBe(true);
     expect(
       missionChatUpdateHasUserVisibleOutput({
         ...base,
