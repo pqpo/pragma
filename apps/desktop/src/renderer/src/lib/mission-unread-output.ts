@@ -64,9 +64,9 @@ export function recordMissionOutputIds(
 }
 
 export function missionChatUpdateHasUserVisibleOutput(update: MissionChatUpdate): boolean {
-  // Invalidations request a snapshot refresh after projection repair or metadata changes. They do
-  // not prove that a user-visible message was added and must not resurrect a cleared unread dot.
-  if (update.kind === "invalidate") return false;
+  // Most invalidations only refresh status or metadata. Producers explicitly mark the uncommon
+  // repair/settlement invalidation that makes previously unprojected output visible.
+  if (update.kind === "invalidate") return update.userVisibleOutput === true;
   return update.patches.some((patch) => {
     if (patch.type === "entry.append") return true;
     if (patch.type !== "entry.upsert") return false;

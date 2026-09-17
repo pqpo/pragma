@@ -950,8 +950,11 @@ export function createMissionRunner(options: {
     patches: readonly MissionChatPatch[],
   ): void => chatService.emitPatches(id, audience, patches);
 
-  const invalidateChat = (id: string, audience: MissionSurfaceAudience): void =>
-    chatService.invalidate(id, audience);
+  const invalidateChat = (
+    id: string,
+    audience: MissionSurfaceAudience,
+    options: { readonly userVisibleOutput?: true | undefined } = {},
+  ): void => chatService.invalidate(id, audience, options);
 
   const invalidateWork = (id: string, audience: MissionSurfaceAudience): void =>
     workService.invalidate(id, audience);
@@ -1051,12 +1054,13 @@ export function createMissionRunner(options: {
     expectedLive: LiveMissionChat,
     audience: MissionSurfaceAudience,
     attachNextTurn = true,
+    userVisibleOutput = false,
   ): Promise<void> => {
     if (lifecycleService.active(id)?.handle === handle) lifecycleService.deleteActive(id);
     await chatService.closeLiveIfCurrent(id, expectedLive);
     workService.clearLive(id);
     chatService.clearContextWindow(id);
-    invalidateChat(id, audience);
+    invalidateChat(id, audience, userVisibleOutput ? { userVisibleOutput: true } : {});
     invalidateWork(id, audience);
     if (attachNextTurn) await attachNextSessionTurn(id, audience);
   };
@@ -1660,6 +1664,7 @@ export function createMissionRunner(options: {
       releaseCheckpoint = resolve;
     });
     let settlementKind: "terminal" | "checkpointed" = "terminal";
+    let terminalInvalidationHasUserVisibleOutput = false;
     const settlement = observeMissionExecution(
       options.missions,
       missionId,
@@ -1702,7 +1707,7 @@ export function createMissionRunner(options: {
       checkpoint,
       async (terminal) => {
         try {
-          const projectionState = await persistMissionExecutionProjection(
+          const projectionResult = await persistMissionExecutionProjection(
             options.missions,
             executionStore,
             missionId,
@@ -1710,6 +1715,8 @@ export function createMissionRunner(options: {
             terminal.status === "cancelled",
             live.entries,
           );
+          const projectionState = projectionResult.status;
+          terminalInvalidationHasUserVisibleOutput ||= projectionResult.userVisibleOutput;
           if (projectionState === "current") {
             try {
               await executionStore.archive(input.handle.executionId);
@@ -1790,6 +1797,7 @@ export function createMissionRunner(options: {
             live,
             audience,
             settlementKind !== "checkpointed",
+            terminalInvalidationHasUserVisibleOutput,
           );
         } catch (error) {
           logger.warn(
@@ -2832,7 +2840,13 @@ export function createMissionRunner(options: {
             executionStore,
             missions: options.missions,
           })
-            .then(() => invalidateChat(mission.id, missionSurfaceAudience(mission)))
+            .then((userVisibleOutput) =>
+              invalidateChat(
+                mission.id,
+                missionSurfaceAudience(mission),
+                userVisibleOutput ? { userVisibleOutput: true } : {},
+              ),
+            )
             .catch((error: unknown) => {
               logger.warn(
                 "mission.chat_projection_repair_failed",
@@ -2921,6 +2935,7 @@ export function createMissionRunner(options: {
         ...(history.nextBeforeCursor === undefined
           ? {}
           : { nextBeforeCursor: history.nextBeforeCursor }),
+        ...(history.historyStatus === undefined ? {} : { historyStatus: history.historyStatus }),
       },
       ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
     };
@@ -4772,7 +4787,10 @@ async function persistMissionExecutionProjection(
   executionId: string,
   cancelled: boolean,
   liveEntries: readonly MissionChatEntry[] = [],
-): Promise<"current" | "partial"> {
+): Promise<{
+  readonly status: "current" | "partial";
+  readonly userVisibleOutput: boolean;
+}> {
   const interruptedProjection = liveEntries
     .filter(
       (entry): entry is Exclude<MissionChatEntry, { readonly kind: "user" }> =>
@@ -4818,13 +4836,49 @@ async function persistMissionExecutionProjection(
       [...projected.values()],
       source?.updatedAt,
     );
-    return "current";
+    return {
+      status: "current",
+      userVisibleOutput: missionProjectionAddsUserVisibleOutput(liveEntries, [
+        ...projected.values(),
+      ]),
+    };
   } catch (error) {
     // The cancellation snapshot above is already durable and sufficient for
     // chat recovery. Canonical history enrichment is best-effort after that
     // commit because an interrupted Runtime may never finish its event stream.
-    if (cancelled) return "partial";
+    if (cancelled) return { status: "partial", userVisibleOutput: false };
     throw error;
+  }
+}
+
+export function missionProjectionAddsUserVisibleOutput(
+  previous: readonly MissionChatEntry[],
+  next: readonly MissionChatEntry[],
+): boolean {
+  const previousById = new Map(previous.map((entry) => [entry.id, entry] as const));
+  return next.some((entry) => {
+    const fingerprint = missionChatEntryUnreadFingerprint(entry);
+    if (fingerprint === undefined) return false;
+    const previousEntry = previousById.get(entry.id);
+    return (
+      previousEntry === undefined ||
+      missionChatEntryUnreadFingerprint(previousEntry) !== fingerprint
+    );
+  });
+}
+
+function missionChatEntryUnreadFingerprint(entry: MissionChatEntry): string | undefined {
+  switch (entry.kind) {
+    case "assistant":
+    case "thinking":
+      return `${entry.kind}:${entry.content}`;
+    case "tool":
+      return `${entry.kind}:${entry.status}:${entry.outputPreview ?? ""}:${entry.error ?? ""}`;
+    case "agent_activity":
+      return `${entry.kind}:${entry.action}:${entry.phase}:${entry.error ?? ""}`;
+    case "user":
+    case "context_operation":
+      return undefined;
   }
 }
 
@@ -4910,9 +4964,9 @@ async function repairMissionExecutionProjection(input: {
   readonly turn: MissionTimelineTurn & { readonly executionId: string };
   readonly executionStore: ReturnType<typeof createFileExecutionStore>;
   readonly missions: MissionStore;
-}): Promise<void> {
+}): Promise<boolean> {
   const executionState = await input.executionStore.get(input.turn.executionId);
-  if (executionState !== undefined && !isFinalExecutionStatus(executionState.status)) return;
+  if (executionState !== undefined && !isFinalExecutionStatus(executionState.status)) return false;
   const previous =
     (await input.missions.readExecutionProjection(input.missionId, input.turn.executionId)) ?? [];
   let repaired = finalizeHistoricalChatEntries(
@@ -4940,6 +4994,7 @@ async function repairMissionExecutionProjection(input: {
     repaired,
     executionState?.updatedAt,
   );
+  return missionProjectionAddsUserVisibleOutput(previous, repaired);
 }
 
 async function readMissionChatHistoryPage(input: {
@@ -4954,6 +5009,7 @@ async function readMissionChatHistoryPage(input: {
 }): Promise<{
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
+  readonly historyStatus?: "repairing" | undefined;
   readonly oldestSequence?: number | undefined;
   readonly newestSequence?: number | undefined;
   readonly nextBeforeCursor?: string | undefined;
@@ -4983,6 +5039,7 @@ async function readMissionChatHistoryPage(input: {
   let remaining = input.query.limit;
   let collected: MissionChatEntry[] = [];
   const syncIssues: MissionChatSyncIssue[] = [];
+  let historyStatus: "repairing" | undefined;
   let nextBeforeCursor: string | undefined;
   let firstTimelineRead = true;
 
@@ -5015,6 +5072,7 @@ async function readMissionChatHistoryPage(input: {
       });
       collected = [...page.entries, ...collected];
       syncIssues.push(...page.syncIssues);
+      if (page.historyStatus === "repairing") historyStatus = "repairing";
       remaining -= page.entries.length;
       if (page.nextCursor !== undefined) {
         nextBeforeCursor = encodeMissionChatPageCursor(page.nextCursor);
@@ -5045,6 +5103,7 @@ async function readMissionChatHistoryPage(input: {
   return {
     entries: collected,
     syncIssues,
+    ...(historyStatus === undefined ? {} : { historyStatus }),
     ...(sequences.length === 0 ? {} : { oldestSequence: Math.min(...sequences) }),
     ...(sequences.length === 0 ? {} : { newestSequence: Math.max(...sequences) }),
     ...(nextBeforeCursor === undefined ? {} : { nextBeforeCursor }),
@@ -5065,6 +5124,7 @@ async function readMissionChatTurnPage(input: {
 }): Promise<{
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
+  readonly historyStatus?: "repairing" | undefined;
   readonly nextCursor?: MissionChatPageCursor | undefined;
 }> {
   const userEntry: MissionChatEntry = {
@@ -5119,6 +5179,7 @@ async function readMissionChatTurnPage(input: {
         return {
           entries: projectedEntries,
           syncIssues: projectionSyncIssues,
+          ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
           nextCursor: {
             version: 1,
             kind: "projection",
@@ -5131,10 +5192,15 @@ async function readMissionChatTurnPage(input: {
         return {
           entries: projectedEntries,
           syncIssues: projectionSyncIssues,
+          ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
           nextCursor: { version: 1, kind: "turn-start", sequence: input.turn.sequence },
         };
       }
-      return { entries: [userEntry, ...projectedEntries], syncIssues: projectionSyncIssues };
+      return {
+        entries: [userEntry, ...projectedEntries],
+        syncIssues: projectionSyncIssues,
+        ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
+      };
     }
     if (input.cursor?.kind === "projection") {
       throw new Error("Mission chat page cursor is no longer available.");

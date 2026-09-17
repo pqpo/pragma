@@ -52,6 +52,13 @@ describe("Mission unread output state", () => {
     expect(
       missionChatUpdateHasUserVisibleOutput({
         ...base,
+        kind: "invalidate",
+        userVisibleOutput: true,
+      }),
+    ).toBe(true);
+    expect(
+      missionChatUpdateHasUserVisibleOutput({
+        ...base,
         kind: "patch",
         patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "new" }],
       }),

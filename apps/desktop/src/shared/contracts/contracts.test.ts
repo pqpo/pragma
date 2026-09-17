@@ -522,6 +522,14 @@ describe("mission chat streaming contracts", () => {
       revision: 3,
     });
     expect(
+      MissionChatUpdateSchema.parse({
+        kind: "invalidate",
+        missionId,
+        revision: 4,
+        userVisibleOutput: true,
+      }),
+    ).toMatchObject({ kind: "invalidate", revision: 4, userVisibleOutput: true });
+    expect(
       MissionChatUpdateSchema.safeParse({
         kind: "patch",
         missionId,

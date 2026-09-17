@@ -138,19 +138,33 @@ describe("Mission service state ownership", () => {
     const listenerError = vi.fn();
     const service = new MissionChatService<{ close: () => Promise<void> }>(listenerError);
     const updates: number[] = [];
+    const invalidations: unknown[] = [];
     service.subscribe(() => {
       throw new Error("listener failed");
     });
-    service.subscribe(({ update }) => updates.push(update.revision));
+    service.subscribe(({ update }) => {
+      updates.push(update.revision);
+      if (update.kind === "invalidate") invalidations.push(update);
+    });
 
     service.emitPatches("mission-1", "user", [
       { type: "entry.append", entryId: "entry-1", field: "content", delta: "hello" },
     ]);
     service.invalidate("mission-1", "user");
+    service.invalidate("mission-1", "user", { userVisibleOutput: true });
 
-    expect(updates).toEqual([1, 2]);
-    expect(listenerError).toHaveBeenCalledTimes(2);
-    expect(service.revision("mission-1")).toBe(2);
+    expect(updates).toEqual([1, 2, 3]);
+    expect(invalidations).toEqual([
+      { missionId: "mission-1", revision: 2, kind: "invalidate" },
+      {
+        missionId: "mission-1",
+        revision: 3,
+        kind: "invalidate",
+        userVisibleOutput: true,
+      },
+    ]);
+    expect(listenerError).toHaveBeenCalledTimes(3);
+    expect(service.revision("mission-1")).toBe(3);
   });
 
   it("returns the replaced live projection so its owner can close it", () => {

@@ -608,6 +608,37 @@ describe("mission conversation model", () => {
     expect(merged.page).toEqual(current.page);
   });
 
+  it("keeps newer cached output while a same-revision projection is being repaired", () => {
+    const base = streamingSnapshot("Latest live answer", 8);
+    const staleAnswer = {
+      ...base.entries[0]!,
+      id: "stale-answer",
+      content: "Older projected answer",
+      timelineSequence: 2,
+    };
+    const current = {
+      ...base,
+      entries: [staleAnswer, { ...base.entries[0]!, timelineSequence: 3 }],
+      page: { oldestSequence: 2, newestSequence: 3, nextBeforeCursor: "cached-cursor" },
+    };
+    const repairing = {
+      ...base,
+      entries: [staleAnswer],
+      page: {
+        oldestSequence: 2,
+        newestSequence: 2,
+        nextBeforeCursor: "stale-cursor",
+        historyStatus: "repairing" as const,
+      },
+    };
+
+    const merged = mergeLatestChatPage(current, repairing);
+
+    expect(merged.entries.map((entry) => entry.id)).toEqual(["stale-answer", "answer"]);
+    expect(merged.page.nextBeforeCursor).toBe("cached-cursor");
+    expect(merged.syncIssues).toBeUndefined();
+  });
+
   it("keeps loaded pages and the exhausted cursor after A -> B -> A navigation", () => {
     const snapshot = streamingSnapshot("Answer", 8);
     const entries = (start: number, end: number) =>
