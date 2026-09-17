@@ -141,8 +141,10 @@ projects those facts into the durable Mission event view, and Desktop composes t
 product metadata. Desktop chat files are rebuildable caches rather than terminal-state commit
 participants. Mission status, chat, and work use independent notification channels so a degraded
 content projection cannot leave the Mission rail in a false running state. Status notifications carry
-the Core-backed Execution identity and status; Desktop uses that fact to update the rail immediately,
-while bounded, per-Mission reconciliation repairs Local Host events and the v10 recovery snapshot.
+the Core-backed Execution identity and status; Desktop uses that fact to update the rail immediately.
+Local Host also compares a non-terminal Mission projection with the canonical Core Execution through
+a bounded, read-only activity query; no read-triggered timer or Desktop-owned background repair loop
+mutates Mission state.
 
 Local bridge placement:
 

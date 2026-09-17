@@ -38,6 +38,33 @@ final result: blocked
 
 ---
 
+# Mission lifecycle and recovery controls refinement Design QA
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-ffaa1273-259c-449b-82f0-9d7c15817e22.png`
+- Source pixels: 1154 × 456.
+- Implementation screenshot: unavailable; the local Electron window has no capturable display surface in this session, and the in-app Browser can only load the bridge-unavailable fallback.
+- Intended desktop state: active Mission team-channel view with lifecycle and recovery actions shown in the top bar.
+
+## Focused comparison evidence
+
+The lifecycle action is now icon-only with a 36px circular control and hover/focus tooltip. Recovery actions remain icon-only and are visually separated by a dedicated divider; the two destructive controls use a light danger surface and danger border so the controls read as interactive rather than decorative.
+
+## Interaction and accessibility checks
+
+- Mark complete, resume, force interrupt, and force remove retain localized `aria-label` values and tooltip descriptions.
+- Existing callbacks, disabled states, and busy states are preserved.
+- Targeted Mission renderer tests passed: 95 tests.
+- Renderer typecheck, ESLint, Prettier, and style ownership verification passed.
+
+## Findings
+
+- [Blocked] Direct screenshot comparison could not be completed because the Desktop bridge/display capture was unavailable in this session.
+- No P0/P1 functional or accessibility findings remain in automated checks.
+
+final result: blocked
+
+---
+
 # Mission Memory Tab Design QA
 
 - Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-b5b1e664-b537-4cd4-8617-5168fc64d0cf.png`
@@ -89,6 +116,33 @@ The activity region was inspected at native 2× density. Summary cards remain le
 No remaining P0, P1, or P2 findings. No P3 follow-up is required for the requested desktop state.
 
 final result: passed
+
+---
+
+# Mission message density and recovery action controls Design QA
+
+- Source visual truth paths: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-5e93c036-ca3b-412d-bc96-b57694cd7d4a.png`, `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-4d550ee1-a1c4-4f9c-84a9-3036c1e08ef7.png`, and `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-ae45d6e3-fa17-4de6-8c87-52edd83ca76b.png`
+- Source pixels: 1590 × 1642, 1958 × 272, and 342 × 192.
+- Implementation screenshot: unavailable; the local Electron window could not be captured from this session, and the in-app Browser loaded the bridge-unavailable fallback instead of the Desktop renderer.
+- Intended desktop state: Mission team-channel chat with persisted conversation history and recovery actions visible in the top bar.
+
+## Focused comparison evidence
+
+The conversation virtual rows now use compact vertical padding and a realistic initial height estimate; the old 180px intrinsic placeholder was removed so unloaded rows do not produce large blank gaps. Resume, force interrupt, and force remove are rendered as 36px circular Phosphor icon controls with localized accessible labels and hover/focus tooltips.
+
+## Interaction and runtime checks
+
+- Recovery controls preserve their existing operations, disabled states, and busy states.
+- Tooltip content is associated with each icon button through `aria-describedby` and remains available on keyboard focus.
+- Targeted Mission renderer tests passed: 95 tests.
+- Renderer typecheck, ESLint, Prettier, and style ownership verification passed.
+
+## Findings
+
+- [Blocked] A browser-rendered screenshot comparison could not be completed because the Desktop bridge was unavailable to the in-app Browser and the session had no capturable display surface.
+- No P0/P1 functional or accessibility findings remain in the automated checks for the changed surface.
+
+final result: blocked
 
 ---
 
@@ -1208,3 +1262,58 @@ The hover-state capture verifies that the existing profiled-avatar tooltip opens
 - Reduced-motion CSS disables the connector animation.
 
 final result: passed
+
+---
+
+# Studio detail action controls Design QA
+
+- Source visual truth paths: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-74dbe828-c2b9-4073-aaef-b736fb5a188f.png` and `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-f86e002c-b4fc-4bf0-90ad-1a7caa234de7.png`
+- Implementation evidence: `/Users/linminqiu/.codex/visualizations/2026/09/17/01a0afad-d549-70e2-be16-c9e35c91362d/expert-actions-implementation.png`, `/Users/linminqiu/.codex/visualizations/2026/09/17/01a0afad-d549-70e2-be16-c9e35c91362d/knowledge-toolbar-implementation.png`, and `/Users/linminqiu/.codex/visualizations/2026/09/17/01a0afad-d549-70e2-be16-c9e35c91362d/expert-actions-tooltip.png`
+- Verification viewport: 1280 × 720 CSS px, device scale factor 2.
+
+## Focused comparison evidence
+
+The rendered expert detail, team detail, and flow detail action groups use the same 36px circular icon-button treatment as the knowledge-base action pattern. The edit action is filled with the primary accent, delete is danger-styled, and the remaining actions use the neutral outline treatment. Existing action order and behavior remain unchanged.
+
+## Interaction and accessibility checks
+
+- Hovering an action reveals its localized purpose in a dark tooltip below the icon.
+- Every action retains its existing accessible label through `aria-label`; the tooltip is associated with the control through `aria-describedby`.
+- The edge-aligned delete tooltip stays within the inspected viewport.
+- The browser rendered 15 action buttons in the preview fixture with 36 × 36 dimensions and no current console errors.
+- Targeted tests, typecheck, lint, and the Desktop production build passed.
+
+## Findings
+
+No actionable P0, P1, or P2 issues remain. Final visual acceptance can be completed against the updated Desktop screens.
+
+final result: passed
+
+---
+
+# Mission lifecycle and recovery controls refinement Design QA
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-ffaa1273-259c-449b-82f0-9d7c15817e22.png`
+- Source pixels: 1154 × 456.
+- Implementation screenshot: unavailable; the local Electron window has no capturable display surface in this session, and the in-app Browser can only load the bridge-unavailable fallback.
+- Intended desktop state: active Mission team-channel view with lifecycle and recovery actions shown in the top bar.
+
+## Focused comparison evidence
+
+The lifecycle and recovery actions are now hidden behind one three-dot trigger placed after the Board tab, with a compact hover/focus dropdown animation. The Mission list and the hidden detail menu both retain the mark-complete action. Every detail action uses the same 36px circular icon control, and its localized tooltip opens to the left of the button. The recovery actions share one compact action group with uniform spacing and no vertical separators; the group has bottom breathing room before the horizontal top-bar rule. The two destructive controls use a light danger surface and danger border so the controls read as interactive rather than decorative.
+
+## Interaction and accessibility checks
+
+- The Mission list and detail action menu retain localized lifecycle actions; detail controls retain localized `aria-label` values and left-side tooltip descriptions.
+- The three-dot trigger is keyboard-focusable and opens the same action panel through `:focus-within` as it does on hover.
+- Existing callbacks, disabled states, and busy states are preserved.
+- Both the ordinary active-execution resume action and the orphaned-execution recovery action use the icon-button treatment.
+- Targeted Mission renderer tests passed: 96 tests.
+- Renderer typecheck, ESLint, Prettier, and style ownership verification passed.
+
+## Findings
+
+- [Blocked] Direct screenshot comparison could not be completed because the Desktop bridge/display capture was unavailable in this session.
+- No P0/P1 functional or accessibility findings remain in automated checks.
+
+final result: blocked
