@@ -252,6 +252,7 @@ export const missions = {
   markComplete: "Mark complete",
   markCompleteNamed: "Mark {{title}} complete",
   reopen: "Reopen",
+  moreActions: "More actions",
   openKnowledgeRevision: "Open knowledge revision",
   work: "Work",
   missionBoard: "Board",
@@ -354,9 +355,13 @@ export const missions = {
   executionStatus: "Execution {{status}}",
   executionId: "Execution ID: {{id}}",
   detailViews: "Mission detail views",
-  teamChannel: "Team channel",
+  teamChannel: "Chat",
   chat: "Chat",
   loadEarlier: "Load earlier messages",
+  historyTruncated_one:
+    "Archived history is incomplete: {{count}} earlier message was omitted and {{truncatedFields}} oversized fields were shortened.",
+  historyTruncated_other:
+    "Archived history is incomplete: {{count}} earlier messages were omitted and {{truncatedFields}} oversized fields were shortened.",
   loadingEarlier: "Loading…",
   chatSyncUnavailable:
     "Some conversation state is temporarily unavailable. Existing messages are preserved.",

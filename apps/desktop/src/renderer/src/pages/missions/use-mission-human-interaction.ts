@@ -31,6 +31,16 @@ export function resolveMissionHumanResponseAttempt(
     : { requestId: createRequestId(), responseKey };
 }
 
+export function excludeRespondedMissionHumanInteractions(
+  interactions: readonly MissionHumanInteraction[],
+  respondedInteractionIds: ReadonlySet<string>,
+): readonly MissionHumanInteraction[] {
+  if (respondedInteractionIds.size === 0) return interactions;
+  return interactions.filter(
+    (interaction) => !respondedInteractionIds.has(interaction.interactionId),
+  );
+}
+
 export function useMissionHumanInteraction(options: {
   readonly missionId: string;
   readonly api?: PragmaDesktopAPI | undefined;
@@ -46,6 +56,9 @@ export function useMissionHumanInteraction(options: {
   >({});
   const [customAnswers, setCustomAnswers] = useState<Record<string, Record<string, string>>>({});
   const [responding, setResponding] = useState(false);
+  const [respondedInteractionIds, setRespondedInteractionIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const attemptsRef = useRef(new Map<string, MissionHumanResponseAttempt>());
   const callbacksRef = useRef({ onResponded: options.onResponded, onError: options.onError });
   callbacksRef.current = { onResponded: options.onResponded, onError: options.onError };
@@ -58,6 +71,7 @@ export function useMissionHumanInteraction(options: {
     setAnswers({});
     setCustomAnswers({});
     setResponding(false);
+    setRespondedInteractionIds(new Set());
   }, [options.missionId]);
 
   const respond = useCallback(
@@ -81,6 +95,14 @@ export function useMissionHumanInteraction(options: {
           response,
         });
         attemptsRef.current.delete(interaction.interactionId);
+        // A conversation-state request that started before this response can finish afterwards
+        // with the old pending interaction. Keep a client-side acknowledgement for the lifetime of
+        // the Mission view so that late snapshots cannot briefly resurrect the submitted dialog.
+        setRespondedInteractionIds((current) => {
+          const next = new Set(current);
+          next.add(interaction.interactionId);
+          return next;
+        });
         options.updateChat((current) =>
           current === null
             ? current
@@ -117,6 +139,7 @@ export function useMissionHumanInteraction(options: {
     setAnswers,
     customAnswers,
     setCustomAnswers,
+    respondedInteractionIds,
     responding,
     respond,
   };

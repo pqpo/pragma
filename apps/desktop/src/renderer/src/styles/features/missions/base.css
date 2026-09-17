@@ -307,10 +307,12 @@
 
 .mission-detail-topbar {
   display: flex;
+  position: relative;
+  z-index: 4;
   align-items: center;
   gap: 24px;
   min-width: 0;
-  padding: 24px 48px 0;
+  padding: 24px 8px 0 48px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -350,7 +352,7 @@
   flex: 0 0 auto;
 }
 
-.mission-lifecycle-status-action {
+.mission-knowledge-revision-action {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -364,16 +366,16 @@
   white-space: nowrap;
 }
 
-.mission-lifecycle-status-action:hover:not(:disabled) {
+.mission-knowledge-revision-action:hover:not(:disabled) {
   color: var(--green-dark);
 }
 
-.mission-lifecycle-status-action:focus-visible {
+.mission-knowledge-revision-action:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 3px var(--ui-focus);
 }
 
-.mission-lifecycle-status-action:disabled {
+.mission-knowledge-revision-action:disabled {
   cursor: wait;
   opacity: 0.65;
 }
@@ -381,14 +383,14 @@
 .mission-recovery-actions {
   display: flex;
   flex: 0 0 auto;
+  flex-direction: column;
   align-items: center;
   gap: 8px;
 }
 
-.mission-recovery-actions .primary-button,
-.mission-recovery-actions .danger-button {
-  min-height: 32px;
-  padding-inline: 10px;
+.mission-recovery-actions .studio-action-with-tooltip.is-danger .studio-action-button {
+  border-color: var(--ui-danger);
+  background: var(--ui-danger-subtle);
 }
 
 .mission-detail-tabs {
@@ -398,7 +400,7 @@
   margin: 0;
 }
 
-.mission-detail-tabs button {
+.mission-detail-tabs > button {
   min-height: 40px;
   padding: 0 2px;
   border: 0;
@@ -409,9 +411,90 @@
   font-weight: 620;
 }
 
-.mission-detail-tabs button.is-active {
+.mission-detail-tabs > button.is-active {
   border-bottom-color: var(--green);
   color: var(--text);
+}
+
+.mission-detail-action-menu {
+  position: relative;
+  z-index: 5;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+}
+
+.mission-detail-tabs .mission-detail-action-menu-trigger {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-round);
+  background: transparent;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.mission-detail-tabs .mission-detail-action-menu-trigger:hover {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-accent-strong);
+}
+
+.mission-detail-tabs .mission-detail-action-menu-trigger:focus-visible {
+  outline: 0;
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.mission-detail-action-popover {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  right: 0;
+  padding-top: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.96);
+  transform-origin: top right;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 140ms ease;
+  visibility: hidden;
+}
+
+.mission-detail-action-popover-surface {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.mission-detail-action-menu:hover .mission-detail-action-popover,
+.mission-detail-action-menu:focus-within .mission-detail-action-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-detail-action-menu-trigger,
+  .mission-detail-action-popover {
+    transition: none;
+  }
 }
 
 .mission-detail-body {
@@ -470,7 +553,7 @@
 
   .missions-page .mission-create,
   .mission-detail-topbar {
-    padding-right: 34px;
+    padding-right: 8px;
     padding-left: 34px;
   }
 
@@ -1099,11 +1182,11 @@
   left: 32px;
 }
 
-.mission-detail-tabs button {
+.mission-detail-tabs > button {
   color: var(--muted);
 }
 
-.mission-detail-tabs button.is-active {
+.mission-detail-tabs > button.is-active {
   border-bottom-color: var(--green);
   color: var(--green-dark);
 }

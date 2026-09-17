@@ -226,7 +226,9 @@ export function applyMissionChatPatches(
             ? { executorAvatarId: existing.executorAvatarId }
             : {}),
         };
-        entries[existingIndex] = preserveAppendOnlyEntryContent(existing, incoming);
+        // Patch revisions are the ordering authority. Content length and prefix
+        // are not versions: a valid rewrite may be shorter or replace a prefix.
+        entries[existingIndex] = incoming;
         if (patch.beforeEntryId !== undefined) {
           const beforeIndex = entryIndexById.get(patch.beforeEntryId);
           if (beforeIndex === undefined) return null;
@@ -439,15 +441,11 @@ export function mergeLatestChatPage(
   // request move the renderer revision or its append-only entries backwards.
   if (latest.revision < current.revision) return current;
   const unavailableSections = new Set(latest.syncIssues?.map((issue) => issue.section) ?? []);
-  const preserveCurrentHistory =
-    unavailableSections.has("history") || latest.page.historyStatus === "repairing";
+  const preserveCurrentHistory = unavailableSections.has("history");
   const latestOldest = latest.page.oldestSequence;
   const latestEntryIds = new Set(latest.entries.map((entry) => entry.id));
   const currentEntriesById = new Map(current.entries.map((entry) => [entry.id, entry] as const));
-  const latestEntries = latest.entries.map((entry) => {
-    const existing = currentEntriesById.get(entry.id);
-    return existing === undefined ? entry : preserveAppendOnlyEntryContent(existing, entry);
-  });
+  const latestEntries = latest.entries;
   const retainedOlder =
     latestOldest === undefined
       ? []
@@ -458,11 +456,18 @@ export function mergeLatestChatPage(
               (entry.timelineSequence === latestOldest && !latestEntryIds.has(entry.id))),
         );
   const retainedUnavailableHistory = preserveCurrentHistory ? current.entries : [];
+  const availableLatestEntries = preserveCurrentHistory
+    ? latestEntries.filter((entry) => !currentEntriesById.has(entry.id))
+    : latestEntries;
   const latestPageWithoutCursor = { ...latest.page };
   delete latestPageWithoutCursor.nextBeforeCursor;
   return {
     ...latest,
-    entries: uniqueChatEntries([...retainedOlder, ...retainedUnavailableHistory, ...latestEntries]),
+    entries: uniqueChatEntries([
+      ...retainedOlder,
+      ...retainedUnavailableHistory,
+      ...availableLatestEntries,
+    ]),
     page: preserveCurrentHistory
       ? {
           ...latestPageWithoutCursor,
@@ -519,7 +524,7 @@ export function reconcileMissionChatRefresh(
     requiredRefreshRevision = live.requiredRefreshRevision;
   }
   const merged =
-    base !== null && latest.revision < base.revision
+    base !== null && latest.revision <= base.revision
       ? mergeStaleRefreshMetadata(base, latest)
       : mergeLatestChatPage(base, latest);
   remaining = remaining.filter((candidate) => candidate.revision > merged.revision);
@@ -541,7 +546,7 @@ function mergeStaleRefreshMetadata(
   const currentEntryIds = new Set(current.entries.map((entry) => entry.id));
   const entries = current.entries.map((entry) => {
     const incoming = latestEntriesById.get(entry.id);
-    return incoming === undefined ? entry : preserveAppendOnlyEntryContent(entry, incoming);
+    return incoming === undefined ? entry : mergeStaleEntryMetadata(entry, incoming);
   });
   // Keep the painted order, but recover missing history beside the shared entries in
   // the older snapshot. Appending it would put earlier expert thinking after a live
@@ -582,7 +587,7 @@ function mergeStaleRefreshMetadata(
   };
 }
 
-function preserveAppendOnlyEntryContent(
+function mergeStaleEntryMetadata(
   existing: MissionChatEntry,
   incoming: MissionChatEntry,
 ): MissionChatEntry {
@@ -592,13 +597,10 @@ function preserveAppendOnlyEntryContent(
   ) {
     return incoming;
   }
-  const regresses = incoming.content.length < existing.content.length;
-  const rewritesActiveStream =
-    existing.streaming === true &&
-    existing.content.length > 0 &&
-    incoming.content !== existing.content &&
-    !incoming.content.startsWith(existing.content);
-  return regresses || rewritesActiveStream ? { ...incoming, content: existing.content } : incoming;
+  // The caller has already established that this is stale metadata. Preserve
+  // the content from the newer revision unconditionally; do not infer recency
+  // from string length or prefix shape.
+  return { ...incoming, content: existing.content };
 }
 
 export function prependChatPage(
@@ -607,7 +609,10 @@ export function prependChatPage(
 ): MissionConversationSnapshot {
   return {
     ...current,
-    revision: Math.max(current.revision, earlier.revision),
+    // A history page reports the backend snapshot observed while it was read;
+    // it does not prove that this renderer consumed live changes up to that
+    // revision. Preserve the contiguous live watermark.
+    revision: current.revision,
     entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
     page: {
       ...(earlier.page.oldestSequence === undefined
@@ -619,13 +624,36 @@ export function prependChatPage(
       ...(earlier.page.nextBeforeCursor === undefined
         ? {}
         : { nextBeforeCursor: earlier.page.nextBeforeCursor }),
+      ...(current.page.truncation === undefined && earlier.page.truncation === undefined
+        ? {}
+        : {
+            // Both pages may report the same bounded terminal projection. Use
+            // monotonic totals so pagination cannot erase the warning or count
+            // the same projection twice.
+            truncation: {
+              omittedEntries: Math.max(
+                current.page.truncation?.omittedEntries ?? 0,
+                earlier.page.truncation?.omittedEntries ?? 0,
+              ),
+              truncatedFields: Math.max(
+                current.page.truncation?.truncatedFields ?? 0,
+                earlier.page.truncation?.truncatedFields ?? 0,
+              ),
+            },
+          }),
     },
   };
 }
 
 export function uniqueChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
   const byId = new Map<string, MissionChatEntry>();
-  for (const entry of entries) byId.set(entry.id, entry);
+  for (const entry of entries) {
+    // The last source is authoritative for both value and order. Updating an
+    // existing Map value keeps its first insertion position and can place a
+    // recovered process entry after the final answer.
+    byId.delete(entry.id);
+    byId.set(entry.id, entry);
+  }
   return [...byId.values()];
 }
 

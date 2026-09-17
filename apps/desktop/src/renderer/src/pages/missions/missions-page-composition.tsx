@@ -20,6 +20,7 @@ import {
   CaretRight,
   CheckCircle,
   Database,
+  DotsThreeVertical,
   File,
   Folder,
   FolderOpen,
@@ -40,6 +41,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   parseExpertMentionSegments,
   type ExpertPromptAttachment,
@@ -49,6 +51,7 @@ import {
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
+import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import {
   type Mission,
   type ContextStore,
@@ -93,13 +96,17 @@ import {
 import { useMissionClientOperation } from "./mission-client-operation.ts";
 import { useMissionComposerState } from "./use-mission-composer-state.ts";
 import { useMissionWork } from "./use-mission-work.ts";
-import { useMissionHumanInteraction } from "./use-mission-human-interaction.ts";
+import {
+  excludeRespondedMissionHumanInteractions,
+  useMissionHumanInteraction,
+} from "./use-mission-human-interaction.ts";
 import { useMissionOptions } from "./use-mission-options.ts";
 import { useMissionContextOperations } from "./use-mission-context-operations.ts";
 import {
   conversationFromPage,
   isMissionConversationCacheReady,
   loadMissionConversationProjection,
+  markConversationStateUnavailable,
   mergeConversationState,
   useMissionConversation,
   type MissionConversationPrefetch,
@@ -148,9 +155,12 @@ import {
 } from "../../lib/sidebar-width-preference.ts";
 import { removeMissionDrafts, writeMissionDraft } from "../../lib/mission-draft.ts";
 import {
+  acceptMissionChatUpdate,
   markMissionOutputReadIds,
+  readMissionOutputBoundaries,
   readUnreadMissionOutputIds,
   recordMissionChatUpdateIds,
+  writeMissionOutputBoundaries,
   writeUnreadMissionOutputIds,
 } from "../../lib/mission-unread-output.ts";
 import {
@@ -299,6 +309,9 @@ export function MissionsPage(props: {
     initialState.selectedMissionIds,
   );
   const missionChatCacheRef = useRef(new Map<string, MissionConversationSnapshot>());
+  const missionOutputBoundariesRef = useRef(
+    readMissionOutputBoundaries(typeof window === "undefined" ? undefined : window.localStorage),
+  );
   const missionDetailCacheRef = useRef(
     new Map<string, Mission>(
       props.initialMission === undefined ? [] : [[props.initialMission.id, props.initialMission]],
@@ -440,11 +453,18 @@ export function MissionsPage(props: {
       });
       const missionPromise = api.getMission(id);
       const chatPromise = loadMissionConversationProjection(api, id)
-        .then(({ page, state }) => {
+        .then(({ page, state, stateUnavailable }) => {
           const cached = cache.get(id);
           const existing = isMissionConversationCacheReady(cached) ? cached : null;
-          const pageSnapshot = mergeLatestChatPage(existing, conversationFromPage(page, existing));
-          const snapshot = mergeConversationState(pageSnapshot, state) ?? pageSnapshot;
+          const loadedPage = conversationFromPage(page, existing);
+          const pageSnapshot = mergeLatestChatPage(
+            existing,
+            stateUnavailable ? markConversationStateUnavailable(loadedPage) : loadedPage,
+          );
+          const snapshot =
+            state === undefined
+              ? pageSnapshot
+              : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
           cache.delete(id);
           cache.set(id, snapshot);
           while (cache.size > 8) {
@@ -452,7 +472,7 @@ export function MissionsPage(props: {
             if (oldest === undefined) break;
             cache.delete(oldest);
           }
-          return { page, state };
+          return { page, state, ...(stateUnavailable ? { stateUnavailable: true as const } : {}) };
         })
         .catch(() => undefined);
       missionConversationRequestsRef.current.set(id, chatPromise);
@@ -508,9 +528,17 @@ export function MissionsPage(props: {
     const api = desktopApi();
     if (api === undefined) return;
     return api.subscribeMissionChatUpdates((update) => {
+      const accepted = acceptMissionChatUpdate(missionOutputBoundariesRef.current, update);
+      if (!accepted.accepted) return;
+      missionOutputBoundariesRef.current = accepted.boundaries;
+      writeMissionOutputBoundaries(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        accepted.boundaries,
+      );
       const selectedMissionIdAtReceipt = selectedMissionIdRef.current;
+      const currentEntries = missionChatCacheRef.current.get(update.missionId)?.entries ?? [];
       updateUnreadMissionOutputIds((current) =>
-        recordMissionChatUpdateIds(current, update, selectedMissionIdAtReceipt),
+        recordMissionChatUpdateIds(current, update, selectedMissionIdAtReceipt, currentEntries),
       );
     });
   }, [updateUnreadMissionOutputIds]);
@@ -570,6 +598,13 @@ export function MissionsPage(props: {
       missionUpdatesDuringRefreshRef.current.set(update.missionId, null);
       removedMissionIdsRef.current.add(update.missionId);
       missionDetailCacheRef.current.delete(update.missionId);
+      const remainingBoundaries = { ...missionOutputBoundariesRef.current };
+      delete remainingBoundaries[update.missionId];
+      missionOutputBoundariesRef.current = remainingBoundaries;
+      writeMissionOutputBoundaries(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        remainingBoundaries,
+      );
       updateUnreadMissionOutputIds((current) =>
         current.includes(update.missionId)
           ? current.filter((missionId) => missionId !== update.missionId)
@@ -749,9 +784,7 @@ export function MissionsPage(props: {
   useEffect(() => {
     const api = desktopApi();
     if (api === undefined) return;
-    const teamMissions = missions.filter(
-      (mission) => mission.id === selectedMissionId && mission.executor.kind === "team",
-    );
+    const teamMissions = teamMissionsForMentionCandidates(missions);
     let cancelled = false;
     void Promise.all(
       teamMissions.map(async (mission) => {
@@ -767,7 +800,7 @@ export function MissionsPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [missions, selectedMissionId]);
+  }, [missions]);
 
   const presentedMissions = useMemo(
     () =>
@@ -1871,6 +1904,7 @@ export function MissionDetailFragment(props: {
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chatFooterRef = useRef<HTMLDivElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
   const composerInputRef = useRef<HTMLTextAreaElement | HTMLDivElement | null>(null);
   const queuedMessageActionsRef = useRef<Map<string, MissionQueuedMessageAction>>(new Map());
@@ -2008,6 +2042,7 @@ export function MissionDetailFragment(props: {
     setAnswers: setHumanAnswers,
     customAnswers: humanCustomAnswers,
     setCustomAnswers: setHumanCustomAnswers,
+    respondedInteractionIds,
     responding,
     respond,
   } = useMissionHumanInteraction({
@@ -2039,6 +2074,30 @@ export function MissionDetailFragment(props: {
     });
   }, []);
 
+  useLayoutEffect(() => {
+    if (activeTab !== "chat") return;
+    const footer = chatFooterRef.current;
+    const scroller = scrollRef.current;
+    if (footer === null || scroller === null) return;
+
+    const syncFooterHeight = (): void => {
+      scroller.style.setProperty(
+        "--mission-chat-footer-height",
+        `${Math.ceil(footer.getBoundingClientRect().height)}px`,
+      );
+      if (followLatestRef.current) scheduleFollowLatest();
+    };
+
+    syncFooterHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(syncFooterHeight);
+    observer.observe(footer);
+    return () => {
+      observer.disconnect();
+      scroller.style.removeProperty("--mission-chat-footer-height");
+    };
+  }, [activeTab, scheduleFollowLatest]);
+
   useEffect(
     () => () => {
       if (followLatestFrameRef.current !== undefined) {
@@ -2065,7 +2124,10 @@ export function MissionDetailFragment(props: {
     ) ?? false;
   const compactingContext = clientOperation.kind === "compacting" || runtimeCompactingContext;
   const clientOperationBusy = clientOperation.kind !== "idle";
-  const interactions = chat?.pendingInteractions ?? [];
+  const interactions = excludeRespondedMissionHumanInteractions(
+    chat?.pendingInteractions ?? [],
+    respondedInteractionIds,
+  );
   const interruptible = chat?.execution?.interruptible ?? false;
   const controlsDisabled = executionActive || clientOperationBusy || compactingContext;
   const {
@@ -2347,10 +2409,8 @@ export function MissionDetailFragment(props: {
     const { page, state } = await loadMissionConversationProjection(api, props.mission.id);
     let result: MissionConversationSnapshot | undefined;
     updateChat((current) => {
-      const next = mergeConversationState(
-        mergeLatestChatPage(current, conversationFromPage(page, current)),
-        state,
-      );
+      const pageSnapshot = mergeLatestChatPage(current, conversationFromPage(page, current));
+      const next = state === undefined ? pageSnapshot : mergeConversationState(pageSnapshot, state);
       result = next ?? undefined;
       return next;
     });
@@ -2443,6 +2503,19 @@ export function MissionDetailFragment(props: {
     () => groupMissionConversationEntries(conversationEntries),
     [conversationEntries],
   );
+  const conversationVirtualizer = useVirtualizer({
+    count: conversationBlocks.length + 2,
+    getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => {
+      if (index === 0) return `${props.mission.id}:history-header`;
+      if (index === conversationBlocks.length + 1) return `${props.mission.id}:live-footer`;
+      const block = conversationBlocks[index - 1]!;
+      return missionConversationBlockKey(props.mission.id, index - 1, block);
+    },
+    estimateSize: (index) => (index === 0 ? 56 : index === conversationBlocks.length + 1 ? 72 : 80),
+    overscan: 8,
+    initialRect: { width: 900, height: 800 },
+  });
   const finalReplyIds = useMemo(() => missionTurnFinalReplyIds(displayEntries), [displayEntries]);
   const latestBranchableReplyId = useMemo(
     () => latestMissionBranchableReply(displayEntries)?.id,
@@ -2607,6 +2680,125 @@ export function MissionDetailFragment(props: {
     props.mission.origin.type === "system-store-revision"
       ? props.mission.origin.storeId
       : undefined;
+  const showRecoveryActions =
+    recoveryAvailable &&
+    (chat?.controlHealth?.state === "deletion_pending" || (executionActive && !interruptible));
+  const showMissionRunAction =
+    props.mission.lifecycleStatus === "active" &&
+    (props.mission.execution === undefined ||
+      (!executionActive && isFlow) ||
+      (executionActive && !interruptible)) &&
+    !(props.mission.branch !== undefined && props.mission.execution === undefined);
+  const missionDetailActionMenu = (
+    <div className="mission-detail-action-menu" role="presentation">
+      <button
+        className="mission-detail-action-menu-trigger"
+        type="button"
+        aria-label={t("moreActions", { ns: "missions" })}
+        aria-haspopup="true"
+        title={t("moreActions", { ns: "missions" })}
+      >
+        <DotsThreeVertical size={18} weight="bold" aria-hidden="true" />
+      </button>
+      <div
+        className="mission-detail-action-popover"
+        role="group"
+        aria-label={t("moreActions", { ns: "missions" })}
+      >
+        <div className="mission-detail-action-popover-surface">
+          {props.onLifecycleChange !== undefined ? (
+            <StudioActionButton
+              label={t(props.mission.lifecycleStatus === "active" ? "markComplete" : "reopen", {
+                ns: "missions",
+              })}
+              tooltip={t(props.mission.lifecycleStatus === "active" ? "markComplete" : "reopen", {
+                ns: "missions",
+              })}
+              tooltipPlacement="left"
+              disabled={clientOperationBusy}
+              icon={
+                props.mission.lifecycleStatus === "active" ? (
+                  <CheckCircle size={20} aria-hidden="true" />
+                ) : (
+                  <ArrowCounterClockwise size={20} aria-hidden="true" />
+                )
+              }
+              onClick={() => void props.onLifecycleChange?.()}
+            />
+          ) : null}
+          {showRecoveryActions ? (
+            <div
+              className="mission-recovery-actions"
+              role="group"
+              aria-label={t("recoveryActions", { ns: "missions" })}
+            >
+              {recoveryActions.has("recover") ? (
+                <StudioActionButton
+                  label={t("resume", { ns: "missions" })}
+                  tooltip={t("resume", { ns: "missions" })}
+                  tooltipPlacement="left"
+                  tone="primary"
+                  disabled={clientOperationBusy}
+                  busy={clientOperation.kind === "restoring"}
+                  icon={<ArrowCounterClockwise size={20} aria-hidden="true" />}
+                  onClick={() => void retryRecovery()}
+                />
+              ) : null}
+              {recoveryActions.has("force_interrupt") ? (
+                <StudioActionButton
+                  label={t("forceInterrupt", { ns: "missions" })}
+                  tooltip={t("forceInterrupt", { ns: "missions" })}
+                  tooltipPlacement="left"
+                  tone="danger"
+                  disabled={clientOperationBusy || interrupting}
+                  busy={interrupting}
+                  icon={<Stop size={20} weight="fill" aria-hidden="true" />}
+                  onClick={() => void forceInterrupt()}
+                />
+              ) : null}
+              {recoveryActions.has("force_remove") ? (
+                <StudioActionButton
+                  label={t("forceRemove", { ns: "missions" })}
+                  tooltip={t("forceRemove", { ns: "missions" })}
+                  tooltipPlacement="left"
+                  tone="danger"
+                  disabled={clientOperationBusy}
+                  icon={<Trash size={20} aria-hidden="true" />}
+                  onClick={() => props.onForceRemove?.()}
+                />
+              ) : null}
+            </div>
+          ) : showMissionRunAction ? (
+            executionActive ? (
+              <StudioActionButton
+                label={t("resume", { ns: "missions" })}
+                tooltip={t("resume", { ns: "missions" })}
+                tooltipPlacement="left"
+                tone="primary"
+                disabled={clientOperationBusy}
+                icon={<Play size={20} aria-hidden="true" />}
+                onClick={() => void props.onRun?.()}
+              />
+            ) : (
+              <StudioActionButton
+                label={t(props.mission.execution === undefined ? "run" : "runAgain", {
+                  ns: "missions",
+                })}
+                tooltip={t(props.mission.execution === undefined ? "run" : "runAgain", {
+                  ns: "missions",
+                })}
+                tooltipPlacement="left"
+                tone="primary"
+                disabled={clientOperationBusy}
+                icon={<Play size={20} aria-hidden="true" />}
+                onClick={() => void props.onRun?.()}
+              />
+            )
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
   const missionStatusBar = (
     <div className="mission-detail-status-bar" aria-label={props.mission.title}>
       <p>
@@ -2642,7 +2834,7 @@ export function MissionDetailFragment(props: {
           <>
             <span aria-hidden="true">·</span>
             <button
-              className="mission-lifecycle-status-action"
+              className="mission-knowledge-revision-action"
               type="button"
               onClick={() => props.onOpenKnowledgeRevision?.(revisionStoreId)}
             >
@@ -2650,86 +2842,7 @@ export function MissionDetailFragment(props: {
             </button>
           </>
         ) : null}
-        <span aria-hidden="true">·</span>
-        <button
-          className="mission-lifecycle-status-action"
-          type="button"
-          disabled={clientOperationBusy}
-          onClick={() => void props.onLifecycleChange?.()}
-        >
-          {props.mission.lifecycleStatus === "active" ? (
-            <>
-              <CheckCircle size={16} aria-hidden="true" />
-              {t("markComplete", { ns: "missions" })}
-            </>
-          ) : (
-            <>
-              <ArrowCounterClockwise size={16} aria-hidden="true" />
-              {t("reopen", { ns: "missions" })}
-            </>
-          )}
-        </button>
       </p>
-      {recoveryAvailable &&
-      (chat?.controlHealth?.state === "deletion_pending" || (executionActive && !interruptible)) ? (
-        <div
-          className="mission-recovery-actions"
-          role="group"
-          aria-label={t("recoveryActions", { ns: "missions" })}
-        >
-          {recoveryActions.has("recover") ? (
-            <button
-              className="primary-button"
-              type="button"
-              disabled={clientOperationBusy}
-              onClick={() => void retryRecovery()}
-            >
-              <ArrowCounterClockwise size={17} />
-              {t("resume", { ns: "missions" })}
-            </button>
-          ) : null}
-          {recoveryActions.has("force_interrupt") ? (
-            <button
-              className="danger-button"
-              type="button"
-              disabled={clientOperationBusy || interrupting}
-              onClick={() => void forceInterrupt()}
-            >
-              <Stop size={17} weight="fill" />
-              {t("forceInterrupt", { ns: "missions" })}
-            </button>
-          ) : null}
-          {recoveryActions.has("force_remove") ? (
-            <button
-              className="danger-button"
-              type="button"
-              disabled={clientOperationBusy}
-              onClick={() => props.onForceRemove?.()}
-            >
-              <Trash size={17} />
-              {t("forceRemove", { ns: "missions" })}
-            </button>
-          ) : null}
-        </div>
-      ) : props.mission.lifecycleStatus === "active" &&
-        (props.mission.execution === undefined ||
-          (!executionActive && isFlow) ||
-          (executionActive && !interruptible)) &&
-        !(props.mission.branch !== undefined && props.mission.execution === undefined) ? (
-        <button
-          className="primary-button"
-          type="button"
-          disabled={clientOperationBusy}
-          onClick={() => void props.onRun?.()}
-        >
-          <Play size={17} />
-          {executionActive
-            ? t("resume", { ns: "missions" })
-            : props.mission.execution === undefined
-              ? t("run", { ns: "missions" })
-              : t("runAgain", { ns: "missions" })}
-        </button>
-      ) : null}
     </div>
   );
 
@@ -2769,6 +2882,7 @@ export function MissionDetailFragment(props: {
           >
             {t("missionBoard", { ns: "missions" })}
           </button>
+          {missionDetailActionMenu}
           {memoryEnabled ? (
             <button
               className={activeTab === "memory" ? "is-active" : ""}
@@ -2807,127 +2921,149 @@ export function MissionDetailFragment(props: {
                 setShowJumpToLatest(!atBottom);
               }}
             >
-              <div className="mission-chat-virtual-header">
-                {chatInitialLoading && !showThinkingPlaceholder ? (
-                  <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
-                ) : null}
-                {!chatInitialLoading && chat?.page.nextBeforeCursor !== undefined ? (
-                  <button
-                    className="mission-load-earlier"
-                    type="button"
-                    disabled={loadingEarlier}
-                    onClick={() => void loadEarlier()}
-                  >
-                    {loadingEarlier
-                      ? t("loadingEarlier", { ns: "missions" })
-                      : t("loadEarlier", { ns: "missions" })}
-                  </button>
-                ) : null}
-                {chatSyncError === null ? null : (
-                  <div className="mission-history-error" role="alert">
-                    <span>{chatSyncError}</span>
-                    <button
-                      type="button"
-                      onClick={() => setChatRefreshRevision((current) => current + 1)}
-                    >
-                      {t("retryChatSync", { ns: "missions" })}
-                    </button>
-                  </div>
-                )}
-                {historyError === null ? null : (
-                  <p className="mission-history-error" role="alert">
-                    {historyError}
-                  </p>
-                )}
-              </div>
-              <div className="mission-chat-list">
-                {conversationBlocks.map((block, index) => {
-                  const key = missionConversationBlockKey(props.mission.id, index, block);
-                  if (block.type === "tools") {
-                    return (
-                      <MissionToolCallBlock
-                        key={key}
-                        collapsed={block.collapsed}
-                        entries={block.entries}
-                        mentionCandidates={mentionCandidates}
-                      />
-                    );
-                  }
-                  if (block.item.type === "local") {
-                    return (
-                      <LocalMissionUserMessageView
-                        key={key}
-                        message={block.item.entry}
-                        missionId={props.mission.id}
-                        mentionCandidates={mentionCandidates}
-                        retryDisabled={clientOperationBusy}
-                        onRetry={
-                          block.item.entry.retryMode !== undefined
-                            ? (message) => void send(message)
-                            : undefined
-                        }
-                      />
-                    );
-                  }
-                  if (block.item.type === "context-operation") {
-                    return (
-                      <MissionContextOperationEntry
-                        key={key}
-                        operation={block.item.entry}
-                        retryDisabled={
-                          clientOperationBusy || chat?.contextWindow?.canCompact !== true
-                        }
-                        onRetry={() => void compactContext(block.item.entry.id)}
-                      />
-                    );
-                  }
+              <div
+                className="mission-chat-virtual-list"
+                style={{ height: conversationVirtualizer.getTotalSize() }}
+              >
+                {conversationVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const index = virtualRow.index;
+                  const block = index === 0 ? undefined : conversationBlocks[index - 1];
                   return (
-                    <MissionChatEntryView
-                      key={key}
-                      entry={block.item.entry}
-                      liveEntryStore={liveEntryStore}
-                      missionId={props.mission.id}
-                      mentionCandidates={mentionCandidates}
-                      onVisibleContent={observeFirstTokenPaint}
-                      paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
-                      showExecutorLabel
-                      showCopy={finalReplyIds.has(block.item.entry.id)}
-                      showBranch={
-                        block.item.entry.id === latestBranchableReplyId &&
-                        props.mission.executor.kind !== "flow" &&
-                        !executionActive &&
-                        !clientOperationBusy &&
-                        (chat?.queue?.state ?? "idle") === "idle" &&
-                        (chat?.queue?.pendingCount ?? 0) === 0 &&
-                        (chat?.pendingInteractions.length ?? 0) === 0
-                      }
-                      onBranch={selectBranchCandidate}
-                    />
+                    <div
+                      key={virtualRow.key}
+                      ref={conversationVirtualizer.measureElement}
+                      data-index={index}
+                      className="mission-chat-virtual-row"
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    >
+                      {index === 0 ? (
+                        <div className="mission-chat-virtual-header">
+                          {chatInitialLoading && !showThinkingPlaceholder ? (
+                            <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
+                          ) : null}
+                          {!chatInitialLoading && chat?.page.nextBeforeCursor !== undefined ? (
+                            <button
+                              className="mission-load-earlier"
+                              type="button"
+                              disabled={loadingEarlier}
+                              onClick={() => void loadEarlier()}
+                            >
+                              {loadingEarlier
+                                ? t("loadingEarlier", { ns: "missions" })
+                                : t("loadEarlier", { ns: "missions" })}
+                            </button>
+                          ) : null}
+                          {chatSyncError === null ? null : (
+                            <div className="mission-history-error" role="alert">
+                              <span>{chatSyncError}</span>
+                              <button
+                                type="button"
+                                onClick={() => setChatRefreshRevision((current) => current + 1)}
+                              >
+                                {t("retryChatSync", { ns: "missions" })}
+                              </button>
+                            </div>
+                          )}
+                          {historyError === null ? null : (
+                            <p className="mission-history-error" role="alert">
+                              {historyError}
+                            </p>
+                          )}
+                          {chat?.page.truncation === undefined ? null : (
+                            <p className="mission-history-error" role="status">
+                              {t("historyTruncated", {
+                                ns: "missions",
+                                count: chat.page.truncation.omittedEntries,
+                                truncatedFields: chat.page.truncation.truncatedFields,
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      ) : index === conversationBlocks.length + 1 ? (
+                        <div className="mission-chat-virtual-footer">
+                          {showThinkingPlaceholder ? (
+                            <MissionThinkingPlaceholder
+                              executorName={props.mission.executor.name}
+                            />
+                          ) : null}
+                          <span aria-hidden="true" className="mission-chat-bottom-anchor" />
+                        </div>
+                      ) : block?.type === "tools" ? (
+                        <div className="mission-chat-virtual-entry">
+                          <MissionToolCallBlock
+                            collapsed={block.collapsed}
+                            entries={block.entries}
+                            mentionCandidates={mentionCandidates}
+                          />
+                        </div>
+                      ) : block?.item.type === "local" ? (
+                        <div className="mission-chat-virtual-entry">
+                          <LocalMissionUserMessageView
+                            message={block.item.entry}
+                            missionId={props.mission.id}
+                            mentionCandidates={mentionCandidates}
+                            retryDisabled={clientOperationBusy}
+                            onRetry={
+                              block.item.entry.retryMode !== undefined
+                                ? (message) => void send(message)
+                                : undefined
+                            }
+                          />
+                        </div>
+                      ) : block?.item.type === "context-operation" ? (
+                        <div className="mission-chat-virtual-entry">
+                          <MissionContextOperationEntry
+                            operation={block.item.entry}
+                            retryDisabled={
+                              clientOperationBusy || chat?.contextWindow?.canCompact !== true
+                            }
+                            onRetry={() => void compactContext(block.item.entry.id)}
+                          />
+                        </div>
+                      ) : block?.item.type === "durable" ? (
+                        <div className="mission-chat-virtual-entry">
+                          <MissionChatEntryView
+                            entry={block.item.entry}
+                            liveEntryStore={liveEntryStore}
+                            missionId={props.mission.id}
+                            mentionCandidates={mentionCandidates}
+                            onVisibleContent={observeFirstTokenPaint}
+                            paintExecutionId={block.item.entry.executionId ?? chat?.execution?.id}
+                            showExecutorLabel
+                            showCopy={finalReplyIds.has(block.item.entry.id)}
+                            showBranch={
+                              block.item.entry.id === latestBranchableReplyId &&
+                              props.mission.executor.kind !== "flow" &&
+                              !executionActive &&
+                              !clientOperationBusy &&
+                              (chat?.queue?.state ?? "idle") === "idle" &&
+                              (chat?.queue?.pendingCount ?? 0) === 0 &&
+                              (chat?.pendingInteractions.length ?? 0) === 0
+                            }
+                            onBranch={selectBranchCandidate}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
-              <div className="mission-chat-virtual-footer">
-                {showThinkingPlaceholder ? (
-                  <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
-                ) : null}
-                <span aria-hidden="true" className="mission-chat-bottom-anchor" />
-              </div>
             </div>
-            {showJumpToLatest ? (
-              <button
-                className="mission-jump-latest"
-                type="button"
-                onClick={() => {
-                  followLatestRef.current = true;
-                  scheduleFollowLatest();
-                  setShowJumpToLatest(false);
-                }}
-              >
-                <CaretDown size={15} aria-hidden="true" />
-                {t("jumpLatest", { ns: "missions" })}
-              </button>
-            ) : null}
-            <div className="mission-chat-footer">
+            <div className="mission-chat-footer" ref={chatFooterRef}>
+              {showJumpToLatest ? (
+                <button
+                  className="mission-jump-latest mission-jump-latest-overlay"
+                  type="button"
+                  onClick={() => {
+                    followLatestRef.current = true;
+                    scheduleFollowLatest();
+                    setShowJumpToLatest(false);
+                  }}
+                >
+                  <CaretDown size={15} aria-hidden="true" />
+                  {t("jumpLatest", { ns: "missions" })}
+                </button>
+              ) : null}
               {presentedError !== null && presentedError !== undefined ? (
                 <MissionErrorBanner
                   error={presentedError}
@@ -5035,6 +5171,12 @@ export function formatMissionListTitle(
         : `@${candidateByRef.get(segment.ref)?.name ?? unavailableLabel}`,
     )
     .join("");
+}
+
+export function teamMissionsForMentionCandidates(
+  missions: readonly MissionSummary[],
+): readonly MissionSummary[] {
+  return missions.filter((mission) => mission.executor.kind === "team");
 }
 
 function missionToSummary(

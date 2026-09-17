@@ -237,6 +237,7 @@ export const missions = {
   markComplete: "標記完成",
   markCompleteNamed: "將 {{title}} 標記完成",
   reopen: "重新開啟",
+  moreActions: "更多操作",
   openKnowledgeRevision: "開啟知識庫修訂",
   work: "工作",
   missionBoard: "白板",
@@ -337,9 +338,13 @@ export const missions = {
   executionStatus: "執行狀態：{{status}}",
   executionId: "執行 ID：{{id}}",
   detailViews: "任務詳細資料檢視",
-  teamChannel: "團隊頻道",
+  teamChannel: "對話",
   chat: "對話",
   loadEarlier: "載入較早的訊息",
+  historyTruncated_one:
+    "封存歷史不完整：有 {{count}} 則較早訊息未保留，{{truncatedFields}} 個超大欄位已縮短。",
+  historyTruncated_other:
+    "封存歷史不完整：有 {{count}} 則較早訊息未保留，{{truncatedFields}} 個超大欄位已縮短。",
   loadingEarlier: "載入中…",
   chatSyncUnavailable: "部分對話狀態暫時無法讀取，現有訊息已保留。",
   retryChatSync: "重試",

@@ -33,6 +33,10 @@
   --ui-text-disabled: #8d8e89;
   --ui-line: #e5e2da;
   --ui-line-strong: #d9d6ce;
+  --ui-scrollbar-thumb: rgb(107 108 104 / 28%);
+  --ui-scrollbar-thumb-hover: rgb(107 108 104 / 36%);
+  --ui-scrollbar-track: transparent;
+  --ui-scrollbar-size: 8px;
   --ui-accent: #445a4f;
   --ui-accent-strong: #2d473a;
   --ui-danger: #9d3f34;

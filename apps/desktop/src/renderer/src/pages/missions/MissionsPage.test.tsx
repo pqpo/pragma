@@ -51,9 +51,13 @@ import {
   unavailableMcpToolName,
   upsertMissionSummary,
   withMissionUiWatchdog,
+  teamMissionsForMentionCandidates,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
-import { resolveMissionHumanResponseAttempt } from "./use-mission-human-interaction.ts";
+import {
+  excludeRespondedMissionHumanInteractions,
+  resolveMissionHumanResponseAttempt,
+} from "./use-mission-human-interaction.ts";
 import {
   claimMissionClientOperation,
   releaseMissionClientOperation,
@@ -68,6 +72,30 @@ import {
 } from "./mission-conversation-model.ts";
 
 describe("MissionsPage", () => {
+  it("does not resurrect a submitted human interaction from a late conversation snapshot", () => {
+    const pending = [
+      {
+        interactionId: "question-flow",
+        request: {
+          kind: "question" as const,
+          questions: [
+            {
+              header: "Direction",
+              question: "Which direction should we take?",
+              kind: "single_choice" as const,
+              options: [{ label: "Option one", description: "The first route." }],
+            },
+          ],
+        },
+      },
+    ];
+
+    expect(excludeRespondedMissionHumanInteractions(pending, new Set(["question-flow"]))).toEqual(
+      [],
+    );
+    expect(excludeRespondedMissionHumanInteractions(pending, new Set())).toBe(pending);
+  });
+
   it("renders canonical mention markers as member names in Mission list titles", () => {
     expect(
       formatMissionListTitle(
@@ -86,6 +114,31 @@ describe("MissionsPage", () => {
     expect(formatMissionListTitle("<@expert:1xddvess309a6gme>请检查实现", [], "不可用成员")).toBe(
       "@不可用成员请检查实现",
     );
+  });
+
+  it("loads mention candidates for every team Mission in the list", () => {
+    const expert = missionSummaryFixture({
+      id: "expert-mission",
+      title: "Expert mission",
+      updatedAt: "2026-07-11T00:00:02.000Z",
+    });
+    const firstTeam = missionSummaryFixture({
+      id: "first-team-mission",
+      title: "First team mission",
+      executorKind: "team",
+      updatedAt: "2026-07-11T00:00:01.000Z",
+    });
+    const secondTeam = missionSummaryFixture({
+      id: "second-team-mission",
+      title: "Second team mission",
+      executorKind: "team",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    });
+
+    expect(teamMissionsForMentionCandidates([expert, firstTeam, secondTeam])).toEqual([
+      firstTeam,
+      secondTeam,
+    ]);
   });
 
   it("uses bounded initial pages for Mission conversations", () => {
@@ -779,6 +832,95 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("is-recovery");
   });
 
+  it("renders recovery actions as compact icon buttons with accessible tooltips", () => {
+    const mission = missionFixture("expert");
+    mission.execution = {
+      id: "00000000-0000-4000-8000-000000000010",
+      inputMessageId: mission.initialMessageId,
+      sessionId: "00000000-0000-4000-8000-000000000011",
+      status: "running",
+      startedAt: "2026-07-11T00:00:01.000Z",
+    };
+    const chat: MissionConversationSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      execution: {
+        id: mission.execution.id,
+        status: "running",
+        interruptible: false,
+      },
+      controlHealth: {
+        state: "orphaned",
+        executionId: mission.execution.id,
+        observedAt: "2026-07-11T00:01:00.000Z",
+        availableActions: ["recover", "force_interrupt", "force_remove"],
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={mission}
+        chatCache={new Map([[mission.id, chat]])}
+        onLifecycleChange={() => undefined}
+      />,
+    );
+
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(4);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(4);
+    expect(html).toContain('aria-label="More actions"');
+    expect(html).toContain('aria-haspopup="true"');
+    expect(html).toContain("mission-detail-action-popover");
+    expect(html).toContain("is-tooltip-left");
+    expect(html).toContain('aria-label="Mark complete"');
+    expect(html).toContain('aria-label="Resume"');
+    expect(html).toContain('aria-label="Force interrupt"');
+    expect(html).toContain('aria-label="Force remove"');
+    expect(html).not.toContain("mission-detail-action-divider");
+    expect(html).not.toContain(">Resume</button>");
+    expect(html).not.toContain(">Force interrupt</button>");
+    expect(html).not.toContain(">Force remove</button>");
+  });
+
+  it("renders the regular active-execution resume action as an icon button", () => {
+    const mission = missionFixture("expert");
+    mission.execution = {
+      id: "00000000-0000-4000-8000-000000000012",
+      inputMessageId: mission.initialMessageId,
+      sessionId: "00000000-0000-4000-8000-000000000013",
+      status: "running",
+      startedAt: "2026-07-11T00:00:01.000Z",
+    };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} onLifecycleChange={() => undefined} />,
+    );
+
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(2);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(2);
+    expect(html).toContain("mission-detail-action-popover");
+    expect(html).toContain("is-tooltip-left");
+    expect(html).toContain('aria-label="Mark complete"');
+    expect(html).toContain('aria-label="Resume"');
+    expect(html).not.toContain(">Resume</button>");
+    expect(html).not.toContain("mission-recovery-actions");
+  });
+
+  it("keeps the completed Mission reopen action in the hidden action menu", () => {
+    const mission = { ...missionFixture("expert"), lifecycleStatus: "completed" as const };
+
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} onLifecycleChange={() => undefined} />,
+    );
+
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Reopen"');
+    expect(html).not.toContain('aria-label="Mark complete"');
+    expect(html).not.toContain("mission-recovery-actions");
+  });
+
   it("shows a shimmering chat skeleton only while the initial conversation snapshot is missing", () => {
     const mission = missionFixture("expert");
     const loadingHtml = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
@@ -1169,7 +1311,7 @@ describe("MissionDetailFragment", () => {
   it("keeps team conversations in the shared chat surface", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("team")} />);
 
-    expect(html).toContain("Team channel");
+    expect(html).toContain('aria-label="Message Delivery Team"');
     expect(html).toContain("mission-chat-composer");
     expect(html).not.toContain("mission-team-inspector");
   });
@@ -1737,7 +1879,7 @@ describe("Mission chat patches", () => {
     expect(merged.page.nextBeforeCursor).toBe("older-cursor");
   });
 
-  it("does not replace append-only live output with a shorter refreshed prefix", () => {
+  it("accepts a shorter rewrite from a newer authoritative revision", () => {
     const missionId = "00000000-0000-4000-8000-000000000000";
     const createdAt = "2026-07-11T00:00:00.000Z";
     const current: MissionConversationSnapshot = {
@@ -1776,7 +1918,7 @@ describe("Mission chat patches", () => {
       entries: [
         {
           id: "answer",
-          content: "complete streamed answer",
+          content: "complete",
           streaming: false,
         },
       ],
@@ -2691,6 +2833,7 @@ function missionFixture(kind: "expert" | "team"): Mission {
 function missionSummaryFixture(input: {
   readonly id: string;
   readonly title: string;
+  readonly executorKind?: MissionSummary["executor"]["kind"] | undefined;
   readonly lifecycleStatus?: MissionSummary["lifecycleStatus"] | undefined;
   readonly status?: NonNullable<MissionSummary["execution"]>["status"] | undefined;
   readonly source?: MissionSummary["source"] | undefined;
@@ -2700,7 +2843,7 @@ function missionSummaryFixture(input: {
     id: input.id,
     title: input.title,
     workspace: { basename: "expert-mesh" },
-    executor: { kind: "expert", name: "Product Designer" },
+    executor: { kind: input.executorKind ?? "expert", name: "Product Designer" },
     ...(input.status === undefined ? {} : { execution: { status: input.status } }),
     source: input.source ?? { type: "task" },
     lifecycleStatus: input.lifecycleStatus ?? "active",

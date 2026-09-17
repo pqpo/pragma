@@ -131,12 +131,17 @@ export function useMissionConversation(input: {
       refreshing = true;
       try {
         const prefetched = await prefetchedConversation;
-        const { page, state } =
+        const { page, state, stateUnavailable } =
           prefetched ?? (await loadMissionConversationProjection(api, input.missionId));
         prefetchedConversation = undefined;
         if (!cancelled) {
-          const pageSnapshot = conversationFromPage(page, chatRef.current);
-          const snapshot = mergeConversationState(pageSnapshot, state) ?? pageSnapshot;
+          const pageSnapshot = stateUnavailable
+            ? markConversationStateUnavailable(conversationFromPage(page, chatRef.current))
+            : conversationFromPage(page, chatRef.current);
+          const snapshot =
+            state === undefined
+              ? pageSnapshot
+              : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
           const drained = reconcileMissionChatRefresh(chatRef.current, snapshot, pending);
           pending = [...drained.remaining];
           update(drained.snapshot);
@@ -144,6 +149,14 @@ export function useMissionConversation(input: {
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
           );
           if (drained.needsRefresh) refreshQueued = true;
+          if (stateUnavailable) {
+            // The page is useful on its own, but pending questions and controls
+            // are safety-relevant. Retry that independent read without throwing
+            // away or re-fetching the message history.
+            setTimeout(() => {
+              if (!cancelled) void refreshConversationState(api);
+            }, 500);
+          }
           const pageReceivedAt = performance.now();
           const characterCount = page.entries.reduce(
             (total, entry) =>
@@ -385,25 +398,48 @@ export function useMissionConversation(input: {
 
 export interface MissionConversationPrefetch {
   readonly page: MissionChatPage;
-  readonly state: MissionConversationState;
+  readonly state?: MissionConversationState | undefined;
+  readonly stateUnavailable?: true | undefined;
 }
 
 export async function loadMissionConversationProjection(
   api: PragmaDesktopAPI,
   missionId: string,
 ): Promise<MissionConversationPrefetch> {
-  const [page, initialState] = await Promise.all([
-    api.getMissionChatPage({ id: missionId, limit: MISSION_CHAT_PAGE_SIZE }),
-    api.getMissionConversationState(missionId),
-  ]);
-  const state =
-    initialState.revision >= page.revision
-      ? initialState
-      : await api.getMissionConversationState(missionId);
-  if (state.revision < page.revision) {
-    throw new Error("Mission conversation state is older than the latest chat page.");
+  // Message history is the primary payload. A pending/control-state failure
+  // must not discard a page that was already read successfully.
+  const initialStateRead = api
+    .getMissionConversationState(missionId)
+    .then((state) => ({ state }) as const)
+    .catch(() => ({ state: undefined }) as const);
+  const page = await api.getMissionChatPage({ id: missionId, limit: MISSION_CHAT_PAGE_SIZE });
+  const { state: initialState } = await initialStateRead;
+  if (initialState !== undefined) {
+    const state =
+      initialState.revision >= page.revision
+        ? initialState
+        : await api.getMissionConversationState(missionId).catch(() => undefined);
+    if (state === undefined) return { page, stateUnavailable: true };
+    return state.revision < page.revision ? { page, stateUnavailable: true } : { page, state };
   }
-  return { page, state };
+  return { page, stateUnavailable: true };
+}
+
+export function markConversationStateUnavailable(
+  snapshot: MissionConversationSnapshot,
+): MissionConversationSnapshot {
+  const issue = {
+    code: "execution_state_unavailable" as const,
+    section: "pending_interactions" as const,
+    retryable: true as const,
+  };
+  return {
+    ...snapshot,
+    syncIssues: [
+      ...(snapshot.syncIssues?.filter((candidate) => candidate.section !== issue.section) ?? []),
+      issue,
+    ],
+  };
 }
 
 export function conversationFromPage(

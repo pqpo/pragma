@@ -237,6 +237,7 @@ export const missions = {
   markComplete: "标记完成",
   markCompleteNamed: "将 {{title}} 标记完成",
   reopen: "重新打开",
+  moreActions: "更多操作",
   openKnowledgeRevision: "打开知识库修订",
   work: "工作",
   missionBoard: "白板",
@@ -337,9 +338,13 @@ export const missions = {
   executionStatus: "执行状态：{{status}}",
   executionId: "执行 ID：{{id}}",
   detailViews: "任务详情视图",
-  teamChannel: "团队频道",
+  teamChannel: "对话",
   chat: "对话",
   loadEarlier: "加载更早的消息",
+  historyTruncated_one:
+    "归档历史不完整：有 {{count}} 条更早消息未保留，{{truncatedFields}} 个超大字段已缩短。",
+  historyTruncated_other:
+    "归档历史不完整：有 {{count}} 条更早消息未保留，{{truncatedFields}} 个超大字段已缩短。",
   loadingEarlier: "加载中…",
   chatSyncUnavailable: "部分对话状态暂时无法读取，现有消息已保留。",
   retryChatSync: "重试",

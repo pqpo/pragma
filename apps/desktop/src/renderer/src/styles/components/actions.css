@@ -59,6 +59,128 @@
   color: var(--ui-text);
 }
 
+.studio-action-with-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.studio-action-button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-round);
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.studio-action-button:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--ui-surface-subtle);
+  color: var(--ui-accent-strong);
+}
+
+.studio-action-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.studio-action-with-tooltip.is-primary .studio-action-button {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent);
+  color: var(--ui-surface);
+}
+
+.studio-action-with-tooltip.is-primary .studio-action-button:hover:not(:disabled) {
+  border-color: var(--ui-accent-strong);
+  background: var(--ui-accent-strong);
+  color: var(--ui-surface);
+}
+
+.studio-action-with-tooltip.is-danger .studio-action-button {
+  border-color: var(--ui-line-strong);
+  color: var(--ui-danger);
+}
+
+.studio-action-with-tooltip.is-danger .studio-action-button:hover:not(:disabled) {
+  border-color: var(--ui-danger);
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+}
+
+.studio-action-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.studio-action-with-tooltip.is-busy .studio-action-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.studio-action-tooltip {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 48px));
+  padding: 7px 9px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-strong);
+  color: var(--ui-surface);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.studio-action-with-tooltip:hover .studio-action-tooltip,
+.studio-action-with-tooltip:focus-within .studio-action-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
+.studio-action-with-tooltip:last-child .studio-action-tooltip {
+  right: 0;
+  left: auto;
+  transform: translate(0, -3px);
+}
+
+.studio-action-with-tooltip:last-child:hover .studio-action-tooltip,
+.studio-action-with-tooltip:last-child:focus-within .studio-action-tooltip {
+  transform: translate(0, 0);
+}
+
+.studio-action-with-tooltip.is-tooltip-left .studio-action-tooltip {
+  top: 50%;
+  right: calc(100% + 8px);
+  left: auto;
+  transform: translate(3px, -50%);
+}
+
+.studio-action-with-tooltip.is-tooltip-left:hover .studio-action-tooltip,
+.studio-action-with-tooltip.is-tooltip-left:focus-within .studio-action-tooltip {
+  transform: translate(0, -50%);
+}
+
 .icon-button.is-danger {
   background: var(--ui-danger-subtle);
   color: var(--ui-danger);
@@ -102,6 +224,16 @@
 
 .detail-actions .secondary-button {
   min-height: 43px;
+}
+
+.expert-detail .detail-actions,
+.pragma-resource-detail .detail-actions {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .mission-model-reset-note .text-button {

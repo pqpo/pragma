@@ -369,7 +369,7 @@
 
 .mission-chat-shell {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -380,6 +380,9 @@
 
 .mission-chat-scroll {
   position: relative;
+  z-index: 1;
+  grid-row: 1;
+  grid-column: 1;
   min-width: 0;
   min-height: 0;
   max-width: 100%;
@@ -396,10 +399,39 @@
   height: 0;
 }
 
+.mission-chat-footer > .mission-jump-latest-overlay {
+  position: absolute;
+  z-index: 3;
+  top: 32px;
+  left: 50%;
+  bottom: auto;
+  margin: 0;
+  transform: translate(-50%, -100%);
+}
+
 .mission-chat-list {
   min-width: 0;
   max-width: 100%;
   padding: 22px var(--mission-detail-inline-padding) 24px;
+}
+
+.mission-chat-virtual-entry {
+  min-width: 0;
+  max-width: 100%;
+  padding: 8px var(--mission-detail-inline-padding);
+}
+
+.mission-chat-virtual-list {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.mission-chat-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .mission-chat-virtual-header {
@@ -412,7 +444,8 @@
 }
 
 .mission-chat-virtual-footer {
-  padding: 0 var(--mission-detail-inline-padding) 24px;
+  padding: 0 var(--mission-detail-inline-padding)
+    max(24px, calc(var(--mission-chat-footer-height, 140px) + 4px));
 }
 
 .mission-chat-list > * + * {
@@ -498,9 +531,17 @@
   position: relative;
   z-index: 2;
   display: grid;
+  grid-row: 1;
+  grid-column: 1;
+  align-self: end;
   gap: 7px;
-  padding: 10px var(--mission-detail-inline-padding) 0;
-  background: var(--background);
+  padding: 42px var(--mission-detail-inline-padding) 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    color-mix(in srgb, var(--background) 72%, transparent) 22px,
+    var(--background) 42px
+  );
 }
 
 .mission-chat-footer-tip {

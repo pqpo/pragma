@@ -27,6 +27,8 @@ import {
   mergeConversationState,
 } from "./use-mission-conversation.ts";
 
+const chatStreamId = "00000000-0000-4000-8000-000000000099";
+
 describe("mission conversation model", () => {
   const streamingSnapshot = (content = "hel", revision = 1): MissionConversationSnapshot => ({
     missionId: "00000000-0000-4000-8000-000000000000",
@@ -50,12 +52,14 @@ describe("mission conversation model", () => {
     const updates: MissionChatUpdate[] = [
       {
         missionId: streamingSnapshot().missionId,
+        streamId: chatStreamId,
         revision: 2,
         kind: "patch",
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "lo" }],
       },
       {
         missionId: streamingSnapshot().missionId,
+        streamId: chatStreamId,
         revision: 3,
         kind: "patch",
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: " world" }],
@@ -92,6 +96,7 @@ describe("mission conversation model", () => {
     const patched = applyMissionChatUpdateBatch(withContext!, [
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 5,
         kind: "patch",
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "!" }],
@@ -203,6 +208,7 @@ describe("mission conversation model", () => {
   it("keeps a revision gap pending for an authoritative refresh", () => {
     const update: MissionChatUpdate = {
       missionId: streamingSnapshot().missionId,
+      streamId: chatStreamId,
       revision: 3,
       kind: "patch",
       patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "lo" }],
@@ -220,11 +226,13 @@ describe("mission conversation model", () => {
     const updates: MissionChatUpdate[] = [
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 11,
         kind: "invalidate",
       },
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 12,
         kind: "patch",
         patches: [
@@ -242,6 +250,7 @@ describe("mission conversation model", () => {
       },
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 13,
         kind: "patch",
         patches: [
@@ -333,12 +342,14 @@ describe("mission conversation model", () => {
     const pending: MissionChatUpdate[] = [
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 6,
         kind: "patch",
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: " world" }],
       },
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 7,
         kind: "patch",
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "!" }],
@@ -383,9 +394,15 @@ describe("mission conversation model", () => {
   it("requests another refresh when an in-flight snapshot predates a newer invalidate", () => {
     const current = streamingSnapshot("previous turn", 8);
     const pending: MissionChatUpdate[] = [
-      { missionId: current.missionId, revision: 9, kind: "invalidate" },
       {
         missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 9,
+        kind: "invalidate",
+      },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
         revision: 10,
         kind: "patch",
         patches: [
@@ -415,7 +432,7 @@ describe("mission conversation model", () => {
     });
   });
 
-  it("does not let a shorter or divergent live upsert rewrite append-only content", () => {
+  it("accepts shorter and divergent rewrites from a newer patch revision", () => {
     const current = streamingSnapshot("complete streamed answer", 4);
     const entry = current.entries[0];
     if (entry?.kind !== "assistant") throw new Error("Expected an Assistant fixture entry.");
@@ -442,11 +459,11 @@ describe("mission conversation model", () => {
 
     expect(shorter).toMatchObject({
       revision: 5,
-      entries: [{ content: "complete streamed answer", streaming: false }],
+      entries: [{ content: "complete", streaming: false }],
     });
     expect(divergent).toMatchObject({
       revision: 5,
-      entries: [{ content: "complete streamed answer", streaming: false }],
+      entries: [{ content: "replacement projection", streaming: false }],
     });
   });
 
@@ -602,6 +619,7 @@ describe("mission conversation model", () => {
         ? [
             {
               missionId: base.missionId,
+              streamId: chatStreamId,
               revision: 9,
               kind: "patch",
               patches: [{ type: "entry.append", entryId: answer.id, field: "content", delta: "!" }],
@@ -667,7 +685,7 @@ describe("mission conversation model", () => {
     expect(merged.page).toEqual(current.page);
   });
 
-  it("keeps newer cached output while a same-revision projection is being repaired", () => {
+  it("keeps newer cached output while history is temporarily unavailable", () => {
     const base = streamingSnapshot("Latest live answer", 8);
     const staleAnswer = {
       ...base.entries[0]!,
@@ -680,22 +698,47 @@ describe("mission conversation model", () => {
       entries: [staleAnswer, { ...base.entries[0]!, timelineSequence: 3 }],
       page: { oldestSequence: 2, newestSequence: 3, nextBeforeCursor: "cached-cursor" },
     };
-    const repairing = {
+    const unavailable = {
       ...base,
       entries: [staleAnswer],
       page: {
         oldestSequence: 2,
         newestSequence: 2,
         nextBeforeCursor: "stale-cursor",
-        historyStatus: "repairing" as const,
       },
+      syncIssues: [
+        {
+          code: "execution_state_unavailable" as const,
+          section: "history" as const,
+          retryable: true as const,
+        },
+      ],
     };
 
-    const merged = mergeLatestChatPage(current, repairing);
+    const merged = mergeLatestChatPage(current, unavailable);
 
     expect(merged.entries.map((entry) => entry.id)).toEqual(["stale-answer", "answer"]);
     expect(merged.page.nextBeforeCursor).toBe("cached-cursor");
-    expect(merged.syncIssues).toBeUndefined();
+    expect(merged.syncIssues).toEqual(unavailable.syncIssues);
+  });
+
+  it("clears a recovered history issue when retry returns the same chat revision", () => {
+    const available = streamingSnapshot("Recovered answer", 8);
+    const degraded: MissionConversationSnapshot = {
+      ...available,
+      syncIssues: [
+        {
+          code: "execution_state_unavailable",
+          section: "history",
+          retryable: true,
+        },
+      ],
+    };
+
+    const recovered = reconcileMissionChatRefresh(degraded, available, []).snapshot;
+
+    expect(recovered.syncIssues).toBeUndefined();
+    expect(recovered.entries).toEqual(available.entries);
   });
 
   it("keeps loaded pages and the exhausted cursor after A -> B -> A navigation", () => {
@@ -744,6 +787,26 @@ describe("mission conversation model", () => {
       Array.from({ length: 150 }, (_, index) => index + 1),
     );
     expect(refreshed.page).toEqual({ oldestSequence: 101, newestSequence: 150 });
+  });
+
+  it("keeps bounded-history truncation metadata after loading an earlier page", () => {
+    const latest = {
+      ...streamingSnapshot("Latest", 8),
+      page: {
+        nextBeforeCursor: "earlier",
+        truncation: { omittedEntries: 4, truncatedFields: 2 },
+      },
+    };
+    const earlier = {
+      ...streamingSnapshot("Earlier", 8),
+      entries: [{ ...streamingSnapshot("Earlier", 8).entries[0]!, id: "earlier" }],
+      page: {},
+    };
+
+    expect(prependChatPage(latest, earlier).page.truncation).toEqual({
+      omittedEntries: 4,
+      truncatedFields: 2,
+    });
   });
 
   it("places a disjoint recovered turn between loaded older history and live output", () => {
@@ -920,8 +983,22 @@ describe("mission conversation model", () => {
 
     const projection = await loadMissionConversationProjection(api, missionId);
 
-    expect(projection.state.revision).toBe(2);
+    expect(projection.state?.revision).toBe(2);
     expect(getMissionConversationState).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a readable chat page when conversation control state is unavailable", async () => {
+    const missionId = streamingSnapshot().missionId;
+    const page = { missionId, revision: 3, entries: [], page: {} };
+    const api = {
+      getMissionChatPage: vi.fn().mockResolvedValue(page),
+      getMissionConversationState: vi.fn().mockRejectedValue(new Error("state unavailable")),
+    } as unknown as PragmaDesktopAPI;
+
+    await expect(loadMissionConversationProjection(api, missionId)).resolves.toEqual({
+      page,
+      stateUnavailable: true,
+    });
   });
 
   it("makes a queued message actionable as soon as its queue item is persisted", () => {

@@ -31,6 +31,7 @@ import {
   MagnifyingGlass,
   Star,
   Plus,
+  SpinnerGap,
   Trash,
   User,
   UsersThree,
@@ -967,10 +968,11 @@ export function HomePage(props: {
               ) : null}
             </div>
             <button
-              className="mission-submit-button"
+              className={`mission-submit-button${saving ? " is-loading" : ""}`}
               type="button"
               aria-label={saving ? t("starting") : t("startMission")}
               title={saving ? t("starting") : t("startMission")}
+              aria-busy={saving}
               disabled={
                 saving ||
                 projectApplying ||
@@ -983,7 +985,11 @@ export function HomePage(props: {
               }
               onClick={() => void submit()}
             >
-              <ArrowUp size={19} weight="bold" aria-hidden="true" />
+              {saving ? (
+                <SpinnerGap size={19} aria-hidden="true" />
+              ) : (
+                <ArrowUp size={19} weight="bold" aria-hidden="true" />
+              )}
             </button>
           </footer>
         </div>
