@@ -4376,6 +4376,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           requestedMode: "steer",
           effectiveMode: "steer",
           status: "succeeded",
+          activatedAt: expect.any(String),
         }),
       }),
     );

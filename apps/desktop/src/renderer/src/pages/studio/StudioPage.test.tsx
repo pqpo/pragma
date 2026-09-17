@@ -33,7 +33,9 @@ const persistedExpert: ExpertDefinition = {
 
 describe("StudioPage", () => {
   it("renders a resizable secondary navigation", () => {
-    const html = renderToStaticMarkup(<StudioPage onTryExpert={() => undefined} />);
+    const html = renderToStaticMarkup(
+      <StudioPage memoryEnabled={true} onTryExpert={() => undefined} />,
+    );
     const resourceIndex = html.indexOf("<span>Knowledge bases</span>");
     const distributionIndex = html.indexOf('class="studio-distribution-actions"');
     const squareIndex = html.indexOf("<span>Square</span>");
@@ -55,6 +57,7 @@ describe("StudioPage", () => {
   it("keeps the last successfully loaded experts across page remounts", () => {
     const html = renderToStaticMarkup(
       <StudioPage
+        memoryEnabled={true}
         initialMemoryState={{
           activeView: "experts",
           experts: [

@@ -306,6 +306,18 @@
   font-weight: 450;
 }
 
+.bundle-publish-grid :is(input, textarea)[aria-invalid="true"],
+.bundle-publish-tag-editor[aria-invalid="true"] {
+  border-color: var(--ui-danger);
+}
+
+.bundle-publish-field-error {
+  color: var(--ui-danger);
+  font-size: 10px;
+  font-weight: 520;
+  line-height: 1.4;
+}
+
 .bundle-publish-grid input {
   min-height: 38px;
   padding: 0 11px;
@@ -337,6 +349,65 @@
 
 .bundle-publish-wide {
   grid-column: 1 / -1;
+}
+
+.bundle-publish-tag-editor {
+  display: flex;
+  min-height: 38px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: 9px;
+  background: var(--ui-surface);
+}
+
+.bundle-publish-tag-editor:focus-within {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.bundle-publish-tag-editor input {
+  min-width: 120px;
+  min-height: 26px;
+  flex: 1 1 150px;
+  padding: 0 4px;
+  border: 0;
+  box-shadow: none;
+}
+
+.bundle-publish-tag-editor input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+.bundle-publish-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 5px 3px 8px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.bundle-publish-tag button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.bundle-publish-tag button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--green-dark) 12%, transparent);
 }
 
 .bundle-publish-modules {

@@ -132,6 +132,7 @@ export function StudioPage(props: {
   readonly initialResourceRef?: string | undefined;
   readonly initialRevisionStoreId?: string | undefined;
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
+  readonly memoryEnabled: boolean;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
   readonly onTryExpert: (expert: ExpertRecord) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
@@ -924,6 +925,7 @@ export function StudioPage(props: {
             capabilities={capabilities}
             plugins={plugins}
             resources={project?.resources ?? []}
+            memoryEnabled={props.memoryEnabled}
             initialStep={expertEditorInitialStep}
             onCancel={() => {
               if (expertEditor.mode === "edit" && selectedExpert !== null) {

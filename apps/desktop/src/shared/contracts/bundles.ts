@@ -28,6 +28,7 @@ export const PragmaBundleExportPreviewSchema = z
         ref: PragmaBundleRootRefSchema,
         kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
         name: z.string().trim().min(1).max(200),
+        description: z.string().trim().min(1).max(8_000),
       })
       .strict(),
     projectRevision: z.number().int().positive(),

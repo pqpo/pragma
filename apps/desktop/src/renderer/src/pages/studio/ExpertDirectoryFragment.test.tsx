@@ -489,6 +489,7 @@ describe("ExpertEditorFragment", () => {
         capabilities={[]}
         plugins={[]}
         resources={[]}
+        memoryEnabled={true}
         onCancel={() => undefined}
         onCreated={async () => undefined}
       />,
@@ -516,6 +517,7 @@ describe("ExpertEditorFragment", () => {
         capabilities={[]}
         plugins={[]}
         resources={[]}
+        memoryEnabled={true}
         onCancel={() => undefined}
         onCreated={async () => undefined}
       />,
@@ -536,6 +538,7 @@ describe("ExpertEditorFragment", () => {
         capabilities={[]}
         plugins={[]}
         resources={[]}
+        memoryEnabled={true}
         onCancel={() => undefined}
         onCreated={async () => undefined}
       />,
@@ -543,5 +546,45 @@ describe("ExpertEditorFragment", () => {
 
     expect(html).toContain("Add capabilities");
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>[\s\S]*Capabilities<\/button>/);
+  });
+
+  it("shows the memory policy on the review step when global memory is enabled", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="edit"
+        initialValue={draft}
+        initialStep="review"
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        memoryEnabled={true}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Memory policy");
+  });
+
+  it("hides the memory policy on the review step when global memory is disabled", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="edit"
+        initialValue={draft}
+        initialStep="review"
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        memoryEnabled={false}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("Memory policy");
   });
 });

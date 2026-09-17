@@ -5,8 +5,11 @@ import {
   SlidersHorizontal,
   SpinnerGap,
   WarningCircle,
+  X,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { BundleSourceSemverSchema, BundleSourceSlugSchema } from "@pragma/shared";
+import type { TFunction } from "i18next";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -14,6 +17,10 @@ import type {
   BundleSourcePublicationResult,
   PragmaBundleModuleOptions,
   PublishBundleSource,
+} from "../../../../shared/contracts/index.ts";
+import {
+  PublishBundleSourceSchema,
+  bundleSourcePublicationSummary,
 } from "../../../../shared/contracts/index.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -32,9 +39,12 @@ export function BundleSourcePublishDialog(props: {
   const [versionEdited, setVersionEdited] = useState(false);
   const [metadata, setMetadata] = useState<PublishBundleSource["metadata"] | null>(null);
   const [modules, setModules] = useState<PragmaBundleModuleOptions | null>(null);
+  const [tagInput, setTagInput] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<PublicationFieldErrors>({});
   const [results, setResults] = useState<BundleSourcePublicationResult["results"] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +58,8 @@ export function BundleSourcePublishDialog(props: {
         setPreparation(prepared);
         setMetadata(prepared.metadata);
         setModules(prepared.modules);
+        setTagInput("");
+        setFieldErrors({});
         const initialSelection = initialPublicationSourceSelection(prepared.sources);
         setSelected(initialSelection);
         setCategories(
@@ -97,29 +109,59 @@ export function BundleSourcePublishDialog(props: {
         )
       : targets;
     if (requestedTargets.length === 0) return;
+    const identity = publicationItemIdForSelection(
+      preparation.sources,
+      new Set(requestedTargets.map((target) => target.sourceId)),
+      metadata.itemId,
+    );
+    if (identity.conflict) {
+      setError(t("bundlePublish.validation.itemIdConflict"));
+      return;
+    }
+    const pendingTag = pendingPublicationTags(metadata.tags, tagInput);
+    const nextMetadata = {
+      ...metadata,
+      itemId: identity.itemId,
+      summary: bundleSourcePublicationSummary(metadata.description),
+      tags: pendingTag.tags,
+    };
+    const nextFieldErrors = validatePublicationFields(version, nextMetadata, pendingTag.error);
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
+      setError(t("bundlePublish.validation.form"));
+      focusFirstInvalidField(formRef.current, nextFieldErrors);
+      return;
+    }
+    const request = PublishBundleSourceSchema.safeParse({
+      rootRef: props.rootRef,
+      projectRevision: props.projectRevision,
+      modules,
+      metadata: nextMetadata,
+      targets: requestedTargets,
+    });
+    if (!request.success) {
+      setError(t("bundlePublish.validation.form"));
+      return;
+    }
     setBusy(true);
     setError(null);
+    setFieldErrors({});
     try {
-      const published = await window.pragmaDesktop.publishBundleSource({
-        rootRef: props.rootRef,
-        projectRevision: props.projectRevision,
-        modules,
-        metadata,
-        targets: requestedTargets,
-      });
+      const published = await window.pragmaDesktop.publishBundleSource(request.data);
       setResults((current) => {
         if (current === null || !retryFailed) return published.results;
         const replacements = new Map(published.results.map((result) => [result.sourceId, result]));
         return current.map((result) => replacements.get(result.sourceId) ?? result);
       });
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(publicationErrorMessage(cause, t("bundlePublish.validation.form")));
     } finally {
       setBusy(false);
     }
   };
 
   const updateSourceSelection = (sourceId: string, checked: boolean) => {
+    setError(null);
     setSelected((current) => {
       const next = new Set(current);
       if (checked) next.add(sourceId);
@@ -132,19 +174,8 @@ export function BundleSourcePublishDialog(props: {
   };
 
   const failed = results?.filter((result) => result.status === "failed") ?? [];
-  const itemIdentityLocked =
-    preparation?.sources.some(
-      (source) => selected.has(source.source.id) && source.existingItem !== undefined,
-    ) ?? false;
-  const invalid =
-    metadata === null ||
-    metadata.itemId.trim() === "" ||
-    metadata.name.trim() === "" ||
-    metadata.summary.trim() === "" ||
-    metadata.description.trim() === "" ||
-    metadata.authorName.trim() === "" ||
-    metadata.license.trim() === "" ||
-    targets.length === 0;
+  const invalid = metadata === null || targets.length === 0;
+  const visibleModuleKeys = preparation === null ? [] : publicationModuleKeys(preparation);
 
   return (
     <Dialog
@@ -193,8 +224,10 @@ export function BundleSourcePublishDialog(props: {
     >
       {results === null ? (
         <form
+          ref={formRef}
           id="bundle-publish-form"
           className="bundle-publish-form"
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
             void publish();
@@ -274,12 +307,13 @@ export function BundleSourcePublishDialog(props: {
                             busy
                           }
                           value={categories[source.source.id] ?? ""}
-                          onChange={(categoryId) =>
+                          onChange={(categoryId) => {
+                            setError(null);
                             setCategories((current) => ({
                               ...current,
                               [source.source.id]: categoryId,
-                            }))
-                          }
+                            }));
+                          }}
                           options={source.categories.map((category) => ({
                             value: category.id,
                             label: category.name.default,
@@ -307,85 +341,170 @@ export function BundleSourcePublishDialog(props: {
                 </header>
                 <div className="bundle-publish-grid">
                   <PublishField
-                    label={t("bundlePublish.itemId")}
-                    value={metadata.itemId}
-                    disabled={busy || itemIdentityLocked}
-                    onChange={(itemId) => setMetadata({ ...metadata, itemId })}
-                  />
-                  <PublishField
+                    field="version"
                     label={t("bundlePublish.version")}
                     value={version}
                     disabled={busy}
+                    error={fieldErrors.version}
                     onChange={(value) => {
                       setVersion(value);
                       setVersionEdited(true);
+                      setError(null);
+                      clearFieldError("version", setFieldErrors);
                     }}
                   />
                   <PublishField
+                    field="name"
                     label={t("bundlePublish.name")}
                     value={metadata.name}
                     disabled={busy}
-                    onChange={(name) => setMetadata({ ...metadata, name })}
+                    error={fieldErrors.name}
+                    onChange={(name) => {
+                      setMetadata({ ...metadata, name });
+                      setError(null);
+                      clearFieldError("name", setFieldErrors);
+                    }}
                   />
                   <PublishField
-                    label={t("bundlePublish.summary")}
-                    value={metadata.summary}
-                    disabled={busy}
-                    onChange={(summary) => setMetadata({ ...metadata, summary })}
-                  />
-                  <PublishField
+                    field="authorName"
                     label={t("bundlePublish.author")}
                     value={metadata.authorName}
                     disabled={busy}
-                    onChange={(authorName) => setMetadata({ ...metadata, authorName })}
+                    error={fieldErrors.authorName}
+                    onChange={(authorName) => {
+                      setMetadata({ ...metadata, authorName });
+                      setError(null);
+                      clearFieldError("authorName", setFieldErrors);
+                    }}
                   />
                   <PublishField
+                    field="license"
                     label={t("bundlePublish.license")}
                     value={metadata.license}
                     disabled={busy}
-                    onChange={(license) => setMetadata({ ...metadata, license })}
+                    error={fieldErrors.license}
+                    onChange={(license) => {
+                      setMetadata({ ...metadata, license });
+                      setError(null);
+                      clearFieldError("license", setFieldErrors);
+                    }}
                   />
-                  <label className="bundle-publish-wide">
+                  <label className="bundle-publish-wide" data-publish-label="description">
                     <span>{t("bundlePublish.descriptionLabel")}</span>
                     <textarea
+                      data-publish-field="description"
                       value={metadata.description}
                       disabled={busy}
-                      onChange={(event) =>
-                        setMetadata({ ...metadata, description: event.target.value })
+                      aria-invalid={fieldErrors.description === undefined ? undefined : true}
+                      aria-describedby={
+                        fieldErrors.description === undefined
+                          ? undefined
+                          : "bundle-publish-description-error"
                       }
+                      onChange={(event) => {
+                        setMetadata({ ...metadata, description: event.target.value });
+                        setError(null);
+                        clearFieldError("description", setFieldErrors);
+                      }}
                     />
+                    {fieldErrors.description === undefined ? null : (
+                      <small
+                        id="bundle-publish-description-error"
+                        className="bundle-publish-field-error"
+                        role="alert"
+                      >
+                        {publicationFieldError(fieldErrors.description, t)}
+                      </small>
+                    )}
                   </label>
-                  <PublishField
-                    label={t("bundlePublish.tags")}
-                    value={metadata.tags.join(", ")}
-                    disabled={busy}
-                    onChange={(tags) =>
-                      setMetadata({
-                        ...metadata,
-                        tags: tags
-                          .split(",")
-                          .map((tag) => tag.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                    wide
-                  />
+                  <label className="bundle-publish-wide" data-publish-label="tags">
+                    <span>{t("bundlePublish.tags")}</span>
+                    <div
+                      className="bundle-publish-tag-editor"
+                      aria-invalid={fieldErrors.tags === undefined ? undefined : true}
+                    >
+                      {metadata.tags.map((tag) => (
+                        <span className="bundle-publish-tag" key={tag}>
+                          {tag}
+                          <button
+                            type="button"
+                            disabled={busy}
+                            aria-label={t("bundlePublish.removeTag", { tag })}
+                            onClick={() => {
+                              setMetadata({
+                                ...metadata,
+                                tags: metadata.tags.filter((candidate) => candidate !== tag),
+                              });
+                              setError(null);
+                              clearFieldError("tags", setFieldErrors);
+                            }}
+                          >
+                            <X size={12} aria-hidden="true" />
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        data-publish-field="tags"
+                        value={tagInput}
+                        disabled={busy}
+                        aria-label={t("bundlePublish.tags")}
+                        aria-invalid={fieldErrors.tags === undefined ? undefined : true}
+                        aria-describedby={
+                          fieldErrors.tags === undefined ? undefined : "bundle-publish-tags-error"
+                        }
+                        onChange={(event) => {
+                          setTagInput(event.target.value);
+                          setError(null);
+                          clearFieldError("tags", setFieldErrors);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === ",") {
+                            event.preventDefault();
+                            const pending = pendingPublicationTags(metadata.tags, tagInput);
+                            if (pending.error === undefined) {
+                              setMetadata({ ...metadata, tags: pending.tags });
+                              setTagInput("");
+                              clearFieldError("tags", setFieldErrors);
+                            } else {
+                              const tagError = pending.error;
+                              setFieldErrors((current) => ({ ...current, tags: tagError }));
+                            }
+                          } else if (
+                            event.key === "Backspace" &&
+                            tagInput === "" &&
+                            metadata.tags.length > 0
+                          ) {
+                            setMetadata({ ...metadata, tags: metadata.tags.slice(0, -1) });
+                          }
+                        }}
+                      />
+                    </div>
+                    {fieldErrors.tags === undefined ? null : (
+                      <small
+                        id="bundle-publish-tags-error"
+                        className="bundle-publish-field-error"
+                        role="alert"
+                      >
+                        {publicationFieldError(fieldErrors.tags, t)}
+                      </small>
+                    )}
+                  </label>
                 </div>
               </section>
 
-              <section className="bundle-publish-section" aria-labelledby="publish-modules-title">
-                <header className="bundle-publish-section-header">
-                  <span>
-                    <Package size={18} aria-hidden="true" />
-                  </span>
-                  <div>
-                    <h3 id="publish-modules-title">{t("bundlePublish.modules")}</h3>
-                    <p>{t("bundlePublish.modulesHint")}</p>
-                  </div>
-                </header>
-                <div className="bundle-publish-modules">
-                  {(["capabilities", "plugins", "knowledgeBases", "flowLayouts"] as const).map(
-                    (key) => (
+              {visibleModuleKeys.length > 0 ? (
+                <section className="bundle-publish-section" aria-labelledby="publish-modules-title">
+                  <header className="bundle-publish-section-header">
+                    <span>
+                      <Package size={18} aria-hidden="true" />
+                    </span>
+                    <div>
+                      <h3 id="publish-modules-title">{t("bundlePublish.modules")}</h3>
+                      <p>{t("bundlePublish.modulesHint")}</p>
+                    </div>
+                  </header>
+                  <div className="bundle-publish-modules">
+                    {visibleModuleKeys.map((key) => (
                       <label key={key}>
                         <span>
                           <strong>{t(`bundlePublish.module.${key}`)}</strong>
@@ -400,10 +519,10 @@ export function BundleSourcePublishDialog(props: {
                           }
                         />
                       </label>
-                    ),
-                  )}
-                </div>
-              </section>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
             </>
           )}
           {error ? (
@@ -440,23 +559,217 @@ export function BundleSourcePublishDialog(props: {
 }
 
 function PublishField(props: {
+  readonly field: PublicationField;
   readonly label: string;
   readonly value: string;
   readonly disabled: boolean;
-  readonly wide?: boolean | undefined;
+  readonly error?: PublicationValidationIssue | undefined;
   readonly onChange: (value: string) => void;
 }) {
+  const { t } = useTranslation("studio");
+  const errorId = `bundle-publish-${props.field}-error`;
   return (
-    <label className={props.wide ? "bundle-publish-wide" : undefined}>
+    <label data-publish-label={props.field}>
       <span>{props.label}</span>
       <input
+        data-publish-field={props.field}
         value={props.value}
         disabled={props.disabled}
-        required
+        aria-invalid={props.error === undefined ? undefined : true}
+        aria-describedby={props.error === undefined ? undefined : errorId}
         onChange={(event) => props.onChange(event.target.value)}
       />
+      {props.error === undefined ? null : (
+        <small id={errorId} className="bundle-publish-field-error" role="alert">
+          {publicationFieldError(props.error, t)}
+        </small>
+      )}
     </label>
   );
+}
+
+type PublicationField = "version" | "name" | "description" | "authorName" | "license" | "tags";
+type PublicationValidationIssue =
+  | {
+      readonly code: "required";
+      readonly field: "name" | "description" | "author" | "license" | "version";
+    }
+  | {
+      readonly code: "tooLong";
+      readonly field: "name" | "description" | "author" | "license" | "version" | "tag";
+      readonly limit: number;
+    }
+  | { readonly code: "invalidVersion" }
+  | { readonly code: "invalidTag" }
+  | { readonly code: "duplicateTag" }
+  | { readonly code: "tooManyTags"; readonly limit: number };
+type PublicationFieldErrors = Partial<Record<PublicationField, PublicationValidationIssue>>;
+
+const FIELD_LIMITS = {
+  version: 100,
+  name: 200,
+  description: 8_000,
+  authorName: 200,
+  license: 100,
+  tag: 80,
+  tags: 30,
+} as const;
+
+export function validatePublicationFields(
+  version: string,
+  metadata: PublishBundleSource["metadata"],
+  pendingTagError?: PublicationValidationIssue,
+): PublicationFieldErrors {
+  const errors: PublicationFieldErrors = {};
+  validateRequiredText("name", metadata.name, FIELD_LIMITS.name, errors);
+  validateRequiredText("description", metadata.description, FIELD_LIMITS.description, errors);
+  validateRequiredText("authorName", metadata.authorName, FIELD_LIMITS.authorName, errors);
+  validateRequiredText("license", metadata.license, FIELD_LIMITS.license, errors);
+  if (version.trim() === "") errors.version = { code: "required", field: "version" };
+  else if (version.length > FIELD_LIMITS.version)
+    errors.version = { code: "tooLong", field: "version", limit: FIELD_LIMITS.version };
+  else if (!BundleSourceSemverSchema.safeParse(version).success)
+    errors.version = { code: "invalidVersion" };
+  if (pendingTagError !== undefined) errors.tags = pendingTagError;
+  else if (metadata.tags.length > FIELD_LIMITS.tags)
+    errors.tags = { code: "tooManyTags", limit: FIELD_LIMITS.tags };
+  else if (
+    metadata.tags.some(
+      (tag) => tag.length > FIELD_LIMITS.tag || !BundleSourceSlugSchema.safeParse(tag).success,
+    )
+  )
+    errors.tags = { code: "invalidTag" };
+  return errors;
+}
+
+function validateRequiredText(
+  field: Exclude<PublicationField, "version" | "tags">,
+  value: string,
+  limit: number,
+  errors: PublicationFieldErrors,
+): void {
+  const label = field === "authorName" ? "author" : field;
+  if (value.trim() === "") errors[field] = { code: "required", field: label };
+  else if (value.length > limit) errors[field] = { code: "tooLong", field: label, limit };
+}
+
+export function normalizePublicationTag(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/gu, "-")
+    .replace(/-+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+}
+
+export function pendingPublicationTags(
+  tags: readonly string[],
+  input: string,
+): { readonly tags: string[]; readonly error?: PublicationValidationIssue | undefined } {
+  if (input.trim() === "") return { tags: [...tags] };
+  const normalized = normalizePublicationTag(input);
+  if (normalized.length > FIELD_LIMITS.tag)
+    return {
+      tags: [...tags],
+      error: { code: "tooLong", field: "tag", limit: FIELD_LIMITS.tag },
+    };
+  if (!BundleSourceSlugSchema.safeParse(normalized).success)
+    return {
+      tags: [...tags],
+      error: { code: "invalidTag" },
+    };
+  if (tags.includes(normalized)) return { tags: [...tags], error: { code: "duplicateTag" } };
+  if (tags.length >= FIELD_LIMITS.tags)
+    return { tags: [...tags], error: { code: "tooManyTags", limit: FIELD_LIMITS.tags } };
+  return { tags: [...tags, normalized] };
+}
+
+export function publicationItemIdForSelection(
+  sources: readonly {
+    readonly source: { readonly id: string };
+    readonly existingItem?: { readonly id: string } | undefined;
+  }[],
+  selected: ReadonlySet<string>,
+  fallback: string,
+): { readonly itemId: string; readonly conflict: boolean } {
+  const existingIds = new Set(
+    sources.flatMap((source) =>
+      selected.has(source.source.id) && source.existingItem !== undefined
+        ? [source.existingItem.id]
+        : [],
+    ),
+  );
+  return {
+    itemId: existingIds.values().next().value ?? fallback,
+    conflict: existingIds.size > 1,
+  };
+}
+
+function publicationModuleKeys(
+  preparation: BundleSourcePublicationPreparation,
+): Array<keyof PragmaBundleModuleOptions> {
+  return (["capabilities", "plugins", "knowledgeBases", "flowLayouts"] as const).filter(
+    (key) =>
+      preparation.moduleCounts[key] > 0 &&
+      !(key === "knowledgeBases" && preparation.root.kind === "knowledge-base"),
+  );
+}
+
+function focusFirstInvalidField(
+  form: HTMLFormElement | null,
+  errors: PublicationFieldErrors,
+): void {
+  const first = (["version", "name", "authorName", "license", "description", "tags"] as const).find(
+    (field) => errors[field] !== undefined,
+  );
+  if (first === undefined) return;
+  queueMicrotask(() =>
+    form?.querySelector<HTMLElement>(`[data-publish-field="${first}"]`)?.focus(),
+  );
+}
+
+function clearFieldError(
+  field: PublicationField,
+  update: Dispatch<SetStateAction<PublicationFieldErrors>>,
+): void {
+  update((current) => {
+    if (current[field] === undefined) return current;
+    const next = { ...current };
+    delete next[field];
+    return next;
+  });
+}
+
+function publicationFieldError(
+  issue: PublicationValidationIssue | undefined,
+  t: TFunction<"studio">,
+): string | undefined {
+  if (issue === undefined) return undefined;
+  if (issue.code === "required")
+    return t("bundlePublish.validation.required", {
+      field: t(`bundlePublish.validation.field.${issue.field}`),
+    });
+  if (issue.code === "tooLong")
+    return t("bundlePublish.validation.tooLong", {
+      field: t(`bundlePublish.validation.field.${issue.field}`),
+      count: issue.limit,
+    });
+  if (issue.code === "invalidVersion") return t("bundlePublish.validation.invalidVersion");
+  if (issue.code === "invalidTag") return t("bundlePublish.validation.invalidTag");
+  if (issue.code === "duplicateTag") return t("bundlePublish.validation.duplicateTag");
+  return t("bundlePublish.validation.tooManyTags", { count: issue.limit });
+}
+
+function publicationErrorMessage(error: unknown, invalidFormMessage: string): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    (("code" in error && error.code === "invalid_request") ||
+      ("name" in error && error.name === "ZodError"))
+  ) {
+    return invalidFormMessage;
+  }
+  return errorMessage(error);
 }
 
 function nextPatchVersion(versions: readonly string[]): string {

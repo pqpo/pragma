@@ -51,7 +51,6 @@ import { ConfirmationDialog } from "../../components/Dialog.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import {
   type Mission,
-  type MissionChatPage,
   type ContextStore,
   type MissionContextMount,
   type MissionChatEntry,
@@ -74,13 +73,14 @@ import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 import {
   createMissionSendAttempt,
+  mergeMissionQueuedMessages,
   useMissionCommandDelivery,
   type LocalMissionUserMessage,
 } from "./mission-command-delivery.ts";
 import {
   groupMissionConversationEntries,
   hideInterruptedExecutionFallbackEntries,
-  hidePreparingQueuedChatEntries,
+  hideQueuedChatEntries,
   mergeLatestChatPage,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
@@ -98,8 +98,11 @@ import { useMissionOptions } from "./use-mission-options.ts";
 import { useMissionContextOperations } from "./use-mission-context-operations.ts";
 import {
   conversationFromPage,
+  isMissionConversationCacheReady,
+  loadMissionConversationProjection,
   mergeConversationState,
   useMissionConversation,
+  type MissionConversationPrefetch,
 } from "./use-mission-conversation.ts";
 export {
   copyMissionReply,
@@ -122,7 +125,7 @@ export {
   MISSION_WORK_CONVERSATION_PAGE_SIZE,
   MISSION_WORK_RECORD_PAGE_SIZE,
 } from "./mission-view-constants.ts";
-import { MISSION_CHAT_PAGE_SIZE, MISSION_WORK_RECORD_PAGE_SIZE } from "./mission-view-constants.ts";
+import { MISSION_WORK_RECORD_PAGE_SIZE } from "./mission-view-constants.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
@@ -146,9 +149,8 @@ import {
 import { removeMissionDrafts, writeMissionDraft } from "../../lib/mission-draft.ts";
 import {
   markMissionOutputReadIds,
-  missionChatUpdateHasUserVisibleOutput,
   readUnreadMissionOutputIds,
-  recordMissionOutputIds,
+  recordMissionChatUpdateIds,
   writeUnreadMissionOutputIds,
 } from "../../lib/mission-unread-output.ts";
 import {
@@ -302,8 +304,8 @@ export function MissionsPage(props: {
       props.initialMission === undefined ? [] : [[props.initialMission.id, props.initialMission]],
     ),
   );
-  const missionChatPageRequestsRef = useRef(
-    new Map<string, Promise<MissionChatPage | undefined>>(),
+  const missionConversationRequestsRef = useRef(
+    new Map<string, Promise<MissionConversationPrefetch | undefined>>(),
   );
   const missionNavigationIdsRef = useRef(new Map<string, string>());
   const initialRunStartedRef = useRef(false);
@@ -437,24 +439,26 @@ export function MissionsPage(props: {
         });
       });
       const missionPromise = api.getMission(id);
-      const chatPromise = api
-        .getMissionChatPage({ id, limit: MISSION_CHAT_PAGE_SIZE })
-        .then((page) => {
-          const existing = cache.get(id) ?? null;
+      const chatPromise = loadMissionConversationProjection(api, id)
+        .then(({ page, state }) => {
+          const cached = cache.get(id);
+          const existing = isMissionConversationCacheReady(cached) ? cached : null;
+          const pageSnapshot = mergeLatestChatPage(existing, conversationFromPage(page, existing));
+          const snapshot = mergeConversationState(pageSnapshot, state) ?? pageSnapshot;
           cache.delete(id);
-          cache.set(id, mergeLatestChatPage(existing, conversationFromPage(page, existing)));
+          cache.set(id, snapshot);
           while (cache.size > 8) {
             const oldest = cache.keys().next().value as string | undefined;
             if (oldest === undefined) break;
             cache.delete(oldest);
           }
-          return page;
+          return { page, state };
         })
         .catch(() => undefined);
-      missionChatPageRequestsRef.current.set(id, chatPromise);
+      missionConversationRequestsRef.current.set(id, chatPromise);
       void chatPromise.finally(() => {
-        if (missionChatPageRequestsRef.current.get(id) === chatPromise) {
-          missionChatPageRequestsRef.current.delete(id);
+        if (missionConversationRequestsRef.current.get(id) === chatPromise) {
+          missionConversationRequestsRef.current.delete(id);
         }
       });
       try {
@@ -504,9 +508,9 @@ export function MissionsPage(props: {
     const api = desktopApi();
     if (api === undefined) return;
     return api.subscribeMissionChatUpdates((update) => {
-      if (!missionChatUpdateHasUserVisibleOutput(update)) return;
+      const selectedMissionIdAtReceipt = selectedMissionIdRef.current;
       updateUnreadMissionOutputIds((current) =>
-        recordMissionOutputIds(current, update.missionId, selectedMissionIdRef.current),
+        recordMissionChatUpdateIds(current, update, selectedMissionIdAtReceipt),
       );
     });
   }, [updateUnreadMissionOutputIds]);
@@ -874,7 +878,7 @@ export function MissionsPage(props: {
             initialComposerDraft={props.initialComposerDraft}
             memoryEnabled={props.memoryEnabled}
             chatCache={missionChatCacheRef.current}
-            prefetchedChatPage={missionChatPageRequestsRef.current.get(selectedMission.id)}
+            prefetchedConversation={missionConversationRequestsRef.current.get(selectedMission.id)}
             initialThinkingRequestId={
               initialRunRequest?.missionId === selectedMission.id
                 ? initialRunRequest.requestId
@@ -1662,6 +1666,7 @@ function comparePinnedMissions(
 }
 
 export type MissionComposerAction = "send" | "loading" | "interrupt" | "recover";
+type MissionQueuedMessageAction = "steer" | "remove";
 export const MISSION_RECOVERY_WATCHDOG_MS = 60_000;
 
 let cachedMissionContextStores: readonly ContextStore[] | undefined;
@@ -1714,7 +1719,7 @@ export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly navigationId?: string | undefined;
   readonly chatCache?: Map<string, MissionConversationSnapshot> | undefined;
-  readonly prefetchedChatPage?: Promise<MissionChatPage | undefined> | undefined;
+  readonly prefetchedConversation?: Promise<MissionConversationPrefetch | undefined> | undefined;
   readonly initialComposerDraft?: string | undefined;
   readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
@@ -1769,9 +1774,9 @@ export function MissionDetailFragment(props: {
     finish: finishClientOperation,
     reset: resetClientOperation,
   } = useMissionClientOperation(props.mission.id);
-  const [queuedMessageActions, setQueuedMessageActions] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [queuedMessageActions, setQueuedMessageActions] = useState<
+    ReadonlyMap<string, MissionQueuedMessageAction>
+  >(() => new Map());
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [mentionCandidates, setMentionCandidates] = useState<readonly ExpertMentionCandidate[]>([]);
   const {
@@ -1856,7 +1861,7 @@ export function MissionDetailFragment(props: {
     navigationId: props.navigationId,
     api: desktopApi(),
     cache: props.chatCache,
-    prefetchedPage: props.prefetchedChatPage,
+    prefetchedConversation: props.prefetchedConversation,
     refreshRevision: chatRefreshRevision,
     syncUnavailableMessage: t("chatSyncUnavailable", { ns: "missions" }),
     formatError: missionError,
@@ -1868,7 +1873,7 @@ export function MissionDetailFragment(props: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
   const composerInputRef = useRef<HTMLTextAreaElement | HTMLDivElement | null>(null);
-  const queuedMessageActionsRef = useRef<Set<string>>(new Set());
+  const queuedMessageActionsRef = useRef<Map<string, MissionQueuedMessageAction>>(new Map());
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
@@ -2117,7 +2122,7 @@ export function MissionDetailFragment(props: {
     setPendingQueuedMessages([]);
     setAwaitingRequestId(null);
     setOptionsError(null);
-    queuedMessageActionsRef.current = new Set();
+    queuedMessageActionsRef.current = new Map();
     setQueuedMessageActions(queuedMessageActionsRef.current);
   }, [props.mission.id]);
 
@@ -2179,9 +2184,12 @@ export function MissionDetailFragment(props: {
     };
   }, [activeTab, memoryEnabled, memoryView, props.mission.execution?.id, props.mission.id]);
 
-  const beginQueuedMessageAction = (queueItemRequestId: string): boolean => {
+  const beginQueuedMessageAction = (
+    queueItemRequestId: string,
+    action: MissionQueuedMessageAction,
+  ): boolean => {
     if (queuedMessageActionsRef.current.has(queueItemRequestId)) return false;
-    const next = new Set(queuedMessageActionsRef.current).add(queueItemRequestId);
+    const next = new Map(queuedMessageActionsRef.current).set(queueItemRequestId, action);
     queuedMessageActionsRef.current = next;
     setQueuedMessageActions(next);
     return true;
@@ -2189,7 +2197,7 @@ export function MissionDetailFragment(props: {
 
   const finishQueuedMessageAction = (queueItemRequestId: string): void => {
     if (!queuedMessageActionsRef.current.has(queueItemRequestId)) return;
-    const next = new Set(queuedMessageActionsRef.current);
+    const next = new Map(queuedMessageActionsRef.current);
     next.delete(queueItemRequestId);
     queuedMessageActionsRef.current = next;
     setQueuedMessageActions(next);
@@ -2336,13 +2344,7 @@ export function MissionDetailFragment(props: {
   const refreshLatestChat = async (): Promise<MissionConversationSnapshot | undefined> => {
     const api = desktopApi();
     if (api === undefined) return undefined;
-    const [page, state] = await Promise.all([
-      api.getMissionChatPage({
-        id: props.mission.id,
-        limit: MISSION_CHAT_PAGE_SIZE,
-      }),
-      api.getMissionConversationState(props.mission.id),
-    ]);
+    const { page, state } = await loadMissionConversationProjection(api, props.mission.id);
     let result: MissionConversationSnapshot | undefined;
     updateChat((current) => {
       const next = mergeConversationState(
@@ -2357,14 +2359,19 @@ export function MissionDetailFragment(props: {
 
   const steerQueuedMessage = async (queueItemRequestId: string): Promise<void> => {
     const api = desktopApi();
-    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId)) return;
+    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId, "steer")) return;
     try {
-      await api.trySteerQueuedMissionMessage({
+      const result = await api.trySteerQueuedMissionMessage({
         id: props.mission.id,
         requestId: crypto.randomUUID(),
         queueItemRequestId,
       });
+      if (result.queueSteer.outcome === "steered") {
+        followLatestRef.current = true;
+        setShowJumpToLatest(false);
+      }
       await refreshLatestChat();
+      if (result.queueSteer.outcome === "steered") scheduleFollowLatest();
     } catch (steerError) {
       setOptionsError(missionError(steerError));
     } finally {
@@ -2377,7 +2384,7 @@ export function MissionDetailFragment(props: {
     content: string,
   ): Promise<void> => {
     const api = desktopApi();
-    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId)) return;
+    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId, "remove")) return;
     try {
       await api.removeQueuedMissionMessage({
         id: props.mission.id,
@@ -2398,21 +2405,21 @@ export function MissionDetailFragment(props: {
     () => new Set(chat?.queue?.items.map((item) => item.requestId) ?? []),
     [chat?.queue?.items],
   );
-  const visiblePendingQueuedMessages = useMemo(
-    () =>
-      pendingQueuedMessages.filter((message) => !persistedQueuedRequestIds.has(message.requestId)),
-    [pendingQueuedMessages, persistedQueuedRequestIds],
+  const queuedMessages = useMemo(
+    () => mergeMissionQueuedMessages(chat?.queue?.items ?? [], pendingQueuedMessages),
+    [chat?.queue?.items, pendingQueuedMessages],
   );
-  const pendingQueuedRequestIds = useMemo(
-    () => new Set(pendingQueuedMessages.map((message) => message.requestId)),
-    [pendingQueuedMessages],
+  const visibleQueuedMessages = queuedMessages;
+  const visibleQueuedRequestIds = useMemo(
+    () => new Set(queuedMessages.map((message) => message.requestId)),
+    [queuedMessages],
   );
   const displayEntries = useMemo(
     () =>
       hideInterruptedExecutionFallbackEntries(
-        hidePreparingQueuedChatEntries(chat?.entries ?? [], pendingQueuedRequestIds),
+        hideQueuedChatEntries(chat?.entries ?? [], visibleQueuedRequestIds),
       ),
-    [chat?.entries, pendingQueuedRequestIds],
+    [chat?.entries, visibleQueuedRequestIds],
   );
   const durableEntryIds = useMemo(
     () => new Set(displayEntries.map((entry) => entry.id)),
@@ -3055,13 +3062,18 @@ export function MissionDetailFragment(props: {
                     />
                   </div>
                   <div className="mission-chat-composer-shell">
-                    {(chat?.queue?.items.length ?? 0) + visiblePendingQueuedMessages.length > 0 ? (
+                    {visibleQueuedMessages.length > 0 ? (
                       <div
                         className="mission-prompt-queue"
                         aria-label={t("queuedMessages", { ns: "missions" })}
                       >
-                        {chat?.queue?.items.map((item) => {
-                          const preparing = pendingQueuedRequestIds.has(item.requestId);
+                        {visibleQueuedMessages.map((item) => {
+                          const action = queuedMessageActions.get(item.requestId);
+                          const steering = action === "steer";
+                          const canSteer =
+                            chat?.queue?.supportsSteer === true &&
+                            interruptible &&
+                            !item.hasAttachments;
                           return (
                             <div className="mission-prompt-queue-item" key={item.requestId}>
                               <span className="mission-prompt-queue-marker" aria-hidden="true">
@@ -3074,30 +3086,32 @@ export function MissionDetailFragment(props: {
                                 inline
                               />
                               <div className="mission-prompt-queue-actions">
-                                {chat.queue?.supportsSteer === true &&
-                                interruptible &&
-                                !item.hasAttachments &&
-                                preparing ? (
+                                {canSteer ? (
                                   <button
-                                    className="mission-queue-steer is-preparing"
+                                    className={`mission-queue-steer${steering ? " is-preparing" : ""}`}
                                     type="button"
-                                    aria-label={t("preparingQueuedSteer", { ns: "missions" })}
-                                    title={t("preparingQueuedSteer", { ns: "missions" })}
-                                    disabled
-                                  >
-                                    <SpinnerGap size={16} aria-hidden="true" />
-                                  </button>
-                                ) : chat.queue?.supportsSteer === true &&
-                                  interruptible &&
-                                  !item.hasAttachments ? (
-                                  <button
-                                    className="mission-queue-steer"
-                                    type="button"
-                                    disabled={queuedMessageActions.has(item.requestId)}
+                                    aria-label={
+                                      steering
+                                        ? t("preparingQueuedSteer", { ns: "missions" })
+                                        : undefined
+                                    }
+                                    title={
+                                      steering
+                                        ? t("preparingQueuedSteer", { ns: "missions" })
+                                        : undefined
+                                    }
+                                    aria-busy={steering || undefined}
+                                    disabled={!item.persisted || action !== undefined}
                                     onClick={() => void steerQueuedMessage(item.requestId)}
                                   >
-                                    <ArrowBendUpLeft size={16} aria-hidden="true" />
-                                    {t("deliverySteer", { ns: "missions" })}
+                                    {steering ? (
+                                      <SpinnerGap size={16} aria-hidden="true" />
+                                    ) : (
+                                      <>
+                                        <ArrowBendUpLeft size={16} aria-hidden="true" />
+                                        {t("deliverySteer", { ns: "missions" })}
+                                      </>
+                                    )}
                                   </button>
                                 ) : null}
                                 <button
@@ -3105,7 +3119,7 @@ export function MissionDetailFragment(props: {
                                   type="button"
                                   aria-label={t("removeQueuedMessage", { ns: "missions" })}
                                   title={t("removeQueuedMessage", { ns: "missions" })}
-                                  disabled={queuedMessageActions.has(item.requestId) || preparing}
+                                  disabled={!item.persisted || action !== undefined}
                                   onClick={() =>
                                     void removeQueuedMessage(item.requestId, item.content)
                                   }
@@ -3116,46 +3130,6 @@ export function MissionDetailFragment(props: {
                             </div>
                           );
                         })}
-                        {visiblePendingQueuedMessages.map((item) => (
-                          <div
-                            className="mission-prompt-queue-item is-preparing"
-                            key={item.requestId}
-                          >
-                            <span className="mission-prompt-queue-marker" aria-hidden="true">
-                              <ArrowBendUpLeft size={16} />
-                            </span>
-                            <strong>{t("queuedMessage", { ns: "missions" })}</strong>
-                            <MissionUserMessageContent
-                              source={item.content}
-                              mentionCandidates={mentionCandidates}
-                              inline
-                            />
-                            <div className="mission-prompt-queue-actions">
-                              {chat?.queue?.supportsSteer === true &&
-                              interruptible &&
-                              item.attachments.length === 0 ? (
-                                <button
-                                  className="mission-queue-steer is-preparing"
-                                  type="button"
-                                  aria-label={t("preparingQueuedSteer", { ns: "missions" })}
-                                  title={t("preparingQueuedSteer", { ns: "missions" })}
-                                  disabled
-                                >
-                                  <SpinnerGap size={16} aria-hidden="true" />
-                                </button>
-                              ) : null}
-                              <button
-                                className="mission-queue-remove"
-                                type="button"
-                                aria-label={t("removeQueuedMessage", { ns: "missions" })}
-                                title={t("removeQueuedMessage", { ns: "missions" })}
-                                disabled
-                              >
-                                <Trash size={17} aria-hidden="true" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
                       </div>
                     ) : null}
                     <div className="mission-chat-composer" aria-busy={clientOperationBusy}>

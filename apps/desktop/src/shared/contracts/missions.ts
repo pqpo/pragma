@@ -552,6 +552,7 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
         requestedMode: z.enum(["enqueue", "steer"]),
         effectiveMode: z.enum(["enqueue", "steer"]),
         status: z.enum(["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]),
+        activatedAt: z.string().datetime().optional(),
         fallbackReason: z.string().min(1).optional(),
         removed: z.boolean().optional(),
       })
@@ -708,6 +709,7 @@ const MissionMessageDeliverySchema = z.object({
   requestedMode: z.enum(["enqueue", "steer"]),
   effectiveMode: z.enum(["enqueue", "steer"]),
   status: z.enum(["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]),
+  activatedAt: z.string().datetime().optional(),
   fallbackReason: z.string().min(1).optional(),
   removed: z.boolean().optional(),
 });

@@ -3065,11 +3065,22 @@ export function createMissionRunner(options: {
         steerFallbackByRequestId.set(data.requestId, data.reason);
       }
     }
+    const executionActivatedAt = new Map<string, string>();
+    for (const event of sessionEvents) {
+      if (event.type !== "execution.attached") continue;
+      const executionId = (event.data as { executionId?: unknown }).executionId;
+      if (typeof executionId === "string") executionActivatedAt.set(executionId, event.occurredAt);
+    }
     const deliveries = promptQueue.flatMap((prompt) => {
       const fallbackReason = steerFallbackByRequestId.get(prompt.requestId);
       const queueSteered =
         prompt.deliveryAttempt?.kind === "queue_steer" &&
         prompt.deliveryAttempt.state === "confirmed";
+      const activatedAt = queueSteered
+        ? prompt.updatedAt
+        : prompt.mode === "enqueue" && prompt.status !== "queued"
+          ? executionActivatedAt.get(prompt.executionId)
+          : undefined;
       return [
         {
           entryId: prompt.requestId,
@@ -3077,6 +3088,7 @@ export function createMissionRunner(options: {
             requestedMode: queueSteered || fallbackReason !== undefined ? "steer" : prompt.mode,
             effectiveMode: queueSteered ? "steer" : prompt.mode,
             status: prompt.status,
+            ...(activatedAt === undefined ? {} : { activatedAt }),
             ...(removedPromptIds.has(prompt.requestId) ? { removed: true } : {}),
             ...(fallbackReason === undefined ? {} : { fallbackReason }),
           },

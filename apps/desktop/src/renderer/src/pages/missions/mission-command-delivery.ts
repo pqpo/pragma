@@ -21,6 +21,13 @@ export interface PendingMissionQueuedMessage {
   readonly attachments: readonly ExpertPromptAttachment[];
 }
 
+export interface MissionQueuedMessageView {
+  readonly requestId: string;
+  readonly content: string;
+  readonly hasAttachments: boolean;
+  readonly persisted: boolean;
+}
+
 export interface MissionCommandDeliveryState {
   readonly optimisticMessages: readonly LocalMissionUserMessage[];
   readonly setOptimisticMessages: Dispatch<SetStateAction<LocalMissionUserMessage[]>>;
@@ -138,4 +145,35 @@ export function rejectMissionCommandDelivery(input: {
         ...input.optimisticMessages,
         { ...input.submitted, status: "failed", retryMode: "new-request" },
       ];
+}
+
+export function mergeMissionQueuedMessages(
+  persisted: readonly {
+    readonly requestId: string;
+    readonly content: string;
+    readonly hasAttachments: boolean;
+  }[],
+  pending: readonly PendingMissionQueuedMessage[],
+): MissionQueuedMessageView[] {
+  const pendingByRequestId = new Map(pending.map((message) => [message.requestId, message]));
+  const merged = persisted.map((message) => {
+    const local = pendingByRequestId.get(message.requestId);
+    pendingByRequestId.delete(message.requestId);
+    return {
+      requestId: message.requestId,
+      content: message.content,
+      hasAttachments: message.hasAttachments || (local?.attachments.length ?? 0) > 0,
+      persisted: true,
+    };
+  });
+  for (const message of pending) {
+    if (!pendingByRequestId.has(message.requestId)) continue;
+    merged.push({
+      requestId: message.requestId,
+      content: message.content,
+      hasAttachments: message.attachments.length > 0,
+      persisted: false,
+    });
+  }
+  return merged;
 }

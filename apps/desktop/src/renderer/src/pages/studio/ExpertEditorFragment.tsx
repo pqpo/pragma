@@ -45,6 +45,7 @@ export function ExpertEditorFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly plugins: readonly DesktopPlugin[];
   readonly resources: readonly PragmaResource[];
+  readonly memoryEnabled: boolean;
   readonly initialStep?: ExpertEditorStep | undefined;
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
@@ -659,7 +660,7 @@ export function ExpertEditorFragment(props: {
                     </dd>
                   </div>
                 </dl>
-                {isEditing ? (
+                {isEditing && props.memoryEnabled ? (
                   <AssetMemoryPolicySection targetRef={{ type: "pragma.expert", id: draft.id }} />
                 ) : null}
               </div>

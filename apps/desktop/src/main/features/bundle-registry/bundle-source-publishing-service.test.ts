@@ -15,11 +15,59 @@ afterEach(async () => {
 });
 
 describe("Bundle Source publishing", () => {
+  it("prepares listing metadata from the root resource description", async () => {
+    const prepareExport = vi.fn(async () => ({
+      root: {
+        ref: "expert:1234567890abcdef",
+        kind: "Expert" as const,
+        name: "Reviewer",
+        description: "Reviews code changes.\n\nLonger implementation notes.",
+      },
+      projectRevision: 3,
+      resourceCount: 2,
+      capabilityCount: 2,
+      pluginCount: 1,
+      knowledgeBaseCount: 0,
+      hasFlowLayouts: false,
+      defaults: {
+        capabilities: true,
+        plugins: true,
+        knowledgeBases: false,
+        flowLayouts: true,
+      },
+    }));
+    const service = createBundleSourcePublishingService({
+      cacheRoot: "/unused",
+      bundles: { prepareExport } as unknown as PragmaBundleService,
+      sources: {
+        preparePublicationSources: vi.fn(async () => []),
+      } as unknown as DesktopBundleRegistrySourceService,
+      readGitIdentity: async () => ({ name: "Pragma Test", email: "test@pragma.invalid" }),
+    });
+
+    await expect(
+      service.prepare({ rootRef: "expert:1234567890abcdef", projectRevision: 3 }),
+    ).resolves.toMatchObject({
+      root: { description: "Reviews code changes.\n\nLonger implementation notes." },
+      moduleCounts: { capabilities: 2, plugins: 1, knowledgeBases: 0, flowLayouts: 0 },
+      metadata: {
+        description: "Reviews code changes.\n\nLonger implementation notes.",
+        summary: "Reviews code changes.",
+        tags: [],
+      },
+    });
+  });
+
   it("generates one Bundle and retains per-source partial results", async () => {
     const cacheRoot = await mkdtemp(join(tmpdir(), "pragma-publishing-"));
     roots.push(cacheRoot);
     const prepareExport = vi.fn(async () => ({
-      root: { ref: "expert:1234567890abcdef", kind: "Expert" as const, name: "Reviewer" },
+      root: {
+        ref: "expert:1234567890abcdef",
+        kind: "Expert" as const,
+        name: "Reviewer",
+        description: "Reviews code changes from the project resource.",
+      },
       projectRevision: 3,
       resourceCount: 1,
       capabilityCount: 0,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createMissionSendAttempt,
+  mergeMissionQueuedMessages,
   rejectMissionCommandDelivery,
 } from "./mission-command-delivery.ts";
 
@@ -46,5 +47,52 @@ describe("Mission command delivery state", () => {
         submitted: { ...failed, status: "pending" },
       }),
     ).toEqual([{ ...failed, retryMode: "new-request" }]);
+  });
+
+  it("keeps one stable queue row while a local submission becomes durable", () => {
+    const pending = [
+      {
+        requestId: failed.id,
+        content: failed.content,
+        attachments: [],
+      },
+    ];
+
+    expect(mergeMissionQueuedMessages([], pending)).toEqual([
+      {
+        requestId: failed.id,
+        content: failed.content,
+        hasAttachments: false,
+        persisted: false,
+      },
+    ]);
+    expect(
+      mergeMissionQueuedMessages(
+        [{ requestId: failed.id, content: failed.content, hasAttachments: false }],
+        pending,
+      ),
+    ).toEqual([
+      {
+        requestId: failed.id,
+        content: failed.content,
+        hasAttachments: false,
+        persisted: true,
+      },
+    ]);
+  });
+
+  it("preserves durable FIFO order and appends submissions not persisted yet", () => {
+    expect(
+      mergeMissionQueuedMessages(
+        [
+          { requestId: "persisted-1", content: "first", hasAttachments: false },
+          { requestId: "persisted-2", content: "second", hasAttachments: false },
+        ],
+        [
+          { requestId: "persisted-2", content: "second", attachments: [] },
+          { requestId: "pending-3", content: "third", attachments: [] },
+        ],
+      ).map((message) => message.requestId),
+    ).toEqual(["persisted-1", "persisted-2", "pending-3"]);
   });
 });

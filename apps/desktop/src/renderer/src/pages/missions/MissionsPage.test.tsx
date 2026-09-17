@@ -1216,6 +1216,8 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain('aria-label="Message delivery mode"');
     expect(html).toContain("mission-prompt-queue-item");
     expect(html).toContain(">Steer<");
+    expect(html).not.toContain("is-preparing");
+    expect(html).not.toContain("Preparing steer");
     expect(html).toContain('aria-label="Remove from queue and edit"');
     expect(html).not.toContain("Execution running");
   });

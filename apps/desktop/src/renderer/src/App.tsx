@@ -218,6 +218,7 @@ export function App() {
           initialResourceRef={studioResourceRef}
           initialRevisionStoreId={studioRevisionStoreId}
           initialMemoryState={studioMemoryState}
+          memoryEnabled={memoryEnabled === true}
           onMemoryStateChange={setStudioMemoryState}
           onConfigureKnowledgeSync={openKnowledgeSyncSettings}
           onLeaveGuardChange={(guard) => {

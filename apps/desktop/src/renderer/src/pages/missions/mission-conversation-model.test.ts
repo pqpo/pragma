@@ -1,14 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   MissionConversationSnapshot,
   MissionChatUpdate,
+  PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
 
 import {
   applyMissionChatPatches,
   applyMissionChatUpdateBatch,
   hideInterruptedExecutionFallbackEntries,
-  hidePreparingQueuedChatEntries,
+  hideQueuedChatEntries,
   mergeLatestChatPage,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
@@ -18,7 +19,13 @@ import {
   startMissionContextOperation,
   touchMissionConversationCache,
 } from "./mission-conversation-model.ts";
-import { mergeContextWindow, mergeConversationState } from "./use-mission-conversation.ts";
+import {
+  conversationFromPage,
+  isMissionConversationCacheReady,
+  loadMissionConversationProjection,
+  mergeContextWindow,
+  mergeConversationState,
+} from "./use-mission-conversation.ts";
 
 describe("mission conversation model", () => {
   const streamingSnapshot = (content = "hel", revision = 1): MissionConversationSnapshot => ({
@@ -139,6 +146,58 @@ describe("mission conversation model", () => {
     expect(staleState?.execution).toMatchObject({ status: "succeeded", interruptible: false });
     expect(staleContext).toBe(freshContext);
     expect(staleContext?.contextWindow?.canCompact).toBe(true);
+  });
+
+  it("preserves delivery metadata when a later history page omits queue state", () => {
+    const requestId = "00000000-0000-4000-8000-000000000012";
+    const current: MissionConversationSnapshot = {
+      missionId: streamingSnapshot().missionId,
+      revision: 2,
+      entries: [
+        {
+          id: requestId,
+          kind: "user",
+          content: "Queued guidance",
+          createdAt: "2026-07-11T00:00:01.000Z",
+          delivery: {
+            requestedMode: "enqueue",
+            effectiveMode: "enqueue",
+            status: "queued",
+          },
+        },
+      ],
+      page: { oldestSequence: 1, newestSequence: 1 },
+      pendingInteractions: [],
+      queue: {
+        state: "running",
+        pendingCount: 1,
+        supportsSteer: true,
+        items: [{ requestId, content: "Queued guidance", hasAttachments: false }],
+      },
+    };
+
+    const refreshed = conversationFromPage(
+      {
+        missionId: current.missionId,
+        revision: 3,
+        entries: [
+          {
+            id: requestId,
+            kind: "user",
+            content: "Queued guidance",
+            createdAt: "2026-07-11T00:00:01.000Z",
+          },
+        ],
+        page: current.page,
+      },
+      current,
+    );
+
+    expect(refreshed.entries[0]).toMatchObject({
+      id: requestId,
+      delivery: { status: "queued" },
+    });
+    expect(refreshed.queue?.items).toHaveLength(1);
   });
 
   it("keeps a revision gap pending for an authoritative refresh", () => {
@@ -737,8 +796,8 @@ describe("mission conversation model", () => {
       createdAt: "2026-07-11T00:00:02.000Z",
     };
 
-    expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([]);
-    expect(hidePreparingQueuedChatEntries([entry], new Set())).toEqual([entry]);
+    expect(hideQueuedChatEntries([entry], new Set([requestId]))).toEqual([]);
+    expect(hideQueuedChatEntries([entry], new Set())).toEqual([entry]);
   });
 
   it("releases a preparing queued message when it has started running", () => {
@@ -755,7 +814,114 @@ describe("mission conversation model", () => {
       },
     };
 
-    expect(hidePreparingQueuedChatEntries([entry], new Set([requestId]))).toEqual([entry]);
+    expect(hideQueuedChatEntries([entry], new Set())).toEqual([entry]);
+  });
+
+  it("keeps a durable queued message hidden even when the queue state arrives separately", () => {
+    const entry = {
+      id: "00000000-0000-4000-8000-000000000012",
+      kind: "user" as const,
+      content: "Adjust the implementation",
+      createdAt: "2026-07-11T00:00:02.000Z",
+      delivery: {
+        requestedMode: "enqueue" as const,
+        effectiveMode: "enqueue" as const,
+        status: "queued" as const,
+      },
+    };
+
+    expect(hideQueuedChatEntries([entry], new Set())).toEqual([]);
+  });
+
+  it("moves a confirmed queued steer to its activation position", () => {
+    const entries = orderMissionConversationEntries([
+      {
+        type: "durable",
+        entry: {
+          id: "queued",
+          kind: "user",
+          content: "Change direction",
+          createdAt: "2026-07-11T00:00:01.000Z",
+          delivery: {
+            requestedMode: "steer",
+            effectiveMode: "steer",
+            status: "succeeded",
+            activatedAt: "2026-07-11T00:00:04.000Z",
+          },
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "active-answer",
+          kind: "assistant",
+          content: "Working",
+          streaming: true,
+          createdAt: "2026-07-11T00:00:03.000Z",
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "later-tool",
+          kind: "tool",
+          toolCallId: "call-1",
+          toolName: "read",
+          status: "succeeded",
+          createdAt: "2026-07-11T00:00:05.000Z",
+        },
+      },
+    ]);
+
+    expect(entries.map((entry) => entry.entry.id)).toEqual([
+      "active-answer",
+      "queued",
+      "later-tool",
+    ]);
+  });
+
+  it("does not treat page-only prefetch data as a renderable conversation cache", () => {
+    const pageOnly = streamingSnapshot();
+    const withState = mergeConversationState(pageOnly, {
+      missionId: pageOnly.missionId,
+      revision: 2,
+      pendingInteractions: [],
+      queue: { state: "idle", pendingCount: 0, supportsSteer: false, items: [] },
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+
+    expect(isMissionConversationCacheReady(pageOnly)).toBe(false);
+    expect(isMissionConversationCacheReady(withState)).toBe(true);
+  });
+
+  it("refetches conversation state when a concurrent chat page is newer", async () => {
+    const missionId = streamingSnapshot().missionId;
+    const conversationState = (revision: number) => ({
+      missionId,
+      revision,
+      pendingInteractions: [],
+      deliveries: [],
+      hiddenEntryIds: [],
+    });
+    const getMissionConversationState = vi
+      .fn()
+      .mockResolvedValueOnce(conversationState(1))
+      .mockResolvedValueOnce(conversationState(2));
+    const api = {
+      getMissionChatPage: vi.fn().mockResolvedValue({
+        missionId,
+        revision: 2,
+        entries: [],
+        page: {},
+      }),
+      getMissionConversationState,
+    } as unknown as PragmaDesktopAPI;
+
+    const projection = await loadMissionConversationProjection(api, missionId);
+
+    expect(projection.state.revision).toBe(2);
+    expect(getMissionConversationState).toHaveBeenCalledTimes(2);
   });
 
   it("makes a queued message actionable as soon as its queue item is persisted", () => {

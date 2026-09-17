@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import type { MissionChatUpdate } from "../../../shared/contracts/index.ts";
 
 import {
   markMissionOutputReadIds,
   missionChatUpdateHasUserVisibleOutput,
   readUnreadMissionOutputIds,
+  recordMissionChatUpdateIds,
   recordMissionOutputIds,
   writeUnreadMissionOutputIds,
 } from "./mission-unread-output.ts";
@@ -34,6 +36,37 @@ describe("Mission unread output state", () => {
     expect(read).toEqual([]);
     expect(recordMissionOutputIds(read, "mission-a", "mission-b")).toEqual(["mission-a"]);
     expect(recordMissionOutputIds(["mission-a"], "mission-a", "mission-a")).toEqual([]);
+  });
+
+  it("uses the selection captured when output arrives even if the state update runs later", () => {
+    const update: MissionChatUpdate = {
+      missionId: "00000000-0000-4000-8000-000000000001",
+      revision: 1,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "new" }],
+    };
+    let selectedMissionId: string = update.missionId;
+    const selectedMissionIdAtReceipt = selectedMissionId;
+    const deferredStateUpdate = (current: readonly string[]) =>
+      recordMissionChatUpdateIds(current, update, selectedMissionIdAtReceipt);
+
+    selectedMissionId = "00000000-0000-4000-8000-000000000002";
+
+    expect(selectedMissionId).not.toBe(selectedMissionIdAtReceipt);
+    expect(deferredStateUpdate([])).toEqual([]);
+  });
+
+  it("marks output unread when it arrives after switching to another Mission", () => {
+    const update: MissionChatUpdate = {
+      missionId: "00000000-0000-4000-8000-000000000001",
+      revision: 1,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "new" }],
+    };
+
+    expect(recordMissionChatUpdateIds([], update, "00000000-0000-4000-8000-000000000002")).toEqual([
+      update.missionId,
+    ]);
   });
 
   it("does not resurrect a cleared dot when an invalidation arrives after switching away", () => {

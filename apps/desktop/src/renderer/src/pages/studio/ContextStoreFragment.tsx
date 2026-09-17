@@ -13,6 +13,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  GitBranch,
   ListBullets,
   MagnifyingGlass,
   PaperPlaneTilt,
@@ -1214,7 +1215,7 @@ export function ContextStoreDetailFragment(props: {
             {props.onPublish !== undefined ? (
               <KnowledgeBaseActionButton
                 label={t("publishToSource")}
-                icon={<UploadSimple size={18} aria-hidden="true" />}
+                icon={<GitBranch size={18} aria-hidden="true" />}
                 onClick={() =>
                   requestLeave(() => {
                     setError(null);

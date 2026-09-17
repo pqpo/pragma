@@ -63,6 +63,16 @@ export function recordMissionOutputIds(
     : [...unreadMissionIds, outputMissionId];
 }
 
+export function recordMissionChatUpdateIds(
+  unreadMissionIds: readonly string[],
+  update: MissionChatUpdate,
+  selectedMissionIdAtReceipt: string | null,
+): readonly string[] {
+  return missionChatUpdateHasUserVisibleOutput(update)
+    ? recordMissionOutputIds(unreadMissionIds, update.missionId, selectedMissionIdAtReceipt)
+    : unreadMissionIds;
+}
+
 export function missionChatUpdateHasUserVisibleOutput(update: MissionChatUpdate): boolean {
   // Most invalidations only refresh status or metadata. Producers explicitly mark the uncommon
   // repair/settlement invalidation that makes previously unprojected output visible.

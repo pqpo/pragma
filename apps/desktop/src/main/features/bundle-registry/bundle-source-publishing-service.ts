@@ -6,6 +6,7 @@ import type { BundleSourceKind } from "@pragma/shared";
 import {
   BundleSourcePublicationPreparationSchema,
   BundleSourcePublicationResultSchema,
+  bundleSourcePublicationSummary,
   type BundleSourcePublicationPreparation,
   type BundleSourcePublicationResult,
   type PrepareBundleSourcePublication,
@@ -39,14 +40,25 @@ export function createBundleSourcePublishingService(options: {
       const sources = await options.sources.preparePublicationSources(kind, preview.root.ref);
       const existing = sources.find((source) => source.existingItem !== undefined)?.existingItem;
       return BundleSourcePublicationPreparationSchema.parse({
-        root: { ref: preview.root.ref, kind, name: preview.root.name },
+        root: {
+          ref: preview.root.ref,
+          kind,
+          name: preview.root.name,
+          description: preview.root.description,
+        },
         projectRevision: preview.projectRevision,
         modules: preview.defaults,
+        moduleCounts: {
+          capabilities: preview.capabilityCount,
+          plugins: preview.pluginCount,
+          knowledgeBases: preview.knowledgeBaseCount,
+          flowLayouts: preview.hasFlowLayouts ? 1 : 0,
+        },
         metadata: {
-          itemId: existing?.id ?? sourceSlug(preview.root.name, preview.root.ref),
+          itemId: sourceSlug(preview.root.name, preview.root.ref),
           name: existing?.name.default ?? preview.root.name,
-          summary: existing?.summary.default ?? preview.root.name,
-          description: existing?.description.default ?? `Pragma Bundle for ${preview.root.name}.`,
+          summary: bundleSourcePublicationSummary(preview.root.description),
+          description: preview.root.description,
           authorName: existing?.author.name ?? identity.name,
           ...(existing?.author.url === undefined ? {} : { authorUrl: existing.author.url }),
           license: existing?.license ?? "UNLICENSED",
@@ -80,7 +92,10 @@ export function createBundleSourcePublishingService(options: {
               bundleFingerprint: exported.bundleFingerprint,
               rootRef: input.rootRef,
               kind,
-              metadata: input.metadata,
+              metadata: {
+                ...input.metadata,
+                summary: bundleSourcePublicationSummary(input.metadata.description),
+              },
               target,
             }),
         );

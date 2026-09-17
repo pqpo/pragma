@@ -226,10 +226,19 @@ export const BundleSourcePublicationPreparationSchema = z
         ref: BundleSourceRootRefSchema,
         kind: BundleSourceKindSchema,
         name: z.string().trim().min(1).max(200),
+        description: z.string().trim().min(1).max(8_000),
       })
       .strict(),
     projectRevision: z.number().int().positive(),
     modules: PragmaBundleModuleOptionsSchema,
+    moduleCounts: z
+      .object({
+        capabilities: z.number().int().nonnegative(),
+        plugins: z.number().int().nonnegative(),
+        knowledgeBases: z.number().int().nonnegative(),
+        flowLayouts: z.number().int().nonnegative(),
+      })
+      .strict(),
     metadata: BundleSourcePublicationMetadataSchema,
     sources: z.array(BundleSourcePublicationSourceSchema),
   })
@@ -262,6 +271,16 @@ export const PublishBundleSourceSchema = PrepareBundleSourcePublicationSchema.ex
       }
     }
   });
+
+export function bundleSourcePublicationSummary(description: string): string {
+  const paragraph = description
+    .split(/\n\s*\n/gu)
+    .map((part) => part.trim())
+    .find((part) => part !== "");
+  const normalized = (paragraph ?? description.trim()).replace(/\s+/gu, " ");
+  const truncated = normalized.slice(0, 500);
+  return /[\uD800-\uDBFF]$/u.test(truncated) ? truncated.slice(0, -1) : truncated;
+}
 
 export const BundleSourcePublicationTargetResultSchema = z
   .object({

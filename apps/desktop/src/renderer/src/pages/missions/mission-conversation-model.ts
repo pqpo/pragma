@@ -30,16 +30,15 @@ export type MissionConversationBlock =
       readonly collapsed: boolean;
     };
 
-export function hidePreparingQueuedChatEntries(
+export function hideQueuedChatEntries(
   entries: readonly MissionChatEntry[],
-  pendingRequestIds: ReadonlySet<string>,
+  queuedRequestIds: ReadonlySet<string>,
 ): MissionChatEntry[] {
-  return entries.filter((entry) => {
-    if (!pendingRequestIds.has(entry.id)) return true;
-    return entry.kind === "user" && entry.delivery?.status !== undefined
-      ? entry.delivery.status !== "queued"
-      : false;
-  });
+  return entries.filter(
+    (entry) =>
+      entry.kind !== "user" ||
+      (!queuedRequestIds.has(entry.id) && entry.delivery?.status !== "queued"),
+  );
 }
 
 export function readyPendingQueuedRequestIds(
@@ -146,17 +145,45 @@ export function groupMissionConversationEntries(
 export function orderMissionConversationEntries(
   entries: readonly MissionConversationEntry[],
 ): MissionConversationEntry[] {
-  const ordered: MissionConversationEntry[] = entries.filter((entry) => entry.type === "durable");
+  const durable = entries.filter((entry) => entry.type === "durable");
+  const activated = durable
+    .filter(
+      (
+        item,
+      ): item is Extract<MissionConversationEntry, { readonly type: "durable" }> & {
+        readonly entry: Extract<MissionChatEntry, { readonly kind: "user" }>;
+      } => item.entry.kind === "user" && item.entry.delivery?.activatedAt !== undefined,
+    )
+    .toSorted((left, right) =>
+      left.entry.delivery!.activatedAt!.localeCompare(right.entry.delivery!.activatedAt!),
+    );
+  const activatedIds = new Set(activated.map((item) => item.entry.id));
+  const ordered: MissionConversationEntry[] = durable.filter(
+    (item) => !activatedIds.has(item.entry.id),
+  );
+  for (const item of activated) {
+    const activatedAt = item.entry.delivery!.activatedAt!;
+    const index = ordered.findIndex(
+      (candidate) => missionConversationEntryDisplayTime(candidate) > activatedAt,
+    );
+    ordered.splice(index < 0 ? ordered.length : index, 0, item);
+  }
   const local = entries
     .filter((entry) => entry.type !== "durable")
     .toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt));
   for (const entry of local) {
     const index = ordered.findIndex(
-      (candidate) => candidate.entry.createdAt > entry.entry.createdAt,
+      (candidate) => missionConversationEntryDisplayTime(candidate) > entry.entry.createdAt,
     );
     ordered.splice(index < 0 ? ordered.length : index, 0, entry);
   }
   return ordered;
+}
+
+function missionConversationEntryDisplayTime(entry: MissionConversationEntry): string {
+  return entry.type === "durable" && entry.entry.kind === "user"
+    ? (entry.entry.delivery?.activatedAt ?? entry.entry.createdAt)
+    : entry.entry.createdAt;
 }
 
 export function applyMissionChatPatches(

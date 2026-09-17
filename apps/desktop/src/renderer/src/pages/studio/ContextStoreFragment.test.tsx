@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { GitBranch, UploadSimple } from "@phosphor-icons/react";
 import { describe, expect, it } from "vitest";
 
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
@@ -165,6 +166,7 @@ describe("knowledge base UI", () => {
         onBack={() => undefined}
         onOpenRevisions={() => undefined}
         onExport={async () => undefined}
+        onPublish={async () => undefined}
         onSubmitRevision={async () => undefined}
         onRevisionSubmitted={() => undefined}
         onDelete={async () => undefined}
@@ -196,7 +198,7 @@ describe("knowledge base UI", () => {
     expect(html).toContain('class="knowledge-base-editor-actions"');
     expect(html).toContain("Revision history");
     expect(html).toContain("Submit revision");
-    expect(html.match(/role="tooltip"/g)).toHaveLength(5);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(6);
     expect(html).toContain('aria-label="Save"');
     expect(html).toContain("No changes to save");
     expect(html.indexOf('aria-label="Save"')).toBeLessThan(
@@ -209,8 +211,13 @@ describe("knowledge base UI", () => {
       html.indexOf('aria-label="Export knowledge base"'),
     );
     expect(html.indexOf('aria-label="Export knowledge base"')).toBeLessThan(
+      html.indexOf('aria-label="Publish to source"'),
+    );
+    expect(html.indexOf('aria-label="Publish to source"')).toBeLessThan(
       html.indexOf('aria-label="Delete knowledge base"'),
     );
+    expect(html).toContain(renderToStaticMarkup(<UploadSimple size={18} aria-hidden="true" />));
+    expect(html).toContain(renderToStaticMarkup(<GitBranch size={18} aria-hidden="true" />));
     expect(html).toContain('aria-label="Resize file list"');
     expect(html).toContain('aria-valuemin="180"');
     expect(html).toContain('aria-valuemax="360"');

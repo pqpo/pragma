@@ -605,6 +605,7 @@
 
 .team-mention-editor.is-home {
   min-height: 80px;
+  max-height: 240px;
   padding: 14px 20px;
   font-size: 16px;
   overflow-y: auto;

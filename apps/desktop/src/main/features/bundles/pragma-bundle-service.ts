@@ -818,6 +818,7 @@ export function createPragmaBundleService(options: {
             ref: canonicalPragmaResourceRef(prepared.root),
             kind: prepared.root.kind,
             name: prepared.root.metadata.name,
+            description: prepared.root.metadata.description,
           },
           projectRevision: prepared.snapshot.revision,
           resourceCount: prepared.resources.length,
