@@ -813,24 +813,37 @@ export function createPragmaBundleService(options: {
     async prepareExport(input) {
       const prepared = await prepare(input.rootRef, input.projectRevision);
       try {
+        const flowLayouts = await Promise.all(
+          prepared.flows.map(
+            async (flow) =>
+              await options.layouts.get({
+                projectId: prepared.snapshot.projectId,
+                flowId: flow.metadata.id,
+              }),
+          ),
+        );
         return PragmaBundleExportPreviewSchema.parse({
           root: {
             ref: canonicalPragmaResourceRef(prepared.root),
             kind: prepared.root.kind,
             name: prepared.root.metadata.name,
             description: prepared.root.metadata.description,
+            tags: prepared.root.metadata.tags,
+            ...(prepared.root.kind === "Expert" || prepared.root.kind === "ExpertTeam"
+              ? { avatarId: prepared.root.metadata.avatarId }
+              : {}),
           },
           projectRevision: prepared.snapshot.revision,
           resourceCount: prepared.resources.length,
           capabilityCount: prepared.capabilities.length,
           pluginCount: prepared.plugins.length,
           knowledgeBaseCount: prepared.contexts.length,
-          hasFlowLayouts: prepared.flows.length > 0,
+          hasFlowLayouts: flowLayouts.some((layout) => layout !== null),
           defaults: {
             capabilities: true,
             plugins: true,
-            knowledgeBases: prepared.root.kind === "ContextStore",
-            flowLayouts: true,
+            knowledgeBases: false,
+            flowLayouts: flowLayouts.some((layout) => layout !== null),
           },
         });
       } finally {

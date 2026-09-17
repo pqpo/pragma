@@ -233,6 +233,22 @@ describe("Desktop Bundle Registry sources", () => {
       await expect(restarted.listSources()).resolves.toEqual([
         expect.objectContaining({ status: "ready", itemCount: 0 }),
       ]);
+      await expect(
+        restarted.preparePublicationSources("expert", "expert:1234567890abcdef"),
+      ).resolves.toEqual([
+        expect.objectContaining({
+          selectable: true,
+          categories: [
+            expect.objectContaining({ id: "general" }),
+            expect.objectContaining({ id: "software-development" }),
+            expect.objectContaining({ id: "research" }),
+            expect.objectContaining({ id: "product-design" }),
+            expect.objectContaining({ id: "content-creation" }),
+            expect.objectContaining({ id: "productivity" }),
+            expect.objectContaining({ id: "education" }),
+          ],
+        }),
+      ]);
 
       await mkdir(join(remote, "experts/general/reviewer/versions/1.0.0"), { recursive: true });
       await writeFile(join(remote, "pragma-source.yaml"), sourceManifest(), "utf8");
@@ -259,7 +275,12 @@ describe("Desktop Bundle Registry sources", () => {
         expect.objectContaining({ name: "Empty Source", remote: expect.any(String) }),
       ]);
       await expect(restarted.getCatalog()).resolves.toMatchObject({
-        items: [expect.objectContaining({ id: "reviewer" })],
+        items: [
+          expect.objectContaining({
+            id: "reviewer",
+            avatarId: "pragma.avatar.expert.07",
+          }),
+        ],
       });
 
       const replacementRemote = join(root, "replacement-remote");
@@ -434,6 +455,7 @@ describe("Desktop Bundle Registry sources", () => {
           authorName: "Pragma Publisher",
           license: "MIT",
           tags: ["review"],
+          avatarId: "pragma.avatar.expert.07",
         },
         target: { sourceId: source.id, categoryId: "general", version: "1.0.0" },
       };
@@ -457,7 +479,7 @@ describe("Desktop Bundle Registry sources", () => {
       await execFileAsync("git", ["clone", "--branch", "main", `file://${remote}`, checkout]);
       await expect(
         readFile(join(checkout, "experts/general/reviewer/config.yaml"), "utf8"),
-      ).resolves.toMatch(/latestVersion: 1\.0\.1/u);
+      ).resolves.toMatch(/avatarId: pragma\.avatar\.expert\.07[\s\S]*latestVersion: 1\.0\.1/u);
     } finally {
       restoreEnvironment("HOME", previous.HOME);
       restoreEnvironment("GIT_CONFIG_COUNT", previous.GIT_CONFIG_COUNT);
@@ -576,6 +598,7 @@ author:
 license: MIT
 tags:
   - review
+avatarId: pragma.avatar.expert.07
 latestVersion: 1.0.0
 createdAt: 2026-08-31T00:00:00.000Z
 updatedAt: 2026-08-31T00:00:00.000Z

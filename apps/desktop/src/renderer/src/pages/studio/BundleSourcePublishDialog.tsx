@@ -21,6 +21,7 @@ import type {
 import {
   PublishBundleSourceSchema,
   bundleSourcePublicationSummary,
+  normalizeBundleSourcePublicationTag,
 } from "../../../../shared/contracts/index.ts";
 import { Dialog } from "../../components/Dialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
@@ -175,7 +176,7 @@ export function BundleSourcePublishDialog(props: {
 
   const failed = results?.filter((result) => result.status === "failed") ?? [];
   const invalid = metadata === null || targets.length === 0;
-  const visibleModuleKeys = preparation === null ? [] : publicationModuleKeys(preparation);
+  const moduleKeys = preparation === null ? [] : publicationModuleKeys();
 
   return (
     <Dialog
@@ -341,6 +342,18 @@ export function BundleSourcePublishDialog(props: {
                 </header>
                 <div className="bundle-publish-grid">
                   <PublishField
+                    field="name"
+                    label={t("bundlePublish.name")}
+                    value={metadata.name}
+                    disabled={busy}
+                    error={fieldErrors.name}
+                    onChange={(name) => {
+                      setMetadata({ ...metadata, name });
+                      setError(null);
+                      clearFieldError("name", setFieldErrors);
+                    }}
+                  />
+                  <PublishField
                     field="version"
                     label={t("bundlePublish.version")}
                     value={version}
@@ -351,18 +364,6 @@ export function BundleSourcePublishDialog(props: {
                       setVersionEdited(true);
                       setError(null);
                       clearFieldError("version", setFieldErrors);
-                    }}
-                  />
-                  <PublishField
-                    field="name"
-                    label={t("bundlePublish.name")}
-                    value={metadata.name}
-                    disabled={busy}
-                    error={fieldErrors.name}
-                    onChange={(name) => {
-                      setMetadata({ ...metadata, name });
-                      setError(null);
-                      clearFieldError("name", setFieldErrors);
                     }}
                   />
                   <PublishField
@@ -423,8 +424,8 @@ export function BundleSourcePublishDialog(props: {
                       className="bundle-publish-tag-editor"
                       aria-invalid={fieldErrors.tags === undefined ? undefined : true}
                     >
-                      {metadata.tags.map((tag) => (
-                        <span className="bundle-publish-tag" key={tag}>
+                      {metadata.tags.map((tag, index) => (
+                        <span className="bundle-publish-tag" key={`${tag}:${index}`}>
                           {tag}
                           <button
                             type="button"
@@ -458,6 +459,8 @@ export function BundleSourcePublishDialog(props: {
                           clearFieldError("tags", setFieldErrors);
                         }}
                         onKeyDown={(event) => {
+                          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
+                            return;
                           if (event.key === "Enter" || event.key === ",") {
                             event.preventDefault();
                             const pending = pendingPublicationTags(metadata.tags, tagInput);
@@ -492,37 +495,47 @@ export function BundleSourcePublishDialog(props: {
                 </div>
               </section>
 
-              {visibleModuleKeys.length > 0 ? (
-                <section className="bundle-publish-section" aria-labelledby="publish-modules-title">
-                  <header className="bundle-publish-section-header">
-                    <span>
-                      <Package size={18} aria-hidden="true" />
-                    </span>
-                    <div>
-                      <h3 id="publish-modules-title">{t("bundlePublish.modules")}</h3>
-                      <p>{t("bundlePublish.modulesHint")}</p>
-                    </div>
-                  </header>
-                  <div className="bundle-publish-modules">
-                    {visibleModuleKeys.map((key) => (
-                      <label key={key}>
+              <section className="bundle-publish-section" aria-labelledby="publish-modules-title">
+                <header className="bundle-publish-section-header">
+                  <span>
+                    <Package size={18} aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h3 id="publish-modules-title">{t("bundlePublish.modules")}</h3>
+                    <p>{t("bundlePublish.modulesHint")}</p>
+                  </div>
+                </header>
+                <div className="bundle-publish-modules">
+                  {moduleKeys.map((key) => {
+                    const disabled = publicationModuleDisabled(preparation, key);
+                    return (
+                      <label className={disabled ? "is-disabled" : undefined} key={key}>
                         <span>
                           <strong>{t(`bundlePublish.module.${key}`)}</strong>
-                          <small>{t(`bundlePublish.moduleHint.${key}`)}</small>
+                          <small>
+                            {disabled
+                              ? t(
+                                  key === "knowledgeBases" &&
+                                    preparation.root.kind === "knowledge-base"
+                                    ? "bundlePublish.moduleHint.rootKnowledgeBase"
+                                    : "bundlePublish.moduleHint.unavailable",
+                                )
+                              : t(`bundlePublish.moduleHint.${key}`)}
+                          </small>
                         </span>
                         <input
                           type="checkbox"
                           checked={modules[key]}
-                          disabled={busy}
+                          disabled={busy || disabled}
                           onChange={(event) =>
                             setModules({ ...modules, [key]: event.target.checked })
                           }
                         />
                       </label>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
+                    );
+                  })}
+                </div>
+              </section>
             </>
           )}
           {error ? (
@@ -639,6 +652,8 @@ export function validatePublicationFields(
     )
   )
     errors.tags = { code: "invalidTag" };
+  else if (new Set(metadata.tags).size !== metadata.tags.length)
+    errors.tags = { code: "duplicateTag" };
   return errors;
 }
 
@@ -654,12 +669,7 @@ function validateRequiredText(
 }
 
 export function normalizePublicationTag(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/gu, "-")
-    .replace(/-+/gu, "-")
-    .replace(/^-+|-+$/gu, "");
+  return normalizeBundleSourcePublicationTag(value);
 }
 
 export function pendingPublicationTags(
@@ -705,13 +715,17 @@ export function publicationItemIdForSelection(
   };
 }
 
-function publicationModuleKeys(
+export function publicationModuleKeys(): Array<keyof PragmaBundleModuleOptions> {
+  return ["capabilities", "plugins", "knowledgeBases", "flowLayouts"];
+}
+
+export function publicationModuleDisabled(
   preparation: BundleSourcePublicationPreparation,
-): Array<keyof PragmaBundleModuleOptions> {
-  return (["capabilities", "plugins", "knowledgeBases", "flowLayouts"] as const).filter(
-    (key) =>
-      preparation.moduleCounts[key] > 0 &&
-      !(key === "knowledgeBases" && preparation.root.kind === "knowledge-base"),
+  key: keyof PragmaBundleModuleOptions,
+): boolean {
+  return (
+    preparation.moduleCounts[key] === 0 ||
+    (key === "knowledgeBases" && preparation.root.kind === "knowledge-base")
   );
 }
 
@@ -719,7 +733,7 @@ function focusFirstInvalidField(
   form: HTMLFormElement | null,
   errors: PublicationFieldErrors,
 ): void {
-  const first = (["version", "name", "authorName", "license", "description", "tags"] as const).find(
+  const first = (["name", "version", "authorName", "license", "description", "tags"] as const).find(
     (field) => errors[field] !== undefined,
   );
   if (first === undefined) return;

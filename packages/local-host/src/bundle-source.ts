@@ -38,6 +38,14 @@ export const DEFAULT_BUNDLE_SOURCE_CATEGORIES = [
   ["education", "Education", "教育学习", "教育學習"],
 ] as const;
 
+export function defaultBundleSourceCategories(): BundleSourceManifest["sections"]["expert"]["categories"] {
+  return DEFAULT_BUNDLE_SOURCE_CATEGORIES.map(([id, en, zhHans, zhHant], order) => ({
+    id,
+    name: { default: en, translations: { en, "zh-Hans": zhHans, "zh-Hant": zhHant } },
+    order: order * 10,
+  }));
+}
+
 export interface BundleSourceInitializationResult {
   readonly sourceId: string;
   readonly manifestPath: string;
@@ -80,13 +88,7 @@ export async function initializeBundleSource(input: {
   } catch (error) {
     if (!isNodeError(error, "ENOENT")) throw error;
   }
-  const categories = DEFAULT_BUNDLE_SOURCE_CATEGORIES.map(
-    ([categoryId, en, zhHans, zhHant], order) => ({
-      id: categoryId,
-      name: { default: en, translations: { en, "zh-Hans": zhHans, "zh-Hant": zhHant } },
-      order: order * 10,
-    }),
-  );
+  const categories = defaultBundleSourceCategories();
   const manifest = BundleSourceManifestSchema.parse({
     schemaVersion: "pragma.bundle-source/v2",
     id,

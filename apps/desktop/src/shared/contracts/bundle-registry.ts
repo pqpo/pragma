@@ -6,6 +6,8 @@ import {
   BundleSourceRootRefSchema,
   BundleSourceSemverSchema,
   BundleSourceSlugSchema,
+  PRAGMA_TEXT_LIMITS,
+  PragmaAvatarIdSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 import { PragmaBundleModuleOptionsSchema } from "./bundles.ts";
@@ -187,17 +189,31 @@ export const PrepareBundleSourcePublicationSchema = z
   })
   .strict();
 
+const BundleSourcePublicationMetadataShape = {
+  itemId: BundleSourceSlugSchema,
+  name: z.string().trim().min(1).max(200),
+  summary: z.string().trim().min(1).max(500),
+  description: z.string().trim().min(1).max(8_000),
+  authorName: z.string().trim().min(1).max(200),
+  authorUrl: z.string().url().max(2_000).optional(),
+  license: z.string().trim().min(1).max(100),
+  homepage: z.string().url().max(2_000).optional(),
+  avatarId: PragmaAvatarIdSchema.optional(),
+} as const;
+
 export const BundleSourcePublicationMetadataSchema = z
   .object({
-    itemId: BundleSourceSlugSchema,
-    name: z.string().trim().min(1).max(200),
-    summary: z.string().trim().min(1).max(500),
-    description: z.string().trim().min(1).max(8_000),
-    authorName: z.string().trim().min(1).max(200),
-    authorUrl: z.string().url().max(2_000).optional(),
-    license: z.string().trim().min(1).max(100),
-    homepage: z.string().url().max(2_000).optional(),
+    ...BundleSourcePublicationMetadataShape,
     tags: z.array(BundleSourceSlugSchema).max(30),
+  })
+  .strict();
+
+export const BundleSourcePublicationDraftMetadataSchema = z
+  .object({
+    ...BundleSourcePublicationMetadataShape,
+    tags: z
+      .array(z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.tag))
+      .max(PRAGMA_TEXT_LIMITS.defaultMetadata.tags),
   })
   .strict();
 
@@ -239,7 +255,7 @@ export const BundleSourcePublicationPreparationSchema = z
         flowLayouts: z.number().int().nonnegative(),
       })
       .strict(),
-    metadata: BundleSourcePublicationMetadataSchema,
+    metadata: BundleSourcePublicationDraftMetadataSchema,
     sources: z.array(BundleSourcePublicationSourceSchema),
   })
   .strict();
@@ -280,6 +296,27 @@ export function bundleSourcePublicationSummary(description: string): string {
   const normalized = (paragraph ?? description.trim()).replace(/\s+/gu, " ");
   const truncated = normalized.slice(0, 500);
   return /[\uD800-\uDBFF]$/u.test(truncated) ? truncated.slice(0, -1) : truncated;
+}
+
+export function normalizeBundleSourcePublicationTag(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/gu, "-")
+    .replace(/-+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+}
+
+export function prepareBundleSourcePublicationTags(values: readonly string[]): string[] {
+  const tags: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeBundleSourcePublicationTag(value);
+    const prepared = BundleSourceSlugSchema.safeParse(normalized).success
+      ? normalized
+      : value.trim();
+    if (!tags.includes(prepared)) tags.push(prepared);
+  }
+  return tags;
 }
 
 export const BundleSourcePublicationTargetResultSchema = z

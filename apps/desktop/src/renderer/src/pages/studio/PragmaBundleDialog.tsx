@@ -20,6 +20,7 @@ import type {
   ContextStore,
   DesktopRuntimeAvailability,
   PragmaBundleDependencyReadiness,
+  PragmaBundleExportPreview,
   PragmaBundleImportInspection,
   PragmaBundleInstallation,
   PragmaBundleModuleOptions,
@@ -151,14 +152,16 @@ function BundleExportDialog(props: {
   const [step, setStep] = useState<ExportStep>(initialRootRef === "" ? "select" : "modules");
   const [rootRef, setRootRef] = useState(initialRootRef);
   const [modules, setModules] = useState<PragmaBundleModuleOptions>({
-    capabilities: true,
-    plugins: true,
+    capabilities: false,
+    plugins: false,
     knowledgeBases: false,
-    flowLayouts: true,
+    flowLayouts: false,
   });
+  const [preview, setPreview] = useState<PragmaBundleExportPreview | null>(null);
   const [resultPath, setResultPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const preparationRequest = useRef(0);
   const roots = useMemo(
     () => orderBundleExportRoots(props.project.resources.filter(isBundleExportRoot)),
     [props.project.resources],
@@ -189,6 +192,45 @@ function BundleExportDialog(props: {
     }
   };
 
+  const prepareExport = async () => {
+    const api = desktopApi();
+    if (api === undefined || rootRef === "") return;
+    const request = ++preparationRequest.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const prepared = await api.preparePragmaBundleExport({
+        rootRef,
+        projectRevision: props.project.revision,
+      });
+      if (preparationRequest.current !== request) return;
+      setPreview(prepared);
+      setModules({
+        capabilities: prepared.defaults.capabilities && prepared.capabilityCount > 0,
+        plugins: prepared.defaults.plugins && prepared.pluginCount > 0,
+        knowledgeBases: false,
+        flowLayouts: prepared.defaults.flowLayouts && prepared.hasFlowLayouts,
+      });
+      setStep("modules");
+    } catch (cause) {
+      if (preparationRequest.current !== request) return;
+      setError(
+        bundleErrorMessage(cause, (key, options) =>
+          options === undefined ? t(key) : t(key, options),
+        ),
+      );
+    } finally {
+      if (preparationRequest.current === request) setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (initialRootRef !== "") void prepareExport();
+    return () => {
+      preparationRequest.current += 1;
+    };
+  }, []);
+
   const selected = roots.find((resource) => canonicalPragmaResourceRef(resource) === rootRef);
   const footer = (() => {
     if (step === "result") {
@@ -213,7 +255,7 @@ function BundleExportDialog(props: {
             className="primary-button"
             type="button"
             disabled={busy || rootRef === ""}
-            onClick={() => setStep("modules")}
+            onClick={() => void prepareExport()}
           >
             {t("bundleContinue")}
           </button>
@@ -226,7 +268,10 @@ function BundleExportDialog(props: {
           className="secondary-button"
           type="button"
           disabled={busy}
-          onClick={() => setStep("select")}
+          onClick={() => {
+            setPreview(null);
+            setStep("select");
+          }}
         >
           {t("bundleBack")}
         </button>
@@ -272,41 +317,56 @@ function BundleExportDialog(props: {
           </header>
           <fieldset className="pragma-bundle-modules">
             <legend id="bundle-modules-title">{t("bundleModules")}</legend>
-            {selected.kind !== "ContextStore" ? (
-              <>
-                <BundleToggle
-                  label={t("bundleCapabilities")}
-                  description={t("bundleCapabilitiesHint")}
-                  checked={modules.capabilities}
-                  onChange={(capabilities) => setModules({ ...modules, capabilities })}
-                />
-                <BundleToggle
-                  label={t("bundlePlugins")}
-                  description={t("bundlePluginsHint")}
-                  checked={modules.plugins}
-                  onChange={(plugins) => setModules({ ...modules, plugins })}
-                />
-              </>
-            ) : null}
+            <BundleToggle
+              label={t("bundleCapabilities")}
+              description={
+                preview?.capabilityCount === 0
+                  ? t("bundleModuleUnavailableHint")
+                  : t("bundleCapabilitiesHint")
+              }
+              checked={modules.capabilities}
+              disabled={preview === null || preview.capabilityCount === 0}
+              onChange={(capabilities) => setModules({ ...modules, capabilities })}
+            />
+            <BundleToggle
+              label={t("bundlePlugins")}
+              description={
+                preview?.pluginCount === 0
+                  ? t("bundleModuleUnavailableHint")
+                  : t("bundlePluginsHint")
+              }
+              checked={modules.plugins}
+              disabled={preview === null || preview.pluginCount === 0}
+              onChange={(plugins) => setModules({ ...modules, plugins })}
+            />
             <BundleToggle
               label={t("bundleKnowledgeBases")}
               description={t(
                 selected.kind === "ContextStore"
                   ? "bundleKnowledgeBaseRequiredHint"
-                  : "bundleKnowledgeBasesHint",
+                  : preview?.knowledgeBaseCount === 0
+                    ? "bundleModuleUnavailableHint"
+                    : "bundleKnowledgeBasesHint",
               )}
-              checked={selected.kind === "ContextStore" || modules.knowledgeBases}
-              disabled={selected.kind === "ContextStore"}
+              checked={modules.knowledgeBases}
+              disabled={
+                preview === null ||
+                selected.kind === "ContextStore" ||
+                preview.knowledgeBaseCount === 0
+              }
               onChange={(knowledgeBases) => setModules({ ...modules, knowledgeBases })}
             />
-            {selected.kind !== "ContextStore" ? (
-              <BundleToggle
-                label={t("bundleFlowLayouts")}
-                description={t("bundleFlowLayoutsHint")}
-                checked={modules.flowLayouts}
-                onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
-              />
-            ) : null}
+            <BundleToggle
+              label={t("bundleFlowLayouts")}
+              description={
+                preview?.hasFlowLayouts === false
+                  ? t("bundleModuleUnavailableHint")
+                  : t("bundleFlowLayoutsHint")
+              }
+              checked={modules.flowLayouts}
+              disabled={preview === null || !preview.hasFlowLayouts}
+              onChange={(flowLayouts) => setModules({ ...modules, flowLayouts })}
+            />
           </fieldset>
           <p className="pragma-bundle-safety">{t("bundleSafetyHint")}</p>
         </section>
@@ -1882,7 +1942,7 @@ function BundleToggle(props: {
   readonly onChange: (checked: boolean) => void;
 }) {
   return (
-    <label>
+    <label className={props.disabled ? "is-disabled" : undefined}>
       <span>
         <strong>{props.label}</strong>
         <small>{props.description}</small>

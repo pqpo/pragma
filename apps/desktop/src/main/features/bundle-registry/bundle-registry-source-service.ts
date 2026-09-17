@@ -11,8 +11,8 @@ import { withFileLock } from "@pragma/core";
 import { decodePragmaBundle, loadPragmaProject } from "@pragma/interpreter";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import {
-  DEFAULT_BUNDLE_SOURCE_CATEGORIES,
   addBundleSourceVersion,
+  defaultBundleSourceCategories,
   initializeBundleSource,
   validateBundleSourceDirectory,
 } from "@pragma/local-host";
@@ -650,6 +650,9 @@ export function createDesktopBundleRegistrySourceService(options: {
                 ? {}
                 : { homepage: input.metadata.homepage }),
               tags: input.metadata.tags,
+              ...(input.metadata.avatarId === undefined
+                ? {}
+                : { avatarId: input.metadata.avatarId }),
             });
             await validateBundleSourceDirectory(worktree);
             const identity = await readSystemGitIdentity();
@@ -978,11 +981,7 @@ export async function readSystemGitIdentity(): Promise<{
 }
 
 function defaultPublicationCategories(): BundleSourceCategory[] {
-  return DEFAULT_BUNDLE_SOURCE_CATEGORIES.map(([id, en, zhHans, zhHant], order) => ({
-    id,
-    name: { default: en, translations: { en, "zh-Hans": zhHans, "zh-Hant": zhHant } },
-    order: order * 10,
-  }));
+  return defaultBundleSourceCategories();
 }
 
 function publicationFailure(
