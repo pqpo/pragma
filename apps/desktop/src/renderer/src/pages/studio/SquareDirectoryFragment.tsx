@@ -263,7 +263,7 @@ export function SquareDirectoryFragment(props: {
         header={
           <header className="square-detail-navigation">
             <button
-              className="back-button"
+              className="back-link"
               type="button"
               onClick={() => {
                 inspectionRequest.current += 1;

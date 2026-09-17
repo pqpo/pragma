@@ -1221,8 +1221,8 @@ export function BundleFileStep(props: {
               <span className="pragma-bundle-verified">
                 <Check size={13} aria-hidden="true" /> {t("bundleVerified")}
               </span>
-              <strong title={props.inspection.sourceName}>{props.inspection.sourceName}</strong>
-              <p>{props.inspection.root.name}</p>
+              <strong title={props.inspection.root.name}>{props.inspection.root.name}</strong>
+              <p>{bundleRootLabel(props.inspection.root.kind, t)}</p>
             </div>
             <button className="secondary-button" type="button" onClick={props.onPick}>
               {t("bundleChooseAnother")}

@@ -291,7 +291,9 @@ describe("Bundle import inspection", () => {
     );
     expect(fileStepHtml).not.toContain("pragma-bundle-dropzone");
     expect(fileStepHtml).toContain("pragma-bundle-file-summary");
-    expect(fileStepHtml).toContain("portable-workflow.pragma");
+    expect(fileStepHtml).toContain("菜鸟 APP 查件业务专家");
+    expect(fileStepHtml).toContain("Expert");
+    expect(fileStepHtml).not.toContain("portable-workflow.pragma");
     expect(fileStepHtml).toContain("1 of 2 dependencies ready");
     expect(fileStepHtml).toContain("Knowledge base (name unavailable in legacy bundle)");
     expect(fileStepHtml).not.toContain("Context 26980318-cc35-4a16-95ae-fd8806492c4a");
