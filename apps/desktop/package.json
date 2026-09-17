@@ -38,6 +38,7 @@
     "@lobehub/icons-static-svg": "1.94.0",
     "@napi-rs/keyring": "1.3.0",
     "@phosphor-icons/react": "latest",
+    "@tanstack/react-virtual": "^3.13.18",
     "@pragma/core": "workspace:*",
     "@pragma/context-filesystem": "workspace:*",
     "@pragma/interpreter": "workspace:*",
