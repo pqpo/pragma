@@ -8,6 +8,8 @@ import {
   normalizePublicationTag,
   pendingPublicationTags,
   publicationItemIdForSelection,
+  publicationModuleDisabled,
+  publicationModuleKeys,
   publicationVersionsForSelection,
   validatePublicationFields,
 } from "./BundleSourcePublishDialog.tsx";
@@ -57,6 +59,56 @@ describe("Bundle Source publication selection", () => {
       error: { code: "duplicateTag" },
     });
     expect(pendingPublicationTags([], "")).toEqual({ tags: [] });
+    expect(
+      validatePublicationFields("1.0.0", {
+        itemId: "reviewer",
+        name: "Reviewer",
+        summary: "Reviews changes",
+        description: "Reviews changes.",
+        authorName: "Pragma",
+        license: "MIT",
+        tags: ["review", "review"],
+      }),
+    ).toMatchObject({ tags: { code: "duplicateTag" } });
+  });
+
+  it("keeps all module choices visible and disables unavailable or root-only content", () => {
+    const preparation = {
+      root: {
+        ref: "context-store:1234567890abcdef",
+        kind: "knowledge-base" as const,
+        name: "Handbook",
+        description: "Handbook",
+      },
+      projectRevision: 1,
+      modules: {
+        capabilities: false,
+        plugins: false,
+        knowledgeBases: false,
+        flowLayouts: false,
+      },
+      moduleCounts: { capabilities: 0, plugins: 1, knowledgeBases: 1, flowLayouts: 0 },
+      metadata: {
+        itemId: "handbook",
+        name: "Handbook",
+        summary: "Handbook",
+        description: "Handbook",
+        authorName: "Pragma",
+        license: "MIT",
+        tags: [],
+      },
+      sources: [],
+    };
+
+    expect(publicationModuleKeys()).toEqual([
+      "capabilities",
+      "plugins",
+      "knowledgeBases",
+      "flowLayouts",
+    ]);
+    expect(publicationModuleDisabled(preparation, "capabilities")).toBe(true);
+    expect(publicationModuleDisabled(preparation, "plugins")).toBe(false);
+    expect(publicationModuleDisabled(preparation, "knowledgeBases")).toBe(true);
   });
 
   it("derives a bounded summary from the first description paragraph", () => {

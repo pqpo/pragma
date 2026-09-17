@@ -7,6 +7,7 @@ import {
   BundleSourcePublicationPreparationSchema,
   BundleSourcePublicationResultSchema,
   bundleSourcePublicationSummary,
+  prepareBundleSourcePublicationTags,
   type BundleSourcePublicationPreparation,
   type BundleSourcePublicationResult,
   type PrepareBundleSourcePublication,
@@ -47,7 +48,12 @@ export function createBundleSourcePublishingService(options: {
           description: preview.root.description,
         },
         projectRevision: preview.projectRevision,
-        modules: preview.defaults,
+        modules: {
+          capabilities: preview.defaults.capabilities && preview.capabilityCount > 0,
+          plugins: preview.defaults.plugins && preview.pluginCount > 0,
+          knowledgeBases: false,
+          flowLayouts: preview.defaults.flowLayouts && preview.hasFlowLayouts,
+        },
         moduleCounts: {
           capabilities: preview.capabilityCount,
           plugins: preview.pluginCount,
@@ -63,7 +69,8 @@ export function createBundleSourcePublishingService(options: {
           ...(existing?.author.url === undefined ? {} : { authorUrl: existing.author.url }),
           license: existing?.license ?? "UNLICENSED",
           ...(existing?.homepage === undefined ? {} : { homepage: existing.homepage }),
-          tags: existing?.tags ?? [],
+          tags: prepareBundleSourcePublicationTags(preview.root.tags),
+          ...(preview.root.avatarId === undefined ? {} : { avatarId: preview.root.avatarId }),
         },
         sources,
       });

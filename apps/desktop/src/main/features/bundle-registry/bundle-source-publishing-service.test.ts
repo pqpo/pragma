@@ -22,6 +22,8 @@ describe("Bundle Source publishing", () => {
         kind: "Expert" as const,
         name: "Reviewer",
         description: "Reviews code changes.\n\nLonger implementation notes.",
+        tags: ["code-review", "typescript"],
+        avatarId: "pragma.avatar.expert.07",
       },
       projectRevision: 3,
       resourceCount: 2,
@@ -50,10 +52,17 @@ describe("Bundle Source publishing", () => {
     ).resolves.toMatchObject({
       root: { description: "Reviews code changes.\n\nLonger implementation notes." },
       moduleCounts: { capabilities: 2, plugins: 1, knowledgeBases: 0, flowLayouts: 0 },
+      modules: {
+        capabilities: true,
+        plugins: true,
+        knowledgeBases: false,
+        flowLayouts: false,
+      },
       metadata: {
         description: "Reviews code changes.\n\nLonger implementation notes.",
         summary: "Reviews code changes.",
-        tags: [],
+        tags: ["code-review", "typescript"],
+        avatarId: "pragma.avatar.expert.07",
       },
     });
   });
@@ -67,6 +76,8 @@ describe("Bundle Source publishing", () => {
         kind: "Expert" as const,
         name: "Reviewer",
         description: "Reviews code changes from the project resource.",
+        tags: ["review"],
+        avatarId: "pragma.avatar.expert.07",
       },
       projectRevision: 3,
       resourceCount: 1,
@@ -123,6 +134,7 @@ describe("Bundle Source publishing", () => {
         authorName: "Pragma Test",
         license: "MIT",
         tags: ["review"],
+        avatarId: "pragma.avatar.expert.07",
       },
       targets: [
         { sourceId: SOURCE_A, categoryId: "general", version: "1.0.0" },
@@ -132,6 +144,11 @@ describe("Bundle Source publishing", () => {
 
     expect(exportTo).toHaveBeenCalledTimes(1);
     expect(publishBundleToSource).toHaveBeenCalledTimes(2);
+    expect(publishBundleToSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ avatarId: "pragma.avatar.expert.07" }),
+      }),
+    );
     expect(result.results).toEqual([
       expect.objectContaining({ sourceId: SOURCE_A, status: "published" }),
       expect.objectContaining({ sourceId: SOURCE_B, status: "failed" }),

@@ -147,7 +147,9 @@ describe("Bundle export root search", () => {
 
     expect(html).toContain("Modules to include");
     expect(html).toContain("Knowledge base content");
-    expect(html).toContain("The current published snapshot is required for this export.");
+    expect(html).toContain(
+      "The root knowledge-base snapshot is always included and is not an attachment.",
+    );
     expect(html).toContain('class="is-active" aria-current="step"');
   });
 });

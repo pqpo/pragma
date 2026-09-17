@@ -466,6 +466,26 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
   });
 
+  it("prepares publication metadata and keeps attached knowledge disabled by default", async () => {
+    const fixture = await createFixture("publication-preview", {
+      avatarId: "pragma.avatar.expert.07",
+    });
+
+    await expect(
+      fixture.service.prepareExport({
+        rootRef: "expert:1xddvess309a6gme",
+        projectRevision: fixture.projectRevision,
+      }),
+    ).resolves.toMatchObject({
+      root: {
+        name: "Writer",
+        tags: [],
+        avatarId: "pragma.avatar.expert.07",
+      },
+      defaults: { knowledgeBases: false },
+    });
+  });
+
   it("exports a verifiable ZIP with a stable semantic fingerprint", async () => {
     const fixture = await createFixture("source");
     const firstPath = join(fixture.root, "first.pragma");

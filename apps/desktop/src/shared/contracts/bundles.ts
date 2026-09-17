@@ -3,6 +3,7 @@ import {
   PragmaContextStoreRefSchema,
   PragmaResourceRefSchema,
 } from "@pragma/interpreter/ast";
+import { PRAGMA_TEXT_LIMITS, PragmaAvatarIdSchema } from "@pragma/shared";
 import { z } from "zod";
 
 export const PragmaBundleModuleOptionsSchema = z
@@ -29,6 +30,10 @@ export const PragmaBundleExportPreviewSchema = z
         kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
         name: z.string().trim().min(1).max(200),
         description: z.string().trim().min(1).max(8_000),
+        tags: z
+          .array(z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.tag))
+          .max(PRAGMA_TEXT_LIMITS.defaultMetadata.tags),
+        avatarId: PragmaAvatarIdSchema.optional(),
       })
       .strict(),
     projectRevision: z.number().int().positive(),
