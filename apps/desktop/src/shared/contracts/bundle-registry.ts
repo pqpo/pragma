@@ -8,6 +8,7 @@ import {
   BundleSourceSlugSchema,
 } from "@pragma/shared";
 import { z } from "zod";
+import { PragmaBundleModuleOptionsSchema } from "./bundles.ts";
 
 export const DesktopBundleRegistryRemoteSchema = z
   .string()
@@ -31,19 +32,29 @@ export const DesktopBundleRegistryRemoteSchema = z
     }
   }, "Git credentials must not be embedded in a Bundle Source URL.");
 
-export const DesktopBundleRegistryRefSchema = z
+export const DesktopBundleRegistryBranchSchema = z
   .string()
   .trim()
   .min(1)
   .max(300)
-  .refine((value) => !value.startsWith("-"), "A Git ref cannot start with a dash.");
+  .refine(
+    (value) =>
+      !value.startsWith("-") &&
+      !value.startsWith("/") &&
+      !value.endsWith("/") &&
+      !value.endsWith(".") &&
+      !value.includes("..") &&
+      !value.includes("@{") &&
+      !/[\s~^:?*[\\]/u.test(value),
+    "Expected a valid Git branch name.",
+  );
 
 export const DesktopBundleRegistrySourceSchema = z
   .object({
     id: z.string().uuid(),
     name: z.string().trim().min(1).max(200),
     remote: DesktopBundleRegistryRemoteSchema,
-    ref: DesktopBundleRegistryRefSchema.optional(),
+    branch: DesktopBundleRegistryBranchSchema.optional(),
     enabled: z.boolean(),
     official: z.boolean(),
     order: z.number().int().nonnegative(),
@@ -52,7 +63,7 @@ export const DesktopBundleRegistrySourceSchema = z
 
 export const DesktopBundleRegistrySourcesSchema = z
   .object({
-    schemaVersion: z.literal("pragma.desktop-bundle-registry-sources/v1"),
+    schemaVersion: z.literal("pragma.desktop-bundle-registry-sources/v2"),
     sources: z.array(DesktopBundleRegistrySourceSchema).max(100),
     dismissedOfficialSourceIds: z.array(z.string().uuid()).max(100).optional(),
   })
@@ -66,6 +77,7 @@ export const DesktopBundleRegistrySourceStatusSchema = DesktopBundleRegistrySour
     .optional(),
   syncedAt: z.string().datetime().optional(),
   itemCount: z.number().int().nonnegative().optional(),
+  resolvedBranch: DesktopBundleRegistryBranchSchema.optional(),
   errorCode: z.string().trim().min(1).max(100).optional(),
   errorMessage: z.string().trim().min(1).max(2_000).optional(),
 });
@@ -74,7 +86,7 @@ export const AddDesktopBundleRegistrySourceSchema = z
   .object({
     name: z.string().trim().min(1).max(200),
     remote: DesktopBundleRegistryRemoteSchema,
-    ref: DesktopBundleRegistryRefSchema.optional(),
+    branch: DesktopBundleRegistryBranchSchema.optional(),
   })
   .strict();
 
@@ -83,7 +95,7 @@ export const UpdateDesktopBundleRegistrySourceSchema = z
     sourceId: z.string().uuid(),
     name: z.string().trim().min(1).max(200).optional(),
     remote: DesktopBundleRegistryRemoteSchema.optional(),
-    ref: DesktopBundleRegistryRefSchema.nullable().optional(),
+    branch: DesktopBundleRegistryBranchSchema.nullable().optional(),
     enabled: z.boolean().optional(),
     order: z.number().int().nonnegative().optional(),
   })
@@ -167,3 +179,108 @@ export const DesktopBundleRegistrySnapshotSchema = z.union([
     })
     .strict(),
 ]);
+
+export const PrepareBundleSourcePublicationSchema = z
+  .object({
+    rootRef: BundleSourceRootRefSchema,
+    projectRevision: z.number().int().positive(),
+  })
+  .strict();
+
+export const BundleSourcePublicationMetadataSchema = z
+  .object({
+    itemId: BundleSourceSlugSchema,
+    name: z.string().trim().min(1).max(200),
+    summary: z.string().trim().min(1).max(500),
+    description: z.string().trim().min(1).max(8_000),
+    authorName: z.string().trim().min(1).max(200),
+    authorUrl: z.string().url().max(2_000).optional(),
+    license: z.string().trim().min(1).max(100),
+    homepage: z.string().url().max(2_000).optional(),
+    tags: z.array(BundleSourceSlugSchema).max(30),
+  })
+  .strict();
+
+export const BundleSourcePublicationTargetSchema = z
+  .object({
+    sourceId: z.string().uuid(),
+    categoryId: BundleSourceSlugSchema,
+    version: BundleSourceSemverSchema,
+  })
+  .strict();
+
+export const BundleSourcePublicationSourceSchema = z
+  .object({
+    source: DesktopBundleRegistrySourceStatusSchema,
+    selectable: z.boolean(),
+    unavailableReason: z.string().trim().min(1).max(2_000).optional(),
+    categories: z.array(BundleSourceCategorySchema),
+    existingItem: BundleSourceItemSummarySchema.optional(),
+  })
+  .strict();
+
+export const BundleSourcePublicationPreparationSchema = z
+  .object({
+    root: z
+      .object({
+        ref: BundleSourceRootRefSchema,
+        kind: BundleSourceKindSchema,
+        name: z.string().trim().min(1).max(200),
+      })
+      .strict(),
+    projectRevision: z.number().int().positive(),
+    modules: PragmaBundleModuleOptionsSchema,
+    metadata: BundleSourcePublicationMetadataSchema,
+    sources: z.array(BundleSourcePublicationSourceSchema),
+  })
+  .strict();
+
+export const PublishBundleSourceSchema = PrepareBundleSourcePublicationSchema.extend({
+  modules: PragmaBundleModuleOptionsSchema,
+  metadata: BundleSourcePublicationMetadataSchema,
+  targets: z.array(BundleSourcePublicationTargetSchema).min(1).max(100),
+})
+  .strict()
+  .superRefine((value, context) => {
+    const sourceIds = new Set<string>();
+    const version = value.targets[0]?.version;
+    for (const [index, target] of value.targets.entries()) {
+      if (sourceIds.has(target.sourceId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["targets", index, "sourceId"],
+          message: "A Bundle Source can only appear once in a publication.",
+        });
+      }
+      sourceIds.add(target.sourceId);
+      if (target.version !== version) {
+        context.addIssue({
+          code: "custom",
+          path: ["targets", index, "version"],
+          message: "All publication targets must use the same version.",
+        });
+      }
+    }
+  });
+
+export const BundleSourcePublicationTargetResultSchema = z
+  .object({
+    sourceId: z.string().uuid(),
+    sourceName: z.string().trim().min(1).max(200),
+    status: z.enum(["published", "already_published", "failed"]),
+    version: BundleSourceSemverSchema,
+    commit: z
+      .string()
+      .regex(/^[a-f0-9]{40,64}$/)
+      .optional(),
+    errorCode: z.string().trim().min(1).max(100).optional(),
+    errorMessage: z.string().trim().min(1).max(2_000).optional(),
+  })
+  .strict();
+
+export const BundleSourcePublicationResultSchema = z
+  .object({
+    bundleFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    results: z.array(BundleSourcePublicationTargetResultSchema).min(1),
+  })
+  .strict();

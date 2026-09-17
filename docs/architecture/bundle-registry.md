@@ -95,8 +95,13 @@ Desktop 对每个启用源执行 shallow fetch + partial clone，锁定 `FETCH_H
 `git ls-tree` 校验文件模式和路径，只读取 `pragma-source.yaml` 与 `config.yaml` blob；不会读取
 `.pragma`。成功后保存包含 manifest 和 items 的可重建快照。新 commit 无效时保留上一快照并标记
 stale。空 Git 仓库也可以配置为 Source，并以零条目的可用状态展示；仓库产生首次提交后，后续刷新会
-按正常 Source 协议发现内容。修改已有 Source 的远端或 ref 时，Desktop 先在隔离缓存中验证新配置，
+按正常 Source 协议发现内容。Source 只允许配置可选分支，不接受 tag；未填写时解析远端默认分支，空仓库
+使用 `main`；远端 `HEAD` 不可解析但只有一个分支时使用该唯一分支。修改已有 Source 的远端或分支时，Desktop 先在隔离缓存中验证新配置，
 验证成功后才替换现有配置和快照。
+
+本机 Source 配置当前为 `pragma.desktop-bundle-registry-sources/v2`。旧 v1 的 `ref` 会在首次读取时通过
+文件锁、稳定 journal、备份和原子替换迁移成 `branch`；如果旧值实际是 tag，后续同步会明确报告分支
+不存在，不会继续把 tag 当作可写目标。
 
 Desktop 默认提供名称为“官方源”的 `git@github.com:pqpo/awesome-pragma.git`。它与用户添加的 Source
 一样可以删除；删除决定持久化到本机配置，后续启动不会自动恢复。所有 Source 删除都必须经用户确认。
@@ -104,6 +109,17 @@ Desktop 默认提供名称为“官方源”的 `git@github.com:pqpo/awesome-pra
 用户选择版本后，Desktop 才从该固定 commit 流式读取 `bundle.pragma`，实施大小限制，并由 Bundle
 decoder 校验内部文件哈希、fingerprint 和协议。随后核对 config 的 rootRef 与根资源类型，再把缓存
 文件交给导入向导。
+
+## Desktop 发布
+
+项目中的专家、专家团、流程和知识库可以直接“发布到源”。一个目标源时自动选中；多个目标源时由用户
+单选或多选。条目元数据、Bundle 模块和版本在目标间共享，分类按源选择；已有条目固定沿用原条目 ID 和
+分类。版本默认建议为已选源现有版本中的下一 patch，用户可以修改。
+
+Desktop 只生成一次 Bundle，然后为每个 Source 建立隔离临时工作树，在 Source 级文件锁内校验、写入、
+生成 commit 并执行普通非 force push。系统 Git 继承用户的 SSH agent/credential helper，commit 使用
+全局 `user.name` 和 `user.email`。每次最多并发三个 Source；成功、幂等和失败逐源展示，部分成功保留，
+重试只处理失败源。空仓库首次发布会创建 v2 manifest 和默认分类。成功后立即刷新对应 Source 快照。
 
 ## v1 Registry 迁移
 

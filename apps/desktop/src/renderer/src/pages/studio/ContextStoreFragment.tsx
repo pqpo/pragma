@@ -491,6 +491,7 @@ export function ContextStoreDetailFragment(props: {
   readonly onBack: () => void;
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly onExport?: (() => Promise<void>) | undefined;
+  readonly onPublish?: (() => Promise<void>) | undefined;
   readonly onSubmitRevision?: ((prompt: string) => Promise<void>) | undefined;
   readonly onRevisionSubmitted?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
@@ -1208,6 +1209,20 @@ export function ContextStoreDetailFragment(props: {
                   setError(null);
                   void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
                 }}
+              />
+            ) : null}
+            {props.onPublish !== undefined ? (
+              <KnowledgeBaseActionButton
+                label={t("publishToSource")}
+                icon={<UploadSimple size={18} aria-hidden="true" />}
+                onClick={() =>
+                  requestLeave(() => {
+                    setError(null);
+                    void props.onPublish!().catch((cause: unknown) =>
+                      setError(errorMessage(cause)),
+                    );
+                  })
+                }
               />
             ) : null}
             <KnowledgeBaseActionButton

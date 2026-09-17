@@ -21,19 +21,18 @@ export const settings = {
   bundleSources: {
     navigation: "Bundle Sources",
     title: "Bundle Sources",
-    description:
-      "Add Git repositories that follow the Pragma Bundle Source format. ",
+    description: "Add Git repositories that follow the Pragma Bundle Source format. ",
     name: "Source name",
     remote: "Git remote",
-    ref: "Branch or tag (optional)",
-    refPlaceholder: "Default branch",
+    branch: "Branch (optional)",
+    branchPlaceholder: "Remote default branch",
     add: "Add source",
     addTitle: "Add Bundle source",
     addDescription: "Enter a Git repository that follows the Pragma Bundle Source format.",
     edit: "Edit {{name}}",
     editTitle: "Edit Bundle source",
     editDescription:
-      "Change the source name, Git remote, or ref. The new settings are validated before saving.",
+      "Change the source name, Git remote, or branch. The new settings are validated before saving.",
     save: "Save",
     saving: "Validating and saving…",
     cancel: "Cancel",

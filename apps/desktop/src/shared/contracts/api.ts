@@ -176,6 +176,10 @@ import type {
   DesktopSquareItemDetail,
   DownloadDesktopSquareBundle,
   DesktopSquareBundleDownload,
+  PrepareBundleSourcePublication,
+  BundleSourcePublicationPreparation,
+  PublishBundleSource,
+  BundleSourcePublicationResult,
   DesktopGlobalMemoryPolicySnapshot,
   DesktopAssetMemoryPolicySnapshot,
   UpdateDesktopGlobalMemoryPolicy,
@@ -521,6 +525,10 @@ export interface PragmaDesktopAPI {
   downloadSquareBundle: (
     input: DownloadDesktopSquareBundle,
   ) => Promise<DesktopSquareBundleDownload>;
+  prepareBundleSourcePublication: (
+    input: PrepareBundleSourcePublication,
+  ) => Promise<BundleSourcePublicationPreparation>;
+  publishBundleSource: (input: PublishBundleSource) => Promise<BundleSourcePublicationResult>;
   listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
   listAutomations: () => Promise<AutomationSummary[]>;
   saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;

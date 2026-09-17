@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -10,6 +10,12 @@ import { promisify } from "node:util";
 import { withFileLock } from "@pragma/core";
 import { decodePragmaBundle, loadPragmaProject } from "@pragma/interpreter";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
+import {
+  DEFAULT_BUNDLE_SOURCE_CATEGORIES,
+  addBundleSourceVersion,
+  initializeBundleSource,
+  validateBundleSourceDirectory,
+} from "@pragma/local-host";
 import {
   BUNDLE_SOURCE_KIND_DIRECTORIES,
   BundleSourceItemSummarySchema,
@@ -20,6 +26,7 @@ import {
   parseBundleSourceManifest,
   parseBundleSourceRepositoryEntry,
   type BundleSourceItemSummary,
+  type BundleSourceCategory,
   type BundleSourceKind,
 } from "@pragma/shared";
 import { parse } from "yaml";
@@ -35,13 +42,18 @@ import {
   type DownloadDesktopSquareBundle,
   type GetDesktopSquareItem,
   type UpdateDesktopBundleRegistrySource,
+  type BundleSourcePublicationPreparation,
+  type BundleSourcePublicationResult,
+  type PublishBundleSource,
 } from "../../../shared/contracts/index.ts";
+import { readMigratedBundleRegistrySources } from "./bundle-registry-source-migrations.ts";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
 const CONFIG_BLOB_LIMIT = 2 * 1024 * 1024;
 const CONFIG_BATCH_LIMIT = 64 * 1024 * 1024;
 const LS_TREE_LIMIT = 32 * 1024 * 1024;
+const IPC_ERROR_MESSAGE_LIMIT = 2_000;
 
 type StoredSources = ReturnType<typeof DesktopBundleRegistrySourcesSchema.parse>;
 type StoredSource = StoredSources["sources"][number];
@@ -66,13 +78,25 @@ export interface DesktopBundleRegistrySourceService {
   getCatalog(): Promise<DesktopSquareCatalog>;
   getItem(input: GetDesktopSquareItem): Promise<DesktopSquareItemDetail>;
   downloadBundle(input: DownloadDesktopSquareBundle): Promise<DesktopSquareBundleDownload>;
+  preparePublicationSources(
+    kind: BundleSourceKind,
+    rootRef: string,
+  ): Promise<BundleSourcePublicationPreparation["sources"]>;
+  publishBundleToSource(input: {
+    readonly bundlePath: string;
+    readonly bundleFingerprint: string;
+    readonly rootRef: string;
+    readonly kind: BundleSourceKind;
+    readonly metadata: PublishBundleSource["metadata"];
+    readonly target: PublishBundleSource["targets"][number];
+  }): Promise<BundleSourcePublicationResult["results"][number]>;
 }
 
 export function createDesktopBundleRegistrySourceService(options: {
   readonly sourcesPath: string;
   readonly cacheRoot: string;
   readonly officialSource?:
-    | { readonly name: string; readonly remote: string; readonly ref?: string | undefined }
+    | { readonly name: string; readonly remote: string; readonly branch?: string | undefined }
     | undefined;
 }): DesktopBundleRegistrySourceService {
   const lockPath = `${options.sourcesPath}.lock`;
@@ -84,14 +108,12 @@ export function createDesktopBundleRegistrySourceService(options: {
 
   const readSources = async (): Promise<StoredSources> => {
     try {
-      const parsed = DesktopBundleRegistrySourcesSchema.parse(
-        JSON.parse(await readFile(options.sourcesPath, "utf8")),
-      );
+      const parsed = await readMigratedBundleRegistrySources(options.sourcesPath, lockPath);
       return withOfficialSource(parsed, options.officialSource);
     } catch (error) {
       if (isNodeError(error, "ENOENT")) {
         return withOfficialSource(
-          { schemaVersion: "pragma.desktop-bundle-registry-sources/v1", sources: [] },
+          { schemaVersion: "pragma.desktop-bundle-registry-sources/v2", sources: [] },
           options.officialSource,
         );
       }
@@ -101,7 +123,7 @@ export function createDesktopBundleRegistrySourceService(options: {
 
   const writeSources = async (sources: StoredSources): Promise<void> => {
     await writeJsonAtomically(options.sourcesPath, {
-      schemaVersion: "pragma.desktop-bundle-registry-sources/v1",
+      schemaVersion: "pragma.desktop-bundle-registry-sources/v2",
       sources: sources.sources,
       dismissedOfficialSourceIds: sources.dismissedOfficialSourceIds ?? [],
     });
@@ -140,20 +162,8 @@ export function createDesktopBundleRegistrySourceService(options: {
     try {
       const repositoryPath = join(repositoriesRoot, source.id);
       await ensureRepository(repositoryPath, source.remote);
-      try {
-        await runGit(repositoryPath, [
-          "fetch",
-          "--force",
-          "--prune",
-          "--depth=1",
-          "--filter=blob:none",
-          "origin",
-          source.ref ?? "HEAD",
-        ]);
-      } catch (error) {
-        if (!isMissingRemoteRef(error)) throw error;
-        const advertisedRefs = await runGit(repositoryPath, ["ls-remote", "origin"]);
-        if (advertisedRefs.trim() !== "") throw error;
+      const resolved = await resolveRemoteBranch(repositoryPath, source.branch);
+      if (resolved.empty) {
         const snapshot = DesktopBundleRegistrySnapshotSchema.parse({
           schemaVersion: "pragma.desktop-bundle-source-snapshot/v3",
           empty: true,
@@ -164,12 +174,22 @@ export function createDesktopBundleRegistrySourceService(options: {
         const status: DesktopBundleRegistrySourceStatus = {
           ...source,
           status: "ready",
+          resolvedBranch: resolved.branch,
           syncedAt: snapshot.syncedAt,
           itemCount: 0,
         };
         transientStatuses.set(source.id, status);
         return status;
       }
+      await runGit(repositoryPath, [
+        "fetch",
+        "--force",
+        "--prune",
+        "--depth=1",
+        "--filter=blob:none",
+        "origin",
+        `refs/heads/${resolved.branch}`,
+      ]);
       const commit = (await runGit(repositoryPath, ["rev-parse", "FETCH_HEAD"])).trim();
       const manifest = parseBundleSourceManifest(
         parse(await readGitBlob(repositoryPath, commit, "pragma-source.yaml", CONFIG_BLOB_LIMIT)),
@@ -199,6 +219,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       const status: DesktopBundleRegistrySourceStatus = {
         ...source,
         status: "ready",
+        resolvedBranch: resolved.branch,
         commit,
         syncedAt: snapshot.syncedAt,
         itemCount: items.length,
@@ -217,7 +238,7 @@ export function createDesktopBundleRegistrySourceService(options: {
               itemCount: previous.items.length,
             }),
         errorCode: sourceErrorCode(error),
-        errorMessage: error instanceof Error ? error.message : "Bundle Source sync failed.",
+        errorMessage: boundedErrorMessage(error, "Bundle Source sync failed."),
       };
       transientStatuses.set(source.id, status);
       return status;
@@ -251,7 +272,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         id: randomUUID(),
         name: input.name,
         remote: input.remote,
-        ...(input.ref === undefined ? {} : { ref: input.ref }),
+        ...(input.branch === undefined ? {} : { branch: input.branch }),
         enabled: true,
         official: false,
         order: current.sources.filter((candidate) => !candidate.official).length,
@@ -289,7 +310,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       if (source === undefined) throw new Error("Bundle Source was not found.");
       if (
         source.official &&
-        (input.name !== undefined || input.remote !== undefined || input.ref !== undefined)
+        (input.name !== undefined || input.remote !== undefined || input.branch !== undefined)
       ) {
         throw new Error("The official Bundle Source configuration cannot be edited.");
       }
@@ -299,16 +320,16 @@ export function createDesktopBundleRegistrySourceService(options: {
         remote: input.remote ?? source.remote,
         enabled: input.enabled ?? source.enabled,
         order: input.order ?? source.order,
-        ...(input.ref === null
-          ? { ref: undefined }
-          : input.ref === undefined
+        ...(input.branch === null
+          ? { branch: undefined }
+          : input.branch === undefined
             ? {}
-            : { ref: input.ref }),
+            : { branch: input.branch }),
       };
       assertRemoteIsUnique(current.sources, updated.remote, updated.id);
       const sourceLocationChanged =
         canonicalRemote(updated.remote) !== canonicalRemote(source.remote) ||
-        updated.ref !== source.ref;
+        updated.branch !== source.branch;
 
       if (!sourceLocationChanged) {
         await withFileLock(lockPath, async () => {
@@ -360,6 +381,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       }
     },
     async removeSource(sourceId) {
+      await readSources();
       await withFileLock(lockPath, async () => {
         const current = await readSources();
         const source = current.sources.find((candidate) => candidate.id === sourceId);
@@ -490,6 +512,191 @@ export function createDesktopBundleRegistrySourceService(options: {
       } catch (error) {
         await rm(temporary, { force: true });
         throw error;
+      }
+    },
+    async preparePublicationSources(kind, rootRef) {
+      const sources = sourcePriorityOrder((await readSources()).sources);
+      return await Promise.all(
+        sources.map(async (source) => {
+          const status = await statusFor(source);
+          const snapshot = await readSnapshot(source.id);
+          const categories =
+            snapshot === undefined || isEmptySnapshot(snapshot)
+              ? defaultPublicationCategories()
+              : snapshot.manifest.sections[kind].categories;
+          const existingItem = snapshot?.items.find(
+            (item) => item.kind === kind && item.rootRef === rootRef,
+          );
+          const selectable = source.enabled && status.status !== "error";
+          return {
+            source: status,
+            selectable,
+            ...(selectable
+              ? {}
+              : {
+                  unavailableReason: source.enabled
+                    ? (status.errorMessage ?? "Bundle Source is unavailable.")
+                    : "Bundle Source is disabled.",
+                }),
+            categories,
+            ...(existingItem === undefined ? {} : { existingItem }),
+          };
+        }),
+      );
+    },
+    async publishBundleToSource(input) {
+      const source = (await readSources()).sources.find(
+        (candidate) => candidate.id === input.target.sourceId,
+      );
+      const sourceName = source?.name ?? input.target.sourceId;
+      if (source === undefined || !source.enabled) {
+        return publicationFailure(
+          input.target.sourceId,
+          sourceName,
+          input.target.version,
+          "source_unavailable",
+          source === undefined ? "Bundle Source was not found." : "Bundle Source is disabled.",
+        );
+      }
+      const configuredItem = (await readSnapshot(source.id))?.items.find(
+        (item) => item.kind === input.kind && item.rootRef === input.rootRef,
+      );
+      if (
+        configuredItem !== undefined &&
+        (configuredItem.id !== input.metadata.itemId ||
+          configuredItem.categoryId !== input.target.categoryId)
+      ) {
+        return publicationFailure(
+          source.id,
+          source.name,
+          input.target.version,
+          "source_item_identity_conflict",
+          `Existing item ${configuredItem.id} must keep its item id and category ${configuredItem.categoryId}.`,
+        );
+      }
+      const publicationLock = join(options.cacheRoot, "publication-locks", `${source.id}.lock`);
+      try {
+        return await withFileLock(publicationLock, async () => {
+          const repositoryPath = join(repositoriesRoot, source.id);
+          await ensureRepository(repositoryPath, source.remote);
+          const resolved = await resolveRemoteBranch(repositoryPath, source.branch);
+          const temporaryRoot = join(options.cacheRoot, "publications");
+          await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
+          const worktree = await mkdtemp(join(temporaryRoot, `${source.id}-`));
+          try {
+            await runGit(worktree, ["init"]);
+            await runGit(worktree, ["remote", "add", "origin", source.remote]);
+            if (resolved.empty) {
+              await runGit(worktree, ["symbolic-ref", "HEAD", `refs/heads/${resolved.branch}`]);
+              await initializeBundleSource({
+                directory: worktree,
+                id: `source-${source.id}`,
+                name: source.name,
+              });
+            } else {
+              await runGit(worktree, [
+                "fetch",
+                "--depth=1",
+                "origin",
+                `refs/heads/${resolved.branch}`,
+              ]);
+              await runGit(worktree, ["checkout", "-B", resolved.branch, "FETCH_HEAD"]);
+              await validateBundleSourceDirectory(worktree);
+            }
+
+            const bundleRelativePath = `${bundleSourceItemDirectory({
+              kind: input.kind,
+              categoryId: input.target.categoryId,
+              itemId: input.metadata.itemId,
+            })}/versions/${input.target.version}/bundle.pragma`;
+            const existingBundlePath = join(worktree, ...bundleRelativePath.split("/"));
+            try {
+              await stat(existingBundlePath);
+              if ((await readBundleFingerprint(existingBundlePath)) === input.bundleFingerprint) {
+                return {
+                  sourceId: source.id,
+                  sourceName: source.name,
+                  status: "already_published" as const,
+                  version: input.target.version,
+                  ...(!resolved.empty
+                    ? { commit: (await runGit(worktree, ["rev-parse", "FETCH_HEAD"])).trim() }
+                    : {}),
+                };
+              }
+              throw new Error(
+                `Bundle Source version already exists with different content: ${input.metadata.itemId}@${input.target.version}`,
+              );
+            } catch (error) {
+              if (!isNodeError(error, "ENOENT")) throw error;
+            }
+
+            await addBundleSourceVersion({
+              directory: worktree,
+              bundlePath: input.bundlePath,
+              kind: input.kind,
+              categoryId: input.target.categoryId,
+              itemId: input.metadata.itemId,
+              rootRef: input.rootRef,
+              version: input.target.version,
+              name: input.metadata.name,
+              summary: input.metadata.summary,
+              description: input.metadata.description,
+              authorName: input.metadata.authorName,
+              ...(input.metadata.authorUrl === undefined
+                ? {}
+                : { authorUrl: input.metadata.authorUrl }),
+              license: input.metadata.license,
+              ...(input.metadata.homepage === undefined
+                ? {}
+                : { homepage: input.metadata.homepage }),
+              tags: input.metadata.tags,
+            });
+            await validateBundleSourceDirectory(worktree);
+            const identity = await readSystemGitIdentity();
+            await runGit(worktree, ["add", "--all"]);
+            const tree = (await runGit(worktree, ["write-tree"])).trim();
+            const parent = resolved.empty
+              ? undefined
+              : (await runGit(worktree, ["rev-parse", "FETCH_HEAD"])).trim();
+            const commit = (
+              await runGit(
+                worktree,
+                [
+                  "commit-tree",
+                  tree,
+                  ...(parent === undefined ? [] : ["-p", parent]),
+                  "-m",
+                  `Publish ${input.kind}:${input.metadata.itemId}@${input.target.version}`,
+                ],
+                {
+                  GIT_AUTHOR_NAME: identity.name,
+                  GIT_AUTHOR_EMAIL: identity.email,
+                  GIT_COMMITTER_NAME: identity.name,
+                  GIT_COMMITTER_EMAIL: identity.email,
+                },
+              )
+            ).trim();
+            await runGit(worktree, ["push", "origin", `${commit}:refs/heads/${resolved.branch}`]);
+            await refresh(source);
+            return {
+              sourceId: source.id,
+              sourceName: source.name,
+              status: "published" as const,
+              version: input.target.version,
+              commit,
+            };
+          } finally {
+            await rm(worktree, { recursive: true, force: true });
+          }
+        });
+      } catch (error) {
+        return publicationFailure(
+          source.id,
+          source.name,
+          input.target.version,
+          publicationErrorCode(error),
+          error instanceof Error ? error.message : "Bundle Source publication failed.",
+        );
       }
     },
   };
@@ -640,7 +847,7 @@ function sourcePriorityOrder(sources: readonly StoredSource[]): StoredSource[] {
 function withOfficialSource(
   sources: StoredSources,
   official:
-    | { readonly name: string; readonly remote: string; readonly ref?: string | undefined }
+    | { readonly name: string; readonly remote: string; readonly branch?: string | undefined }
     | undefined,
 ): StoredSources {
   if (official === undefined) {
@@ -664,7 +871,7 @@ function withOfficialSource(
     id,
     name: official.name,
     remote: official.remote,
-    ...(official.ref === undefined ? {} : { ref: official.ref }),
+    ...(official.branch === undefined ? {} : { branch: official.branch }),
     enabled: storedOfficial?.enabled ?? true,
     official: true,
     order: 0,
@@ -705,21 +912,114 @@ async function ensureRepository(path: string, remote: string): Promise<void> {
   await rename(temporary, path);
 }
 
+async function resolveRemoteBranch(
+  repositoryPath: string,
+  configuredBranch: string | undefined,
+): Promise<{ readonly branch: string; readonly empty: boolean }> {
+  const advertised = await runGit(repositoryPath, ["ls-remote", "origin"]);
+  if (advertised.trim() === "") {
+    return { branch: configuredBranch ?? "main", empty: true };
+  }
+  if (configuredBranch !== undefined) {
+    const expected = `refs/heads/${configuredBranch}`;
+    const exists = advertised.split("\n").some((line) => line.trim().endsWith(`\t${expected}`));
+    if (!exists) {
+      throw new Error(`Configured Bundle Source branch was not found: ${configuredBranch}`);
+    }
+    return { branch: configuredBranch, empty: false };
+  }
+  const symref = await runGit(repositoryPath, ["ls-remote", "--symref", "origin", "HEAD"]);
+  const match = /^ref: refs\/heads\/(.+)\tHEAD$/mu.exec(symref);
+  if (match?.[1] !== undefined) return { branch: match[1], empty: false };
+
+  const branches = advertised.split("\n").flatMap((line) => {
+    const branch = /^[a-f0-9]+\trefs\/heads\/(.+)$/u.exec(line.trim())?.[1];
+    return branch === undefined ? [] : [branch];
+  });
+  if (branches.length === 1) return { branch: branches[0]!, empty: false };
+  throw new Error(
+    "Bundle Source remote HEAD does not resolve to a branch. Configure a branch explicitly.",
+  );
+}
+
 async function runGit(
   repositoryPath: string | undefined,
   args: readonly string[],
+  extraEnvironment: NodeJS.ProcessEnv = {},
 ): Promise<string> {
   const completeArgs = repositoryPath === undefined ? [...args] : ["-C", repositoryPath, ...args];
   const { stdout } = await execFileAsync("git", completeArgs, {
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: LS_TREE_LIMIT,
     env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+      ...gitEnvironment(),
+      ...extraEnvironment,
     },
   });
   return stdout;
+}
+
+export async function readSystemGitIdentity(): Promise<{
+  readonly name: string;
+  readonly email: string;
+}> {
+  try {
+    const [name, email] = await Promise.all([
+      runGit(undefined, ["config", "--global", "--get", "user.name"]),
+      runGit(undefined, ["config", "--global", "--get", "user.email"]),
+    ]);
+    if (name.trim() === "" || email.trim() === "") throw new Error("missing");
+    return { name: name.trim(), email: email.trim() };
+  } catch (error) {
+    throw new Error("Git user.name and user.email must be configured globally before publishing.", {
+      cause: error,
+    });
+  }
+}
+
+function defaultPublicationCategories(): BundleSourceCategory[] {
+  return DEFAULT_BUNDLE_SOURCE_CATEGORIES.map(([id, en, zhHans, zhHant], order) => ({
+    id,
+    name: { default: en, translations: { en, "zh-Hans": zhHans, "zh-Hant": zhHant } },
+    order: order * 10,
+  }));
+}
+
+function publicationFailure(
+  sourceId: string,
+  sourceName: string,
+  version: string,
+  errorCode: string,
+  errorMessage: string,
+): BundleSourcePublicationResult["results"][number] {
+  return {
+    sourceId,
+    sourceName,
+    status: "failed",
+    version,
+    errorCode,
+    errorMessage: truncateErrorMessage(errorMessage),
+  };
+}
+
+function boundedErrorMessage(error: unknown, fallback: string): string {
+  return truncateErrorMessage(error instanceof Error ? error.message : fallback);
+}
+
+function truncateErrorMessage(message: string): string {
+  return message.length <= IPC_ERROR_MESSAGE_LIMIT
+    ? message
+    : `${message.slice(0, IPC_ERROR_MESSAGE_LIMIT - 1)}…`;
+}
+
+function publicationErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("different content")) return "source_version_conflict";
+  if (message.includes("user.name") || message.includes("user.email"))
+    return "git_identity_missing";
+  if (message.includes("non-fast-forward") || message.includes("fetch first"))
+    return "source_push_conflict";
+  return sourceErrorCode(error).replace("sync", "publication");
 }
 
 async function readGitTree(repositoryPath: string, commit: string): Promise<GitTreeEntry[]> {
@@ -944,6 +1244,11 @@ async function hashFile(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+async function readBundleFingerprint(path: string): Promise<string> {
+  const decoded = await decodePragmaBundle({ kind: "file", path });
+  return decoded.manifest.bundleFingerprint;
+}
+
 async function writeJsonAtomically(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -957,13 +1262,11 @@ function sourceErrorCode(error: unknown): string {
   if (message.includes("not found") && message.includes("git")) return "git_unavailable";
   if (message.includes("authentication") || message.includes("permission denied"))
     return "git_auth_failed";
+  if (message.includes("branch was not found") || message.includes("head does not resolve"))
+    return "source_branch_not_found";
   if (message.includes("schema") || message.includes("parse") || message.includes("source"))
     return "source_protocol_invalid";
   return "source_sync_failed";
-}
-
-function isMissingRemoteRef(error: unknown): boolean {
-  return error instanceof Error && error.message.toLowerCase().includes("couldn't find remote ref");
 }
 
 function isNodeError(error: unknown, code: string): boolean {

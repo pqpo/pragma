@@ -13,7 +13,7 @@ export function BundleRegistrySourcesFragment() {
   const [sources, setSources] = useState<readonly DesktopBundleRegistrySourceStatus[]>([]);
   const [name, setName] = useState("");
   const [remote, setRemote] = useState("");
-  const [ref, setRef] = useState("");
+  const [branch, setBranch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -44,19 +44,19 @@ export function BundleRegistrySourcesFragment() {
         await api.addBundleRegistrySource({
           name,
           remote,
-          ...(ref.trim() === "" ? {} : { ref }),
+          ...(branch.trim() === "" ? {} : { branch }),
         });
       } else {
         await api.updateBundleRegistrySource({
           sourceId: editingSourceId,
           name,
           remote,
-          ref: ref.trim() === "" ? null : ref,
+          branch: branch.trim() === "" ? null : branch,
         });
       }
       setName("");
       setRemote("");
-      setRef("");
+      setBranch("");
       setEditingSourceId(null);
       await reload();
       setAddDialogOpen(false);
@@ -85,14 +85,14 @@ export function BundleRegistrySourcesFragment() {
     setAddError(null);
     setName("");
     setRemote("");
-    setRef("");
+    setBranch("");
     setEditingSourceId(null);
   };
 
   const openEditDialog = (source: DesktopBundleRegistrySourceStatus) => {
     setName(source.name);
     setRemote(source.remote);
-    setRef(source.ref ?? "");
+    setBranch(source.branch ?? "");
     setEditingSourceId(source.id);
     setAddError(null);
     setAddDialogOpen(true);
@@ -133,7 +133,7 @@ export function BundleRegistrySourcesFragment() {
               setEditingSourceId(null);
               setName("");
               setRemote("");
-              setRef("");
+              setBranch("");
               setAddError(null);
               setAddDialogOpen(true);
             }}
@@ -297,12 +297,12 @@ export function BundleRegistrySourcesFragment() {
               />
             </label>
             <label>
-              <span>{t("bundleSources.ref")}</span>
+              <span>{t("bundleSources.branch")}</span>
               <input
-                value={ref}
+                value={branch}
                 disabled={submitting}
-                onChange={(event) => setRef(event.target.value)}
-                placeholder={t("bundleSources.refPlaceholder")}
+                onChange={(event) => setBranch(event.target.value)}
+                placeholder={t("bundleSources.branchPlaceholder")}
               />
             </label>
             {addError ? <p className="form-error">{addError}</p> : null}

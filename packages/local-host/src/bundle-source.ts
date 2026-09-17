@@ -28,7 +28,7 @@ const execFileAsync = promisify(execFile);
 const SOURCE_MANIFEST = "pragma-source.yaml";
 const ITEM_CONFIG = "config.yaml";
 
-const DEFAULT_CATEGORIES = [
+export const DEFAULT_BUNDLE_SOURCE_CATEGORIES = [
   ["general", "General", "通用", "一般"],
   ["software-development", "Software Development", "软件开发", "軟體開發"],
   ["research", "Research", "研究", "研究"],
@@ -80,11 +80,13 @@ export async function initializeBundleSource(input: {
   } catch (error) {
     if (!isNodeError(error, "ENOENT")) throw error;
   }
-  const categories = DEFAULT_CATEGORIES.map(([categoryId, en, zhHans, zhHant], order) => ({
-    id: categoryId,
-    name: { default: en, translations: { en, "zh-Hans": zhHans, "zh-Hant": zhHant } },
-    order: order * 10,
-  }));
+  const categories = DEFAULT_BUNDLE_SOURCE_CATEGORIES.map(
+    ([categoryId, en, zhHans, zhHant], order) => ({
+      id: categoryId,
+      name: { default: en, translations: { en, "zh-Hans": zhHans, "zh-Hant": zhHant } },
+      order: order * 10,
+    }),
+  );
   const manifest = BundleSourceManifestSchema.parse({
     schemaVersion: "pragma.bundle-source/v2",
     id,
@@ -100,7 +102,9 @@ export async function initializeBundleSource(input: {
   });
   await writeYamlAtomically(manifestPath, manifest);
   const directories = Object.values(BUNDLE_SOURCE_KIND_DIRECTORIES).flatMap((kindDirectory) =>
-    DEFAULT_CATEGORIES.map(([categoryId]) => join(directory, kindDirectory, categoryId)),
+    DEFAULT_BUNDLE_SOURCE_CATEGORIES.map(([categoryId]) =>
+      join(directory, kindDirectory, categoryId),
+    ),
   );
   await Promise.all(directories.map(async (path) => await mkdir(path, { recursive: true })));
   return {
@@ -185,7 +189,11 @@ export async function addBundleSourceVersion(input: {
     throw new Error(`Bundle root ${input.rootRef} does not match Source kind ${input.kind}.`);
   }
 
-  const conflictingConfig = (await listRepositoryFiles(directory)).find((path) => {
+  const repositoryFiles = await listRepositoryFiles(directory);
+  const sourceConfigPaths = repositoryFiles.filter(
+    (path) => parseBundleSourceRepositoryEntry(path)?.kind === "config",
+  );
+  const conflictingConfig = sourceConfigPaths.find((path) => {
     const entry = parseBundleSourceRepositoryEntry(path);
     return (
       entry?.kind === "config" &&
@@ -198,6 +206,21 @@ export async function addBundleSourceVersion(input: {
     throw new Error(
       `Bundle Source item ${input.kind}:${itemId} already exists in another category.`,
     );
+  }
+  for (const path of sourceConfigPaths) {
+    const entry = parseBundleSourceRepositoryEntry(path);
+    if (entry?.kind !== "config" || entry.sourceKind !== input.kind) continue;
+    const configured = parseBundleSourceItem(
+      parse(await readFile(join(directory, ...path.split("/")), "utf8")),
+    );
+    if (
+      configured.rootRef === input.rootRef &&
+      (entry.itemId !== itemId || entry.categoryId !== categoryId)
+    ) {
+      throw new Error(
+        `Existing Bundle Source root ${input.rootRef} must keep item ${entry.itemId} in category ${entry.categoryId}.`,
+      );
+    }
   }
 
   const itemDirectory = join(
@@ -240,6 +263,19 @@ export async function addBundleSourceVersion(input: {
         }
       : {
           ...existing,
+          name: { ...existing.name, default: input.name },
+          summary: { ...existing.summary, default: input.summary },
+          description: { ...existing.description, default: input.description },
+          author: {
+            name: input.authorName,
+            ...(input.authorUrl === undefined ? {} : { url: input.authorUrl }),
+          },
+          license: input.license,
+          ...(input.homepage === undefined
+            ? { homepage: undefined }
+            : { homepage: input.homepage }),
+          tags: [...(input.tags ?? [])],
+          ...(input.avatarId === undefined ? {} : { avatarId: input.avatarId }),
           latestVersion:
             compareSemver(version, existing.latestVersion) >= 0 ? version : existing.latestVersion,
           updatedAt: now,
@@ -470,11 +506,7 @@ export async function validateBundleSourceDirectory(directoryInput: string): Pro
 }> {
   const directory = resolve(directoryInput);
   const manifest = await readBundleSourceManifest(directory);
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.isSymbolicLink() || entry.name === ".gitmodules") {
-      throw new Error(`Bundle Source symlinks and submodules are not allowed: ${entry.name}`);
-    }
-  }
+  await assertNoUnsafeRepositoryEntries(directory);
   const paths = await listRepositoryFiles(directory);
   const entries = paths
     .filter((path) =>
@@ -557,6 +589,19 @@ export async function validateBundleSourceDirectory(directoryInput: string): Pro
     throw new Error("Bundle Source contains a version without config.yaml.");
   }
   return { sourceId: manifest.id, itemCount: configs.length, versionCount: bundles.length };
+}
+
+async function assertNoUnsafeRepositoryEntries(root: string, current = root): Promise<void> {
+  for (const entry of await readdir(current, { withFileTypes: true })) {
+    if (current === root && entry.name === ".git") continue;
+    const path = join(current, entry.name);
+    if (entry.isSymbolicLink() || entry.name === ".gitmodules") {
+      throw new Error(
+        `Bundle Source symlinks and submodules are not allowed: ${repositoryPath(root, path)}`,
+      );
+    }
+    if (entry.isDirectory()) await assertNoUnsafeRepositoryEntries(root, path);
+  }
 }
 
 export async function readBundleSourceManifest(

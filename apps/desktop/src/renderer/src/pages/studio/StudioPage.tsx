@@ -58,6 +58,7 @@ import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectory
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
+import { BundleSourcePublishDialog } from "./BundleSourcePublishDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
 import { SquareDirectoryFragment } from "./SquareDirectoryFragment.tsx";
 import { DownloadSimple, Storefront, UploadSimple, User } from "@phosphor-icons/react";
@@ -212,6 +213,7 @@ export function StudioPage(props: {
   const [bundleMode, setBundleMode] = useState<"export" | "import" | null>(null);
   const [squareBundlePath, setSquareBundlePath] = useState<string | undefined>();
   const [bundleRootRef, setBundleRootRef] = useState<string | undefined>();
+  const [publicationRootRef, setPublicationRootRef] = useState<string | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const openedInitialResourceRef = useRef<string | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
@@ -901,6 +903,14 @@ export function StudioPage(props: {
               setScreen("context-store-detail");
             }}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
+            onPublish={
+              selectedExpert.ref !== undefined &&
+              project?.resources.some(
+                (resource) => canonicalPragmaResourceRef(resource) === selectedExpert.ref,
+              )
+                ? () => setPublicationRootRef(selectedExpert.ref!)
+                : undefined
+            }
             onDelete={deleteSelectedExpert}
             onReset={resetSelectedExpert}
           />
@@ -1008,6 +1018,25 @@ export function StudioPage(props: {
               if (binding === undefined) throw new Error("Knowledge-base binding is unavailable.");
               setBundleRootRef(binding.resourceRef);
               setBundleMode("export");
+            }}
+            onPublish={async () => {
+              let binding = contextStoreBindings.find(
+                (candidate) => candidate.storeId === selectedContextStore.id,
+              );
+              const api = desktopApi();
+              if (api !== undefined && binding === undefined) {
+                binding = await api.ensurePragmaContextStoreBinding({
+                  storeId: selectedContextStore.id,
+                });
+                const ensuredBinding = binding;
+                setContextStoreBindings((current) => [
+                  ...current.filter((candidate) => candidate.storeId !== ensuredBinding.storeId),
+                  ensuredBinding,
+                ]);
+                setProject(await api.getPragmaProject());
+              }
+              if (binding === undefined) throw new Error("Knowledge-base binding is unavailable.");
+              setPublicationRootRef(binding.resourceRef);
             }}
             onBack={() => {
               if (contextStoreDetailReturn === "expert-detail") {
@@ -1209,6 +1238,7 @@ export function StudioPage(props: {
               setScreen("directory");
             }}
             onEdit={() => openResourceEdit(selectedResource)}
+            onPublish={() => setPublicationRootRef(canonicalPragmaResourceRef(selectedResource))}
             onDelete={deleteSelectedResource}
           />
         ) : null}
@@ -1319,6 +1349,13 @@ export function StudioPage(props: {
             setSelectedCapabilityId(capabilityId);
             setScreen("capability-detail");
           }}
+        />
+      ) : null}
+      {publicationRootRef !== null && project !== null ? (
+        <BundleSourcePublishDialog
+          rootRef={publicationRootRef}
+          projectRevision={project.revision}
+          onClose={() => setPublicationRootRef(null)}
         />
       ) : null}
     </section>

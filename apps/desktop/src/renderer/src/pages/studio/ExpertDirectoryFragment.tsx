@@ -13,6 +13,7 @@ import {
   Play,
   Plus,
   Trash,
+  UploadSimple,
   Wrench,
   type Icon,
 } from "@phosphor-icons/react";
@@ -209,6 +210,7 @@ export function ExpertDetailFragment(props: {
   readonly onEdit: () => void;
   readonly onOpenContextStore: (store: ContextStore) => void;
   readonly onTryInSession: () => void;
+  readonly onPublish?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
   readonly onReset: () => Promise<void>;
 }) {
@@ -423,6 +425,12 @@ export function ExpertDetailFragment(props: {
             <Play size={17} aria-hidden="true" />
             {t("trySession")}
           </button>
+          {props.onPublish === undefined ? null : (
+            <button className="secondary-button" type="button" onClick={props.onPublish}>
+              <UploadSimple size={17} aria-hidden="true" />
+              {t("publishToSource")}
+            </button>
+          )}
           {!isBuiltInExpert(props.expert) ? (
             <button
               className="danger-button"

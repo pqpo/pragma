@@ -41,6 +41,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Desktop-bound resource identity](./030-desktop-bound-resource-identity-and-capability-revision-propagation.md)
 - [Interpreter-owned `.pragma` bundle protocol](./031-interpreter-owned-pragma-bundle-protocol.md)
 - [Lightweight Git bundle source](./046-lightweight-git-bundle-source.md)
+- [Desktop 直接发布 Bundle Source](./050-desktop-bundle-source-publication.md)
 
 ## 持久状态与本机运行
 

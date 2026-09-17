@@ -4,7 +4,7 @@ import {
   ContextStoreSnapshotSchema,
 } from "./context-stores.ts";
 import {
-  DesktopBundleRegistryRefSchema,
+  DesktopBundleRegistryBranchSchema,
   DesktopBundleRegistryRemoteSchema,
 } from "./bundle-registry.ts";
 import { z } from "zod";
@@ -13,7 +13,7 @@ export const KnowledgeSyncConfigurationSchema = z
   .object({
     schemaVersion: z.literal("pragma.knowledge-sync-settings/v1"),
     remote: DesktopBundleRegistryRemoteSchema,
-    branch: DesktopBundleRegistryRefSchema.optional(),
+    branch: DesktopBundleRegistryBranchSchema.optional(),
     autoPush: z.boolean().default(true),
     pushDeletions: z.boolean().default(false),
   })

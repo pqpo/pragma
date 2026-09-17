@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import {
   initializeBundleSource,
   readBundleSourceManifest,
   upgradeBundleSource,
+  validateBundleSourceDirectory,
 } from "../src/index.ts";
 import { createExpertBundle } from "./bundle-source-fixture.ts";
 
@@ -44,6 +45,17 @@ describe("Bundle Source repository", () => {
     await expect(
       initializeBundleSource({ directory: root, id: "second", name: "Second" }),
     ).rejects.toThrow(/already exists/u);
+  });
+
+  it("rejects symlinks outside item directories before publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-source-symlink-"));
+    await initializeBundleSource({ directory: root, id: "linked", name: "Linked" });
+    await mkdir(join(root, ".github"), { recursive: true });
+    await symlink("../pragma-source.yaml", join(root, ".github/source-link.yaml"));
+
+    await expect(validateBundleSourceDirectory(root)).rejects.toThrow(
+      /symlinks and submodules are not allowed/u,
+    );
   });
 
   it("adds immutable versions without changing Git history", async () => {
@@ -95,12 +107,28 @@ describe("Bundle Source repository", () => {
     await expect(addBundleSourceVersion({ ...input, version: "1.0.0" })).rejects.toThrow(
       /already exists/u,
     );
-    await addBundleSourceVersion({ ...input, version: "1.1.0" });
+    await expect(
+      addBundleSourceVersion({
+        ...input,
+        itemId: "renamed-reviewer",
+        version: "1.1.0",
+      }),
+    ).rejects.toThrow(/must keep item reviewer/u);
+    await addBundleSourceVersion({
+      ...input,
+      version: "1.1.0",
+      name: "Reviewer Pro",
+      summary: "Reviews every change",
+    });
 
     const config = parse(
       await readFile(join(root, "experts/software-development/reviewer/config.yaml"), "utf8"),
     );
-    expect(config.latestVersion).toBe("1.1.0");
+    expect(config).toMatchObject({
+      latestVersion: "1.1.0",
+      name: { default: "Reviewer Pro" },
+      summary: { default: "Reviews every change" },
+    });
     const { stdout: headAfter } = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"]);
     expect(headAfter).toBe(headBefore);
   });

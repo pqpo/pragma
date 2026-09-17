@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { decodePragmaBundle, formatPragmaYaml, loadPragmaProject } from "@pragma/interpreter";
+import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 
 import {
   AddDesktopBundleRegistrySourceSchema,
@@ -26,6 +28,87 @@ afterEach(async () => {
 });
 
 describe("Desktop Bundle Registry sources", () => {
+  it("migrates the historical v1 ref to the v2 branch with a backup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-registry-migration-"));
+    temporaryRoots.push(root);
+    const sourcesPath = join(root, "data", "sources.json");
+    await mkdir(join(root, "data"), { recursive: true });
+    await copyFile(
+      join(import.meta.dirname, "test/fixtures/bundle-registry-sources-v1.json"),
+      sourcesPath,
+    );
+    const service = createDesktopBundleRegistrySourceService({
+      sourcesPath,
+      cacheRoot: join(root, "cache"),
+    });
+
+    await expect(service.listSources()).resolves.toEqual([
+      expect.objectContaining({ branch: "release", name: "Historical source" }),
+    ]);
+    await expect(readFile(sourcesPath, "utf8")).resolves.toContain(
+      '"schemaVersion": "pragma.desktop-bundle-registry-sources/v2"',
+    );
+    await expect(readFile(`${sourcesPath}.v1.backup`, "utf8")).resolves.toContain(
+      '"ref": "release"',
+    );
+  });
+
+  it("recovers a completed migration journal and rejects future source settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-registry-recovery-"));
+    temporaryRoots.push(root);
+    const sourcesPath = join(root, "data", "sources.json");
+    await mkdir(join(root, "data"), { recursive: true });
+    await writeFile(
+      sourcesPath,
+      `${JSON.stringify({ schemaVersion: "pragma.desktop-bundle-registry-sources/v2", sources: [] })}\n`,
+    );
+    await writeFile(`${sourcesPath}.v1.backup`, "historical settings\n");
+    await writeFile(
+      `${sourcesPath}.migration.json`,
+      `${JSON.stringify({
+        schemaVersion: "pragma.desktop-bundle-registry-sources-migration/v1",
+        sourceVersion: "pragma.desktop-bundle-registry-sources/v1",
+        targetVersion: "pragma.desktop-bundle-registry-sources/v2",
+        backupPath: `${sourcesPath}.v1.backup`,
+      })}\n`,
+    );
+    const service = createDesktopBundleRegistrySourceService({
+      sourcesPath,
+      cacheRoot: join(root, "cache"),
+    });
+    await expect(service.listSources()).resolves.toEqual([]);
+    await expect(readFile(`${sourcesPath}.migration.json`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await writeFile(
+      sourcesPath,
+      `${JSON.stringify({ schemaVersion: "pragma.desktop-bundle-registry-sources/v3", sources: [] })}\n`,
+    );
+    await expect(service.listSources()).rejects.toThrow(/configuration is unreadable/u);
+  });
+
+  it("fails closed when the source settings migration journal is malformed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-registry-journal-"));
+    temporaryRoots.push(root);
+    const sourcesPath = join(root, "data", "sources.json");
+    await mkdir(join(root, "data"), { recursive: true });
+    await writeFile(
+      sourcesPath,
+      `${JSON.stringify({ schemaVersion: "pragma.desktop-bundle-registry-sources/v2", sources: [] })}\n`,
+    );
+    await writeFile(`${sourcesPath}.migration.json`, '{"status":"prepared"}\n');
+    const service = createDesktopBundleRegistrySourceService({
+      sourcesPath,
+      cacheRoot: join(root, "cache"),
+    });
+
+    await expect(service.listSources()).rejects.toThrow(/configuration is unreadable/u);
+    await expect(readFile(`${sourcesPath}.migration.json`, "utf8")).resolves.toContain(
+      '"status":"prepared"',
+    );
+  });
+
   it("persists an official source toggle and allows the built-in source to be dismissed", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-desktop-registry-"));
     temporaryRoots.push(root);
@@ -77,7 +160,7 @@ describe("Desktop Bundle Registry sources", () => {
       AddDesktopBundleRegistrySourceSchema.safeParse({
         name: "Unsafe",
         remote: "https://git.example/team/registry.git",
-        ref: "--upload-pack=malicious",
+        branch: "--upload-pack=malicious",
       }).success,
     ).toBe(false);
     expect(
@@ -170,8 +253,8 @@ describe("Desktop Bundle Registry sources", () => {
         commit: expect.stringMatching(/^[a-f0-9]{40,64}$/u),
       });
       await expect(
-        restarted.updateSource({ sourceId: status.id, name: "Invalid Edit", ref: "missing" }),
-      ).rejects.toThrow(/couldn't find remote ref/u);
+        restarted.updateSource({ sourceId: status.id, name: "Invalid Edit", branch: "missing" }),
+      ).rejects.toThrow(/branch was not found/u);
       await expect(restarted.listSources()).resolves.toEqual([
         expect.objectContaining({ name: "Empty Source", remote: expect.any(String) }),
       ]);
@@ -187,7 +270,7 @@ describe("Desktop Bundle Registry sources", () => {
           sourceId: status.id,
           name: "Renamed Empty Source",
           remote: `https://pragma-empty-source.test${replacementRemote}`,
-          ref: null,
+          branch: null,
         }),
       ).resolves.toMatchObject({
         id: status.id,
@@ -307,6 +390,81 @@ describe("Desktop Bundle Registry sources", () => {
       restoreEnvironment("GIT_CONFIG_VALUE_0", previous[2]);
     }
   });
+
+  it("initializes an empty source, commits with the system identity, pushes, and is idempotent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-desktop-source-publish-"));
+    temporaryRoots.push(root);
+    const remote = join(root, "remote.git");
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    await execFileAsync("git", ["init", "--bare", "--initial-branch=master", remote]);
+    const previous = {
+      HOME: process.env.HOME,
+      GIT_CONFIG_COUNT: process.env.GIT_CONFIG_COUNT,
+      GIT_CONFIG_KEY_0: process.env.GIT_CONFIG_KEY_0,
+      GIT_CONFIG_VALUE_0: process.env.GIT_CONFIG_VALUE_0,
+    };
+    process.env.HOME = home;
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "url.file:///.insteadOf";
+    process.env.GIT_CONFIG_VALUE_0 = "https://pragma-publish.test/";
+    try {
+      await execFileAsync("git", ["config", "--global", "user.name", "Pragma Publisher"]);
+      await execFileAsync("git", ["config", "--global", "user.email", "publisher@pragma.invalid"]);
+      const service = createDesktopBundleRegistrySourceService({
+        sourcesPath: join(root, "data/sources.json"),
+        cacheRoot: join(root, "cache"),
+      });
+      const source = await service.addSource({
+        name: "Publishing Source",
+        remote: `https://pragma-publish.test${remote}`,
+      });
+      const bundlePath = await createExpertBundle(root);
+      const decoded = await decodePragmaBundle({ kind: "file", path: bundlePath });
+      const request = {
+        bundlePath,
+        bundleFingerprint: decoded.manifest.bundleFingerprint,
+        rootRef: "expert:1xddvess309a6gme",
+        kind: "expert" as const,
+        metadata: {
+          itemId: "reviewer",
+          name: "Reviewer",
+          summary: "Reviews code",
+          description: "Reviews code changes.",
+          authorName: "Pragma Publisher",
+          license: "MIT",
+          tags: ["review"],
+        },
+        target: { sourceId: source.id, categoryId: "general", version: "1.0.0" },
+      };
+
+      await expect(service.publishBundleToSource(request)).resolves.toMatchObject({
+        status: "published",
+        commit: expect.stringMatching(/^[a-f0-9]{40,64}$/u),
+      });
+      await expect(service.publishBundleToSource(request)).resolves.toMatchObject({
+        status: "already_published",
+      });
+      await expect(
+        service.publishBundleToSource({
+          ...request,
+          target: { ...request.target, version: "1.0.1" },
+        }),
+      ).resolves.toMatchObject({
+        status: "published",
+      });
+      const checkout = join(root, "checkout");
+      await execFileAsync("git", ["clone", "--branch", "main", `file://${remote}`, checkout]);
+      await expect(
+        readFile(join(checkout, "experts/general/reviewer/config.yaml"), "utf8"),
+      ).resolves.toMatch(/latestVersion: 1\.0\.1/u);
+    } finally {
+      restoreEnvironment("HOME", previous.HOME);
+      restoreEnvironment("GIT_CONFIG_COUNT", previous.GIT_CONFIG_COUNT);
+      restoreEnvironment("GIT_CONFIG_KEY_0", previous.GIT_CONFIG_KEY_0);
+      restoreEnvironment("GIT_CONFIG_VALUE_0", previous.GIT_CONFIG_VALUE_0);
+    }
+  }, 15_000);
 });
 
 async function commitAll(repository: string, message: string): Promise<void> {
@@ -327,6 +485,59 @@ async function commitAll(repository: string, message: string): Promise<void> {
 function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
+}
+
+async function createExpertBundle(root: string): Promise<string> {
+  const projectPath = join(root, "project.yaml");
+  const bundlePath = join(root, "reviewer.pragma");
+  await writeFile(
+    projectPath,
+    formatPragmaYaml({
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "Bundle",
+      resources: [
+        {
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "RuntimeProfile",
+          metadata: {
+            id: "knr7p5b7qc55wv92",
+            name: "Runtime",
+            description: "Runtime",
+            tags: [],
+          },
+          spec: { adapter: "pragma.runtime.profile@v1", config: { runtimeId: "codex" } },
+        },
+        {
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "Expert",
+          metadata: {
+            id: "1xddvess309a6gme",
+            name: "Reviewer",
+            description: "Reviews code",
+            tags: ["review"],
+          },
+          spec: {
+            scope: "review",
+            instructions: "Review code.",
+            runtime: { ref: "runtime-profile:knr7p5b7qc55wv92" },
+            capabilities: [],
+            toolApprovals: {},
+            contextStores: [],
+            plugins: [],
+            tools: [],
+          },
+        },
+      ],
+    }),
+  );
+  const project = await loadPragmaProject(projectPath);
+  try {
+    const exported = await project.exportBundle({ roots: ["expert:1xddvess309a6gme"] });
+    await writeFile(bundlePath, exported.bytes);
+    return bundlePath;
+  } finally {
+    await project.dispose();
+  }
 }
 
 function sourceManifest(): string {

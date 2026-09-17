@@ -18,6 +18,7 @@ import {
   Trash,
   UserCircle,
   UsersThree,
+  UploadSimple,
 } from "@phosphor-icons/react";
 import {
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -345,6 +346,7 @@ export function PragmaResourceDetailFragment(props: {
     ((resource: PragmaExpertTeamResource | PragmaFlowResource) => void) | undefined;
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onPublish?: (() => void) | undefined;
   readonly onDelete: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
@@ -465,6 +467,12 @@ export function PragmaResourceDetailFragment(props: {
             <PencilSimple size={17} aria-hidden="true" />
             {isTeam ? t("editExpertTeam") : t("editFlow")}
           </button>
+          {props.onPublish === undefined ? null : (
+            <button className="secondary-button" type="button" onClick={props.onPublish}>
+              <UploadSimple size={17} aria-hidden="true" />
+              {t("publishToSource")}
+            </button>
+          )}
           <button
             className="danger-button"
             type="button"

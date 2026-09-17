@@ -56,8 +56,12 @@ import {
   DesktopSquareBundleDownloadSchema,
   DesktopSquareCatalogSchema,
   DesktopSquareItemDetailSchema,
+  BundleSourcePublicationPreparationSchema,
+  BundleSourcePublicationResultSchema,
   DownloadDesktopSquareBundleSchema,
   GetDesktopSquareItemSchema,
+  PrepareBundleSourcePublicationSchema,
+  PublishBundleSourceSchema,
   UpdateDesktopBundleRegistrySourceSchema,
 } from "./bundle-registry.ts";
 import {
@@ -349,6 +353,12 @@ export type GetDesktopSquareItem = z.infer<typeof GetDesktopSquareItemSchema>;
 export type DesktopSquareItemDetail = z.infer<typeof DesktopSquareItemDetailSchema>;
 export type DownloadDesktopSquareBundle = z.infer<typeof DownloadDesktopSquareBundleSchema>;
 export type DesktopSquareBundleDownload = z.infer<typeof DesktopSquareBundleDownloadSchema>;
+export type PrepareBundleSourcePublication = z.infer<typeof PrepareBundleSourcePublicationSchema>;
+export type BundleSourcePublicationPreparation = z.infer<
+  typeof BundleSourcePublicationPreparationSchema
+>;
+export type PublishBundleSource = z.infer<typeof PublishBundleSourceSchema>;
+export type BundleSourcePublicationResult = z.infer<typeof BundleSourcePublicationResultSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;

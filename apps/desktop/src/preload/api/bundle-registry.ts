@@ -10,6 +10,10 @@ import {
   DesktopSquareItemDetailSchema,
   DownloadDesktopSquareBundleSchema,
   GetDesktopSquareItemSchema,
+  PrepareBundleSourcePublicationSchema,
+  BundleSourcePublicationPreparationSchema,
+  PublishBundleSourceSchema,
+  BundleSourcePublicationResultSchema,
   UpdateDesktopBundleRegistrySourceSchema,
 } from "../../shared/contracts/index.ts";
 import { invokeMutation } from "../invoke-mutation.ts";
@@ -63,6 +67,20 @@ export const bundleRegistryApi = {
         DownloadDesktopSquareBundleSchema.parse(input),
       ),
     ),
+  prepareBundleSourcePublication: async (input) =>
+    BundleSourcePublicationPreparationSchema.parse(
+      await ipcRenderer.invoke(
+        "bundle-registry:publication:prepare",
+        PrepareBundleSourcePublicationSchema.parse(input),
+      ),
+    ),
+  publishBundleSource: async (input) =>
+    BundleSourcePublicationResultSchema.parse(
+      await invokeMutation(
+        "bundle-registry:publication:publish",
+        PublishBundleSourceSchema.parse(input),
+      ),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listBundleRegistrySources"
@@ -74,4 +92,6 @@ export const bundleRegistryApi = {
   | "getSquareCatalog"
   | "getSquareItem"
   | "downloadSquareBundle"
+  | "prepareBundleSourcePublication"
+  | "publishBundleSource"
 >;

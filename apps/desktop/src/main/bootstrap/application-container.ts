@@ -47,6 +47,7 @@ import { BundleSetupRequiredError } from "../features/bundles/pragma-bundle-erro
 import { createPragmaBundleService } from "../features/bundles/pragma-bundle-service.ts";
 import { installBundleRegistryHandlers } from "../features/bundle-registry/bundle-registry-ipc.ts";
 import { createDesktopBundleRegistrySourceService } from "../features/bundle-registry/bundle-registry-source-service.ts";
+import { createBundleSourcePublishingService } from "../features/bundle-registry/bundle-source-publishing-service.ts";
 import { createCapabilityCredentialStore } from "../features/capabilities/capability-credential-store.ts";
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
@@ -883,7 +884,12 @@ export async function createDesktopApplicationContainer(
     cacheRoot: join(pragmaPaths.cacheRoot(), "bundle-registry"),
     officialSource: options.officialBundleRegistrySource,
   });
-  installBundleRegistryHandlers(bundleRegistrySources);
+  const bundleSourcePublishing = createBundleSourcePublishingService({
+    bundles: bundleService,
+    sources: bundleRegistrySources,
+    cacheRoot: join(pragmaPaths.cacheRoot(), "bundle-registry", "publications"),
+  });
+  installBundleRegistryHandlers(bundleRegistrySources, bundleSourcePublishing);
   const assertBundleExecutorReady = async (
     ref: string,
     operation: "create_mission" | "run_mission",

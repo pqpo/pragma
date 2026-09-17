@@ -5,7 +5,7 @@
 Accepted
 
 Bundle Source v2 与知识库第四种类型由 ADR 048 修订；本 ADR 的轻量 Git 仓库、精确 commit 快照和
-Square 身份模型继续有效。
+Square 身份模型继续有效。Desktop 只读假设与 Source 本机配置的 ref 语义由 ADR 050 修订。
 
 ## 背景
 
