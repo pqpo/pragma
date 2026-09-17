@@ -871,6 +871,19 @@ export function createMissionRunner(options: {
     };
   };
 
+  const readSystemExecutorMetadata = (): readonly MissionExecutorPresentationMetadata[] => {
+    try {
+      return options.getSystemExecutorMetadata?.() ?? [];
+    } catch (error) {
+      logger.warn(
+        "mission.system_executor_names_unavailable",
+        "System Expert presentation metadata could not be read.",
+        { error },
+      );
+      return [];
+    }
+  };
+
   const getExecutorMetadata = async (
     mission: Pick<Mission, "project">,
   ): Promise<ExecutorMetadata> => {
@@ -878,10 +891,7 @@ export function createMissionRunner(options: {
     const existing = sessionService.executorMetadata(projectKey);
     const projectMetadata = existing ?? (await readExecutorMetadata(mission));
     if (existing === undefined) sessionService.setExecutorMetadata(projectKey, projectMetadata);
-    return mergeMissionExecutorMetadata(
-      projectMetadata,
-      options.getSystemExecutorMetadata?.() ?? [],
-    );
+    return mergeMissionExecutorMetadata(projectMetadata, readSystemExecutorMetadata());
   };
 
   const getExecutorMetadataOrFallback = async (
@@ -891,10 +901,17 @@ export function createMissionRunner(options: {
     await getExecutorMetadata(mission).catch((error: unknown) => {
       logger.warn(
         "mission.executor_names_unavailable",
-        `Mission ${mission.id} will use Expert IDs for ${surface} output labels.`,
+        `Mission ${mission.id} could not read Project Expert names for ${surface} output labels.`,
         { error, missionId: mission.id },
       );
-      return { names: new Map<string, string>(), avatarIds: new Map<string, string>() };
+      // Keep built-in/system identities available even when the pinned Project Revision cannot be
+      // opened. The root Expert can still resolve from the immutable Mission executor snapshot;
+      // any remaining identity stays unresolved so the renderer can use a localized unavailable
+      // label instead of exposing an opaque resource id.
+      return mergeMissionExecutorMetadata(
+        { names: new Map<string, string>(), avatarIds: new Map<string, string>() },
+        readSystemExecutorMetadata(),
+      );
     });
 
   const startMission = (id: string): Promise<Mission> => {
@@ -2795,6 +2812,7 @@ export function createMissionRunner(options: {
     if (!isUserFacingMissionOrigin(mission.origin)) {
       throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
     }
+    const executorMetadataPromise = getExecutorMetadataOrFallback(mission, "historical");
     const capturedLive = chatService.live(mission.id);
     let inheritedHistoryPromise: ReturnType<MissionStore["readBranchHistory"]> | undefined;
     const history = await readMissionChatHistoryPage({
@@ -2838,6 +2856,7 @@ export function createMissionRunner(options: {
     const entries = [...history.entries];
     const historyReadAt = performance.now();
     const syncIssues = [...history.syncIssues];
+    const executorMetadata = await executorMetadataPromise;
     // Capture the revision and live entries in one synchronous turn. Keep using the live object
     // retained at the beginning of the read: settlement may already have removed it from the map,
     // but its final output still belongs in this snapshot.
@@ -2851,7 +2870,24 @@ export function createMissionRunner(options: {
               : {}),
           })) ?? [])
         : [];
-    const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries);
+    const resolveExecutorName = createMissionExecutorNameResolver(mission, executorMetadata.names);
+    const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
+      executorMetadata.avatarIds,
+    );
+    const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries).map(
+      (entry) => {
+        if (entry.executorId === undefined) return entry;
+        const executorName = entry.executorName ?? resolveExecutorName(entry.executorId);
+        const executorAvatarId =
+          entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
+        if (entry.executorName !== undefined && entry.executorAvatarId !== undefined) return entry;
+        return {
+          ...entry,
+          ...(executorName === undefined ? {} : { executorName }),
+          ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
+        };
+      },
+    );
     const uniqueSyncIssues = [
       ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
     ];
@@ -5072,7 +5108,6 @@ async function readMissionChatTurnPage(input: {
       projection.sourceUpdatedAt !== undefined &&
       (executionState === undefined || executionState.updatedAt <= projection.sourceUpdatedAt);
     if (!projectionIsCurrent) {
-      projectionSyncIssues.push(missionChatSyncIssue("history"));
       input.scheduleProjectionRepair?.({ ...input.turn, executionId: input.turn.executionId });
     }
     if (projection !== undefined) {
@@ -5104,6 +5139,9 @@ async function readMissionChatTurnPage(input: {
     if (input.cursor?.kind === "projection") {
       throw new Error("Mission chat page cursor is no longer available.");
     }
+    // An outdated projection is still a readable conversation snapshot and can be repaired in the
+    // background. Only report degraded history when no durable or projected content is available.
+    projectionSyncIssues.push(missionChatSyncIssue("history"));
     return { entries: [userEntry], syncIssues: projectionSyncIssues };
   }
 
@@ -5356,13 +5394,17 @@ async function readMissionChatHistory(
     });
     if (turn.executionId === undefined) continue;
 
-    // The live projection is already fed by replayable output/event subscriptions. Reading the
-    // durable Execution here would scan its complete message and event history on every cold
-    // latest-page load. The caller merges activeChat.entries after this lightweight pass.
-    if (turn.executionId === activeChat?.executionId) continue;
+    const activeEntries =
+      turn.executionId === activeChat?.executionId ? activeChat.entries : undefined;
+    // Once the live projection has visible output it is the cheapest and freshest source for an
+    // active Execution. Before its replayable subscription catches up, read the durable history so
+    // a cold navigation cannot briefly show only the user prompt. Completion-only and oversized
+    // results have no live entry, so they still take the durable path and receive finalization.
+    if (activeEntries !== undefined && activeEntries.length > 0) continue;
 
     const view = new StoredExecutionView(turn.executionId, executionStore);
     const state = await view.getState().catch(() => undefined);
+    if (activeEntries !== undefined && state === undefined) continue;
     if (state === undefined) {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
       if (projection !== undefined) {
@@ -5772,7 +5814,8 @@ function createMissionExecutorNameResolver(
   names: ReadonlyMap<string, string>,
 ): ExecutorNameResolver {
   // A Team or Flow name identifies the invocable resource, not the concrete Expert producing an
-  // entry. Their Experts must resolve through the pinned Project Revision or fall back to IDs.
+  // entry. Their Experts resolve through the pinned Project Revision; an unresolved identity is
+  // left empty for the renderer's localized unavailable label rather than exposing its raw id.
   const rootExpertId =
     mission.executor.kind === "expert" && mission.executor.ref.startsWith("expert:")
       ? mission.executor.ref.slice("expert:".length)

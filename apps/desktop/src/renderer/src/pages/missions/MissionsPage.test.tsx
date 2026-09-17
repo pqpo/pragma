@@ -2418,7 +2418,7 @@ describe("Mission Expert output labels", () => {
     expect(html).not.toContain("Reviewer");
   });
 
-  it("falls back to the Expert ID and keeps Work drawer output labels suppressed", () => {
+  it("uses a localized unavailable label instead of an Expert ID and suppresses Work labels", () => {
     const fallback = renderToStaticMarkup(
       <MissionChatEntryView
         entry={{
@@ -2463,7 +2463,8 @@ describe("Mission Expert output labels", () => {
       />,
     );
 
-    expect(fallback).toContain(">expert-without-name<");
+    expect(fallback).toContain(">Unavailable member<");
+    expect(fallback).not.toContain(">expert-without-name<");
     expect(work).toContain("Runtime Researcher");
     expect(work).not.toContain("mission-output-executor");
     expect(work).not.toContain("Parent Expert");

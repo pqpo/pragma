@@ -359,7 +359,7 @@ function MissionExecutorLabel(props: { readonly entry: MissionChatEntry }) {
     <small
       className="mission-output-executor"
       data-mission-executor-id={props.entry.executorId}
-      title={props.entry.executorId}
+      title={label}
     >
       <ExpertAvatar avatarId={props.entry.executorAvatarId} size="xs" />
       <span>{label}</span>
@@ -637,7 +637,10 @@ export function formatExpertMentionDisplayText(
 }
 
 function missionChatEntryExecutorLabel(entry: MissionChatEntry): string | undefined {
-  return entry.executorName ?? entry.executorId;
+  if (entry.executorName !== undefined) return entry.executorName;
+  return entry.executorId === undefined
+    ? undefined
+    : i18n.t("mentionUnavailable", { ns: "missions" });
 }
 
 function toolStatusLabel(status: Extract<MissionChatEntry, { kind: "tool" }>["status"]): string {

@@ -452,6 +452,18 @@ export function mergeLatestChatPage(
   };
 }
 
+export function touchMissionConversationCache(
+  cache: Map<string, MissionConversationSnapshot>,
+  missionId: string,
+): void {
+  const conversation = cache.get(missionId);
+  if (conversation === undefined) return;
+  // Loaded entries and nextBeforeCursor describe one pagination state. Trimming only the entries
+  // makes an exhausted cursor look complete after A -> B -> A navigation, hiding older messages.
+  cache.delete(missionId);
+  cache.set(missionId, conversation);
+}
+
 /**
  * Materializes already-received deltas before accepting an asynchronous refresh. A snapshot may
  * advertise their revision while still carrying an older projection, so filtering the queue first

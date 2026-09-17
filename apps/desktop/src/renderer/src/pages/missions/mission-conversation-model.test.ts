@@ -12,9 +12,11 @@ import {
   mergeLatestChatPage,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
+  prependChatPage,
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
   startMissionContextOperation,
+  touchMissionConversationCache,
 } from "./mission-conversation-model.ts";
 import { mergeContextWindow, mergeConversationState } from "./use-mission-conversation.ts";
 
@@ -604,6 +606,54 @@ describe("mission conversation model", () => {
     const merged = reconcileMissionChatRefresh(current, stale, []).snapshot;
     expect(merged.entries.map((entry) => entry.id)).toEqual(["earlier", "answer"]);
     expect(merged.page).toEqual(current.page);
+  });
+
+  it("keeps loaded pages and the exhausted cursor after A -> B -> A navigation", () => {
+    const snapshot = streamingSnapshot("Answer", 8);
+    const entries = (start: number, end: number) =>
+      Array.from({ length: end - start + 1 }, (_, offset) => {
+        const sequence = start + offset;
+        return {
+          ...snapshot.entries[0]!,
+          id: `entry-${sequence}`,
+          timelineSequence: sequence,
+        };
+      });
+    const latest = {
+      ...snapshot,
+      entries: entries(101, 150),
+      page: { oldestSequence: 101, newestSequence: 150, nextBeforeCursor: "before-101" },
+    };
+    const middle = {
+      ...snapshot,
+      entries: entries(51, 100),
+      page: { oldestSequence: 51, newestSequence: 100, nextBeforeCursor: "before-51" },
+    };
+    const oldest = {
+      ...snapshot,
+      entries: entries(1, 50),
+      page: { oldestSequence: 1, newestSequence: 50 },
+    };
+    const cached = prependChatPage(prependChatPage(latest, middle), oldest);
+    const cache = new Map([
+      ["other-mission", streamingSnapshot("Other", 1)],
+      [cached.missionId, cached],
+    ]);
+
+    touchMissionConversationCache(cache, cached.missionId);
+
+    expect(cache.get(cached.missionId)).toBe(cached);
+    expect(cache.get(cached.missionId)?.entries).toHaveLength(150);
+    expect([...cache.keys()].at(-1)).toBe(cached.missionId);
+
+    const refreshed = mergeLatestChatPage(cache.get(cached.missionId) ?? null, {
+      ...latest,
+      revision: 9,
+    });
+    expect(refreshed.entries.map((entry) => entry.timelineSequence)).toEqual(
+      Array.from({ length: 150 }, (_, index) => index + 1),
+    );
+    expect(refreshed.page).toEqual({ oldestSequence: 101, newestSequence: 150 });
   });
 
   it("places a disjoint recovered turn between loaded older history and live output", () => {

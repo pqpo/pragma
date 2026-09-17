@@ -824,9 +824,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
     expect(chat.entries.map((entry) => entry.kind)).toEqual(["user", "assistant", "thinking"]);
-    expect(chat.syncIssues).toEqual([
-      { code: "execution_state_unavailable", section: "history", retryable: true },
-    ]);
+    expect(chat.syncIssues).toBeUndefined();
     await vi.waitFor(
       async () => {
         expect(
@@ -878,6 +876,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           id: "coordinator-intermediate",
           executionId,
           invocationId: "coordinator-root",
+          executorId: "0000000000pragma",
           eventSequence: 1,
           kind: "assistant",
           content: "I will delegate this work",
@@ -888,6 +887,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           id: "coordinator-final",
           executionId,
           invocationId: "coordinator-root",
+          executorId: "0000000000pragma",
           eventSequence: 2,
           kind: "assistant",
           content: "Final answer",
@@ -899,6 +899,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           id: "teammate-late-thinking",
           executionId,
           invocationId: "teammate",
+          executorId: expert.metadata.id,
           eventSequence: 3,
           kind: "thinking",
           content: "Late diagnostic reasoning",
@@ -923,12 +924,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      getSystemExecutorMetadata: () => [
+        {
+          id: "0000000000pragma",
+          name: "Pragma",
+          avatarId: "pragma.avatar.expert.default",
+        },
+      ],
     });
 
     const degraded = await runner.getChatPage({ id: mission.id, limit: 2 });
-    expect(degraded.syncIssues).toEqual([
-      { code: "execution_state_unavailable", section: "history", retryable: true },
-    ]);
+    expect(degraded.syncIssues).toBeUndefined();
     await vi.waitFor(
       async () => {
         expect(
@@ -942,6 +948,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(latest.entries.map((entry) => entry.id)).toEqual([
       "teammate-late-thinking",
       "coordinator-final",
+    ]);
+    expect(latest.entries).toMatchObject([
+      { executorId: expert.metadata.id, executorName: "Writer" },
+      {
+        executorId: "0000000000pragma",
+        executorName: "Pragma",
+        executorAvatarId: "pragma.avatar.expert.default",
+      },
     ]);
     const earlier = await runner.getChatPage({
       id: mission.id,
@@ -3717,7 +3731,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(workProjection).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps Work available with ID fallbacks when executor names cannot be read", async () => {
+  it("keeps known executor names and Work available when Project metadata cannot be read", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-work-name-fallback-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -3734,6 +3748,33 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
+    const executionId = "00000000-0000-4000-8000-000000000123";
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: "2026-09-17T00:00:00.000Z",
+    });
+    await missions.writeExecutionProjection(mission.id, executionId, [
+      {
+        id: "root-answer",
+        executionId,
+        executorId: expertFixture().metadata.id,
+        kind: "assistant",
+        content: "Root answer",
+        streaming: false,
+        createdAt: "2026-09-17T00:00:01.000Z",
+      },
+      {
+        id: "system-answer",
+        executionId,
+        executorId: "0000000000pragma",
+        kind: "assistant",
+        content: "System answer",
+        streaming: false,
+        createdAt: "2026-09-17T00:00:02.000Z",
+      },
+    ]);
     vi.spyOn(project, "openRevision").mockRejectedValueOnce(
       new Error("Project metadata unavailable"),
     );
@@ -3755,6 +3796,24 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: unavailableRuntimes,
       loggerProvider: createNoopLoggerProvider(),
+      getSystemExecutorMetadata: () => [
+        {
+          id: "0000000000pragma",
+          name: "Pragma",
+          avatarId: "pragma.avatar.expert.default",
+        },
+      ],
+    });
+
+    await expect(runner.getChatPage({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: "root-answer", executorName: "Writer" }),
+        expect.objectContaining({
+          id: "system-answer",
+          executorName: "Pragma",
+          executorAvatarId: "pragma.avatar.expert.default",
+        }),
+      ]),
     });
 
     await expect(runner.getWork(mission.id)).resolves.toMatchObject({
@@ -4861,9 +4920,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     });
     const degradedPage = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(degradedPage.syncIssues).toEqual([
-      { code: "execution_state_unavailable", section: "history", retryable: true },
-    ]);
+    expect(degradedPage.syncIssues).toBeUndefined();
     await vi.waitFor(
       async () => {
         await expect(runner.getChatPage({ id: mission.id, limit: 50 })).resolves.toMatchObject({
