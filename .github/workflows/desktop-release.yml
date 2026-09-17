@@ -322,7 +322,9 @@ jobs:
             exit 1
           fi
 
-          gh release upload "${tag}" release-assets/* --clobber
+          for asset in release-assets/*; do
+            gh release upload "${tag}" "${asset}" --clobber
+          done
 
       - name: Authenticate to Alibaba Cloud with GitHub OIDC
         id: aliyun-credentials
