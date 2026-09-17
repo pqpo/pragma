@@ -487,10 +487,12 @@ describe("Home executor preference contracts", () => {
 describe("mission chat streaming contracts", () => {
   it("accepts incremental patches and invalidations with positive revisions", () => {
     const missionId = "00000000-0000-4000-8000-000000000000";
+    const streamId = "00000000-0000-4000-8000-000000000001";
     expect(
       MissionChatUpdateSchema.parse({
         kind: "patch",
         missionId,
+        streamId,
         revision: 1,
         patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "hello" }],
       }),
@@ -499,6 +501,7 @@ describe("mission chat streaming contracts", () => {
       MissionChatUpdateSchema.parse({
         kind: "patch",
         missionId,
+        streamId,
         revision: 2,
         patches: [
           {
@@ -516,15 +519,14 @@ describe("mission chat streaming contracts", () => {
     ).toMatchObject({
       patches: [{ type: "context-window.update", usage: { usedTokens: 64_000 } }],
     });
-    expect(MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, revision: 3 })).toEqual({
-      kind: "invalidate",
-      missionId,
-      revision: 3,
-    });
+    expect(
+      MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, streamId, revision: 3 }),
+    ).toEqual({ kind: "invalidate", missionId, streamId, revision: 3 });
     expect(
       MissionChatUpdateSchema.parse({
         kind: "invalidate",
         missionId,
+        streamId,
         revision: 4,
         userVisibleOutput: true,
       }),
@@ -533,6 +535,7 @@ describe("mission chat streaming contracts", () => {
       MissionChatUpdateSchema.safeParse({
         kind: "patch",
         missionId,
+        streamId,
         revision: 0,
         patches: [],
       }).success,

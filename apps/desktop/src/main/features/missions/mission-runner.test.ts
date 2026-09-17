@@ -70,6 +70,7 @@ import {
   finalizeHistoricalChatEntries,
   mergeMissionChatEntriesWithLive,
   missionProjectionAddsUserVisibleOutput,
+  listPendingHumanInteractions,
   orderMissionExecutionEntries,
 } from "./mission-runner-composition.ts";
 import { createMissionStore } from "./mission-store.ts";
@@ -283,6 +284,41 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 30_000 }, () => {
+  it("does not return a pending human request that raced with a terminal transition", async () => {
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "waiting" })
+      .mockResolvedValueOnce({ status: "interrupted" });
+    const request = {
+      kind: "user_question" as const,
+      toolName: "askUserQuestion" as const,
+      toolCallId: "racing-question",
+      questions: [
+        {
+          question: "Continue?",
+          header: "Continue",
+          kind: "single_choice" as const,
+          options: [{ label: "yes", description: "Continue." }],
+        },
+      ],
+    };
+
+    await expect(
+      listPendingHumanInteractions({
+        getState: getState as never,
+        listEvents: (async () => ({
+          items: [
+            {
+              type: "human.requested",
+              data: { interactionId: "pending-question", request },
+            } as never,
+          ],
+        })) as never,
+      }),
+    ).resolves.toEqual([]);
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
+
   it("merges system Expert names and avatars into Mission presentation metadata", () => {
     const metadata = mergeMissionExecutorMetadata(
       {
@@ -418,6 +454,90 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       content: "answer",
       streaming: false,
     });
+  });
+
+  it("keeps assistant answers emitted after a tool call in the same Runtime run", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+    };
+    const base: Omit<ExecutionOutputItem, "sourceEventId" | "channel" | "occurredAt"> = {
+      executionId: chat.executionId,
+      invocationId: "teammate",
+      parentInvocationId: "coordinator",
+      executorId: "researcher",
+      contextId: "researcher-context",
+      runId: "teammate-run",
+      source: { kind: "runtime", runId: "teammate-run", path: [] },
+    };
+
+    consumeLiveChatOutput(chat, {
+      ...base,
+      sourceEventId: "before-tool",
+      channel: "message",
+      value: {
+        stopReason: "toolUse",
+        content: [{ type: "text", text: "I will ask the user now." }],
+      },
+      occurredAt: "2026-09-17T13:44:30.000Z",
+    });
+    consumeLiveChatOutput(chat, {
+      ...base,
+      sourceEventId: "tool-started",
+      channel: "tool",
+      value: {
+        toolCallId: "ask-user",
+        toolName: "askUserQuestion",
+        inputPreview: "Did you receive it?",
+      },
+      occurredAt: "2026-09-17T13:44:31.000Z",
+    });
+    consumeLiveChatOutput(chat, {
+      ...base,
+      sourceEventId: "tool-completed",
+      channel: "tool",
+      value: {
+        toolCallId: "ask-user",
+        toolName: "askUserQuestion",
+        outputPreview: "Received",
+      },
+      occurredAt: "2026-09-17T13:44:32.000Z",
+    });
+    const finalPatches = consumeLiveChatOutput(chat, {
+      ...base,
+      sourceEventId: "after-tool",
+      channel: "message",
+      value: {
+        stopReason: "stop",
+        content: [{ type: "text", text: "The user answered: Received." }],
+      },
+      occurredAt: "2026-09-17T13:44:33.000Z",
+    });
+
+    expect(finalPatches).toEqual([
+      expect.objectContaining({
+        type: "entry.upsert",
+        entry: expect.objectContaining({
+          kind: "assistant",
+          content: "The user answered: Received.",
+          finalAnswer: true,
+        }),
+      }),
+    ]);
+    expect(chat.entries).toMatchObject([
+      { kind: "assistant", content: "I will ask the user now.", streaming: false },
+      { kind: "tool", toolName: "askUserQuestion", status: "succeeded" },
+      {
+        kind: "assistant",
+        content: "The user answered: Received.",
+        streaming: false,
+        finalAnswer: true,
+      },
+    ]);
+    expect(chat.entries[0]?.id).toContain(":assistant:0");
+    expect(chat.entries[2]?.id).toContain(":assistant:1");
   });
 
   it("ignores late thinking after a final answer but accepts a new run", () => {
@@ -735,7 +855,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     ]);
   });
 
-  it("returns an archived turn's stale projection before repairing it in the background", async () => {
+  it("normalizes an archived legacy projection without rewriting it from a read", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-order-repair-"));
     temporaryPaths.push(root);
     const pragmaHome = join(root, "state");
@@ -854,30 +974,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
+    const projectionBefore = await readFile(projectionPath, "utf8");
     const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(chat.entries.map((entry) => entry.kind)).toEqual(["user", "assistant", "thinking"]);
+    expect(chat.entries.map((entry) => entry.kind)).toEqual(["user", "thinking", "assistant"]);
     expect(chat.syncIssues).toBeUndefined();
-    expect(chat.page.historyStatus).toBe("repairing");
-    await vi.waitFor(
-      async () => {
-        expect(
-          await missions.readExecutionProjectionPage(mission.id, executionId, { limit: 50 }),
-        ).toMatchObject({
-          orderingVersion: 3,
-          entries: [{ kind: "thinking" }, { kind: "assistant", finalAnswer: true }],
-        });
-      },
-      { timeout: 5_000, interval: 100 },
-    );
-    const repaired = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(repaired.entries.map((entry) => entry.kind)).toEqual(["user", "thinking", "assistant"]);
-    expect(repaired.syncIssues).toBeUndefined();
-    expect(repaired.page.historyStatus).toBeUndefined();
-    const backup = await readFile(`${projectionPath}.before-order-repair`, "utf8");
-    expect(backup).toBe(await readFile(historicalProjection, "utf8"));
+    expect(await readFile(projectionPath, "utf8")).toBe(projectionBefore);
   });
 
-  it("repairs a v2 projection in the background before paging the corrected order", async () => {
+  it("pages a normalized legacy projection without background repair", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-final-boundary-repair-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -967,18 +1071,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ],
     });
 
-    const degraded = await runner.getChatPage({ id: mission.id, limit: 2 });
-    expect(degraded.syncIssues).toBeUndefined();
-    expect(degraded.page.historyStatus).toBe("repairing");
-    await vi.waitFor(
-      async () => {
-        expect(
-          await missions.readExecutionProjectionPage(mission.id, executionId, { limit: 10 }),
-        ).toMatchObject({ orderingVersion: 3 });
-      },
-      { timeout: 5_000, interval: 100 },
-    );
-
+    const projectionBefore = await readFile(projectionPath, "utf8");
     const latest = await runner.getChatPage({ id: mission.id, limit: 2 });
     expect(latest.entries.map((entry) => entry.id)).toEqual([
       "teammate-late-thinking",
@@ -1001,19 +1094,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mission.initialMessageId,
       "coordinator-intermediate",
     ]);
-    expect(
-      await missions.readExecutionProjectionPage(mission.id, executionId, { limit: 10 }),
-    ).toMatchObject({
-      orderingVersion: 3,
-      entries: [
-        { id: "coordinator-intermediate" },
-        { id: "teammate-late-thinking" },
-        { id: "coordinator-final", finalAnswer: true },
-      ],
-    });
-    expect(await readFile(`${projectionPath}.before-order-v3-repair`, "utf8")).toContain(
-      '"orderingVersion":2',
-    );
+    expect(await readFile(projectionPath, "utf8")).toBe(projectionBefore);
   });
 
   it("orders durable thinking and final replies by event sequence", () => {
@@ -3341,6 +3422,220 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     unsubscribe();
   });
 
+  it("materializes pre-tool and post-tool assistant messages from one Runtime run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-same-run-tool-answer-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Ask the user and report the answer",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        const usage = {
+          measurement: "reported" as const,
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        };
+        const message = (text: string, stopReason: "toolUse" | "stop", timestamp: number) => ({
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text }],
+          api: "test",
+          provider: "test",
+          model: "test-model",
+          usage,
+          stopReason,
+          timestamp,
+        });
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.completed",
+          payload: {
+            role: "assistant",
+            contentType: "text",
+            message: message("I will ask the user now.", "toolUse", Date.now()),
+          },
+        });
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "tool.started",
+          payload: { toolCallId: "ask-user", toolName: "askUserQuestion", kind: "tool" },
+        });
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "tool.completed",
+          payload: {
+            toolCallId: "ask-user",
+            toolName: "askUserQuestion",
+            kind: "tool",
+            outputPreview: "Received",
+          },
+        });
+        const answer = "The user answered: Received.";
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.completed",
+          payload: {
+            role: "assistant",
+            contentType: "text",
+            message: message(answer, "stop", Date.now() + 1),
+          },
+        });
+        return { outputText: answer, runtimeSessionId: "runtime", usage };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
+    expect(
+      chat.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => entry.content),
+    ).toEqual(["I will ask the user now.", "The user answered: Received."]);
+    expect(chat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "tool",
+          toolName: "askUserQuestion",
+          status: "succeeded",
+        }),
+      ]),
+    );
+
+    // Older projections could retain the pre-tool assistant segment while losing
+    // the terminal result. A current read must recover the canonical root output
+    // without requiring a background repair job or a rerun of the Mission.
+    const completedMission = await missions.get(mission.id);
+    const executionId = completedMission.execution!.id;
+    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const execution = (await executionStore.get(executionId))!;
+    let projection = await missions.readExecutionProjection(mission.id, executionId);
+    await vi.waitFor(
+      async () => {
+        projection = await missions.readExecutionProjection(mission.id, executionId);
+        expect(projection).toBeDefined();
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    await missions.writeExecutionProjection(
+      mission.id,
+      executionId,
+      projection!.filter(
+        (entry) =>
+          entry.kind !== "assistant" || entry.content !== "The user answered: Received.",
+      ),
+      execution.updatedAt,
+    );
+    const recovered = await runner.getChatPage({ id: mission.id, limit: 50 });
+    expect(recovered.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `result:${executionId}`,
+          kind: "assistant",
+          content: "The user answered: Received.",
+          finalAnswer: true,
+        }),
+      ]),
+    );
+  });
+
+  it("reads a legacy terminal Execution when its Mission projection is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-missing-projection-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Read the durable answer without a projection",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({
+        outputText: "Durable legacy answer",
+        runtimeSessionId: "runtime",
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const executionStore = createFileExecutionStore({ pragmaHome });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      executionStore,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    vi.spyOn(missions, "readExecutionProjectionPage").mockResolvedValue(undefined);
+
+    const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
+
+    expect(chat.syncIssues).toBeUndefined();
+    expect(chat.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "assistant",
+          content: "Durable legacy answer",
+          streaming: false,
+        }),
+      ]),
+    );
+  });
+
   it("streams nested agent turns into their work conversation without leaking into root chat", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-child-stream-"));
     temporaryPaths.push(root);
@@ -4047,7 +4342,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(archiveSpy).toHaveBeenCalled();
   });
 
-  it("publishes the Core terminal status before terminal projection settles", async () => {
+  it("publishes terminal status only after the durable Mission event projection settles", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-terminal-status-first-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -4099,14 +4394,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await runner.run(mission.id);
     await projectionStart;
     try {
-      expect(notifications).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            missionId: mission.id,
-            execution: expect.objectContaining({ status: "succeeded" }),
-          }),
-        ]),
-      );
+      expect(notifications).toEqual([]);
       await expect(missions.get(mission.id)).resolves.toMatchObject({
         execution: { status: "running" },
       });
@@ -4121,6 +4409,14 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
+    );
+    expect(notifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          missionId: mission.id,
+          execution: expect.objectContaining({ status: "succeeded" }),
+        }),
+      ]),
     );
   });
 
@@ -4961,25 +5257,19 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         expect.objectContaining({ kind: "assistant", content: "Refined findings" }),
       ],
     });
-    const degradedPage = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(degradedPage.syncIssues).toBeUndefined();
-    expect(degradedPage.page.historyStatus).toBe("repairing");
-    await vi.waitFor(
-      async () => {
-        await expect(runner.getChatPage({ id: mission.id, limit: 50 })).resolves.toMatchObject({
-          entries: expect.arrayContaining([
-            expect.objectContaining({ kind: "agent_activity", action: "spawn" }),
-            expect.objectContaining({
-              kind: "context_operation",
-              operationId: "compact-1",
-              status: "succeeded",
-            }),
-          ]),
-        });
-      },
-      { timeout: 5_000, interval: 100 },
+    const projectedPage = await runner.getChatPage({ id: mission.id, limit: 50 });
+    expect(projectedPage.syncIssues).toBeUndefined();
+    expect(projectedPage.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "agent_activity", action: "spawn" }),
+        expect.objectContaining({
+          kind: "context_operation",
+          operationId: "compact-1",
+          status: "succeeded",
+        }),
+      ]),
     );
-    expect((await runner.getChatPage({ id: mission.id, limit: 50 })).entries).not.toEqual(
+    expect(projectedPage.entries).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: "context_operation",
@@ -5619,6 +5909,10 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       requestId: "60000000-0000-4000-8000-000000000001",
       response: { answers: { "Which environment?": "staging" } },
     });
+    await expect(runner.getConversationState(mission.id)).resolves.toMatchObject({
+      pendingInteractions: [],
+    });
+    await expect(runner.listHumanInteractions(mission.id)).resolves.toEqual([]);
     await humanResumeCommitStarted;
     releaseHumanResumeCommit();
     await resumedTurnStarted;
@@ -5644,6 +5938,32 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         response: { answers: { "Which environment?": "production" } },
       }),
     ).rejects.toThrow(/no longer waiting|not pending/u);
+
+    const interruptedMission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Ask once, then let the user interrupt.",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertResource),
+    });
+    await runner.run(interruptedMission.id);
+    await vi.waitFor(
+      async () =>
+        expect((await missions.get(interruptedMission.id)).execution?.status).toBe("waiting"),
+      { timeout: settlementTimeoutMs },
+    );
+    await expect(runner.getConversationState(interruptedMission.id)).resolves.toMatchObject({
+      pendingInteractions: [
+        expect.objectContaining({ request: expect.objectContaining({ kind: "question" }) }),
+      ],
+    });
+    await expect(runner.interrupt(interruptedMission.id)).resolves.toMatchObject({
+      execution: { status: "cancelled" },
+    });
+    await expect(runner.getConversationState(interruptedMission.id)).resolves.toMatchObject({
+      pendingInteractions: [],
+      execution: { status: "cancelled", interruptible: false },
+    });
+    await expect(runner.listHumanInteractions(interruptedMission.id)).resolves.toEqual([]);
   });
 
   it("keeps an ExpertTeam askUserQuestion response out of the steer queue", async () => {

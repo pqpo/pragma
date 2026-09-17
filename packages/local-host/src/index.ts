@@ -42,6 +42,7 @@ export * from "./missions/controller/watch.ts";
 export * from "./missions/controller/mission-control.ts";
 export * from "./missions/controller/migrations/index.ts";
 export * from "./missions/query.ts";
+export * from "./missions/activity.ts";
 export * from "./run-payload.ts";
 export * from "./run.ts";
 export * from "./mission-event-projector.ts";
@@ -59,7 +60,6 @@ export * from "./secrets/index.ts";
 export * from "./runtime-resolver.ts";
 /** Composition convenience: this is Core's shared counter, not a Host estimator. */
 export { createRuntimeTokenCounter } from "@pragma/core";
-
 
 export interface WorkspaceFilesystemPort {
   readonly stat: (path: string) => Promise<{ readonly isDirectory: () => boolean }>;

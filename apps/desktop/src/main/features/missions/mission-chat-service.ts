@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { RuntimeContextWindowUsage } from "@pragma/core";
 
 import type { MissionChatPatch, MissionChatUpdate } from "../../../shared/contracts/index.ts";
@@ -11,6 +13,7 @@ export interface MissionLiveChatProjection {
 }
 
 export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
+  readonly #streamId = randomUUID();
   readonly #listeners = new Set<(notification: MissionChatNotification) => void>();
   readonly #revisions = new Map<string, number>();
   readonly #degradedSync = new Set<string>();
@@ -111,9 +114,16 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     this.#revisions.set(missionId, revision);
     const value: MissionChatUpdate =
       update.kind === "patch"
-        ? { missionId, revision, kind: "patch", patches: [...update.patches] }
+        ? {
+            missionId,
+            streamId: this.#streamId,
+            revision,
+            kind: "patch",
+            patches: [...update.patches],
+          }
         : {
             missionId,
+            streamId: this.#streamId,
             revision,
             kind: "invalidate",
             ...(update.userVisibleOutput === true ? { userVisibleOutput: true } : {}),

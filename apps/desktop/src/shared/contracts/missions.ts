@@ -702,7 +702,12 @@ const MissionChatPageInfoSchema = z.object({
   oldestSequence: z.number().int().positive().optional(),
   newestSequence: z.number().int().positive().optional(),
   nextBeforeCursor: z.string().min(1).max(2_048).optional(),
-  historyStatus: z.literal("repairing").optional(),
+  truncation: z
+    .object({
+      omittedEntries: z.number().int().nonnegative(),
+      truncatedFields: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 const MissionMessageDeliverySchema = z.object({
@@ -805,6 +810,7 @@ export const MissionChatPatchSchema = z.discriminatedUnion("type", [
 
 const MissionChatUpdateBaseSchema = z.object({
   missionId: MissionIdSchema,
+  streamId: z.string().uuid(),
   revision: z.number().int().positive(),
 });
 

@@ -72,6 +72,8 @@ export interface MissionExecutionProjectionPage {
   readonly createdAt: string;
   readonly sourceUpdatedAt?: string | undefined;
   readonly orderingVersion: ProjectionOrderingVersion;
+  readonly omittedEntries: number;
+  readonly truncatedFields: number;
   readonly nextBeforeOffset?: number | undefined;
 }
 
@@ -79,13 +81,13 @@ export async function readMissionExecutionProjectionOrderingVersion(
   path: string,
   executionId: string,
 ): Promise<ProjectionOrderingVersion | undefined> {
-  const metadata = await stat(path).catch((error: unknown) => {
+  const handle = await open(path, "r").catch((error: unknown) => {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
   });
-  if (metadata === undefined) return undefined;
-  const handle = await open(path, "r");
+  if (handle === undefined) return undefined;
   try {
+    const metadata = await handle.stat();
     return (await readProjectionHeader(handle, metadata.size, executionId)).orderingVersion;
   } finally {
     await handle.close();
@@ -102,19 +104,18 @@ export async function readMissionExecutionProjectionPage(
       "Mission execution projection page limit is invalid.",
     );
   }
-  const metadata = await stat(path).catch((error: unknown) => {
+  const handle = await open(path, "r").catch((error: unknown) => {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
   });
-  if (metadata === undefined) return undefined;
-  if (metadata.size > MISSION_EXECUTION_PROJECTION_MAX_BYTES) {
-    throw new MissionExecutionProjectionError(
-      `Mission execution projection exceeds ${MISSION_EXECUTION_PROJECTION_MAX_BYTES} bytes.`,
-    );
-  }
-
-  const handle = await open(path, "r");
+  if (handle === undefined) return undefined;
   try {
+    const metadata = await handle.stat();
+    if (metadata.size > MISSION_EXECUTION_PROJECTION_MAX_BYTES) {
+      throw new MissionExecutionProjectionError(
+        `Mission execution projection exceeds ${MISSION_EXECUTION_PROJECTION_MAX_BYTES} bytes.`,
+      );
+    }
     const header = await readProjectionHeader(handle, metadata.size, executionId);
     const requestedEnd = input.beforeOffset ?? metadata.size;
     if (
@@ -147,6 +148,8 @@ export async function readMissionExecutionProjectionPage(
       createdAt: header.createdAt,
       ...(header.sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt: header.sourceUpdatedAt }),
       orderingVersion: header.orderingVersion,
+      omittedEntries: header.omittedEntries,
+      truncatedFields: header.truncatedFields,
       ...(page.nextBeforeOffset === undefined ? {} : { nextBeforeOffset: page.nextBeforeOffset }),
     };
   } finally {
@@ -257,6 +260,8 @@ async function readProjectionHeader(
   readonly createdAt: string;
   readonly sourceUpdatedAt?: string | undefined;
   readonly orderingVersion: ProjectionOrderingVersion;
+  readonly omittedEntries: number;
+  readonly truncatedFields: number;
 }> {
   const maximumHeaderBytes = Math.min(size, 64 * 1024);
   const bytes = Buffer.allocUnsafe(maximumHeaderBytes);
@@ -285,6 +290,8 @@ async function readProjectionHeader(
     createdAt: header.createdAt,
     ...(header.sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt: header.sourceUpdatedAt }),
     orderingVersion: header.orderingVersion ?? 1,
+    omittedEntries: header.omittedEntries,
+    truncatedFields: header.truncatedFields,
   };
 }
 

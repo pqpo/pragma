@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { MissionActivityReader } from "@pragma/local-host";
+
 import {
   MissionSchema,
   type Mission,
@@ -49,18 +51,10 @@ function summary(): MissionSummary {
 }
 
 describe("Mission read model", () => {
-  it("uses the Core terminal record for a detail read", async () => {
+  it("uses the Local Host terminal activity for a detail read", async () => {
     const readModel = createMissionReadModel({
       missions: { get: async () => mission(), list: async () => [summary()] },
-      executions: {
-        get: async () =>
-          ({
-            executionId,
-            status: "succeeded",
-            output: { type: "inline", value: { answer: 42 } },
-            updatedAt: "2026-09-01T00:02:00.000Z",
-          }) as never,
-      },
+      activity: activityReader("succeeded"),
     });
 
     await expect(readModel.get(missionId)).resolves.toMatchObject({
@@ -72,31 +66,47 @@ describe("Mission read model", () => {
     });
   });
 
-  it("never fans out canonical reads from the availability-critical list", async () => {
-    const getExecution = vi.fn(async () => await new Promise<never>(() => undefined));
+  it("projects active list summaries from the Local Host activity fact", async () => {
+    const activity = activityReader("succeeded");
     const readModel = createMissionReadModel({
       missions: { get: async () => mission(), list: async () => [summary()] },
-      executions: { get: getExecution },
+      activity,
     });
 
-    await expect(readModel.list()).resolves.toEqual([summary()]);
-    expect(getExecution).not.toHaveBeenCalled();
+    await expect(readModel.list()).resolves.toEqual([
+      expect.objectContaining({ execution: { id: executionId, status: "succeeded" } }),
+    ]);
+    expect(activity.readMany).toHaveBeenCalledOnce();
   });
 
-  it("bounds a canonical detail read and returns persisted metadata on timeout", async () => {
-    const onReadFailure = vi.fn();
+  it("keeps persisted metadata when the activity authority is degraded", async () => {
     const readModel = createMissionReadModel({
       missions: { get: async () => mission(), list: async () => [summary()] },
-      executions: { get: async () => await new Promise<never>(() => undefined) },
-      canonicalReadTimeoutMs: 1,
-      onReadFailure,
+      activity: activityReader("running", true),
     });
 
     await expect(readModel.get(missionId)).resolves.toMatchObject({
       execution: { status: "running" },
     });
-    expect(onReadFailure).toHaveBeenCalledWith(
-      expect.objectContaining({ missionId, error: expect.any(Error) }),
-    );
   });
 });
+
+function activityReader(
+  status: "running" | "succeeded",
+  degraded = false,
+): MissionActivityReader & {
+  readonly read: ReturnType<typeof vi.fn<MissionActivityReader["read"]>>;
+  readonly readMany: ReturnType<typeof vi.fn<MissionActivityReader["readMany"]>>;
+} {
+  const snapshot = {
+    executionId,
+    status,
+    updatedAt: "2026-09-01T00:02:00.000Z",
+    source: status === "succeeded" ? ("core-execution" as const) : ("persisted-metadata" as const),
+    degraded,
+  };
+  return {
+    read: vi.fn(async () => snapshot),
+    readMany: vi.fn(async (inputs) => inputs.map(() => snapshot)),
+  };
+}

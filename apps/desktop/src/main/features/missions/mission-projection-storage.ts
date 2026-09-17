@@ -4,9 +4,7 @@ import { join } from "node:path";
 
 import { MissionChatEntrySchema, type MissionChatEntry } from "../../../shared/contracts/index.ts";
 import {
-  MISSION_EXECUTION_PROJECTION_ORDERING_VERSION,
   readMissionExecutionProjection,
-  readMissionExecutionProjectionOrderingVersion,
   readMissionExecutionProjectionPage,
   writeMissionExecutionProjection,
   type MissionExecutionProjectionPage,
@@ -87,24 +85,13 @@ export function createMissionProjectionStorage(
       );
     },
     async write(id, executionId, entries, sourceUpdatedAt) {
-      const path = currentPath(id, executionId);
-      const previousOrderingVersion = await readMissionExecutionProjectionOrderingVersion(
-        path,
+      await writeMissionExecutionProjection(
+        currentPath(id, executionId),
         executionId,
+        entries,
+        undefined,
+        sourceUpdatedAt,
       );
-      if (
-        previousOrderingVersion !== undefined &&
-        previousOrderingVersion < MISSION_EXECUTION_PROJECTION_ORDERING_VERSION
-      ) {
-        const backupPath =
-          previousOrderingVersion === 1
-            ? `${path}.before-order-repair`
-            : `${path}.before-order-v${MISSION_EXECUTION_PROJECTION_ORDERING_VERSION}-repair`;
-        await copyFile(path, backupPath, constants.COPYFILE_EXCL).catch((error: unknown) => {
-          if (!isNodeError(error, "EEXIST")) throw error;
-        });
-      }
-      await writeMissionExecutionProjection(path, executionId, entries, undefined, sourceUpdatedAt);
       await rm(legacyPath(id, executionId), { force: true });
     },
   };

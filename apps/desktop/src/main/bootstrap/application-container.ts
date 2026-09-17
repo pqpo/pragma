@@ -26,6 +26,7 @@ import {
 import { MEMORY_CURATOR_REF } from "@pragma/memory";
 import {
   createLocalHostMissionController,
+  createMissionActivityReader,
   createNativeOsKeychain,
   createSecretStore,
   type MissionControllerStore,
@@ -117,8 +118,6 @@ import { createFencedMissionStore } from "../features/missions/mission-store-fen
 import { MissionStatusService } from "../features/missions/mission-status-service.ts";
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
-import { createMissionTerminalProjectionRepair } from "../features/missions/mission-terminal-projection-repair.ts";
-import { createMissionTerminalReconciler } from "../features/missions/mission-terminal-reconciler.ts";
 import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
 import {
   createDesktopMemoryCurator,
@@ -1310,80 +1309,20 @@ export async function createDesktopApplicationContainer(
     memory: memoryPlane,
     runner: missionRunner,
   });
-  const repairMissionTerminalProjection = createMissionTerminalProjectionRepair({
-    ownerScope,
+  const missionActivity = createMissionActivityReader({
     controller: missionControllerStore,
-    missions: guardedMissionStore,
-    events: executionEventProjector,
-    reporter: {
-      eventFailure: (error, input) => {
-        mainLogger.warn(
-          "mission.terminal_event_repair_failed",
-          "The Core terminal state is visible, but its Mission event still needs repair.",
-          {
-            error,
-            missionId: input.mission.id,
-            executionId: input.executionId,
-            errorCode: "MISSION_TERMINAL_EVENT_REPAIR_FAILED",
-            retryable: true,
-          },
-        );
-      },
-      snapshotFailure: (error, input) => {
-        mainLogger.warn(
-          "mission.execution_snapshot_repair_failed",
-          "The Mission event is authoritative, but its v10 recovery snapshot remains stale.",
-          {
-            error,
-            missionId: input.mission.id,
-            executionId: input.executionId,
-            errorCode: "MISSION_EXECUTION_SNAPSHOT_REPAIR_FAILED",
-            retryable: true,
-          },
-        );
-      },
-      rebuilt: (input) => {
-        mainLogger.info(
-          "mission.terminal_projection_rebuilt",
-          "Rebuilt a stale Mission terminal projection from the Core execution record.",
-          {
-            missionId: input.mission.id,
-            executionId: input.executionId,
-            status: input.status,
-          },
-        );
-      },
+    executions: memoryPlane.executionStore,
+    onReadFailure: ({ missionId, source, error }) => {
+      mainLogger.warn(
+        "mission.read_projection_degraded",
+        "Mission activity was returned with a degraded authority read.",
+        { missionId, source, error, retryable: true },
+      );
     },
   });
   const missionReadModel = createMissionReadModel({
     missions: missionStore,
-    executions: memoryPlane.executionStore,
-    onReadFailure: ({ missionId, error }) => {
-      mainLogger.warn(
-        "mission.read_projection_degraded",
-        "Mission metadata was returned with a degraded execution projection.",
-        { missionId, error, retryable: true },
-      );
-    },
-  });
-  const missionTerminalReconciler = createMissionTerminalReconciler({
-    missions: missionStore,
-    executions: memoryPlane.executionStore,
-    repair: repairMissionTerminalProjection,
-    status: missionStatus,
-    audienceForMission: (mission) =>
-      isUserFacingMissionOrigin(mission.origin) ? "user" : "internal",
-    canRepair: async (missionId) => {
-      const { snapshot } = await missionControllerStore.readSnapshot({ missionId });
-      return snapshot.lease === undefined || Date.parse(snapshot.lease.expiresAt) <= Date.now();
-    },
-    reportFailure: ({ missionId, error }) => {
-      mainLogger.warn(
-        "mission.terminal_reconciliation_degraded",
-        "Mission terminal reconciliation was deferred without blocking renderer reads.",
-        { missionId, error, retryable: true },
-      );
-    },
+    activity: missionActivity,
   });
   const localHost = createLocalHostNodeApplication({
     pragmaHome: pragmaPaths.root,
@@ -1404,24 +1343,8 @@ export async function createDesktopApplicationContainer(
         listExecutors: async () => await missionExecutors.list(),
       },
       missions: {
-        get: async (missionId) => {
-          const mission = await missionReadModel.get(missionId);
-          missionTerminalReconciler.schedule([missionId]);
-          return mission;
-        },
-        list: async () => {
-          const summaries = await missionReadModel.list();
-          missionTerminalReconciler.schedule(
-            summaries
-              .filter(
-                (mission) =>
-                  mission.execution !== undefined &&
-                  ["queued", "running", "waiting"].includes(mission.execution.status),
-              )
-              .map((mission) => mission.id),
-          );
-          return summaries;
-        },
+        get: async (missionId) => await missionReadModel.get(missionId),
+        list: async () => await missionReadModel.list(),
         query: missionQuery.queryMission,
       },
       missionLifecycle,

@@ -1365,6 +1365,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const latestPage = await store.readExecutionProjectionPage(created.id, executionId, {
       limit: 20,
     });
+    expect(latestPage).toMatchObject({ omittedEntries: 2, truncatedFields: 1 });
     expect(latestPage?.entries).toHaveLength(20);
     expect(latestPage?.entries[0]).toMatchObject({
       id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES - 18}`,

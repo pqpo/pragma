@@ -9,6 +9,7 @@ import {
 
 const missionId = "00000000-0000-4000-8000-000000000000";
 const executionId = "00000000-0000-4000-8000-000000000003";
+const streamId = "00000000-0000-4000-8000-000000000004";
 
 describe("Mission renderer update forwarding", () => {
   it("forwards user chat patches in revision order", () => {
@@ -16,6 +17,7 @@ describe("Mission renderer update forwarding", () => {
     const updates: MissionChatUpdate[] = [1, 2, 3].map((revision) => ({
       kind: "patch",
       missionId,
+      streamId,
       revision,
       patches: [
         { type: "entry.append", entryId: "answer", field: "content", delta: String(revision) },
@@ -58,7 +60,7 @@ describe("Mission renderer update forwarding", () => {
     forwardMissionChatNotification({
       notification: {
         audience: "internal",
-        update: { kind: "invalidate", missionId, revision: 1 },
+        update: { kind: "invalidate", missionId, streamId, revision: 1 },
       },
       getSender: () => ({ send }),
     });

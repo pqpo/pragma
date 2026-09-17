@@ -811,9 +811,66 @@ export function createMissionRunner(options: {
       { missionId },
     );
   });
-  const pendingProjectionRepairs = new Set<string>();
-  const pendingHumanInteractionsByMission = new Map<string, MissionHumanInteraction[]>();
-  const pendingHumanInteractionReads = new Set<string>();
+  const pendingHumanInteractionsByMission = new Map<
+    string,
+    {
+      readonly executionId: string;
+      readonly interactions: readonly MissionHumanInteraction[];
+    }
+  >();
+  const respondedHumanInteractionsByMission = new Map<
+    string,
+    {
+      readonly executionId: string;
+      readonly interactionIds: ReadonlySet<string>;
+    }
+  >();
+  const excludeRespondedHumanInteractions = (
+    missionId: string,
+    executionId: string | undefined,
+    interactions: readonly MissionHumanInteraction[],
+  ): MissionHumanInteraction[] => {
+    const responded = respondedHumanInteractionsByMission.get(missionId);
+    if (executionId === undefined || responded?.executionId !== executionId) {
+      return [...interactions];
+    }
+    return interactions.filter(
+      (interaction) => !responded.interactionIds.has(interaction.interactionId),
+    );
+  };
+  const acknowledgeHumanInteractionResponse = (
+    missionId: string,
+    executionId: string,
+    interactionId: string,
+  ): void => {
+    const current = respondedHumanInteractionsByMission.get(missionId);
+    const interactionIds =
+      current?.executionId === executionId ? new Set(current.interactionIds) : new Set<string>();
+    interactionIds.add(interactionId);
+    respondedHumanInteractionsByMission.set(missionId, { executionId, interactionIds });
+    const cached = pendingHumanInteractionsByMission.get(missionId);
+    if (cached?.executionId === executionId) {
+      pendingHumanInteractionsByMission.set(missionId, {
+        executionId,
+        interactions: cached.interactions.filter(
+          (interaction) => interaction.interactionId !== interactionId,
+        ),
+      });
+    }
+  };
+  const clearHumanInteractionProjection = (
+    missionId: string,
+    executionId?: string | undefined,
+  ): void => {
+    const pending = pendingHumanInteractionsByMission.get(missionId);
+    if (executionId === undefined || pending?.executionId === executionId) {
+      pendingHumanInteractionsByMission.delete(missionId);
+    }
+    const responded = respondedHumanInteractionsByMission.get(missionId);
+    if (executionId === undefined || responded?.executionId === executionId) {
+      respondedHumanInteractionsByMission.delete(missionId);
+    }
+  };
   const workService = new MissionWorkService<LiveMissionChat>(({ error, missionId }) => {
     logger.error(
       "mission.work_listener_failed",
@@ -1057,6 +1114,7 @@ export function createMissionRunner(options: {
     userVisibleOutput = false,
   ): Promise<void> => {
     if (lifecycleService.active(id)?.handle === handle) lifecycleService.deleteActive(id);
+    clearHumanInteractionProjection(id, handle.executionId);
     await chatService.closeLiveIfCurrent(id, expectedLive);
     workService.clearLive(id);
     chatService.clearContextWindow(id);
@@ -1570,7 +1628,14 @@ export function createMissionRunner(options: {
       sessionId: input.sessionId,
       logger,
       onInteractionsChanged: (interactions) => {
-        pendingHumanInteractionsByMission.set(missionId, [...interactions]);
+        pendingHumanInteractionsByMission.set(missionId, {
+          executionId: input.handle.executionId,
+          interactions: excludeRespondedHumanInteractions(
+            missionId,
+            input.handle.executionId,
+            interactions,
+          ),
+        });
       },
     });
     const live = observeMissionChat(
@@ -1678,10 +1743,6 @@ export function createMissionRunner(options: {
       input.sessionId,
       async (terminal) => {
         const mission = input.mission;
-        statusService.publish(missionId, audience, {
-          id: input.handle.executionId,
-          status: terminal.status,
-        });
         let canonicalProjectionFailure: unknown;
         try {
           await retryMissionEventProjection(async () =>
@@ -1702,6 +1763,13 @@ export function createMissionRunner(options: {
             { missionId, executionId: input.handle.executionId, retryable: true },
           );
         }
+        // The Core terminal record is already committed. Publish that canonical
+        // fact even when the secondary Local Host event projection is degraded;
+        // otherwise one failed projection can leave the rail visibly running.
+        statusService.publish(missionId, audience, {
+          id: input.handle.executionId,
+          status: terminal.status,
+        });
         if (canonicalProjectionFailure !== undefined) throw canonicalProjectionFailure;
       },
       checkpoint,
@@ -2829,35 +2897,6 @@ export function createMissionRunner(options: {
       executionStore,
       missions: options.missions,
       ...(capturedLive === undefined ? {} : { activeChat: capturedLive }),
-      scheduleProjectionRepair: (turn) => {
-        const key = `${mission.id}:${turn.executionId}`;
-        if (pendingProjectionRepairs.has(key)) return;
-        pendingProjectionRepairs.add(key);
-        const timer = setTimeout(() => {
-          void repairMissionExecutionProjection({
-            missionId: mission.id,
-            turn,
-            executionStore,
-            missions: options.missions,
-          })
-            .then((userVisibleOutput) =>
-              invalidateChat(
-                mission.id,
-                missionSurfaceAudience(mission),
-                userVisibleOutput ? { userVisibleOutput: true } : {},
-              ),
-            )
-            .catch((error: unknown) => {
-              logger.warn(
-                "mission.chat_projection_repair_failed",
-                "Mission chat projection could not be repaired in the background.",
-                { error, missionId: mission.id, executionId: turn.executionId },
-              );
-            })
-            .finally(() => pendingProjectionRepairs.delete(key));
-        }, 1_000);
-        timer.unref();
-      },
       ...(mission.branch === undefined
         ? {}
         : {
@@ -2935,7 +2974,7 @@ export function createMissionRunner(options: {
         ...(history.nextBeforeCursor === undefined
           ? {}
           : { nextBeforeCursor: history.nextBeforeCursor }),
-        ...(history.historyStatus === undefined ? {} : { historyStatus: history.historyStatus }),
+        ...(history.truncation === undefined ? {} : { truncation: history.truncation }),
       },
       ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
     };
@@ -2961,37 +3000,46 @@ export function createMissionRunner(options: {
         ? undefined
         : await executionStore.get(latestMission.execution.id).catch(() => undefined);
     const persistedTerminalStatus =
-      persistedExecution !== undefined && isFinalExecutionStatus(persistedExecution.status)
+      persistedExecution !== undefined && isMissionTerminalExecutionStatus(persistedExecution.status)
         ? persistedExecution.status === "interrupted"
           ? ("cancelled" as const)
           : persistedExecution.status
         : undefined;
-    const effectiveExecutionStatus = persistedTerminalStatus ?? latestMission.execution?.status;
-    const projectedExecutionActive =
+    let effectiveExecutionStatus = persistedTerminalStatus ?? latestMission.execution?.status;
+    let projectedExecutionActive =
       effectiveExecutionStatus !== undefined &&
       ["queued", "running", "waiting"].includes(effectiveExecutionStatus);
     const syncIssues: MissionChatSyncIssue[] = [];
-    const pendingInteractions = pendingHumanInteractionsByMission.get(id) ?? [];
-    if (!pendingHumanInteractionsByMission.has(id) && effectiveExecutionStatus === "waiting") {
-      syncIssues.push(missionChatSyncIssue("pending_interactions"));
-      if (!pendingHumanInteractionReads.has(id)) {
-        pendingHumanInteractionReads.add(id);
-        const timer = setTimeout(() => {
-          void listMissionPendingHumanInteractions(latestMission)
-            .then((interactions) => {
-              pendingHumanInteractionsByMission.set(id, [...interactions]);
-              invalidateChat(id, missionSurfaceAudience(latestMission));
-            })
-            .catch((error: unknown) => {
-              logger.warn(
-                "mission.human_interaction_projection_failed",
-                "Mission pending interactions could not be rebuilt in the background.",
-                { error, missionId: id, executionId: latestMission.execution?.id },
-              );
-            })
-            .finally(() => pendingHumanInteractionReads.delete(id));
-        }, 0);
-        timer.unref();
+    let pendingInteractions: MissionHumanInteraction[] = [];
+    if (projectedExecutionActive && effectiveExecutionStatus === "waiting") {
+      const cachedInteractions = pendingHumanInteractionsByMission.get(id);
+      if (
+        cachedInteractions !== undefined &&
+        cachedInteractions.executionId === latestMission.execution?.id
+      ) {
+        pendingInteractions = [...cachedInteractions.interactions];
+      } else {
+        try {
+          pendingInteractions = [...(await listMissionPendingHumanInteractions(latestMission))];
+          if (latestMission.execution !== undefined) {
+            pendingHumanInteractionsByMission.set(id, {
+              executionId: latestMission.execution.id,
+              interactions: [...pendingInteractions],
+            });
+          }
+        } catch {
+          syncIssues.push(missionChatSyncIssue("pending_interactions"));
+        }
+      }
+    } else {
+      // Pending human input belongs to one active Execution. A terminal or
+      // non-waiting state closes it and stale snapshots cannot resurrect it.
+      const cachedInteractions = pendingHumanInteractionsByMission.get(id);
+      if (
+        latestMission.execution === undefined ||
+        cachedInteractions?.executionId === latestMission.execution.id
+      ) {
+        pendingHumanInteractionsByMission.delete(id);
       }
     }
     const current = lifecycleService.active(id);
@@ -3101,6 +3149,33 @@ export function createMissionRunner(options: {
       prompt.deliveryAttempt.sourceExecutionId !== undefined
         ? [`result:${prompt.deliveryAttempt.sourceExecutionId}`]
         : [],
+    );
+    // Pending interactions and session queues are independent reads. They can
+    // cross an interrupt, so validate the canonical aggregate again before
+    // publishing the composite state. This prevents an old askUser snapshot
+    // from being returned with a newer chat revision.
+    if (latestMission.execution !== undefined) {
+      const finalExecutionState = await executionStore
+        .get(latestMission.execution.id)
+        .catch(() => undefined);
+      if (
+        finalExecutionState !== undefined &&
+        isMissionTerminalExecutionStatus(finalExecutionState.status)
+      ) {
+        effectiveExecutionStatus =
+          finalExecutionState.status === "interrupted" ? "cancelled" : finalExecutionState.status;
+        projectedExecutionActive = false;
+        pendingInteractions = [];
+        clearHumanInteractionProjection(id, latestMission.execution.id);
+      }
+    }
+    // Re-apply acknowledgements after all asynchronous reads. A response may have completed while
+    // this composite state was being assembled, in which case its earlier pending snapshot must
+    // not be published to the renderer.
+    pendingInteractions = excludeRespondedHumanInteractions(
+      id,
+      latestMission.execution?.id,
+      pendingInteractions,
     );
     const healthCurrent = lifecycleService.active(id);
     const activeHandleMatches =
@@ -3863,6 +3938,11 @@ export function createMissionRunner(options: {
             toExpertHumanResponse(request, command.payload.response),
             { requestId: command.request.requestId },
           );
+          acknowledgeHumanInteractionResponse(
+            command.missionId,
+            execution.handle.executionId,
+            interactionId,
+          );
           invalidateChat(command.missionId, execution.audience);
           return {
             missionId: command.missionId,
@@ -4524,7 +4604,12 @@ export function createMissionRunner(options: {
       });
     },
     async listHumanInteractions(id) {
-      return await listMissionPendingHumanInteractions(await options.missions.get(id));
+      const mission = await options.missions.get(id);
+      return excludeRespondedHumanInteractions(
+        id,
+        mission.execution?.id,
+        await listMissionPendingHumanInteractions(mission),
+      );
     },
     async respondToHumanInteraction(input) {
       await withMissionController(input.missionId, async () => {
@@ -4536,6 +4621,11 @@ export function createMissionRunner(options: {
           {
             requestId: input.requestId,
           },
+        );
+        acknowledgeHumanInteractionResponse(
+          input.missionId,
+          execution.handle.executionId,
+          input.interactionId,
         );
         invalidateChat(input.missionId, execution.audience);
       });
@@ -4841,18 +4931,20 @@ async function persistMissionExecutionProjection(
     );
     for (const entry of interruptedProjection) projected.set(entry.id, entry);
     const source = await executionStore.get(executionId);
+    const completeProjection =
+      source === undefined
+        ? [...projected.values()]
+        : ensureTerminalExecutionResultEntry([...projected.values()], source);
     await retryMissionProjectionWrite(
       missions,
       missionId,
       executionId,
-      [...projected.values()],
+      completeProjection,
       source?.updatedAt,
     );
     return {
       status: "current",
-      userVisibleOutput: missionProjectionAddsUserVisibleOutput(liveEntries, [
-        ...projected.values(),
-      ]),
+      userVisibleOutput: missionProjectionAddsUserVisibleOutput(liveEntries, completeProjection),
     };
   } catch (error) {
     // The cancellation snapshot above is already durable and sufficient for
@@ -4971,44 +5063,6 @@ type MissionChatPageCursor =
     }
   | { readonly version: 1; readonly kind: "turn-start"; readonly sequence: number };
 
-async function repairMissionExecutionProjection(input: {
-  readonly missionId: string;
-  readonly turn: MissionTimelineTurn & { readonly executionId: string };
-  readonly executionStore: ReturnType<typeof createFileExecutionStore>;
-  readonly missions: MissionStore;
-}): Promise<boolean> {
-  const executionState = await input.executionStore.get(input.turn.executionId);
-  if (executionState !== undefined && !isFinalExecutionStatus(executionState.status)) return false;
-  const previous =
-    (await input.missions.readExecutionProjection(input.missionId, input.turn.executionId)) ?? [];
-  let repaired = finalizeHistoricalChatEntries(
-    orderMissionExecutionEntries(previous),
-    true,
-    executionState?.rootInvocationId,
-  );
-  if (executionState !== undefined) {
-    const canonical = await readDurableMissionChatEntries(
-      new StoredExecutionView(input.turn.executionId, input.executionStore),
-      input.turn.sequence,
-    );
-    if (canonical.length === 0 && previous.length > 0) {
-      throw new Error("Execution event history is unavailable for projection repair.");
-    }
-    repaired = finalizeHistoricalChatEntries(
-      mergeMissionChatEntriesWithLive(previous, canonical),
-      true,
-      executionState.rootInvocationId,
-    );
-  }
-  await input.missions.writeExecutionProjection(
-    input.missionId,
-    input.turn.executionId,
-    repaired,
-    executionState?.updatedAt,
-  );
-  return missionProjectionAddsUserVisibleOutput(previous, repaired);
-}
-
 async function readMissionChatHistoryPage(input: {
   readonly missionId: string;
   readonly query: MissionChatPageQuery;
@@ -5016,15 +5070,14 @@ async function readMissionChatHistoryPage(input: {
   readonly missions: MissionStore;
   readonly activeChat?: LiveMissionChat | undefined;
   readonly loadInheritedEntries?: (() => Promise<readonly MissionChatEntry[]>) | undefined;
-  readonly scheduleProjectionRepair?:
-    ((turn: MissionTimelineTurn & { readonly executionId: string }) => void) | undefined;
 }): Promise<{
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
-  readonly historyStatus?: "repairing" | undefined;
   readonly oldestSequence?: number | undefined;
   readonly newestSequence?: number | undefined;
   readonly nextBeforeCursor?: string | undefined;
+  readonly truncation?:
+    { readonly omittedEntries: number; readonly truncatedFields: number } | undefined;
 }> {
   const cursor = decodeMissionChatPageCursor(input.query.beforeCursor);
   let beforeSequence = cursor?.kind === "timeline" ? cursor.beforeSequence : undefined;
@@ -5051,8 +5104,9 @@ async function readMissionChatHistoryPage(input: {
   let remaining = input.query.limit;
   let collected: MissionChatEntry[] = [];
   const syncIssues: MissionChatSyncIssue[] = [];
-  let historyStatus: "repairing" | undefined;
   let nextBeforeCursor: string | undefined;
+  let omittedEntries = 0;
+  let truncatedFields = 0;
   let firstTimelineRead = true;
 
   while (remaining > 0) {
@@ -5076,15 +5130,13 @@ async function readMissionChatHistoryPage(input: {
           ? {}
           : { cursor: turnCursor }),
         ...(input.activeChat === undefined ? {} : { activeChat: input.activeChat }),
-        ...(input.scheduleProjectionRepair === undefined
-          ? {}
-          : { scheduleProjectionRepair: input.scheduleProjectionRepair }),
         inheritedEntries:
           turn.executionId === undefined ? await inheritedEntriesFor(turn.sequence) : [],
       });
       collected = [...page.entries, ...collected];
       syncIssues.push(...page.syncIssues);
-      if (page.historyStatus === "repairing") historyStatus = "repairing";
+      omittedEntries += page.truncation?.omittedEntries ?? 0;
+      truncatedFields += page.truncation?.truncatedFields ?? 0;
       remaining -= page.entries.length;
       if (page.nextCursor !== undefined) {
         nextBeforeCursor = encodeMissionChatPageCursor(page.nextCursor);
@@ -5115,10 +5167,12 @@ async function readMissionChatHistoryPage(input: {
   return {
     entries: collected,
     syncIssues,
-    ...(historyStatus === undefined ? {} : { historyStatus }),
     ...(sequences.length === 0 ? {} : { oldestSequence: Math.min(...sequences) }),
     ...(sequences.length === 0 ? {} : { newestSequence: Math.max(...sequences) }),
     ...(nextBeforeCursor === undefined ? {} : { nextBeforeCursor }),
+    ...(omittedEntries === 0 && truncatedFields === 0
+      ? {}
+      : { truncation: { omittedEntries, truncatedFields } }),
   };
 }
 
@@ -5131,13 +5185,12 @@ async function readMissionChatTurnPage(input: {
   readonly cursor?: Exclude<MissionChatPageCursor, { readonly kind: "timeline" }> | undefined;
   readonly activeChat?: LiveMissionChat | undefined;
   readonly inheritedEntries: readonly MissionChatEntry[];
-  readonly scheduleProjectionRepair?:
-    ((turn: MissionTimelineTurn & { readonly executionId: string }) => void) | undefined;
 }): Promise<{
   readonly entries: readonly MissionChatEntry[];
   readonly syncIssues: readonly MissionChatSyncIssue[];
-  readonly historyStatus?: "repairing" | undefined;
   readonly nextCursor?: MissionChatPageCursor | undefined;
+  readonly truncation?:
+    { readonly omittedEntries: number; readonly truncatedFields: number } | undefined;
 }> {
   const userEntry: MissionChatEntry = {
     id: input.turn.message.id,
@@ -5161,66 +5214,89 @@ async function readMissionChatTurnPage(input: {
     input.turn.executionId !== undefined &&
     input.inheritedEntries.length === 0 &&
     input.turn.executionId !== input.activeChat?.executionId &&
-    (input.cursor === undefined || input.cursor.kind === "projection")
+    (input.cursor === undefined ||
+      input.cursor.kind === "projection" ||
+      input.cursor.kind === "entries")
   ) {
-    const projection = await input.missions.readExecutionProjectionPage(
+    const projectionPage = await input.missions.readExecutionProjectionPage(
       input.missionId,
       input.turn.executionId,
-      {
-        ...(input.cursor?.kind === "projection" ? { beforeOffset: input.cursor.beforeOffset } : {}),
-        limit: input.limit,
-      },
+      { limit: 1_000 },
     );
-    const executionState =
-      projection === undefined ? undefined : await input.executionStore.get(input.turn.executionId);
-    const projectionSyncIssues: MissionChatSyncIssue[] = [];
-    const projectionIsCurrent =
-      projection !== undefined &&
-      projection.orderingVersion === MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
-      projection.sourceUpdatedAt !== undefined &&
-      (executionState === undefined || executionState.updatedAt <= projection.sourceUpdatedAt);
-    if (!projectionIsCurrent) {
-      input.scheduleProjectionRepair?.({ ...input.turn, executionId: input.turn.executionId });
-    }
-    if (projection !== undefined) {
-      const projectedEntries = projection.entries.map((entry) => ({
+    const projection = projectionPage?.entries;
+    // Legacy and interrupted versions can have a complete Execution without a
+    // terminal Mission projection. The Execution state is the authority that
+    // decides whether durable history can still be reconstructed; treating a
+    // missing projection as a missing Execution makes retries deterministically
+    // fail even though all source records remain readable.
+    const executionState = await input.executionStore
+      .get(input.turn.executionId)
+      .catch(() => undefined);
+    // A terminal projection is immutable and already bounded for UI reads.
+    // Retaining the canonical state file after archival must not force every
+    // history page to inflate and decode the complete archived event stream.
+    if (
+      projectionPage !== undefined &&
+      (executionState === undefined ||
+        (isMissionTerminalExecutionStatus(executionState.status) &&
+          projectionPage.orderingVersion === MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
+          projectionPage.sourceUpdatedAt !== undefined &&
+          projectionPage.sourceUpdatedAt >= executionState.updatedAt))
+    ) {
+      const completeProjection =
+        executionState === undefined
+          ? projectionPage.entries
+          : ensureTerminalExecutionResultEntry(projectionPage.entries, executionState);
+      const projectedEntries = finalizeHistoricalChatEntries(
+        orderMissionExecutionEntries(completeProjection),
+        true,
+        executionState?.rootInvocationId,
+      ).map((entry) => ({
         ...entry,
         timelineSequence: entry.timelineSequence ?? input.turn.sequence,
       }));
-      if (projection.nextBeforeOffset !== undefined) {
-        return {
-          entries: projectedEntries,
-          syncIssues: projectionSyncIssues,
-          ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
-          nextCursor: {
-            version: 1,
-            kind: "projection",
-            sequence: input.turn.sequence,
-            beforeOffset: projection.nextBeforeOffset,
-          },
-        };
-      }
-      if (projectedEntries.length === input.limit) {
-        return {
-          entries: projectedEntries,
-          syncIssues: projectionSyncIssues,
-          ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
-          nextCursor: { version: 1, kind: "turn-start", sequence: input.turn.sequence },
-        };
-      }
+      const combined = [userEntry, ...projectedEntries];
+      const entryCursor = input.cursor?.kind === "entries" ? input.cursor : undefined;
+      const requestedEnd =
+        entryCursor === undefined
+          ? combined.length
+          : combined.findIndex((entry) =>
+              entryCursor.version === 1
+                ? entry.id === entryCursor.beforeEntryId
+                : missionChatEntryHash(entry.id) === entryCursor.beforeEntryHash,
+            );
+      // Legacy byte cursors cannot be mapped safely after an atomic file
+      // replacement. Reset them to the latest stable keyset page; entry IDs
+      // keep renderer de-duplication deterministic.
+      const safeEnd = input.cursor?.kind === "projection" ? combined.length : requestedEnd;
+      if (safeEnd < 0) throw new Error("Mission chat page cursor is no longer available.");
+      const start = Math.max(0, safeEnd - input.limit);
       return {
-        entries: [userEntry, ...projectedEntries],
-        syncIssues: projectionSyncIssues,
-        ...(!projectionIsCurrent ? { historyStatus: "repairing" as const } : {}),
+        entries: combined.slice(start, safeEnd),
+        syncIssues: [],
+        ...(projectionPage.omittedEntries === 0 && projectionPage.truncatedFields === 0
+          ? {}
+          : {
+              truncation: {
+                omittedEntries: projectionPage.omittedEntries,
+                truncatedFields: projectionPage.truncatedFields,
+              },
+            }),
+        ...(start === 0
+          ? {}
+          : {
+              nextCursor: {
+                version: 2 as const,
+                kind: "entries" as const,
+                sequence: input.turn.sequence,
+                beforeEntryHash: missionChatEntryHash(combined[start]!.id),
+              },
+            }),
       };
     }
-    if (input.cursor?.kind === "projection") {
-      throw new Error("Mission chat page cursor is no longer available.");
+    if (projection === undefined && executionState === undefined) {
+      return { entries: [userEntry], syncIssues: [missionChatSyncIssue("history")] };
     }
-    // An outdated projection is still a readable conversation snapshot and can be repaired in the
-    // background. Only report degraded history when no durable or projected content is available.
-    projectionSyncIssues.push(missionChatSyncIssue("history"));
-    return { entries: [userEntry], syncIssues: projectionSyncIssues };
   }
 
   const history = await readMissionChatHistory(
@@ -5540,12 +5616,12 @@ async function readMissionChatHistory(
         })),
         ...activityEntries,
       ]),
-      isFinalExecutionStatus(state.status),
+      isMissionTerminalExecutionStatus(state.status),
       state.rootInvocationId,
     );
     entries.push(...richEntries);
     if (
-      isFinalExecutionStatus(state.status) &&
+      isMissionTerminalExecutionStatus(state.status) &&
       !richEntries.some((entry) => entry.kind === "assistant")
     ) {
       entries.push({
@@ -5693,6 +5769,73 @@ function executionFallback(status: string, output: unknown, error: unknown): str
   if (status === "cancelled" || status === "interrupted") return "Execution interrupted.";
   const message = readErrorMessage(error);
   return message === "" ? "Execution failed." : `Execution failed: ${message}`;
+}
+
+function ensureTerminalExecutionResultEntry(
+  entries: readonly Exclude<MissionChatEntry, { readonly kind: "user" }>[],
+  execution: TerminalExecutionResultSource,
+): Exclude<MissionChatEntry, { readonly kind: "user" }>[];
+function ensureTerminalExecutionResultEntry(
+  entries: readonly MissionChatEntry[],
+  execution: TerminalExecutionResultSource,
+): MissionChatEntry[];
+function ensureTerminalExecutionResultEntry(
+  entries: readonly MissionChatEntry[],
+  execution: TerminalExecutionResultSource,
+): MissionChatEntry[] {
+  if (execution.status !== "succeeded") return [...entries];
+  const content = missionWorkOutputSummary(execution.output, 200_000);
+  if (content === undefined || content === "") return [...entries];
+  const matchingIndex = entries.findLastIndex(
+    (entry) =>
+      entry.kind === "assistant" &&
+      entry.invocationId === execution.rootInvocationId &&
+      entry.content === content,
+  );
+  if (matchingIndex >= 0) {
+    return entries.map((entry, index) =>
+      index === matchingIndex && entry.kind === "assistant"
+        ? { ...entry, streaming: false, finalAnswer: true }
+        : entry,
+    );
+  }
+  const presentation = entries.findLast(
+    (entry) =>
+      entry.invocationId === execution.rootInvocationId &&
+      (entry.executorId !== undefined ||
+        entry.executorName !== undefined ||
+        entry.executorAvatarId !== undefined),
+  );
+  return [
+    ...entries,
+    {
+      id: `result:${execution.executionId}`,
+      executionId: execution.executionId,
+      invocationId: execution.rootInvocationId,
+      ...(presentation?.executorId === undefined
+        ? {}
+        : { executorId: presentation.executorId }),
+      ...(presentation?.executorName === undefined
+        ? {}
+        : { executorName: presentation.executorName }),
+      ...(presentation?.executorAvatarId === undefined
+        ? {}
+        : { executorAvatarId: presentation.executorAvatarId }),
+      kind: "assistant",
+      content,
+      streaming: false,
+      finalAnswer: true,
+      createdAt: execution.updatedAt,
+    },
+  ];
+}
+
+interface TerminalExecutionResultSource {
+  readonly executionId: string;
+  readonly rootInvocationId: string;
+  readonly status: string;
+  readonly output?: unknown;
+  readonly updatedAt: string;
 }
 
 function readErrorMessage(error: unknown): string {
@@ -6019,31 +6162,6 @@ function isExecutionUnavailable(error: unknown, executionId: string): boolean {
   return error instanceof Error && error.message === `Execution not found: ${executionId}`;
 }
 
-async function readDurableMissionChatEntries(
-  execution: ExecutionView,
-  timelineSequence: number,
-): Promise<readonly MissionChatEntry[]> {
-  const state = await execution.getState();
-  const histories = await execution.getMessageHistory({ scope: { kind: "all" } });
-  const activityEntries = await readHistoricalRuntimeActivityEntries(
-    execution,
-    timelineSequence,
-    state.rootInvocationId,
-  );
-  return finalizeHistoricalChatEntries(
-    orderMissionExecutionEntries([
-      ...messageRecordsToChatEntries(
-        histories
-          .flatMap((history) => history.messages)
-          .filter((record) => record.source?.parentSessionId === undefined),
-      ).map((entry) => ({ ...entry, timelineSequence })),
-      ...activityEntries,
-    ]),
-    isFinalExecutionStatus(state.status),
-    state.rootInvocationId,
-  );
-}
-
 async function missionSubscriptionRetryDelay(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 250));
 }
@@ -6297,13 +6415,21 @@ export function consumeLiveChatOutput(
     }
     const current = findStreamingMessageEntryForRun(chat.entries, item, "assistant");
     const existingForRun = findAssistantEntryForRun(chat.entries, item);
+    const startsNewSegment =
+      current === undefined &&
+      existingForRun !== undefined &&
+      assistantMessageStartsNewSegment(chat.entries, existingForRun, item, content);
     // Codex can deliver an item/completed notification before a queued delta is
     // drained. The completed item already owns the final text; treating that late
     // delta as a new stream would create a second assistant row for the same run.
+    // A Runtime run may legitimately contain several assistant messages separated
+    // by tool calls, though. In that case the post-tool delta starts a new segment
+    // even though an earlier assistant message for the run is already complete.
     if (
       item.delta !== undefined &&
       current === undefined &&
-      hasCompletedMessageForRun(chat.entries, item)
+      hasCompletedMessageForRun(chat.entries, item) &&
+      !startsNewSegment
     ) {
       return patches;
     }
@@ -6319,7 +6445,11 @@ export function consumeLiveChatOutput(
             : { type: "entry.upsert", entry: { ...current } },
         );
       }
-    } else if (item.delta === undefined && existingForRun !== undefined) {
+    } else if (
+      item.delta === undefined &&
+      existingForRun !== undefined &&
+      !startsNewSegment
+    ) {
       if (current !== undefined) {
         current.streaming = false;
         if (finalAnswer) current.finalAnswer = true;
@@ -6552,6 +6682,27 @@ function hasCompletedMessageForRun(
   );
 }
 
+function assistantMessageStartsNewSegment(
+  entries: readonly MissionChatEntry[],
+  previous: Extract<MissionChatEntry, { readonly kind: "assistant" }>,
+  item: Pick<
+    ExecutionOutputItem,
+    "executionId" | "invocationId" | "runId" | "occurredAt"
+  >,
+  content: string,
+): boolean {
+  if (content !== "" && content !== previous.content) return true;
+  const previousIndex = entries.findIndex((entry) => entry.id === previous.id);
+  if (previousIndex < 0) return false;
+  return entries.slice(previousIndex + 1).some(
+    (entry) =>
+      entry.kind === "tool" &&
+      entry.executionId === item.executionId &&
+      entry.invocationId === item.invocationId &&
+      entry.createdAt <= item.occurredAt,
+  );
+}
+
 function findAssistantEntryForRun(
   entries: readonly MissionChatEntry[],
   item: Pick<ExecutionOutputItem, "executionId" | "invocationId" | "runId">,
@@ -6612,10 +6763,14 @@ function readAgentActivityPhase(
   }
 }
 
-async function listPendingHumanInteractions(
-  execution: Pick<MutableExecution, "listEvents">,
+export async function listPendingHumanInteractions(
+  execution: Pick<MutableExecution, "getState" | "listEvents">,
 ): Promise<MissionHumanInteraction[]> {
+  const stateBeforeRead = await execution.getState();
+  if (isMissionTerminalExecutionStatus(stateBeforeRead.status)) return [];
   const events = await readAllExecutionEvents(execution);
+  const stateAfterRead = await execution.getState();
+  if (isMissionTerminalExecutionStatus(stateAfterRead.status)) return [];
   const responded = new Set(
     events
       .filter((event) => event.type === "human.responded")
@@ -6629,6 +6784,12 @@ async function listPendingHumanInteractions(
     const request = ExpertAgentHumanRequestSchema.safeParse(data.request);
     return request.success ? [{ interactionId, request: toDesktopHumanRequest(request.data) }] : [];
   });
+}
+
+function isMissionTerminalExecutionStatus(
+  status: Parameters<typeof isFinalExecutionStatus>[0],
+): boolean {
+  return status === "interrupted" || isFinalExecutionStatus(status);
 }
 
 function completedMessageText(value: unknown): string {

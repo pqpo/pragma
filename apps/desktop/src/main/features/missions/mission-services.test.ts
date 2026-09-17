@@ -155,13 +155,13 @@ describe("Mission service state ownership", () => {
 
     expect(updates).toEqual([1, 2, 3]);
     expect(invalidations).toEqual([
-      { missionId: "mission-1", revision: 2, kind: "invalidate" },
-      {
+      expect.objectContaining({ missionId: "mission-1", revision: 2, kind: "invalidate" }),
+      expect.objectContaining({
         missionId: "mission-1",
         revision: 3,
         kind: "invalidate",
         userVisibleOutput: true,
-      },
+      }),
     ]);
     expect(listenerError).toHaveBeenCalledTimes(3);
     expect(service.revision("mission-1")).toBe(3);
