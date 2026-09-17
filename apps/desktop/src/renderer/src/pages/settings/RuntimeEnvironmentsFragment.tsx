@@ -187,8 +187,6 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
   );
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>();
   const [error, setError] = useState<string | null>(null);
-  const [environmentStatus, setEnvironmentStatus] =
-    useState<DesktopRuntimeProcessEnvironmentStatus>();
   const [refreshingEnvironment, setRefreshingEnvironment] = useState(false);
 
   const loadRuntimes = async (targetId?: string, forceRefresh = false) => {
@@ -232,17 +230,13 @@ export function RuntimeEnvironmentsFragment(props: { readonly onNavigateToModels
 
   useEffect(() => {
     void loadRuntimes(undefined, false);
-    void window.pragmaDesktop
-      .getRuntimeProcessEnvironmentStatus()
-      .then(setEnvironmentStatus)
-      .catch((statusError: unknown) => setError(errorMessage(statusError)));
   }, []);
 
   const refreshEnvironmentAndRuntimes = async () => {
     setError(null);
     setRefreshingEnvironment(true);
     try {
-      setEnvironmentStatus(await window.pragmaDesktop.refreshRuntimeProcessEnvironment());
+      await window.pragmaDesktop.refreshRuntimeProcessEnvironment();
       await loadRuntimes(undefined, true);
     } catch (refreshError) {
       setError(errorMessage(refreshError));
