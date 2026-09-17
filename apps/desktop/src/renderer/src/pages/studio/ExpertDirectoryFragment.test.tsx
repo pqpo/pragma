@@ -302,6 +302,8 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain('<h2 id="expert-context-heading">Knowledge base</h2>');
     expect(html).toMatch(/studio-screen-header.*Back to Experts.*studio-screen-body.*Test Expert/s);
     expect(html).toContain("Delete expert");
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(3);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(3);
     expect(html).not.toContain("Create new version");
   });
 

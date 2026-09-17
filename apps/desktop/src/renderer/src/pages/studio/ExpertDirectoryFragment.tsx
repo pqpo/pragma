@@ -29,6 +29,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
+import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import {
   MemoryStoreBrowser,
   type ContextStoreBrowserSource,
@@ -405,44 +406,43 @@ export function ExpertDetailFragment(props: {
         </div>
         <div className="detail-actions">
           {!props.expert.readOnly || isBuiltInExpert(props.expert) ? (
-            <button className="primary-button" type="button" onClick={props.onEdit}>
-              <PencilSimple size={17} aria-hidden="true" />
-              {t(isBuiltInExpert(props.expert) ? "customizeBuiltInExpert" : "editExpert")}
-            </button>
+            <StudioActionButton
+              label={t(isBuiltInExpert(props.expert) ? "customizeBuiltInExpert" : "editExpert")}
+              tone="primary"
+              icon={<PencilSimple size={18} aria-hidden="true" />}
+              onClick={props.onEdit}
+            />
           ) : null}
           {isBuiltInExpert(props.expert) ? (
-            <button
-              className="secondary-button"
-              type="button"
+            <StudioActionButton
+              label={t("resetBuiltInExpert")}
               disabled={!props.expert.customized}
+              icon={<ArrowCounterClockwise size={18} aria-hidden="true" />}
               onClick={() => setResetConfirmOpen(true)}
-            >
-              <ArrowCounterClockwise size={17} aria-hidden="true" />
-              {t("resetBuiltInExpert")}
-            </button>
+            />
           ) : null}
-          <button className="secondary-button" type="button" onClick={props.onTryInSession}>
-            <Play size={17} aria-hidden="true" />
-            {t("trySession")}
-          </button>
+          <StudioActionButton
+            label={t("trySession")}
+            icon={<Play size={18} aria-hidden="true" />}
+            onClick={props.onTryInSession}
+          />
           {props.onPublish === undefined ? null : (
-            <button className="secondary-button" type="button" onClick={props.onPublish}>
-              <UploadSimple size={17} aria-hidden="true" />
-              {t("publishToSource")}
-            </button>
+            <StudioActionButton
+              label={t("publishToSource")}
+              icon={<UploadSimple size={18} aria-hidden="true" />}
+              onClick={props.onPublish}
+            />
           )}
           {!isBuiltInExpert(props.expert) ? (
-            <button
-              className="danger-button"
-              type="button"
+            <StudioActionButton
+              label={t("deleteExpertAction")}
+              tone="danger"
+              icon={<Trash size={18} aria-hidden="true" />}
               onClick={() => {
                 setDeleteError(null);
                 setConfirmOpen(true);
               }}
-            >
-              <Trash size={17} aria-hidden="true" />
-              {t("deleteExpertAction")}
-            </button>
+            />
           ) : null}
         </div>
       </header>

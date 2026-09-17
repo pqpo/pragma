@@ -2105,17 +2105,6 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
   gap: 10px;
 }
 
-.pragma-resource-detail .detail-actions > button {
-  min-height: 38px;
-}
-
-.pragma-resource-detail .detail-actions .primary-button {
-  border: 1px solid #a8beb0;
-  background: var(--ui-surface);
-  color: var(--green-dark);
-  box-shadow: none;
-}
-
 .team-detail-content {
   display: grid;
   gap: 28px;
@@ -2554,6 +2543,19 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
 
   .team-member-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .expert-detail .expert-detail-header,
+  .pragma-resource-detail .expert-detail-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .expert-detail .detail-actions,
+  .pragma-resource-detail .detail-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 }
 

@@ -58,6 +58,7 @@ import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
+import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
@@ -463,27 +464,28 @@ export function PragmaResourceDetailFragment(props: {
           </div>
         </div>
         <div className="detail-actions">
-          <button className="primary-button" type="button" onClick={props.onEdit}>
-            <PencilSimple size={17} aria-hidden="true" />
-            {isTeam ? t("editExpertTeam") : t("editFlow")}
-          </button>
+          <StudioActionButton
+            label={isTeam ? t("editExpertTeam") : t("editFlow")}
+            tone="primary"
+            icon={<PencilSimple size={18} aria-hidden="true" />}
+            onClick={props.onEdit}
+          />
           {props.onPublish === undefined ? null : (
-            <button className="secondary-button" type="button" onClick={props.onPublish}>
-              <UploadSimple size={17} aria-hidden="true" />
-              {t("publishToSource")}
-            </button>
+            <StudioActionButton
+              label={t("publishToSource")}
+              icon={<UploadSimple size={18} aria-hidden="true" />}
+              onClick={props.onPublish}
+            />
           )}
-          <button
-            className="danger-button"
-            type="button"
+          <StudioActionButton
+            label={t("deleteResourceAction")}
+            tone="danger"
+            icon={<Trash size={18} aria-hidden="true" />}
             onClick={() => {
               setDeleteError(null);
               setConfirmOpen(true);
             }}
-          >
-            <Trash size={17} aria-hidden="true" />
-            {t("deleteResourceAction")}
-          </button>
+          />
         </div>
       </header>
       {deleteError ? (

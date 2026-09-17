@@ -649,6 +649,8 @@ const complete = true;
 
     expect(html).toContain("Back to teams");
     expect(html).toContain("Edit expert team");
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(2);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(2);
     expect(html).toContain("Quality team");
     expect(html.match(/data-avatar-profile="pragma.avatar.expert.11"/g)).toHaveLength(3);
     expect(html).toContain("Expert 001");
@@ -774,6 +776,8 @@ const complete = true;
 
     expect(html).toContain("Back to flows");
     expect(html).toContain("Edit flow");
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(2);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(2);
     expect(html).toContain("Approval flow");
     expect(html).toContain("approval");
     expect(html).toContain("1 step");

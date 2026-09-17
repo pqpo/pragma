@@ -25,16 +25,7 @@ import {
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   PRAGMA_TEXT_LIMITS,
@@ -59,6 +50,7 @@ import { Dialog } from "../../components/Dialog.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
+import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -112,39 +104,6 @@ type LoadFileOptions = {
 };
 
 export type ContextStoreLeaveGuard = (action: () => void) => void;
-
-function KnowledgeBaseActionButton(props: {
-  readonly label: string;
-  readonly tooltip?: string | undefined;
-  readonly icon: ReactNode;
-  readonly tone?: "default" | "primary" | "danger" | undefined;
-  readonly disabled?: boolean | undefined;
-  readonly busy?: boolean | undefined;
-  readonly onClick: () => void;
-}) {
-  const tooltipId = useId();
-  const tone = props.tone ?? "default";
-
-  return (
-    <span
-      className={`knowledge-base-action-with-tooltip is-${tone}${props.busy ? " is-busy" : ""}`}
-    >
-      <button
-        className="knowledge-base-action-button"
-        type="button"
-        aria-label={props.label}
-        aria-describedby={tooltipId}
-        disabled={props.disabled}
-        onClick={props.onClick}
-      >
-        {props.icon}
-      </button>
-      <span id={tooltipId} className="knowledge-base-action-tooltip" role="tooltip">
-        {props.tooltip ?? props.label}
-      </span>
-    </span>
-  );
-}
 
 const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
@@ -1162,7 +1121,7 @@ export function ContextStoreDetailFragment(props: {
             </div>
           </div>
           <div className="knowledge-base-editor-actions">
-            <KnowledgeBaseActionButton
+            <StudioActionButton
               label={saveStatus === "saving" ? t("saving") : t("saveKnowledgeBase")}
               tooltip={
                 saveStatus === "saving"
@@ -1184,7 +1143,7 @@ export function ContextStoreDetailFragment(props: {
               onClick={() => void commitDraft()}
             />
             {props.onSubmitRevision !== undefined ? (
-              <KnowledgeBaseActionButton
+              <StudioActionButton
                 label={t("submitStoreRevision")}
                 icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
                 onClick={() =>
@@ -1196,14 +1155,14 @@ export function ContextStoreDetailFragment(props: {
               />
             ) : null}
             {props.onOpenRevisions !== undefined ? (
-              <KnowledgeBaseActionButton
+              <StudioActionButton
                 label={t("viewStoreRevisions")}
                 icon={<ListBullets size={18} aria-hidden="true" />}
                 onClick={() => requestLeave(props.onOpenRevisions!)}
               />
             ) : null}
             {props.onExport !== undefined ? (
-              <KnowledgeBaseActionButton
+              <StudioActionButton
                 label={t("exportKnowledgeBase")}
                 icon={<UploadSimple size={18} aria-hidden="true" />}
                 onClick={() => {
@@ -1213,7 +1172,7 @@ export function ContextStoreDetailFragment(props: {
               />
             ) : null}
             {props.onPublish !== undefined ? (
-              <KnowledgeBaseActionButton
+              <StudioActionButton
                 label={t("publishToSource")}
                 icon={<GitBranch size={18} aria-hidden="true" />}
                 onClick={() =>
@@ -1226,7 +1185,7 @@ export function ContextStoreDetailFragment(props: {
                 }
               />
             ) : null}
-            <KnowledgeBaseActionButton
+            <StudioActionButton
               label={t("deleteKnowledgeBaseAction")}
               tone="danger"
               icon={<Trash size={18} aria-hidden="true" />}
