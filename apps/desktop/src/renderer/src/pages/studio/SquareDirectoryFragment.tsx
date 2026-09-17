@@ -39,6 +39,7 @@ const KINDS: readonly SquareKindFilter[] = [
 interface InspectedSquareVersion {
   readonly version: string;
   readonly path: string;
+  readonly rootRef: string;
   readonly inspection: PragmaBundleImportInspection;
 }
 
@@ -114,7 +115,7 @@ export async function inspectSquareVersion(
     sourcePath: downloaded.path,
     rootRef: downloaded.rootRef,
   });
-  return { version, path: downloaded.path, inspection };
+  return { version, path: downloaded.path, rootRef: downloaded.rootRef, inspection };
 }
 
 export function SquareDirectoryFragment(props: {
@@ -227,7 +228,7 @@ export function SquareDirectoryFragment(props: {
     if (selected === null || version === "") return;
     const cached = inspectedVersion?.version === version ? inspectedVersion : null;
     if (cached !== null) {
-      props.onInstall(cached.path, selected.item.rootRef);
+      props.onInstall(cached.path, cached.rootRef);
       return;
     }
     const api = desktopApi();

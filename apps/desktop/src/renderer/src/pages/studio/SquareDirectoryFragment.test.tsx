@@ -80,6 +80,7 @@ describe("SquareDirectoryFragment", () => {
 
   it("downloads and inspects the selected version with the downloaded root", async () => {
     const item = squareItem("flow", "Release flow", SOURCE_B, "general", "2026-09-17");
+    const downloadedRootRef = "flow:abcdef1234567890";
     const detail: DesktopSquareItemDetail = {
       sourceId: item.sourceId,
       sourceName: item.sourceName,
@@ -108,7 +109,7 @@ describe("SquareDirectoryFragment", () => {
     };
     const downloadSquareBundle = vi.fn(async () => ({
       path: "/tmp/release-flow.pragma",
-      rootRef: item.rootRef,
+      rootRef: downloadedRootRef,
       sha256: "a".repeat(64),
       cached: true,
     }));
@@ -121,6 +122,7 @@ describe("SquareDirectoryFragment", () => {
     await expect(inspectSquareVersion(api, detail, "1.0.0")).resolves.toEqual({
       version: "1.0.0",
       path: "/tmp/release-flow.pragma",
+      rootRef: downloadedRootRef,
       inspection,
     });
     expect(downloadSquareBundle).toHaveBeenCalledWith({
@@ -131,7 +133,7 @@ describe("SquareDirectoryFragment", () => {
     });
     expect(inspectPragmaBundle).toHaveBeenCalledWith({
       sourcePath: "/tmp/release-flow.pragma",
-      rootRef: item.rootRef,
+      rootRef: downloadedRootRef,
     });
   });
 });
