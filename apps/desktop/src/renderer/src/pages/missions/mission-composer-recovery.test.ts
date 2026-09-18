@@ -9,6 +9,7 @@ import {
   discardMissionComposerRecoverySnapshot,
   isCurrentMissionComposerSnapshot,
   releaseMissionComposerSnapshot,
+  replaceMissionComposerSnapshotDraft,
   resolveMissionComposerRestore,
   storeMissionComposerRecovery,
   type MissionComposerSnapshot,
@@ -142,6 +143,31 @@ describe("Mission composer recovery", () => {
     expect(resolveMissionComposerRestore({ current: cleared, recovery: oldAttempt })).toBe(
       "conflict",
     );
+  });
+
+  it("replaces a removed queued draft only when the unmounted revision still matches", () => {
+    const unmounted = snapshot("mission-a", "newer draft", ["attachment-a"], "revision-a");
+
+    expect(
+      replaceMissionComposerSnapshotDraft({
+        snapshot: unmounted,
+        expectedRevisionId: "revision-a",
+        nextRevisionId: "revision-queued",
+        draft: "removed queued message",
+      }),
+    ).toEqual({
+      ...unmounted,
+      revisionId: "revision-queued",
+      draft: "removed queued message",
+    });
+    expect(
+      replaceMissionComposerSnapshotDraft({
+        snapshot: unmounted,
+        expectedRevisionId: "revision-older",
+        nextRevisionId: "revision-queued",
+        draft: "removed queued message",
+      }),
+    ).toBeUndefined();
   });
 });
 

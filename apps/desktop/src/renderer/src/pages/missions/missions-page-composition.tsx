@@ -107,6 +107,7 @@ import {
   discardMissionComposerRecovery as releaseMissionComposerRecovery,
   discardMissionComposerRecoverySnapshot,
   releaseMissionComposerSnapshot,
+  replaceMissionComposerSnapshotDraft,
   storeMissionComposerRecovery,
   type MissionComposerRecoveryConsumeReason,
   type MissionComposerRecoveryWriteReason,
@@ -2285,10 +2286,23 @@ export function MissionDetailFragment(props: {
   const chatFooterRef = useRef<HTMLDivElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
   const composerRef = useRef<MissionComposerHandle | null>(null);
+  const lastUnmountedComposerSnapshotRef = useRef<MissionComposerSnapshot | undefined>(undefined);
+  const pendingComposerDraftReplacementRef = useRef<
+    | {
+        readonly expectedRevisionId: string;
+        readonly nextRevisionId: string;
+        readonly draft: string;
+      }
+    | undefined
+  >(undefined);
   const queuedMessageActionsRef = useRef<Map<string, MissionQueuedMessageAction>>(new Map());
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
+  const bindComposerRef = useCallback((composer: MissionComposerHandle | null): void => {
+    composerRef.current = composer;
+    if (composer !== null) lastUnmountedComposerSnapshotRef.current = undefined;
+  }, []);
   useEffect(() => {
     const recovery = props.initialComposerRecovery;
     if (recovery?.missionId !== props.mission.id || composerRef.current === null) return;
@@ -2821,14 +2835,41 @@ export function MissionDetailFragment(props: {
     content: string,
   ): Promise<void> => {
     const api = desktopApi();
-    if (api === undefined || !beginQueuedMessageAction(queueItemRequestId, "remove")) return;
+    const sourceSnapshot = composerRef.current?.snapshot();
+    if (
+      api === undefined ||
+      sourceSnapshot === undefined ||
+      !beginQueuedMessageAction(queueItemRequestId, "remove")
+    )
+      return;
     try {
       await api.removeQueuedMissionMessage({
         id: props.mission.id,
         requestId: crypto.randomUUID(),
         queueItemRequestId,
       });
-      composerRef.current?.replaceDraft(props.mission.id, content);
+      if (composerRef.current !== null) {
+        composerRef.current.replaceDraft(props.mission.id, sourceSnapshot.revisionId, content);
+      } else {
+        const replacement = {
+          expectedRevisionId: sourceSnapshot.revisionId,
+          nextRevisionId: crypto.randomUUID(),
+          draft: content,
+        };
+        const unmountedSnapshot = lastUnmountedComposerSnapshotRef.current;
+        if (unmountedSnapshot === undefined) {
+          pendingComposerDraftReplacementRef.current = replacement;
+        } else {
+          const recovered = replaceMissionComposerSnapshotDraft({
+            snapshot: unmountedSnapshot,
+            ...replacement,
+          });
+          if (recovered !== undefined) {
+            lastUnmountedComposerSnapshotRef.current = recovered;
+            props.onComposerRecovery?.(recovered, "unmount");
+          }
+        }
+      }
       await refreshLatestChat();
       requestAnimationFrame(() => composerRef.current?.focus(props.mission.id));
     } catch (removeError) {
@@ -3645,7 +3686,7 @@ export function MissionDetailFragment(props: {
                       </div>
                     ) : null}
                     <MissionChatComposer
-                      ref={composerRef}
+                      ref={bindComposerRef}
                       mission={props.mission}
                       initialRevisionId={props.initialComposerRevisionId}
                       initialDraft={props.initialComposerDraft}
@@ -3653,7 +3694,19 @@ export function MissionDetailFragment(props: {
                       onInitialRecoveryConsumed={(snapshot) =>
                         props.onComposerRecoveryConsumed?.(snapshot, "claimed")
                       }
-                      onUnmountState={(snapshot) => props.onComposerRecovery?.(snapshot, "unmount")}
+                      onUnmountState={(snapshot) => {
+                        const replacement = pendingComposerDraftReplacementRef.current;
+                        pendingComposerDraftReplacementRef.current = undefined;
+                        const recovered =
+                          replacement === undefined
+                            ? snapshot
+                            : (replaceMissionComposerSnapshotDraft({
+                                snapshot,
+                                ...replacement,
+                              }) ?? snapshot);
+                        lastUnmountedComposerSnapshotRef.current = recovered;
+                        props.onComposerRecovery?.(recovered, "unmount");
+                      }}
                       mentionCandidates={mentionCandidates}
                       imageUnsupported={imageUnsupported}
                       isFlow={isFlow}

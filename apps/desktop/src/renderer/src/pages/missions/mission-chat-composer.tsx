@@ -37,7 +37,7 @@ export interface MissionComposerHandle {
   readonly snapshot: () => MissionComposerSnapshot;
   readonly clear: () => void;
   readonly restore: (snapshot: MissionComposerSnapshot) => MissionComposerRestoreResult;
-  readonly replaceDraft: (missionId: string, draft: string) => void;
+  readonly replaceDraft: (missionId: string, expectedRevisionId: string, draft: string) => boolean;
   readonly focus: (missionId: string) => void;
 }
 
@@ -236,8 +236,10 @@ export const MissionChatComposer = forwardRef<
         }
         return "restored";
       },
-      replaceDraft: (missionId, nextDraft) => {
-        if (missionId === props.mission.id) setDraft(nextDraft);
+      replaceDraft: (missionId, expectedRevisionId, nextDraft) => {
+        if (missionId !== props.mission.id || getRevisionId() !== expectedRevisionId) return false;
+        setDraft(nextDraft);
+        return true;
       },
       focus: (missionId) => {
         if (missionId === props.mission.id) inputRef.current?.focus();

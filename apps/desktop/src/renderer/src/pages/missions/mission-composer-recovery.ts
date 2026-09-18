@@ -101,6 +101,20 @@ export function releaseMissionComposerSnapshot(
   return unownedAttachmentIds(recoveries, attachmentIds(snapshot));
 }
 
+export function replaceMissionComposerSnapshotDraft(input: {
+  readonly snapshot: MissionComposerSnapshot;
+  readonly expectedRevisionId: string;
+  readonly nextRevisionId: string;
+  readonly draft: string;
+}): MissionComposerSnapshot | undefined {
+  if (input.snapshot.revisionId !== input.expectedRevisionId) return undefined;
+  return {
+    ...input.snapshot,
+    revisionId: input.nextRevisionId,
+    draft: input.draft,
+  };
+}
+
 export function discardMissionComposerRecoverySnapshot(
   recoveries: Map<string, MissionComposerSnapshot>,
   snapshot: MissionComposerSnapshot,
