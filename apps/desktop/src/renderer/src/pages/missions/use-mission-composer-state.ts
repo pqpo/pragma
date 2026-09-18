@@ -11,12 +11,24 @@ import {
   mergeMissionAttachmentPreviews,
   mergeMissionAttachments,
 } from "../../lib/mission-attachments.ts";
-import { readMissionDraft, writeMissionDraft } from "../../lib/mission-draft.ts";
+import { createMissionDraftPersistence, readMissionDraft } from "../../lib/mission-draft.ts";
 
 export function useMissionComposerState(options: {
   readonly mission: Pick<Mission, "id" | "lifecycleStatus">;
+  readonly initialRevisionId?: string | undefined;
   readonly initialDraft?: string | undefined;
+  readonly initialAttachments?: readonly ExpertPromptAttachment[] | undefined;
+  readonly initialAttachmentPreviews?: Readonly<Record<string, string>> | undefined;
   readonly discardDrafts?: PragmaDesktopAPI["discardMissionAttachmentDrafts"] | undefined;
+  readonly onUnmountState?:
+    | ((state: {
+        readonly missionId: string;
+        readonly revisionId: string;
+        readonly draft: string;
+        readonly attachments: readonly ExpertPromptAttachment[];
+        readonly attachmentPreviews: Readonly<Record<string, string>>;
+      }) => void)
+    | undefined;
   readonly onAttachmentLimit: () => void;
   readonly onAttachmentsAccepted: () => void;
 }) {
@@ -30,38 +42,94 @@ export function useMissionComposerState(options: {
     missionId: options.mission.id,
     status: options.mission.lifecycleStatus,
   });
-  const [draft, setDraft] = useState(() =>
+  const [draft, setDraftState] = useState(() =>
     initialDraft(options.mission, initialDraftOverrideRef.current),
   );
-  const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
-  const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
-    {},
+  const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>(
+    () => options.initialAttachments ?? [],
   );
-  const attachmentIdsRef = useRef<readonly string[]>([]);
-  const draftMissionIdRef = useRef<string | null>(options.mission.id);
+  const [attachmentPreviews, setAttachmentPreviews] = useState<Readonly<Record<string, string>>>(
+    () => options.initialAttachmentPreviews ?? {},
+  );
+  const attachmentIdsRef = useRef<readonly string[]>(
+    (options.initialAttachments ?? []).map((attachment) => attachment.id),
+  );
+  const [revisionNamespace] = useState(() => crypto.randomUUID());
+  const revisionSequenceRef = useRef(0);
+  const revisionIdRef = useRef(
+    options.initialRevisionId ?? `${revisionNamespace}:${revisionSequenceRef.current}`,
+  );
+  const draftRef = useRef(draft);
+  const attachmentsRef = useRef(attachments);
+  const attachmentPreviewsRef = useRef(attachmentPreviews);
+  draftRef.current = draft;
+  attachmentsRef.current = attachments;
+  attachmentPreviewsRef.current = attachmentPreviews;
+  const missionIdRef = useRef(options.mission.id);
+  const draftPersistenceRef = useRef<ReturnType<typeof createMissionDraftPersistence> | null>(null);
+  if (draftPersistenceRef.current === null) {
+    draftPersistenceRef.current = createMissionDraftPersistence(
+      typeof window === "undefined" ? undefined : window.localStorage,
+    );
+  }
   const callbacksRef = useRef({
     onAttachmentLimit: options.onAttachmentLimit,
     onAttachmentsAccepted: options.onAttachmentsAccepted,
+    onUnmountState: options.onUnmountState,
+    discardDrafts: options.discardDrafts,
   });
   callbacksRef.current = {
     onAttachmentLimit: options.onAttachmentLimit,
     onAttachmentsAccepted: options.onAttachmentsAccepted,
+    onUnmountState: options.onUnmountState,
+    discardDrafts: options.discardDrafts,
   };
 
-  const discard = useCallback(
-    (attachmentIds: readonly string[]): void => {
-      if (attachmentIds.length > 0) {
-        void options.discardDrafts?.({ attachmentIds: [...attachmentIds] });
-      }
+  const discard = useCallback((attachmentIds: readonly string[]): void => {
+    if (attachmentIds.length > 0) {
+      void callbacksRef.current.discardDrafts?.({ attachmentIds: [...attachmentIds] });
+    }
+  }, []);
+
+  const markEdited = useCallback((): void => {
+    revisionSequenceRef.current += 1;
+    revisionIdRef.current = `${revisionNamespace}:${revisionSequenceRef.current}`;
+  }, [revisionNamespace]);
+
+  const updateDraft = useCallback(
+    (nextDraft: string): void => {
+      if (draftRef.current !== nextDraft) markEdited();
+      draftRef.current = nextDraft;
+      setDraftState(nextDraft);
     },
-    [options.discardDrafts],
+    [markEdited],
   );
+
+  const restoreDraft = useCallback((nextDraft: string, revisionId: string): void => {
+    revisionIdRef.current = revisionId;
+    draftRef.current = nextDraft;
+    setDraftState(nextDraft);
+  }, []);
 
   const clearAttachments = useCallback((): void => {
     attachmentIdsRef.current = [];
+    attachmentsRef.current = [];
+    attachmentPreviewsRef.current = {};
     setAttachments([]);
     setAttachmentPreviews({});
   }, []);
+
+  const clearDraft = useCallback((): void => {
+    draftPersistenceRef.current?.clear(options.mission.id);
+    draftRef.current = "";
+    setDraftState("");
+  }, [options.mission.id]);
+
+  const removeDraft = useCallback((): void => {
+    draftPersistenceRef.current?.remove(options.mission.id);
+    draftRef.current = "";
+    setDraftState("");
+  }, [options.mission.id]);
 
   const restoreAttachments = useCallback(
     (
@@ -69,6 +137,8 @@ export function useMissionComposerState(options: {
       restoredPreviews: Readonly<Record<string, string>>,
     ): void => {
       attachmentIdsRef.current = restoredAttachments.map((attachment) => attachment.id);
+      attachmentsRef.current = restoredAttachments;
+      attachmentPreviewsRef.current = restoredPreviews;
       setAttachments(restoredAttachments);
       setAttachmentPreviews(restoredPreviews);
     },
@@ -90,16 +160,20 @@ export function useMissionComposerState(options: {
           .map((attachment) => attachment.id);
         discard(rejectedIds);
         attachmentIdsRef.current = next.map((attachment) => attachment.id);
+        attachmentsRef.current = next;
         if (next.length > current.length) {
-          setAttachmentPreviews((previews) =>
-            mergeMissionAttachmentPreviews(previews, result, next),
-          );
+          markEdited();
+          setAttachmentPreviews((previews) => {
+            const nextPreviews = mergeMissionAttachmentPreviews(previews, result, next);
+            attachmentPreviewsRef.current = nextPreviews;
+            return nextPreviews;
+          });
           callbacksRef.current.onAttachmentsAccepted();
         }
         return next;
       });
     },
-    [discard],
+    [discard, markEdited],
   );
 
   const removeAttachment = useCallback(
@@ -107,47 +181,55 @@ export function useMissionComposerState(options: {
       discard([id]);
       setAttachments((current) => {
         const next = current.filter((attachment) => attachment.id !== id);
+        if (next.length === current.length) return current;
+        markEdited();
         attachmentIdsRef.current = next.map((attachment) => attachment.id);
+        attachmentsRef.current = next;
         return next;
       });
       setAttachmentPreviews((current) => {
         const next = { ...current };
         delete next[id];
+        attachmentPreviewsRef.current = next;
         return next;
+      });
+    },
+    [discard, markEdited],
+  );
+
+  useEffect(
+    () => () => {
+      const onUnmountState = callbacksRef.current.onUnmountState;
+      if (onUnmountState === undefined) {
+        draftPersistenceRef.current?.dispose();
+        discard(attachmentIdsRef.current);
+        return;
+      }
+      // The callback owns the final persistence decision. Cancel the stale
+      // timer first so deleted Missions cannot be written back during unmount.
+      draftPersistenceRef.current?.cancel();
+      onUnmountState({
+        missionId: missionIdRef.current,
+        revisionId: revisionIdRef.current,
+        draft: draftRef.current,
+        attachments: attachmentsRef.current,
+        attachmentPreviews: attachmentPreviewsRef.current,
       });
     },
     [discard],
   );
 
-  useEffect(
-    () => () => {
-      discard(attachmentIdsRef.current);
-    },
-    [discard],
-  );
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const flushDraft = () => draftPersistenceRef.current?.flush();
+    window.addEventListener("pagehide", flushDraft);
+    return () => window.removeEventListener("pagehide", flushDraft);
+  }, []);
 
   useEffect(() => {
-    if (draftMissionIdRef.current === options.mission.id) return;
-    discard(attachmentIdsRef.current);
-    attachmentIdsRef.current = [];
-    draftMissionIdRef.current = null;
-    setDraft(initialDraft(options.mission, initialDraftOverrideRef.current));
-    setAttachments([]);
-    setAttachmentPreviews({});
-  }, [discard, options.mission.id]);
-
-  useEffect(() => {
-    if (draftMissionIdRef.current === null) {
-      draftMissionIdRef.current = options.mission.id;
-      return;
-    }
-    if (draftMissionIdRef.current !== options.mission.id) return;
-    writeMissionDraft(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      options.mission.id,
-      draft,
-    );
-  }, [draft, options.mission.id]);
+    if (options.mission.lifecycleStatus !== "active") return;
+    draftPersistenceRef.current?.schedule(options.mission.id, draft);
+  }, [draft, options.mission.id, options.mission.lifecycleStatus]);
 
   useEffect(() => {
     if (options.initialDraft === undefined) return;
@@ -155,8 +237,8 @@ export function useMissionComposerState(options: {
       missionId: options.mission.id,
       draft: options.initialDraft,
     };
-    setDraft(options.initialDraft);
-  }, [options.initialDraft, options.mission.id]);
+    updateDraft(options.initialDraft);
+  }, [options.initialDraft, options.mission.id, updateDraft]);
 
   useEffect(() => {
     const previousLifecycle = lifecycleStatusRef.current;
@@ -176,26 +258,23 @@ export function useMissionComposerState(options: {
     ) {
       return;
     }
-    setDraft("");
+    removeDraft();
     discard(attachmentIdsRef.current);
     clearAttachments();
-    writeMissionDraft(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      options.mission.id,
-      "",
-    );
-  }, [clearAttachments, discard, options.mission.id, options.mission.lifecycleStatus]);
+  }, [clearAttachments, discard, options.mission.id, options.mission.lifecycleStatus, removeDraft]);
 
   return {
     draft,
-    setDraft,
+    setDraft: updateDraft,
+    restoreDraft,
+    getRevisionId: () => revisionIdRef.current,
+    clearDraft,
     attachments,
     attachmentPreviews,
     clearAttachments,
     restoreAttachments,
     addAttachments,
     removeAttachment,
-    discardAttachments: discard,
   };
 }
 

@@ -17,7 +17,7 @@ it("retains an internal detail, falls back for a deleted Mission, and surfaces o
       },
       isCurrent: () => true,
     }),
-  ).resolves.toBe("fallback");
+  ).resolves.toBe("deleted");
   const error = new Error("Host disconnected");
   await expect(
     resolveUnlistedMissionSelection({

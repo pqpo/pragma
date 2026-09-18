@@ -6,7 +6,13 @@ import {
   MissionUserMessageContent,
 } from "../pages/missions/mission-chat-presentation.tsx";
 import { expertAvatarSource } from "./ExpertAvatar.tsx";
-import { findExpertMentionQuery, refreshMentionEditorChips } from "./TeamMentionComposer.tsx";
+import {
+  findExpertMentionQuery,
+  refreshMentionEditorChips,
+  resolveMentionCompositionEnd,
+  resolveTeamMentionEnterAction,
+  serializeMentionNodes,
+} from "./TeamMentionComposer.tsx";
 
 describe("TeamMentionComposer", () => {
   it("opens only at the beginning or after whitespace", () => {
@@ -87,4 +93,69 @@ describe("TeamMentionComposer", () => {
     expect(rendered).toBe("Delegate @Reviewer this task");
     expect(rendered).not.toContain("1xddvess309a6gme");
   });
+
+  it("keeps an authoritative external reset that arrives during IME composition", () => {
+    expect(resolveMentionCompositionEnd("", "拼写中")).toEqual({
+      kind: "external",
+      value: "",
+      currentValue: "拼写中",
+    });
+  });
+
+  it("commits the final IME value only when no external value is pending", () => {
+    expect(resolveMentionCompositionEnd(undefined, "你好")).toEqual({
+      kind: "commit",
+      value: "你好",
+    });
+  });
+
+  it("serializes long text and multiple mention chips without losing canonical refs", () => {
+    const longText = "性能测试".repeat(5_000);
+    const nodes = [
+      textNode(longText),
+      mentionNode("expert:1xddvess309a6gme"),
+      textNode(" then "),
+      mentionNode("expert:v2vt1v01vzz6j24q"),
+    ];
+
+    expect(serializeMentionNodes(nodes)).toBe(
+      `${longText}<@expert:1xddvess309a6gme> then <@expert:v2vt1v01vzz6j24q>`,
+    );
+  });
+
+  it("removes a mention as an atomic node", () => {
+    const nodes = [
+      textNode("Ask "),
+      mentionNode("expert:1xddvess309a6gme"),
+      textNode(" then continue"),
+    ];
+    nodes.splice(1, 1);
+
+    expect(serializeMentionNodes(nodes)).toBe("Ask  then continue");
+  });
+
+  it("uses Shift+Enter for newline, Enter for submit, and ignores IME Enter", () => {
+    expect(resolveTeamMentionEnterAction({ shiftKey: true, isComposing: false, keyCode: 13 })).toBe(
+      "newline",
+    );
+    expect(
+      resolveTeamMentionEnterAction({ shiftKey: false, isComposing: false, keyCode: 13 }),
+    ).toBe("submit");
+    expect(
+      resolveTeamMentionEnterAction({ shiftKey: false, isComposing: true, keyCode: 229 }),
+    ).toBe("ignore");
+  });
 });
+
+function textNode(text: string): Node {
+  return { nodeType: 3, textContent: text } as Node;
+}
+
+function mentionNode(ref: string): Node {
+  return {
+    nodeType: 1,
+    dataset: { expertMention: ref },
+    tagName: "SPAN",
+    childNodes: [],
+  } as unknown as Node;
+}

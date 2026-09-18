@@ -5,7 +5,7 @@ export async function resolveUnlistedMissionSelection(input: {
   readonly id: string;
   readonly getSource: (id: string) => Promise<MissionSummary["source"]>;
   readonly isCurrent: () => boolean;
-}): Promise<"detail" | "fallback" | "stale"> {
+}): Promise<"detail" | "fallback" | "deleted" | "stale"> {
   try {
     const source = await input.getSource(input.id);
     if (!input.isCurrent()) return "stale";
@@ -18,7 +18,7 @@ export async function resolveUnlistedMissionSelection(input: {
       "code" in error &&
       error.code === "mission_not_found"
     )
-      return "fallback";
+      return "deleted";
     throw error;
   }
 }

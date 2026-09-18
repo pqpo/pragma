@@ -45,6 +45,10 @@ export function TeamMentionComposer(props: {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const queryRef = useRef<ActiveMentionQuery | null>(null);
   const escapeDismissedRef = useRef(false);
+  const lastEmittedValueRef = useRef<string | undefined>(undefined);
+  const lastSerializedValueRef = useRef(props.value);
+  const pendingExternalValueRef = useRef<string | undefined>(undefined);
+  const composingRef = useRef(false);
   const listboxId = `${useId().replaceAll(":", "")}-mentions`;
   const [query, setQuery] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -58,6 +62,10 @@ export function TeamMentionComposer(props: {
     () => new Map(props.candidates.map((candidate) => [candidate.ref, candidate])),
     [props.candidates],
   );
+  const candidateByRefRef = useRef(candidateByRef);
+  const unavailableLabelRef = useRef(props.unavailableLabel);
+  candidateByRefRef.current = candidateByRef;
+  unavailableLabelRef.current = props.unavailableLabel;
   const visibleCandidates = useMemo(() => {
     if (query === null) return [];
     const term = query.toLocaleLowerCase();
@@ -70,16 +78,35 @@ export function TeamMentionComposer(props: {
   useLayoutEffect(() => {
     const editor = editorRef.current;
     if (editor === null) return;
+    if (lastEmittedValueRef.current === props.value) {
+      lastEmittedValueRef.current = undefined;
+      return;
+    }
+    if (composingRef.current) {
+      pendingExternalValueRef.current = props.value;
+      return;
+    }
     if (serializeMentionEditor(editor) === props.value) {
-      refreshMentionEditorChips(editor, candidateByRef, props.unavailableLabel);
+      lastSerializedValueRef.current = props.value;
       return;
     }
     const focused = document.activeElement === editor;
-    replaceMentionEditorContents(editor, props.value, candidateByRef, props.unavailableLabel);
+    replaceMentionEditorContents(
+      editor,
+      props.value,
+      candidateByRefRef.current,
+      unavailableLabelRef.current,
+    );
+    lastSerializedValueRef.current = props.value;
     queryRef.current = null;
     setQuery(null);
     if (focused) placeCaretAtEnd(editor);
-  }, [candidateByRef, props.unavailableLabel, props.value]);
+  }, [props.value]);
+
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (editor !== null) refreshMentionEditorChips(editor, candidateByRef, props.unavailableLabel);
+  }, [candidateByRef, props.unavailableLabel]);
 
   useLayoutEffect(() => {
     if (query === null) return;
@@ -145,12 +172,23 @@ export function TeamMentionComposer(props: {
     setQuery(match.query);
   };
 
+  const emitCurrentValue = (editor: HTMLDivElement): void => {
+    emitSerializedValue(serializeMentionEditor(editor));
+  };
+
+  const emitSerializedValue = (value: string): void => {
+    if (lastSerializedValueRef.current === value) return;
+    lastSerializedValueRef.current = value;
+    lastEmittedValueRef.current = value;
+    props.onChange(value);
+  };
+
   const emitValue = () => {
     const editor = editorRef.current;
     if (editor === null) return;
     escapeDismissedRef.current = false;
-    props.onChange(serializeMentionEditor(editor));
-    updateMentionQuery();
+    emitCurrentValue(editor);
+    if (!composingRef.current) updateMentionQuery();
   };
 
   const insertText = (text: string) => {
@@ -182,7 +220,7 @@ export function TeamMentionComposer(props: {
     queryRef.current = null;
     escapeDismissedRef.current = false;
     setQuery(null);
-    props.onChange(serializeMentionEditor(editor));
+    emitCurrentValue(editor);
     requestAnimationFrame(() => editor.focus());
   };
 
@@ -211,7 +249,7 @@ export function TeamMentionComposer(props: {
     range.collapse(true);
     sibling.remove();
     setSelection(range);
-    props.onChange(serializeMentionEditor(editor));
+    emitCurrentValue(editor);
     return true;
   };
 
@@ -247,9 +285,13 @@ export function TeamMentionComposer(props: {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (event.shiftKey) insertText("\n");
-      else if (!event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229)
-        props.onSubmit();
+      const action = resolveTeamMentionEnterAction({
+        shiftKey: event.shiftKey,
+        isComposing: event.nativeEvent.isComposing,
+        keyCode: event.nativeEvent.keyCode,
+      });
+      if (action === "newline") insertText("\n");
+      else if (action === "submit") props.onSubmit();
     }
   };
 
@@ -269,7 +311,7 @@ export function TeamMentionComposer(props: {
     event.clipboardData.setData("text/plain", serializeMentionNodes(fragment.childNodes));
     if (cut) {
       range.deleteContents();
-      props.onChange(serializeMentionEditor(editor));
+      emitCurrentValue(editor);
       updateMentionQuery();
     }
   };
@@ -337,7 +379,43 @@ export function TeamMentionComposer(props: {
         data-empty={props.value === "" ? "true" : "false"}
         data-disabled={props.disabled ? "true" : "false"}
         autoFocus={props.autoFocus}
-        onInput={emitValue}
+        onInput={() => {
+          if (!composingRef.current) emitValue();
+        }}
+        onCompositionStart={() => {
+          composingRef.current = true;
+          pendingExternalValueRef.current = undefined;
+        }}
+        onCompositionEnd={() => {
+          composingRef.current = false;
+          const pendingExternalValue = pendingExternalValueRef.current;
+          pendingExternalValueRef.current = undefined;
+          const editor = editorRef.current;
+          if (editor === null) return;
+          const resolution = resolveMentionCompositionEnd(
+            pendingExternalValue,
+            serializeMentionEditor(editor),
+          );
+          if (resolution.kind === "external") {
+            if (resolution.currentValue !== resolution.value) {
+              replaceMentionEditorContents(
+                editor,
+                resolution.value,
+                candidateByRefRef.current,
+                unavailableLabelRef.current,
+              );
+              placeCaretAtEnd(editor);
+            }
+            lastSerializedValueRef.current = resolution.value;
+            lastEmittedValueRef.current = undefined;
+            queryRef.current = null;
+            setQuery(null);
+            return;
+          }
+          escapeDismissedRef.current = false;
+          emitSerializedValue(resolution.value);
+          updateMentionQuery();
+        }}
         onMouseUp={() => {
           escapeDismissedRef.current = false;
           updateMentionQuery();
@@ -393,6 +471,26 @@ export function findExpertMentionQuery(
     start: textBeforeCaret.length - match[2]!.length - 1,
     query: match[2]!,
   };
+}
+
+export function resolveMentionCompositionEnd(
+  pendingExternalValue: string | undefined,
+  currentValue: string,
+):
+  | { readonly kind: "external"; readonly value: string; readonly currentValue: string }
+  | { readonly kind: "commit"; readonly value: string } {
+  return pendingExternalValue === undefined
+    ? { kind: "commit", value: currentValue }
+    : { kind: "external", value: pendingExternalValue, currentValue };
+}
+
+export function resolveTeamMentionEnterAction(input: {
+  readonly shiftKey: boolean;
+  readonly isComposing: boolean;
+  readonly keyCode: number;
+}): "newline" | "submit" | "ignore" {
+  if (input.shiftKey) return "newline";
+  return input.isComposing || input.keyCode === 229 ? "ignore" : "submit";
 }
 
 export function refreshMentionEditorChips(
@@ -462,23 +560,24 @@ function serializeMentionEditor(editor: HTMLElement): string {
   return serializeMentionNodes(editor.childNodes);
 }
 
-function serializeMentionNodes(nodes: Iterable<Node>): string {
+export function serializeMentionNodes(nodes: Iterable<Node>): string {
   let value = "";
   for (const node of nodes) {
-    if (node.nodeType === Node.TEXT_NODE) {
+    if (node.nodeType === 3) {
       value += node.textContent ?? "";
       continue;
     }
-    if (!(node instanceof HTMLElement)) continue;
-    const ref = node.dataset.expertMention;
+    if (node.nodeType !== 1) continue;
+    const element = node as HTMLElement;
+    const ref = element.dataset.expertMention;
     if (ref !== undefined) {
       try {
         value += formatExpertMentionToken(ref);
       } catch {
         // Invalid DOM metadata is ignored instead of leaking a raw resource ID.
       }
-    } else if (node.tagName === "BR") value += "\n";
-    else value += serializeMentionNodes(node.childNodes);
+    } else if (element.tagName === "BR") value += "\n";
+    else value += serializeMentionNodes(element.childNodes);
   }
   return value;
 }
