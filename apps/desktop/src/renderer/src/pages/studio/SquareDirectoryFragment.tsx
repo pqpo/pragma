@@ -109,6 +109,20 @@ export function toggleSquareCategory(
   return current === next ? "all" : next;
 }
 
+export function normalizeSquareCategoryFilter(
+  current: SquareCategoryFilter,
+  categories: DesktopSquareCatalog["categories"],
+  kind: SquareKindFilter,
+): SquareCategoryFilter {
+  if (
+    current === "all" ||
+    categories.some((item) => item.id === current && (kind === "all" || item.kind === kind))
+  ) {
+    return current;
+  }
+  return "all";
+}
+
 export async function inspectSquareVersion(
   api: Pick<PragmaDesktopAPI, "downloadSquareBundle" | "inspectPragmaBundle">,
   detail: DesktopSquareItemDetail,
@@ -158,7 +172,9 @@ export function SquareDirectoryFragment(props: {
   const loadCatalog = async () => {
     const api = desktopApi();
     if (api === undefined) return;
-    setCatalog(await api.getSquareCatalog());
+    const nextCatalog = await api.getSquareCatalog();
+    setCatalog(nextCatalog);
+    setCategory((current) => normalizeSquareCategoryFilter(current, nextCatalog.categories, kind));
   };
 
   useEffect(() => {

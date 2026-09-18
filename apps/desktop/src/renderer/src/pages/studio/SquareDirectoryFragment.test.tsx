@@ -11,6 +11,7 @@ import {
   inspectSquareVersion,
   SquareDirectoryFragment,
   SquareItemVisual,
+  normalizeSquareCategoryFilter,
   squareItemsForView,
   toggleSquareCategory,
 } from "./SquareDirectoryFragment.tsx";
@@ -45,6 +46,22 @@ describe("SquareDirectoryFragment", () => {
     expect(toggleSquareCategory("all", "research")).toBe("research");
     expect(toggleSquareCategory("research", "research")).toBe("all");
     expect(toggleSquareCategory("research", "productivity")).toBe("productivity");
+  });
+
+  it("clears a category filter that disappears from the refreshed catalog", () => {
+    const categories: DesktopSquareCatalog["categories"] = [
+      {
+        id: "research",
+        kind: "expert",
+        name: { default: "Research" },
+        order: 1,
+      },
+    ];
+
+    expect(normalizeSquareCategoryFilter("research", categories, "expert")).toBe("research");
+    expect(normalizeSquareCategoryFilter("productivity", categories, "expert")).toBe("all");
+    expect(normalizeSquareCategoryFilter("research", categories, "flow")).toBe("all");
+    expect(normalizeSquareCategoryFilter("all", categories, "flow")).toBe("all");
   });
 
   it("combines type, source, business-category, search, and sort filters", () => {

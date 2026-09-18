@@ -190,11 +190,8 @@
   flex: 0 1 auto;
   overflow: hidden;
   overflow-wrap: anywhere;
-  padding: 4px 8px;
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-surface-subtle);
   color: var(--ui-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -229,8 +226,7 @@
   justify-content: space-between;
   gap: 12px;
   margin-top: auto;
-  padding-top: 4px;
-  border-top: 1px solid var(--ui-line);
+  padding-top: 8px;
   color: var(--ui-text-secondary);
   font-size: 12px;
 }
