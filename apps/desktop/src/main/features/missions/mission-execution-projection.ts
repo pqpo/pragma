@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
+import { performance } from "node:perf_hooks";
 import { createInterface } from "node:readline";
 
 import { z } from "zod";
@@ -12,6 +13,9 @@ export const MISSION_EXECUTION_PROJECTION_MAX_ENTRIES = 1_000;
 export const MISSION_EXECUTION_PROJECTION_MAX_BYTES = 4 * 1024 * 1024;
 export const MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH = 32_000;
 export const MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH = 4_000;
+
+const DEFAULT_SYNCHRONOUS_BUILD_BUDGET_MS = 4;
+const PROJECTION_WRITE_BATCH_BYTES = 256 * 1024;
 
 const ProjectionSchemaVersion = "pragma.mission-execution-projection/v2";
 export const MISSION_EXECUTION_PROJECTION_ORDERING_VERSION = 3 as const;
@@ -59,6 +63,58 @@ const ProjectionEntrySchema = z.object({
 
 type ProjectionHeader = z.infer<typeof ProjectionHeaderSchema>;
 type ProjectionEntry = z.infer<typeof ProjectionEntrySchema>;
+
+export interface MissionExecutionProjectionWriteMetrics {
+  readonly inputEntries: number;
+  readonly candidateEntries: number;
+  readonly retainedEntries: number;
+  readonly encodedBytes: number;
+  readonly queueWaitMs: number;
+  readonly validationMs: number;
+  readonly boundingAndEncodingMs: number;
+  readonly buildWallMs: number;
+  readonly synchronousBuildMs: number;
+  readonly maximumSynchronousSliceMs: number;
+  readonly yieldCount: number;
+  readonly yieldWaitMs: number;
+  readonly fileWriteMs: number;
+  readonly totalMs: number;
+}
+
+export interface MissionExecutionProjectionWriteOptions {
+  readonly synchronousBuildBudgetMs?: number | undefined;
+  readonly onMetrics?: ((metrics: MissionExecutionProjectionWriteMetrics) => void) | undefined;
+}
+
+export interface MissionExecutionProjectionMigrationOptions extends MissionExecutionProjectionWriteOptions {
+  readonly beforeWrite?: (() => Promise<void>) | undefined;
+}
+
+interface EncodedProjection {
+  readonly lines: readonly EncodedProjectionLine[];
+  readonly encodedBytes: number;
+  readonly validatedEntries?: readonly MissionChatEntry[] | undefined;
+  readonly metrics: Pick<
+    MissionExecutionProjectionWriteMetrics,
+    | "inputEntries"
+    | "candidateEntries"
+    | "retainedEntries"
+    | "validationMs"
+    | "boundingAndEncodingMs"
+    | "buildWallMs"
+    | "synchronousBuildMs"
+    | "maximumSynchronousSliceMs"
+    | "yieldCount"
+    | "yieldWaitMs"
+  >;
+}
+
+interface EncodedProjectionLine {
+  readonly value: string;
+  readonly bytes: number;
+}
+
+const projectionWrites = new Map<string, Promise<readonly MissionChatEntry[] | undefined>>();
 
 export class MissionExecutionProjectionError extends Error {
   constructor(message: string) {
@@ -232,23 +288,150 @@ export async function writeMissionExecutionProjection(
   entries: readonly MissionChatEntry[],
   orderingVersion: ProjectionOrderingVersion = MISSION_EXECUTION_PROJECTION_ORDERING_VERSION,
   sourceUpdatedAt?: string,
+  options: MissionExecutionProjectionWriteOptions = {},
 ): Promise<void> {
-  const records = createBoundedProjection(executionId, entries, orderingVersion, sourceUpdatedAt);
+  await enqueueMissionExecutionProjectionWrite(
+    path,
+    executionId,
+    entries,
+    orderingVersion,
+    sourceUpdatedAt,
+    options,
+    false,
+    undefined,
+  );
+}
+
+export async function migrateLegacyMissionExecutionProjection(
+  path: string,
+  executionId: string,
+  entries: unknown,
+  options: MissionExecutionProjectionMigrationOptions = {},
+): Promise<readonly MissionChatEntry[]> {
+  if (!Array.isArray(entries)) {
+    MissionChatEntrySchema.array().parse(entries);
+    throw new MissionExecutionProjectionError("Legacy Mission projection entries are invalid.");
+  }
+  const validated = await enqueueMissionExecutionProjectionWrite(
+    path,
+    executionId,
+    entries,
+    1,
+    undefined,
+    options,
+    true,
+    options.beforeWrite,
+  );
+  if (validated === undefined) {
+    throw new MissionExecutionProjectionError(
+      "Legacy Mission execution projection validation did not return entries.",
+    );
+  }
+  return validated;
+}
+
+async function enqueueMissionExecutionProjectionWrite(
+  path: string,
+  executionId: string,
+  entries: readonly unknown[],
+  orderingVersion: ProjectionOrderingVersion,
+  sourceUpdatedAt: string | undefined,
+  options: MissionExecutionProjectionWriteOptions,
+  collectValidatedEntries: boolean,
+  beforeWrite: (() => Promise<void>) | undefined,
+): Promise<readonly MissionChatEntry[] | undefined> {
+  const requestedAt = performance.now();
+  const previousWrite = projectionWrites.get(path) ?? Promise.resolve();
+  const write = previousWrite
+    .catch(() => undefined)
+    .then(
+      async () =>
+        await performMissionExecutionProjectionWrite(
+          path,
+          executionId,
+          entries,
+          orderingVersion,
+          sourceUpdatedAt,
+          options,
+          requestedAt,
+          collectValidatedEntries,
+          beforeWrite,
+        ),
+    );
+  projectionWrites.set(path, write);
+  try {
+    return await write;
+  } finally {
+    if (projectionWrites.get(path) === write) projectionWrites.delete(path);
+  }
+}
+
+async function performMissionExecutionProjectionWrite(
+  path: string,
+  executionId: string,
+  entries: readonly unknown[],
+  orderingVersion: ProjectionOrderingVersion,
+  sourceUpdatedAt: string | undefined,
+  options: MissionExecutionProjectionWriteOptions,
+  requestedAt: number,
+  collectValidatedEntries: boolean,
+  beforeWrite: (() => Promise<void>) | undefined,
+): Promise<readonly MissionChatEntry[] | undefined> {
+  const startedAt = performance.now();
+  const budgetMs = options.synchronousBuildBudgetMs ?? DEFAULT_SYNCHRONOUS_BUILD_BUDGET_MS;
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0) {
+    throw new MissionExecutionProjectionError(
+      "Mission execution projection synchronous build budget is invalid.",
+    );
+  }
+  const projection = await createBoundedProjection(
+    executionId,
+    entries,
+    orderingVersion,
+    sourceUpdatedAt,
+    budgetMs,
+    collectValidatedEntries,
+  );
+  await beforeWrite?.();
+  const fileWriteStartedAt = performance.now();
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporaryPath, "wx", 0o600);
+  let completedAt: number;
   try {
-    for (const record of records) {
-      await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+    let batch: string[] = [];
+    let batchBytes = 0;
+    for (const line of projection.lines) {
+      if (batch.length > 0 && batchBytes + line.bytes > PROJECTION_WRITE_BATCH_BYTES) {
+        await handle.writeFile(batch.join(""), "utf8");
+        batch = [];
+        batchBytes = 0;
+      }
+      batch.push(line.value);
+      batchBytes += line.bytes;
     }
+    if (batch.length > 0) await handle.writeFile(batch.join(""), "utf8");
     await handle.sync();
     await handle.close();
     await rename(temporaryPath, path);
+    completedAt = performance.now();
   } catch (error) {
     await handle.close().catch(() => undefined);
     await rm(temporaryPath, { force: true });
     throw error;
   }
+  try {
+    options.onMetrics?.({
+      ...projection.metrics,
+      encodedBytes: projection.encodedBytes,
+      queueWaitMs: startedAt - requestedAt,
+      fileWriteMs: completedAt - fileWriteStartedAt,
+      totalMs: completedAt - requestedAt,
+    });
+  } catch {
+    // Diagnostics must not turn a durable successful rename into a failed write.
+  }
+  return projection.validatedEntries;
 }
 
 async function readProjectionHeader(
@@ -364,23 +547,52 @@ function completeLineRanges(
   return ranges;
 }
 
-function createBoundedProjection(
+async function createBoundedProjection(
   executionId: string,
-  entries: readonly MissionChatEntry[],
+  entries: readonly unknown[],
   orderingVersion: ProjectionOrderingVersion,
   sourceUpdatedAt?: string,
-): readonly [ProjectionHeader, ...ProjectionEntry[]] {
-  const parsed = MissionChatEntrySchema.array().parse(entries);
-  const bounded = parsed.map((entry) => boundEntry(executionId, entry));
-  const maximumRetained = Math.min(bounded.length, MISSION_EXECUTION_PROJECTION_MAX_ENTRIES);
-  const firstCandidateIndex = bounded.length - maximumRetained;
-  const headerFor = (omittedEntries: number, truncatedFields: number): ProjectionHeader =>
-    ProjectionHeaderSchema.parse({
+  synchronousBudgetMs = DEFAULT_SYNCHRONOUS_BUILD_BUDGET_MS,
+  collectValidatedEntries = false,
+): Promise<EncodedProjection> {
+  const buildStartedAt = performance.now();
+  // Even a small projection starts on a later event-loop turn. A Promise or async
+  // declaration alone would still execute the validation synchronously here.
+  await yieldToEventLoop();
+  const budget = new SynchronousWorkBudget(synchronousBudgetMs);
+  const maximumRetained = Math.min(entries.length, MISSION_EXECUTION_PROJECTION_MAX_ENTRIES);
+  const firstCandidateIndex = entries.length - maximumRetained;
+  const candidates: MissionChatEntry[] = [];
+  const validatedEntries: MissionChatEntry[] | undefined = collectValidatedEntries ? [] : undefined;
+  const validationIssues: z.core.$ZodIssue[] = [];
+  const validationStartedAt = performance.now();
+  for (let index = 0; index < entries.length; index += 1) {
+    const parsed = MissionChatEntrySchema.safeParse(entries[index]);
+    if (parsed.success) {
+      validatedEntries?.push(parsed.data);
+      if (index >= firstCandidateIndex) candidates.push(parsed.data);
+    } else {
+      validationIssues.push(
+        ...parsed.error.issues.map((issue) => ({ ...issue, path: [index, ...issue.path] })),
+      );
+    }
+    await budget.checkpoint();
+  }
+  if (validationIssues.length > 0) throw new z.ZodError(validationIssues);
+  const validationMs = performance.now() - validationStartedAt;
+  const boundingStartedAt = performance.now();
+  const buildStartedAtIso = new Date().toISOString();
+  const headerFor = (
+    omittedEntries: number,
+    truncatedFields: number,
+    createdAt = buildStartedAtIso,
+  ): ProjectionHeader =>
+    ({
       schemaVersion: ProjectionSchemaVersion,
       recordType: "header",
       orderingVersion,
       executionId,
-      createdAt: new Date().toISOString(),
+      createdAt,
       ...(sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt }),
       limits: {
         maxEntries: MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
@@ -389,109 +601,205 @@ function createBoundedProjection(
       },
       omittedEntries,
       truncatedFields,
-    });
+    }) satisfies ProjectionHeader;
 
-  const retainedNewestFirst: ProjectionEntry[] = [];
+  // Validate header-owned caller input once. Candidate records are constructed
+  // exclusively from entries already accepted by MissionChatEntrySchema.
+  ProjectionHeaderSchema.parse(headerFor(entries.length, 0));
+
+  const retainedNewestFirst: EncodedProjectionLine[] = [];
   let retainedBytes = 0;
   let retainedTruncatedFields = 0;
-  for (let index = bounded.length - 1; index >= firstCandidateIndex; index -= 1) {
-    const candidate = bounded[index]!;
-    const candidateBytes = encodedSize([candidate]);
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const candidate = await boundEntry(executionId, candidates[index]!, budget);
+    const line = `${JSON.stringify(candidate)}\n`;
+    const candidateBytes = Buffer.byteLength(line);
     const candidateTruncatedFields = candidate.truncation?.fields.length ?? 0;
     const nextCount = retainedNewestFirst.length + 1;
     const nextTruncatedFields = retainedTruncatedFields + candidateTruncatedFields;
-    const nextHeader = headerFor(bounded.length - nextCount, nextTruncatedFields);
+    const nextHeader = `${JSON.stringify(
+      headerFor(entries.length - nextCount, nextTruncatedFields),
+    )}\n`;
     if (
-      encodedSize([nextHeader]) + retainedBytes + candidateBytes >
+      Buffer.byteLength(nextHeader) + retainedBytes + candidateBytes >
       MISSION_EXECUTION_PROJECTION_MAX_BYTES
     ) {
       break;
     }
-    retainedNewestFirst.push(candidate);
+    retainedNewestFirst.push({ value: line, bytes: candidateBytes });
     retainedBytes += candidateBytes;
     retainedTruncatedFields = nextTruncatedFields;
+    await budget.checkpoint();
   }
   const retained = retainedNewestFirst.reverse();
-  const header = headerFor(bounded.length - retained.length, retainedTruncatedFields);
-  if (encodedSize([header]) > MISSION_EXECUTION_PROJECTION_MAX_BYTES) {
+  const headerLine = `${JSON.stringify(
+    headerFor(entries.length - retained.length, retainedTruncatedFields, new Date().toISOString()),
+  )}\n`;
+  const headerBytes = Buffer.byteLength(headerLine);
+  if (headerBytes > MISSION_EXECUTION_PROJECTION_MAX_BYTES) {
     throw new MissionExecutionProjectionError("Mission execution projection header is too large.");
   }
-  return [header, ...retained];
+  budget.finish();
+  const boundingAndEncodingMs = performance.now() - boundingStartedAt;
+  return {
+    lines: [{ value: headerLine, bytes: headerBytes }, ...retained],
+    encodedBytes: headerBytes + retained.reduce((sum, candidate) => sum + candidate.bytes, 0),
+    ...(validatedEntries === undefined ? {} : { validatedEntries }),
+    metrics: {
+      inputEntries: entries.length,
+      candidateEntries: candidates.length,
+      retainedEntries: retained.length,
+      validationMs,
+      boundingAndEncodingMs,
+      buildWallMs: performance.now() - buildStartedAt,
+      synchronousBuildMs: budget.synchronousMs,
+      maximumSynchronousSliceMs: budget.maximumSliceMs,
+      yieldCount: budget.yieldCount,
+      yieldWaitMs: budget.yieldWaitMs,
+    },
+  };
 }
 
-function boundEntry(executionId: string, entry: MissionChatEntry): ProjectionEntry {
+async function boundEntry(
+  executionId: string,
+  entry: MissionChatEntry,
+  budget: SynchronousWorkBudget,
+): Promise<ProjectionEntry> {
   const fields: Array<z.infer<typeof ProjectionTruncatedFieldSchema>> = [];
   const bounded = { ...entry };
   if (bounded.kind === "user" || bounded.kind === "assistant" || bounded.kind === "thinking") {
-    bounded.content = truncateField(
+    bounded.content = await truncateField(
       bounded.content,
       MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH,
       "content",
       fields,
+      budget,
     );
   } else if (bounded.kind === "tool") {
     if (bounded.inputPreview !== undefined) {
-      bounded.inputPreview = truncateField(bounded.inputPreview, 800, "inputPreview", fields);
+      bounded.inputPreview = await truncateField(
+        bounded.inputPreview,
+        800,
+        "inputPreview",
+        fields,
+        budget,
+      );
     }
     if (bounded.outputPreview !== undefined) {
-      bounded.outputPreview = truncateField(bounded.outputPreview, 800, "outputPreview", fields);
+      bounded.outputPreview = await truncateField(
+        bounded.outputPreview,
+        800,
+        "outputPreview",
+        fields,
+        budget,
+      );
     }
     if (bounded.error !== undefined) {
-      bounded.error = truncateField(
+      bounded.error = await truncateField(
         bounded.error,
         MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH,
         "error",
         fields,
+        budget,
       );
     }
   } else if (bounded.kind === "agent_activity") {
     if (bounded.label !== undefined) {
-      bounded.label = truncateField(bounded.label, 500, "label", fields);
+      bounded.label = await truncateField(bounded.label, 500, "label", fields, budget);
     }
     if (bounded.error !== undefined) {
-      bounded.error = truncateField(
+      bounded.error = await truncateField(
         bounded.error,
         MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH,
         "error",
         fields,
+        budget,
       );
     }
   } else if (bounded.kind === "context_operation") {
     if (bounded.error !== undefined) {
-      bounded.error = truncateField(
+      bounded.error = await truncateField(
         bounded.error,
         MISSION_EXECUTION_PROJECTION_MAX_ERROR_LENGTH,
         "error",
         fields,
+        budget,
       );
     }
   }
-  return ProjectionEntrySchema.parse({
+  return {
     schemaVersion: ProjectionSchemaVersion,
     recordType: "entry",
     executionId,
     entry: bounded,
     ...(fields.length === 0 ? {} : { truncation: { truncated: true, fields } }),
-  });
+  } satisfies ProjectionEntry;
 }
 
-function truncateField(
+async function truncateField(
   value: string,
   maximumLength: number,
   field: z.infer<typeof ProjectionTruncatedFieldSchema>["field"],
   truncation: Array<z.infer<typeof ProjectionTruncatedFieldSchema>>,
-): string {
-  const characters = Array.from(value);
-  if (characters.length <= maximumLength) return value;
-  truncation.push({ field, originalLength: characters.length });
-  return characters.slice(0, maximumLength).join("");
+  budget: SynchronousWorkBudget,
+): Promise<string> {
+  if (value.length <= maximumLength) return value;
+  let codePoints = 0;
+  let end = value.length;
+  let unitsSinceCheckpoint = 0;
+  for (let offset = 0; offset < value.length;) {
+    if (codePoints === maximumLength) end = offset;
+    const width = value.codePointAt(offset)! > 0xffff ? 2 : 1;
+    offset += width;
+    unitsSinceCheckpoint += width;
+    codePoints += 1;
+    if (unitsSinceCheckpoint >= 4_096) {
+      unitsSinceCheckpoint = 0;
+      await budget.checkpoint();
+    }
+  }
+  if (codePoints <= maximumLength) return value;
+  truncation.push({ field, originalLength: codePoints });
+  return value.slice(0, end);
 }
 
-function encodedSize(records: readonly (ProjectionHeader | ProjectionEntry)[]): number {
-  return records.reduce(
-    (size, record) => size + Buffer.byteLength(`${JSON.stringify(record)}\n`),
-    0,
-  );
+class SynchronousWorkBudget {
+  #sliceStartedAt = performance.now();
+  #finished = false;
+  synchronousMs = 0;
+  maximumSliceMs = 0;
+  yieldCount = 0;
+  yieldWaitMs = 0;
+
+  constructor(readonly maximumSliceBudgetMs: number) {}
+
+  async checkpoint(): Promise<void> {
+    const now = performance.now();
+    const elapsed = now - this.#sliceStartedAt;
+    if (elapsed < this.maximumSliceBudgetMs) return;
+    this.#recordSlice(elapsed);
+    this.yieldCount += 1;
+    const yieldStartedAt = performance.now();
+    await yieldToEventLoop();
+    const resumedAt = performance.now();
+    this.yieldWaitMs += resumedAt - yieldStartedAt;
+    this.#sliceStartedAt = resumedAt;
+  }
+
+  finish(): void {
+    if (this.#finished) return;
+    this.#finished = true;
+    this.#recordSlice(performance.now() - this.#sliceStartedAt);
+  }
+
+  #recordSlice(elapsed: number): void {
+    this.synchronousMs += elapsed;
+    this.maximumSliceMs = Math.max(this.maximumSliceMs, elapsed);
+  }
+}
+
+async function yieldToEventLoop(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 async function fileEndsWithNewline(path: string, size: number): Promise<boolean> {

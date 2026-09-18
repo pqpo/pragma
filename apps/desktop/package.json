@@ -14,6 +14,7 @@
     "prebuild": "pnpm --filter \"@pragma/desktop^...\" build && pnpm run prepare:plugins",
     "build": "electron-vite build && pnpm run verify:styles && pnpm run verify:main && pnpm run verify:preload",
     "benchmark:composer": "node ./scripts/benchmark-mission-composer.mjs",
+    "benchmark:mission-projection": "node --expose-gc ./scripts/benchmark-mission-projection.mjs",
     "benchmark:mission-stream": "node ./scripts/benchmark-mission-stream.mjs",
     "benchmark:mission-stream-ui": "node ./scripts/benchmark-mission-stream-ui.mjs",
     "verify:main": "node ./scripts/verify-main-bundle.mjs",
