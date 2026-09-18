@@ -7,6 +7,7 @@ import {
   Package,
   SealCheck,
   Storefront,
+  UploadSimple,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -27,6 +28,7 @@ import { desktopApi } from "./studio-model.ts";
 type SquareKind = DesktopSquareCatalog["items"][number]["kind"];
 type SquareKindFilter = "all" | SquareKind;
 type SquareSort = "latest" | "name";
+type SquareCategoryFilter = string;
 
 const KINDS: readonly SquareKindFilter[] = [
   "all",
@@ -100,6 +102,13 @@ export function squareItemsForView(
     );
 }
 
+export function toggleSquareCategory(
+  current: SquareCategoryFilter,
+  next: string,
+): SquareCategoryFilter {
+  return current === next ? "all" : next;
+}
+
 export async function inspectSquareVersion(
   api: Pick<PragmaDesktopAPI, "downloadSquareBundle" | "inspectPragmaBundle">,
   detail: DesktopSquareItemDetail,
@@ -119,6 +128,9 @@ export async function inspectSquareVersion(
 }
 
 export function SquareDirectoryFragment(props: {
+  readonly canExport: boolean;
+  readonly onExport: () => void;
+  readonly onImport: () => void;
   readonly onInstall: (sourcePath: string, rootRef: string) => void;
 }) {
   const { t, i18n } = useTranslation("studio");
@@ -131,7 +143,7 @@ export function SquareDirectoryFragment(props: {
   const [kind, setKind] = useState<SquareKindFilter>("all");
   const [sourceId, setSourceId] = useState("all");
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("all");
+  const [category, setCategory] = useState<SquareCategoryFilter>("all");
   const [sort, setSort] = useState<SquareSort>("latest");
   const [version, setVersion] = useState("");
   const [inspectedVersion, setInspectedVersion] = useState<InspectedSquareVersion | null>(null);
@@ -254,6 +266,8 @@ export function SquareDirectoryFragment(props: {
     const selectedCategory = catalog.categories.find(
       (item) => item.kind === selected.item.kind && item.id === selected.item.categoryId,
     );
+    const selectedCategoryName =
+      selectedCategory === undefined ? undefined : localized(selectedCategory.name, i18n.language);
     const inspection =
       inspectedVersion?.version === version ? inspectedVersion.inspection : undefined;
     return (
@@ -282,11 +296,7 @@ export function SquareDirectoryFragment(props: {
           <div className="square-detail-copy">
             <div className="square-detail-badges">
               <span>{t(`square.kinds.${selected.item.kind}`)}</span>
-              <span>
-                {selectedCategory === undefined
-                  ? selected.item.categoryId
-                  : localized(selectedCategory.name, i18n.language)}
-              </span>
+              {selectedCategoryName === undefined ? null : <span>{selectedCategoryName}</span>}
             </div>
             <h1 id="square-detail-heading">{localized(selected.item.name, i18n.language)}</h1>
             <p>{localized(selected.item.summary, i18n.language)}</p>
@@ -328,16 +338,14 @@ export function SquareDirectoryFragment(props: {
           <main className="square-detail-main">
             <section aria-labelledby="square-description-heading">
               <h2 id="square-description-heading">{t("square.fullDescription")}</h2>
-              <article className="square-readme">
+              <article className="square-readme markdown-preview">
                 <MarkdownContent
                   source={localized(selected.item.description, i18n.language)}
                   codeBlockControls
                 />
               </article>
             </section>
-          </main>
-          <aside className="square-detail-sidebar">
-            <section aria-labelledby="square-contents-heading">
+            <section className="square-detail-contents" aria-labelledby="square-contents-heading">
               <h2 id="square-contents-heading">{t("square.contents")}</h2>
               {loadingVersion ? (
                 <p className="square-detail-status">{t("square.loadingVersion")}</p>
@@ -353,39 +361,47 @@ export function SquareDirectoryFragment(props: {
                   </button>
                 </div>
               ) : inspection === undefined ? null : (
-                <>
-                  <p className="square-detail-count">
-                    <Package size={18} />
-                    {t("square.resourceCount", { count: inspection.resources })}
-                  </p>
-                  <ul className="square-detail-roots">
-                    {inspection.roots.map((root) => (
-                      <li key={root.ref}>{root.name}</li>
-                    ))}
-                  </ul>
-                  <h3>{t("square.dependencies")}</h3>
-                  {inspection.dependencies.length === 0 ? (
-                    <p className="square-detail-status">{t("square.noDependencies")}</p>
-                  ) : (
-                    <ul className="square-detail-dependencies">
-                      {inspection.dependencies.map((dependency) => (
-                        <li key={`${dependency.kind}:${dependency.ref}`}>
-                          <span>{dependency.name}</span>
-                          <small>
-                            {t(`square.dependencyKinds.${dependency.kind}`)} ·{" "}
-                            {t(
-                              dependency.included
-                                ? "square.dependencyIncluded"
-                                : "square.dependencyRequired",
-                            )}
-                          </small>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
+                <div className="square-detail-contents-grid">
+                  <div>
+                    <p className="square-detail-count">
+                      <Package size={18} />
+                      {t("square.resourceCount", { count: inspection.resources })}
+                    </p>
+                    {inspection.roots.length === 0 ? null : (
+                      <ul className="square-detail-roots">
+                        {inspection.roots.map((root) => (
+                          <li key={root.ref}>{root.name}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <h3>{t("square.dependencies")}</h3>
+                    {inspection.dependencies.length === 0 ? (
+                      <p className="square-detail-status">{t("square.noDependencies")}</p>
+                    ) : (
+                      <ul className="square-detail-dependencies">
+                        {inspection.dependencies.map((dependency) => (
+                          <li key={`${dependency.kind}:${dependency.ref}`}>
+                            <span>{dependency.name}</span>
+                            <small>
+                              {t(`square.dependencyKinds.${dependency.kind}`)} ·{" "}
+                              {t(
+                                dependency.included
+                                  ? "square.dependencyIncluded"
+                                  : "square.dependencyRequired",
+                              )}
+                            </small>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
               )}
             </section>
+          </main>
+          <aside className="square-detail-sidebar">
             <section aria-labelledby="square-provenance-heading">
               <h2 id="square-provenance-heading">{t("square.provenance")}</h2>
               <dl>
@@ -417,15 +433,30 @@ export function SquareDirectoryFragment(props: {
             <h1 id="square-heading">{t("square.title")}</h1>
             <p>{t("square.description")}</p>
           </div>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={refreshing}
-            onClick={() => void refresh()}
-          >
-            <ArrowsClockwise size={17} />
-            {refreshing ? t("square.refreshing") : t("square.refresh")}
-          </button>
+          <div className="square-heading-actions">
+            <button className="secondary-button" type="button" onClick={props.onImport}>
+              <UploadSimple size={17} />
+              {t("importBundle")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!props.canExport}
+              onClick={props.onExport}
+            >
+              <DownloadSimple size={17} />
+              {t("exportBundle")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={refreshing}
+              onClick={() => void refresh()}
+            >
+              <ArrowsClockwise size={17} />
+              {refreshing ? t("square.refreshing") : t("square.refresh")}
+            </button>
+          </div>
         </header>
       }
     >
@@ -446,20 +477,18 @@ export function SquareDirectoryFragment(props: {
           </button>
         ))}
       </div>
-      <div className="square-category-strip" aria-label={t("square.businessCategories")}>
-        <button
-          type="button"
-          className={category === "all" ? "is-active" : undefined}
-          onClick={() => setCategory("all")}
-        >
-          {t("square.allBusinessCategories")}
-        </button>
+      <div
+        className="square-category-strip"
+        role="group"
+        aria-label={t("square.businessCategories")}
+      >
         {categories.map((item) => (
           <button
             type="button"
             className={category === item.id ? "is-active" : undefined}
+            aria-pressed={category === item.id}
             key={item.id}
-            onClick={() => setCategory(item.id)}
+            onClick={() => setCategory((current) => toggleSquareCategory(current, item.id))}
           >
             {localized(item.name, i18n.language)}
           </button>
@@ -518,16 +547,27 @@ export function SquareDirectoryFragment(props: {
             >
               <SquareItemVisual item={item} size="md" />
               <span className="square-card-copy">
-                <strong>{localized(item.name, i18n.language)}</strong>
+                <span className="square-card-title">
+                  <strong>{localized(item.name, i18n.language)}</strong>
+                  <SquareItemCategory item={item} catalog={catalog} locale={i18n.language} />
+                </span>
                 <p>{localized(item.summary, i18n.language)}</p>
-                <small>
-                  {item.sourceOfficial ? <SealCheck size={14} /> : null}
-                  {item.sourceName} · {item.latestVersion}
-                </small>
                 <span className="square-tags">
                   {item.tags.slice(0, 3).map((tag) => (
                     <em key={tag}>{tag}</em>
                   ))}
+                  {item.tags.length > 3 ? (
+                    <em title={t("square.moreTags", { count: item.tags.length - 3 })}>
+                      +{item.tags.length - 3}
+                    </em>
+                  ) : null}
+                </span>
+                <span className="square-card-meta">
+                  <span className="square-card-source">
+                    {item.sourceOfficial ? <SealCheck size={14} /> : null}
+                    {item.sourceName}
+                  </span>
+                  <span className="square-card-version">{item.latestVersion}</span>
                 </span>
               </span>
             </button>
@@ -536,6 +576,18 @@ export function SquareDirectoryFragment(props: {
       )}
     </StudioScreenFrame>
   );
+}
+
+function SquareItemCategory(props: {
+  readonly catalog: DesktopSquareCatalog;
+  readonly item: Pick<DesktopSquareCatalog["items"][number], "kind" | "categoryId">;
+  readonly locale: string;
+}) {
+  const category = props.catalog.categories.find(
+    (candidate) => candidate.kind === props.item.kind && candidate.id === props.item.categoryId,
+  );
+  if (category === undefined) return null;
+  return <span className="square-card-category">{localized(category.name, props.locale)}</span>;
 }
 
 export function SquareItemVisual(props: {

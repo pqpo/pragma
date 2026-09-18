@@ -37,10 +37,8 @@ describe("StudioPage", () => {
       <StudioPage memoryEnabled={true} onTryExpert={() => undefined} />,
     );
     const resourceIndex = html.indexOf("<span>Knowledge bases</span>");
-    const distributionIndex = html.indexOf('class="studio-distribution-actions"');
-    const squareIndex = html.indexOf("<span>Square</span>");
-    const importIndex = html.indexOf("<span>Import</span>");
-    const exportIndex = html.indexOf("<span>Export</span>");
+    const capabilitiesIndex = html.indexOf("<span>Capabilities</span>");
+    const marketIndex = html.indexOf("<span>Market</span>");
 
     expect(html).toContain('class="studio-navigation"');
     expect(html).toContain('aria-label="Resize navigation"');
@@ -48,10 +46,9 @@ describe("StudioPage", () => {
     expect(html).not.toContain("<span>Revision tasks</span><em>");
     expect(html).not.toContain("<span>Plugins</span>");
     expect(resourceIndex).toBeGreaterThan(-1);
-    expect(distributionIndex).toBeGreaterThan(resourceIndex);
-    expect(squareIndex).toBeGreaterThan(distributionIndex);
-    expect(importIndex).toBeGreaterThan(squareIndex);
-    expect(exportIndex).toBeGreaterThan(importIndex);
+    expect(resourceIndex).toBeGreaterThan(capabilitiesIndex);
+    expect(marketIndex).toBeGreaterThan(resourceIndex);
+    expect(html).not.toContain('class="studio-distribution-actions"');
   });
 
   it("keeps the last successfully loaded experts across page remounts", () => {

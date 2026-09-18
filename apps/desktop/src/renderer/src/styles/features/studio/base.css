@@ -1029,50 +1029,6 @@
   }
 }
 
-.studio-distribution-actions {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.studio-bundle-actions {
-  display: grid;
-  gap: 6px;
-}
-
-.studio-bundle-actions button {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  gap: 11px;
-  padding: 0 13px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 620;
-}
-
-.studio-bundle-actions button:hover:not(:disabled) {
-  background: var(--surface-muted);
-  color: var(--text);
-}
-
-.studio-bundle-actions button:focus-visible {
-  outline: 2px solid var(--green);
-  outline-offset: 2px;
-}
-
-.studio-bundle-actions button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
 .http-tool-title {
   display: flex;
   flex-wrap: wrap;
