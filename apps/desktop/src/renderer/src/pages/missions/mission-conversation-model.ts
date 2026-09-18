@@ -467,6 +467,7 @@ export function visiblePatchExecutionIds(
   update: MissionChatUpdate,
   snapshot: MissionConversationSnapshot | null,
   readEntryExecutionId?: ((entryId: string) => string | undefined) | undefined,
+  activeExecutionId: string | undefined = snapshot?.execution?.id,
 ): ReadonlySet<string> {
   const executionIds = new Set<string>();
   const updateEntryExecutionIds = new Map<string, string | undefined>();
@@ -479,7 +480,7 @@ export function visiblePatchExecutionIds(
         (patch.entry.kind === "assistant" || patch.entry.kind === "thinking") &&
         patch.entry.content.length > 0
       ) {
-        const executionId = patch.entry.executionId ?? snapshot?.execution?.id;
+        const executionId = patch.entry.executionId ?? activeExecutionId;
         if (executionId !== undefined) executionIds.add(executionId);
       }
       continue;
@@ -493,6 +494,7 @@ export function visiblePatchExecutionIds(
         ? snapshot?.entries.find((entry) => entry.id === patch.entryId)?.executionId
         : readEntryExecutionId(patch.entryId);
     if (executionId !== undefined) executionIds.add(executionId);
+    else if (activeExecutionId !== undefined) executionIds.add(activeExecutionId);
   }
   return executionIds;
 }
@@ -527,7 +529,12 @@ export function includedPendingFirstTokenExecutionIds(
           }
         : (entryId: string) =>
             pendingEntryExecutions.has(entryId) ? pendingEntryExecutions.get(entryId) : undefined;
-    for (const executionId of visiblePatchExecutionIds(update, null, readEntryExecutionId)) {
+    for (const executionId of visiblePatchExecutionIds(
+      update,
+      null,
+      readEntryExecutionId,
+      update.revision === snapshot.revision ? snapshot.execution?.id : undefined,
+    )) {
       executionIds.add(executionId);
     }
     if (update.kind === "patch") {
@@ -542,7 +549,10 @@ export function includedPendingFirstTokenExecutionIds(
 }
 
 export class MissionFirstTokenUpdateBuffer {
-  readonly #pending = new Map<number, MissionChatUpdate>();
+  readonly #pending = new Map<
+    number,
+    { readonly update: MissionChatUpdate; readonly activeExecutionId: string | undefined }
+  >();
   readonly #entryExecutionIds = new Map<string, string | undefined>();
   #revision: number;
 
@@ -559,24 +569,29 @@ export class MissionFirstTokenUpdateBuffer {
   push(
     update: MissionChatUpdate,
     readEntryExecutionId: (entryId: string) => string | undefined,
+    activeExecutionId?: string | undefined,
   ): ReadonlySet<string> {
-    if (update.revision <= this.#revision) return new Set();
-    this.#pending.set(update.revision, update);
+    if (update.revision <= this.#revision || this.#pending.has(update.revision)) return new Set();
+    this.#pending.set(update.revision, { update, activeExecutionId });
     const executionIds = new Set<string>();
     for (;;) {
       const nextRevision = this.#revision + 1;
       const next = this.#pending.get(nextRevision);
       if (next === undefined) break;
       this.#pending.delete(nextRevision);
-      for (const executionId of visiblePatchExecutionIds(next, null, (entryId) =>
-        this.#entryExecutionIds.has(entryId)
-          ? this.#entryExecutionIds.get(entryId)
-          : readEntryExecutionId(entryId),
+      for (const executionId of visiblePatchExecutionIds(
+        next.update,
+        null,
+        (entryId) =>
+          this.#entryExecutionIds.has(entryId)
+            ? this.#entryExecutionIds.get(entryId)
+            : readEntryExecutionId(entryId),
+        next.activeExecutionId,
       )) {
         executionIds.add(executionId);
       }
-      if (next.kind === "patch") {
-        for (const patch of next.patches) {
+      if (next.update.kind === "patch") {
+        for (const patch of next.update.patches) {
           if (patch.type === "entry.upsert") {
             this.#entryExecutionIds.set(patch.entry.id, patch.entry.executionId);
           }

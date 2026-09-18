@@ -301,6 +301,22 @@ describe("mission conversation model", () => {
     ]);
   });
 
+  it("retains the active execution fallback for entries without execution ownership", () => {
+    const current = streamingSnapshot("", 1);
+    const tracker = new MissionFirstTokenUpdateBuffer(current.revision);
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "first" }],
+    };
+
+    expect([...tracker.push(update, () => undefined, "active-execution")]).toEqual([
+      "active-execution",
+    ]);
+  });
+
   it("records a pending token already included at the refreshed page boundary", () => {
     const snapshot = streamingSnapshot("first", 12);
     const boundaryUpdate: MissionChatUpdate = {
@@ -370,6 +386,28 @@ describe("mission conversation model", () => {
         [laterAppend, explicitOwnership],
       ),
     ]).toEqual(["pending-execution"]);
+
+    const entryWithoutOwnership: MissionChatEntry = {
+      id: "answer",
+      kind: "assistant",
+      content: "first",
+      streaming: true,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    };
+    expect([
+      ...includedPendingFirstTokenExecutionIds(
+        {
+          ...snapshot,
+          entries: [entryWithoutOwnership],
+          execution: {
+            id: "active-execution",
+            status: "running",
+            interruptible: true,
+          },
+        },
+        [boundaryUpdate],
+      ),
+    ]).toEqual(["active-execution"]);
   });
 
   it("does not advance the content revision when delayed state projections arrive", () => {

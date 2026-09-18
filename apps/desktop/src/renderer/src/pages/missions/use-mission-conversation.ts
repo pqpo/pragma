@@ -147,10 +147,13 @@ export function useMissionConversation(input: {
       firstTokenUpdates.reset(base.revision);
       for (const updateValue of updates.toSorted((left, right) => left.revision - right.revision)) {
         recordFirstTokens(
-          firstTokenUpdates.push(updateValue, (entryId) =>
-            baseEntryExecutions.has(entryId)
-              ? baseEntryExecutions.get(entryId)
-              : liveEntryStore.get(entryId)?.executionId,
+          firstTokenUpdates.push(
+            updateValue,
+            (entryId) =>
+              baseEntryExecutions.has(entryId)
+                ? baseEntryExecutions.get(entryId)
+                : liveEntryStore.get(entryId)?.executionId,
+            base.execution?.id,
           ),
         );
       }
@@ -345,6 +348,7 @@ export function useMissionConversation(input: {
       const executionIds = firstTokenUpdates.push(
         updateValue,
         (entryId) => liveEntryStore.get(entryId)?.executionId,
+        chatRef.current?.execution?.id,
       );
       recordFirstTokens(executionIds);
       scheduleFlush();
