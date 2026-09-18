@@ -195,6 +195,20 @@ interface MissionsPageInitialState extends MissionsPageMemoryState {
 
 export type MissionListSource = "task" | "automation";
 
+export function recordMissionRemoval(input: {
+  readonly missionId: string;
+  readonly removedMissionIds: Set<string>;
+  readonly missionDetails: Map<string, Mission>;
+  readonly missionUpdates: Map<
+    string,
+    { readonly mission: Mission; readonly source: MissionSummary["source"] } | null
+  >;
+}): void {
+  input.removedMissionIds.add(input.missionId);
+  input.missionDetails.delete(input.missionId);
+  input.missionUpdates.set(input.missionId, null);
+}
+
 export function resolveMissionsPageInitialState(input: {
   readonly initialMission?: Mission | undefined;
   readonly memoryState?: MissionsPageMemoryState | undefined;
@@ -676,9 +690,12 @@ export function MissionsPage(props: {
         typeof window === "undefined" ? undefined : window.localStorage,
         new Set([update.missionId]),
       );
-      missionUpdatesDuringRefreshRef.current.set(update.missionId, null);
-      removedMissionIdsRef.current.add(update.missionId);
-      missionDetailCacheRef.current.delete(update.missionId);
+      recordMissionRemoval({
+        missionId: update.missionId,
+        removedMissionIds: removedMissionIdsRef.current,
+        missionDetails: missionDetailCacheRef.current,
+        missionUpdates: missionUpdatesDuringRefreshRef.current,
+      });
       const remainingBoundaries = { ...missionOutputBoundariesRef.current };
       delete remainingBoundaries[update.missionId];
       missionOutputBoundariesRef.current = remainingBoundaries;
@@ -1183,11 +1200,18 @@ export function MissionsPage(props: {
             setDeleting(true);
             void withMissionUiWatchdog(api.deleteMission(deleteCandidate.id))
               .then(async () => {
+                const deletedMissionId = deleteCandidate.id;
+                recordMissionRemoval({
+                  missionId: deletedMissionId,
+                  removedMissionIds: removedMissionIdsRef.current,
+                  missionDetails: missionDetailCacheRef.current,
+                  missionUpdates: missionUpdatesDuringRefreshRef.current,
+                });
+                discardComposerRecovery(deletedMissionId);
+                removeMissionDrafts(window.localStorage, new Set([deletedMissionId]));
                 const storedMissions = await api.listMissions();
-                discardComposerRecovery(deleteCandidate.id);
-                removeMissionDrafts(window.localStorage, new Set([deleteCandidate.id]));
                 setMissions(storedMissions);
-                if (selectedMissionId === deleteCandidate.id) {
+                if (selectedMissionId === deletedMissionId) {
                   selectedMissionIdRef.current = null;
                   setSelectedMissionId(null);
                   setSelectedMission(null);

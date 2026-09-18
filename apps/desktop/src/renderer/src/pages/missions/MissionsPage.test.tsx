@@ -46,6 +46,7 @@ import {
   missionStatusLabel,
   MISSION_ROW_PREVIEW_HOVER_DELAY_MS,
   positionMissionRowPreview,
+  recordMissionRemoval,
   resolveMissionRowIndicator,
   workStatusLabel,
   resolveMissionsPageInitialState,
@@ -82,6 +83,24 @@ import {
 } from "./mission-conversation-model.ts";
 
 describe("MissionsPage", () => {
+  it("records a successful Mission deletion before its Composer unmounts", () => {
+    const mission = missionFixture("expert");
+    const removedMissionIds = new Set<string>();
+    const missionDetails = new Map([[mission.id, mission]]);
+    const missionUpdates = new Map([[mission.id, { mission, source: { type: "task" as const } }]]);
+
+    recordMissionRemoval({
+      missionId: mission.id,
+      removedMissionIds,
+      missionDetails,
+      missionUpdates,
+    });
+
+    expect(removedMissionIds.has(mission.id)).toBe(true);
+    expect(missionDetails.has(mission.id)).toBe(false);
+    expect(missionUpdates.get(mission.id)).toBeNull();
+  });
+
   it("resets Composer height before measuring non-append draft replacements", () => {
     expect(canMeasureMissionComposerGrowthWithoutReset("hello", "hello world")).toBe(true);
     expect(
