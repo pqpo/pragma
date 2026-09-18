@@ -100,7 +100,16 @@ function runElectron(mainPath) {
         );
         return;
       }
-      resolveResult(JSON.parse(resultLine.slice(resultPrefix.length)));
+      try {
+        const result = JSON.parse(resultLine.slice(resultPrefix.length));
+        if (result !== null && typeof result === "object" && "error" in result) {
+          reject(new Error(`Composer benchmark renderer failed.\n${String(result.error)}`));
+          return;
+        }
+        resolveResult(result);
+      } catch (error) {
+        reject(error);
+      }
     });
   });
 }

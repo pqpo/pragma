@@ -148,4 +148,19 @@ describe("Mission composer draft persistence", () => {
     expect(storage.removeItem).toHaveBeenCalledWith("pragma.desktop.missions.composer-drafts.v1");
     vi.useRealTimers();
   });
+
+  it("can cancel an unmount flush after the owning Mission was deleted", () => {
+    vi.useFakeTimers();
+    const storage = memoryStorage();
+    const persistence = createMissionDraftPersistence(storage, 400);
+
+    persistence.schedule("mission-a", "Pending");
+    removeMissionDrafts(storage, new Set(["mission-a"]));
+    persistence.cancel();
+    vi.runAllTimers();
+
+    expect(readMissionDraft(storage, "mission-a")).toBe("");
+    expect(storage.setItem).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });

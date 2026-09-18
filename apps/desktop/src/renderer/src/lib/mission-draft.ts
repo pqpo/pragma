@@ -99,6 +99,7 @@ export interface MissionDraftPersistence {
   readonly schedule: (missionId: string, draft: string) => void;
   readonly clear: (missionId: string) => void;
   readonly remove: (missionId: string) => void;
+  readonly cancel: () => void;
   readonly flush: () => void;
   readonly dispose: () => void;
 }
@@ -147,6 +148,10 @@ export function createMissionDraftPersistence(
         pending = undefined;
       }
       removeMissionDrafts(storage, new Set([missionId]));
+    },
+    cancel() {
+      cancelTimer();
+      pending = undefined;
     },
     flush,
     dispose() {

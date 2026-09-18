@@ -172,14 +172,15 @@ export function useMissionComposerState(options: {
 
   useEffect(
     () => () => {
-      // Flush the debounced value first. The snapshot callback then writes the
-      // latest ref value, so an older pending timer can never win the handoff.
-      draftPersistenceRef.current?.dispose();
       const onUnmountState = callbacksRef.current.onUnmountState;
       if (onUnmountState === undefined) {
+        draftPersistenceRef.current?.dispose();
         discard(attachmentIdsRef.current);
         return;
       }
+      // The callback owns the final persistence decision. Cancel the stale
+      // timer first so deleted Missions cannot be written back during unmount.
+      draftPersistenceRef.current?.cancel();
       onUnmountState({
         missionId: missionIdRef.current,
         draft: draftRef.current,
