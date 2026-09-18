@@ -2,8 +2,9 @@ import { constants } from "node:fs";
 import { copyFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { MissionChatEntrySchema, type MissionChatEntry } from "../../../shared/contracts/index.ts";
+import type { MissionChatEntry } from "../../../shared/contracts/index.ts";
 import {
+  migrateLegacyMissionExecutionProjection,
   readMissionExecutionProjection,
   readMissionExecutionProjectionPage,
   writeMissionExecutionProjection,
@@ -56,9 +57,13 @@ export function createMissionProjectionStorage(
     ).catch((error: unknown) => {
       if (!isNodeError(error, "EEXIST")) throw error;
     });
-    await writeMissionExecutionProjection(currentPath(id, executionId), executionId, legacy, 1);
+    const validated = await migrateLegacyMissionExecutionProjection(
+      currentPath(id, executionId),
+      executionId,
+      legacy.entries,
+    );
     await rm(legacyPath(id, executionId), { force: true });
-    return legacy;
+    return validated;
   };
 
   return {
@@ -99,7 +104,7 @@ export function createMissionProjectionStorage(
 
 async function readLegacyProjection(
   path: string,
-): Promise<readonly MissionChatEntry[] | undefined> {
+): Promise<{ readonly entries: unknown } | undefined> {
   let value: unknown;
   try {
     value = JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -119,7 +124,7 @@ async function readLegacyProjection(
       "Unsupported Mission projection schema.",
     );
   }
-  return MissionChatEntrySchema.array().parse(value.entries);
+  return { entries: value.entries };
 }
 
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
