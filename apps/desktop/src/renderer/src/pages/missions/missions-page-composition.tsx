@@ -853,6 +853,20 @@ export function MissionsPage(props: {
             setHasResolvedInitialLoad(true);
             return;
           }
+          if (selection === "deleted") {
+            discardComposerRecovery(selectedId);
+            removeMissionDrafts(
+              typeof window === "undefined" ? undefined : window.localStorage,
+              new Set([selectedId]),
+            );
+            recordMissionRemoval({
+              missionId: selectedId,
+              removedMissionIds: removedMissionIdsRef.current,
+              missionDetails: missionDetailCacheRef.current,
+              missionUpdates: missionUpdatesDuringRefreshRef.current,
+            });
+            composerRevisionByMissionIdRef.current.delete(selectedId);
+          }
         }
         if (selectedId !== null) {
           const selectedSummary = refreshedMissions.find((mission) => mission.id === selectedId);
@@ -909,7 +923,12 @@ export function MissionsPage(props: {
     return () => {
       cancelled = true;
     };
-  }, [openMission, updateUnreadMissionOutputIds, props.initialMission?.id]);
+  }, [
+    discardComposerRecovery,
+    openMission,
+    updateUnreadMissionOutputIds,
+    props.initialMission?.id,
+  ]);
 
   useEffect(() => {
     const api = desktopApi();
