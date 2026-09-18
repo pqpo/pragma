@@ -91,7 +91,7 @@ describe("isBuiltInExpert", () => {
 });
 
 describe("studioSections", () => {
-  it("keeps distribution workflows out of the resource navigation group", () => {
+  it("keeps Market and Knowledge bases in the same navigation group", () => {
     expect(studioSections.map((section) => section.id)).toEqual([
       "experts",
       "teams",
@@ -99,6 +99,7 @@ describe("studioSections", () => {
       "integrations",
       "capabilities",
       "context-stores",
+      "square",
     ]);
   });
 });

@@ -13,9 +13,21 @@
 
 .square-heading {
   display: flex;
+  min-height: 0;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+  padding-bottom: 20px;
+  border-bottom: 0;
+}
+
+.square-heading-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .square-controls {
@@ -39,10 +51,8 @@
 .square-kind-tabs {
   display: flex;
   gap: 4px;
-  margin-bottom: 16px;
-  padding-bottom: 8px;
+  margin-bottom: 20px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--ui-line);
 }
 
 .square-kind-tabs button {
@@ -71,7 +81,7 @@
   display: flex;
   gap: 8px;
   margin: 0 0 16px;
-  padding-bottom: 4px;
+  padding-bottom: 8px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
@@ -90,7 +100,7 @@
 
 .square-category-strip button:hover,
 .square-category-strip button.is-active {
-  background: var(--ui-surface-subtle);
+  background: var(--ui-selection);
   color: var(--ui-text);
 }
 
@@ -105,9 +115,9 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: 12px;
-  min-height: 168px;
-  padding: 16px;
+  gap: 16px;
+  min-height: 192px;
+  padding: 20px;
   border: 1px solid var(--ui-line);
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
@@ -149,21 +159,48 @@
 
 .square-card-copy {
   display: grid;
+  align-content: start;
+  height: 100%;
   min-width: 0;
+  gap: 12px;
+}
+
+.square-card-title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
   gap: 8px;
 }
 
-.square-card-copy > strong {
+.square-card-title > strong {
+  display: -webkit-box;
+  min-width: 0;
   overflow: hidden;
+  overflow-wrap: anywhere;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.square-card-category {
+  display: block;
+  max-width: 42%;
+  flex: 0 1 auto;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .square-card-copy > p {
   display: -webkit-box;
-  min-height: 60px;
+  min-height: 0;
   overflow: hidden;
   margin: 0;
   color: var(--ui-text-secondary);
@@ -182,12 +219,45 @@
   font-size: 12px;
 }
 
+.square-card-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.square-card-source {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.square-card-version {
+  flex: 0 0 auto;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
 .square-tags,
 .square-detail-tags,
 .square-detail-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.square-tags:empty,
+.square-detail-tags:empty {
+  display: none;
 }
 
 .square-tags em,
@@ -232,14 +302,14 @@
   grid-template-columns: auto minmax(0, 1fr) 220px;
   align-items: start;
   gap: 24px;
-  padding-bottom: 32px;
+  padding-bottom: 24px;
   border-bottom: 1px solid var(--ui-line);
 }
 
 .square-detail-copy {
   display: grid;
   min-width: 0;
-  gap: 8px;
+  gap: 12px;
 }
 
 .square-detail-copy h1 {
@@ -278,10 +348,10 @@
 
 .square-detail-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 48px;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
+  gap: 32px;
   align-items: start;
-  padding-top: 32px;
+  padding-top: 24px;
 }
 
 .square-detail-main,
@@ -298,7 +368,26 @@
 
 .square-readme {
   min-width: 0;
-  padding-bottom: 48px;
+  padding-bottom: 0;
+}
+
+.square-readme.markdown-preview {
+  padding: 0;
+  color: var(--ui-text-secondary);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.square-detail-main > section + section {
+  margin-top: 32px;
+  padding-top: 32px;
+  border-top: 1px solid var(--ui-line);
+}
+
+.square-detail-contents-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
 }
 
 .square-detail-sidebar {
@@ -307,7 +396,7 @@
 }
 
 .square-detail-sidebar section + section {
-  padding-top: 32px;
+  padding-top: 24px;
   border-top: 1px solid var(--ui-line);
 }
 
@@ -429,11 +518,22 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 32px;
   }
+
+  .square-detail-contents-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
 }
 
 @container square-screen (max-width: 560px) {
   .square-heading {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .square-heading-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .square-controls,
@@ -451,5 +551,9 @@
 
   .square-detail-body {
     gap: 32px;
+  }
+
+  .square-card {
+    min-height: 0;
   }
 }

@@ -61,7 +61,7 @@ import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
 import { BundleSourcePublishDialog } from "./BundleSourcePublishDialog.tsx";
 import { ContextStoreRevisionFragment } from "./ContextStoreRevisionFragment.tsx";
 import { SquareDirectoryFragment } from "./SquareDirectoryFragment.tsx";
-import { DownloadSimple, Storefront, UploadSimple, User } from "@phosphor-icons/react";
+import { User } from "@phosphor-icons/react";
 import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import {
   desktopApi,
@@ -804,7 +804,7 @@ export function StudioPage(props: {
                       ? automations.length
                       : section.id === "capabilities"
                         ? capabilities.length
-                        : 0;
+                        : undefined;
           return (
             <button
               key={section.id}
@@ -819,41 +819,6 @@ export function StudioPage(props: {
             </button>
           );
         })}
-        <div className="studio-distribution-actions">
-          <button
-            className={activeView === "square" ? "studio-nav-item is-active" : "studio-nav-item"}
-            type="button"
-            aria-current={activeView === "square" ? "page" : undefined}
-            onClick={() => openStudioView("square")}
-          >
-            <Storefront size={20} aria-hidden="true" />
-            <span>{t("square.navigation")}</span>
-          </button>
-          <div className="studio-bundle-actions">
-            <button
-              type="button"
-              onClick={() => {
-                setSquareBundlePath(undefined);
-                setBundleRootRef(undefined);
-                setBundleMode("import");
-              }}
-            >
-              <DownloadSimple size={18} aria-hidden="true" />
-              <span>{t("importBundle")}</span>
-            </button>
-            <button
-              type="button"
-              disabled={project === null}
-              onClick={() => {
-                setBundleRootRef(undefined);
-                setBundleMode("export");
-              }}
-            >
-              <UploadSimple size={18} aria-hidden="true" />
-              <span>{t("exportBundle")}</span>
-            </button>
-          </div>
-        </div>
       </nav>
       <SidebarResizeHandle
         label={t("navigation.resize", { ns: "common" })}
@@ -865,6 +830,16 @@ export function StudioPage(props: {
       <div className="studio-content">
         {screen === "directory" && activeView === "square" ? (
           <SquareDirectoryFragment
+            canExport={project !== null}
+            onExport={() => {
+              setBundleRootRef(undefined);
+              setBundleMode("export");
+            }}
+            onImport={() => {
+              setSquareBundlePath(undefined);
+              setBundleRootRef(undefined);
+              setBundleMode("import");
+            }}
             onInstall={(sourcePath, rootRef) => {
               setSquareBundlePath(sourcePath);
               setBundleRootRef(rootRef);

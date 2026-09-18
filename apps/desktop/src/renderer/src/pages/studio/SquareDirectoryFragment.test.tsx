@@ -11,12 +11,21 @@ import {
   inspectSquareVersion,
   SquareDirectoryFragment,
   SquareItemVisual,
+  normalizeSquareCategoryFilter,
   squareItemsForView,
+  toggleSquareCategory,
 } from "./SquareDirectoryFragment.tsx";
 
 describe("SquareDirectoryFragment", () => {
   it("defaults to all resource kinds and exposes source and business-category filters", () => {
-    const html = renderToStaticMarkup(<SquareDirectoryFragment onInstall={() => undefined} />);
+    const html = renderToStaticMarkup(
+      <SquareDirectoryFragment
+        canExport={true}
+        onExport={() => undefined}
+        onImport={() => undefined}
+        onInstall={() => undefined}
+      />,
+    );
 
     expect(html).toContain('role="tablist"');
     expect(html).toContain("All types");
@@ -24,11 +33,35 @@ describe("SquareDirectoryFragment", () => {
     expect(html).toContain("Expert teams");
     expect(html).toContain("Flows");
     expect(html).toContain("Knowledge bases");
-    expect(html).toContain("All business categories");
+    expect(html).not.toContain("All business categories");
+    expect(html).toContain("Import");
+    expect(html).toContain("Export");
     expect(html).toContain("All sources");
     expect(html).toContain("Latest");
     expect(html).toContain("Name");
     expect(html).not.toContain("Hottest");
+  });
+
+  it("toggles a business category back to all results and switches categories", () => {
+    expect(toggleSquareCategory("all", "research")).toBe("research");
+    expect(toggleSquareCategory("research", "research")).toBe("all");
+    expect(toggleSquareCategory("research", "productivity")).toBe("productivity");
+  });
+
+  it("clears a category filter that disappears from the refreshed catalog", () => {
+    const categories: DesktopSquareCatalog["categories"] = [
+      {
+        id: "research",
+        kind: "expert",
+        name: { default: "Research" },
+        order: 1,
+      },
+    ];
+
+    expect(normalizeSquareCategoryFilter("research", categories, "expert")).toBe("research");
+    expect(normalizeSquareCategoryFilter("productivity", categories, "expert")).toBe("all");
+    expect(normalizeSquareCategoryFilter("research", categories, "flow")).toBe("all");
+    expect(normalizeSquareCategoryFilter("all", categories, "flow")).toBe("all");
   });
 
   it("combines type, source, business-category, search, and sort filters", () => {
