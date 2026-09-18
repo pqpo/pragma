@@ -15,6 +15,7 @@ import { createMissionDraftPersistence, readMissionDraft } from "../../lib/missi
 
 export function useMissionComposerState(options: {
   readonly mission: Pick<Mission, "id" | "lifecycleStatus">;
+  readonly initialRevisionId?: string | undefined;
   readonly initialDraft?: string | undefined;
   readonly initialAttachments?: readonly ExpertPromptAttachment[] | undefined;
   readonly initialAttachmentPreviews?: Readonly<Record<string, string>> | undefined;
@@ -22,6 +23,7 @@ export function useMissionComposerState(options: {
   readonly onUnmountState?:
     | ((state: {
         readonly missionId: string;
+        readonly revisionId: string;
         readonly draft: string;
         readonly attachments: readonly ExpertPromptAttachment[];
         readonly attachmentPreviews: Readonly<Record<string, string>>;
@@ -40,7 +42,7 @@ export function useMissionComposerState(options: {
     missionId: options.mission.id,
     status: options.mission.lifecycleStatus,
   });
-  const [draft, setDraft] = useState(() =>
+  const [draft, setDraftState] = useState(() =>
     initialDraft(options.mission, initialDraftOverrideRef.current),
   );
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>(
@@ -51,6 +53,11 @@ export function useMissionComposerState(options: {
   );
   const attachmentIdsRef = useRef<readonly string[]>(
     (options.initialAttachments ?? []).map((attachment) => attachment.id),
+  );
+  const [revisionNamespace] = useState(() => crypto.randomUUID());
+  const revisionSequenceRef = useRef(0);
+  const revisionIdRef = useRef(
+    options.initialRevisionId ?? `${revisionNamespace}:${revisionSequenceRef.current}`,
   );
   const draftRef = useRef(draft);
   const attachmentsRef = useRef(attachments);
@@ -84,9 +91,24 @@ export function useMissionComposerState(options: {
     }
   }, []);
 
-  const updateDraft = useCallback((nextDraft: string): void => {
+  const markEdited = useCallback((): void => {
+    revisionSequenceRef.current += 1;
+    revisionIdRef.current = `${revisionNamespace}:${revisionSequenceRef.current}`;
+  }, [revisionNamespace]);
+
+  const updateDraft = useCallback(
+    (nextDraft: string): void => {
+      if (draftRef.current !== nextDraft) markEdited();
+      draftRef.current = nextDraft;
+      setDraftState(nextDraft);
+    },
+    [markEdited],
+  );
+
+  const restoreDraft = useCallback((nextDraft: string, revisionId: string): void => {
+    revisionIdRef.current = revisionId;
     draftRef.current = nextDraft;
-    setDraft(nextDraft);
+    setDraftState(nextDraft);
   }, []);
 
   const clearAttachments = useCallback((): void => {
@@ -99,13 +121,15 @@ export function useMissionComposerState(options: {
 
   const clearDraft = useCallback((): void => {
     draftPersistenceRef.current?.clear(options.mission.id);
-    updateDraft("");
-  }, [options.mission.id, updateDraft]);
+    draftRef.current = "";
+    setDraftState("");
+  }, [options.mission.id]);
 
   const removeDraft = useCallback((): void => {
     draftPersistenceRef.current?.remove(options.mission.id);
-    updateDraft("");
-  }, [options.mission.id, updateDraft]);
+    draftRef.current = "";
+    setDraftState("");
+  }, [options.mission.id]);
 
   const restoreAttachments = useCallback(
     (
@@ -138,6 +162,7 @@ export function useMissionComposerState(options: {
         attachmentIdsRef.current = next.map((attachment) => attachment.id);
         attachmentsRef.current = next;
         if (next.length > current.length) {
+          markEdited();
           setAttachmentPreviews((previews) => {
             const nextPreviews = mergeMissionAttachmentPreviews(previews, result, next);
             attachmentPreviewsRef.current = nextPreviews;
@@ -148,7 +173,7 @@ export function useMissionComposerState(options: {
         return next;
       });
     },
-    [discard],
+    [discard, markEdited],
   );
 
   const removeAttachment = useCallback(
@@ -156,6 +181,8 @@ export function useMissionComposerState(options: {
       discard([id]);
       setAttachments((current) => {
         const next = current.filter((attachment) => attachment.id !== id);
+        if (next.length === current.length) return current;
+        markEdited();
         attachmentIdsRef.current = next.map((attachment) => attachment.id);
         attachmentsRef.current = next;
         return next;
@@ -167,7 +194,7 @@ export function useMissionComposerState(options: {
         return next;
       });
     },
-    [discard],
+    [discard, markEdited],
   );
 
   useEffect(
@@ -183,6 +210,7 @@ export function useMissionComposerState(options: {
       draftPersistenceRef.current?.cancel();
       onUnmountState({
         missionId: missionIdRef.current,
+        revisionId: revisionIdRef.current,
         draft: draftRef.current,
         attachments: attachmentsRef.current,
         attachmentPreviews: attachmentPreviewsRef.current,
@@ -238,6 +266,8 @@ export function useMissionComposerState(options: {
   return {
     draft,
     setDraft: updateDraft,
+    restoreDraft,
+    getRevisionId: () => revisionIdRef.current,
     clearDraft,
     attachments,
     attachmentPreviews,

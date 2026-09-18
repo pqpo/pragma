@@ -4,10 +4,18 @@ export const MAX_MISSION_COMPOSER_RECOVERIES = 8;
 
 export interface MissionComposerSnapshot {
   readonly missionId: string;
+  readonly revisionId: string;
   readonly draft: string;
   readonly attachments: readonly ExpertPromptAttachment[];
   readonly attachmentPreviews: Readonly<Record<string, string>>;
 }
+
+export type MissionComposerSnapshotIdentity = Pick<
+  MissionComposerSnapshot,
+  "missionId" | "revisionId"
+>;
+export type MissionComposerRecoveryWriteReason = "unmount" | "send-failed";
+export type MissionComposerRecoveryConsumeReason = "claimed" | "send-succeeded";
 
 export type MissionComposerRestoreDecision =
   "already-owned" | "restore" | "conflict" | "wrong-mission";
@@ -17,6 +25,7 @@ export function resolveMissionComposerRestore(input: {
   readonly recovery: MissionComposerSnapshot;
 }): MissionComposerRestoreDecision {
   if (input.current.missionId !== input.recovery.missionId) return "wrong-mission";
+  if (input.current.revisionId !== input.recovery.revisionId) return "conflict";
   if (
     input.current.draft === input.recovery.draft &&
     sameAttachmentIds(input.current.attachments, input.recovery.attachments)
@@ -55,6 +64,53 @@ export function storeMissionComposerRecovery(
   return unownedAttachmentIds(recoveries, releasedCandidates);
 }
 
+export function isCurrentMissionComposerSnapshot(
+  latestRevisionId: string | undefined,
+  snapshot: MissionComposerSnapshotIdentity,
+): boolean {
+  return latestRevisionId === undefined || latestRevisionId === snapshot.revisionId;
+}
+
+export function canStoreFailedMissionComposerRecovery(
+  recoveries: ReadonlyMap<string, MissionComposerSnapshot>,
+  latestRevisionId: string | undefined,
+  snapshot: MissionComposerSnapshot,
+): boolean {
+  if (!isCurrentMissionComposerSnapshot(latestRevisionId, snapshot)) return false;
+  const existing = recoveries.get(snapshot.missionId);
+  return (
+    existing === undefined ||
+    resolveMissionComposerRestore({ current: existing, recovery: snapshot }) !== "conflict"
+  );
+}
+
+export function consumeMissionComposerRecovery(
+  recoveries: Map<string, MissionComposerSnapshot>,
+  snapshot: MissionComposerSnapshot,
+): boolean {
+  const recovery = recoveries.get(snapshot.missionId);
+  if (recovery === undefined || !sameMissionComposerSnapshot(recovery, snapshot)) return false;
+  recoveries.delete(snapshot.missionId);
+  return true;
+}
+
+export function releaseMissionComposerSnapshot(
+  recoveries: ReadonlyMap<string, MissionComposerSnapshot>,
+  snapshot: MissionComposerSnapshot,
+): readonly string[] {
+  return unownedAttachmentIds(recoveries, attachmentIds(snapshot));
+}
+
+export function discardMissionComposerRecoverySnapshot(
+  recoveries: Map<string, MissionComposerSnapshot>,
+  snapshot: MissionComposerSnapshot,
+): readonly string[] {
+  const recovery = recoveries.get(snapshot.missionId);
+  if (recovery === undefined || !sameMissionComposerSnapshot(recovery, snapshot)) return [];
+  recoveries.delete(snapshot.missionId);
+  return unownedAttachmentIds(recoveries, attachmentIds(recovery));
+}
+
 export function discardMissionComposerRecovery(
   recoveries: Map<string, MissionComposerSnapshot>,
   missionId: string,
@@ -80,6 +136,18 @@ function sameAttachmentIds(
   return (
     left.length === right.length &&
     left.every((attachment, index) => attachment.id === right[index]?.id)
+  );
+}
+
+function sameMissionComposerSnapshot(
+  left: MissionComposerSnapshot,
+  right: MissionComposerSnapshot,
+): boolean {
+  return (
+    left.missionId === right.missionId &&
+    left.revisionId === right.revisionId &&
+    left.draft === right.draft &&
+    sameAttachmentIds(left.attachments, right.attachments)
   );
 }
 

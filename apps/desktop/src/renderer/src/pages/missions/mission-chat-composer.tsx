@@ -89,10 +89,16 @@ export function recoverFailedMissionSend(input: {
   readonly recovery: MissionComposerSnapshot;
   readonly composer: Pick<MissionComposerHandle, "restore"> | null;
   readonly preserve: ((snapshot: MissionComposerSnapshot) => void) | undefined;
+  readonly discard?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
 }): void {
   if (input.recovery.attachments.length > 0) {
-    const restored = input.composer?.restore(input.recovery) === "restored";
-    if (!restored) input.preserve?.(input.recovery);
+    if (input.composer === null) {
+      input.preserve?.(input.recovery);
+      return;
+    }
+    if (input.composer.restore(input.recovery) !== "restored") {
+      input.discard?.(input.recovery);
+    }
     return;
   }
   if (input.composer === null) input.preserve?.(input.recovery);
@@ -102,9 +108,10 @@ export const MissionChatComposer = forwardRef<
   MissionComposerHandle,
   {
     readonly mission: Mission;
+    readonly initialRevisionId?: string | undefined;
     readonly initialDraft?: string | undefined;
     readonly initialRecovery?: MissionComposerSnapshot | undefined;
-    readonly onInitialRecoveryConsumed?: ((missionId: string) => void) | undefined;
+    readonly onInitialRecoveryConsumed?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
     readonly onUnmountState?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
     readonly mentionCandidates: readonly ExpertMentionCandidate[];
     readonly imageUnsupported: boolean;
@@ -146,11 +153,14 @@ export const MissionChatComposer = forwardRef<
     attachments,
     attachmentPreviews,
     clearAttachments,
+    restoreDraft,
+    getRevisionId,
     restoreAttachments,
     addAttachments,
     removeAttachment,
   } = useMissionComposerState({
     mission: props.mission,
+    initialRevisionId: initialRecoveryRef.current?.revisionId ?? props.initialRevisionId,
     initialDraft: initialRecoveryRef.current?.draft ?? props.initialDraft,
     initialAttachments: initialRecoveryRef.current?.attachments,
     initialAttachmentPreviews: initialRecoveryRef.current?.attachmentPreviews,
@@ -163,7 +173,7 @@ export const MissionChatComposer = forwardRef<
   useEffect(() => {
     const initialRecovery = initialRecoveryRef.current;
     if (initialRecovery?.missionId === props.mission.id) {
-      initialRecoveryConsumedRef.current?.(props.mission.id);
+      initialRecoveryConsumedRef.current?.(initialRecovery);
     }
   }, [props.mission.id]);
 
@@ -198,6 +208,7 @@ export const MissionChatComposer = forwardRef<
     () => ({
       snapshot: () => ({
         missionId: props.mission.id,
+        revisionId: getRevisionId(),
         draft,
         attachments,
         attachmentPreviews,
@@ -210,6 +221,7 @@ export const MissionChatComposer = forwardRef<
         const decision = resolveMissionComposerRestore({
           current: {
             missionId: props.mission.id,
+            revisionId: getRevisionId(),
             draft,
             attachments,
             attachmentPreviews,
@@ -219,7 +231,7 @@ export const MissionChatComposer = forwardRef<
         if (decision === "wrong-mission") return "wrong-mission";
         if (decision === "conflict") return "conflict";
         if (decision === "restore") {
-          setDraft(snapshot.draft);
+          restoreDraft(snapshot.draft, snapshot.revisionId);
           restoreAttachments(snapshot.attachments, snapshot.attachmentPreviews);
         }
         return "restored";
@@ -239,7 +251,9 @@ export const MissionChatComposer = forwardRef<
       draft,
       props.mission.id,
       restoreAttachments,
+      restoreDraft,
       setDraft,
+      getRevisionId,
     ],
   );
 

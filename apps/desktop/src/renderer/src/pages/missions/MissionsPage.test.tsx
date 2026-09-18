@@ -1188,6 +1188,7 @@ describe("MissionDetailFragment", () => {
   it("preserves failed attachment sends after their Mission Composer unmounts", () => {
     const recovery = {
       missionId: "mission-a",
+      revisionId: "revision-retry",
       draft: "Retry with attachment",
       attachments: [
         {
@@ -1213,6 +1214,7 @@ describe("MissionDetailFragment", () => {
         mission={mission}
         initialRecovery={{
           missionId: mission.id,
+          revisionId: "revision-remount",
           draft: "Recovered after returning to chat",
           attachments: [
             {
@@ -1254,6 +1256,7 @@ describe("MissionDetailFragment", () => {
   it("restores a failed or retried attachment send into the still-mounted Composer", () => {
     const recovery = {
       missionId: "mission-a",
+      revisionId: "revision-retry",
       draft: "Retry with attachment",
       attachments: [
         {
@@ -1274,9 +1277,10 @@ describe("MissionDetailFragment", () => {
     expect(preserve).not.toHaveBeenCalled();
   });
 
-  it("preserves a late failed send when the current Composer rejects a conflicting restore", () => {
+  it("discards a late failed send when the current Composer has a newer revision", () => {
     const recovery = {
       missionId: "mission-a",
+      revisionId: "revision-old",
       draft: "Older failed send",
       attachments: [
         {
@@ -1290,11 +1294,13 @@ describe("MissionDetailFragment", () => {
     };
     const restore = vi.fn(() => "conflict" as const);
     const preserve = vi.fn();
+    const discard = vi.fn();
 
-    recoverFailedMissionSend({ recovery, composer: { restore }, preserve });
+    recoverFailedMissionSend({ recovery, composer: { restore }, preserve, discard });
 
     expect(restore).toHaveBeenCalledWith(recovery);
-    expect(preserve).toHaveBeenCalledWith(recovery);
+    expect(preserve).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledWith(recovery);
   });
 
   it("releases UI loading after the 60-second watchdog while work remains unsettled", async () => {

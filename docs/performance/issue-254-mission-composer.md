@@ -62,10 +62,12 @@ Send and explicit clear cancel the pending write before storing an empty migrati
 late timer cannot resurrect submitted text. Completing or deleting a Mission physically removes
 both its v2 key and any legacy v1 entry.
 
-A renderer or process crash can still lose at most the unflushed debounce window; browser storage
-does not provide a synchronous crash-commit guarantee. Staged attachments are process-owned: they
-are transferred between mounted Mission composers in memory and are discarded on page/application
-exit when no live Composer can own them. Recovery snapshots are capped at eight inactive Missions;
-eviction releases their staged attachments. A late failed send may restore only into an empty
-Composer. If the user has already entered a newer draft, that input wins and the older staged
-attachments are released instead of overwriting the active Composer.
+A renderer or process crash can lose the whole continuously edited interval since the last flush:
+this is trailing-edge debounce without a `maxWait`, so input that never pauses for 400 ms does not
+create a periodic checkpoint. Browser storage also does not provide a synchronous crash-commit
+guarantee. Staged attachments are process-owned: they are transferred between mounted Mission
+composers in memory and are discarded on page/application exit when no live Composer can own them.
+Recovery snapshots are capped at eight inactive Missions; eviction releases their staged
+attachments. Recovery revisions ensure that a late send callback can settle only the snapshot it
+started from. Newer edits, attachment changes, and explicit clears win whether their Composer is
+mounted or inactive.

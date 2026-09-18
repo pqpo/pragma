@@ -101,9 +101,15 @@ import {
   type MissionComposerHandle,
 } from "./mission-chat-composer.tsx";
 import {
+  canStoreFailedMissionComposerRecovery,
   clearMissionComposerRecoveries,
+  consumeMissionComposerRecovery,
   discardMissionComposerRecovery as releaseMissionComposerRecovery,
+  discardMissionComposerRecoverySnapshot,
+  releaseMissionComposerSnapshot,
   storeMissionComposerRecovery,
+  type MissionComposerRecoveryConsumeReason,
+  type MissionComposerRecoveryWriteReason,
   type MissionComposerSnapshot,
 } from "./mission-composer-recovery.ts";
 import { useMissionWork } from "./use-mission-work.ts";
@@ -348,6 +354,7 @@ export function MissionsPage(props: {
   );
   const missionStatusUpdatesRef = useRef(new Map<string, MissionStatusUpdate>());
   const composerRecoveryByMissionIdRef = useRef(new Map<string, MissionComposerSnapshot>());
+  const composerRevisionByMissionIdRef = useRef(new Map<string, string>());
   const missionsPageMountedRef = useRef(true);
   const discardComposerAttachments = useCallback((attachmentIds: readonly string[]): void => {
     const uniqueAttachmentIds = [...new Set(attachmentIds)];
@@ -358,8 +365,23 @@ export function MissionsPage(props: {
     }
   }, []);
   const preserveComposerRecovery = useCallback(
-    (snapshot: MissionComposerSnapshot): void => {
+    (snapshot: MissionComposerSnapshot, reason: MissionComposerRecoveryWriteReason): void => {
+      const latestRevisionId = composerRevisionByMissionIdRef.current.get(snapshot.missionId);
+      if (
+        reason === "send-failed" &&
+        !canStoreFailedMissionComposerRecovery(
+          composerRecoveryByMissionIdRef.current,
+          latestRevisionId,
+          snapshot,
+        )
+      ) {
+        discardComposerAttachments(
+          releaseMissionComposerSnapshot(composerRecoveryByMissionIdRef.current, snapshot),
+        );
+        return;
+      }
       if (!missionsPageMountedRef.current) {
+        composerRevisionByMissionIdRef.current.set(snapshot.missionId, snapshot.revisionId);
         writeMissionDraft(
           typeof window === "undefined" ? undefined : window.localStorage,
           snapshot.missionId,
@@ -372,6 +394,7 @@ export function MissionsPage(props: {
         removedMissionIdsRef.current.has(snapshot.missionId) ||
         missionDetailCacheRef.current.get(snapshot.missionId)?.lifecycleStatus === "completed"
       ) {
+        composerRevisionByMissionIdRef.current.delete(snapshot.missionId);
         discardComposerAttachments([
           ...releaseMissionComposerRecovery(
             composerRecoveryByMissionIdRef.current,
@@ -381,6 +404,7 @@ export function MissionsPage(props: {
         ]);
         return;
       }
+      composerRevisionByMissionIdRef.current.set(snapshot.missionId, snapshot.revisionId);
       discardComposerAttachments(
         storeMissionComposerRecovery(composerRecoveryByMissionIdRef.current, snapshot),
       );
@@ -395,8 +419,16 @@ export function MissionsPage(props: {
     },
     [discardComposerAttachments],
   );
-  const consumeComposerRecovery = useCallback((missionId: string): void => {
-    composerRecoveryByMissionIdRef.current.delete(missionId);
+  const discardComposerSnapshot = useCallback(
+    (snapshot: MissionComposerSnapshot): void => {
+      discardComposerAttachments(
+        releaseMissionComposerSnapshot(composerRecoveryByMissionIdRef.current, snapshot),
+      );
+    },
+    [discardComposerAttachments],
+  );
+  const consumeComposerRecovery = useCallback((snapshot: MissionComposerSnapshot): void => {
+    consumeMissionComposerRecovery(composerRecoveryByMissionIdRef.current, snapshot);
   }, []);
   const discardComposerRecovery = useCallback(
     (missionId: string): void => {
@@ -407,15 +439,18 @@ export function MissionsPage(props: {
     [discardComposerAttachments],
   );
   const rejectComposerRecovery = useCallback(
-    (missionId: string, currentDraft: string): void => {
-      discardComposerRecovery(missionId);
+    (recovery: MissionComposerSnapshot, current: MissionComposerSnapshot): void => {
+      composerRevisionByMissionIdRef.current.set(current.missionId, current.revisionId);
+      discardComposerAttachments(
+        discardMissionComposerRecoverySnapshot(composerRecoveryByMissionIdRef.current, recovery),
+      );
       writeMissionDraft(
         typeof window === "undefined" ? undefined : window.localStorage,
-        missionId,
-        currentDraft,
+        current.missionId,
+        current.draft,
       );
     },
-    [discardComposerRecovery],
+    [discardComposerAttachments],
   );
   useEffect(() => {
     missionsPageMountedRef.current = true;
@@ -450,6 +485,7 @@ export function MissionsPage(props: {
         setInitialRunRequest((current) => (current?.missionId === projected.id ? null : current));
       }
       if (projected.lifecycleStatus === "completed") {
+        composerRevisionByMissionIdRef.current.delete(projected.id);
         discardComposerRecovery(projected.id);
         removeMissionDrafts(
           typeof window === "undefined" ? undefined : window.localStorage,
@@ -696,6 +732,7 @@ export function MissionsPage(props: {
         missionDetails: missionDetailCacheRef.current,
         missionUpdates: missionUpdatesDuringRefreshRef.current,
       });
+      composerRevisionByMissionIdRef.current.delete(update.missionId);
       const remainingBoundaries = { ...missionOutputBoundariesRef.current };
       delete remainingBoundaries[update.missionId];
       missionOutputBoundariesRef.current = remainingBoundaries;
@@ -996,8 +1033,12 @@ export function MissionsPage(props: {
             mission={selectedMission}
             navigationId={missionNavigationIdsRef.current.get(selectedMission.id)}
             initialComposerDraft={props.initialComposerDraft}
+            initialComposerRevisionId={composerRevisionByMissionIdRef.current.get(
+              selectedMission.id,
+            )}
             initialComposerRecovery={composerRecoveryByMissionIdRef.current.get(selectedMission.id)}
             onComposerRecovery={preserveComposerRecovery}
+            onComposerRecoverySuperseded={discardComposerSnapshot}
             onComposerRecoveryConsumed={consumeComposerRecovery}
             onComposerRecoveryConflict={rejectComposerRecovery}
             memoryEnabled={props.memoryEnabled}
@@ -1207,6 +1248,7 @@ export function MissionsPage(props: {
                   missionDetails: missionDetailCacheRef.current,
                   missionUpdates: missionUpdatesDuringRefreshRef.current,
                 });
+                composerRevisionByMissionIdRef.current.delete(deletedMissionId);
                 discardComposerRecovery(deletedMissionId);
                 removeMissionDrafts(window.localStorage, new Set([deletedMissionId]));
                 const storedMissions = await api.listMissions();
@@ -2077,11 +2119,17 @@ export function MissionDetailFragment(props: {
   readonly chatCache?: Map<string, MissionConversationSnapshot> | undefined;
   readonly prefetchedConversation?: Promise<MissionConversationPrefetch | undefined> | undefined;
   readonly initialComposerDraft?: string | undefined;
+  readonly initialComposerRevisionId?: string | undefined;
   readonly initialComposerRecovery?: MissionComposerSnapshot | undefined;
-  readonly onComposerRecovery?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
-  readonly onComposerRecoveryConsumed?: ((missionId: string) => void) | undefined;
+  readonly onComposerRecovery?:
+    | ((snapshot: MissionComposerSnapshot, reason: MissionComposerRecoveryWriteReason) => void)
+    | undefined;
+  readonly onComposerRecoverySuperseded?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
+  readonly onComposerRecoveryConsumed?:
+    | ((snapshot: MissionComposerSnapshot, reason: MissionComposerRecoveryConsumeReason) => void)
+    | undefined;
   readonly onComposerRecoveryConflict?:
-    ((missionId: string, currentDraft: string) => void) | undefined;
+    ((recovery: MissionComposerSnapshot, current: MissionComposerSnapshot) => void) | undefined;
   readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
   readonly onDismissError?: (() => void) | undefined;
@@ -2227,9 +2275,9 @@ export function MissionDetailFragment(props: {
     if (recovery?.missionId !== props.mission.id || composerRef.current === null) return;
     const restoreResult = composerRef.current.restore(recovery);
     if (restoreResult === "restored") {
-      props.onComposerRecoveryConsumed?.(props.mission.id);
+      props.onComposerRecoveryConsumed?.(recovery, "claimed");
     } else if (restoreResult === "conflict") {
-      props.onComposerRecoveryConflict?.(props.mission.id, composerRef.current.snapshot().draft);
+      props.onComposerRecoveryConflict?.(recovery, composerRef.current.snapshot());
     }
   }, [
     props.initialComposerRecovery,
@@ -2628,7 +2676,9 @@ export function MissionDetailFragment(props: {
     followLatestRef.current = true;
     try {
       await props.onSend?.(content, requestId, optimistic.attachments, "enqueue");
-      props.onComposerRecoveryConsumed?.(props.mission.id);
+      if (retry === undefined && composerSnapshot !== undefined) {
+        props.onComposerRecoveryConsumed?.(composerSnapshot, "send-succeeded");
+      }
       setDeliveryNotice(undefined);
       if (shouldPrepareQueuedMessage) {
         await refreshLatestChat().catch(() => undefined);
@@ -2657,6 +2707,7 @@ export function MissionDetailFragment(props: {
       if (!persisted) {
         const recovery: MissionComposerSnapshot = {
           missionId: props.mission.id,
+          revisionId: composerSnapshot?.revisionId ?? requestId,
           draft: content,
           attachments: optimistic.attachments,
           attachmentPreviews: composerSnapshot?.attachmentPreviews ?? {},
@@ -2664,7 +2715,8 @@ export function MissionDetailFragment(props: {
         recoverFailedMissionSend({
           recovery,
           composer: composerRef.current,
-          preserve: props.onComposerRecovery,
+          preserve: (snapshot) => props.onComposerRecovery?.(snapshot, "send-failed"),
+          discard: props.onComposerRecoverySuperseded,
         });
       }
       setAwaitingRequestId(null);
@@ -3576,10 +3628,13 @@ export function MissionDetailFragment(props: {
                     <MissionChatComposer
                       ref={composerRef}
                       mission={props.mission}
+                      initialRevisionId={props.initialComposerRevisionId}
                       initialDraft={props.initialComposerDraft}
                       initialRecovery={props.initialComposerRecovery}
-                      onInitialRecoveryConsumed={props.onComposerRecoveryConsumed}
-                      onUnmountState={props.onComposerRecovery}
+                      onInitialRecoveryConsumed={(snapshot) =>
+                        props.onComposerRecoveryConsumed?.(snapshot, "claimed")
+                      }
+                      onUnmountState={(snapshot) => props.onComposerRecovery?.(snapshot, "unmount")}
                       mentionCandidates={mentionCandidates}
                       imageUnsupported={imageUnsupported}
                       isFlow={isFlow}

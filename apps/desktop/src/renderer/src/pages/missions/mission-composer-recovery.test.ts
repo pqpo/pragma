@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_MISSION_COMPOSER_RECOVERIES,
+  canStoreFailedMissionComposerRecovery,
   clearMissionComposerRecoveries,
+  consumeMissionComposerRecovery,
   discardMissionComposerRecovery,
+  discardMissionComposerRecoverySnapshot,
+  isCurrentMissionComposerSnapshot,
+  releaseMissionComposerSnapshot,
   resolveMissionComposerRestore,
   storeMissionComposerRecovery,
   type MissionComposerSnapshot,
@@ -14,7 +19,10 @@ describe("Mission composer recovery", () => {
     const recovery = snapshot("mission-a", "failed send", ["attachment-old"]);
 
     expect(
-      resolveMissionComposerRestore({ current: snapshot("mission-a", "", []), recovery }),
+      resolveMissionComposerRestore({
+        current: snapshot("mission-a", "", [], recovery.revisionId),
+        recovery,
+      }),
     ).toBe("restore");
     expect(resolveMissionComposerRestore({ current: recovery, recovery })).toBe("already-owned");
     expect(
@@ -77,15 +85,75 @@ describe("Mission composer recovery", () => {
     expect(clearMissionComposerRecoveries(recoveries)).toEqual(["attachment-b"]);
     expect(recoveries.size).toBe(0);
   });
+
+  it("does not let an older failed send replace a newer inactive draft", () => {
+    const oldAttempt = snapshot("mission-a", "old send", ["attachment-old"], "revision-old");
+    const newerDraft = snapshot("mission-a", "new draft", ["attachment-new"], "revision-new");
+    const recoveries = new Map<string, MissionComposerSnapshot>();
+    storeMissionComposerRecovery(recoveries, newerDraft);
+
+    expect(isCurrentMissionComposerSnapshot(newerDraft.revisionId, oldAttempt)).toBe(false);
+    expect(
+      canStoreFailedMissionComposerRecovery(recoveries, newerDraft.revisionId, oldAttempt),
+    ).toBe(false);
+    expect(releaseMissionComposerSnapshot(recoveries, oldAttempt)).toEqual(["attachment-old"]);
+    expect(recoveries.get("mission-a")).toBe(newerDraft);
+  });
+
+  it("does not treat different send snapshots with the same revision as the same owner", () => {
+    const activeDraft = snapshot("mission-a", "new draft", ["attachment-new"], "revision-shared");
+    const retryFailure = snapshot("mission-a", "old retry", ["attachment-old"], "revision-shared");
+    const recoveries = new Map<string, MissionComposerSnapshot>([["mission-a", activeDraft]]);
+
+    expect(
+      canStoreFailedMissionComposerRecovery(recoveries, activeDraft.revisionId, retryFailure),
+    ).toBe(false);
+    expect(consumeMissionComposerRecovery(recoveries, retryFailure)).toBe(false);
+    expect(discardMissionComposerRecoverySnapshot(recoveries, retryFailure)).toEqual([]);
+    expect(recoveries.get("mission-a")).toBe(activeDraft);
+  });
+
+  it("consumes or discards only the exact recovery revision", () => {
+    const newerDraft = snapshot("mission-a", "new draft", ["attachment-new"], "revision-new");
+    const recoveries = new Map<string, MissionComposerSnapshot>([["mission-a", newerDraft]]);
+
+    expect(
+      consumeMissionComposerRecovery(
+        recoveries,
+        snapshot("mission-a", "old draft", [], "revision-old"),
+      ),
+    ).toBe(false);
+    expect(
+      discardMissionComposerRecoverySnapshot(
+        recoveries,
+        snapshot("mission-a", "old draft", [], "revision-old"),
+      ),
+    ).toEqual([]);
+    expect(recoveries.get("mission-a")).toBe(newerDraft);
+    expect(consumeMissionComposerRecovery(recoveries, newerDraft)).toBe(true);
+    expect(recoveries.has("mission-a")).toBe(false);
+  });
+
+  it("keeps a newer empty user intent newer than an old failed send", () => {
+    const oldAttempt = snapshot("mission-a", "old send", [], "revision-old");
+    const cleared = snapshot("mission-a", "", [], "revision-cleared");
+
+    expect(isCurrentMissionComposerSnapshot("revision-cleared", oldAttempt)).toBe(false);
+    expect(resolveMissionComposerRestore({ current: cleared, recovery: oldAttempt })).toBe(
+      "conflict",
+    );
+  });
 });
 
 function snapshot(
   missionId: string,
   draft: string,
   attachmentIds: readonly string[],
+  revisionId = `revision-${missionId}-${draft}`,
 ): MissionComposerSnapshot {
   return {
     missionId,
+    revisionId,
     draft,
     attachments: attachmentIds.map((id) => ({
       id,
