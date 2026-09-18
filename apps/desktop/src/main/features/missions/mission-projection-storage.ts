@@ -50,17 +50,21 @@ export function createMissionProjectionStorage(
   ): Promise<readonly MissionChatEntry[] | undefined> => {
     const legacy = await readLegacyProjection(legacyPath(id, executionId));
     if (legacy === undefined) return undefined;
-    await copyFile(
-      legacyPath(id, executionId),
-      `${legacyPath(id, executionId)}.before-jsonl-migration`,
-      constants.COPYFILE_EXCL,
-    ).catch((error: unknown) => {
-      if (!isNodeError(error, "EEXIST")) throw error;
-    });
     const validated = await migrateLegacyMissionExecutionProjection(
       currentPath(id, executionId),
       executionId,
       legacy.entries,
+      {
+        async beforeWrite() {
+          await copyFile(
+            legacyPath(id, executionId),
+            `${legacyPath(id, executionId)}.before-jsonl-migration`,
+            constants.COPYFILE_EXCL,
+          ).catch((error: unknown) => {
+            if (!isNodeError(error, "EEXIST")) throw error;
+          });
+        },
+      },
     );
     await rm(legacyPath(id, executionId), { force: true });
     return validated;

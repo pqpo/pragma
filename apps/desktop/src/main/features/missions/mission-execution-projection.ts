@@ -86,6 +86,10 @@ export interface MissionExecutionProjectionWriteOptions {
   readonly onMetrics?: ((metrics: MissionExecutionProjectionWriteMetrics) => void) | undefined;
 }
 
+export interface MissionExecutionProjectionMigrationOptions extends MissionExecutionProjectionWriteOptions {
+  readonly beforeWrite?: (() => Promise<void>) | undefined;
+}
+
 interface EncodedProjection {
   readonly lines: readonly EncodedProjectionLine[];
   readonly encodedBytes: number;
@@ -294,6 +298,7 @@ export async function writeMissionExecutionProjection(
     sourceUpdatedAt,
     options,
     false,
+    undefined,
   );
 }
 
@@ -301,7 +306,7 @@ export async function migrateLegacyMissionExecutionProjection(
   path: string,
   executionId: string,
   entries: unknown,
-  options: MissionExecutionProjectionWriteOptions = {},
+  options: MissionExecutionProjectionMigrationOptions = {},
 ): Promise<readonly MissionChatEntry[]> {
   if (!Array.isArray(entries)) {
     MissionChatEntrySchema.array().parse(entries);
@@ -315,6 +320,7 @@ export async function migrateLegacyMissionExecutionProjection(
     undefined,
     options,
     true,
+    options.beforeWrite,
   );
   if (validated === undefined) {
     throw new MissionExecutionProjectionError(
@@ -332,6 +338,7 @@ async function enqueueMissionExecutionProjectionWrite(
   sourceUpdatedAt: string | undefined,
   options: MissionExecutionProjectionWriteOptions,
   collectValidatedEntries: boolean,
+  beforeWrite: (() => Promise<void>) | undefined,
 ): Promise<readonly MissionChatEntry[] | undefined> {
   const requestedAt = performance.now();
   const previousWrite = projectionWrites.get(path) ?? Promise.resolve();
@@ -348,6 +355,7 @@ async function enqueueMissionExecutionProjectionWrite(
           options,
           requestedAt,
           collectValidatedEntries,
+          beforeWrite,
         ),
     );
   projectionWrites.set(path, write);
@@ -367,6 +375,7 @@ async function performMissionExecutionProjectionWrite(
   options: MissionExecutionProjectionWriteOptions,
   requestedAt: number,
   collectValidatedEntries: boolean,
+  beforeWrite: (() => Promise<void>) | undefined,
 ): Promise<readonly MissionChatEntry[] | undefined> {
   const startedAt = performance.now();
   const budgetMs = options.synchronousBuildBudgetMs ?? DEFAULT_SYNCHRONOUS_BUILD_BUDGET_MS;
@@ -383,6 +392,7 @@ async function performMissionExecutionProjectionWrite(
     budgetMs,
     collectValidatedEntries,
   );
+  await beforeWrite?.();
   const fileWriteStartedAt = performance.now();
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;

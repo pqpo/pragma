@@ -1496,6 +1496,56 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(readFile(currentPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("backs up a legacy projection only after validation succeeds", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Preserve a valid migration backup",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000023";
+    const directory = join(store.storagePath!(created.id), "execution-projections");
+    const legacyPath = join(directory, `${executionId}.json`);
+    const backupPath = `${legacyPath}.before-jsonl-migration`;
+    const currentPath = join(directory, `${executionId}.jsonl`);
+    const legacyDocument = (content: string) =>
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-execution-projection/v1",
+        executionId,
+        entries: [
+          {
+            id: "assistant:legacy-retry",
+            executionId,
+            kind: "assistant",
+            content,
+            streaming: false,
+            createdAt: "2026-07-17T00:00:01.000Z",
+          },
+        ],
+        createdAt: "2026-07-17T00:00:02.000Z",
+      })}\n`;
+    await mkdir(directory, { recursive: true });
+    await writeFile(legacyPath, legacyDocument("x".repeat(200_001)), "utf8");
+
+    await expect(store.readExecutionProjection(created.id, executionId)).rejects.toMatchObject({
+      code: "projection_invalid",
+    });
+    await expect(readFile(backupPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(currentPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    await writeFile(legacyPath, legacyDocument("repaired answer"), "utf8");
+    await expect(store.readExecutionProjection(created.id, executionId)).resolves.toEqual([
+      expect.objectContaining({ id: "assistant:legacy-retry", content: "repaired answer" }),
+    ]);
+    await expect(readFile(legacyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(backupPath, "utf8")).resolves.toContain('"content":"repaired answer"');
+    await expect(readFile(currentPath, "utf8")).resolves.toContain(
+      '"schemaVersion":"pragma.mission-execution-projection/v2"',
+    );
+  });
+
   it("rejects v2 explicitly and does not read timelines while listing summaries", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
