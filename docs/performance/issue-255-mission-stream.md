@@ -77,6 +77,8 @@ pnpm --filter @pragma/desktop benchmark:mission-stream-ui
 - 共享缓存只保存完整物化快照；延迟正文留在 hook 私有状态，在刷新、分页、状态合并与 Mission 切换边界
   从 live store 物化后再写入缓存。
 - 未读输出的纯 append 快速路径不再预先构建完整 entry Map。
+- live store 的轻量发布订阅继续驱动跟随最新消息，不需要为每个 Token 重渲染整个 Mission 页面。
+- 首次页面读取前到达的更新会在刷新合并消费前，基于最近的前置 revision 重放首 Token 归属。
 - Mission 页面回归覆盖缓存恢复、历史 prepend、upsert 移动、短文本/分歧重写和流式订阅。
 
 模型微基准隔离 Issue #255 指定的同步数据处理成本，不把 `mission.stream_flush` 当成端到端输入延迟；

@@ -48,6 +48,23 @@ describe("MissionLiveEntryStore", () => {
     expect(listener).not.toHaveBeenCalled();
   });
 
+  it("notifies lightweight publication subscribers for deferred content", () => {
+    const store = new MissionLiveEntryStore();
+    const entry = assistant("answer", "seed");
+    store.reset([entry]);
+    const listener = vi.fn();
+    const unsubscribe = store.subscribePublished(listener);
+    const updated = assistant("answer", "seed next");
+
+    store.publish(updated);
+    store.publish(updated);
+    unsubscribe();
+    store.publish(assistant("answer", "seed next again"));
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith(updated);
+  });
+
   it("notifies changed and removed entries when a structural snapshot resets the store", () => {
     const store = new MissionLiveEntryStore();
     const unchanged = assistant("unchanged", "same");

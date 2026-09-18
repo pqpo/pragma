@@ -3,6 +3,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { MissionChatEntry } from "../../../../shared/contracts/index.ts";
 
 type Listener = () => void;
+type PublishListener = (entry: MissionChatEntry) => void;
 
 const NOOP_UNSUBSCRIBE = (): void => undefined;
 
@@ -13,6 +14,7 @@ const NOOP_UNSUBSCRIBE = (): void => undefined;
 export class MissionLiveEntryStore {
   readonly #entries = new Map<string, MissionChatEntry>();
   readonly #listeners = new Map<string, Set<Listener>>();
+  readonly #publishListeners = new Set<PublishListener>();
 
   get(entryId: string): MissionChatEntry | undefined {
     return this.#entries.get(entryId);
@@ -22,6 +24,7 @@ export class MissionLiveEntryStore {
     if (this.#entries.get(entry.id) === entry) return;
     this.#entries.set(entry.id, entry);
     for (const listener of this.#listeners.get(entry.id) ?? []) listener();
+    for (const listener of this.#publishListeners) listener(entry);
   }
 
   reset(entries: readonly MissionChatEntry[]): void {
@@ -49,6 +52,11 @@ export class MissionLiveEntryStore {
       listeners.delete(listener);
       if (listeners.size === 0) this.#listeners.delete(entryId);
     };
+  }
+
+  subscribePublished(listener: PublishListener): () => void {
+    this.#publishListeners.add(listener);
+    return () => this.#publishListeners.delete(listener);
   }
 }
 

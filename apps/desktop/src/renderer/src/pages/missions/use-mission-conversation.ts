@@ -136,13 +136,20 @@ export function useMissionConversation(input: {
       }
     };
 
-    const resetFirstTokenUpdates = (revision: number): void => {
-      firstTokenUpdates.reset(revision);
-      for (const updateValue of pending.toSorted((left, right) => left.revision - right.revision)) {
+    const resetFirstTokenUpdates = (
+      base: MissionConversationSnapshot,
+      updates: readonly MissionChatUpdate[],
+    ): void => {
+      const baseEntryExecutions = new Map(
+        base.entries.map((entry) => [entry.id, entry.executionId] as const),
+      );
+      firstTokenUpdates.reset(base.revision);
+      for (const updateValue of updates.toSorted((left, right) => left.revision - right.revision)) {
         recordFirstTokens(
-          firstTokenUpdates.push(
-            updateValue,
-            (entryId) => liveEntryStore.get(entryId)?.executionId,
+          firstTokenUpdates.push(updateValue, (entryId) =>
+            baseEntryExecutions.has(entryId)
+              ? baseEntryExecutions.get(entryId)
+              : liveEntryStore.get(entryId)?.executionId,
           ),
         );
       }
@@ -182,10 +189,25 @@ export function useMissionConversation(input: {
             state === undefined
               ? pageSnapshot
               : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
+          // Subscription starts before the page read. Establish the fetched revision as the
+          // watermark and attribute any contiguous updates before reconciliation consumes them.
+          const firstPendingRevision = pending.reduce(
+            (minimum, updateValue) => Math.min(minimum, updateValue.revision),
+            Number.POSITIVE_INFINITY,
+          );
+          const firstTokenBase = [current, snapshot]
+            .filter(
+              (candidate): candidate is MissionConversationSnapshot =>
+                candidate !== null &&
+                candidate.missionId === snapshot.missionId &&
+                candidate.revision < firstPendingRevision,
+            )
+            .toSorted((left, right) => right.revision - left.revision)[0];
+          resetFirstTokenUpdates(firstTokenBase ?? snapshot, pending);
           const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
           update(drained.snapshot);
-          resetFirstTokenUpdates(drained.snapshot.revision);
+          resetFirstTokenUpdates(drained.snapshot, pending);
           setSyncError(
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
           );

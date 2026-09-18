@@ -280,6 +280,26 @@ describe("mission conversation model", () => {
     expect([...tracker.push(revision15, readExecution)]).toEqual([]);
   });
 
+  it("replays a startup token after a refresh establishes the missing revision watermark", () => {
+    const current = streamingSnapshot("", 1);
+    const tracker = new MissionFirstTokenUpdateBuffer(0);
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "first" }],
+    };
+    const readExecution = (entryId: string) =>
+      current.entries.find((entry) => entry.id === entryId)?.executionId;
+
+    expect([...tracker.push(update, readExecution)]).toEqual([]);
+    tracker.reset(current.revision);
+    expect([...tracker.push(update, readExecution)]).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+    ]);
+  });
+
   it("does not advance the content revision when delayed state projections arrive", () => {
     const current = streamingSnapshot("hello", 4);
     const withState = mergeConversationState(current, {
