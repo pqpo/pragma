@@ -271,11 +271,14 @@ async function measure(entryCount, streaming) {
   const textarea = document.querySelector("textarea");
   const nativeValueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
   const samples = [];
+  let samplesWithStreamProgress = 0;
   for (let index = 0; index < 40; index += 1) {
+    const operationsBeforeSample = streamOperations;
     const startedAt = performance.now();
     nativeValueSetter.call(textarea, "fixed-length-draft-" + String(index).padStart(2, "0"));
     textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
     await nextPaint();
+    if (streamOperations > operationsBeforeSample) samplesWithStreamProgress += 1;
     samples.push(performance.now() - startedAt);
   }
   stopped = true;
@@ -294,6 +297,7 @@ async function measure(entryCount, streaming) {
     entries: entryCount,
     samples: samples.length,
     streamOperations,
+    samplesWithStreamProgress,
     inputToPaintP50Ms: Number(percentile(samples, 0.5).toFixed(2)),
     inputToPaintP95Ms: Number(percentile(samples, 0.95).toFixed(2)),
     longTaskCount,

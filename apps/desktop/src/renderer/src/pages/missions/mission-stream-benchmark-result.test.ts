@@ -19,6 +19,7 @@ const scenario = (mode: "static" | "streaming", entries: number) => ({
   entries,
   samples: 40,
   streamOperations: mode === "streaming" ? 80 : 0,
+  samplesWithStreamProgress: mode === "streaming" ? 40 : 0,
   inputToPaintP50Ms: 33.3,
   inputToPaintP95Ms: 34.7,
   longTaskCount: 0,
@@ -55,6 +56,14 @@ describe("Mission stream benchmark result", () => {
     missingOutput.results[1]!.outputMutationCount = 0;
     expect(() => validateMissionStreamBenchmarkResult(missingOutput)).toThrow(
       "did not render output",
+    );
+    const stalledOutput = completeResult();
+    stalledOutput.results[1]!.streamOperations = 1;
+    stalledOutput.results[1]!.samplesWithStreamProgress = 1;
+    stalledOutput.results[1]!.renderedStreamCharacters = 1;
+    stalledOutput.results[1]!.outputMutationCount = 1;
+    expect(() => validateMissionStreamBenchmarkResult(stalledOutput)).toThrow(
+      "did not sustain output",
     );
   });
 

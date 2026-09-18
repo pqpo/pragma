@@ -33,6 +33,8 @@ export function validateMissionStreamBenchmarkResult(value) {
       "inputToPaintP95Ms",
       "longTaskCount",
       "longTaskMs",
+      "streamOperations",
+      "samplesWithStreamProgress",
       "outputMutationCount",
       "renderedStreamCharacters",
     ]) {
@@ -44,13 +46,21 @@ export function validateMissionStreamBenchmarkResult(value) {
       throw new Error(`Mission stream UI benchmark scenario ${key} has invalid sample count.`);
     }
     if (result.mode === "streaming") {
-      if (result.streamOperations <= 0 || result.renderedStreamCharacters <= 0) {
-        throw new Error(`Mission stream UI benchmark scenario ${key} did not stream output.`);
+      if (
+        result.streamOperations < result.samples ||
+        result.samplesWithStreamProgress !== result.samples ||
+        result.renderedStreamCharacters < result.samples
+      ) {
+        throw new Error(`Mission stream UI benchmark scenario ${key} did not sustain output.`);
       }
-      if (result.outputMutationCount <= 0) {
+      if (result.outputMutationCount < result.samples) {
         throw new Error(`Mission stream UI benchmark scenario ${key} did not render output.`);
       }
-    } else if (result.streamOperations !== 0 || result.renderedStreamCharacters !== 0) {
+    } else if (
+      result.streamOperations !== 0 ||
+      result.samplesWithStreamProgress !== 0 ||
+      result.renderedStreamCharacters !== 0
+    ) {
       throw new Error(`Mission stream UI benchmark static scenario ${key} streamed output.`);
     }
   }
