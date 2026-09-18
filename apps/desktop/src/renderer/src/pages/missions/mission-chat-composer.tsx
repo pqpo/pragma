@@ -41,6 +41,17 @@ export interface MissionComposerHandle {
   readonly focus: (missionId: string) => void;
 }
 
+export function canMeasureMissionComposerGrowthWithoutReset(
+  previousDraft: string | undefined,
+  nextDraft: string,
+): boolean {
+  return (
+    previousDraft !== undefined &&
+    nextDraft.length > previousDraft.length &&
+    nextDraft.startsWith(previousDraft)
+  );
+}
+
 export function resolveMissionComposerAction(input: {
   readonly draft: string;
   readonly sending: boolean;
@@ -120,7 +131,7 @@ export const MissionChatComposer = forwardRef<
   const { t } = useTranslation(["missions", "common"]);
   const inputRef = useRef<HTMLTextAreaElement | HTMLDivElement | null>(null);
   const resizeFrameRef = useRef<number | undefined>(undefined);
-  const previousDraftLengthRef = useRef<number | undefined>(undefined);
+  const previousDraftRef = useRef<string | undefined>(undefined);
   const mountedRef = useRef(true);
   const initialRecoveryRef = useRef(props.initialRecovery);
   const initialRecoveryConsumedRef = useRef(props.onInitialRecoveryConsumed);
@@ -166,9 +177,9 @@ export const MissionChatComposer = forwardRef<
       resizeFrameRef.current = undefined;
       const input = inputRef.current;
       if (input === null) return;
-      const previousLength = previousDraftLengthRef.current;
-      previousDraftLengthRef.current = draft.length;
-      if (previousLength !== undefined && draft.length > previousLength) {
+      const previousDraft = previousDraftRef.current;
+      previousDraftRef.current = draft;
+      if (canMeasureMissionComposerGrowthWithoutReset(previousDraft, draft)) {
         const nextHeight = `${Math.min(input.scrollHeight, 130)}px`;
         if (input.style.height !== nextHeight) input.style.height = nextHeight;
         return;

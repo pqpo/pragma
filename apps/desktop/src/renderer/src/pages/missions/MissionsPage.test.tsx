@@ -58,6 +58,7 @@ import {
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
 import {
+  canMeasureMissionComposerGrowthWithoutReset,
   MissionChatComposer,
   recoverFailedMissionSend,
   resolveMissionComposerAction,
@@ -81,6 +82,19 @@ import {
 } from "./mission-conversation-model.ts";
 
 describe("MissionsPage", () => {
+  it("resets Composer height before measuring non-append draft replacements", () => {
+    expect(canMeasureMissionComposerGrowthWithoutReset("hello", "hello world")).toBe(true);
+    expect(
+      canMeasureMissionComposerGrowthWithoutReset(
+        "first line\nsecond line",
+        "a longer single line",
+      ),
+    ).toBe(false);
+    expect(canMeasureMissionComposerGrowthWithoutReset("@al", "[[expert:0000000000000000]] ")).toBe(
+      false,
+    );
+  });
+
   it("does not resurrect a submitted human interaction from a late conversation snapshot", () => {
     const pending = [
       {
