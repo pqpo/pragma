@@ -349,6 +349,27 @@ describe("mission conversation model", () => {
         [ownershipChangesAfterAppend],
       ),
     ]).toEqual([]);
+
+    const explicitOwnership: MissionChatUpdate = {
+      ...boundaryUpdate,
+      revision: 11,
+      patches: [
+        {
+          type: "entry.upsert",
+          entry: { ...futureEntry, executionId: "pending-execution" },
+        },
+      ],
+    };
+    const laterAppend: MissionChatUpdate = {
+      ...boundaryUpdate,
+      revision: 12,
+    };
+    expect([
+      ...includedPendingFirstTokenExecutionIds(
+        { ...snapshot, revision: 13, entries: [futureEntry] },
+        [laterAppend, explicitOwnership],
+      ),
+    ]).toEqual(["pending-execution"]);
   });
 
   it("does not advance the content revision when delayed state projections arrive", () => {

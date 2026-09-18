@@ -505,8 +505,11 @@ export function includedPendingFirstTokenExecutionIds(
   const snapshotEntryExecutions = new Map(
     snapshot.entries.map((entry) => [entry.id, entry.executionId] as const),
   );
-  for (const update of updates) {
-    if (update.revision > snapshot.revision) continue;
+  const pendingEntryExecutions = new Map<string, string | undefined>();
+  const processedRevisions = new Set<number>();
+  for (const update of updates.toSorted((left, right) => left.revision - right.revision)) {
+    if (update.revision > snapshot.revision || processedRevisions.has(update.revision)) continue;
+    processedRevisions.add(update.revision);
     const upsertedEntryIds = new Set(
       update.kind === "patch"
         ? update.patches.flatMap((patch) => (patch.type === "entry.upsert" ? [patch.entry.id] : []))
@@ -516,11 +519,23 @@ export function includedPendingFirstTokenExecutionIds(
     // when its update carries an execution-bearing upsert, never from future snapshot metadata.
     const readEntryExecutionId =
       update.revision === snapshot.revision
-        ? (entryId: string) =>
-            upsertedEntryIds.has(entryId) ? undefined : snapshotEntryExecutions.get(entryId)
-        : () => undefined;
+        ? (entryId: string) => {
+            if (pendingEntryExecutions.has(entryId)) {
+              return pendingEntryExecutions.get(entryId);
+            }
+            return upsertedEntryIds.has(entryId) ? undefined : snapshotEntryExecutions.get(entryId);
+          }
+        : (entryId: string) =>
+            pendingEntryExecutions.has(entryId) ? pendingEntryExecutions.get(entryId) : undefined;
     for (const executionId of visiblePatchExecutionIds(update, null, readEntryExecutionId)) {
       executionIds.add(executionId);
+    }
+    if (update.kind === "patch") {
+      for (const patch of update.patches) {
+        if (patch.type === "entry.upsert") {
+          pendingEntryExecutions.set(patch.entry.id, patch.entry.executionId);
+        }
+      }
     }
   }
   return executionIds;
