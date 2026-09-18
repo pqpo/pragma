@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  MissionChatEntry,
   MissionConversationSnapshot,
   MissionChatUpdate,
   PragmaDesktopAPI,
@@ -10,7 +11,10 @@ import {
   applyMissionChatUpdateBatch,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
+  includedPendingFirstTokenExecutionIds,
+  materializeMissionChatSnapshot,
   mergeLatestChatPage,
+  MissionFirstTokenUpdateBuffer,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
   prependChatPage,
@@ -18,8 +22,10 @@ import {
   reconcileMissionChatRefresh,
   startMissionContextOperation,
   touchMissionConversationCache,
+  visiblePatchExecutionIds,
 } from "./mission-conversation-model.ts";
 import {
+  cacheMissionConversationSnapshot,
   conversationFromPage,
   isMissionConversationCacheReady,
   loadMissionConversationProjection,
@@ -75,6 +81,333 @@ describe("mission conversation model", () => {
       requiresRender: false,
     });
     expect([...result.changedEntryIds]).toEqual(["answer"]);
+  });
+
+  it("keeps pure content appends incremental until a structural boundary", () => {
+    const entries = Array.from({ length: 5_000 }, (_, index) => ({
+      ...streamingSnapshot(String(index)).entries[0]!,
+      id: `answer-${index}`,
+      executionId: `execution-${index}`,
+    }));
+    const current = { ...streamingSnapshot("", 1), entries };
+    const liveEntries = new Map<string, MissionChatEntry>(
+      entries.map((entry) => [entry.id, entry] as const),
+    );
+    const readEntry = vi.fn((entryId: string) => liveEntries.get(entryId));
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer-4999", field: "content", delta: "!" }],
+    };
+
+    const appended = applyMissionChatUpdateBatch(current, [update], {
+      deferContentEntries: true,
+      readEntry,
+    });
+
+    expect(appended.snapshot.entries).toBe(entries);
+    expect(readEntry).toHaveBeenCalledOnce();
+    expect(appended.changedEntries.get("answer-4999")).toMatchObject({ content: "4999!" });
+    expect(appended.snapshot.entries.at(-1)).toMatchObject({ content: "4999" });
+
+    for (const entry of appended.changedEntries.values()) liveEntries.set(entry.id, entry);
+    const materialized = materializeMissionChatSnapshot(appended.snapshot, (entryId) =>
+      liveEntries.get(entryId),
+    );
+    expect(materialized.entries.at(-1)).toBe(appended.changedEntries.get("answer-4999"));
+
+    const structural = applyMissionChatUpdateBatch(
+      appended.snapshot,
+      [
+        {
+          ...update,
+          revision: 3,
+          patches: [
+            {
+              type: "entry.upsert",
+              entry: {
+                id: "late-thinking",
+                kind: "thinking",
+                content: "new",
+                streaming: true,
+                createdAt: "2026-07-11T00:00:01.000Z",
+              },
+              beforeEntryId: "answer-4999",
+            },
+          ],
+        },
+      ],
+      { deferContentEntries: true, readEntry: (entryId) => liveEntries.get(entryId) },
+    );
+    expect(structural.requiresRender).toBe(true);
+    expect(structural.snapshot.entries.at(-2)).toMatchObject({ id: "late-thinking" });
+    expect(structural.snapshot.entries.at(-1)).toMatchObject({ content: "4999!" });
+  });
+
+  it("materializes deferred content before exposing a snapshot through the shared cache", () => {
+    const current = { ...streamingSnapshot("seed", 1), stateRevision: 1 };
+    const liveEntries = new Map(current.entries.map((entry) => [entry.id, entry] as const));
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: " next" }],
+    };
+    const result = applyMissionChatUpdateBatch(current, [update], {
+      deferContentEntries: true,
+      readEntry: (entryId) => liveEntries.get(entryId),
+    });
+    for (const entry of result.changedEntries.values()) liveEntries.set(entry.id, entry);
+    expect(result.snapshot.entries[0]).toMatchObject({ content: "seed" });
+
+    const cache = new Map<string, MissionConversationSnapshot>();
+    cacheMissionConversationSnapshot(cache, current.missionId, result.snapshot, (entryId) =>
+      liveEntries.get(entryId),
+    );
+
+    expect(cache.get(current.missionId)).toMatchObject({
+      revision: 2,
+      entries: [{ id: "answer", content: "seed next" }],
+    });
+  });
+
+  it("resolves first visible tokens through constant-time metadata for multiple executions", () => {
+    const current = streamingSnapshot("existing", 1);
+    const lookup = vi.fn((entryId: string) =>
+      entryId === "answer-a" ? "execution-a" : entryId === "answer-b" ? "execution-b" : undefined,
+    );
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [
+        { type: "entry.append", entryId: "answer-a", field: "content", delta: "a" },
+        { type: "entry.append", entryId: "answer-b", field: "content", delta: "b" },
+        {
+          type: "entry.upsert",
+          entry: {
+            id: "answer-c",
+            kind: "assistant",
+            executionId: "execution-c",
+            content: "c",
+            streaming: true,
+            createdAt: "2026-07-11T00:00:01.000Z",
+          },
+        },
+      ],
+    };
+
+    expect([...visiblePatchExecutionIds(update, current, lookup)]).toEqual([
+      "execution-a",
+      "execution-b",
+      "execution-c",
+    ]);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("attributes first tokens by contiguous revision when a future upsert arrives first", () => {
+    const current = streamingSnapshot("existing", 1);
+    const tracker = new MissionFirstTokenUpdateBuffer(10);
+    const readExecution = (entryId: string) => (entryId === "entry-x" ? "execution-a" : undefined);
+    const revision12: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 12,
+      kind: "patch",
+      patches: [
+        {
+          type: "entry.upsert",
+          entry: {
+            id: "entry-x",
+            kind: "assistant",
+            executionId: "execution-b",
+            content: "",
+            streaming: true,
+            createdAt: "2026-07-11T00:00:02.000Z",
+          },
+        },
+      ],
+    };
+    const revision11: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 11,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "entry-x", field: "content", delta: "first" }],
+    };
+    const revision13: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 13,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "entry-x", field: "content", delta: "next" }],
+    };
+
+    expect([...tracker.push(revision12, readExecution)]).toEqual([]);
+    expect([...tracker.push(revision11, readExecution)]).toEqual(["execution-a"]);
+    expect([...tracker.push(revision13, readExecution)]).toEqual(["execution-b"]);
+    expect([...tracker.push(revision11, readExecution)]).toEqual([]);
+
+    const revision14: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 14,
+      kind: "patch",
+      patches: [
+        {
+          type: "entry.upsert",
+          entry: {
+            id: "entry-x",
+            kind: "assistant",
+            content: "",
+            streaming: true,
+            createdAt: "2026-07-11T00:00:03.000Z",
+          },
+        },
+      ],
+    };
+    const revision15: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 15,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "entry-x", field: "content", delta: "orphan" }],
+    };
+    expect([...tracker.push(revision14, readExecution)]).toEqual([]);
+    expect([...tracker.push(revision15, readExecution)]).toEqual([]);
+  });
+
+  it("replays a startup token after a refresh establishes the missing revision watermark", () => {
+    const current = streamingSnapshot("", 1);
+    const tracker = new MissionFirstTokenUpdateBuffer(0);
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "first" }],
+    };
+    const readExecution = (entryId: string) =>
+      current.entries.find((entry) => entry.id === entryId)?.executionId;
+
+    expect([...tracker.push(update, readExecution)]).toEqual([]);
+    tracker.reset(current.revision);
+    expect([...tracker.push(update, readExecution)]).toEqual([
+      "00000000-0000-4000-8000-000000000001",
+    ]);
+  });
+
+  it("retains the active execution fallback for entries without execution ownership", () => {
+    const current = streamingSnapshot("", 1);
+    const tracker = new MissionFirstTokenUpdateBuffer(current.revision);
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "first" }],
+    };
+
+    expect([...tracker.push(update, () => undefined, "active-execution")]).toEqual([
+      "active-execution",
+    ]);
+  });
+
+  it("records a pending token already included at the refreshed page boundary", () => {
+    const snapshot = streamingSnapshot("first", 12);
+    const boundaryUpdate: MissionChatUpdate = {
+      missionId: snapshot.missionId,
+      streamId: chatStreamId,
+      revision: 12,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "first" }],
+    };
+    const olderUnknownOwnership: MissionChatUpdate = {
+      ...boundaryUpdate,
+      revision: 11,
+    };
+
+    expect([
+      ...includedPendingFirstTokenExecutionIds(snapshot, [olderUnknownOwnership, boundaryUpdate]),
+    ]).toEqual(["00000000-0000-4000-8000-000000000001"]);
+    expect([...includedPendingFirstTokenExecutionIds(snapshot, [olderUnknownOwnership])]).toEqual(
+      [],
+    );
+
+    const futureEntry: MissionChatEntry = {
+      id: "answer",
+      kind: "assistant",
+      executionId: "future-execution",
+      content: "",
+      streaming: true,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    };
+    const ownershipChangesAfterAppend: MissionChatUpdate = {
+      ...boundaryUpdate,
+      patches: [
+        ...boundaryUpdate.patches,
+        {
+          type: "entry.upsert",
+          entry: futureEntry,
+        },
+      ],
+    };
+    expect([
+      ...includedPendingFirstTokenExecutionIds(
+        {
+          ...snapshot,
+          entries: [futureEntry],
+        },
+        [ownershipChangesAfterAppend],
+      ),
+    ]).toEqual([]);
+
+    const explicitOwnership: MissionChatUpdate = {
+      ...boundaryUpdate,
+      revision: 11,
+      patches: [
+        {
+          type: "entry.upsert",
+          entry: { ...futureEntry, executionId: "pending-execution" },
+        },
+      ],
+    };
+    const laterAppend: MissionChatUpdate = {
+      ...boundaryUpdate,
+      revision: 12,
+    };
+    expect([
+      ...includedPendingFirstTokenExecutionIds(
+        { ...snapshot, revision: 13, entries: [futureEntry] },
+        [laterAppend, explicitOwnership],
+      ),
+    ]).toEqual(["pending-execution"]);
+
+    const entryWithoutOwnership: MissionChatEntry = {
+      id: "answer",
+      kind: "assistant",
+      content: "first",
+      streaming: true,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    };
+    expect([
+      ...includedPendingFirstTokenExecutionIds(
+        {
+          ...snapshot,
+          entries: [entryWithoutOwnership],
+          execution: {
+            id: "active-execution",
+            status: "running",
+            interruptible: true,
+          },
+        },
+        [boundaryUpdate],
+      ),
+    ]).toEqual(["active-execution"]);
   });
 
   it("does not advance the content revision when delayed state projections arrive", () => {

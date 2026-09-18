@@ -2481,6 +2481,14 @@ export function MissionDetailFragment(props: {
     });
   }, []);
 
+  useEffect(
+    () =>
+      liveEntryStore.subscribePublished(() => {
+        if (followLatestRef.current) scheduleFollowLatest();
+      }),
+    [liveEntryStore, scheduleFollowLatest],
+  );
+
   useLayoutEffect(() => {
     if (activeTab !== "chat") return;
     const footer = chatFooterRef.current;

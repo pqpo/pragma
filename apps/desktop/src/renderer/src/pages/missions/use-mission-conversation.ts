@@ -10,7 +10,9 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import {
   applyMissionChatUpdateBatch,
-  firstVisiblePatchExecutionId,
+  includedPendingFirstTokenExecutionIds,
+  materializeMissionChatSnapshot,
+  MissionFirstTokenUpdateBuffer,
   prependChatPage,
   reconcileMissionChatRefresh,
 } from "./mission-conversation-model.ts";
@@ -46,12 +48,18 @@ export function useMissionConversation(input: {
 
   const update = useCallback(
     (value: SetStateAction<MissionConversationSnapshot | null>) => {
-      const next = typeof value === "function" ? value(chatRef.current) : value;
+      const current =
+        chatRef.current === null
+          ? null
+          : materializeMissionChatSnapshot(chatRef.current, (entryId) =>
+              liveEntryStore.get(entryId),
+            );
+      const next = typeof value === "function" ? value(current) : value;
       chatRef.current = next;
       if (next === null) liveEntryStore.clear();
       else liveEntryStore.reset(next.entries);
       if (next !== null && next.missionId === input.missionId) {
-        setCachedConversation(input.cache, input.missionId, next);
+        cacheMissionConversationSnapshot(input.cache, input.missionId, next);
       }
       setChat(next);
     },
@@ -59,21 +67,16 @@ export function useMissionConversation(input: {
   );
 
   const advanceLive = useCallback(
-    (next: MissionConversationSnapshot, changedEntryIds: ReadonlySet<string>) => {
+    (
+      next: MissionConversationSnapshot,
+      changedEntries: ReadonlyMap<string, MissionConversationSnapshot["entries"][number]>,
+    ) => {
       chatRef.current = next;
-      setCachedConversation(input.cache, input.missionId, next);
-      if (changedEntryIds.size === 0) return;
-      const changedEntries = new Map(
-        next.entries
-          .filter((entry) => changedEntryIds.has(entry.id))
-          .map((entry) => [entry.id, entry] as const),
-      );
-      for (const entryId of changedEntryIds) {
-        const entry = changedEntries.get(entryId);
-        if (entry !== undefined) liveEntryStore.publish(entry);
-      }
+      for (const entry of changedEntries.values()) liveEntryStore.publish(entry);
+      // The ordered snapshot intentionally defers these entry bodies. Keep that partial
+      // representation hook-private; shared cache writes always materialize from the live store.
     },
-    [input.cache, input.missionId, liveEntryStore],
+    [liveEntryStore],
   );
 
   useEffect(() => {
@@ -109,6 +112,7 @@ export function useMissionConversation(input: {
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPerformanceLogAt = 0;
     let pending: MissionChatUpdate[] = [];
+    const firstTokenUpdates = new MissionFirstTokenUpdateBuffer(chatRef.current?.revision ?? 0);
     receivedFirstTokensRef.current.clear();
     paintedFirstTokensRef.current.clear();
     pendingFirstTokenPaintsRef.current.clear();
@@ -117,8 +121,49 @@ export function useMissionConversation(input: {
     }
     firstTokenPaintFramesRef.current.clear();
 
+    const recordFirstTokens = (executionIds: ReadonlySet<string>): void => {
+      for (const executionId of executionIds) {
+        if (receivedFirstTokensRef.current.has(executionId)) continue;
+        receivedFirstTokensRef.current.add(executionId);
+        pendingFirstTokenPaintsRef.current.set(executionId, { receivedAt: performance.now() });
+        api.reportRendererLog({
+          level: "info",
+          event: "mission.first_ui_token_received",
+          message: "Renderer received the first UI-visible Mission token",
+          missionId: input.missionId,
+          executionId,
+          navigationId,
+        });
+      }
+    };
+
+    const resetFirstTokenUpdates = (
+      base: MissionConversationSnapshot,
+      updates: readonly MissionChatUpdate[],
+    ): void => {
+      const baseEntryExecutions = new Map(
+        base.entries.map((entry) => [entry.id, entry.executionId] as const),
+      );
+      firstTokenUpdates.reset(base.revision);
+      for (const updateValue of updates.toSorted((left, right) => left.revision - right.revision)) {
+        recordFirstTokens(
+          firstTokenUpdates.push(
+            updateValue,
+            (entryId) =>
+              baseEntryExecutions.has(entryId)
+                ? baseEntryExecutions.get(entryId)
+                : liveEntryStore.get(entryId)?.executionId,
+            base.execution?.id,
+          ),
+        );
+      }
+    };
+
     const drainPending = (base: MissionConversationSnapshot) => {
-      const drained = applyMissionChatUpdateBatch(base, pending);
+      const drained = applyMissionChatUpdateBatch(base, pending, {
+        deferContentEntries: true,
+        readEntry: (entryId) => liveEntryStore.get(entryId),
+      });
       pending = [...drained.remaining];
       return drained;
     };
@@ -135,16 +180,42 @@ export function useMissionConversation(input: {
           prefetched ?? (await loadMissionConversationProjection(api, input.missionId));
         prefetchedConversation = undefined;
         if (!cancelled) {
+          const current =
+            chatRef.current === null
+              ? null
+              : materializeMissionChatSnapshot(chatRef.current, (entryId) =>
+                  liveEntryStore.get(entryId),
+                );
           const pageSnapshot = stateUnavailable
-            ? markConversationStateUnavailable(conversationFromPage(page, chatRef.current))
-            : conversationFromPage(page, chatRef.current);
+            ? markConversationStateUnavailable(conversationFromPage(page, current))
+            : conversationFromPage(page, current);
           const snapshot =
             state === undefined
               ? pageSnapshot
               : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
-          const drained = reconcileMissionChatRefresh(chatRef.current, snapshot, pending);
+          // Subscription starts before the page read. Establish the fetched revision as the
+          // watermark and attribute any contiguous updates before reconciliation consumes them.
+          const firstPendingRevision = pending.reduce(
+            (minimum, updateValue) => Math.min(minimum, updateValue.revision),
+            Number.POSITIVE_INFINITY,
+          );
+          const firstTokenBase = [current, snapshot]
+            .filter(
+              (candidate): candidate is MissionConversationSnapshot =>
+                candidate !== null &&
+                candidate.missionId === snapshot.missionId &&
+                candidate.revision < firstPendingRevision,
+            )
+            .toSorted((left, right) => right.revision - left.revision)[0];
+          // The fetched page may already include some pending updates even when a cached base
+          // exists but has a revision gap. Recover every safely attributable included token;
+          // recordFirstTokens de-duplicates executions also found by the contiguous replay.
+          recordFirstTokens(includedPendingFirstTokenExecutionIds(snapshot, pending));
+          resetFirstTokenUpdates(firstTokenBase ?? snapshot, pending);
+          const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
           update(drained.snapshot);
+          resetFirstTokenUpdates(drained.snapshot, pending);
           setSyncError(
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
           );
@@ -241,18 +312,16 @@ export function useMissionConversation(input: {
       const startedAt = performance.now();
       const drained = drainPending(chatRef.current);
       if (drained.requiresRender) update(drained.snapshot);
-      else advanceLive(drained.snapshot, drained.changedEntryIds);
+      else advanceLive(drained.snapshot, drained.changedEntries);
       const finishedAt = performance.now();
       if (finishedAt - lastPerformanceLogAt >= 5_000) {
         lastPerformanceLogAt = finishedAt;
-        const activeContentLength = drained.snapshot.entries.reduce(
-          (longest, entry) =>
-            drained.changedEntryIds.has(entry.id) &&
-            (entry.kind === "assistant" || entry.kind === "thinking")
-              ? Math.max(longest, entry.content.length)
-              : longest,
-          0,
-        );
+        let activeContentLength = 0;
+        for (const entry of drained.changedEntries.values()) {
+          if (entry.kind === "assistant" || entry.kind === "thinking") {
+            activeContentLength = Math.max(activeContentLength, entry.content.length);
+          }
+        }
         api.reportRendererLog({
           level: "info",
           event: "mission.stream_flush",
@@ -276,19 +345,12 @@ export function useMissionConversation(input: {
 
     const unsubscribe = api.subscribeMissionChat(input.missionId, (updateValue) => {
       pending.push(updateValue);
-      const executionId = firstVisiblePatchExecutionId(updateValue, chatRef.current);
-      if (executionId !== undefined && !receivedFirstTokensRef.current.has(executionId)) {
-        receivedFirstTokensRef.current.add(executionId);
-        pendingFirstTokenPaintsRef.current.set(executionId, { receivedAt: performance.now() });
-        api.reportRendererLog({
-          level: "info",
-          event: "mission.first_ui_token_received",
-          message: "Renderer received the first UI-visible Mission token",
-          missionId: input.missionId,
-          executionId,
-          navigationId,
-        });
-      }
+      const executionIds = firstTokenUpdates.push(
+        updateValue,
+        (entryId) => liveEntryStore.get(entryId)?.executionId,
+        chatRef.current?.execution?.id,
+      );
+      recordFirstTokens(executionIds);
       scheduleFlush();
     });
     void refresh();
@@ -301,6 +363,15 @@ export function useMissionConversation(input: {
         for (const paintFrame of frames) cancelAnimationFrame(paintFrame);
       }
       firstTokenPaintFramesRef.current.clear();
+      const latest =
+        chatRef.current === null
+          ? null
+          : materializeMissionChatSnapshot(chatRef.current, (entryId) =>
+              liveEntryStore.get(entryId),
+            );
+      if (latest !== null && latest.missionId === input.missionId) {
+        cacheMissionConversationSnapshot(input.cache, input.missionId, latest);
+      }
       unsubscribe();
       longTaskObserver?.disconnect();
     };
@@ -527,14 +598,17 @@ function mergeSyncIssues(
   return merged.length === 0 ? undefined : merged;
 }
 
-function setCachedConversation(
+export function cacheMissionConversationSnapshot(
   cache: Map<string, MissionConversationSnapshot> | undefined,
   missionId: string,
   snapshot: MissionConversationSnapshot,
+  readEntry?:
+    ((entryId: string) => MissionConversationSnapshot["entries"][number] | undefined) | undefined,
 ): void {
   if (cache === undefined) return;
+  const completeSnapshot = materializeMissionChatSnapshot(snapshot, readEntry);
   cache.delete(missionId);
-  cache.set(missionId, snapshot);
+  cache.set(missionId, completeSnapshot);
   while (cache.size > 8) {
     const oldest = cache.keys().next().value as string | undefined;
     if (oldest === undefined) break;

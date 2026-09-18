@@ -191,8 +191,63 @@ export function applyMissionChatPatches(
   patches: readonly MissionChatPatch[],
   revision: number,
 ): MissionConversationSnapshot | null {
+  return applyMissionChatPatchesWithChanges(snapshot, patches, revision)?.snapshot ?? null;
+}
+
+interface MissionChatPatchApplyResult {
+  readonly snapshot: MissionConversationSnapshot;
+  readonly changedEntries: ReadonlyMap<string, MissionChatEntry>;
+}
+
+export interface MissionChatUpdateBatchOptions {
+  /**
+   * Reads the latest live value for an entry without scanning the ordered snapshot.
+   * The ordered snapshot remains the authority for membership and order.
+   */
+  readonly readEntry?: ((entryId: string) => MissionChatEntry | undefined) | undefined;
+  /**
+   * Keeps pure content appends out of the ordered snapshot until the next structural boundary.
+   * The caller must publish changedEntries through the same live entry store used by readEntry.
+   */
+  readonly deferContentEntries?: boolean | undefined;
+}
+
+function applyMissionChatPatchesWithChanges(
+  snapshot: MissionConversationSnapshot,
+  patches: readonly MissionChatPatch[],
+  revision: number,
+  options: MissionChatUpdateBatchOptions = {},
+): MissionChatPatchApplyResult | null {
+  if (patches.length === 0) {
+    return {
+      snapshot: revision === snapshot.revision ? snapshot : { ...snapshot, revision },
+      changedEntries: new Map(),
+    };
+  }
+  if (options.deferContentEntries && patches.every(isMissionContentAppendPatch)) {
+    const changedEntries = new Map<string, MissionChatEntry>();
+    for (const patch of patches) {
+      const entry =
+        changedEntries.get(patch.entryId) ??
+        (options.readEntry === undefined
+          ? snapshot.entries.find((candidate) => candidate.id === patch.entryId)
+          : options.readEntry(patch.entryId));
+      if (entry?.kind !== "assistant" && entry?.kind !== "thinking") return null;
+      changedEntries.set(patch.entryId, {
+        ...entry,
+        content: truncateChatStream(`${entry.content}${patch.delta}`, 200_000),
+      });
+    }
+    return {
+      snapshot: { ...snapshot, revision },
+      changedEntries,
+    };
+  }
+
+  snapshot = materializeMissionChatSnapshot(snapshot, options.readEntry);
   const entries = [...snapshot.entries];
   const entryIndexById = new Map(entries.map((entry, index) => [entry.id, index] as const));
+  const changedEntries = new Map<string, MissionChatEntry>();
   for (const patch of patches) {
     if (patch.type === "context-window.update") {
       if (snapshot.contextWindow === undefined) return null;
@@ -242,6 +297,9 @@ export function applyMissionChatPatches(
           }
         }
       }
+      const changedIndex = entryIndexById.get(patch.entry.id);
+      if (changedIndex === undefined) return null;
+      changedEntries.set(patch.entry.id, entries[changedIndex]!);
       continue;
     }
     const index = entryIndexById.get(patch.entryId);
@@ -258,6 +316,7 @@ export function applyMissionChatPatches(
         ...entry,
         content: truncateChatStream(`${entry.content}${patch.delta}`, 200_000),
       };
+      changedEntries.set(patch.entryId, entries[index]!);
       continue;
     }
     if (entry.kind !== "tool") return null;
@@ -265,8 +324,32 @@ export function applyMissionChatPatches(
       ...entry,
       outputPreview: truncateChatStream(`${entry.outputPreview ?? ""}${patch.delta}`, 801),
     };
+    changedEntries.set(patch.entryId, entries[index]!);
   }
-  return { ...snapshot, revision, entries };
+  return { snapshot: { ...snapshot, revision, entries }, changedEntries };
+}
+
+function isMissionContentAppendPatch(patch: MissionChatPatch): patch is Extract<
+  MissionChatPatch,
+  { readonly type: "entry.append" }
+> & {
+  readonly field: "content";
+} {
+  return patch.type === "entry.append" && patch.field === "content";
+}
+
+export function materializeMissionChatSnapshot(
+  snapshot: MissionConversationSnapshot,
+  readEntry: ((entryId: string) => MissionChatEntry | undefined) | undefined,
+): MissionConversationSnapshot {
+  if (readEntry === undefined) return snapshot;
+  let changed = false;
+  const entries = snapshot.entries.map((entry) => {
+    const liveEntry = readEntry(entry.id) ?? entry;
+    if (liveEntry !== entry) changed = true;
+    return liveEntry;
+  });
+  return changed ? { ...snapshot, entries } : snapshot;
 }
 
 function refreshMissionChatEntryIndexes(
@@ -285,16 +368,18 @@ export interface MissionChatUpdateBatchResult {
   readonly needsRefresh: boolean;
   readonly requiresRender: boolean;
   readonly changedEntryIds: ReadonlySet<string>;
+  readonly changedEntries: ReadonlyMap<string, MissionChatEntry>;
   readonly requiredRefreshRevision?: number | undefined;
 }
 
 /**
- * Applies every contiguous update as one immutable entries copy. IPC updates remain revisioned,
- * while high-frequency append patches are compacted within the renderer frame.
+ * Applies every contiguous update in one batch. IPC updates remain revisioned, while
+ * high-frequency content appends can stay in the indexed live store until a structural boundary.
  */
 export function applyMissionChatUpdateBatch(
   base: MissionConversationSnapshot,
   pending: readonly MissionChatUpdate[],
+  options: MissionChatUpdateBatchOptions = {},
 ): MissionChatUpdateBatchResult {
   const updates = pending.toSorted((left, right) => left.revision - right.revision);
   const contiguous: Extract<MissionChatUpdate, { readonly kind: "patch" }>[] = [];
@@ -326,33 +411,32 @@ export function applyMissionChatUpdateBatch(
       needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
       requiresRender: false,
       changedEntryIds: new Set(),
+      changedEntries: new Map(),
       ...(requiredRefreshRevision === undefined ? {} : { requiredRefreshRevision }),
     };
   }
 
   const patches = compactMissionChatPatches(contiguous.flatMap((update) => update.patches));
-  const changedEntryIds = new Set<string>();
-  for (const patch of patches) {
-    if (patch.type === "entry.append") changedEntryIds.add(patch.entryId);
-    else if (patch.type === "entry.upsert") changedEntryIds.add(patch.entry.id);
-  }
-  const snapshot = applyMissionChatPatches(base, patches, consumedRevision);
-  if (snapshot === null) {
+  const applied = applyMissionChatPatchesWithChanges(base, patches, consumedRevision, options);
+  if (applied === null) {
     return {
       snapshot: base,
       remaining: updates.filter((update) => update.revision > base.revision),
       needsRefresh: true,
       requiresRender: false,
       changedEntryIds: new Set(),
+      changedEntries: new Map(),
       ...(requiredRefreshRevision === undefined ? {} : { requiredRefreshRevision }),
     };
   }
+  const changedEntryIds = new Set(applied.changedEntries.keys());
   return {
-    snapshot,
+    snapshot: applied.snapshot,
     remaining,
     needsRefresh: requiredRefreshRevision !== undefined || remaining.length > 0,
     requiresRender: missionChatPatchesRequireRender(patches),
     changedEntryIds,
+    changedEntries: applied.changedEntries,
     ...(requiredRefreshRevision === undefined ? {} : { requiredRefreshRevision }),
   };
 }
@@ -379,31 +463,144 @@ export function missionChatPatchesRequireRender(patches: readonly MissionChatPat
   return patches.some((patch) => patch.type !== "entry.append" || patch.field !== "content");
 }
 
-export function firstVisiblePatchExecutionId(
+export function visiblePatchExecutionIds(
   update: MissionChatUpdate,
   snapshot: MissionConversationSnapshot | null,
-): string | undefined {
-  if (update.kind !== "patch") return undefined;
+  readEntryExecutionId?: ((entryId: string) => string | undefined) | undefined,
+  activeExecutionId: string | undefined = snapshot?.execution?.id,
+): ReadonlySet<string> {
+  const executionIds = new Set<string>();
+  const updateEntryExecutionIds = new Map<string, string | undefined>();
+  if (update.kind !== "patch") return executionIds;
   for (const patch of update.patches) {
     if (patch.type === "context-window.update") continue;
     if (patch.type === "entry.upsert") {
+      updateEntryExecutionIds.set(patch.entry.id, patch.entry.executionId);
       if (
         (patch.entry.kind === "assistant" || patch.entry.kind === "thinking") &&
         patch.entry.content.length > 0
       ) {
-        return patch.entry.executionId ?? snapshot?.execution?.id;
+        const executionId = patch.entry.executionId ?? activeExecutionId;
+        if (executionId !== undefined) executionIds.add(executionId);
       }
       continue;
     }
     if (patch.type !== "entry.append" || patch.field !== "content" || patch.delta.length === 0) {
       continue;
     }
-    return (
-      snapshot?.entries.find((entry) => entry.id === patch.entryId)?.executionId ??
-      snapshot?.execution?.id
-    );
+    const executionId = updateEntryExecutionIds.has(patch.entryId)
+      ? updateEntryExecutionIds.get(patch.entryId)
+      : readEntryExecutionId === undefined
+        ? snapshot?.entries.find((entry) => entry.id === patch.entryId)?.executionId
+        : readEntryExecutionId(patch.entryId);
+    if (executionId !== undefined) executionIds.add(executionId);
+    else if (activeExecutionId !== undefined) executionIds.add(activeExecutionId);
   }
-  return undefined;
+  return executionIds;
+}
+
+export function includedPendingFirstTokenExecutionIds(
+  snapshot: MissionConversationSnapshot,
+  updates: readonly MissionChatUpdate[],
+): ReadonlySet<string> {
+  const executionIds = new Set<string>();
+  const snapshotEntryExecutions = new Map(
+    snapshot.entries.map((entry) => [entry.id, entry.executionId] as const),
+  );
+  const pendingEntryExecutions = new Map<string, string | undefined>();
+  const processedRevisions = new Set<number>();
+  for (const update of updates.toSorted((left, right) => left.revision - right.revision)) {
+    if (update.revision > snapshot.revision || processedRevisions.has(update.revision)) continue;
+    processedRevisions.add(update.revision);
+    const upsertedEntryIds = new Set(
+      update.kind === "patch"
+        ? update.patches.flatMap((patch) => (patch.type === "entry.upsert" ? [patch.entry.id] : []))
+        : [],
+    );
+    // The snapshot proves ownership only at its own revision. Older content is recorded only
+    // when its update carries an execution-bearing upsert, never from future snapshot metadata.
+    const readEntryExecutionId =
+      update.revision === snapshot.revision
+        ? (entryId: string) => {
+            if (pendingEntryExecutions.has(entryId)) {
+              return pendingEntryExecutions.get(entryId);
+            }
+            return upsertedEntryIds.has(entryId) ? undefined : snapshotEntryExecutions.get(entryId);
+          }
+        : (entryId: string) =>
+            pendingEntryExecutions.has(entryId) ? pendingEntryExecutions.get(entryId) : undefined;
+    for (const executionId of visiblePatchExecutionIds(
+      update,
+      null,
+      readEntryExecutionId,
+      update.revision === snapshot.revision ? snapshot.execution?.id : undefined,
+    )) {
+      executionIds.add(executionId);
+    }
+    if (update.kind === "patch") {
+      for (const patch of update.patches) {
+        if (patch.type === "entry.upsert") {
+          pendingEntryExecutions.set(patch.entry.id, patch.entry.executionId);
+        }
+      }
+    }
+  }
+  return executionIds;
+}
+
+export class MissionFirstTokenUpdateBuffer {
+  readonly #pending = new Map<
+    number,
+    { readonly update: MissionChatUpdate; readonly activeExecutionId: string | undefined }
+  >();
+  readonly #entryExecutionIds = new Map<string, string | undefined>();
+  #revision: number;
+
+  constructor(revision: number) {
+    this.#revision = revision;
+  }
+
+  reset(revision: number): void {
+    this.#revision = revision;
+    this.#pending.clear();
+    this.#entryExecutionIds.clear();
+  }
+
+  push(
+    update: MissionChatUpdate,
+    readEntryExecutionId: (entryId: string) => string | undefined,
+    activeExecutionId?: string | undefined,
+  ): ReadonlySet<string> {
+    if (update.revision <= this.#revision || this.#pending.has(update.revision)) return new Set();
+    this.#pending.set(update.revision, { update, activeExecutionId });
+    const executionIds = new Set<string>();
+    for (;;) {
+      const nextRevision = this.#revision + 1;
+      const next = this.#pending.get(nextRevision);
+      if (next === undefined) break;
+      this.#pending.delete(nextRevision);
+      for (const executionId of visiblePatchExecutionIds(
+        next.update,
+        null,
+        (entryId) =>
+          this.#entryExecutionIds.has(entryId)
+            ? this.#entryExecutionIds.get(entryId)
+            : readEntryExecutionId(entryId),
+        next.activeExecutionId,
+      )) {
+        executionIds.add(executionId);
+      }
+      if (next.update.kind === "patch") {
+        for (const patch of next.update.patches) {
+          if (patch.type === "entry.upsert") {
+            this.#entryExecutionIds.set(patch.entry.id, patch.entry.executionId);
+          }
+        }
+      }
+      this.#revision = nextRevision;
+    }
+    return executionIds;
+  }
 }
 
 export function shouldClearMissionThinkingPlaceholder(
