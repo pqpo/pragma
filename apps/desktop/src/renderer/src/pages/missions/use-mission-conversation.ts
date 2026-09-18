@@ -204,9 +204,10 @@ export function useMissionConversation(input: {
                 candidate.revision < firstPendingRevision,
             )
             .toSorted((left, right) => right.revision - left.revision)[0];
-          if (firstTokenBase === undefined) {
-            recordFirstTokens(includedPendingFirstTokenExecutionIds(snapshot, pending));
-          }
+          // The fetched page may already include some pending updates even when a cached base
+          // exists but has a revision gap. Recover every safely attributable included token;
+          // recordFirstTokens de-duplicates executions also found by the contiguous replay.
+          recordFirstTokens(includedPendingFirstTokenExecutionIds(snapshot, pending));
           resetFirstTokenUpdates(firstTokenBase ?? snapshot, pending);
           const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
