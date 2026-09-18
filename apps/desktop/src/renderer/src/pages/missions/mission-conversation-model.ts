@@ -497,6 +497,35 @@ export function visiblePatchExecutionIds(
   return executionIds;
 }
 
+export function includedPendingFirstTokenExecutionIds(
+  snapshot: MissionConversationSnapshot,
+  updates: readonly MissionChatUpdate[],
+): ReadonlySet<string> {
+  const executionIds = new Set<string>();
+  const snapshotEntryExecutions = new Map(
+    snapshot.entries.map((entry) => [entry.id, entry.executionId] as const),
+  );
+  for (const update of updates) {
+    if (update.revision > snapshot.revision) continue;
+    const upsertedEntryIds = new Set(
+      update.kind === "patch"
+        ? update.patches.flatMap((patch) => (patch.type === "entry.upsert" ? [patch.entry.id] : []))
+        : [],
+    );
+    // The snapshot proves ownership only at its own revision. Older content is recorded only
+    // when its update carries an execution-bearing upsert, never from future snapshot metadata.
+    const readEntryExecutionId =
+      update.revision === snapshot.revision
+        ? (entryId: string) =>
+            upsertedEntryIds.has(entryId) ? undefined : snapshotEntryExecutions.get(entryId)
+        : () => undefined;
+    for (const executionId of visiblePatchExecutionIds(update, null, readEntryExecutionId)) {
+      executionIds.add(executionId);
+    }
+  }
+  return executionIds;
+}
+
 export class MissionFirstTokenUpdateBuffer {
   readonly #pending = new Map<number, MissionChatUpdate>();
   readonly #entryExecutionIds = new Map<string, string | undefined>();

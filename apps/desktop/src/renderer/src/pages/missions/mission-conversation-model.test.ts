@@ -11,6 +11,7 @@ import {
   applyMissionChatUpdateBatch,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
+  includedPendingFirstTokenExecutionIds,
   materializeMissionChatSnapshot,
   mergeLatestChatPage,
   MissionFirstTokenUpdateBuffer,
@@ -298,6 +299,56 @@ describe("mission conversation model", () => {
     expect([...tracker.push(update, readExecution)]).toEqual([
       "00000000-0000-4000-8000-000000000001",
     ]);
+  });
+
+  it("records a pending token already included at the refreshed page boundary", () => {
+    const snapshot = streamingSnapshot("first", 12);
+    const boundaryUpdate: MissionChatUpdate = {
+      missionId: snapshot.missionId,
+      streamId: chatStreamId,
+      revision: 12,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "first" }],
+    };
+    const olderUnknownOwnership: MissionChatUpdate = {
+      ...boundaryUpdate,
+      revision: 11,
+    };
+
+    expect([
+      ...includedPendingFirstTokenExecutionIds(snapshot, [olderUnknownOwnership, boundaryUpdate]),
+    ]).toEqual(["00000000-0000-4000-8000-000000000001"]);
+    expect([...includedPendingFirstTokenExecutionIds(snapshot, [olderUnknownOwnership])]).toEqual(
+      [],
+    );
+
+    const futureEntry: MissionChatEntry = {
+      id: "answer",
+      kind: "assistant",
+      executionId: "future-execution",
+      content: "",
+      streaming: true,
+      createdAt: "2026-07-11T00:00:00.000Z",
+    };
+    const ownershipChangesAfterAppend: MissionChatUpdate = {
+      ...boundaryUpdate,
+      patches: [
+        ...boundaryUpdate.patches,
+        {
+          type: "entry.upsert",
+          entry: futureEntry,
+        },
+      ],
+    };
+    expect([
+      ...includedPendingFirstTokenExecutionIds(
+        {
+          ...snapshot,
+          entries: [futureEntry],
+        },
+        [ownershipChangesAfterAppend],
+      ),
+    ]).toEqual([]);
   });
 
   it("does not advance the content revision when delayed state projections arrive", () => {

@@ -10,6 +10,7 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import {
   applyMissionChatUpdateBatch,
+  includedPendingFirstTokenExecutionIds,
   materializeMissionChatSnapshot,
   MissionFirstTokenUpdateBuffer,
   prependChatPage,
@@ -203,6 +204,9 @@ export function useMissionConversation(input: {
                 candidate.revision < firstPendingRevision,
             )
             .toSorted((left, right) => right.revision - left.revision)[0];
+          if (firstTokenBase === undefined) {
+            recordFirstTokens(includedPendingFirstTokenExecutionIds(snapshot, pending));
+          }
           resetFirstTokenUpdates(firstTokenBase ?? snapshot, pending);
           const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
