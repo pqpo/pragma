@@ -51,13 +51,18 @@ import {
   resolveMissionsPageInitialState,
   resolveMissionRailGroups,
   resolveMissionSearchCollapsed,
-  resolveMissionComposerAction,
   unavailableMcpToolName,
   upsertMissionSummary,
   withMissionUiWatchdog,
   teamMissionsForMentionCandidates,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
+import {
+  MissionChatComposer,
+  recoverFailedMissionSend,
+  resolveMissionComposerAction,
+  routeMissionAttachmentResult,
+} from "./mission-chat-composer.tsx";
 import {
   excludeRespondedMissionHumanInteractions,
   resolveMissionHumanResponseAttempt,
@@ -1124,6 +1129,139 @@ describe("MissionDetailFragment", () => {
         hasPendingQueuedMessage: false,
       }),
     ).toBe("recover");
+  });
+
+  it("discards attachment results that return after their Composer unmounts", () => {
+    const result = {
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000010",
+          kind: "file" as const,
+          name: "late.txt",
+          path: "/tmp/late.txt",
+        },
+      ],
+      previews: [],
+    };
+    const accept = vi.fn();
+    const discard = vi.fn();
+
+    routeMissionAttachmentResult({ result, owned: false, accept, discard });
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledWith([result.attachments[0]!.id]);
+  });
+
+  it("preserves failed attachment sends after their Mission Composer unmounts", () => {
+    const recovery = {
+      missionId: "mission-a",
+      draft: "Retry with attachment",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000010",
+          kind: "file" as const,
+          name: "retry.txt",
+          path: "/tmp/retry.txt",
+        },
+      ],
+      attachmentPreviews: {},
+    };
+    const preserve = vi.fn();
+
+    recoverFailedMissionSend({ recovery, composer: null, preserve });
+
+    expect(preserve).toHaveBeenCalledWith(recovery);
+  });
+
+  it("initializes a remounted Composer from the latest Mission recovery", () => {
+    const mission = missionFixture("expert");
+    const html = renderToStaticMarkup(
+      <MissionChatComposer
+        mission={mission}
+        initialRecovery={{
+          missionId: mission.id,
+          draft: "Recovered after returning to chat",
+          attachments: [
+            {
+              id: "00000000-0000-4000-8000-000000000010",
+              kind: "file",
+              name: "recovered.txt",
+              path: "/tmp/recovered.txt",
+            },
+          ],
+          attachmentPreviews: {},
+        }}
+        mentionCandidates={[]}
+        imageUnsupported={false}
+        isFlow={false}
+        sending={false}
+        clientOperationBusy={false}
+        compactingContext={false}
+        hasPendingQueuedMessage={false}
+        executionActive={false}
+        interruptible={false}
+        interrupting={false}
+        recoveryAvailable={false}
+        awaitingRequest={false}
+        toolbarOptions={null}
+        contextWindowControl={null}
+        onSubmit={() => undefined}
+        onInterrupt={() => undefined}
+        onRecover={() => undefined}
+        onError={() => undefined}
+        onAttachmentLimit={() => undefined}
+        onAttachmentsAccepted={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Recovered after returning to chat");
+    expect(html).toContain("recovered.txt");
+  });
+
+  it("restores a failed or retried attachment send into the still-mounted Composer", () => {
+    const recovery = {
+      missionId: "mission-a",
+      draft: "Retry with attachment",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000010",
+          kind: "file" as const,
+          name: "retry.txt",
+          path: "/tmp/retry.txt",
+        },
+      ],
+      attachmentPreviews: {},
+    };
+    const restore = vi.fn(() => "restored" as const);
+    const preserve = vi.fn();
+
+    recoverFailedMissionSend({ recovery, composer: { restore }, preserve });
+
+    expect(restore).toHaveBeenCalledWith(recovery);
+    expect(preserve).not.toHaveBeenCalled();
+  });
+
+  it("preserves a late failed send when the current Composer rejects a conflicting restore", () => {
+    const recovery = {
+      missionId: "mission-a",
+      draft: "Older failed send",
+      attachments: [
+        {
+          id: "00000000-0000-4000-8000-000000000010",
+          kind: "file" as const,
+          name: "retry.txt",
+          path: "/tmp/retry.txt",
+        },
+      ],
+      attachmentPreviews: {},
+    };
+    const restore = vi.fn(() => "conflict" as const);
+    const preserve = vi.fn();
+
+    recoverFailedMissionSend({ recovery, composer: { restore }, preserve });
+
+    expect(restore).toHaveBeenCalledWith(recovery);
+    expect(preserve).toHaveBeenCalledWith(recovery);
   });
 
   it("releases UI loading after the 60-second watchdog while work remains unsettled", async () => {

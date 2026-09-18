@@ -16,7 +16,6 @@ import {
 } from "react";
 
 import {
-  ArrowUp,
   ArrowCounterClockwise,
   CaretDown,
   CaretLeft,
@@ -25,7 +24,6 @@ import {
   Circle,
   Database,
   DotsThreeVertical,
-  File,
   Folder,
   FolderOpen,
   GitBranch,
@@ -50,7 +48,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   parseExpertMentionSegments,
   type ExpertPromptAttachment,
-  type ExpertPromptAttachmentKind,
   type HumanInteractionResponse,
 } from "@pragma/shared";
 
@@ -77,7 +74,6 @@ import {
 } from "../../../../shared/contracts/index.ts";
 import { localizedMissionError } from "../../lib/mission-errors.ts";
 import { i18n } from "../../i18n/index.ts";
-import { shouldSubmitComposerOnEnter } from "../../lib/composer-keyboard.ts";
 import { formatMissionDateTime } from "../../lib/mission-time.ts";
 import {
   createMissionSendAttempt,
@@ -99,7 +95,17 @@ import {
   type MissionConversationBlock,
 } from "./mission-conversation-model.ts";
 import { useMissionClientOperation } from "./mission-client-operation.ts";
-import { useMissionComposerState } from "./use-mission-composer-state.ts";
+import {
+  MissionChatComposer,
+  recoverFailedMissionSend,
+  type MissionComposerHandle,
+} from "./mission-chat-composer.tsx";
+import {
+  clearMissionComposerRecoveries,
+  discardMissionComposerRecovery as releaseMissionComposerRecovery,
+  storeMissionComposerRecovery,
+  type MissionComposerSnapshot,
+} from "./mission-composer-recovery.ts";
 import { useMissionWork } from "./use-mission-work.ts";
 import {
   excludeRespondedMissionHumanInteractions,
@@ -141,10 +147,6 @@ import { MISSION_WORK_RECORD_PAGE_SIZE } from "./mission-view-constants.ts";
 import { runtimeDisplayName } from "../../lib/runtime-display.ts";
 import { formatTokens } from "../../lib/usage-format.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
-import {
-  MissionAttachmentList,
-  MissionAttachmentPicker,
-} from "../../components/MissionAttachments.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { MemoryStoreBrowser } from "../../components/MemoryStoreBrowser.tsx";
 import {
@@ -152,7 +154,6 @@ import {
   type ContextStoreBrowserSource,
 } from "../../components/ContextStoreBrowser.tsx";
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
-import { TeamMentionComposer } from "../../components/TeamMentionComposer.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
 import {
   SIDEBAR_WIDTH_PREFERENCES,
@@ -168,11 +169,7 @@ import {
   writeMissionOutputBoundaries,
   writeUnreadMissionOutputIds,
 } from "../../lib/mission-unread-output.ts";
-import {
-  clipboardImageFile,
-  missionImageSupport,
-  stageClipboardImage,
-} from "../../lib/mission-attachments.ts";
+import { missionImageSupport } from "../../lib/mission-attachments.ts";
 import {
   readPinnedMissionIds,
   readLastOpenedMissionId,
@@ -294,6 +291,7 @@ export function MissionsPage(props: {
   );
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [, setComposerRecoveryRevision] = useState(0);
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [initialRunRequest, setInitialRunRequest] = useState<{
@@ -335,6 +333,85 @@ export function MissionsPage(props: {
     >(),
   );
   const missionStatusUpdatesRef = useRef(new Map<string, MissionStatusUpdate>());
+  const composerRecoveryByMissionIdRef = useRef(new Map<string, MissionComposerSnapshot>());
+  const missionsPageMountedRef = useRef(true);
+  const discardComposerAttachments = useCallback((attachmentIds: readonly string[]): void => {
+    const uniqueAttachmentIds = [...new Set(attachmentIds)];
+    for (let offset = 0; offset < uniqueAttachmentIds.length; offset += 20) {
+      void desktopApi()?.discardMissionAttachmentDrafts({
+        attachmentIds: uniqueAttachmentIds.slice(offset, offset + 20),
+      });
+    }
+  }, []);
+  const preserveComposerRecovery = useCallback(
+    (snapshot: MissionComposerSnapshot): void => {
+      if (!missionsPageMountedRef.current) {
+        writeMissionDraft(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          snapshot.missionId,
+          snapshot.draft,
+        );
+        discardComposerAttachments(snapshot.attachments.map((attachment) => attachment.id));
+        return;
+      }
+      if (
+        removedMissionIdsRef.current.has(snapshot.missionId) ||
+        missionDetailCacheRef.current.get(snapshot.missionId)?.lifecycleStatus === "completed"
+      ) {
+        discardComposerAttachments([
+          ...releaseMissionComposerRecovery(
+            composerRecoveryByMissionIdRef.current,
+            snapshot.missionId,
+          ),
+          ...snapshot.attachments.map((attachment) => attachment.id),
+        ]);
+        return;
+      }
+      discardComposerAttachments(
+        storeMissionComposerRecovery(composerRecoveryByMissionIdRef.current, snapshot),
+      );
+      writeMissionDraft(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        snapshot.missionId,
+        snapshot.draft,
+      );
+      if (selectedMissionIdRef.current === snapshot.missionId) {
+        setComposerRecoveryRevision((current) => current + 1);
+      }
+    },
+    [discardComposerAttachments],
+  );
+  const consumeComposerRecovery = useCallback((missionId: string): void => {
+    composerRecoveryByMissionIdRef.current.delete(missionId);
+  }, []);
+  const discardComposerRecovery = useCallback(
+    (missionId: string): void => {
+      discardComposerAttachments(
+        releaseMissionComposerRecovery(composerRecoveryByMissionIdRef.current, missionId),
+      );
+    },
+    [discardComposerAttachments],
+  );
+  const rejectComposerRecovery = useCallback(
+    (missionId: string, currentDraft: string): void => {
+      discardComposerRecovery(missionId);
+      writeMissionDraft(
+        typeof window === "undefined" ? undefined : window.localStorage,
+        missionId,
+        currentDraft,
+      );
+    },
+    [discardComposerRecovery],
+  );
+  useEffect(() => {
+    missionsPageMountedRef.current = true;
+    return () => {
+      missionsPageMountedRef.current = false;
+      discardComposerAttachments(
+        clearMissionComposerRecoveries(composerRecoveryByMissionIdRef.current),
+      );
+    };
+  }, [discardComposerAttachments]);
   const cacheMissionDetail = useCallback((mission: Mission): void => {
     missionDetailCacheRef.current.delete(mission.id);
     missionDetailCacheRef.current.set(mission.id, mission);
@@ -359,10 +436,10 @@ export function MissionsPage(props: {
         setInitialRunRequest((current) => (current?.missionId === projected.id ? null : current));
       }
       if (projected.lifecycleStatus === "completed") {
-        writeMissionDraft(
+        discardComposerRecovery(projected.id);
+        removeMissionDrafts(
           typeof window === "undefined" ? undefined : window.localStorage,
-          projected.id,
-          "",
+          new Set([projected.id]),
         );
       }
       cacheMissionDetail(projected);
@@ -376,7 +453,7 @@ export function MissionsPage(props: {
         return upsertMissionSummary(current, missionToSummary(projected, source ?? knownSource));
       });
     },
-    [cacheMissionDetail],
+    [cacheMissionDetail, discardComposerRecovery],
   );
 
   const updatePinnedMissionIds = useCallback((update: (current: readonly string[]) => string[]) => {
@@ -594,10 +671,10 @@ export function MissionsPage(props: {
         replaceMission(update.mission, update.source);
         return;
       }
-      writeMissionDraft(
+      discardComposerRecovery(update.missionId);
+      removeMissionDrafts(
         typeof window === "undefined" ? undefined : window.localStorage,
-        update.missionId,
-        "",
+        new Set([update.missionId]),
       );
       missionUpdatesDuringRefreshRef.current.set(update.missionId, null);
       removedMissionIdsRef.current.add(update.missionId);
@@ -621,7 +698,7 @@ export function MissionsPage(props: {
         setSelectedMission(null);
       }
     });
-  }, [replaceMission, updateUnreadMissionOutputIds]);
+  }, [discardComposerRecovery, replaceMission, updateUnreadMissionOutputIds]);
 
   useEffect(() => {
     if (props.initialMission === undefined) return;
@@ -878,11 +955,6 @@ export function MissionsPage(props: {
           if (api === undefined) return;
           try {
             replaceMission(await api.markMissionComplete(summary.id));
-            writeMissionDraft(
-              typeof window === "undefined" ? undefined : window.localStorage,
-              summary.id,
-              "",
-            );
             updatePinnedMissionIds((current) =>
               current.filter((missionId) => missionId !== summary.id),
             );
@@ -907,6 +979,10 @@ export function MissionsPage(props: {
             mission={selectedMission}
             navigationId={missionNavigationIdsRef.current.get(selectedMission.id)}
             initialComposerDraft={props.initialComposerDraft}
+            initialComposerRecovery={composerRecoveryByMissionIdRef.current.get(selectedMission.id)}
+            onComposerRecovery={preserveComposerRecovery}
+            onComposerRecoveryConsumed={consumeComposerRecovery}
+            onComposerRecoveryConflict={rejectComposerRecovery}
             memoryEnabled={props.memoryEnabled}
             chatCache={missionChatCacheRef.current}
             prefetchedConversation={missionConversationRequestsRef.current.get(selectedMission.id)}
@@ -1048,11 +1124,6 @@ export function MissionsPage(props: {
                     : await api.reopenMission(selectedMission.id);
                 replaceMission(updated);
                 if (selectedMission.lifecycleStatus === "active") {
-                  writeMissionDraft(
-                    typeof window === "undefined" ? undefined : window.localStorage,
-                    selectedMission.id,
-                    "",
-                  );
                   updatePinnedMissionIds((current) =>
                     current.filter((missionId) => missionId !== selectedMission.id),
                   );
@@ -1113,7 +1184,8 @@ export function MissionsPage(props: {
             void withMissionUiWatchdog(api.deleteMission(deleteCandidate.id))
               .then(async () => {
                 const storedMissions = await api.listMissions();
-                writeMissionDraft(window.localStorage, deleteCandidate.id, "");
+                discardComposerRecovery(deleteCandidate.id);
+                removeMissionDrafts(window.localStorage, new Set([deleteCandidate.id]));
                 setMissions(storedMissions);
                 if (selectedMissionId === deleteCandidate.id) {
                   selectedMissionIdRef.current = null;
@@ -1945,7 +2017,6 @@ function comparePinnedMissions(
   return right.updatedAt.localeCompare(left.updatedAt);
 }
 
-export type MissionComposerAction = "send" | "loading" | "interrupt" | "recover";
 type MissionQueuedMessageAction = "steer" | "remove";
 export const MISSION_RECOVERY_WATCHDOG_MS = 60_000;
 
@@ -1972,25 +2043,6 @@ export async function withMissionUiWatchdog<T>(operation: Promise<T>): Promise<T
   });
 }
 
-export function resolveMissionComposerAction(input: {
-  readonly draft: string;
-  readonly sending: boolean;
-  readonly executionActive: boolean;
-  readonly interruptible: boolean;
-  readonly recoveryAvailable?: boolean;
-  readonly awaitingRequest: boolean;
-  readonly hasPendingQueuedMessage: boolean;
-}): MissionComposerAction {
-  if (input.sending) return "loading";
-  if (input.draft.trim() !== "") return "send";
-  if (input.executionActive && input.interruptible) return "interrupt";
-  if (input.executionActive && input.recoveryAvailable === true) return "recover";
-  if (input.executionActive || input.awaitingRequest || input.hasPendingQueuedMessage) {
-    return "loading";
-  }
-  return "send";
-}
-
 type MissionMemoryView = "store" | "activity";
 
 export const DEFAULT_MISSION_MEMORY_VIEW: MissionMemoryView = "activity";
@@ -2001,6 +2053,11 @@ export function MissionDetailFragment(props: {
   readonly chatCache?: Map<string, MissionConversationSnapshot> | undefined;
   readonly prefetchedConversation?: Promise<MissionConversationPrefetch | undefined> | undefined;
   readonly initialComposerDraft?: string | undefined;
+  readonly initialComposerRecovery?: MissionComposerSnapshot | undefined;
+  readonly onComposerRecovery?: ((snapshot: MissionComposerSnapshot) => void) | undefined;
+  readonly onComposerRecoveryConsumed?: ((missionId: string) => void) | undefined;
+  readonly onComposerRecoveryConflict?:
+    ((missionId: string, currentDraft: string) => void) | undefined;
   readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
   readonly onDismissError?: (() => void) | undefined;
@@ -2076,23 +2133,6 @@ export function MissionDetailFragment(props: {
     api: desktopApi(),
     formatError: missionError,
   });
-  const {
-    draft,
-    setDraft,
-    attachments,
-    attachmentPreviews,
-    clearAttachments,
-    restoreAttachments,
-    addAttachments,
-    removeAttachment,
-    discardAttachments,
-  } = useMissionComposerState({
-    mission: props.mission,
-    initialDraft: props.initialComposerDraft,
-    discardDrafts: desktopApi()?.discardMissionAttachmentDrafts,
-    onAttachmentLimit: () => setOptionsError(t("attachmentLimit", { ns: "missions" })),
-    onAttachmentsAccepted: () => setOptionsError(null),
-  });
   const [branchCandidate, setBranchCandidate] = useState<
     Extract<MissionChatEntry, { kind: "assistant" }> | undefined
   >();
@@ -2153,11 +2193,26 @@ export function MissionDetailFragment(props: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const chatFooterRef = useRef<HTMLDivElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
-  const composerInputRef = useRef<HTMLTextAreaElement | HTMLDivElement | null>(null);
+  const composerRef = useRef<MissionComposerHandle | null>(null);
   const queuedMessageActionsRef = useRef<Map<string, MissionQueuedMessageAction>>(new Map());
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
+  useEffect(() => {
+    const recovery = props.initialComposerRecovery;
+    if (recovery?.missionId !== props.mission.id || composerRef.current === null) return;
+    const restoreResult = composerRef.current.restore(recovery);
+    if (restoreResult === "restored") {
+      props.onComposerRecoveryConsumed?.(props.mission.id);
+    } else if (restoreResult === "conflict") {
+      props.onComposerRecoveryConflict?.(props.mission.id, composerRef.current.snapshot().draft);
+    }
+  }, [
+    props.initialComposerRecovery,
+    props.mission.id,
+    props.onComposerRecoveryConflict,
+    props.onComposerRecoveryConsumed,
+  ]);
   useEffect(() => {
     if (!contextStorePickerOpen && !contextStoresSaving) {
       setContextStoreIds(
@@ -2436,13 +2491,6 @@ export function MissionDetailFragment(props: {
   }, [props.mission.id]);
 
   useEffect(() => {
-    const input = composerInputRef.current;
-    if (input === null) return;
-    input.style.height = "auto";
-    input.style.height = `${Math.min(input.scrollHeight, 130)}px`;
-  }, [draft]);
-
-  useEffect(() => {
     const api = desktopApi();
     if (api === undefined) return;
     let cancelled = false;
@@ -2513,13 +2561,14 @@ export function MissionDetailFragment(props: {
   };
 
   const send = async (retry?: LocalMissionUserMessage) => {
-    const content = retry?.content ?? draft.trim();
+    const composerSnapshot = composerRef.current?.snapshot();
+    const content = retry?.content ?? composerSnapshot?.draft.trim() ?? "";
     if (content === "" || isFlow) return;
     const operationToken = beginClientOperation("sending");
     if (operationToken === undefined) return;
     const optimistic = createMissionSendAttempt({
       content,
-      attachments,
+      attachments: composerSnapshot?.attachments ?? [],
       retry,
       createRequestId: () => crypto.randomUUID(),
       now: () => new Date().toISOString(),
@@ -2527,13 +2576,9 @@ export function MissionDetailFragment(props: {
     const requestId = optimistic.id;
     recordSubmission(optimistic, retry?.retryMode === "new-request" ? retry.id : undefined);
     const shouldPrepareQueuedMessage = executionActive;
-    if (retry === undefined) setDraft("");
     const sentAttachmentIds = optimistic.attachments.map((attachment) => attachment.id);
-    const sentAttachmentPreviews = attachmentPreviews;
     let discardSentDrafts = false;
-    if (retry === undefined) {
-      clearAttachments();
-    }
+    if (retry === undefined) composerRef.current?.clear();
     if (shouldPrepareQueuedMessage) {
       setPendingQueuedMessages((current) =>
         current.some((message) => message.requestId === requestId)
@@ -2559,6 +2604,7 @@ export function MissionDetailFragment(props: {
     followLatestRef.current = true;
     try {
       await props.onSend?.(content, requestId, optimistic.attachments, "enqueue");
+      props.onComposerRecoveryConsumed?.(props.mission.id);
       setDeliveryNotice(undefined);
       if (shouldPrepareQueuedMessage) {
         await refreshLatestChat().catch(() => undefined);
@@ -2584,37 +2630,26 @@ export function MissionDetailFragment(props: {
                 )
               : [...current, { ...optimistic, status: "failed", retryMode: "same-request" }],
       );
-      if (retry === undefined && !persisted && optimistic.attachments.length > 0) {
-        setDraft(content);
-        restoreAttachments(optimistic.attachments, sentAttachmentPreviews);
+      if (!persisted) {
+        const recovery: MissionComposerSnapshot = {
+          missionId: props.mission.id,
+          draft: content,
+          attachments: optimistic.attachments,
+          attachmentPreviews: composerSnapshot?.attachmentPreviews ?? {},
+        };
+        recoverFailedMissionSend({
+          recovery,
+          composer: composerRef.current,
+          preserve: props.onComposerRecovery,
+        });
       }
       setAwaitingRequestId(null);
     } finally {
       if (discardSentDrafts && sentAttachmentIds.length > 0) {
-        discardAttachments(sentAttachmentIds);
+        void desktopApi()?.discardMissionAttachmentDrafts({ attachmentIds: sentAttachmentIds });
       }
       finishClientOperation(operationToken);
-      requestAnimationFrame(() => composerInputRef.current?.focus());
-    }
-  };
-
-  const pickAttachments = async (kind: ExpertPromptAttachmentKind) => {
-    if (isFlow) return;
-    try {
-      addAttachments(await window.pragmaDesktop.pickMissionAttachments({ kind }));
-    } catch (pickError) {
-      setOptionsError(missionError(pickError));
-    }
-  };
-
-  const pasteImage = async (file: File) => {
-    try {
-      const result = await stageClipboardImage(file, (input) =>
-        window.pragmaDesktop.stageMissionClipboardImage(input),
-      );
-      addAttachments(result);
-    } catch (pasteError) {
-      setOptionsError(missionError(pasteError));
+      requestAnimationFrame(() => composerRef.current?.focus(props.mission.id));
     }
   };
 
@@ -2698,9 +2733,9 @@ export function MissionDetailFragment(props: {
         requestId: crypto.randomUUID(),
         queueItemRequestId,
       });
-      setDraft(content);
+      composerRef.current?.replaceDraft(props.mission.id, content);
       await refreshLatestChat();
-      requestAnimationFrame(() => composerInputRef.current?.focus());
+      requestAnimationFrame(() => composerRef.current?.focus(props.mission.id));
     } catch (removeError) {
       setOptionsError(missionError(removeError));
     } finally {
@@ -2750,16 +2785,25 @@ export function MissionDetailFragment(props: {
     () => groupMissionConversationEntries(conversationEntries),
     [conversationEntries],
   );
-  const conversationVirtualizer = useVirtualizer({
-    count: conversationBlocks.length + 2,
-    getScrollElement: () => scrollRef.current,
-    getItemKey: (index) => {
+  const getConversationScrollElement = useCallback(() => scrollRef.current, []);
+  const getConversationItemKey = useCallback(
+    (index: number) => {
       if (index === 0) return `${props.mission.id}:history-header`;
       if (index === conversationBlocks.length + 1) return `${props.mission.id}:live-footer`;
       const block = conversationBlocks[index - 1]!;
       return missionConversationBlockKey(props.mission.id, index - 1, block);
     },
-    estimateSize: (index) => (index === 0 ? 56 : index === conversationBlocks.length + 1 ? 72 : 80),
+    [conversationBlocks, props.mission.id],
+  );
+  const estimateConversationItemSize = useCallback(
+    (index: number) => (index === 0 ? 56 : index === conversationBlocks.length + 1 ? 72 : 80),
+    [conversationBlocks.length],
+  );
+  const conversationVirtualizer = useVirtualizer({
+    count: conversationBlocks.length + 2,
+    getScrollElement: getConversationScrollElement,
+    getItemKey: getConversationItemKey,
+    estimateSize: estimateConversationItemSize,
     overscan: 8,
     initialRect: { width: 900, height: 800 },
   });
@@ -2791,16 +2835,6 @@ export function MissionDetailFragment(props: {
     );
   const recoveryAvailable = backendRecoveryAvailable;
   const recoveryActions = new Set(chat?.controlHealth?.availableActions ?? []);
-  const composerAction = resolveMissionComposerAction({
-    draft,
-    sending: clientOperation.kind === "sending",
-    executionActive,
-    interruptible,
-    recoveryAvailable,
-    awaitingRequest: awaitingRequestId !== null,
-    hasPendingQueuedMessage: pendingQueuedMessages.length > 0,
-  });
-
   useEffect(() => {
     const executionStatus = props.mission.execution?.status;
     if (
@@ -3515,124 +3549,35 @@ export function MissionDetailFragment(props: {
                         })}
                       </div>
                     ) : null}
-                    <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
-                      <MissionAttachmentList
-                        attachments={attachments}
-                        previews={attachmentPreviews}
-                        imageUnsupported={imageUnsupported}
-                        onRemove={removeAttachment}
-                      />
-                      {isTeam ? (
-                        <TeamMentionComposer
-                          inputRef={(element) => {
-                            composerInputRef.current = element;
-                          }}
-                          value={draft}
-                          candidates={mentionCandidates}
-                          onChange={setDraft}
-                          onSubmit={() => void send()}
-                          disabled={
-                            clientOperationBusy ||
-                            compactingContext ||
-                            props.mission.lifecycleStatus === "completed"
-                          }
-                          placeholder={
-                            compactingContext
-                              ? t("contextCompactionInputDisabled", { ns: "missions" })
-                              : props.mission.lifecycleStatus === "completed"
-                                ? t("reopenToContinue", { ns: "missions" })
-                                : t("messageExecutor", {
-                                    ns: "missions",
-                                    name: props.mission.executor.name,
-                                  })
-                          }
-                          ariaLabel={t("messageExecutor", {
-                            ns: "missions",
-                            name: props.mission.executor.name,
-                          })}
-                          menuLabel={t("mentionMembers", { ns: "missions" })}
-                          emptyLabel={t("mentionNoMatches", { ns: "missions" })}
-                          unavailableLabel={t("mentionUnavailable", { ns: "missions" })}
-                          onPaste={(event) => {
-                            const file = clipboardImageFile(event.clipboardData);
-                            if (
-                              file === undefined ||
-                              clientOperationBusy ||
-                              compactingContext ||
-                              props.mission.lifecycleStatus === "completed"
-                            )
-                              return;
-                            event.preventDefault();
-                            void pasteImage(file);
-                          }}
-                          variant="mission"
-                        />
-                      ) : (
-                        <textarea
-                          ref={(element) => {
-                            composerInputRef.current = element;
-                          }}
-                          rows={1}
-                          value={draft}
-                          disabled={
-                            isFlow ||
-                            clientOperationBusy ||
-                            compactingContext ||
-                            props.mission.lifecycleStatus === "completed"
-                          }
-                          placeholder={
-                            compactingContext
-                              ? t("contextCompactionInputDisabled", { ns: "missions" })
-                              : props.mission.lifecycleStatus === "completed"
-                                ? t("reopenToContinue", { ns: "missions" })
-                                : isFlow
-                                  ? t("flowContinues", { ns: "missions" })
-                                  : t("messageExecutor", {
-                                      ns: "missions",
-                                      name: props.mission.executor.name,
-                                    })
-                          }
-                          aria-label={t("messageExecutor", {
-                            ns: "missions",
-                            name: props.mission.executor.name,
-                          })}
-                          aria-describedby={
-                            compactingContext ? "mission-context-compaction-status" : undefined
-                          }
-                          onChange={(event) => setDraft(event.target.value)}
-                          onPaste={(event) => {
-                            const file = clipboardImageFile(event.clipboardData);
-                            if (
-                              file === undefined ||
-                              isFlow ||
-                              clientOperationBusy ||
-                              compactingContext ||
-                              props.mission.lifecycleStatus === "completed"
-                            )
-                              return;
-                            event.preventDefault();
-                            void pasteImage(file);
-                          }}
-                          onKeyDown={(event) => {
-                            if (shouldSubmitComposerOnEnter(event.nativeEvent)) {
-                              event.preventDefault();
-                              void send();
-                            }
-                          }}
-                        />
-                      )}
-                      <div className="mission-chat-composer-toolbar">
-                        <div className="mission-chat-options" aria-label={t("missionOptions")}>
-                          <MissionAttachmentPicker
-                            compact
-                            disabled={
-                              isFlow ||
-                              clientOperationBusy ||
-                              compactingContext ||
-                              props.mission.lifecycleStatus === "completed"
-                            }
-                            onPick={pickAttachments}
-                          />
+                    <MissionChatComposer
+                      ref={composerRef}
+                      mission={props.mission}
+                      initialDraft={props.initialComposerDraft}
+                      initialRecovery={props.initialComposerRecovery}
+                      onInitialRecoveryConsumed={props.onComposerRecoveryConsumed}
+                      onUnmountState={props.onComposerRecovery}
+                      mentionCandidates={mentionCandidates}
+                      imageUnsupported={imageUnsupported}
+                      isFlow={isFlow}
+                      sending={clientOperation.kind === "sending"}
+                      clientOperationBusy={clientOperationBusy}
+                      compactingContext={compactingContext}
+                      hasPendingQueuedMessage={pendingQueuedMessages.length > 0}
+                      executionActive={executionActive}
+                      interruptible={interruptible}
+                      interrupting={interrupting}
+                      recoveryAvailable={recoveryAvailable}
+                      awaitingRequest={awaitingRequestId !== null}
+                      onSubmit={() => void send()}
+                      onInterrupt={() => void interrupt()}
+                      onRecover={() => void retryRecovery()}
+                      onError={(error) => setOptionsError(missionError(error))}
+                      onAttachmentLimit={() =>
+                        setOptionsError(t("attachmentLimit", { ns: "missions" }))
+                      }
+                      onAttachmentsAccepted={() => setOptionsError(null)}
+                      toolbarOptions={
+                        <>
                           <button
                             className="mission-context-store-trigger"
                             type="button"
@@ -3682,66 +3627,18 @@ export function MissionDetailFragment(props: {
                               onChange={(value) => void saveOptions(toolPermissionMode, value)}
                             />
                           ) : null}
-                        </div>
-                        <div className="mission-chat-actions">
-                          {chat?.contextWindow === undefined ? null : (
-                            <ContextWindowControl
-                              state={chat.contextWindow}
-                              compacting={compactingContext}
-                              onCompact={() => void compactContext()}
-                            />
-                          )}
-                          {composerAction === "interrupt" ? (
-                            <button
-                              className="is-interrupt"
-                              type="button"
-                              aria-label={t("interrupt", { ns: "missions" })}
-                              title={t("interrupt", { ns: "missions" })}
-                              disabled={interrupting}
-                              onClick={() => void interrupt()}
-                            >
-                              <Stop size={17} weight="fill" aria-hidden="true" />
-                            </button>
-                          ) : composerAction === "recover" ? (
-                            <button
-                              className="is-recovery"
-                              type="button"
-                              aria-label={t("resume", { ns: "missions" })}
-                              title={t("resume", { ns: "missions" })}
-                              disabled={clientOperationBusy}
-                              onClick={() => void retryRecovery()}
-                            >
-                              <ArrowCounterClockwise size={19} aria-hidden="true" />
-                            </button>
-                          ) : composerAction === "loading" ? (
-                            <button
-                              className="is-loading"
-                              type="button"
-                              aria-label={t("loading", { ns: "common" })}
-                              title={t("loading", { ns: "common" })}
-                              aria-busy="true"
-                              disabled
-                            >
-                              <SpinnerGap size={19} aria-hidden="true" />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              aria-label={t("send", { ns: "missions" })}
-                              disabled={
-                                isFlow ||
-                                draft.trim() === "" ||
-                                clientOperationBusy ||
-                                props.mission.lifecycleStatus === "completed"
-                              }
-                              onClick={() => void send()}
-                            >
-                              <ArrowUp size={19} weight="bold" aria-hidden="true" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                        </>
+                      }
+                      contextWindowControl={
+                        chat?.contextWindow === undefined ? null : (
+                          <ContextWindowControl
+                            state={chat.contextWindow}
+                            compacting={compactingContext}
+                            onCompact={() => void compactContext()}
+                          />
+                        )
+                      }
+                    />
                   </div>
                 </>
               )}
