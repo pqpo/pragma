@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import electronPath from "electron";
 import { build } from "esbuild";
 
+import { parseMissionStreamBenchmarkResult } from "./mission-stream-benchmark-result.mjs";
+
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pragma-mission-stream-ui-benchmark-"));
 const resultPrefix = "PRAGMA_MISSION_STREAM_UI_BENCHMARK:";
@@ -21,6 +23,8 @@ try {
     benchmarkEntry(
       resolve(desktopRoot, "src/renderer/src/pages/missions/mission-chat-composer.tsx"),
       resolve(desktopRoot, "src/renderer/src/pages/missions/mission-conversation-model.ts"),
+      resolve(desktopRoot, "src/renderer/src/pages/missions/mission-live-entry-store.ts"),
+      resolve(desktopRoot, "src/renderer/src/pages/missions/mission-chat-presentation.tsx"),
     ),
     "utf8",
   );
@@ -101,7 +105,11 @@ function runElectron(mainPath) {
         );
         return;
       }
-      resolveResult(JSON.parse(resultLine.slice(resultPrefix.length)));
+      try {
+        resolveResult(parseMissionStreamBenchmarkResult(resultLine, resultPrefix));
+      } catch (error) {
+        reject(error);
+      }
     });
   });
 }
@@ -130,13 +138,15 @@ app.whenReady().then(async () => {
 `;
 }
 
-function benchmarkEntry(componentPath, modelPath) {
+function benchmarkEntry(componentPath, modelPath, storePath, presentationPath) {
   return `
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MissionChatComposer } from ${JSON.stringify(componentPath)};
 import { applyMissionChatUpdateBatch } from ${JSON.stringify(modelPath)};
+import { MissionLiveEntryStore } from ${JSON.stringify(storePath)};
+import { MissionChatEntryView } from ${JSON.stringify(presentationPath)};
 
 const mission = {
   schemaVersion: "pragma.mission/v10",
@@ -155,8 +165,17 @@ const mission = {
   updatedAt: "2026-09-18T00:00:00.000Z",
 };
 
-function App() {
-  return <MissionChatComposer
+function App({ entry, liveEntryStore }) {
+  return <>
+    <section id="streamed-entry">
+      <MissionChatEntryView
+        entry={entry}
+        liveEntryStore={liveEntryStore}
+        missionId={mission.id}
+        paintExecutionId={entry.executionId}
+      />
+    </section>
+    <MissionChatComposer
     mission={mission}
     mentionCandidates={[]}
     imageUnsupported={false}
@@ -178,7 +197,8 @@ function App() {
     onError={() => {}}
     onAttachmentLimit={() => {}}
     onAttachmentsAccepted={() => {}}
-  />;
+    />
+  </>;
 }
 
 const nextPaint = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -190,8 +210,6 @@ const percentile = (samples, fraction) => {
 async function measure(entryCount, streaming) {
   const rootElement = document.getElementById("root");
   const root = createRoot(rootElement);
-  flushSync(() => root.render(<App />));
-  await nextPaint();
   let snapshot = {
     missionId: mission.id,
     revision: 1,
@@ -206,8 +224,18 @@ async function measure(entryCount, streaming) {
     page: {},
     pendingInteractions: [],
   };
-  const liveEntries = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
   const targetId = snapshot.entries.at(-1).id;
+  const targetEntry = snapshot.entries.at(-1);
+  const liveEntryStore = new MissionLiveEntryStore();
+  liveEntryStore.reset(snapshot.entries);
+  flushSync(() => root.render(<App entry={targetEntry} liveEntryStore={liveEntryStore} />));
+  await nextPaint();
+  const output = document.getElementById("streamed-entry");
+  let outputMutationCount = 0;
+  const mutationObserver = new MutationObserver((records) => {
+    outputMutationCount += records.length;
+  });
+  mutationObserver.observe(output, { childList: true, subtree: true, characterData: true });
   let stopped = false;
   let streamOperations = 0;
   const pump = () => {
@@ -220,9 +248,9 @@ async function measure(entryCount, streaming) {
       patches: [{ type: "entry.append", entryId: targetId, field: "content", delta: "x" }],
     }], {
       deferContentEntries: true,
-      readEntry: (entryId) => liveEntries.get(entryId),
+      readEntry: (entryId) => liveEntryStore.get(entryId),
     });
-    for (const entry of result.changedEntries.values()) liveEntries.set(entry.id, entry);
+    for (const entry of result.changedEntries.values()) liveEntryStore.publish(entry);
     snapshot = result.snapshot;
     streamOperations += 1;
     requestAnimationFrame(pump);
@@ -252,8 +280,13 @@ async function measure(entryCount, streaming) {
   }
   stopped = true;
   await nextPaint();
+  mutationObserver.disconnect();
   observer?.disconnect();
   const heapAfter = performance.memory?.usedJSHeapSize;
+  const liveContent = liveEntryStore.get(targetId)?.content ?? "";
+  if (!output.textContent.includes(liveContent)) {
+    throw new Error("Rendered Mission output did not reach the latest live entry content.");
+  }
   root.unmount();
   rootElement.replaceChildren();
   return {
@@ -265,6 +298,8 @@ async function measure(entryCount, streaming) {
     inputToPaintP95Ms: Number(percentile(samples, 0.95).toFixed(2)),
     longTaskCount,
     longTaskMs: Number(longTaskMs.toFixed(2)),
+    outputMutationCount,
+    renderedStreamCharacters: Math.max(0, liveContent.length - targetEntry.content.length),
     heapDeltaMiB: heapBefore === undefined || heapAfter === undefined
       ? undefined
       : Number(((heapAfter - heapBefore) / 1024 / 1024).toFixed(3)),

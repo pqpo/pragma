@@ -11,10 +11,9 @@ import type {
 import {
   applyMissionChatUpdateBatch,
   materializeMissionChatSnapshot,
-  pendingMissionChatEntryExecutions,
+  MissionFirstTokenUpdateBuffer,
   prependChatPage,
   reconcileMissionChatRefresh,
-  visiblePatchExecutionIds,
 } from "./mission-conversation-model.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
 import { MISSION_CHAT_PAGE_SIZE } from "./mission-view-constants.ts";
@@ -59,7 +58,7 @@ export function useMissionConversation(input: {
       if (next === null) liveEntryStore.clear();
       else liveEntryStore.reset(next.entries);
       if (next !== null && next.missionId === input.missionId) {
-        setCachedConversation(input.cache, input.missionId, next);
+        cacheMissionConversationSnapshot(input.cache, input.missionId, next);
       }
       setChat(next);
     },
@@ -72,10 +71,11 @@ export function useMissionConversation(input: {
       changedEntries: ReadonlyMap<string, MissionConversationSnapshot["entries"][number]>,
     ) => {
       chatRef.current = next;
-      setCachedConversation(input.cache, input.missionId, next);
       for (const entry of changedEntries.values()) liveEntryStore.publish(entry);
+      // The ordered snapshot intentionally defers these entry bodies. Keep that partial
+      // representation hook-private; shared cache writes always materialize from the live store.
     },
-    [input.cache, input.missionId, liveEntryStore],
+    [liveEntryStore],
   );
 
   useEffect(() => {
@@ -111,10 +111,7 @@ export function useMissionConversation(input: {
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPerformanceLogAt = 0;
     let pending: MissionChatUpdate[] = [];
-    const pendingEntryExecutions = new Map<
-      string,
-      { readonly revision: number; readonly executionId: string }
-    >();
+    const firstTokenUpdates = new MissionFirstTokenUpdateBuffer(chatRef.current?.revision ?? 0);
     receivedFirstTokensRef.current.clear();
     paintedFirstTokensRef.current.clear();
     pendingFirstTokenPaintsRef.current.clear();
@@ -123,10 +120,31 @@ export function useMissionConversation(input: {
     }
     firstTokenPaintFramesRef.current.clear();
 
-    const rebuildPendingEntryExecutionIds = (): void => {
-      pendingEntryExecutions.clear();
-      for (const [entryId, execution] of pendingMissionChatEntryExecutions(pending)) {
-        pendingEntryExecutions.set(entryId, execution);
+    const recordFirstTokens = (executionIds: ReadonlySet<string>): void => {
+      for (const executionId of executionIds) {
+        if (receivedFirstTokensRef.current.has(executionId)) continue;
+        receivedFirstTokensRef.current.add(executionId);
+        pendingFirstTokenPaintsRef.current.set(executionId, { receivedAt: performance.now() });
+        api.reportRendererLog({
+          level: "info",
+          event: "mission.first_ui_token_received",
+          message: "Renderer received the first UI-visible Mission token",
+          missionId: input.missionId,
+          executionId,
+          navigationId,
+        });
+      }
+    };
+
+    const resetFirstTokenUpdates = (revision: number): void => {
+      firstTokenUpdates.reset(revision);
+      for (const updateValue of pending.toSorted((left, right) => left.revision - right.revision)) {
+        recordFirstTokens(
+          firstTokenUpdates.push(
+            updateValue,
+            (entryId) => liveEntryStore.get(entryId)?.executionId,
+          ),
+        );
       }
     };
 
@@ -136,7 +154,6 @@ export function useMissionConversation(input: {
         readEntry: (entryId) => liveEntryStore.get(entryId),
       });
       pending = [...drained.remaining];
-      rebuildPendingEntryExecutionIds();
       return drained;
     };
 
@@ -168,7 +185,7 @@ export function useMissionConversation(input: {
           const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
           update(drained.snapshot);
-          rebuildPendingEntryExecutionIds();
+          resetFirstTokenUpdates(drained.snapshot.revision);
           setSyncError(
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
           );
@@ -298,39 +315,11 @@ export function useMissionConversation(input: {
 
     const unsubscribe = api.subscribeMissionChat(input.missionId, (updateValue) => {
       pending.push(updateValue);
-      if (updateValue.kind === "patch") {
-        for (const patch of updateValue.patches) {
-          if (patch.type === "entry.upsert" && patch.entry.executionId !== undefined) {
-            const existing = pendingEntryExecutions.get(patch.entry.id);
-            if (existing === undefined || existing.revision <= updateValue.revision) {
-              pendingEntryExecutions.set(patch.entry.id, {
-                revision: updateValue.revision,
-                executionId: patch.entry.executionId,
-              });
-            }
-          }
-        }
-      }
-      const executionIds = visiblePatchExecutionIds(
+      const executionIds = firstTokenUpdates.push(
         updateValue,
-        chatRef.current,
-        (entryId) =>
-          pendingEntryExecutions.get(entryId)?.executionId ??
-          liveEntryStore.get(entryId)?.executionId,
+        (entryId) => liveEntryStore.get(entryId)?.executionId,
       );
-      for (const executionId of executionIds) {
-        if (receivedFirstTokensRef.current.has(executionId)) continue;
-        receivedFirstTokensRef.current.add(executionId);
-        pendingFirstTokenPaintsRef.current.set(executionId, { receivedAt: performance.now() });
-        api.reportRendererLog({
-          level: "info",
-          event: "mission.first_ui_token_received",
-          message: "Renderer received the first UI-visible Mission token",
-          missionId: input.missionId,
-          executionId,
-          navigationId,
-        });
-      }
+      recordFirstTokens(executionIds);
       scheduleFlush();
     });
     void refresh();
@@ -350,7 +339,7 @@ export function useMissionConversation(input: {
               liveEntryStore.get(entryId),
             );
       if (latest !== null && latest.missionId === input.missionId) {
-        setCachedConversation(input.cache, input.missionId, latest);
+        cacheMissionConversationSnapshot(input.cache, input.missionId, latest);
       }
       unsubscribe();
       longTaskObserver?.disconnect();
@@ -578,14 +567,17 @@ function mergeSyncIssues(
   return merged.length === 0 ? undefined : merged;
 }
 
-function setCachedConversation(
+export function cacheMissionConversationSnapshot(
   cache: Map<string, MissionConversationSnapshot> | undefined,
   missionId: string,
   snapshot: MissionConversationSnapshot,
+  readEntry?:
+    ((entryId: string) => MissionConversationSnapshot["entries"][number] | undefined) | undefined,
 ): void {
   if (cache === undefined) return;
+  const completeSnapshot = materializeMissionChatSnapshot(snapshot, readEntry);
   cache.delete(missionId);
-  cache.set(missionId, snapshot);
+  cache.set(missionId, completeSnapshot);
   while (cache.size > 8) {
     const oldest = cache.keys().next().value as string | undefined;
     if (oldest === undefined) break;

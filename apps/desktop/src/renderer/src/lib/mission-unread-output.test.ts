@@ -153,6 +153,34 @@ describe("Mission unread output state", () => {
     ).toBe(false);
   });
 
+  it("does not index loaded history for a pure append", () => {
+    const missionId = "00000000-0000-4000-8000-000000000001";
+    const entries = [
+      {
+        id: "reply",
+        kind: "assistant" as const,
+        content: "already visible",
+        streaming: true,
+        createdAt: "2026-09-03T00:00:00.000Z",
+      },
+    ];
+    const map = vi.spyOn(entries, "map");
+
+    expect(
+      missionChatUpdateHasUserVisibleOutput(
+        {
+          missionId,
+          streamId,
+          revision: 2,
+          kind: "patch",
+          patches: [{ type: "entry.append", entryId: "reply", field: "content", delta: "new" }],
+        },
+        entries,
+      ),
+    ).toBe(true);
+    expect(map).not.toHaveBeenCalled();
+  });
+
   it("rejects duplicate and older revisions within one persisted stream epoch", () => {
     const update: MissionChatUpdate = {
       missionId: "00000000-0000-4000-8000-000000000001",

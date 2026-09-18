@@ -469,10 +469,12 @@ export function visiblePatchExecutionIds(
   readEntryExecutionId?: ((entryId: string) => string | undefined) | undefined,
 ): ReadonlySet<string> {
   const executionIds = new Set<string>();
+  const updateEntryExecutionIds = new Map<string, string | undefined>();
   if (update.kind !== "patch") return executionIds;
   for (const patch of update.patches) {
     if (patch.type === "context-window.update") continue;
     if (patch.type === "entry.upsert") {
+      updateEntryExecutionIds.set(patch.entry.id, patch.entry.executionId);
       if (
         (patch.entry.kind === "assistant" || patch.entry.kind === "thinking") &&
         patch.entry.content.length > 0
@@ -485,36 +487,61 @@ export function visiblePatchExecutionIds(
     if (patch.type !== "entry.append" || patch.field !== "content" || patch.delta.length === 0) {
       continue;
     }
-    const executionId =
-      (readEntryExecutionId === undefined
+    const executionId = updateEntryExecutionIds.has(patch.entryId)
+      ? updateEntryExecutionIds.get(patch.entryId)
+      : readEntryExecutionId === undefined
         ? snapshot?.entries.find((entry) => entry.id === patch.entryId)?.executionId
-        : readEntryExecutionId(patch.entryId)) ?? snapshot?.execution?.id;
+        : readEntryExecutionId(patch.entryId);
     if (executionId !== undefined) executionIds.add(executionId);
   }
   return executionIds;
 }
 
-export interface PendingMissionChatEntryExecution {
-  readonly revision: number;
-  readonly executionId: string;
-}
+export class MissionFirstTokenUpdateBuffer {
+  readonly #pending = new Map<number, MissionChatUpdate>();
+  readonly #entryExecutionIds = new Map<string, string | undefined>();
+  #revision: number;
 
-export function pendingMissionChatEntryExecutions(
-  updates: readonly MissionChatUpdate[],
-): ReadonlyMap<string, PendingMissionChatEntryExecution> {
-  const executions = new Map<string, PendingMissionChatEntryExecution>();
-  for (const update of updates.toSorted((left, right) => left.revision - right.revision)) {
-    if (update.kind !== "patch") continue;
-    for (const patch of update.patches) {
-      if (patch.type === "entry.upsert" && patch.entry.executionId !== undefined) {
-        executions.set(patch.entry.id, {
-          revision: update.revision,
-          executionId: patch.entry.executionId,
-        });
-      }
-    }
+  constructor(revision: number) {
+    this.#revision = revision;
   }
-  return executions;
+
+  reset(revision: number): void {
+    this.#revision = revision;
+    this.#pending.clear();
+    this.#entryExecutionIds.clear();
+  }
+
+  push(
+    update: MissionChatUpdate,
+    readEntryExecutionId: (entryId: string) => string | undefined,
+  ): ReadonlySet<string> {
+    if (update.revision <= this.#revision) return new Set();
+    this.#pending.set(update.revision, update);
+    const executionIds = new Set<string>();
+    for (;;) {
+      const nextRevision = this.#revision + 1;
+      const next = this.#pending.get(nextRevision);
+      if (next === undefined) break;
+      this.#pending.delete(nextRevision);
+      for (const executionId of visiblePatchExecutionIds(next, null, (entryId) =>
+        this.#entryExecutionIds.has(entryId)
+          ? this.#entryExecutionIds.get(entryId)
+          : readEntryExecutionId(entryId),
+      )) {
+        executionIds.add(executionId);
+      }
+      if (next.kind === "patch") {
+        for (const patch of next.patches) {
+          if (patch.type === "entry.upsert") {
+            this.#entryExecutionIds.set(patch.entry.id, patch.entry.executionId);
+          }
+        }
+      }
+      this.#revision = nextRevision;
+    }
+    return executionIds;
+  }
 }
 
 export function shouldClearMissionThinkingPlaceholder(
