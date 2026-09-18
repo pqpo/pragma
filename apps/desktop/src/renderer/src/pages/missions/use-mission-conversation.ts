@@ -10,9 +10,11 @@ import type {
 } from "../../../../shared/contracts/index.ts";
 import {
   applyMissionChatUpdateBatch,
-  firstVisiblePatchExecutionId,
+  materializeMissionChatSnapshot,
+  pendingMissionChatEntryExecutions,
   prependChatPage,
   reconcileMissionChatRefresh,
+  visiblePatchExecutionIds,
 } from "./mission-conversation-model.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
 import { MISSION_CHAT_PAGE_SIZE } from "./mission-view-constants.ts";
@@ -46,7 +48,13 @@ export function useMissionConversation(input: {
 
   const update = useCallback(
     (value: SetStateAction<MissionConversationSnapshot | null>) => {
-      const next = typeof value === "function" ? value(chatRef.current) : value;
+      const current =
+        chatRef.current === null
+          ? null
+          : materializeMissionChatSnapshot(chatRef.current, (entryId) =>
+              liveEntryStore.get(entryId),
+            );
+      const next = typeof value === "function" ? value(current) : value;
       chatRef.current = next;
       if (next === null) liveEntryStore.clear();
       else liveEntryStore.reset(next.entries);
@@ -59,19 +67,13 @@ export function useMissionConversation(input: {
   );
 
   const advanceLive = useCallback(
-    (next: MissionConversationSnapshot, changedEntryIds: ReadonlySet<string>) => {
+    (
+      next: MissionConversationSnapshot,
+      changedEntries: ReadonlyMap<string, MissionConversationSnapshot["entries"][number]>,
+    ) => {
       chatRef.current = next;
       setCachedConversation(input.cache, input.missionId, next);
-      if (changedEntryIds.size === 0) return;
-      const changedEntries = new Map(
-        next.entries
-          .filter((entry) => changedEntryIds.has(entry.id))
-          .map((entry) => [entry.id, entry] as const),
-      );
-      for (const entryId of changedEntryIds) {
-        const entry = changedEntries.get(entryId);
-        if (entry !== undefined) liveEntryStore.publish(entry);
-      }
+      for (const entry of changedEntries.values()) liveEntryStore.publish(entry);
     },
     [input.cache, input.missionId, liveEntryStore],
   );
@@ -109,6 +111,10 @@ export function useMissionConversation(input: {
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPerformanceLogAt = 0;
     let pending: MissionChatUpdate[] = [];
+    const pendingEntryExecutions = new Map<
+      string,
+      { readonly revision: number; readonly executionId: string }
+    >();
     receivedFirstTokensRef.current.clear();
     paintedFirstTokensRef.current.clear();
     pendingFirstTokenPaintsRef.current.clear();
@@ -117,9 +123,20 @@ export function useMissionConversation(input: {
     }
     firstTokenPaintFramesRef.current.clear();
 
+    const rebuildPendingEntryExecutionIds = (): void => {
+      pendingEntryExecutions.clear();
+      for (const [entryId, execution] of pendingMissionChatEntryExecutions(pending)) {
+        pendingEntryExecutions.set(entryId, execution);
+      }
+    };
+
     const drainPending = (base: MissionConversationSnapshot) => {
-      const drained = applyMissionChatUpdateBatch(base, pending);
+      const drained = applyMissionChatUpdateBatch(base, pending, {
+        deferContentEntries: true,
+        readEntry: (entryId) => liveEntryStore.get(entryId),
+      });
       pending = [...drained.remaining];
+      rebuildPendingEntryExecutionIds();
       return drained;
     };
 
@@ -135,16 +152,23 @@ export function useMissionConversation(input: {
           prefetched ?? (await loadMissionConversationProjection(api, input.missionId));
         prefetchedConversation = undefined;
         if (!cancelled) {
+          const current =
+            chatRef.current === null
+              ? null
+              : materializeMissionChatSnapshot(chatRef.current, (entryId) =>
+                  liveEntryStore.get(entryId),
+                );
           const pageSnapshot = stateUnavailable
-            ? markConversationStateUnavailable(conversationFromPage(page, chatRef.current))
-            : conversationFromPage(page, chatRef.current);
+            ? markConversationStateUnavailable(conversationFromPage(page, current))
+            : conversationFromPage(page, current);
           const snapshot =
             state === undefined
               ? pageSnapshot
               : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
-          const drained = reconcileMissionChatRefresh(chatRef.current, snapshot, pending);
+          const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
           update(drained.snapshot);
+          rebuildPendingEntryExecutionIds();
           setSyncError(
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
           );
@@ -241,18 +265,16 @@ export function useMissionConversation(input: {
       const startedAt = performance.now();
       const drained = drainPending(chatRef.current);
       if (drained.requiresRender) update(drained.snapshot);
-      else advanceLive(drained.snapshot, drained.changedEntryIds);
+      else advanceLive(drained.snapshot, drained.changedEntries);
       const finishedAt = performance.now();
       if (finishedAt - lastPerformanceLogAt >= 5_000) {
         lastPerformanceLogAt = finishedAt;
-        const activeContentLength = drained.snapshot.entries.reduce(
-          (longest, entry) =>
-            drained.changedEntryIds.has(entry.id) &&
-            (entry.kind === "assistant" || entry.kind === "thinking")
-              ? Math.max(longest, entry.content.length)
-              : longest,
-          0,
-        );
+        let activeContentLength = 0;
+        for (const entry of drained.changedEntries.values()) {
+          if (entry.kind === "assistant" || entry.kind === "thinking") {
+            activeContentLength = Math.max(activeContentLength, entry.content.length);
+          }
+        }
         api.reportRendererLog({
           level: "info",
           event: "mission.stream_flush",
@@ -276,8 +298,28 @@ export function useMissionConversation(input: {
 
     const unsubscribe = api.subscribeMissionChat(input.missionId, (updateValue) => {
       pending.push(updateValue);
-      const executionId = firstVisiblePatchExecutionId(updateValue, chatRef.current);
-      if (executionId !== undefined && !receivedFirstTokensRef.current.has(executionId)) {
+      if (updateValue.kind === "patch") {
+        for (const patch of updateValue.patches) {
+          if (patch.type === "entry.upsert" && patch.entry.executionId !== undefined) {
+            const existing = pendingEntryExecutions.get(patch.entry.id);
+            if (existing === undefined || existing.revision <= updateValue.revision) {
+              pendingEntryExecutions.set(patch.entry.id, {
+                revision: updateValue.revision,
+                executionId: patch.entry.executionId,
+              });
+            }
+          }
+        }
+      }
+      const executionIds = visiblePatchExecutionIds(
+        updateValue,
+        chatRef.current,
+        (entryId) =>
+          pendingEntryExecutions.get(entryId)?.executionId ??
+          liveEntryStore.get(entryId)?.executionId,
+      );
+      for (const executionId of executionIds) {
+        if (receivedFirstTokensRef.current.has(executionId)) continue;
         receivedFirstTokensRef.current.add(executionId);
         pendingFirstTokenPaintsRef.current.set(executionId, { receivedAt: performance.now() });
         api.reportRendererLog({
@@ -301,6 +343,15 @@ export function useMissionConversation(input: {
         for (const paintFrame of frames) cancelAnimationFrame(paintFrame);
       }
       firstTokenPaintFramesRef.current.clear();
+      const latest =
+        chatRef.current === null
+          ? null
+          : materializeMissionChatSnapshot(chatRef.current, (entryId) =>
+              liveEntryStore.get(entryId),
+            );
+      if (latest !== null && latest.missionId === input.missionId) {
+        setCachedConversation(input.cache, input.missionId, latest);
+      }
       unsubscribe();
       longTaskObserver?.disconnect();
     };

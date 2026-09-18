@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  MissionChatEntry,
   MissionConversationSnapshot,
   MissionChatUpdate,
   PragmaDesktopAPI,
@@ -10,14 +11,17 @@ import {
   applyMissionChatUpdateBatch,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
+  materializeMissionChatSnapshot,
   mergeLatestChatPage,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
+  pendingMissionChatEntryExecutions,
   prependChatPage,
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
   startMissionContextOperation,
   touchMissionConversationCache,
+  visiblePatchExecutionIds,
 } from "./mission-conversation-model.ts";
 import {
   conversationFromPage,
@@ -75,6 +79,178 @@ describe("mission conversation model", () => {
       requiresRender: false,
     });
     expect([...result.changedEntryIds]).toEqual(["answer"]);
+  });
+
+  it("keeps pure content appends incremental until a structural boundary", () => {
+    const entries = Array.from({ length: 5_000 }, (_, index) => ({
+      ...streamingSnapshot(String(index)).entries[0]!,
+      id: `answer-${index}`,
+      executionId: `execution-${index}`,
+    }));
+    const current = { ...streamingSnapshot("", 1), entries };
+    const liveEntries = new Map<string, MissionChatEntry>(
+      entries.map((entry) => [entry.id, entry] as const),
+    );
+    const readEntry = vi.fn((entryId: string) => liveEntries.get(entryId));
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [{ type: "entry.append", entryId: "answer-4999", field: "content", delta: "!" }],
+    };
+
+    const appended = applyMissionChatUpdateBatch(current, [update], {
+      deferContentEntries: true,
+      readEntry,
+    });
+
+    expect(appended.snapshot.entries).toBe(entries);
+    expect(readEntry).toHaveBeenCalledOnce();
+    expect(appended.changedEntries.get("answer-4999")).toMatchObject({ content: "4999!" });
+    expect(appended.snapshot.entries.at(-1)).toMatchObject({ content: "4999" });
+
+    for (const entry of appended.changedEntries.values()) liveEntries.set(entry.id, entry);
+    const materialized = materializeMissionChatSnapshot(appended.snapshot, (entryId) =>
+      liveEntries.get(entryId),
+    );
+    expect(materialized.entries.at(-1)).toBe(appended.changedEntries.get("answer-4999"));
+
+    const structural = applyMissionChatUpdateBatch(
+      appended.snapshot,
+      [
+        {
+          ...update,
+          revision: 3,
+          patches: [
+            {
+              type: "entry.upsert",
+              entry: {
+                id: "late-thinking",
+                kind: "thinking",
+                content: "new",
+                streaming: true,
+                createdAt: "2026-07-11T00:00:01.000Z",
+              },
+              beforeEntryId: "answer-4999",
+            },
+          ],
+        },
+      ],
+      { deferContentEntries: true, readEntry: (entryId) => liveEntries.get(entryId) },
+    );
+    expect(structural.requiresRender).toBe(true);
+    expect(structural.snapshot.entries.at(-2)).toMatchObject({ id: "late-thinking" });
+    expect(structural.snapshot.entries.at(-1)).toMatchObject({ content: "4999!" });
+  });
+
+  it("resolves first visible tokens through constant-time metadata for multiple executions", () => {
+    const current = streamingSnapshot("existing", 1);
+    const lookup = vi.fn((entryId: string) =>
+      entryId === "answer-a" ? "execution-a" : entryId === "answer-b" ? "execution-b" : undefined,
+    );
+    const update: MissionChatUpdate = {
+      missionId: current.missionId,
+      streamId: chatStreamId,
+      revision: 2,
+      kind: "patch",
+      patches: [
+        { type: "entry.append", entryId: "answer-a", field: "content", delta: "a" },
+        { type: "entry.append", entryId: "answer-b", field: "content", delta: "b" },
+        {
+          type: "entry.upsert",
+          entry: {
+            id: "answer-c",
+            kind: "assistant",
+            executionId: "execution-c",
+            content: "c",
+            streaming: true,
+            createdAt: "2026-07-11T00:00:01.000Z",
+          },
+        },
+      ],
+    };
+
+    expect([...visiblePatchExecutionIds(update, current, lookup)]).toEqual([
+      "execution-a",
+      "execution-b",
+      "execution-c",
+    ]);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains execution metadata for updates left pending behind a revision gap", () => {
+    const current = streamingSnapshot("existing", 1);
+    const pending: MissionChatUpdate[] = [
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 2,
+        kind: "patch",
+        patches: [
+          {
+            type: "entry.upsert",
+            entry: {
+              id: "answer-a",
+              kind: "assistant",
+              executionId: "execution-a",
+              content: "a",
+              streaming: true,
+              createdAt: "2026-07-11T00:00:01.000Z",
+            },
+          },
+        ],
+      },
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 4,
+        kind: "patch",
+        patches: [
+          {
+            type: "entry.upsert",
+            entry: {
+              id: "answer-b",
+              kind: "assistant",
+              executionId: "execution-b",
+              content: "",
+              streaming: true,
+              createdAt: "2026-07-11T00:00:02.000Z",
+            },
+          },
+        ],
+      },
+    ];
+
+    const drained = applyMissionChatUpdateBatch(current, pending);
+    expect(drained.remaining.map((update) => update.revision)).toEqual([4]);
+    expect(pendingMissionChatEntryExecutions(drained.remaining)).toEqual(
+      new Map([["answer-b", { revision: 4, executionId: "execution-b" }]]),
+    );
+    expect(
+      pendingMissionChatEntryExecutions([
+        pending[1]!,
+        {
+          missionId: current.missionId,
+          streamId: chatStreamId,
+          revision: 5,
+          kind: "patch",
+          patches: [
+            {
+              type: "entry.upsert",
+              entry: {
+                id: "answer-b",
+                kind: "assistant",
+                executionId: "execution-b-newer",
+                content: "",
+                streaming: true,
+                createdAt: "2026-07-11T00:00:02.000Z",
+              },
+            },
+          ],
+        },
+      ]),
+    ).toEqual(new Map([["answer-b", { revision: 5, executionId: "execution-b-newer" }]]));
   });
 
   it("does not advance the content revision when delayed state projections arrive", () => {
