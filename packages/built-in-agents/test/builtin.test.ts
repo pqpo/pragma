@@ -476,6 +476,7 @@ describe("built-in Pragma Agent DSL", () => {
 
   it("defines Store Revision as an ordinary draft-editing Expert with required management tools", () => {
     const resource = builtInAgentResource(STORE_REVISION_EXPERT_REF);
+    expect(resource.spec.instructions.length).toBeLessThanOrEqual(5_000);
     expect(resource.metadata.avatarId).toBe("pragma.avatar.expert.22");
     expect(resource.metadata.description).not.toContain("Hidden");
     expect(resource.spec.scope).toContain("Create, continue, rebase, verify, and submit");
