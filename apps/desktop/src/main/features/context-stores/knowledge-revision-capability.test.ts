@@ -226,6 +226,24 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     );
   });
 
+  it("reuses the reserved knowledge-base id when a creation invocation is replayed", async () => {
+    const { port, start } = fixture(false);
+    const input = {
+      ...invocation,
+      create: { name: "Agent knowledge", description: "Created after review." },
+      prompt: "Create a new knowledge base.",
+    };
+
+    const first = await port.start(input);
+    const replay = await port.start(input);
+
+    expect(replay.creation?.resourceId).toBe(first.creation?.resourceId);
+    expect(start.mock.calls[1]![0]).toMatchObject({
+      storeId: first.creation?.resourceId,
+      sourceDigest: start.mock.calls[0]![0].sourceDigest,
+    });
+  });
+
   it("rejects a targetRef that does not match the continued draft", async () => {
     const { port, getDraft } = fixture(false);
     getDraft.mockResolvedValue({

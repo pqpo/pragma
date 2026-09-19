@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "pragma.skill-revision-job/v2",
+  "id": "71000000-0000-4000-8000-000000000001",
+  "revision": 3,
+  "draftId": "72000000-0000-4000-8000-000000000001",
+  "missionId": "73000000-0000-4000-8000-000000000001",
+  "request": {
+    "schemaVersion": "pragma.skill-revision-request/v2",
+    "capabilityId": "00000000-0000-4000-8000-000000000001",
+    "prompt": "Improve the historical workflow.",
+    "source": "expert-reflection",
+    "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "provenance": {
+      "executionId": "74000000-0000-4000-8000-000000000001",
+      "invocationId": "75000000-0000-4000-8000-000000000001",
+      "expertId": "0000000000sk1rev"
+    },
+    "sourceRefs": []
+  },
+  "state": "editing",
+  "createdAt": "2026-09-18T08:00:00.000Z",
+  "updatedAt": "2026-09-18T08:05:00.000Z"
+}

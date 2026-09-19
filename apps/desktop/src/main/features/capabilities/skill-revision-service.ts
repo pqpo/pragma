@@ -32,8 +32,10 @@ import {
 import {
   SkillRevisionDraftV1Schema,
   SkillRevisionJobV2StoredSchema,
+  SkillRevisionMigrationJournalSchema,
   migrateSkillRevisionDraftV1ToV2,
   migrateSkillRevisionJobV2ToV3,
+  type SkillRevisionMigrationJournal,
 } from "./skill-revision-migrations/index.ts";
 
 export interface SkillRevisionGenerator {
@@ -137,6 +139,8 @@ export function createSkillRevisionService(options: {
   const draftsPath = options.draftsPath ?? join(options.statePath, "drafts");
   const draftsTrashPath = options.draftsTrashPath ?? join(options.statePath, "trash", "drafts");
   const discardJournalsPath = join(options.statePath, "discard-journals");
+  const migrationJournalsPath = join(options.statePath, "migration-journals");
+  const migrationBackupsPath = join(options.statePath, "migration-backups");
   const lockPath = join(options.statePath, ".lock");
   const jobPath = (id: string) => join(jobsPath, `${id}.json`);
   const draftRoot = (id: string) => join(draftsPath, id);
@@ -183,22 +187,132 @@ export function createSkillRevisionService(options: {
   const writeDraft = async (draft: SkillRevisionDraft) =>
     await writeJsonAtomic(draftPath(draft.id), SkillRevisionDraftSchema.parse(draft));
 
+  const adjacentMigration = (
+    kind: "job" | "draft",
+    id: string,
+  ): Omit<SkillRevisionMigrationJournal, "sourceHash"> =>
+    kind === "job"
+      ? {
+          schemaVersion: "pragma.skill-revision-migration/v1",
+          kind,
+          recordId: id,
+          sourceVersion: "pragma.skill-revision-job/v2",
+          targetVersion: "pragma.skill-revision-job/v3",
+          recordPath: jobPath(id),
+          backupPath: join(migrationBackupsPath, `${id}.v2.json`),
+        }
+      : {
+          schemaVersion: "pragma.skill-revision-migration/v1",
+          kind,
+          recordId: id,
+          sourceVersion: "pragma.skill-revision-draft/v1",
+          targetVersion: "pragma.skill-revision-draft/v2",
+          recordPath: draftPath(id),
+          backupPath: join(migrationBackupsPath, `draft-${id}.v1.json`),
+        };
+
+  const adjacentMigrationJournalPath = (kind: "job" | "draft", id: string): string =>
+    join(
+      migrationJournalsPath,
+      kind === "job" ? `job-${id}.v2-to-v3.json` : `draft-${id}.v1-to-v2.json`,
+    );
+
+  const readAdjacentMigrationJournal = async (
+    kind: "job" | "draft",
+    id: string,
+  ): Promise<SkillRevisionMigrationJournal | undefined> => {
+    const path = adjacentMigrationJournalPath(kind, id);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await readFile(path, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    const journal = SkillRevisionMigrationJournalSchema.parse(raw);
+    const expected = adjacentMigration(kind, id);
+    for (const [key, value] of Object.entries(expected)) {
+      if (journal[key as keyof typeof journal] !== value) {
+        throw coded("skill_revision_migration_journal_invalid");
+      }
+    }
+    return journal;
+  };
+
+  const assertAdjacentMigrationBackup = async (
+    journal: SkillRevisionMigrationJournal,
+  ): Promise<void> => {
+    const source = JSON.parse(await readFile(journal.backupPath, "utf8")) as unknown;
+    if (journal.kind === "job") SkillRevisionJobV2StoredSchema.parse(source);
+    else SkillRevisionDraftV1Schema.parse(source);
+    if (jsonHash(source) !== journal.sourceHash) {
+      throw coded("skill_revision_migration_backup_mismatch");
+    }
+  };
+
+  const finishAdjacentMigration = async (kind: "job" | "draft", id: string): Promise<void> => {
+    const journal = await readAdjacentMigrationJournal(kind, id);
+    if (journal === undefined) return;
+    await assertAdjacentMigrationBackup(journal);
+    await rm(adjacentMigrationJournalPath(kind, id), { force: true });
+  };
+
+  const persistAdjacentMigration = async <T>(input: {
+    readonly kind: "job" | "draft";
+    readonly id: string;
+    readonly source: unknown;
+    readonly migrated: T;
+    readonly write: (value: T) => Promise<void>;
+  }): Promise<T> => {
+    const details = adjacentMigration(input.kind, input.id);
+    const journal = SkillRevisionMigrationJournalSchema.parse({
+      ...details,
+      sourceHash: jsonHash(input.source),
+    });
+    const existing = await readAdjacentMigrationJournal(input.kind, input.id);
+    if (existing === undefined) {
+      try {
+        const backup = JSON.parse(await readFile(journal.backupPath, "utf8")) as unknown;
+        if (jsonHash(backup) !== journal.sourceHash) {
+          throw coded("skill_revision_migration_backup_mismatch");
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        await writeJsonAtomic(journal.backupPath, input.source);
+      }
+      await writeJsonAtomic(adjacentMigrationJournalPath(input.kind, input.id), journal);
+    } else if (existing.sourceHash !== journal.sourceHash) {
+      throw coded("skill_revision_migration_journal_invalid");
+    }
+    await assertAdjacentMigrationBackup(journal);
+    await input.write(input.migrated);
+    await rm(adjacentMigrationJournalPath(input.kind, input.id), { force: true });
+    return input.migrated;
+  };
+
   const readDraft = async (id: string): Promise<SkillRevisionDraft> => {
     const raw = JSON.parse(await readFile(draftPath(id), "utf8")) as unknown;
     const current = SkillRevisionDraftSchema.safeParse(raw);
-    if (current.success) return current.data;
+    if (current.success) {
+      await finishAdjacentMigration("draft", id);
+      return current.data;
+    }
     return await withFileLock(`${draftRoot(id)}.migration.lock`, async () => {
       const latestRaw = JSON.parse(await readFile(draftPath(id), "utf8")) as unknown;
       const latest = SkillRevisionDraftSchema.safeParse(latestRaw);
-      if (latest.success) return latest.data;
+      if (latest.success) {
+        await finishAdjacentMigration("draft", id);
+        return latest.data;
+      }
       const legacy = SkillRevisionDraftV1Schema.parse(latestRaw);
       const migrated = migrateSkillRevisionDraftV1ToV2(legacy);
-      await writeJsonAtomic(
-        join(options.statePath, "migration-backups", `draft-${id}.v1.json`),
-        legacy,
-      );
-      await writeDraft(migrated);
-      return migrated;
+      return await persistAdjacentMigration({
+        kind: "draft",
+        id,
+        source: legacy,
+        migrated,
+        write: writeDraft,
+      });
     });
   };
 
@@ -339,9 +453,8 @@ export function createSkillRevisionService(options: {
       );
       await writeDraft(draft);
     }
-    const request = SkillRevisionRequestV3Schema.parse({
-      schemaVersion: "pragma.skill-revision-request/v3",
-      operation: "revise",
+    const requestV2 = {
+      schemaVersion: "pragma.skill-revision-request/v2" as const,
       capabilityId: legacy.request.capabilityId,
       prompt: legacy.request.prompt,
       source: legacy.request.source,
@@ -351,7 +464,7 @@ export function createSkillRevisionService(options: {
       sourceRefs: legacy.request.sourceRefs,
       replayCases: legacy.request.replayCases,
       boundaryCase: legacy.request.boundaryCase,
-    });
+    };
     const state =
       legacy.state === "completed"
         ? "completed"
@@ -362,12 +475,12 @@ export function createSkillRevisionService(options: {
             : legacy.state === "pending_review"
               ? "pending_review"
               : "needs_attention";
-    const migrated = ManagedSkillRevisionJobSchema.parse({
-      schemaVersion: "pragma.skill-revision-job/v3",
+    const migratedV2 = SkillRevisionJobV2StoredSchema.parse({
+      schemaVersion: "pragma.skill-revision-job/v2",
       id: legacy.id,
       revision: legacy.revision,
       draftId: draft.id,
-      request,
+      request: requestV2,
       state,
       evaluation: legacy.evaluation,
       supersededBy: legacy.supersededBy,
@@ -375,7 +488,14 @@ export function createSkillRevisionService(options: {
       createdAt: legacy.createdAt,
       updatedAt: legacy.updatedAt,
     });
-    await writeJob(migrated);
+    const migrated = migrateSkillRevisionJobV2ToV3(migratedV2);
+    await persistAdjacentMigration({
+      kind: "job",
+      id: legacy.id,
+      source: migratedV2,
+      migrated,
+      write: writeJob,
+    });
     await rm(migrationPath, { force: true });
     return migrated;
   };
@@ -384,20 +504,29 @@ export function createSkillRevisionService(options: {
     try {
       const raw = JSON.parse(await readFile(jobPath(id), "utf8")) as unknown;
       const current = ManagedSkillRevisionJobSchema.safeParse(raw);
-      if (current.success) return current.data;
+      if (current.success) {
+        await finishAdjacentMigration("job", id);
+        await rm(join(options.statePath, "migrations", `${id}.v1-to-v2.json`), { force: true });
+        return current.data;
+      }
       return await withFileLock(`${jobPath(id)}.migration.lock`, async () => {
         const latestRaw = JSON.parse(await readFile(jobPath(id), "utf8")) as unknown;
         const latest = ManagedSkillRevisionJobSchema.safeParse(latestRaw);
-        if (latest.success) return latest.data;
+        if (latest.success) {
+          await finishAdjacentMigration("job", id);
+          await rm(join(options.statePath, "migrations", `${id}.v1-to-v2.json`), { force: true });
+          return latest.data;
+        }
         const legacyV2 = SkillRevisionJobV2StoredSchema.safeParse(latestRaw);
         if (legacyV2.success) {
           const migrated = migrateSkillRevisionJobV2ToV3(legacyV2.data);
-          await writeJsonAtomic(
-            join(options.statePath, "migration-backups", `${legacyV2.data.id}.v2.json`),
-            legacyV2.data,
-          );
-          await writeJob(migrated);
-          return migrated;
+          return await persistAdjacentMigration({
+            kind: "job",
+            id,
+            source: legacyV2.data,
+            migrated,
+            write: writeJob,
+          });
         }
         return await migrateLegacyJob(SkillRevisionJobSchema.parse(latestRaw));
       });
@@ -1156,6 +1285,10 @@ async function readJsonNames(path: string): Promise<string[]> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+function jsonHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function coded(code: string): Error & { code: string } {

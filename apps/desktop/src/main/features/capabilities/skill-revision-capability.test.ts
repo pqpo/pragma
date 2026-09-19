@@ -70,6 +70,62 @@ describe("Skill revision management capability", () => {
     );
   });
 
+  it("reuses the reserved Skill id when a creation invocation is replayed", async () => {
+    const draftId = "10000000-0000-4000-8000-000000000003";
+    const start = vi.fn(async (request) => ({
+      id: "20000000-0000-4000-8000-000000000003",
+      draftId,
+      state: "editing" as const,
+      request,
+    }));
+    const revisions = {
+      start,
+      inspectDraft: vi.fn(async () => ({
+        draft: {
+          schemaVersion: "pragma.skill-revision-draft/v2",
+          operation: "create",
+          id: draftId,
+          revision: 1,
+          capabilityId: start.mock.calls[0]![0].capabilityId,
+          name: "created-skill",
+          resourceDescription: "Created through review.",
+          baseRevision: 0,
+          baseContentHash: "a".repeat(64),
+          state: "editing",
+          createdAt: "2026-09-19T00:00:00.000Z",
+          updatedAt: "2026-09-19T00:00:00.000Z",
+        },
+        draftPath: "/tmp/draft",
+        workingTree: { hash: "a".repeat(64), entries: [], totalBytes: 0 },
+        currentRevision: 0,
+        currentContentHash: "a".repeat(64),
+        stale: false,
+        changes: [],
+      })),
+    } as unknown as SkillRevisionService;
+    const port = createDesktopSkillRevisionSubmissionPort({
+      capabilities: { list: vi.fn(async () => []) } as unknown as CapabilityStore,
+      revisions,
+    });
+    const input = {
+      executionId: "30000000-0000-4000-8000-000000000001",
+      invocationId: "40000000-0000-4000-8000-000000000001",
+      expertId: "0000000000sk1rev",
+      operationId: "50000000-0000-4000-8000-000000000001",
+      create: { name: "created-skill", description: "Created through review." },
+      prompt: "Create a Skill.",
+    };
+
+    const first = await port.start(input);
+    const replay = await port.start(input);
+
+    expect(replay.creation?.resourceId).toBe(first.creation?.resourceId);
+    expect(start.mock.calls[1]![0]).toMatchObject({
+      capabilityId: first.creation?.resourceId,
+      sourceDigest: start.mock.calls[0]![0].sourceDigest,
+    });
+  });
+
   it("rejects a targetRef that does not match the continued draft", async () => {
     const draftId = "10000000-0000-4000-8000-000000000002";
     const firstId = "60000000-0000-4000-8000-000000000001";

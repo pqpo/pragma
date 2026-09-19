@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import {
   KnowledgeRevisionToolError,
@@ -15,6 +15,7 @@ import {
 } from "@pragma/built-in-agents";
 
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
+import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import type { SkillRevisionService } from "./skill-revision-service.ts";
 
@@ -176,7 +177,7 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
       }
       const capabilityId =
         input.create !== undefined
-          ? randomUUID()
+          ? reservedRevisionResourceId("skill", input)
           : (continuedDraft?.capabilityId ?? target!.capabilityId);
       const operation: "create" | "revise" =
         input.create !== undefined || continuedDraft?.operation === "create" ? "create" : "revise";

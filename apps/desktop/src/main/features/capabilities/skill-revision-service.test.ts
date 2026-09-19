@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -204,58 +204,173 @@ describe("Skill revision service", () => {
     await fixture.service.processPending();
   });
 
-  it("migrates persisted revision jobs and drafts to creation-aware schemas", async () => {
+  it("migrates frozen historical job and draft fixtures to creation-aware schemas", async () => {
     const fixture = await createService();
-    const missionId = randomUUID();
-    const currentJob = await fixture.service.start(request("expert-reflection"), { missionId });
-    const currentDraft = await fixture.service.getDraft(currentJob.draftId);
-    const { operation: _jobOperation, ...currentRequest } = currentJob.request;
-    const {
-      operation: _draftOperation,
-      resourceDescription: _description,
-      ...draftV1
-    } = currentDraft;
-    void _jobOperation;
-    void _draftOperation;
-    void _description;
-
+    const historicalJob = await historicalFixture("skill-revision-job-v2.json");
+    const historicalDraft = await historicalFixture("skill-revision-draft-v1.json");
+    const jobId = String(historicalJob["id"]);
+    const draftId = String(historicalDraft["id"]);
+    await mkdir(join(fixture.statePath, "jobs"), { recursive: true });
+    await mkdir(join(fixture.draftsPath, draftId), { recursive: true });
     await writeFile(
-      join(fixture.statePath, "jobs", `${currentJob.id}.json`),
-      `${JSON.stringify({
-        ...currentJob,
-        schemaVersion: "pragma.skill-revision-job/v2",
-        request: {
-          ...currentRequest,
-          schemaVersion: "pragma.skill-revision-request/v2",
-        },
-      })}\n`,
+      join(fixture.statePath, "jobs", `${jobId}.json`),
+      `${JSON.stringify(historicalJob)}\n`,
     );
     await writeFile(
-      join(fixture.draftsPath, currentDraft.id, "draft.json"),
-      `${JSON.stringify({
-        ...draftV1,
-        schemaVersion: "pragma.skill-revision-draft/v1",
-      })}\n`,
+      join(fixture.draftsPath, draftId, "draft.json"),
+      `${JSON.stringify(historicalDraft)}\n`,
     );
 
-    await expect(fixture.service.get(currentJob.id)).resolves.toMatchObject({
+    await expect(fixture.service.get(jobId)).resolves.toMatchObject({
       schemaVersion: "pragma.skill-revision-job/v3",
-      revision: currentJob.revision + 1,
+      revision: 4,
       request: { schemaVersion: "pragma.skill-revision-request/v3", operation: "revise" },
     });
-    await expect(fixture.service.getDraft(currentDraft.id)).resolves.toMatchObject({
+    await expect(fixture.service.getDraft(draftId)).resolves.toMatchObject({
       schemaVersion: "pragma.skill-revision-draft/v2",
       operation: "revise",
     });
     await expect(
-      readFile(join(fixture.statePath, "migration-backups", `${currentJob.id}.v2.json`), "utf8"),
+      readFile(join(fixture.statePath, "migration-backups", `${jobId}.v2.json`), "utf8"),
     ).resolves.toContain("pragma.skill-revision-job/v2");
     await expect(
-      readFile(
-        join(fixture.statePath, "migration-backups", `draft-${currentDraft.id}.v1.json`),
-        "utf8",
-      ),
+      readFile(join(fixture.statePath, "migration-backups", `draft-${draftId}.v1.json`), "utf8"),
     ).resolves.toContain("pragma.skill-revision-draft/v1");
+  });
+
+  it("reads current revision records without running a migration", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const jobPath = join(fixture.statePath, "jobs", `${job.id}.json`);
+    const draftPath = join(fixture.draftsPath, job.draftId, "draft.json");
+    const beforeJob = await readFile(jobPath, "utf8");
+    const beforeDraft = await readFile(draftPath, "utf8");
+
+    await fixture.service.get(job.id);
+    await fixture.service.getDraft(job.draftId);
+
+    await expect(readFile(jobPath, "utf8")).resolves.toBe(beforeJob);
+    await expect(readFile(draftPath, "utf8")).resolves.toBe(beforeDraft);
+    await expect(
+      readFile(join(fixture.statePath, "migration-backups", `${job.id}.v2.json`), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("replays completed adjacent-migration journals after atomic replacement", async () => {
+    const fixture = await createService();
+    const historicalJob = await historicalFixture("skill-revision-job-v2.json");
+    const historicalDraft = await historicalFixture("skill-revision-draft-v1.json");
+    const jobId = String(historicalJob["id"]);
+    const draftId = String(historicalDraft["id"]);
+    const jobPath = join(fixture.statePath, "jobs", `${jobId}.json`);
+    const draftPath = join(fixture.draftsPath, draftId, "draft.json");
+    await mkdir(join(fixture.statePath, "jobs"), { recursive: true });
+    await mkdir(join(fixture.draftsPath, draftId), { recursive: true });
+    await writeFile(jobPath, `${JSON.stringify(historicalJob)}\n`);
+    await writeFile(draftPath, `${JSON.stringify(historicalDraft)}\n`);
+    await fixture.service.get(jobId);
+    await fixture.service.getDraft(draftId);
+
+    const jobBackupPath = join(fixture.statePath, "migration-backups", `${jobId}.v2.json`);
+    const draftBackupPath = join(
+      fixture.statePath,
+      "migration-backups",
+      `draft-${draftId}.v1.json`,
+    );
+    const jobJournalPath = join(
+      fixture.statePath,
+      "migration-journals",
+      `job-${jobId}.v2-to-v3.json`,
+    );
+    const draftJournalPath = join(
+      fixture.statePath,
+      "migration-journals",
+      `draft-${draftId}.v1-to-v2.json`,
+    );
+    await mkdir(join(fixture.statePath, "migration-journals"), { recursive: true });
+    await writeFile(
+      jobJournalPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-migration/v1",
+        kind: "job",
+        recordId: jobId,
+        recordPath: jobPath,
+        backupPath: jobBackupPath,
+        sourceHash: jsonHash(JSON.parse(await readFile(jobBackupPath, "utf8"))),
+        sourceVersion: "pragma.skill-revision-job/v2",
+        targetVersion: "pragma.skill-revision-job/v3",
+      })}\n`,
+    );
+    await writeFile(
+      draftJournalPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-migration/v1",
+        kind: "draft",
+        recordId: draftId,
+        recordPath: draftPath,
+        backupPath: draftBackupPath,
+        sourceHash: jsonHash(JSON.parse(await readFile(draftBackupPath, "utf8"))),
+        sourceVersion: "pragma.skill-revision-draft/v1",
+        targetVersion: "pragma.skill-revision-draft/v2",
+      })}\n`,
+    );
+    // Cover both crash points: the Job replacement has not happened yet, while the Draft
+    // replacement completed before its journal could be removed.
+    await writeFile(jobPath, `${JSON.stringify(historicalJob)}\n`);
+
+    await expect(fixture.service.get(jobId)).resolves.toMatchObject({
+      schemaVersion: "pragma.skill-revision-job/v3",
+    });
+    await fixture.service.getDraft(draftId);
+
+    await expect(readFile(jobJournalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(draftJournalPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("chains a frozen v1 job through the managed v2 record into v3", async () => {
+    const fixture = await createService();
+    const historicalJob = await historicalFixture("skill-revision-job-v1.json");
+    const jobId = String(historicalJob["id"]);
+    await mkdir(join(fixture.statePath, "jobs"), { recursive: true });
+    await writeFile(
+      join(fixture.statePath, "jobs", `${jobId}.json`),
+      `${JSON.stringify(historicalJob)}\n`,
+    );
+
+    const migrated = await fixture.service.get(jobId);
+
+    expect(migrated).toMatchObject({
+      schemaVersion: "pragma.skill-revision-job/v3",
+      revision: 3,
+      request: { schemaVersion: "pragma.skill-revision-request/v3", operation: "revise" },
+    });
+    await expect(fixture.service.getDraft(migrated.draftId)).resolves.toMatchObject({
+      schemaVersion: "pragma.skill-revision-draft/v2",
+      operation: "revise",
+    });
+    await expect(
+      readFile(join(fixture.statePath, "migration-backups", `${jobId}.v1.json`), "utf8"),
+    ).resolves.toContain("pragma.skill-revision-job/v1");
+    await expect(
+      readFile(join(fixture.statePath, "migration-backups", `${jobId}.v2.json`), "utf8"),
+    ).resolves.toContain("pragma.skill-revision-job/v2");
+  });
+
+  it("rejects future job and draft versions without replacing them", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const draft = await fixture.service.getDraft(job.draftId);
+    const jobPath = join(fixture.statePath, "jobs", `${job.id}.json`);
+    const draftPath = join(fixture.draftsPath, draft.id, "draft.json");
+    const futureJob = { ...job, schemaVersion: "pragma.skill-revision-job/v4" };
+    const futureDraft = { ...draft, schemaVersion: "pragma.skill-revision-draft/v3" };
+    await writeFile(jobPath, `${JSON.stringify(futureJob)}\n`);
+    await writeFile(draftPath, `${JSON.stringify(futureDraft)}\n`);
+
+    await expect(fixture.service.get(job.id)).rejects.toThrow();
+    await expect(fixture.service.getDraft(draft.id)).rejects.toThrow();
+    await expect(readFile(jobPath, "utf8")).resolves.toContain("pragma.skill-revision-job/v4");
+    await expect(readFile(draftPath, "utf8")).resolves.toContain("pragma.skill-revision-draft/v3");
   });
 
   it("recovers an interrupted publication during startup processing", async () => {
@@ -422,4 +537,15 @@ function passingEvaluation() {
     })),
     evaluatedAt: "2026-09-08T00:00:00.000Z",
   };
+}
+
+async function historicalFixture(name: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await readFile(join(import.meta.dirname, "fixtures", name), "utf8")) as Record<
+    string,
+    unknown
+  >;
+}
+
+function jsonHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }

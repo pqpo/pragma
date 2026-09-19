@@ -2,6 +2,10 @@ export { SkillRevisionDraftV1Schema } from "./schemas/draft-v1.ts";
 export { SkillRevisionJobV2StoredSchema } from "./schemas/job-v2.ts";
 export { migrateSkillRevisionDraftV1ToV2 } from "./steps/draft-v1-to-v2.ts";
 export { migrateSkillRevisionJobV2ToV3 } from "./steps/job-v2-to-v3.ts";
+export {
+  SkillRevisionMigrationJournalSchema,
+  type SkillRevisionMigrationJournal,
+} from "./journal.ts";
 
 export const SKILL_REVISION_STORAGE_MIGRATIONS = Object.freeze({
   draft: Object.freeze([

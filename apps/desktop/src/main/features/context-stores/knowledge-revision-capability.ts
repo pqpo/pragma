@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import {
   KnowledgeRevisionDraftFileSchema,
@@ -32,6 +32,7 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import { ContextStoreStoreError, type ContextStoreStore } from "./context-store-store.ts";
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
+import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
 
 export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   readonly project: PragmaProjectStore;
@@ -249,7 +250,9 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
         );
       }
       const storeId =
-        input.create !== undefined ? randomUUID() : (continuedDraft?.storeId ?? selected!.storeId);
+        input.create !== undefined
+          ? reservedRevisionResourceId("context-store", input)
+          : (continuedDraft?.storeId ?? selected!.storeId);
       const operation: "create" | "revise" =
         input.create !== undefined || continuedDraft?.operation === "create" ? "create" : "revise";
       const creation =
