@@ -53,7 +53,10 @@ import type {
 } from "./capability-credential-store.ts";
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
-import { scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
+import {
+  copySkillTree,
+  scanSkillWorkingTree,
+} from "./skill-revision-draft-store.ts";
 
 const MAX_SKILL_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_FILES = 1000;
@@ -1063,7 +1066,7 @@ export function createCapabilityStore(options: {
       );
       const payloadPath = join(stagedRoot, "payload");
       try {
-        await importSkillPayload(input.sourcePath, payloadPath);
+        await copySkillTree(input.sourcePath, payloadPath);
         const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
         const metadata = readSkillMetadata(skillDocument);
         const contentHash = await hashDirectory(payloadPath);
@@ -1078,7 +1081,14 @@ export function createCapabilityStore(options: {
           current.manifest.latestRevision === input.baseRevision + 1 &&
           current.definition.contentHash === contentHash
         ) {
-          return current;
+          const publishedSnapshot = await scanSkillWorkingTree(
+            join(revisionPath(input.id, current.manifest.latestRevision), "payload"),
+          );
+          if (publishedSnapshot.hash === input.candidateContentHash) return current;
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            "The published Skill revision has different file metadata from this candidate.",
+          );
         }
         if (
           current.manifest.latestRevision !== input.baseRevision ||

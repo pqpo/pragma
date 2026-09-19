@@ -505,6 +505,83 @@ export function createSkillRevisionService(options: {
     }
   };
 
+  const completePublication = async (
+    job: ManagedSkillRevisionJob,
+    draft: SkillRevisionDraft,
+  ): Promise<ManagedSkillRevisionJob> => {
+    if (
+      draft.submissionHash === undefined ||
+      job.evaluation?.passed !== true ||
+      job.evaluation.subjectHash !== draft.submissionHash
+    ) {
+      throw coded("skill_revision_approval_invalid");
+    }
+    try {
+      const published = await options.capabilities.publishSkillRevisionCandidate({
+        id: draft.capabilityId,
+        baseRevision: draft.baseRevision,
+        baseContentHash: draft.baseContentHash,
+        sourcePath: join(submissionsPath(draft.id), draft.submissionHash),
+        candidateContentHash: draft.submissionHash,
+      });
+      const currentDraft = await readDraft(draft.id);
+      if (currentDraft.state !== "completed") {
+        await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
+          state: "completed",
+          error: undefined,
+        }));
+      }
+      const currentJob = await readJob(job.id);
+      if (currentJob.state === "completed") return currentJob;
+      return await mutateJob(currentJob.id, currentJob.revision, () => ({
+        state: "completed",
+        publishedRevision: published.manifest.latestRevision,
+        error: undefined,
+      }));
+    } catch (error) {
+      const failure = { code: errorCode(error), message: errorMessage(error) };
+      const currentDraft = await readDraft(draft.id);
+      if (currentDraft.state === "publishing") {
+        await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
+          state: "needs_attention",
+          error: failure,
+        }));
+      }
+      const currentJob = await readJob(job.id);
+      if (currentJob.state === "publishing" || currentJob.state === "pending_review") {
+        await mutateJob(currentJob.id, currentJob.revision, () => ({
+          state: "needs_attention",
+          error: failure,
+        }));
+      }
+      throw error;
+    }
+  };
+
+  const nextInterruptedPublication = async (
+    jobs: readonly ManagedSkillRevisionJob[],
+  ): Promise<
+    { readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft } | undefined
+  > => {
+    for (const job of jobs) {
+      if (job.state !== "publishing" && job.state !== "pending_review") continue;
+      let draft: SkillRevisionDraft;
+      try {
+        draft = await readDraft(job.draftId);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      if (
+        draft.state === "publishing" ||
+        (job.state === "publishing" && draft.state === "completed")
+      ) {
+        return { job, draft };
+      }
+    }
+    return undefined;
+  };
+
   const service: SkillRevisionService = {
     async submit(rawRequest) {
       const legacy = SkillRevisionRequestSchema.parse(rawRequest);
@@ -535,8 +612,8 @@ export function createSkillRevisionService(options: {
           revision: draft.baseRevision,
           contentHash: draft.baseContentHash,
         });
-        const next = applySkillChangeSet(base, changeSet);
-        await writeGeneratedPackageToTree(next, worktreePath(draft.id));
+        applySkillChangeSet(base, changeSet);
+        await applyLegacyChangeSetToTree(worktreePath(draft.id), changeSet);
         const inspection = await service.inspectDraft(draft.id);
         return await service.submitDraft({
           draftId: draft.id,
@@ -637,6 +714,7 @@ export function createSkillRevisionService(options: {
       return (await readAllJobs())
         .filter(
           (job) =>
+            job.error?.code !== "draft_discarded" &&
             (filter.capabilityId === undefined ||
               job.request.capabilityId === filter.capabilityId) &&
             (filter.state === undefined || job.state === filter.state),
@@ -763,35 +841,7 @@ export function createSkillRevisionService(options: {
         state: "publishing",
       }));
       const publishingJob = await mutateJob(job.id, job.revision, () => ({ state: "publishing" }));
-      try {
-        const published = await options.capabilities.publishSkillRevisionCandidate({
-          id: draft.capabilityId,
-          baseRevision: draft.baseRevision,
-          baseContentHash: draft.baseContentHash,
-          sourcePath: join(submissionsPath(draft.id), draft.submissionHash),
-          candidateContentHash: draft.submissionHash,
-        });
-        await mutateDraft(publishingDraft.id, publishingDraft.revision, () => ({
-          state: "completed",
-          error: undefined,
-        }));
-        return await mutateJob(publishingJob.id, publishingJob.revision, () => ({
-          state: "completed",
-          publishedRevision: published.manifest.latestRevision,
-          error: undefined,
-        }));
-      } catch (error) {
-        const failure = { code: errorCode(error), message: errorMessage(error) };
-        await mutateDraft(publishingDraft.id, publishingDraft.revision, () => ({
-          state: "needs_attention",
-          error: failure,
-        }));
-        await mutateJob(publishingJob.id, publishingJob.revision, () => ({
-          state: "needs_attention",
-          error: failure,
-        }));
-        throw error;
-      }
+      return await completePublication(publishingJob, publishingDraft);
     },
     async reject(id, revision) {
       const job = await readJob(id);
@@ -837,12 +887,11 @@ export function createSkillRevisionService(options: {
         for (const job of (await readAllJobs()).filter(
           (candidate) => candidate.draftId === draft.id,
         )) {
-          if (!["completed", "rejected"].includes(job.state)) {
-            await mutateJob(job.id, job.revision, () => ({
-              state: "rejected",
-              error: { code: "draft_discarded", message: "The Skill draft was discarded." },
-            }));
-          }
+          if (job.state === "completed") throw coded("skill_revision_state_invalid");
+          await mutateJob(job.id, job.revision, () => ({
+            state: "rejected",
+            error: { code: "draft_discarded", message: "The Skill draft was discarded." },
+          }));
         }
         await mkdir(discardJournalsPath, { recursive: true, mode: 0o700 });
         await mkdir(draftsTrashPath, { recursive: true, mode: 0o700 });
@@ -878,14 +927,21 @@ export function createSkillRevisionService(options: {
       processing = (async () => {
         do {
           processingRequested = false;
-          const next = (await readAllJobs())
+          const jobs = await readAllJobs();
+          const next = jobs
             .filter((job) => job.state === "evaluating")
             .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
-          if (next !== undefined) await processEvaluation(next);
-        } while (
-          processingRequested ||
-          (await readAllJobs()).some((job) => job.state === "evaluating")
-        );
+          if (next !== undefined) {
+            await processEvaluation(next);
+            processingRequested = true;
+            continue;
+          }
+          const interrupted = await nextInterruptedPublication(jobs);
+          if (interrupted !== undefined) {
+            await completePublication(interrupted.job, interrupted.draft);
+            processingRequested = true;
+          }
+        } while (processingRequested);
       })();
       try {
         await processing;
@@ -952,14 +1008,6 @@ async function readEvaluationPackage(
     description: metadata.description ?? capability.definition.description,
     files,
   });
-}
-
-async function writeGeneratedPackageToTree(skill: SkillPackage, root: string): Promise<void> {
-  for (const file of skill.files) {
-    const path = join(root, ...file.path.split("/"));
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, file.content, { mode: 0o600 });
-  }
 }
 
 async function applyLegacyChangeSetToTree(

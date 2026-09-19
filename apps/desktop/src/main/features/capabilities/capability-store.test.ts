@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import type { CapabilityCredentialStore } from "./capability-credential-store.ts
 import { createCapabilityVerifier } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
 import { createCapabilityStore, type CapabilityRevisionPublishInput } from "./capability-store.ts";
+import { scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
 
 const directories: string[] = [];
 
@@ -406,6 +407,54 @@ describe("capability store", () => {
     await expect(
       store.getSkillFile({ id: original.manifest.id, revision: 2, path: "assets/raw.bin" }),
     ).resolves.toMatchObject({ content: null, size: 2 });
+  });
+
+  it("preserves executable bits when publishing an immutable Skill candidate", async () => {
+    const { directory, store } = await createStore();
+    const originalSource = join(directory, "original-executable-skill");
+    const candidateSource = join(directory, "candidate-executable-skill");
+    await mkdir(originalSource);
+    await mkdir(join(candidateSource, "scripts"), { recursive: true });
+    const skillDocument =
+      "---\nname: executable-skill\ndescription: Executable Skill.\n---\n\nRun checks.\n";
+    await writeFile(join(originalSource, "SKILL.md"), skillDocument);
+    await writeFile(join(candidateSource, "SKILL.md"), skillDocument);
+    await writeFile(join(candidateSource, "scripts", "verify.mjs"), "process.exit(0);\n");
+    await chmod(join(candidateSource, "scripts", "verify.mjs"), 0o755);
+
+    const original = await store.importSkill({ sourcePath: originalSource });
+    if (original.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    const snapshot = await scanSkillWorkingTree(candidateSource);
+    const published = await store.publishSkillRevisionCandidate({
+      id: original.manifest.id,
+      baseRevision: original.manifest.latestRevision,
+      baseContentHash: original.definition.contentHash,
+      sourcePath: candidateSource,
+      candidateContentHash: snapshot.hash,
+    });
+    const replayed = await store.publishSkillRevisionCandidate({
+      id: original.manifest.id,
+      baseRevision: original.manifest.latestRevision,
+      baseContentHash: original.definition.contentHash,
+      sourcePath: candidateSource,
+      candidateContentHash: snapshot.hash,
+    });
+
+    expect(published.manifest.latestRevision).toBe(2);
+    expect(replayed.manifest.latestRevision).toBe(2);
+    const executable = await stat(
+      join(
+        directory,
+        "capabilities",
+        original.manifest.id,
+        "revisions",
+        "000002",
+        "payload",
+        "scripts",
+        "verify.mjs",
+      ),
+    );
+    expect(executable.mode & 0o111).not.toBe(0);
   });
 
   it("reports corrupted or missing Skill package files with capability errors", async () => {
