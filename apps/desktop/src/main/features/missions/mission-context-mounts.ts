@@ -6,15 +6,22 @@ export function missionContextMountsFingerprint(mission: Mission): string {
     .update(
       JSON.stringify(
         mission.contextMounts
-          .map((mount) =>
-            mount.kind === "context-store"
-              ? { kind: mount.kind, storeId: mount.storeId }
-              : {
-                  kind: mount.kind,
-                  draftId: mount.draftId,
-                  revisionJobId: mount.revisionJobId ?? null,
-                },
-          )
+          .map((mount) => {
+            if (mount.kind === "context-store") return { kind: mount.kind, storeId: mount.storeId };
+            if (mount.kind === "skill-revision-draft") {
+              return {
+                kind: mount.kind,
+                draftId: mount.draftId,
+                revisionJobId: mount.revisionJobId,
+                capabilityId: mount.capabilityId,
+              };
+            }
+            return {
+              kind: mount.kind,
+              draftId: mount.draftId,
+              revisionJobId: mount.revisionJobId ?? null,
+            };
+          })
           .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
       ),
     )

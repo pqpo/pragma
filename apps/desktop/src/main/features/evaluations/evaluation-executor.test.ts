@@ -108,7 +108,7 @@ function missionHarness(completeImmediately: boolean): {
       const now = new Date().toISOString();
       const mission = {
         ...input,
-        schemaVersion: "pragma.mission/v10",
+        schemaVersion: "pragma.mission/v11",
         id,
         title: input.title ?? input.goal,
         initialMessageId: `20000000-0000-4000-8000-00000000000${created.length}`,

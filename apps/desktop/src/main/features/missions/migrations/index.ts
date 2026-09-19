@@ -5,6 +5,7 @@ export { MissionV6Schema } from "./schemas/v6.ts";
 export { MissionV7Schema } from "./schemas/v7.ts";
 export { MissionV8Schema } from "./schemas/v8.ts";
 export { MissionV9Schema } from "./schemas/v9.ts";
+export { MissionV10Schema } from "./schemas/v10.ts";
 export { missionV3ToV4Step } from "./steps/v3-to-v4.ts";
 export { missionV4ToV5Step } from "./steps/v4-to-v5.ts";
 export { missionV5ToV6Step } from "./steps/v5-to-v6.ts";
@@ -12,6 +13,7 @@ export { missionV6ToV7Step } from "./steps/v6-to-v7.ts";
 export { missionV7ToV8Step } from "./steps/v7-to-v8.ts";
 export { missionV8ToV9Step } from "./steps/v8-to-v9.ts";
 export { missionV9ToV10Step } from "./steps/v9-to-v10.ts";
+export { missionV10ToV11Step } from "./steps/v10-to-v11.ts";
 
 import { missionV3ToV4Step } from "./steps/v3-to-v4.ts";
 import { missionV4ToV5Step } from "./steps/v4-to-v5.ts";
@@ -20,6 +22,7 @@ import { missionV6ToV7Step } from "./steps/v6-to-v7.ts";
 import { missionV7ToV8Step } from "./steps/v7-to-v8.ts";
 import { missionV8ToV9Step } from "./steps/v8-to-v9.ts";
 import { missionV9ToV10Step } from "./steps/v9-to-v10.ts";
+import { missionV10ToV11Step } from "./steps/v10-to-v11.ts";
 
 export const MISSION_STORAGE_MIGRATIONS = [
   missionV3ToV4Step,
@@ -29,4 +32,5 @@ export const MISSION_STORAGE_MIGRATIONS = [
   missionV7ToV8Step,
   missionV8ToV9Step,
   missionV9ToV10Step,
+  missionV10ToV11Step,
 ] as const;

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BUILT_IN_AGENT_REFS,
   BUILT_IN_PRAGMA_REF,
+  SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
 } from "@pragma/built-in-agents";
 
@@ -52,7 +53,7 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("exposes Store Revision while keeping the other managed identities internal", async () => {
+  it("exposes Store and Skill Revision while keeping the other managed identities internal", async () => {
     const registry = createDesktopSystemExpertRegistry();
     expect(registry.get(STORE_REVISION_EXPERT_REF)).toMatchObject({
       ref: STORE_REVISION_EXPERT_REF,
@@ -63,11 +64,23 @@ describe("DesktopSystemExpertRegistry", () => {
       ref: STORE_REVISION_EXPERT_REF,
       kind: "expert",
     });
+    expect(registry.get(SKILL_REVISION_EXPERT_REF)).toMatchObject({
+      ref: SKILL_REVISION_EXPERT_REF,
+      name: "Skill Revision Agent",
+      avatarId: "pragma.avatar.expert.07",
+    });
+    expect(registry.getExecutor(SKILL_REVISION_EXPERT_REF)).toMatchObject({
+      ref: SKILL_REVISION_EXPERT_REF,
+      kind: "expert",
+    });
     const managedRefs = BUILT_IN_AGENT_REFS.filter(
-      (ref) => ref !== BUILT_IN_PRAGMA_REF && ref !== STORE_REVISION_EXPERT_REF,
+      (ref) =>
+        ref !== BUILT_IN_PRAGMA_REF &&
+        ref !== STORE_REVISION_EXPERT_REF &&
+        ref !== SKILL_REVISION_EXPERT_REF,
     );
 
-    expect(managedRefs).toHaveLength(4);
+    expect(managedRefs).toHaveLength(3);
     for (const ref of managedRefs) {
       expect(registry.isReservedRef(ref)).toBe(true);
       expect(registry.isReservedId(ref.slice("expert:".length))).toBe(true);
@@ -246,11 +259,73 @@ describe("DesktopSystemExpertRegistry", () => {
       customized: true,
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       customizations: [{ ref: BUILT_IN_PRAGMA_REF }],
     });
     await expect(readFile(`${configPath}.v3.backup.json`, "utf8")).resolves.toContain(
       "expert:pragma@1.0.0",
+    );
+  });
+
+  it("migrates a real v5 customization without losing model or knowledge mounts", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v5-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    await writeFile(
+      configPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 5,
+          customizations: [
+            {
+              avatarId: "pragma.avatar.expert.default",
+              name: "Pragma",
+              description:
+                "The app's built-in general-purpose Agent for everyday work and expert orchestration.",
+              tags: ["builtin", "pragma", "default-agent"],
+              model: {
+                runtimeId: "pi",
+                providerId: "ad0aa84a-2057-4074-b138-408099ecac0a",
+                modelId: "deepseek-v4-flash",
+              },
+              capabilities: [],
+              toolApprovals: {},
+              plugins: [],
+              contextStoreMounts: [
+                {
+                  storeId: "26980318-cc35-4a16-95ae-fd8806492c4a",
+                  enabled: true,
+                  priority: 0,
+                },
+              ],
+              additionalInstructions: "",
+              ref: BUILT_IN_PRAGMA_REF,
+              revision: 7,
+              updatedAt: "2026-08-14T15:17:13.045Z",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+
+    expect(registry.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
+      revision: 7,
+      executionProfile: {
+        mode: "pinned",
+        model: { runtimeId: "pi", modelId: "deepseek-v4-flash" },
+      },
+      contextStoreMounts: [
+        { storeId: "26980318-cc35-4a16-95ae-fd8806492c4a", enabled: true, priority: 0 },
+      ],
+    });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 6 });
+    await expect(readFile(`${configPath}.v5.backup.json`, "utf8")).resolves.toContain(
+      "deepseek-v4-flash",
     );
   });
 

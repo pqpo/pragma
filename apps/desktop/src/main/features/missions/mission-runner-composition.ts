@@ -566,6 +566,7 @@ export function createMissionRunner(options: {
                 mutationApproval: "none" as const,
               };
             }
+            if (mount.kind === "skill-revision-draft") return undefined;
             if (options.contextStoreRevisions === undefined) {
               throw new Error(`Mission Knowledge Draft is unavailable: ${mount.draftId}`);
             }
@@ -3000,7 +3001,8 @@ export function createMissionRunner(options: {
         ? undefined
         : await executionStore.get(latestMission.execution.id).catch(() => undefined);
     const persistedTerminalStatus =
-      persistedExecution !== undefined && isMissionTerminalExecutionStatus(persistedExecution.status)
+      persistedExecution !== undefined &&
+      isMissionTerminalExecutionStatus(persistedExecution.status)
         ? persistedExecution.status === "interrupted"
           ? ("cancelled" as const)
           : persistedExecution.status
@@ -5812,9 +5814,7 @@ function ensureTerminalExecutionResultEntry(
       id: `result:${execution.executionId}`,
       executionId: execution.executionId,
       invocationId: execution.rootInvocationId,
-      ...(presentation?.executorId === undefined
-        ? {}
-        : { executorId: presentation.executorId }),
+      ...(presentation?.executorId === undefined ? {} : { executorId: presentation.executorId }),
       ...(presentation?.executorName === undefined
         ? {}
         : { executorName: presentation.executorName }),
@@ -6445,11 +6445,7 @@ export function consumeLiveChatOutput(
             : { type: "entry.upsert", entry: { ...current } },
         );
       }
-    } else if (
-      item.delta === undefined &&
-      existingForRun !== undefined &&
-      !startsNewSegment
-    ) {
+    } else if (item.delta === undefined && existingForRun !== undefined && !startsNewSegment) {
       if (current !== undefined) {
         current.streaming = false;
         if (finalAnswer) current.finalAnswer = true;
@@ -6685,22 +6681,21 @@ function hasCompletedMessageForRun(
 function assistantMessageStartsNewSegment(
   entries: readonly MissionChatEntry[],
   previous: Extract<MissionChatEntry, { readonly kind: "assistant" }>,
-  item: Pick<
-    ExecutionOutputItem,
-    "executionId" | "invocationId" | "runId" | "occurredAt"
-  >,
+  item: Pick<ExecutionOutputItem, "executionId" | "invocationId" | "runId" | "occurredAt">,
   content: string,
 ): boolean {
   if (content !== "" && content !== previous.content) return true;
   const previousIndex = entries.findIndex((entry) => entry.id === previous.id);
   if (previousIndex < 0) return false;
-  return entries.slice(previousIndex + 1).some(
-    (entry) =>
-      entry.kind === "tool" &&
-      entry.executionId === item.executionId &&
-      entry.invocationId === item.invocationId &&
-      entry.createdAt <= item.occurredAt,
-  );
+  return entries
+    .slice(previousIndex + 1)
+    .some(
+      (entry) =>
+        entry.kind === "tool" &&
+        entry.executionId === item.executionId &&
+        entry.invocationId === item.invocationId &&
+        entry.createdAt <= item.occurredAt,
+    );
 }
 
 function findAssistantEntryForRun(

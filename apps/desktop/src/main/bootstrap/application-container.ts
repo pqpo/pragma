@@ -53,6 +53,7 @@ import { createCapabilityCredentialStore } from "../features/capabilities/capabi
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
+import { createDesktopSkillRevisionSubmissionPort } from "../features/capabilities/skill-revision-capability.ts";
 import {
   createDesktopSkillAgents,
   createSkillEvaluationProfileStore,
@@ -678,10 +679,6 @@ export async function createDesktopApplicationContainer(
     revisions: storeRevisions,
     additionalMountResources: systemExpertKnowledgeRevisionMountResources,
   });
-  installCapabilityHandlers(capabilityStore, options.getWindow, () => ({
-    ...pragmaManagementPortsRef.current,
-    knowledgeRevisions: pragmaManagementKnowledgeRevisions,
-  }));
   const skillAgentsRef: { current?: DesktopSkillAgents } = {};
   const skillEvaluationProfiles = createSkillEvaluationProfileStore(
     join(pragmaPaths.stateRoot(), "skill-evaluation", "profile.json"),
@@ -704,12 +701,28 @@ export async function createDesktopApplicationContainer(
   };
   const skillRevisions = createSkillRevisionService({
     statePath: join(pragmaPaths.stateRoot(), "skill-revisions"),
+    draftsPath: join(pragmaPaths.dataRoot(), "skill-revision-drafts"),
+    draftsTrashPath: join(pragmaPaths.trashRoot(), "skill-revision-drafts"),
     capabilities: capabilityStore,
     generator: skillRevisionGenerator,
     evaluator: skillRevisionEvaluator,
     warn: (message, error) =>
       mainLogger.warn("desktop.skill_revision_processing_failed", message, { error }),
   });
+  const pragmaManagementSkillRevisions = createDesktopSkillRevisionSubmissionPort({
+    capabilities: capabilityStore,
+    revisions: skillRevisions,
+  });
+  installCapabilityHandlers(
+    capabilityStore,
+    options.getWindow,
+    () => ({
+      ...pragmaManagementPortsRef.current,
+      knowledgeRevisions: pragmaManagementKnowledgeRevisions,
+      skillRevisions: pragmaManagementSkillRevisions,
+    }),
+    skillRevisions,
+  );
   const knowledgePromotion = createMemoryKnowledgePromotionService({
     statePath: join(pragmaPaths.stateRoot(), "memory-knowledge-promotion"),
     contextStores,
@@ -1083,13 +1096,66 @@ export async function createDesktopApplicationContainer(
         });
       }
       if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
-        if (
-          skillAgentsRef.current === undefined ||
-          mission.origin.type !== "system-skill-revision"
-        ) {
-          throw new Error("The Skill Revision Agent mission is invalid or unavailable.");
+        if (skillAgentsRef.current === undefined) {
+          throw new Error("The Skill Revision Agent is unavailable.");
         }
-        return await skillAgentsRef.current.compile({ kind: "revision", runtimes: scopedRuntimes });
+        const definition = systemExperts.get(SKILL_REVISION_EXPERT_REF);
+        if (definition === undefined)
+          throw new Error("The Skill Revision Agent definition is missing.");
+        const skillRevisionPort = createDesktopSkillRevisionSubmissionPort({
+          capabilities: capabilityStore,
+          revisions: skillRevisions,
+          inlineMissionId: mission.id,
+          mountDraft: async (input) => {
+            await missionStore.mountSkillRevisionDraft({
+              id: input.missionId,
+              draftId: input.draftId,
+              revisionJobId: input.jobId,
+              capabilityId: input.capabilityId,
+            });
+          },
+          unmountDraft: async (input) => {
+            const current = await missionStore.get(input.missionId);
+            await missionStore.updateContextMounts(
+              input.missionId,
+              current.contextMounts.filter(
+                (mount) => mount.kind !== "skill-revision-draft" || mount.draftId !== input.draftId,
+              ),
+            );
+          },
+        });
+        const mountedDraft = mission.contextMounts.find(
+          (mount) => mount.kind === "skill-revision-draft",
+        );
+        const skillRevisionWorkspace =
+          mountedDraft === undefined
+            ? mission.workspace.path
+            : (await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id)).draftPath;
+        if (mountedDraft !== undefined && skillRevisionWorkspace === undefined) {
+          throw Object.assign(
+            new Error("The mounted Skill draft is not writable by this Mission."),
+            { code: "skill_revision_runtime_file_tools_unavailable" },
+          );
+        }
+        const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
+        const additionalResources = systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
+        return await skillAgentsRef.current.compile({
+          kind: "revision",
+          runtimes: scopedRuntimes,
+          adapterHost: createDesktopAdapterHost(
+            {
+              capabilityStore,
+              capabilityCredentials,
+              capabilitiesPath,
+              mcpToolRegistryPool,
+              contextStores,
+              pragmaManagement: { skillRevisions: skillRevisionPort },
+            },
+            skillRevisionWorkspace ?? mission.workspace.path,
+          ),
+          ...(expertResource === undefined ? {} : { expertResource }),
+          ...(additionalResources === undefined ? {} : { additionalResources }),
+        });
       }
       if (mission.executor.ref === SKILL_EVALUATION_EXPERT_REF) {
         if (
@@ -1296,6 +1362,7 @@ export async function createDesktopApplicationContainer(
   pragmaManagementPortsRef.current = {
     project: pragmaAgentProject,
     missions: pragmaAgentMissions,
+    skillRevisions: pragmaManagementSkillRevisions,
     automations: createDesktopPragmaAgentAutomationPort({
       service: automationService,
       project: pragmaProjectStore,

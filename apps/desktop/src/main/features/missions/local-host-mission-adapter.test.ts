@@ -25,7 +25,7 @@ function mission(input: {
   readonly flowInput?: Record<string, unknown>;
 }) {
   return MissionSchema.parse({
-    schemaVersion: "pragma.mission/v10",
+    schemaVersion: "pragma.mission/v11",
     id: "00000000-0000-4000-8000-000000000901",
     title: "M9 adapter test",
     goal: "Run through the Local Host port.",

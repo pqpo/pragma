@@ -1,4 +1,9 @@
 import { ipcRenderer } from "electron";
+import { z } from "zod";
+import {
+  ManagedSkillRevisionJobSchema,
+  SkillRevisionDraftSchema,
+} from "@pragma/built-in-agents/contracts";
 
 import {
   CapabilityActionSchema,
@@ -88,6 +93,18 @@ export const capabilitiesApi = {
     ),
   pickSkillSource: async () =>
     PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("capabilities:pick-skill")),
+  listSkillRevisionJobs: async (capabilityId) =>
+    z
+      .array(z.object({ job: ManagedSkillRevisionJobSchema, draft: SkillRevisionDraftSchema }))
+      .parse(await ipcRenderer.invoke("capabilities:list-skill-revisions", capabilityId)),
+  approveSkillRevision: async (input) =>
+    ManagedSkillRevisionJobSchema.parse(
+      await ipcRenderer.invoke("capabilities:approve-skill-revision", input),
+    ),
+  rejectSkillRevision: async (input) =>
+    ManagedSkillRevisionJobSchema.parse(
+      await ipcRenderer.invoke("capabilities:reject-skill-revision", input),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listCapabilities"
@@ -104,4 +121,7 @@ export const capabilitiesApi = {
   | "previewCodeService"
   | "deleteCapability"
   | "pickSkillSource"
+  | "listSkillRevisionJobs"
+  | "approveSkillRevision"
+  | "rejectSkillRevision"
 >;

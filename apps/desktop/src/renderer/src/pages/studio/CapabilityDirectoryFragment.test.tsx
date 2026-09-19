@@ -7,6 +7,7 @@ import {
   capabilityEditMode,
   capabilityDeleteErrorMessage,
   codeDraftFromDefinition,
+  directCapabilityCreateMode,
   fieldsToObjectSchema,
   formatCommandArguments,
   httpDraftFromDefinition,
@@ -195,6 +196,7 @@ describe("capability row actions", () => {
   it("presents the overflow button as a menu trigger instead of a delete action", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment
+        kind="skills"
         capabilities={[capability]}
         onOpen={() => undefined}
         onChanged={() => undefined}
@@ -210,6 +212,7 @@ describe("capability row actions", () => {
   it("lists system capabilities as built-in without mutation actions", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment
+        kind="skills"
         capabilities={[{ ...capability, managedBy: "system" }]}
         onOpen={() => undefined}
         onChanged={() => undefined}
@@ -229,6 +232,11 @@ describe("capability row actions", () => {
     expect(capabilityEditMode("mcp_server")).toBe("mcp");
     expect(capabilityEditMode("http_service")).toBe("http");
     expect(capabilityEditMode("code_service")).toBe("code");
+  });
+
+  it("opens the Skill drawer directly while Connectors keep their type menu", () => {
+    expect(directCapabilityCreateMode("skills")).toBe("skill");
+    expect(directCapabilityCreateMode("connectors")).toBeNull();
   });
 
   it("maps referenced and unknown delete failures to friendly copy", () => {

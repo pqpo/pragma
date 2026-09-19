@@ -1,7 +1,6 @@
 import {
   Archive,
   CaretDown,
-  CloudArrowUp,
   Code,
   DotsThree,
   Globe,
@@ -37,8 +36,12 @@ import {
 export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
 import { desktopApi } from "./studio-model.ts";
 
-type Filter = "all" | "skills" | "tools";
+type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
+
+export function directCapabilityCreateMode(kind: "connectors" | "skills"): CapabilityMode | null {
+  return kind === "skills" ? "skill" : null;
+}
 
 export function capabilityEditMode(kind: CapabilityDefinition["kind"]): CapabilityMode {
   switch (kind) {
@@ -120,13 +123,19 @@ const emptyCode = {
 };
 
 export function CapabilityDirectoryFragment(props: {
+  readonly kind: "connectors" | "skills";
   readonly capabilities: readonly Capability[];
   readonly onOpen: (capability: Capability) => void;
+  readonly onOpenRevisions?: (() => void) | undefined;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>(() => {
+    if (typeof window === "undefined") return "mcp";
+    const stored = window.localStorage.getItem("pragma.studio.connector-filter");
+    return stored === "http" || stored === "function" ? stored : "mcp";
+  });
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<CapabilityMode | null>(null);
   const [editingCapability, setEditingCapability] = useState<Capability | null>(null);
@@ -137,11 +146,17 @@ export function CapabilityDirectoryFragment(props: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
-  const matching = props.capabilities.filter((capability) => {
+  const catalog = props.capabilities.filter((capability) =>
+    props.kind === "skills"
+      ? capability.definition.kind === "skill"
+      : capability.definition.kind !== "skill",
+  );
+  const matching = catalog.filter((capability) => {
     const typeMatches =
-      filter === "all" ||
-      (filter === "skills" && capability.definition.kind === "skill") ||
-      (filter === "tools" && capability.definition.kind !== "skill");
+      props.kind === "skills" ||
+      (filter === "mcp" && capability.definition.kind === "mcp_server") ||
+      (filter === "http" && capability.definition.kind === "http_service") ||
+      (filter === "function" && capability.definition.kind === "code_service");
     const searchable = [
       capability.manifest.name,
       capability.manifest.id,
@@ -411,63 +426,76 @@ export function CapabilityDirectoryFragment(props: {
       header={
         <header className="studio-heading capability-heading">
           <div>
-            <h1 id="capabilities-heading">{t("capabilities")}</h1>
-            <p>{t("capabilitiesDescription")}</p>
+            <h1 id="capabilities-heading">{t(props.kind)}</h1>
+            <p>{t(props.kind === "skills" ? "skillsDescription" : "connectorsDescription")}</p>
           </div>
           <div className="studio-create-wrap">
-            <button className="primary-button" type="button" onClick={() => setMenuOpen(!menuOpen)}>
-              <Plus size={17} /> {t("addCapability")} <CaretDown size={14} />
+            {props.kind === "skills" && props.onOpenRevisions !== undefined ? (
+              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+                <Archive size={17} /> {t("skillRevisions")}
+              </button>
+            ) : null}
+            <button
+              className="primary-button"
+              type="button"
+              aria-haspopup={props.kind === "connectors" ? "menu" : undefined}
+              aria-expanded={props.kind === "connectors" ? menuOpen : undefined}
+              onClick={() => {
+                const directMode = directCapabilityCreateMode(props.kind);
+                if (directMode !== null) {
+                  openCreateDrawer(directMode);
+                  return;
+                }
+                setMenuOpen(!menuOpen);
+              }}
+            >
+              <Plus size={17} /> {t("addCapability")}
+              {props.kind === "connectors" ? <CaretDown size={14} /> : null}
             </button>
-            {menuOpen ? (
+            {props.kind === "connectors" && menuOpen ? (
               <div className="studio-create-menu capability-create-menu">
-                <button
-                  type="button"
-                  onClick={() => {
-                    openCreateDrawer("skill");
-                  }}
-                >
-                  <CloudArrowUp size={19} />
-                  <span>
-                    <strong>{t("uploadSkill")}</strong>
-                    <small>{t("uploadSkillDescription")}</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    openCreateDrawer("mcp");
-                  }}
-                >
-                  <Plug size={19} />
-                  <span>
-                    <strong>{t("connectMcp")}</strong>
-                    <small>{t("connectMcpDescription")}</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    openCreateDrawer("http");
-                  }}
-                >
-                  <Globe size={19} />
-                  <span>
-                    <strong>{t("addHttp")}</strong>
-                    <small>{t("addHttpDescription")}</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    openCreateDrawer("code");
-                  }}
-                >
-                  <Code size={19} />
-                  <span>
-                    <strong>{t("addCode")}</strong>
-                    <small>{t("addCodeDescription")}</small>
-                  </span>
-                </button>
+                {props.kind === "connectors" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openCreateDrawer("mcp");
+                    }}
+                  >
+                    <Plug size={19} />
+                    <span>
+                      <strong>{t("connectMcp")}</strong>
+                      <small>{t("connectMcpDescription")}</small>
+                    </span>
+                  </button>
+                ) : null}
+                {props.kind === "connectors" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openCreateDrawer("http");
+                    }}
+                  >
+                    <Globe size={19} />
+                    <span>
+                      <strong>{t("addHttp")}</strong>
+                      <small>{t("addHttpDescription")}</small>
+                    </span>
+                  </button>
+                ) : null}
+                {props.kind === "connectors" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openCreateDrawer("code");
+                    }}
+                  >
+                    <Code size={19} />
+                    <span>
+                      <strong>{t("addCode")}</strong>
+                      <small>{t("addCodeDescription")}</small>
+                    </span>
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -485,20 +513,25 @@ export function CapabilityDirectoryFragment(props: {
             placeholder={t("searchCapabilities")}
           />
         </label>
-        <div className="capability-filters" aria-label={t("capabilityType")}>
-          {(["all", "skills", "tools"] as const).map((value) => (
-            <button
-              key={value}
-              className={filter === value ? "is-active" : ""}
-              type="button"
-              onClick={() => setFilter(value)}
-            >
-              {t(value)}
-            </button>
-          ))}
-        </div>
+        {props.kind === "connectors" ? (
+          <div className="capability-filters" aria-label={t("capabilityType")}>
+            {(["mcp", "http", "function"] as const).map((value) => (
+              <button
+                key={value}
+                className={filter === value ? "is-active" : ""}
+                type="button"
+                onClick={() => {
+                  setFilter(value);
+                  window.localStorage.setItem("pragma.studio.connector-filter", value);
+                }}
+              >
+                {t(value)}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <span className="capability-results-count">
-          {t("showingMatching", { visible: matching.length, total: props.capabilities.length })}
+          {t("showingMatching", { visible: matching.length, total: catalog.length })}
         </span>
       </div>
 
@@ -521,9 +554,7 @@ export function CapabilityDirectoryFragment(props: {
         ))}
         {matching.length === 0 ? (
           <p className="capability-empty">
-            {normalizedQuery.length > 0 || filter !== "all"
-              ? t("noMatchesFound")
-              : t("noCapabilities")}
+            {normalizedQuery.length > 0 ? t("noMatchesFound") : t("noCapabilities")}
           </p>
         ) : null}
       </div>

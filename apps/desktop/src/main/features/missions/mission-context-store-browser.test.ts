@@ -44,7 +44,7 @@ const team: PragmaExpertTeamResource = {
 };
 
 const mission = MissionSchema.parse({
-  schemaVersion: "pragma.mission/v10",
+  schemaVersion: "pragma.mission/v11",
   id: "00000000-0000-4000-8000-000000000000",
   title: "Editorial mission",
   goal: "Write and review",

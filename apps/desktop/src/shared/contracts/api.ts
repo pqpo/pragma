@@ -1,4 +1,8 @@
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
+import type {
+  ManagedSkillRevisionJob,
+  SkillRevisionDraft,
+} from "@pragma/built-in-agents/contracts";
 import type { DesktopRendererLog } from "./logging.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
@@ -615,6 +619,17 @@ export interface PragmaDesktopAPI {
   previewCodeService: (input: PreviewCodeServiceRequest) => Promise<PreviewCodeServiceResult>;
   deleteCapability: (id: string) => Promise<CapabilityDeleteResult>;
   pickSkillSource: () => Promise<PickWorkspaceResult>;
+  listSkillRevisionJobs: (
+    capabilityId?: string,
+  ) => Promise<{ readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft }[]>;
+  approveSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<ManagedSkillRevisionJob>;
+  rejectSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<ManagedSkillRevisionJob>;
   getRuntimeAvailability: (
     options?: GetDesktopRuntimeAvailabilityOptions,
   ) => Promise<DesktopRuntimeAvailability[]>;

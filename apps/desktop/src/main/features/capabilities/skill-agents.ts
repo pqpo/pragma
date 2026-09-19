@@ -10,7 +10,13 @@ import {
   compileBuiltInAgent,
   createBuiltInSkillAgents,
 } from "@pragma/built-in-agents";
-import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
+import type {
+  CompiledResource,
+  InvocableResource,
+  PragmaCompileOptions,
+  PragmaExpertResource,
+  PragmaResource,
+} from "@pragma/interpreter";
 import type { SkillPackage } from "@pragma/shared";
 import { z } from "zod";
 
@@ -90,6 +96,9 @@ export interface DesktopSkillAgents {
   compile(input: {
     readonly kind: "revision" | "evaluation";
     readonly runtimes?: RuntimeResolver;
+    readonly adapterHost?: PragmaCompileOptions["adapterHost"];
+    readonly expertResource?: PragmaExpertResource;
+    readonly additionalResources?: readonly PragmaResource[];
   }): Promise<CompiledResource<InvocableResource>>;
   fingerprint(kind: "revision" | "evaluation"): Promise<string>;
   recoverOrphans(): Promise<number>;
@@ -260,6 +269,11 @@ export function createDesktopSkillAgents(options: {
           ? {}
           : { defaultModelSelection: runtime.modelSelection }),
         loggerProvider: options.loggerProvider,
+        ...(input.adapterHost === undefined ? {} : { adapterHost: input.adapterHost }),
+        ...(input.expertResource === undefined ? {} : { expertResource: input.expertResource }),
+        ...(input.additionalResources === undefined
+          ? {}
+          : { additionalResources: input.additionalResources }),
       });
     },
     async fingerprint(kind) {

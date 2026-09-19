@@ -11,7 +11,7 @@ const executionId = "44444444-4444-4444-8444-444444444444";
 
 function mission() {
   return MissionSchema.parse({
-    schemaVersion: "pragma.mission/v10",
+    schemaVersion: "pragma.mission/v11",
     id: missionId,
     title: "Projection",
     goal: "Project a follow-up turn",

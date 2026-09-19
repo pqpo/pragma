@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from "electron";
 import { basename } from "node:path";
 
 import type { PragmaManagementToolPorts } from "@pragma/built-in-agents";
+import { z } from "zod";
 
 import {
   CapabilityActionSchema,
@@ -25,11 +26,13 @@ import {
   listCapabilitiesWithBuiltIns,
   testBuiltInCapability,
 } from "./built-in-capabilities.ts";
+import type { SkillRevisionService } from "./skill-revision-service.ts";
 
 export function installCapabilityHandlers(
   store: CapabilityStore,
   windowGetter: () => BrowserWindow | null,
   builtInManagementPorts: () => PragmaManagementToolPorts,
+  skillRevisions: SkillRevisionService,
 ): void {
   ipcMain.handle("capabilities:list", () => listCapabilitiesWithBuiltIns(store));
   ipcMain.handle("capabilities:get", (_event, id: unknown, revision: unknown) => {
@@ -119,6 +122,24 @@ export function installCapabilityHandlers(
         error: error instanceof Error ? error.message : "The Skill source could not be selected.",
       };
     }
+  });
+  ipcMain.handle("capabilities:list-skill-revisions", async (_event, capabilityId: unknown) => {
+    const id = capabilityId === undefined ? undefined : CapabilityIdSchema.parse(capabilityId);
+    const jobs = await skillRevisions.list(id === undefined ? {} : { capabilityId: id });
+    return await Promise.all(
+      jobs.map(async (job) => ({ job, draft: await skillRevisions.getDraft(job.draftId) })),
+    );
+  });
+  const actionSchema = z
+    .object({ jobId: z.string().uuid(), expectedRevision: z.number().int().positive() })
+    .strict();
+  ipcMain.handle("capabilities:approve-skill-revision", (_event, input: unknown) => {
+    const parsed = actionSchema.parse(input);
+    return skillRevisions.approve(parsed.jobId, parsed.expectedRevision);
+  });
+  ipcMain.handle("capabilities:reject-skill-revision", (_event, input: unknown) => {
+    const parsed = actionSchema.parse(input);
+    return skillRevisions.reject(parsed.jobId, parsed.expectedRevision);
   });
 }
 

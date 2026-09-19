@@ -1,5 +1,5 @@
-import { MissionSchema } from "../../../../../shared/contracts/missions.ts";
 import { MissionV9Schema } from "../schemas/v9.ts";
+import { MissionV10Schema } from "../schemas/v10.ts";
 
 export const missionV9ToV10Step = {
   from: "pragma.mission/v9",
@@ -7,7 +7,7 @@ export const missionV9ToV10Step = {
   migrate(input: unknown) {
     const legacy = MissionV9Schema.parse(input);
     const { contextStoreIds, ...rest } = legacy;
-    return MissionSchema.parse({
+    return MissionV10Schema.parse({
       ...rest,
       schemaVersion: "pragma.mission/v10",
       contextMounts: contextStoreIds.map((storeId) => ({

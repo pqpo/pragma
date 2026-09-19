@@ -50,6 +50,7 @@ import {
   MissionV7Schema,
   MissionV8Schema,
   MissionV9Schema,
+  MissionV10Schema,
   missionV3ToV4Step,
   missionV4ToV5Step,
   missionV5ToV6Step,
@@ -57,6 +58,7 @@ import {
   missionV7ToV8Step,
   missionV8ToV9Step,
   missionV9ToV10Step,
+  missionV10ToV11Step,
 } from "./migrations/index.ts";
 import {
   MissionExecutionProjectionError,
@@ -128,6 +130,12 @@ export interface MissionStore {
     readonly storeId: string;
     readonly draftId: string;
     readonly revisionJobId: string;
+  }): Promise<Mission>;
+  mountSkillRevisionDraft(input: {
+    readonly id: string;
+    readonly draftId: string;
+    readonly revisionJobId: string;
+    readonly capabilityId: string;
   }): Promise<Mission>;
   restoreManagedRevisionStore(input: {
     readonly id: string;
@@ -220,6 +228,12 @@ const MissionV9MigrationTransactionSchema = z.object({
 const MissionV10MigrationTransactionSchema = z.object({
   schemaVersion: z.literal("pragma.mission-v10-migration/v1"),
   missionId: MissionIdSchema,
+  target: MissionV10Schema,
+});
+
+const MissionV11MigrationTransactionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission-v11-migration/v1"),
+  missionId: MissionIdSchema,
   target: MissionSchema,
 });
 
@@ -294,6 +308,10 @@ export function createMissionStore(options: {
     join(missionPath(id), ".v9-to-v10.transaction.json");
   const v9BackupPath = (id: string) =>
     join(missionPath(id), "migration-backups", "mission.v9.yaml");
+  const v11MigrationTransactionPath = (id: string) =>
+    join(missionPath(id), ".v10-to-v11.transaction.json");
+  const v10BackupPath = (id: string) =>
+    join(missionPath(id), "migration-backups", "mission.v10.yaml");
   const branchHistoryPath = (id: string) => join(missionPath(id), "branch", "history.json");
   const projections = createMissionProjectionStorage(missionPath);
   const lockPath = (id: string) =>
@@ -564,7 +582,9 @@ export function createMissionStore(options: {
     return target;
   };
 
-  const recoverV10Migration = async (id: string): Promise<Mission | undefined> => {
+  const recoverV10Migration = async (
+    id: string,
+  ): Promise<z.infer<typeof MissionV10Schema> | undefined> => {
     const value = await readJsonIfExists(v10MigrationTransactionPath(id));
     if (value === undefined) return undefined;
     const transaction = MissionV10MigrationTransactionSchema.parse(value);
@@ -590,7 +610,7 @@ export function createMissionStore(options: {
   const migrateV9ToV10 = async (
     id: string,
     legacy: z.infer<typeof MissionV9Schema>,
-  ): Promise<Mission> => {
+  ): Promise<z.infer<typeof MissionV10Schema>> => {
     const target = missionV9ToV10Step.migrate(legacy);
     await writeTextIfAbsent(v9BackupPath(id), formatPragmaYaml(legacy));
     await writeJsonAtomically(
@@ -605,6 +625,53 @@ export function createMissionStore(options: {
     await rm(v10MigrationTransactionPath(id), { force: true });
     return target;
   };
+
+  const recoverV11Migration = async (id: string): Promise<Mission | undefined> => {
+    const value = await readJsonIfExists(v11MigrationTransactionPath(id));
+    if (value === undefined) return undefined;
+    const transaction = MissionV11MigrationTransactionSchema.parse(value);
+    if (transaction.missionId !== id || transaction.target.id !== id) {
+      throw new MissionStoreError(
+        "config_invalid",
+        `Mission ${id} has a migration journal for a different Mission.`,
+      );
+    }
+    const persisted = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
+    const persistedVersion = readSchemaVersion(persisted);
+    if (persistedVersion !== "pragma.mission/v10" && persistedVersion !== "pragma.mission/v11") {
+      throw new MissionStoreError(
+        "unsupported_schema",
+        `Mission ${id} cannot replay its v10-to-v11 migration from ${String(persistedVersion)}.`,
+      );
+    }
+    await writeYamlAtomically(manifestPath(id), transaction.target);
+    await rm(v11MigrationTransactionPath(id), { force: true });
+    return transaction.target;
+  };
+
+  const migrateV10ToV11 = async (
+    id: string,
+    legacy: z.infer<typeof MissionV10Schema>,
+  ): Promise<Mission> => {
+    const target = missionV10ToV11Step.migrate(legacy);
+    await writeTextIfAbsent(v10BackupPath(id), formatPragmaYaml(legacy));
+    await writeJsonAtomically(
+      v11MigrationTransactionPath(id),
+      MissionV11MigrationTransactionSchema.parse({
+        schemaVersion: "pragma.mission-v11-migration/v1",
+        missionId: id,
+        target,
+      }),
+    );
+    await writeYamlAtomically(manifestPath(id), target);
+    await rm(v11MigrationTransactionPath(id), { force: true });
+    return target;
+  };
+
+  const migrateV9ToCurrent = async (
+    id: string,
+    legacy: z.infer<typeof MissionV9Schema>,
+  ): Promise<Mission> => await migrateV10ToV11(id, await migrateV9ToV10(id, legacy));
 
   const readRecords = async (
     id: string,
@@ -633,13 +700,19 @@ export function createMissionStore(options: {
 
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
+      const recoveredV11 = await recoverV11Migration(id);
+      if (recoveredV11 !== undefined) return recoveredV11;
       const recoveredV10 = await recoverV10Migration(id);
-      if (recoveredV10 !== undefined) return recoveredV10;
+      if (recoveredV10 !== undefined) return await migrateV10ToV11(id, recoveredV10);
       const recoveredV9 = await recoverV9Migration(id);
-      if (recoveredV9 !== undefined) return await migrateV9ToV10(id, recoveredV9);
+      if (recoveredV9 !== undefined)
+        return await migrateV10ToV11(id, await migrateV9ToV10(id, recoveredV9));
       const recoveredV8 = await recoverV8Migration(id);
       if (recoveredV8 !== undefined)
-        return await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8));
+        return await migrateV10ToV11(
+          id,
+          await migrateV9ToV10(id, await migrateV8ToV9(id, recoveredV8)),
+        );
       const recoveredV7 = await recoverV7Migration(id);
       const recoveredEarly = await recoverEarlyMigration(id);
       const value =
@@ -674,7 +747,7 @@ export function createMissionStore(options: {
           source: current,
           target: missionV5ToV6Step.migrate(current),
         });
-        return await migrateV9ToV10(
+        return await migrateV9ToCurrent(
           id,
           await migrateV8ToV9(
             id,
@@ -684,24 +757,30 @@ export function createMissionStore(options: {
       }
       if (versionAfterRefMigration === "pragma.mission/v6") {
         const legacy = MissionV6Schema.parse(current);
-        return await migrateV9ToV10(
+        return await migrateV9ToCurrent(
           id,
           await migrateV8ToV9(id, await migrateV7ToV8(id, await migrateV6ToV7(id, legacy))),
         );
       }
       if (versionAfterRefMigration === "pragma.mission/v7") {
-        return await migrateV9ToV10(
+        return await migrateV9ToCurrent(
           id,
           await migrateV8ToV9(id, await migrateV7ToV8(id, MissionV7Schema.parse(current))),
         );
       }
       if (versionAfterRefMigration === "pragma.mission/v8") {
-        return await migrateV9ToV10(id, await migrateV8ToV9(id, MissionV8Schema.parse(current)));
+        return await migrateV9ToCurrent(
+          id,
+          await migrateV8ToV9(id, MissionV8Schema.parse(current)),
+        );
       }
       if (versionAfterRefMigration === "pragma.mission/v9") {
-        return await migrateV9ToV10(id, MissionV9Schema.parse(current));
+        return await migrateV9ToCurrent(id, MissionV9Schema.parse(current));
       }
-      if (versionAfterRefMigration !== "pragma.mission/v10") {
+      if (versionAfterRefMigration === "pragma.mission/v10") {
+        return await migrateV10ToV11(id, MissionV10Schema.parse(current));
+      }
+      if (versionAfterRefMigration !== "pragma.mission/v11") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses a schema this Pragma version cannot read safely. Update Pragma or use compatible recovery tooling. The Mission data was preserved.`,
@@ -1104,7 +1183,7 @@ export function createMissionStore(options: {
           createdAt: timestamp,
         };
         const mission = MissionSchema.parse({
-          schemaVersion: "pragma.mission/v10",
+          schemaVersion: "pragma.mission/v11",
           id,
           title: normalizeBranchTitle(source.title),
           goal: source.goal,
@@ -1229,7 +1308,7 @@ export function createMissionStore(options: {
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v10",
+        schemaVersion: "pragma.mission/v11",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
@@ -1391,6 +1470,36 @@ export function createMissionStore(options: {
               },
             }
           : updated;
+      });
+    },
+    async mountSkillRevisionDraft(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const mount = {
+          kind: "skill-revision-draft" as const,
+          draftId: input.draftId,
+          revisionJobId: input.revisionJobId,
+          capabilityId: input.capabilityId,
+        };
+        if (
+          current.contextMounts.some(
+            (candidate) =>
+              candidate.kind === mount.kind &&
+              candidate.draftId === mount.draftId &&
+              candidate.revisionJobId === mount.revisionJobId,
+          )
+        )
+          return current;
+        return {
+          ...current,
+          contextMounts: [
+            ...current.contextMounts.filter(
+              (candidate) =>
+                candidate.kind !== "skill-revision-draft" || candidate.draftId !== input.draftId,
+            ),
+            mount,
+          ],
+          updatedAt: timestamp,
+        };
       });
     },
     async restoreManagedRevisionStore(input) {
