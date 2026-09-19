@@ -69,7 +69,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const first = await source.contextStores.getSnapshot(sourceStore.id);
     await source.contextStores.applyChangeSet(
       {
-        schemaVersion: "pragma.context-store-change-set/v1",
+        schemaVersion: "pragma.context-store-change-set/v2",
+        operation: "revise" as const,
         storeId: sourceStore.id,
         baseRevision: first.revision,
         baseSnapshotHash: first.snapshotHash,

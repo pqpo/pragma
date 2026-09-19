@@ -48,7 +48,8 @@ async function fixture(
         await options.beforeGenerate?.(request.prompt);
         if (request.prompt === options.failPrompt) throw new Error("Runtime failed");
         return {
-          schemaVersion: "pragma.context-store-change-set/v1" as const,
+          schemaVersion: "pragma.context-store-change-set/v2" as const,
+          operation: "revise" as const,
           storeId: request.storeId,
           baseRevision: snapshot.revision,
           baseSnapshotHash: snapshot.snapshotHash,
@@ -76,6 +77,119 @@ async function fixture(
 }
 
 describe("context store sparse draft revisions", () => {
+  it("publishes an approved creation draft as formal revision 1", async () => {
+    const { service, contextStores } = await fixture();
+    const reservedId = "90000000-0000-4000-8000-000000000001";
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "create",
+      storeId: reservedId,
+      resourceName: "Created by Agent",
+      resourceDescription: "A reviewed knowledge base.",
+      prompt: "Create the knowledge base.",
+      source: "user",
+    });
+    await expect(contextStores.list()).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: reservedId })]),
+    );
+    const draftStore = (await service.resolveDraft(job.draftId)).store;
+    for (const [id, trigger] of [
+      ["guide.md", "always_on"],
+      ["overview.md", "always_on"],
+      ["index.md", "model_decision"],
+      ["items/fact.md", "model_decision"],
+    ] as const) {
+      const added = await draftStore.addContext({
+        id,
+        content: `# ${id}\n`,
+        metadata: { trigger, priority: "normal" },
+      });
+      expect(added.ok).toBe(true);
+    }
+    const draft = await service.getDraft(job.draftId);
+    await service.submitDraft(draft.id, draft.revision, "Create reviewed knowledge.");
+    const pending = await service.get(job.id);
+    const completed = await service.approve(pending.id, pending.revision);
+
+    expect(completed.state).toBe("merged");
+    await expect(contextStores.getSnapshot(reservedId)).resolves.toMatchObject({
+      revision: 1,
+      files: expect.arrayContaining([expect.objectContaining({ id: "guide.md" })]),
+    });
+    await expect(contextStores.history(reservedId)).resolves.toEqual([
+      expect.objectContaining({ revision: 1, parentRevision: null, revisionJobId: job.id }),
+    ]);
+  });
+
+  it("moves a creation to needs_attention when its reserved id is occupied", async () => {
+    const { service, contextStores } = await fixture();
+    const reservedId = "90000000-0000-4000-8000-000000000004";
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "create",
+      storeId: reservedId,
+      resourceName: "Conflicting creation",
+      resourceDescription: "Must not overwrite another resource.",
+      prompt: "Create the knowledge base.",
+      source: "user",
+    });
+    const draftStore = (await service.resolveDraft(job.draftId)).store;
+    for (const [id, trigger] of [
+      ["guide.md", "always_on"],
+      ["overview.md", "always_on"],
+      ["index.md", "model_decision"],
+      ["items/fact.md", "model_decision"],
+    ] as const) {
+      await draftStore.addContext({
+        id,
+        content: `# ${id}\n`,
+        metadata: { trigger, priority: "normal" },
+      });
+    }
+    const draft = await service.getDraft(job.draftId);
+    await service.submitDraft(draft.id, draft.revision, "Create reviewed knowledge.");
+    await contextStores.createFromSnapshot({
+      id: reservedId,
+      name: "Occupied",
+      description: "Existing content.",
+      files: [],
+      author: "user",
+      summary: "Occupy the reserved id.",
+    });
+    const pending = await service.get(job.id);
+
+    await expect(service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "needs_attention",
+      error: { code: "knowledge_creation_id_conflict" },
+    });
+    await expect(service.getDraft(job.draftId)).resolves.toMatchObject({
+      state: "needs_attention",
+    });
+  });
+
+  it("rejects an incomplete knowledge-base creation draft", async () => {
+    const { service } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "create",
+      storeId: "90000000-0000-4000-8000-000000000002",
+      resourceName: "Incomplete",
+      resourceDescription: "Missing required files.",
+      prompt: "Create an incomplete knowledge base.",
+      source: "user",
+    });
+    const draftStore = (await service.resolveDraft(job.draftId)).store;
+    await draftStore.addContext({
+      id: "items/only.md",
+      content: "# Only\n",
+      metadata: { trigger: "model_decision", priority: "normal" },
+    });
+    const draft = await service.getDraft(job.draftId);
+    await expect(
+      service.submitDraft(draft.id, draft.revision, "Incomplete."),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+  });
+
   it.each(["merged", "discarded", "failed", "orphaned"] as const)(
     "starts another revision after a %s historical job",
     async (history) => {
@@ -84,7 +198,8 @@ describe("context store sparse draft revisions", () => {
         failPrompt: "Fail",
       });
       const request = {
-        schemaVersion: "pragma.context-store-revision-request/v1" as const,
+        schemaVersion: "pragma.context-store-revision-request/v2" as const,
+        operation: "revise" as const,
         storeId: store.id,
         prompt: "Record a fact",
         source: "expert-reflection" as const,
@@ -127,7 +242,8 @@ describe("context store sparse draft revisions", () => {
       beforeGenerate: async (prompt) => {
         if (prompt !== "First") return;
         await service.start({
-          schemaVersion: "pragma.context-store-revision-request/v1",
+          schemaVersion: "pragma.context-store-revision-request/v2",
+          operation: "revise" as const,
           storeId: store.id,
           prompt: "Second",
           source: "user",
@@ -136,7 +252,8 @@ describe("context store sparse draft revisions", () => {
       },
     });
     await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "First",
       source: "user",
@@ -161,7 +278,8 @@ describe("context store sparse draft revisions", () => {
     serviceRef.current = fixtureResult.service;
     const activeService = serviceRef.current;
     const job = await activeService.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: fixtureResult.store.id,
       prompt: "Let me inspect the editable draft before submission",
       source: "user",
@@ -202,7 +320,8 @@ describe("context store sparse draft revisions", () => {
   it("deduplicates machine submissions and persists only an overlay before approval", async () => {
     const { draftsPath, contextStores, service, store } = await fixture();
     const request = {
-      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Record the reflected invariant",
       source: "memory-learning" as const,
@@ -327,7 +446,8 @@ describe("context store sparse draft revisions", () => {
     const { service, store } = await fixture();
     const job = await service.start(
       {
-        schemaVersion: "pragma.context-store-revision-request/v1",
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise" as const,
         storeId: store.id,
         prompt: "Collaborate on the draft",
         source: "user",
@@ -379,7 +499,8 @@ describe("context store sparse draft revisions", () => {
   it("makes repeated Mission attachment idempotent", async () => {
     const { service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Attach once",
       source: "user",
@@ -395,7 +516,8 @@ describe("context store sparse draft revisions", () => {
   it("releases a submitted Mission draft without changing its review state", async () => {
     const { service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Submit before detaching",
       source: "user",
@@ -419,7 +541,8 @@ describe("context store sparse draft revisions", () => {
   it("preserves an orphaned draft while releasing its missing Mission claim", async () => {
     const { service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Preserve the orphaned draft",
       source: "user",
@@ -456,7 +579,8 @@ describe("context store sparse draft revisions", () => {
       isMissionAvailable: async (candidate) => candidate !== missionId,
     });
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Keep the editable overlay after the Mission is removed",
       source: "user",
@@ -482,7 +606,8 @@ describe("context store sparse draft revisions", () => {
   it("replays an interrupted Mission-claim release", async () => {
     const { directory, service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Recover the release journal",
       source: "user",
@@ -516,7 +641,8 @@ describe("context store sparse draft revisions", () => {
   it("continues recovering valid claim releases when another release journal is malformed", async () => {
     const { directory, service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Recover despite another damaged release journal",
       source: "user",
@@ -548,7 +674,8 @@ describe("context store sparse draft revisions", () => {
     const { contextStores, directory, store, service } = await fixture();
     const missionId = "22222222-2222-4222-8222-222222222231";
     const request = {
-      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "First attempt interrupted before mount",
       source: "user" as const,
@@ -591,7 +718,8 @@ describe("context store sparse draft revisions", () => {
       },
     });
     const request = {
-      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Revise",
       source: "user" as const,
@@ -609,7 +737,8 @@ describe("context store sparse draft revisions", () => {
   it("submits the active task rather than reviving an earlier stopped task for the same draft", async () => {
     const { service, store, directory } = await fixture();
     const request = {
-      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Revise",
       source: "user" as const,
@@ -651,7 +780,8 @@ describe("context store sparse draft revisions", () => {
     );
     const missionId = "22222222-2222-4222-8222-222222222250";
     const request = {
-      schemaVersion: "pragma.context-store-revision-request/v1" as const,
+      schemaVersion: "pragma.context-store-revision-request/v2" as const,
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Continue",
       source: "user" as const,
@@ -689,7 +819,8 @@ describe("context store sparse draft revisions", () => {
       service.startForMission({
         missionId,
         request: {
-          schemaVersion: "pragma.context-store-revision-request/v1",
+          schemaVersion: "pragma.context-store-revision-request/v2",
+          operation: "revise" as const,
           storeId: store.id,
           prompt,
           source: "user",
@@ -714,7 +845,8 @@ describe("context store sparse draft revisions", () => {
         missionId,
         draftId: draft.id,
         request: {
-          schemaVersion: "pragma.context-store-revision-request/v1",
+          schemaVersion: "pragma.context-store-revision-request/v2",
+          operation: "revise" as const,
           storeId: store.id,
           prompt,
           source: "user",
@@ -741,7 +873,8 @@ describe("context store sparse draft revisions", () => {
       },
     });
     const claimed = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Keep the draft available for direct recovery",
       source: "user",
@@ -790,7 +923,8 @@ describe("context store sparse draft revisions", () => {
     });
     const { service, store } = await fixture({ onRevisionDetached });
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Recover the rejected Mission claim",
       source: "user",
@@ -815,7 +949,8 @@ describe("context store sparse draft revisions", () => {
   it("does not revive submitted or terminal revisions when attaching a Mission", async () => {
     const { service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Submit before an invalid attach",
       source: "user",
@@ -837,7 +972,8 @@ describe("context store sparse draft revisions", () => {
     const onRevisionDetached = vi.fn(async () => undefined);
     const { service, store } = await fixture({ onRevisionDetached });
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Replace an obsolete submitted draft",
       source: "user",
@@ -875,7 +1011,8 @@ describe("context store sparse draft revisions", () => {
     const onRevisionDetached = vi.fn(async () => undefined);
     const { service, store } = await fixture({ onRevisionDetached });
     const first = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "First revision attempt",
       source: "user",
@@ -889,7 +1026,8 @@ describe("context store sparse draft revisions", () => {
 
     const second = await service.start(
       {
-        schemaVersion: "pragma.context-store-revision-request/v1",
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise" as const,
         storeId: store.id,
         prompt: "Second revision attempt",
         source: "user",
@@ -920,7 +1058,8 @@ describe("context store sparse draft revisions", () => {
   it("retains merged drafts as revision history", async () => {
     const { service, store } = await fixture();
     const job = await service.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Keep merged history",
       source: "user",
@@ -1007,7 +1146,8 @@ describe("context store sparse draft revisions", () => {
   it("requires an explicit rebase after the formal store advances", async () => {
     const { service, contextStores, store } = await fixture();
     const job = await service.submit({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Add retry guidance",
       source: "user",
@@ -1047,7 +1187,8 @@ describe("context store sparse draft revisions", () => {
 
     for (const state of states) {
       const job = await service.start({
-        schemaVersion: "pragma.context-store-revision-request/v1",
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise" as const,
         storeId: store.id,
         prompt: `Delete ${state}`,
         source: "user",
@@ -1065,7 +1206,8 @@ describe("context store sparse draft revisions", () => {
     const base = await contextStores.createFile(store.id, "items/shared.md", "# Base\n");
     const job = await service.start(
       {
-        schemaVersion: "pragma.context-store-revision-request/v1",
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise" as const,
         storeId: store.id,
         prompt: "Revise shared guidance",
         source: "user",
@@ -1146,9 +1288,9 @@ describe("context store sparse draft revisions", () => {
 
     const [migrated] = await service.list();
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.context-store-revision-job/v2",
+      schemaVersion: "pragma.context-store-revision-job/v3",
       id: source.id,
-      revision: 5,
+      revision: 6,
       state: "pending_review",
       draftId: replayDraftId,
     });
@@ -1204,7 +1346,8 @@ describe("context store sparse draft revisions", () => {
     const onRevisionDetached = vi.fn(async () => undefined);
     const { directory, service, contextStores, store } = await fixture({ onRevisionDetached });
     const job = await service.submit({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Recover merge",
       source: "user",

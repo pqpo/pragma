@@ -1,18 +1,17 @@
 import {
   ContextStoreDraftOverlaySchema,
-  ContextStoreRevisionJobSchema,
   type ContextStoreDraftOverlay,
-  type ContextStoreRevisionJob,
   type ContextStoreRevisionSnapshot,
 } from "@pragma/built-in-agents/contracts";
 
 import type { ContextStoreRevisionJobV1 } from "../schemas/v1.ts";
+import { ContextStoreRevisionJobV2Schema, type ContextStoreRevisionJobV2 } from "../schemas/v2.ts";
 
 export function migrateContextStoreRevisionJobV1ToV2(
   source: ContextStoreRevisionJobV1,
   draftId: string,
-): ContextStoreRevisionJob {
-  return ContextStoreRevisionJobSchema.parse({
+): ContextStoreRevisionJobV2 {
+  return ContextStoreRevisionJobV2Schema.parse({
     schemaVersion: "pragma.context-store-revision-job/v2",
     id: source.id,
     revision: source.revision + 1,
@@ -60,7 +59,9 @@ export function overlayFromV1Job(
   });
 }
 
-function migrateState(state: ContextStoreRevisionJobV1["state"]): ContextStoreRevisionJob["state"] {
+function migrateState(
+  state: ContextStoreRevisionJobV1["state"],
+): ContextStoreRevisionJobV2["state"] {
   switch (state) {
     case "pending":
     case "running":

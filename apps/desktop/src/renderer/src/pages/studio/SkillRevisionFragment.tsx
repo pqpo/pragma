@@ -36,6 +36,7 @@ export function SkillRevisionFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly capabilityId?: string | undefined;
   readonly onCountChanged?: ((count: number) => void) | undefined;
+  readonly onPublished?: (() => Promise<void>) | undefined;
   readonly onBack: () => void;
 }) {
   const { t } = useTranslation("studio");
@@ -69,6 +70,7 @@ export function SkillRevisionFragment(props: {
       const input = { jobId: entry.job.id, expectedRevision: entry.job.revision };
       if (action === "approve") await api.approveSkillRevision(input);
       else await api.rejectSkillRevision(input);
+      if (action === "approve") await props.onPublished?.();
       await load();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -110,11 +112,16 @@ export function SkillRevisionFragment(props: {
               <article className="skill-revision-row" role="listitem" key={entry.job.id}>
                 <div className="skill-revision-main">
                   <strong>{capability?.manifest.name ?? entry.draft.name}</strong>
+                  {entry.draft.operation === "create" ? (
+                    <small>{t("newSkillRevision")}</small>
+                  ) : null}
                   <small>{entry.job.request.prompt}</small>
                 </div>
                 <div className="skill-revision-meta">
                   <span className="version-label">
-                    {t("baseRevision", { count: entry.draft.baseRevision })}
+                    {entry.draft.operation === "create"
+                      ? t("publishesAsRevisionOne")
+                      : t("baseRevision", { count: entry.draft.baseRevision })}
                   </span>
                   <span className={`capability-status is-${entry.job.state}`}>
                     {entry.job.state}

@@ -632,6 +632,9 @@ export const studio = {
     "This task has no related Mission to continue. Delete it, then go to Studio → Knowledge bases → the relevant knowledge base → Submit revision to start a new proposal.",
   filesChanged: "{{count}} files changed",
   baseRevision: "Base revision {{count}}",
+  newKnowledgeBaseRevision: "New knowledge base",
+  newSkillRevision: "New Skill",
+  publishesAsRevisionOne: "Will publish as revision 1",
   revisionOperation: {
     upsert: "Updated",
     delete: "Deleted",

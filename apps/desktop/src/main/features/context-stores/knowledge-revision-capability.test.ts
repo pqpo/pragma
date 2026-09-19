@@ -201,6 +201,83 @@ const invocation = {
 };
 
 describe("Desktop Pragma management knowledge revision tools", () => {
+  it("starts a creation without exposing a synthetic formal target", async () => {
+    const { port, start } = fixture(false);
+    const result = await port.start({
+      ...invocation,
+      create: { name: "Agent knowledge", description: "Created after review." },
+      prompt: "Create a new knowledge base.",
+    });
+
+    expect(result.target).toBeUndefined();
+    expect(result.creation).toMatchObject({
+      resourceId: expect.any(String),
+      name: "Agent knowledge",
+      description: "Created after review.",
+    });
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "create",
+        storeId: result.creation?.resourceId,
+        resourceName: "Agent knowledge",
+        resourceDescription: "Created after review.",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("rejects a targetRef that does not match the continued draft", async () => {
+    const { port, getDraft } = fixture(false);
+    getDraft.mockResolvedValue({
+      id: "00000000-0000-4000-8000-000000000301",
+      operation: "revise",
+      storeId: STORE_ID,
+    } as Awaited<ReturnType<ContextStoreRevisionService["getDraft"]>>);
+    const mismatchedResource = createDesktopContextResource({
+      owner: "project-expert",
+      storeId: UNMOUNTED_STORE_ID,
+    });
+
+    await expect(
+      port.start({
+        ...invocation,
+        targetRef: `context-store:${mismatchedResource.metadata.id}`,
+        draftId: "00000000-0000-4000-8000-000000000301",
+        prompt: "Continue the draft.",
+      }),
+    ).rejects.toMatchObject({
+      code: "revision_conflict",
+      message: "knowledge_revision_target_draft_mismatch",
+    });
+  });
+
+  it("reports a creation draft as stale when its reserved id already exists", async () => {
+    const { port, getDraft } = fixture(false);
+    const draftId = "00000000-0000-4000-8000-000000000302";
+    getDraft.mockResolvedValue({
+      schemaVersion: "pragma.context-store-draft/v2",
+      operation: "create",
+      id: draftId,
+      revision: 1,
+      name: "Creation draft",
+      storeId: "90000000-0000-4000-8000-000000000010",
+      resourceName: "Reserved knowledge",
+      resourceDescription: "Creation metadata.",
+      baseRevision: 0,
+      baseSnapshotHash: "a".repeat(64),
+      state: "editing",
+      overlay: { files: [], deletedFiles: [], directories: [], deletedDirectories: [] },
+      createdAt: "2026-09-19T00:00:00.000Z",
+      updatedAt: "2026-09-19T00:00:00.000Z",
+    });
+
+    await expect(port.getDraft({ ...invocation, draftId })).resolves.toMatchObject({
+      mode: "summary",
+      currentStoreRevision: 6,
+      stale: true,
+    });
+  });
+
   it.each(["rebase", "submitDraft", "discardDraft"] as const)(
     "rejects %s when a claimed draft has no verifiable owner",
     async (operation) => {
@@ -273,7 +350,8 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     const { port, listDrafts } = fixture();
     listDrafts.mockResolvedValue([
       {
-        schemaVersion: "pragma.context-store-draft/v1",
+        schemaVersion: "pragma.context-store-draft/v2",
+        operation: "revise" as const,
         id: "00000000-0000-4000-8000-000000000301",
         revision: 5,
         name: "Retry invariants",
@@ -306,6 +384,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
           name: "Retry invariants",
           storeId: STORE_ID,
           baseRevision: 4,
+          operation: "revise",
           state: "editing",
           createdAt: "2026-08-28T00:00:00.000Z",
           updatedAt: "2026-08-28T01:00:00.000Z",
@@ -317,7 +396,8 @@ describe("Desktop Pragma management knowledge revision tools", () => {
   it("recovers the writable namespace for a draft claimed by the current Mission", async () => {
     const { port, listDrafts, getDraft } = fixture(true);
     const draft = {
-      schemaVersion: "pragma.context-store-draft/v1" as const,
+      schemaVersion: "pragma.context-store-draft/v2" as const,
+      operation: "revise" as const,
       id: "00000000-0000-4000-8000-000000000301",
       revision: 5,
       name: "Retry invariants",
@@ -350,7 +430,8 @@ describe("Desktop Pragma management knowledge revision tools", () => {
   it("reads draft hashes by default and only one file body on demand", async () => {
     const { port, getDraft, getDraftFile } = fixture();
     getDraft.mockResolvedValue({
-      schemaVersion: "pragma.context-store-draft/v1",
+      schemaVersion: "pragma.context-store-draft/v2",
+      operation: "revise" as const,
       id: "00000000-0000-4000-8000-000000000301",
       revision: 5,
       name: "Retry invariants",

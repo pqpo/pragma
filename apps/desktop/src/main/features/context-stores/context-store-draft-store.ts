@@ -258,10 +258,14 @@ function createEffectiveStore(
   overlay: ContextStoreDraftOverlay,
 ): InMemoryContextStore {
   const draft = ContextStoreDraftSchema.parse({
-    schemaVersion: "pragma.context-store-draft/v1",
+    schemaVersion: "pragma.context-store-draft/v2",
+    operation: base.revision === 0 ? "create" : "revise",
     id: "00000000-0000-4000-8000-000000000000",
     revision: 1,
     name: "effective",
+    ...(base.revision === 0
+      ? { resourceName: "effective", resourceDescription: "Effective creation draft." }
+      : {}),
     storeId: base.storeId,
     baseRevision: base.revision,
     baseSnapshotHash: base.snapshotHash,

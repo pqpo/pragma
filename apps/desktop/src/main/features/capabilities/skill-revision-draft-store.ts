@@ -29,7 +29,18 @@ export class SkillWorkingTreeError extends Error {
   }
 }
 
-export async function scanSkillWorkingTree(root: string): Promise<SkillWorkingTreeSnapshot> {
+export function emptySkillWorkingTreeSnapshot(): SkillWorkingTreeSnapshot {
+  return {
+    hash: createHash("sha256").update(JSON.stringify([])).digest("hex"),
+    entries: [],
+    totalBytes: 0,
+  };
+}
+
+export async function scanSkillWorkingTree(
+  root: string,
+  options: { readonly allowMissingSkillDocument?: boolean } = {},
+): Promise<SkillWorkingTreeSnapshot> {
   const absoluteRoot = resolve(root);
   const entries: SkillWorkingTreeEntry[] = [];
   let totalBytes = 0;
@@ -86,7 +97,10 @@ export async function scanSkillWorkingTree(root: string): Promise<SkillWorkingTr
   };
 
   await visit(absoluteRoot);
-  if (!entries.some((entry) => entry.path === "SKILL.md")) {
+  if (
+    options.allowMissingSkillDocument !== true &&
+    !entries.some((entry) => entry.path === "SKILL.md")
+  ) {
     throw new SkillWorkingTreeError(
       "skill_revision_skill_document_missing",
       "Skill drafts require SKILL.md.",

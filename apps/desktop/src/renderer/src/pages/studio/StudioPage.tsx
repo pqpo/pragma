@@ -979,6 +979,9 @@ export function StudioPage(props: {
             stores={contextStores}
             initialStoreId={revisionStoreFilter}
             onCountChanged={setRevisionTaskCount}
+            onPublished={async () => {
+              setContextStores(await window.pragmaDesktop.listContextStores());
+            }}
             onOpenMission={props.onOpenMission}
             onBack={() => {
               setRevisionStoreFilter(undefined);
@@ -1051,7 +1054,8 @@ export function StudioPage(props: {
               const api = desktopApi();
               if (api === undefined) throw new Error("Desktop bridge is unavailable.");
               await api.submitContextStoreRevision({
-                schemaVersion: "pragma.context-store-revision-request/v1",
+                schemaVersion: "pragma.context-store-revision-request/v2",
+                operation: "revise" as const,
                 storeId: selectedContextStore.id,
                 prompt,
                 source: "user",
@@ -1123,6 +1127,9 @@ export function StudioPage(props: {
             capabilities={capabilities}
             capabilityId={selectedCapabilityId ?? undefined}
             onCountChanged={selectedCapabilityId === null ? setSkillRevisionTaskCount : undefined}
+            onPublished={async () => {
+              setCapabilities(await window.pragmaDesktop.listCapabilities());
+            }}
             onBack={() =>
               setScreen(selectedCapabilityId === null ? "directory" : "capability-detail")
             }

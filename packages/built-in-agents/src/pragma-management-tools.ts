@@ -104,14 +104,32 @@ const WritableNamespaceSchema = z
     "Writable Context namespace for this draft in the current Mission. Pass it unchanged to Expert Context tools.",
   );
 
-export const KnowledgeRevisionStartResultSchema = z.object({
-  jobId: z.string().uuid(),
-  draftId: DraftIdSchema,
-  missionId: z.string().uuid().optional(),
-  state: z.string().min(1),
-  target: KnowledgeRevisionTargetSchema,
-  writableNamespace: WritableNamespaceSchema.optional(),
-});
+export const KnowledgeRevisionStartResultSchema = z
+  .object({
+    jobId: z.string().uuid(),
+    draftId: DraftIdSchema,
+    missionId: z.string().uuid().optional(),
+    state: z.string().min(1),
+    target: KnowledgeRevisionTargetSchema.optional(),
+    creation: z
+      .object({
+        resourceId: z.string().uuid(),
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().min(1).max(2_000),
+      })
+      .strict()
+      .optional(),
+    writableNamespace: WritableNamespaceSchema.optional(),
+  })
+  .superRefine((result, context) => {
+    if ((result.target === undefined) === (result.creation === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["target"],
+        message: "A revision start result must identify either an existing target or a creation.",
+      });
+    }
+  });
 
 export type KnowledgeRevisionStartResult = z.infer<typeof KnowledgeRevisionStartResultSchema>;
 
@@ -141,6 +159,9 @@ export const KnowledgeRevisionDraftSummarySchema = z
     name: ContextStoreDraftSchema.shape.name,
     storeId: ContextStoreDraftSchema.shape.storeId,
     baseRevision: ContextStoreDraftSchema.shape.baseRevision,
+    operation: ContextStoreDraftSchema.shape.operation,
+    resourceName: ContextStoreDraftSchema.shape.resourceName,
+    resourceDescription: ContextStoreDraftSchema.shape.resourceDescription,
     state: ContextStoreDraftSchema.shape.state,
     activeMissionId: ContextStoreDraftSchema.shape.activeMissionId,
     recovery: KnowledgeRevisionDraftRecoverySchema.optional(),
@@ -171,13 +192,41 @@ export const KnowledgeRevisionDraftPageSchema = PragmaManagementPageSchema(
 );
 export const KnowledgeRevisionStartInputSchema = z
   .object({
-    targetRef: TargetRefSchema,
+    targetRef: TargetRefSchema.optional(),
+    create: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().min(1).max(2_000),
+      })
+      .strict()
+      .optional(),
     prompt: z.string().trim().min(1).max(50_000),
     draftId: DraftIdSchema.optional(),
     draftName: z.string().trim().min(1).max(120).optional(),
   })
   .strict()
   .superRefine((input, context) => {
+    if (
+      input.create !== undefined &&
+      (input.targetRef !== undefined || input.draftId !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["create"],
+        message: "Creation cannot be combined with an existing target or draft.",
+      });
+    }
+    if (
+      input.create === undefined &&
+      input.targetRef === undefined &&
+      input.draftId === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["targetRef"],
+        message: "Choose a target, create a resource, or continue a draft.",
+      });
+    }
     if (input.draftId !== undefined && input.draftName !== undefined) {
       context.addIssue({
         code: "custom",
@@ -215,7 +264,7 @@ export const KnowledgeRevisionDraftInspectionSchema = z
     draft: KnowledgeRevisionDraftSummarySchema.extend({
       baseSnapshotHash: ContextStoreDraftSchema.shape.baseSnapshotHash,
     }).strict(),
-    currentStoreRevision: z.number().int().positive(),
+    currentStoreRevision: z.number().int().nonnegative(),
     currentSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     stale: z.boolean(),
     overlay: z
@@ -283,7 +332,7 @@ export const KnowledgeRevisionDraftReceiptSchema = z
     draftId: DraftIdSchema,
     revision: z.number().int().positive(),
     state: ContextStoreDraftSchema.shape.state,
-    baseRevision: z.number().int().positive(),
+    baseRevision: z.number().int().nonnegative(),
     stale: z.boolean(),
     changedPaths: z.array(z.string().min(1).max(500)).max(1_000),
     submittedRevision: z.number().int().positive().optional(),
@@ -416,6 +465,8 @@ export const ReadySkillRevisionDraftSummarySchema = z
     capabilityId: SkillRevisionDraftSchema.shape.capabilityId,
     name: SkillRevisionDraftSchema.shape.name,
     baseRevision: SkillRevisionDraftSchema.shape.baseRevision,
+    operation: SkillRevisionDraftSchema.shape.operation,
+    resourceDescription: SkillRevisionDraftSchema.shape.resourceDescription,
     state: SkillRevisionDraftSchema.shape.state,
     missionId: z.string().uuid().optional(),
     draftPath: z.string().min(1).max(4_000).optional(),
@@ -447,13 +498,41 @@ export const SkillRevisionListDraftsInputSchema = PragmaManagementPageInputSchem
 
 export const SkillRevisionStartInputSchema = z
   .object({
-    targetRef: SkillTargetRefSchema,
+    targetRef: SkillTargetRefSchema.optional(),
+    create: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().min(1).max(500),
+      })
+      .strict()
+      .optional(),
     prompt: z.string().trim().min(1).max(50_000),
     draftId: SkillDraftIdSchema.optional(),
     draftName: z.string().trim().min(1).max(120).optional(),
   })
   .strict()
   .superRefine((input, context) => {
+    if (
+      input.create !== undefined &&
+      (input.targetRef !== undefined || input.draftId !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["create"],
+        message: "Creation cannot be combined with an existing target or draft.",
+      });
+    }
+    if (
+      input.create === undefined &&
+      input.targetRef === undefined &&
+      input.draftId === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["targetRef"],
+        message: "Choose a target, create a resource, or continue a draft.",
+      });
+    }
     if (input.draftId !== undefined && input.draftName !== undefined) {
       context.addIssue({
         code: "custom",
@@ -468,10 +547,27 @@ export const SkillRevisionStartResultSchema = z
     draftId: SkillDraftIdSchema,
     missionId: z.string().uuid().optional(),
     state: ManagedSkillRevisionJobSchema.shape.state,
-    target: ReadySkillRevisionTargetSchema,
+    target: ReadySkillRevisionTargetSchema.optional(),
+    creation: z
+      .object({
+        resourceId: z.string().uuid(),
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().min(1).max(500),
+      })
+      .strict()
+      .optional(),
     draftPath: z.string().min(1).max(4_000).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((result, context) => {
+    if ((result.target === undefined) === (result.creation === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["target"],
+        message: "A revision start result must identify either an existing target or a creation.",
+      });
+    }
+  });
 
 export const SkillRevisionGetDraftInputSchema = PragmaManagementPageInputSchema.extend({
   draftId: SkillDraftIdSchema,
@@ -489,7 +585,7 @@ export const SkillRevisionDraftInspectionSchema = z
   .object({
     draft: ReadySkillRevisionDraftSummarySchema,
     workingTreeHash: SkillWorkingTreeHashSchema,
-    currentRevision: z.number().int().positive(),
+    currentRevision: z.number().int().nonnegative(),
     currentContentHash: SkillWorkingTreeHashSchema,
     stale: z.boolean(),
     items: z.array(SkillRevisionDraftChangeSchema).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),

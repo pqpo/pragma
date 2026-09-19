@@ -87,12 +87,13 @@ describe("ContextStoreRevisionFragment", () => {
   it("shows one removal action when a revision task still has an unmerged draft", async () => {
     await i18n.changeLanguage("zh-Hans");
     const job = {
-      schemaVersion: "pragma.context-store-revision-job/v2",
+      schemaVersion: "pragma.context-store-revision-job/v3",
       id: "10000000-0000-4000-8000-000000000004",
       revision: 3,
       draftId: "20000000-0000-4000-8000-000000000004",
       request: {
-        schemaVersion: "pragma.context-store-revision-request/v1",
+        schemaVersion: "pragma.context-store-revision-request/v2",
+        operation: "revise" as const,
         storeId: "00000000-0000-4000-8000-000000000004",
         prompt: "等待审批的修订",
         source: "user",
@@ -102,7 +103,8 @@ describe("ContextStoreRevisionFragment", () => {
       updatedAt: "2026-08-05T07:29:00.000Z",
     } as const;
     const draft = {
-      schemaVersion: "pragma.context-store-draft/v1" as const,
+      schemaVersion: "pragma.context-store-draft/v2" as const,
+      operation: "revise" as const,
       id: job.draftId,
       revision: 2,
       name: "等待审批的修订",
@@ -142,12 +144,13 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v2",
+          schemaVersion: "pragma.context-store-revision-job/v3",
           id: "10000000-0000-4000-8000-000000000001",
           revision: 3,
           draftId: "20000000-0000-4000-8000-000000000001",
           request: {
-            schemaVersion: "pragma.context-store-revision-request/v1",
+            schemaVersion: "pragma.context-store-revision-request/v2",
+            operation: "revise" as const,
             storeId: "00000000-0000-4000-8000-000000000001",
             prompt: "补充审批流程",
             source: "user",
@@ -157,7 +160,8 @@ describe("ContextStoreRevisionFragment", () => {
           updatedAt: "2026-08-05T07:29:00.000Z",
         }}
         draft={{
-          schemaVersion: "pragma.context-store-draft/v1",
+          schemaVersion: "pragma.context-store-draft/v2",
+          operation: "revise" as const,
           id: "20000000-0000-4000-8000-000000000001",
           revision: 2,
           name: "审批流程修订",
@@ -210,13 +214,14 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v2",
+          schemaVersion: "pragma.context-store-revision-job/v3",
           id: "10000000-0000-4000-8000-000000000002",
           revision: 4,
           draftId: "20000000-0000-4000-8000-000000000002",
           missionId: "30000000-0000-4000-8000-000000000002",
           request: {
-            schemaVersion: "pragma.context-store-revision-request/v1",
+            schemaVersion: "pragma.context-store-revision-request/v2",
+            operation: "revise" as const,
             storeId: "00000000-0000-4000-8000-000000000002",
             prompt: "同步最新知识库",
             source: "user",
@@ -226,7 +231,8 @@ describe("ContextStoreRevisionFragment", () => {
           updatedAt: "2026-08-05T07:29:00.000Z",
         }}
         draft={{
-          schemaVersion: "pragma.context-store-draft/v1",
+          schemaVersion: "pragma.context-store-draft/v2",
+          operation: "revise" as const,
           id: "20000000-0000-4000-8000-000000000002",
           revision: 3,
           name: "同步最新知识库",
@@ -264,13 +270,14 @@ describe("ContextStoreRevisionFragment", () => {
     const html = renderToStaticMarkup(
       <ContextStoreRevisionDiffFragment
         job={{
-          schemaVersion: "pragma.context-store-revision-job/v2",
+          schemaVersion: "pragma.context-store-revision-job/v3",
           id: "10000000-0000-4000-8000-000000000003",
           revision: 4,
           draftId: "20000000-0000-4000-8000-000000000003",
           missionId: "30000000-0000-4000-8000-000000000003",
           request: {
-            schemaVersion: "pragma.context-store-revision-request/v1",
+            schemaVersion: "pragma.context-store-revision-request/v2",
+            operation: "revise" as const,
             storeId: "00000000-0000-4000-8000-000000000003",
             prompt: "先审核草稿，不要提交",
             source: "user",
@@ -280,7 +287,8 @@ describe("ContextStoreRevisionFragment", () => {
           updatedAt: "2026-08-05T07:29:00.000Z",
         }}
         draft={{
-          schemaVersion: "pragma.context-store-draft/v1",
+          schemaVersion: "pragma.context-store-draft/v2",
+          operation: "revise" as const,
           id: "20000000-0000-4000-8000-000000000003",
           revision: 3,
           name: "先审核草稿",
@@ -325,7 +333,8 @@ describe("ContextStoreRevisionFragment", () => {
 
   it("uses fixed baseline content when reviewing an updated draft file", () => {
     const draft = {
-      schemaVersion: "pragma.context-store-draft/v1" as const,
+      schemaVersion: "pragma.context-store-draft/v2" as const,
+      operation: "revise" as const,
       id: "20000000-0000-4000-8000-000000000003",
       revision: 2,
       name: "Update guide",
@@ -350,7 +359,8 @@ describe("ContextStoreRevisionFragment", () => {
       updatedAt: "2026-08-05T07:29:00.000Z",
     };
     const [operation] = draftOverlayOperations(draft, {
-      schemaVersion: "pragma.context-store-change-set/v1",
+      schemaVersion: "pragma.context-store-change-set/v2",
+      operation: "revise",
       storeId: draft.storeId,
       baseRevision: draft.baseRevision,
       baseSnapshotHash: draft.baseSnapshotHash,

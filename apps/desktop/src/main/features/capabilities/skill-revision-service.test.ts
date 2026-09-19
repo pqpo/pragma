@@ -17,6 +17,53 @@ afterEach(async () => {
 });
 
 describe("Skill revision service", () => {
+  it("publishes an approved empty-baseline Skill as revision 1", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const reservedId = "90000000-0000-4000-8000-000000000003";
+    const job = await fixture.service.start(
+      {
+        schemaVersion: "pragma.skill-revision-request/v3",
+        operation: "create",
+        capabilityId: reservedId,
+        resourceName: "created-skill",
+        resourceDescription: "Created skill.",
+        source: "expert-reflection",
+        sourceDigest: "e".repeat(64),
+        sourceRefs: [],
+        prompt: "Create the Skill.",
+      },
+      { missionId },
+    );
+    const draft = await fixture.service.inspectDraft(job.draftId, missionId);
+    expect(draft).toMatchObject({ currentRevision: 0, stale: false, changes: [] });
+    await writeFile(
+      join(draft.draftPath!, "SKILL.md"),
+      "---\nname: created-skill\ndescription: Created skill.\n---\n\nFollow the workflow.\n",
+    );
+    const ready = await fixture.service.inspectDraft(job.draftId, missionId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: ready.draft.revision,
+      expectedWorkingTreeHash: ready.workingTree.hash,
+      summary: "Create the Skill.",
+      missionId,
+    });
+    await fixture.service.processPending();
+    expect(fixture.publishNew).not.toHaveBeenCalled();
+    const pending = await fixture.service.get(job.id);
+    expect(pending.state).toBe("pending_review");
+    const completed = await fixture.service.approve(pending.id, pending.revision);
+    expect(completed).toMatchObject({ state: "completed", publishedRevision: 1 });
+    expect(fixture.publishNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: reservedId,
+        name: "created-skill",
+        description: "Created skill.",
+      }),
+    );
+  });
+
   it("publishes a raw package including binary files and executable scripts", async () => {
     const fixture = await createService();
     const missionId = randomUUID();
@@ -132,7 +179,8 @@ describe("Skill revision service", () => {
       generator: {
         async generate() {
           return {
-            schemaVersion: "pragma.skill-revision-change-set/v1" as const,
+            schemaVersion: "pragma.skill-revision-change-set/v2" as const,
+            operation: "revise" as const,
             capabilityId,
             baseRevision: 1,
             baseContentHash,
@@ -154,6 +202,60 @@ describe("Skill revision service", () => {
       readFile(join(draft.referencePath!, "references", "obsolete.md")),
     ).rejects.toMatchObject({ code: "ENOENT" });
     await fixture.service.processPending();
+  });
+
+  it("migrates persisted revision jobs and drafts to creation-aware schemas", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const currentJob = await fixture.service.start(request("expert-reflection"), { missionId });
+    const currentDraft = await fixture.service.getDraft(currentJob.draftId);
+    const { operation: _jobOperation, ...currentRequest } = currentJob.request;
+    const {
+      operation: _draftOperation,
+      resourceDescription: _description,
+      ...draftV1
+    } = currentDraft;
+    void _jobOperation;
+    void _draftOperation;
+    void _description;
+
+    await writeFile(
+      join(fixture.statePath, "jobs", `${currentJob.id}.json`),
+      `${JSON.stringify({
+        ...currentJob,
+        schemaVersion: "pragma.skill-revision-job/v2",
+        request: {
+          ...currentRequest,
+          schemaVersion: "pragma.skill-revision-request/v2",
+        },
+      })}\n`,
+    );
+    await writeFile(
+      join(fixture.draftsPath, currentDraft.id, "draft.json"),
+      `${JSON.stringify({
+        ...draftV1,
+        schemaVersion: "pragma.skill-revision-draft/v1",
+      })}\n`,
+    );
+
+    await expect(fixture.service.get(currentJob.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.skill-revision-job/v3",
+      revision: currentJob.revision + 1,
+      request: { schemaVersion: "pragma.skill-revision-request/v3", operation: "revise" },
+    });
+    await expect(fixture.service.getDraft(currentDraft.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.skill-revision-draft/v2",
+      operation: "revise",
+    });
+    await expect(
+      readFile(join(fixture.statePath, "migration-backups", `${currentJob.id}.v2.json`), "utf8"),
+    ).resolves.toContain("pragma.skill-revision-job/v2");
+    await expect(
+      readFile(
+        join(fixture.statePath, "migration-backups", `draft-${currentDraft.id}.v1.json`),
+        "utf8",
+      ),
+    ).resolves.toContain("pragma.skill-revision-draft/v1");
   });
 
   it("recovers an interrupted publication during startup processing", async () => {
@@ -207,6 +309,10 @@ async function createService(
     void input;
     return { manifest: { latestRevision: 2 } };
   });
+  const publishNew = vi.fn(async (input: { readonly sourcePath: string }) => {
+    void input;
+    return { manifest: { latestRevision: 1 } };
+  });
   const capabilities = {
     async get(_id: string, requestedRevision?: number) {
       const revision = requestedRevision ?? currentRevision;
@@ -224,9 +330,11 @@ async function createService(
       return sourcePath;
     },
     publishSkillRevisionCandidate: publish,
+    publishNewSkillRevisionCandidate: publishNew,
   } as unknown as CapabilityStore;
   return {
     publish,
+    publishNew,
     setCurrentRevision(revision: number) {
       currentRevision = revision;
     },
@@ -271,7 +379,8 @@ function legacyRequest() {
 
 function request(source: "memory-learning" | "expert-reflection") {
   return {
-    schemaVersion: "pragma.skill-revision-request/v2" as const,
+    schemaVersion: "pragma.skill-revision-request/v3" as const,
+    operation: "revise" as const,
     capabilityId,
     source,
     sourceDigest: randomUUID().replaceAll("-", "").padEnd(64, "0"),

@@ -198,7 +198,7 @@ export function createBuiltInSkillAgents(options: {
           profile,
           prompt: JSON.stringify({
             capabilityId: input.request.capabilityId,
-            task: "Return exactly one pragma.skill-revision-change-set/v1 JSON object. Make the smallest coherent change, preserve unrelated files, and keep scripts as dependency-free Node ESM with node:test coverage.",
+            task: "Return exactly one pragma.skill-revision-change-set/v2 JSON object with operation=revise. Make the smallest coherent change, preserve unrelated files, and keep scripts as dependency-free Node ESM with node:test coverage.",
             request: input.request.prompt,
             baseRevision: input.revision,
             baseContentHash: input.contentHash,

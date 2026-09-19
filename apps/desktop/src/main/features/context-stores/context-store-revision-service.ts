@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { withFileLock } from "@pragma/core";
 import {
   assertProgressiveKnowledgeStructure,
+  assertProgressiveKnowledgeSnapshot,
   attachContextStoreBaseContent,
   KnowledgeDraftValidationError,
 } from "@pragma/built-in-agents";
@@ -35,10 +36,16 @@ import { z } from "zod";
 
 import type { ContextStoreContent, ContextStoreSnapshot } from "../../../shared/contracts/index.ts";
 import { SparseContextStoreDraft, materializeDraftSnapshot } from "./context-store-draft-store.ts";
-import { ContextStoreStoreError, type ContextStoreStore } from "./context-store-store.ts";
+import {
+  ContextStoreStoreError,
+  hashSnapshotContent,
+  type ContextStoreStore,
+} from "./context-store-store.ts";
 import {
   ContextStoreRevisionJobV1Schema,
-  CONTEXT_STORE_REVISION_JOB_MIGRATIONS,
+  ContextStoreRevisionJobV2Schema,
+  migrateContextStoreRevisionJobV1ToV2,
+  migrateContextStoreRevisionJobV2ToV3,
   overlayFromV1Job,
 } from "./revision-migrations/index.ts";
 
@@ -175,6 +182,28 @@ const MissionClaimJournalSchema = z
 
 type MissionClaimJournal = z.infer<typeof MissionClaimJournalSchema>;
 
+function parseMissionClaim(raw: unknown): MissionClaimJournal {
+  const current = MissionClaimJournalSchema.safeParse(raw);
+  if (current.success) return current.data;
+  const legacy = z
+    .object({
+      schemaVersion: z.literal("pragma.context-store-revision-mission-claim/v1"),
+      request: z
+        .object({ schemaVersion: z.literal("pragma.context-store-revision-request/v1") })
+        .passthrough(),
+    })
+    .passthrough()
+    .parse(raw);
+  return MissionClaimJournalSchema.parse({
+    ...legacy,
+    request: {
+      ...legacy.request,
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+    },
+  });
+}
+
 export function createContextStoreRevisionService(options: {
   readonly statePath: string;
   readonly draftsPath?: string | undefined;
@@ -235,7 +264,29 @@ export function createContextStoreRevisionService(options: {
 
   const readDraft = async (id: string): Promise<ContextStoreDraft> => {
     try {
-      return ContextStoreDraftSchema.parse(JSON.parse(await readFile(draftPath(id), "utf8")));
+      const raw = JSON.parse(await readFile(draftPath(id), "utf8")) as unknown;
+      const current = ContextStoreDraftSchema.safeParse(raw);
+      if (current.success) return current.data;
+      return await withFileLock(`${draftRoot(id)}.migration.lock`, async () => {
+        const latestRaw = JSON.parse(await readFile(draftPath(id), "utf8")) as unknown;
+        const latest = ContextStoreDraftSchema.safeParse(latestRaw);
+        if (latest.success) return latest.data;
+        const legacy = z
+          .object({ schemaVersion: z.literal("pragma.context-store-draft/v1") })
+          .passthrough()
+          .parse(latestRaw);
+        const migrated = ContextStoreDraftSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.context-store-draft/v2",
+          operation: "revise",
+        });
+        await writeJsonAtomic(
+          join(options.statePath, "migration-backups", `draft-${id}.v1.json`),
+          legacy,
+        );
+        await writeDraft(migrated);
+        return migrated;
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new ContextStoreRevisionServiceError("draft_not_found", "Knowledge draft not found.");
@@ -296,15 +347,23 @@ export function createContextStoreRevisionService(options: {
     name: string,
     overlay: ContextStoreDraftOverlay = emptyOverlay(),
     id: string = randomUUID(),
+    creation?: { readonly name: string; readonly description: string },
   ): Promise<ContextStoreDraft> => {
-    const base = await options.contextStores.getSnapshot(storeId);
     const timestamp = new Date().toISOString();
+    const base =
+      creation === undefined
+        ? await options.contextStores.getSnapshot(storeId)
+        : emptyCreationSnapshot(storeId, timestamp);
     const draft = ContextStoreDraftSchema.parse({
-      schemaVersion: "pragma.context-store-draft/v1",
+      schemaVersion: "pragma.context-store-draft/v2",
+      operation: creation === undefined ? "revise" : "create",
       id,
       revision: 1,
       name,
       storeId,
+      ...(creation === undefined
+        ? {}
+        : { resourceName: creation.name, resourceDescription: creation.description }),
       baseRevision: base.revision,
       baseSnapshotHash: base.snapshotHash,
       state: "editing",
@@ -348,7 +407,8 @@ export function createContextStoreRevisionService(options: {
         legacy.changeSet?.baseRevision,
       );
       draft = ContextStoreDraftSchema.parse({
-        schemaVersion: "pragma.context-store-draft/v1",
+        schemaVersion: "pragma.context-store-draft/v2",
+        operation: "revise",
         id: migration.draftId,
         revision: 1,
         name: `Migrated revision ${legacy.id.slice(0, 8)}`,
@@ -374,7 +434,8 @@ export function createContextStoreRevisionService(options: {
       );
       await writeDraft(draft);
     }
-    const migrated = CONTEXT_STORE_REVISION_JOB_MIGRATIONS[0]!.migrate(legacy, draft.id);
+    const v2 = migrateContextStoreRevisionJobV1ToV2(legacy, draft.id);
+    const migrated = migrateContextStoreRevisionJobV2ToV3(v2);
     await writeJsonAtomic(jobPath(migrated.id), migrated);
     await rm(migrationPath, { force: true });
     return migrated;
@@ -384,7 +445,23 @@ export function createContextStoreRevisionService(options: {
     try {
       const raw = JSON.parse(await readFile(jobPath(id), "utf8")) as unknown;
       const current = ContextStoreRevisionJobSchema.safeParse(raw);
-      return current.success ? current.data : await migrateJob(raw);
+      if (current.success) return current.data;
+      return await withFileLock(`${jobPath(id)}.migration.lock`, async () => {
+        const latestRaw = JSON.parse(await readFile(jobPath(id), "utf8")) as unknown;
+        const latest = ContextStoreRevisionJobSchema.safeParse(latestRaw);
+        if (latest.success) return latest.data;
+        const legacyV2 = ContextStoreRevisionJobV2Schema.safeParse(latestRaw);
+        if (legacyV2.success) {
+          const migrated = migrateContextStoreRevisionJobV2ToV3(legacyV2.data);
+          await writeJsonAtomic(
+            join(options.statePath, "migration-backups", `${legacyV2.data.id}.v2.json`),
+            legacyV2.data,
+          );
+          await writeJob(migrated);
+          return migrated;
+        }
+        return await migrateJob(latestRaw);
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new ContextStoreRevisionServiceError("job_not_found", "Revision task not found.");
@@ -456,7 +533,7 @@ export function createContextStoreRevisionService(options: {
     storeId: string,
   ): Promise<MissionClaimJournal | undefined> => {
     try {
-      return MissionClaimJournalSchema.parse(
+      return parseMissionClaim(
         JSON.parse(await readFile(missionClaimPath(missionId, storeId), "utf8")),
       );
     } catch (error) {
@@ -492,7 +569,7 @@ export function createContextStoreRevisionService(options: {
     )) {
       const path = join(missionClaimsPath, name);
       try {
-        const claim = MissionClaimJournalSchema.parse(JSON.parse(await readFile(path, "utf8")));
+        const claim = parseMissionClaim(JSON.parse(await readFile(path, "utf8")));
         if (
           claim.missionId === input.missionId &&
           claim.draftId === input.draftId &&
@@ -524,6 +601,12 @@ export function createContextStoreRevisionService(options: {
         claim.draftName ?? revisionDraftName(claim.request),
         emptyOverlay(),
         claim.draftId,
+        claim.request.operation === "create"
+          ? {
+              name: claim.request.resourceName!,
+              description: claim.request.resourceDescription!,
+            }
+          : undefined,
       );
     }
     if (draft.storeId !== claim.storeId || draft.state === "merged") {
@@ -539,7 +622,7 @@ export function createContextStoreRevisionService(options: {
       }
       const timestamp = new Date().toISOString();
       job = ContextStoreRevisionJobSchema.parse({
-        schemaVersion: "pragma.context-store-revision-job/v2",
+        schemaVersion: "pragma.context-store-revision-job/v3",
         id: claim.jobId,
         revision: 1,
         draftId: claim.draftId,
@@ -708,9 +791,21 @@ export function createContextStoreRevisionService(options: {
             ? await createDraft(
                 request.storeId,
                 startOptions.draftName ?? revisionDraftName(request),
+                emptyOverlay(),
+                randomUUID(),
+                request.operation === "create"
+                  ? {
+                      name: request.resourceName!,
+                      description: request.resourceDescription!,
+                    }
+                  : undefined,
               )
             : await readDraft(startOptions.draftId);
-        if (draft.storeId !== request.storeId || draft.state === "merged") {
+        if (
+          draft.storeId !== request.storeId ||
+          draft.operation !== request.operation ||
+          draft.state === "merged"
+        ) {
           throw invalidState("The selected draft is not editable for this knowledge base.");
         }
         const active = (await readAllJobs()).find(
@@ -726,7 +821,7 @@ export function createContextStoreRevisionService(options: {
         }
         const timestamp = new Date().toISOString();
         const job = ContextStoreRevisionJobSchema.parse({
-          schemaVersion: "pragma.context-store-revision-job/v2",
+          schemaVersion: "pragma.context-store-revision-job/v3",
           id: randomUUID(),
           revision: 1,
           draftId: draft.id,
@@ -859,18 +954,48 @@ export function createContextStoreRevisionService(options: {
       if (draft.state !== "pending_review" || draft.submittedRevision !== draft.revision) {
         throw invalidState("The submitted draft changed and must be submitted again.");
       }
-      const live = await options.contextStores.getSnapshot(draft.storeId);
-      if (live.revision !== draft.baseRevision || live.snapshotHash !== draft.baseSnapshotHash) {
-        await forceDraftState(draft, "needs_rebase");
-        return await mutateJob(current.id, current.revision, () => ({ state: "needs_rebase" }));
+      if (draft.operation === "revise") {
+        const live = await options.contextStores.getSnapshot(draft.storeId);
+        if (live.revision !== draft.baseRevision || live.snapshotHash !== draft.baseSnapshotHash) {
+          await forceDraftState(draft, "needs_rebase");
+          return await mutateJob(current.id, current.revision, () => ({ state: "needs_rebase" }));
+        }
       }
       const merging = await mutateJob(current.id, current.revision, () => ({ state: "merging" }));
       try {
         await forceDraftState(draft, "merging");
-        const base = await options.contextStores.getSnapshot(draft.storeId, draft.baseRevision);
+        const base = await draftBaseSnapshot(draft, options.contextStores);
         const changeSet = changeSetFromDraft(draft, base);
-        assertProgressiveKnowledgeStructure(base, changeSet);
-        await options.contextStores.applyChangeSet(changeSet, "store-revision-agent", merging.id);
+        if (draft.operation === "create") {
+          const candidate = materializeDraftSnapshot(draft, base);
+          assertProgressiveKnowledgeSnapshot(candidate);
+          const directories = creationDirectories(candidate);
+          const expectedSnapshotHash = hashSnapshotContent(candidate.files, directories);
+          try {
+            await options.contextStores.createFromSnapshot({
+              id: draft.storeId,
+              name: draft.resourceName!,
+              description: draft.resourceDescription!,
+              directories,
+              files: candidate.files,
+              author: "store-revision-agent",
+              summary: draft.summary ?? `Create knowledge base ${draft.resourceName}.`,
+              revisionJobId: merging.id,
+              expectedSnapshotHash,
+            });
+          } catch (error) {
+            const existing = await options.contextStores
+              .getSnapshot(draft.storeId)
+              .catch(() => undefined);
+            const applied = (
+              await options.contextStores.history(draft.storeId).catch(() => [])
+            ).some((record) => record.revisionJobId === merging.id);
+            if (existing?.snapshotHash !== expectedSnapshotHash || !applied) throw error;
+          }
+        } else {
+          assertProgressiveKnowledgeStructure(base, changeSet);
+          await options.contextStores.applyChangeSet(changeSet, "store-revision-agent", merging.id);
+        }
         await forceDraftState(await readDraft(draft.id), "merged");
         const merged = await mutateJob(merging.id, merging.revision, () => ({
           state: "merged",
@@ -890,6 +1015,17 @@ export function createContextStoreRevisionService(options: {
         return merged;
       } catch (error) {
         if (error instanceof ContextStoreStoreError && error.code === "revision_conflict") {
+          if (draft.operation === "create") {
+            const failure = {
+              code: "knowledge_creation_id_conflict",
+              message: "The reserved knowledge-base id is already occupied.",
+            };
+            await forceDraftState(await readDraft(draft.id), "needs_attention");
+            return await mutateJob(merging.id, merging.revision, () => ({
+              state: "needs_attention",
+              error: failure,
+            }));
+          }
           await forceDraftState(await readDraft(draft.id), "needs_rebase");
           return await mutateJob(merging.id, merging.revision, () => ({
             state: "needs_rebase",
@@ -1016,7 +1152,7 @@ export function createContextStoreRevisionService(options: {
 
     async getDraftChangeSet(draftId) {
       const draft = await readDraft(draftId);
-      const base = await options.contextStores.getSnapshot(draft.storeId, draft.baseRevision);
+      const base = await draftBaseSnapshot(draft, options.contextStores);
       return attachContextStoreBaseContent(base, changeSetFromDraft(draft, base));
     },
 
@@ -1045,12 +1181,15 @@ export function createContextStoreRevisionService(options: {
         }
         if (overlayIsEmpty(current.overlay))
           throw invalidState("An empty draft cannot be submitted.");
-        const base = await options.contextStores.getSnapshot(current.storeId, current.baseRevision);
+        const base = await draftBaseSnapshot(current, options.contextStores);
         try {
-          assertProgressiveKnowledgeStructure(
-            base,
-            changeSetFromDraft({ ...current, summary }, base),
-          );
+          const candidate = materializeDraftSnapshot(current, base);
+          if (current.operation === "create") assertProgressiveKnowledgeSnapshot(candidate);
+          else
+            assertProgressiveKnowledgeStructure(
+              base,
+              changeSetFromDraft({ ...current, summary }, base),
+            );
         } catch (error) {
           if (error instanceof KnowledgeDraftValidationError) {
             throw new ContextStoreRevisionServiceError("validation_failed", error.message, {
@@ -1159,13 +1298,20 @@ export function createContextStoreRevisionService(options: {
     },
 
     async inspectRebase(draftId) {
-      return await inspectRebase(await readDraft(draftId), options.contextStores);
+      const draft = await readDraft(draftId);
+      if (draft.operation === "create") {
+        throw invalidState("A new knowledge-base draft has no formal revision to rebase.");
+      }
+      return await inspectRebase(draft, options.contextStores);
     },
 
     async rebase(input) {
       const parsed = RebaseContextStoreDraftSchema.parse(input);
       const draft = await readDraft(parsed.draftId);
       if (draft.revision !== parsed.expectedRevision) throw revisionConflict();
+      if (draft.operation === "create") {
+        throw invalidState("A new knowledge-base draft has no formal revision to rebase.");
+      }
       if (draft.state !== "editing" && draft.state !== "needs_rebase") {
         throw invalidState("Only an editable knowledge draft can be rebased.");
       }
@@ -1211,8 +1357,7 @@ export function createContextStoreRevisionService(options: {
         name: draft.name,
         store: new SparseContextStoreDraft(draftId, {
           read: readDraft,
-          readBase: async (current) =>
-            await options.contextStores.getSnapshot(current.storeId, current.baseRevision),
+          readBase: async (current) => await draftBaseSnapshot(current, options.contextStores),
           mutate: async (id, expectedRevision, update) =>
             await mutateDraftOverlay(id, expectedRevision, update),
         }),
@@ -1292,7 +1437,7 @@ export function createContextStoreRevisionService(options: {
         const interruptedMerges = (await api.list()).filter((job) => job.state === "merging");
         for (const interrupted of interruptedMerges) {
           const draft = await readDraft(interrupted.draftId);
-          const applied = (await options.contextStores.history(draft.storeId)).some(
+          const applied = (await options.contextStores.history(draft.storeId).catch(() => [])).some(
             (record) => record.revisionJobId === interrupted.id,
           );
           if (applied) {
@@ -1312,6 +1457,14 @@ export function createContextStoreRevisionService(options: {
             ) {
               await mutateJob(merged.id, merged.revision, () => ({ missionId: undefined }));
             }
+            continue;
+          }
+          if (draft.operation === "create") {
+            const replay = await mutateJob(interrupted.id, interrupted.revision, () => ({
+              state: "pending_review",
+            }));
+            if (draft.state === "merging") await forceDraftState(draft, "pending_review");
+            await api.approve(replay.id, replay.revision);
             continue;
           }
           const live = await options.contextStores.getSnapshot(draft.storeId);
@@ -1340,10 +1493,7 @@ export function createContextStoreRevisionService(options: {
           }));
           try {
             const draft = await readDraft(running.draftId);
-            const snapshot = await options.contextStores.getSnapshot(
-              draft.storeId,
-              draft.baseRevision,
-            );
+            const snapshot = await draftBaseSnapshot(draft, options.contextStores);
             const generatedChangeSet = await options.generator.generate({
               jobId: running.id,
               draftId: draft.id,
@@ -1510,7 +1660,8 @@ function changeSetFromDraft(
   }
   for (const file of draft.overlay.files) explicitDeletes.delete(file.id);
   return ContextStoreChangeSetSchema.parse({
-    schemaVersion: "pragma.context-store-change-set/v1",
+    schemaVersion: "pragma.context-store-change-set/v2",
+    operation: draft.operation,
     storeId: draft.storeId,
     baseRevision: draft.baseRevision,
     baseSnapshotHash: draft.baseSnapshotHash,
@@ -1520,6 +1671,41 @@ function changeSetFromDraft(
       ...[...explicitDeletes].map((id) => ({ operation: "delete" as const, id })),
     ],
   });
+}
+
+function emptyCreationSnapshot(storeId: string, createdAt: string): ContextStoreSnapshot {
+  return {
+    schemaVersion: "pragma.context-store-snapshot/v1",
+    storeId,
+    revision: 0,
+    snapshotHash: hashSnapshotContent([], []),
+    createdAt,
+    directories: [],
+    files: [],
+  };
+}
+
+function creationDirectories(
+  snapshot: Pick<ContextStoreSnapshot, "files" | "directories">,
+): string[] {
+  const directories = new Set(snapshot.directories);
+  for (const file of snapshot.files) {
+    const segments = file.id.split("/");
+    segments.pop();
+    for (let index = 1; index <= segments.length; index += 1) {
+      directories.add(segments.slice(0, index).join("/"));
+    }
+  }
+  return [...directories].toSorted();
+}
+
+async function draftBaseSnapshot(
+  draft: ContextStoreDraft,
+  stores: ContextStoreStore,
+): Promise<ContextStoreSnapshot> {
+  return draft.operation === "create"
+    ? emptyCreationSnapshot(draft.storeId, draft.createdAt)
+    : await stores.getSnapshot(draft.storeId, draft.baseRevision);
 }
 
 function overlayFromChangeSet(changeSet: ContextStoreChangeSet): ContextStoreDraftOverlay {

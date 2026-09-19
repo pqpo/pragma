@@ -255,7 +255,8 @@ export function createMemoryKnowledgePromotionService(options: {
           const prompts = renderRevisionPrompts(input.proposals);
           for (const [index, prompt] of prompts.entries()) {
             await options.revisions.submit({
-              schemaVersion: "pragma.context-store-revision-request/v1",
+              schemaVersion: "pragma.context-store-revision-request/v2",
+              operation: "revise",
               storeId,
               source: "memory-learning",
               sourceDigest: revisionPartDigest(sourceDigest, index, prompts.length),

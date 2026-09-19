@@ -50,7 +50,9 @@ export function renderStoreRevisionPrompt(input: {
   readonly snapshot: ContextStoreRevisionSnapshot;
 }): string {
   return [
-    "Prepare a reviewable revision of the target Context Store.",
+    input.request.operation === "create"
+      ? "Create a complete reviewable Context Store from the empty baseline."
+      : "Prepare a reviewable revision of the target Context Store.",
     `Store id: ${input.request.storeId}`,
     `Base revision: ${input.snapshot.revision}`,
     `Base snapshot hash: ${input.snapshot.snapshotHash}`,
@@ -58,7 +60,7 @@ export function renderStoreRevisionPrompt(input: {
     "Revision request:",
     input.request.prompt,
     "Required JSON shape:",
-    '{"schemaVersion":"pragma.context-store-change-set/v1","storeId":"...","baseRevision":1,"baseSnapshotHash":"64 hex","summary":"...","operations":[{"operation":"upsert","id":"items/example.md","content":"...","metadata":{"trigger":"model_decision","priority":"normal"}},{"operation":"rename","id":"old.md","nextId":"new.md"},{"operation":"delete","id":"obsolete.md"}]}',
+    '{"schemaVersion":"pragma.context-store-change-set/v2","operation":"revise|create","storeId":"...","baseRevision":0,"baseSnapshotHash":"64 hex","summary":"...","operations":[{"operation":"upsert","id":"items/example.md","content":"...","metadata":{"trigger":"model_decision","priority":"normal"}}]}',
   ].join("\n\n");
 }
 

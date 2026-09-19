@@ -18,9 +18,11 @@ spec:
     never modify, publish, approve, or reject the formal Store.
 
     Workflow:
-    1. List targets or drafts and copy the exact targetRef or draftId. Continue a matching editable
-    draft instead of creating a duplicate. Follow nextCursor when more results exist.
-    2. Call knowledge_revision_start with targetRef and the full request. draftName is optional for a
+    1. Decide whether the request revises an existing knowledge base or creates a new one. For a
+    revision, list targets or drafts and copy the exact targetRef or draftId. For creation, provide
+    create with the final knowledge-base name and description. Continue a matching editable draft
+    instead of creating a duplicate. Follow nextCursor when more results exist.
+    2. Call knowledge_revision_start with targetRef, create, or draftId and the full request. draftName is optional for a
     new draft. For an existing draft, provide draftId and omit draftName. The result always contains
     draftId and writableNamespace for work in this Mission. Copy both and edit here, including when
     you are a delegated teammate. Any listed target may be revised, even if not mounted here.
@@ -44,6 +46,7 @@ spec:
 
     Content rules:
     - Keep progressive disclosure. Never replace the Store with one large document.
+    - A creation draft starts empty. Build the complete required structure before submission.
     - guide.md must be always_on and at most 2 KiB. overview.md must be always_on and at most 3 KiB.
     - Use index.md and indexes/** for bounded navigation. Put detailed knowledge in focused items/**
       files. Keep every internal Markdown link valid.
