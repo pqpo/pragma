@@ -37,6 +37,7 @@ import {
   migrateSkillRevisionJobV2ToV3,
   type SkillRevisionMigrationJournal,
 } from "./skill-revision-migrations/index.ts";
+import { deterministicRevisionUuid } from "../built-in-agents/revision-resource-id.ts";
 
 export interface SkillRevisionGenerator {
   generate(input: {
@@ -319,8 +320,9 @@ export function createSkillRevisionService(options: {
   const createDraft = async (input: {
     readonly request: SkillRevisionRequestV3;
     readonly name?: string;
+    readonly id?: string;
   }): Promise<SkillRevisionDraft> => {
-    const id = randomUUID();
+    const id = input.id ?? randomUUID();
     const timestamp = new Date().toISOString();
     try {
       let baseRevision = 0;
@@ -740,7 +742,13 @@ export function createSkillRevisionService(options: {
         error: undefined,
       }));
     } catch (error) {
-      const failure = { code: errorCode(error), message: errorMessage(error) };
+      const failure =
+        draft.operation === "create" && isReservedSkillIdConflict(error)
+          ? {
+              code: "skill_creation_id_conflict",
+              message: "The reserved Skill id is already occupied by different content.",
+            }
+          : { code: errorCode(error), message: errorMessage(error) };
       const currentDraft = await readDraft(draft.id);
       if (currentDraft.state === "publishing") {
         await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
@@ -1092,10 +1100,142 @@ export function createSkillRevisionService(options: {
       }));
     },
     async retry(id, revision) {
-      const job = await readJob(id);
-      if (job.revision !== revision || job.state !== "needs_attention") {
+      const candidate = await readJob(id);
+      if (candidate.revision !== revision || candidate.state !== "needs_attention") {
         throw coded("skill_revision_conflict");
       }
+      if (
+        candidate.request.operation === "create" &&
+        candidate.error?.code === "skill_creation_id_conflict"
+      ) {
+        const replacement = await withFileLock(lockPath, async () => {
+          const job = await readJob(id);
+          if (job.revision !== revision || job.state !== "needs_attention") {
+            throw coded("skill_revision_conflict");
+          }
+          const draft = await readDraft(job.draftId);
+          if (
+            draft.operation !== "create" ||
+            draft.submissionHash === undefined ||
+            draft.summary === undefined
+          ) {
+            throw coded("skill_revision_state_invalid");
+          }
+          const replacementCapabilityId = deterministicRevisionUuid("skill-conflict-resource", [
+            job.id,
+            revision,
+            draft.capabilityId,
+          ]);
+          const replacementDraftId = deterministicRevisionUuid("skill-conflict-draft", [
+            job.id,
+            revision,
+            draft.id,
+          ]);
+          const replacementJobId = deterministicRevisionUuid("skill-conflict-job", [
+            job.id,
+            revision,
+          ]);
+          let replacementDraft: SkillRevisionDraft;
+          try {
+            replacementDraft = await readDraft(replacementDraftId);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            const request = SkillRevisionRequestV3Schema.parse({
+              ...job.request,
+              capabilityId: replacementCapabilityId,
+              sourceDigest: createHash("sha256")
+                .update(
+                  JSON.stringify([
+                    "skill_creation_id_conflict_recovery",
+                    job.request.sourceDigest,
+                    replacementCapabilityId,
+                  ]),
+                )
+                .digest("hex"),
+            });
+            replacementDraft = await createDraft({
+              request,
+              name: draft.name,
+              id: replacementDraftId,
+            });
+          }
+          if (
+            replacementDraft.state !== "evaluating" ||
+            replacementDraft.submissionHash !== draft.submissionHash
+          ) {
+            const replacementWorktree = `${worktreePath(replacementDraft.id)}.${randomUUID()}.tmp`;
+            await copySkillTree(
+              join(submissionsPath(draft.id), draft.submissionHash),
+              replacementWorktree,
+            );
+            await rm(worktreePath(replacementDraft.id), { recursive: true, force: true });
+            await rename(replacementWorktree, worktreePath(replacementDraft.id));
+            const submission = await createStableSkillSubmission({
+              worktreePath: worktreePath(replacementDraft.id),
+              submissionsPath: submissionsPath(replacementDraft.id),
+              expectedHash: draft.submissionHash,
+            });
+            replacementDraft = SkillRevisionDraftSchema.parse({
+              ...replacementDraft,
+              revision: replacementDraft.revision + 1,
+              state: "evaluating",
+              submissionHash: submission.snapshot.hash,
+              submittedRevision: replacementDraft.revision + 1,
+              summary: draft.summary,
+              updatedAt: new Date().toISOString(),
+            });
+            await writeDraft(replacementDraft);
+          }
+          let replacementJob: ManagedSkillRevisionJob;
+          try {
+            replacementJob = await readJob(replacementJobId);
+          } catch (error) {
+            if (errorCode(error) !== "skill_revision_job_not_found") throw error;
+            const timestamp = new Date().toISOString();
+            replacementJob = ManagedSkillRevisionJobSchema.parse({
+              schemaVersion: "pragma.skill-revision-job/v3",
+              id: replacementJobId,
+              revision: 1,
+              draftId: replacementDraft.id,
+              request: {
+                ...job.request,
+                capabilityId: replacementCapabilityId,
+                sourceDigest: createHash("sha256")
+                  .update(
+                    JSON.stringify([
+                      "skill_creation_id_conflict_recovery",
+                      job.request.sourceDigest,
+                      replacementCapabilityId,
+                    ]),
+                  )
+                  .digest("hex"),
+              },
+              state: "evaluating",
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            });
+            await writeJob(replacementJob);
+          }
+          await writeJob(
+            ManagedSkillRevisionJobSchema.parse({
+              ...job,
+              revision: job.revision + 1,
+              state: "superseded",
+              missionId: undefined,
+              supersededBy: replacementJob.id,
+              error: {
+                code: "skill_creation_id_conflict_recovered",
+                message: `The candidate was moved to replacement revision task ${replacementJob.id}.`,
+              },
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+          return replacementJob;
+        });
+        service.scheduleProcessing();
+        return replacement;
+      }
+      const job = candidate;
       const draft = await readDraft(job.draftId);
       await mutateDraft(draft.id, draft.revision, () => ({
         state: "evaluating",
@@ -1305,6 +1445,13 @@ function errorCode(error: unknown): string {
 
 function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : "Skill revision failed.").slice(0, 2_000);
+}
+
+function isReservedSkillIdConflict(error: unknown): boolean {
+  return (
+    errorCode(error) === "revision_conflict" &&
+    errorMessage(error) === "The reserved Skill id is already occupied by different content."
+  );
 }
 
 function recordDiagnostic(

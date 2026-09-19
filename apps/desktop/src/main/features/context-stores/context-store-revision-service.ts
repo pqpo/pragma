@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -35,6 +35,7 @@ import {
 import { z } from "zod";
 
 import type { ContextStoreContent, ContextStoreSnapshot } from "../../../shared/contracts/index.ts";
+import { deterministicRevisionUuid } from "../built-in-agents/revision-resource-id.ts";
 import { SparseContextStoreDraft, materializeDraftSnapshot } from "./context-store-draft-store.ts";
 import {
   ContextStoreStoreError,
@@ -1071,6 +1072,127 @@ export function createContextStoreRevisionService(options: {
     },
 
     async retry(jobId, expectedRevision) {
+      const candidate = await readJob(jobId);
+      if (
+        candidate.request.operation === "create" &&
+        candidate.state === "needs_attention" &&
+        candidate.error?.code === "knowledge_creation_id_conflict"
+      ) {
+        return await withFileLock(jobsLockPath, async () => {
+          const job = await readJob(jobId);
+          if (job.revision !== expectedRevision || job.state !== "needs_attention") {
+            throw revisionConflict();
+          }
+          const draft = await readDraft(job.draftId);
+          if (draft.operation !== "create") throw invalidState("Only creation conflicts recover.");
+          const replacementStoreId = deterministicRevisionUuid("knowledge-conflict-resource", [
+            job.id,
+            expectedRevision,
+            draft.storeId,
+          ]);
+          const replacementDraftId = deterministicRevisionUuid("knowledge-conflict-draft", [
+            job.id,
+            expectedRevision,
+            draft.id,
+          ]);
+          const replacementJobId = deterministicRevisionUuid("knowledge-conflict-job", [
+            job.id,
+            expectedRevision,
+          ]);
+          let replacementDraft: ContextStoreDraft;
+          try {
+            replacementDraft = await readDraft(replacementDraftId);
+          } catch (error) {
+            if (
+              !(error instanceof ContextStoreRevisionServiceError) ||
+              error.code !== "draft_not_found"
+            ) {
+              throw error;
+            }
+            const created = await createDraft(
+              replacementStoreId,
+              draft.name,
+              draft.overlay,
+              replacementDraftId,
+              { name: draft.resourceName!, description: draft.resourceDescription! },
+            );
+            replacementDraft = await mutateDraftRecord(created.id, created.revision, () => ({
+              state: "pending_review",
+              submittedRevision: created.revision + 1,
+              summary: draft.summary,
+            }));
+          }
+          if (replacementDraft.state !== "pending_review") {
+            replacementDraft = await mutateDraftRecord(
+              replacementDraft.id,
+              replacementDraft.revision,
+              () => ({
+                state: "pending_review",
+                submittedRevision: replacementDraft.revision + 1,
+                summary: draft.summary,
+              }),
+            );
+          }
+          let replacement: ContextStoreRevisionJob;
+          try {
+            replacement = await readJob(replacementJobId);
+          } catch (error) {
+            if (
+              !(error instanceof ContextStoreRevisionServiceError) ||
+              error.code !== "job_not_found"
+            ) {
+              throw error;
+            }
+            const timestamp = new Date().toISOString();
+            replacement = ContextStoreRevisionJobSchema.parse({
+              schemaVersion: "pragma.context-store-revision-job/v3",
+              id: replacementJobId,
+              revision: 1,
+              draftId: replacementDraft.id,
+              request: {
+                ...job.request,
+                storeId: replacementStoreId,
+                ...(job.request.sourceDigest === undefined
+                  ? {}
+                  : {
+                      sourceDigest: createHash("sha256")
+                        .update(
+                          JSON.stringify([
+                            "knowledge_creation_id_conflict_recovery",
+                            job.request.sourceDigest,
+                            replacementStoreId,
+                          ]),
+                        )
+                        .digest("hex"),
+                    }),
+              },
+              state: "pending_review",
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            });
+            await writeJob(replacement);
+          }
+          const rejected = ContextStoreRevisionJobSchema.parse({
+            ...job,
+            revision: job.revision + 1,
+            state: "rejected",
+            missionId: undefined,
+            error: {
+              code: "knowledge_creation_id_conflict_recovered",
+              message: `The candidate was moved to replacement revision task ${replacement.id}.`,
+            },
+            updatedAt: new Date().toISOString(),
+          });
+          await writeJob(rejected);
+          return replacement;
+        });
+      }
+      if (
+        candidate.state === "rejected" &&
+        candidate.error?.code === "knowledge_creation_id_conflict_recovered"
+      ) {
+        throw invalidState("The conflicted creation was already moved to a replacement task.");
+      }
       const retried = await mutateJob(jobId, expectedRevision, (job) => {
         if (!["needs_attention", "rejected"].includes(job.state)) {
           throw invalidState("Only a stopped revision task can be retried.");

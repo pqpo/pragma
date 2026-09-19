@@ -269,7 +269,7 @@ describe("Desktop Pragma management knowledge revision tools", () => {
     });
   });
 
-  it("reports a creation draft as stale when its reserved id already exists", async () => {
+  it("keeps a creation draft on its empty baseline when its reserved id already exists", async () => {
     const { port, getDraft } = fixture(false);
     const draftId = "00000000-0000-4000-8000-000000000302";
     getDraft.mockResolvedValue({
@@ -291,8 +291,8 @@ describe("Desktop Pragma management knowledge revision tools", () => {
 
     await expect(port.getDraft({ ...invocation, draftId })).resolves.toMatchObject({
       mode: "summary",
-      currentStoreRevision: 6,
-      stale: true,
+      currentStoreRevision: 0,
+      stale: false,
     });
   });
 

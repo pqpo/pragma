@@ -141,6 +141,10 @@ export function installCapabilityHandlers(
     const parsed = actionSchema.parse(input);
     return skillRevisions.reject(parsed.jobId, parsed.expectedRevision);
   });
+  ipcMain.handle("capabilities:retry-skill-revision", (_event, input: unknown) => {
+    const parsed = actionSchema.parse(input);
+    return skillRevisions.retry(parsed.jobId, parsed.expectedRevision);
+  });
 }
 
 function managementApprovalDetail(reason: string, input: unknown): string {

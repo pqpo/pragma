@@ -30,7 +30,7 @@ import {
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
-import { ContextStoreStoreError, type ContextStoreStore } from "./context-store-store.ts";
+import type { ContextStoreStore } from "./context-store-store.ts";
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
 import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
 
@@ -654,14 +654,7 @@ async function currentSnapshotForDraft(
   stores: ContextStoreStore,
 ): Promise<{ readonly revision: number; readonly snapshotHash: string }> {
   if (draft.operation === "revise") return await stores.getSnapshot(draft.storeId);
-  try {
-    return await stores.getSnapshot(draft.storeId);
-  } catch (error) {
-    if (error instanceof ContextStoreStoreError && error.code === "store_not_found") {
-      return { revision: 0, snapshotHash: draft.baseSnapshotHash };
-    }
-    throw error;
-  }
+  return { revision: 0, snapshotHash: draft.baseSnapshotHash };
 }
 
 function contentChunk(source: string, offset: number, limitChars: number) {

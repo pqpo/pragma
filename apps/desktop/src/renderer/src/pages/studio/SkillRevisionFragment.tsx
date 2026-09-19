@@ -62,14 +62,15 @@ export function SkillRevisionFragment(props: {
 
   useEffect(() => void load(), [load]);
 
-  const act = async (entry: Entry, action: "approve" | "reject") => {
+  const act = async (entry: Entry, action: "approve" | "reject" | "retry") => {
     const api = desktopApi();
     if (api === undefined) return;
     setBusyId(entry.job.id);
     try {
       const input = { jobId: entry.job.id, expectedRevision: entry.job.revision };
       if (action === "approve") await api.approveSkillRevision(input);
-      else await api.rejectSkillRevision(input);
+      else if (action === "reject") await api.rejectSkillRevision(input);
+      else await api.retrySkillRevision(input);
       if (action === "approve") await props.onPublished?.();
       await load();
     } catch (cause) {
@@ -150,6 +151,16 @@ export function SkillRevisionFragment(props: {
                         <Check size={16} /> {t("approveAndPublish")}
                       </button>
                     </>
+                  ) : null}
+                  {entry.job.state === "needs_attention" ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busyId === entry.job.id}
+                      onClick={() => void act(entry, "retry")}
+                    >
+                      <ClockCounterClockwise size={16} /> {t("retryRevision")}
+                    </button>
                   ) : null}
                 </div>
                 {entry.job.error ? (

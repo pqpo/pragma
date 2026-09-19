@@ -78,7 +78,7 @@ async function fixture(
 
 describe("context store sparse draft revisions", () => {
   it("publishes an approved creation draft as formal revision 1", async () => {
-    const { service, contextStores } = await fixture();
+    const { directory, draftsPath, service, contextStores } = await fixture();
     const reservedId = "90000000-0000-4000-8000-000000000001";
     const job = await service.start({
       schemaVersion: "pragma.context-store-revision-request/v2",
@@ -119,6 +119,24 @@ describe("context store sparse draft revisions", () => {
     await expect(contextStores.history(reservedId)).resolves.toEqual([
       expect.objectContaining({ revision: 1, parentRevision: null, revisionJobId: job.id }),
     ]);
+
+    const completedDraft = await service.getDraft(job.draftId);
+    await writeFile(
+      join(directory, "state", "context-store-revisions", "jobs", `${job.id}.json`),
+      `${JSON.stringify({ ...completed, state: "merging" })}\n`,
+    );
+    await writeFile(
+      join(draftsPath, job.draftId, "draft.json"),
+      `${JSON.stringify({
+        ...completedDraft,
+        state: "merging",
+        submittedRevision: completedDraft.revision,
+      })}\n`,
+    );
+    await service.processPending();
+
+    await expect(service.get(job.id)).resolves.toMatchObject({ state: "merged" });
+    await expect(contextStores.history(reservedId)).resolves.toHaveLength(1);
   });
 
   it("moves a creation to needs_attention when its reserved id is occupied", async () => {
@@ -158,12 +176,41 @@ describe("context store sparse draft revisions", () => {
     });
     const pending = await service.get(job.id);
 
-    await expect(service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+    const conflicted = await service.approve(pending.id, pending.revision);
+    expect(conflicted).toMatchObject({
       state: "needs_attention",
       error: { code: "knowledge_creation_id_conflict" },
     });
     await expect(service.getDraft(job.draftId)).resolves.toMatchObject({
       state: "needs_attention",
+    });
+
+    const replacement = await service.retry(conflicted.id, conflicted.revision);
+    expect(replacement).toMatchObject({
+      state: "pending_review",
+      request: { operation: "create" },
+    });
+    expect(replacement.id).not.toBe(job.id);
+    expect(replacement.draftId).not.toBe(job.draftId);
+    expect(replacement.request.storeId).not.toBe(reservedId);
+    await expect(service.get(job.id)).resolves.toMatchObject({
+      state: "rejected",
+      error: { code: "knowledge_creation_id_conflict_recovered" },
+    });
+    await expect(service.getDraft(replacement.draftId)).resolves.toMatchObject({
+      state: "pending_review",
+      summary: "Create reviewed knowledge.",
+      overlay: { files: expect.arrayContaining([expect.objectContaining({ id: "guide.md" })]) },
+    });
+    await expect(service.retry(conflicted.id, conflicted.revision)).rejects.toMatchObject({
+      code: "invalid_state",
+    });
+
+    const completed = await service.approve(replacement.id, replacement.revision);
+    expect(completed.state).toBe("merged");
+    await expect(contextStores.getSnapshot(replacement.request.storeId)).resolves.toMatchObject({
+      revision: 1,
+      files: expect.arrayContaining([expect.objectContaining({ id: "guide.md" })]),
     });
   });
 

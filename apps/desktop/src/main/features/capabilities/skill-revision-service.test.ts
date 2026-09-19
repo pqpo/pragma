@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -62,6 +62,109 @@ describe("Skill revision service", () => {
         description: "Created skill.",
       }),
     );
+
+    const completedDraft = await fixture.service.getDraft(job.draftId);
+    await writeFile(
+      join(fixture.statePath, "jobs", `${job.id}.json`),
+      `${JSON.stringify({ ...completed, state: "publishing" })}\n`,
+    );
+    await writeFile(
+      join(fixture.draftsPath, job.draftId, "draft.json"),
+      `${JSON.stringify({ ...completedDraft, state: "publishing" })}\n`,
+    );
+    await fixture.service.processPending();
+
+    await expect(fixture.service.get(job.id)).resolves.toMatchObject({ state: "completed" });
+    expect(fixture.publishNew).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a creation candidate under a new id after the reserved id is occupied", async () => {
+    let occupied = true;
+    const fixture = await createService({
+      async publishNew(input) {
+        if (occupied) {
+          throw Object.assign(
+            new Error("The reserved Skill id is already occupied by different content."),
+            { code: "revision_conflict" },
+          );
+        }
+        void input;
+        return { manifest: { latestRevision: 1 } };
+      },
+    });
+    const reservedId = "90000000-0000-4000-8000-000000000013";
+    const job = await fixture.service.start({
+      schemaVersion: "pragma.skill-revision-request/v3",
+      operation: "create",
+      capabilityId: reservedId,
+      resourceName: "recovered-skill",
+      resourceDescription: "Recovered Skill.",
+      source: "expert-reflection",
+      sourceDigest: "f".repeat(64),
+      sourceRefs: [],
+      prompt: "Create the recovered Skill.",
+    });
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(editing.draftPath!, "SKILL.md"),
+      "---\nname: recovered-skill\ndescription: Recovered Skill.\n---\n\nKeep this candidate.\n",
+    );
+    await mkdir(join(editing.draftPath!, "scripts"));
+    await writeFile(join(editing.draftPath!, "scripts", "verify.mjs"), "process.exit(0);\n");
+    await chmod(join(editing.draftPath!, "scripts", "verify.mjs"), 0o755);
+    const ready = await fixture.service.inspectDraft(job.draftId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: ready.draft.revision,
+      expectedWorkingTreeHash: ready.workingTree.hash,
+      summary: "Preserve and recover this candidate.",
+    });
+    await fixture.service.processPending();
+    const pending = await fixture.service.get(job.id);
+    await expect(fixture.service.approve(pending.id, pending.revision)).rejects.toMatchObject({
+      code: "revision_conflict",
+    });
+    const conflicted = await fixture.service.get(job.id);
+    expect(conflicted).toMatchObject({
+      state: "needs_attention",
+      error: { code: "skill_creation_id_conflict" },
+    });
+
+    const replacement = await fixture.service.retry(conflicted.id, conflicted.revision);
+    expect(replacement.id).not.toBe(job.id);
+    expect(replacement.draftId).not.toBe(job.draftId);
+    expect(replacement.request.capabilityId).not.toBe(reservedId);
+    await expect(fixture.service.get(job.id)).resolves.toMatchObject({
+      state: "superseded",
+      supersededBy: replacement.id,
+    });
+    await expect(fixture.service.retry(conflicted.id, conflicted.revision)).rejects.toMatchObject({
+      code: "skill_revision_conflict",
+    });
+    await fixture.service.processPending();
+    const recoveredDraft = await fixture.service.getDraft(replacement.draftId);
+    const recoveredCandidatePath = join(
+      fixture.draftsPath,
+      replacement.draftId,
+      "submissions",
+      recoveredDraft.submissionHash!,
+    );
+    await expect(readFile(join(recoveredCandidatePath, "SKILL.md"), "utf8")).resolves.toContain(
+      "Keep this candidate.",
+    );
+    expect((await stat(join(recoveredCandidatePath, "scripts", "verify.mjs"))).mode & 0o111).toBe(
+      0o111,
+    );
+
+    occupied = false;
+    const recoveredPending = await fixture.service.get(replacement.id);
+    expect(recoveredPending.state).toBe("pending_review");
+    const completed = await fixture.service.approve(recoveredPending.id, recoveredPending.revision);
+    expect(completed).toMatchObject({ state: "completed", publishedRevision: 1 });
+    expect(fixture.publishNew.mock.calls.at(-1)?.[0]).toMatchObject({
+      id: replacement.request.capabilityId,
+      candidateContentHash: recoveredDraft.submissionHash,
+    });
   });
 
   it("publishes a raw package including binary files and executable scripts", async () => {
@@ -409,6 +512,10 @@ describe("Skill revision service", () => {
 async function createService(
   options: {
     readonly generator?: Parameters<typeof createSkillRevisionService>[0]["generator"];
+    readonly publishNew?: (input: {
+      readonly id: string;
+      readonly sourcePath: string;
+    }) => Promise<{ readonly manifest: { readonly latestRevision: number } }>;
   } = {},
 ) {
   const root = join(tmpdir(), `pragma-skill-revisions-${randomUUID()}`);
@@ -424,10 +531,11 @@ async function createService(
     void input;
     return { manifest: { latestRevision: 2 } };
   });
-  const publishNew = vi.fn(async (input: { readonly sourcePath: string }) => {
-    void input;
-    return { manifest: { latestRevision: 1 } };
-  });
+  const publishNew = vi.fn(async (input: { readonly id: string; readonly sourcePath: string }) =>
+    options.publishNew === undefined
+      ? { manifest: { latestRevision: 1 } }
+      : await options.publishNew(input),
+  );
   const capabilities = {
     async get(_id: string, requestedRevision?: number) {
       const revision = requestedRevision ?? currentRevision;
