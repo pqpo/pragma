@@ -113,6 +113,7 @@ export function ContextStoreRevisionFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly initialStoreId?: string | undefined;
   readonly onCountChanged?: ((count: number) => void) | undefined;
+  readonly onPublished?: (() => Promise<void>) | undefined;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onBack: () => void;
 }) {
@@ -216,6 +217,7 @@ export function ContextStoreRevisionFragment(props: {
       else if (action === "reject") await api.rejectContextStoreRevision(input);
       else if (action === "retry") await api.retryContextStoreRevision(input);
       else await api.deleteContextStoreRevision(input);
+      if (action === "approve") await props.onPublished?.();
       if (activeStoreId.current !== storeId) return;
       if (action === "delete") {
         setSelectedJobId(null);
@@ -493,8 +495,15 @@ export function ContextStoreRevisionFragment(props: {
                     >
                       <span className="revision-task-summary">
                         <strong title={job.request.prompt}>{job.request.prompt}</strong>
-                        <small title={store?.name ?? t("unavailableKnowledgeBase")}>
-                          {store?.name ?? t("unavailableKnowledgeBase")} ·{" "}
+                        <small
+                          title={
+                            store?.name ?? draft?.resourceName ?? t("unavailableKnowledgeBase")
+                          }
+                        >
+                          {store?.name ?? draft?.resourceName ?? t("unavailableKnowledgeBase")} ·{" "}
+                          {draft?.operation === "create"
+                            ? `${t("newKnowledgeBaseRevision")} · `
+                            : ""}
                           {t(`revisionSource.${job.request.source}`)}
                         </small>
                       </span>
@@ -797,12 +806,11 @@ export function ContextStoreRevisionDiffFragment(props: {
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
   const awaitingConfirmation = isDraftAwaitingConfirmation(props.job);
-  const revisionMetadata = `${props.store?.name ?? props.job.request.storeId} · ${t(
-    "baseRevision",
-    {
-      count: props.draft.baseRevision,
-    },
-  )} · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
+  const revisionMetadata = `${props.store?.name ?? props.draft.resourceName ?? props.job.request.storeId} · ${
+    props.draft.operation === "create"
+      ? t("publishesAsRevisionOne")
+      : t("baseRevision", { count: props.draft.baseRevision })
+  } · ${formatRevisionTimestamp(props.job.updatedAt, i18n.language)}`;
 
   return (
     <StudioScreenFrame

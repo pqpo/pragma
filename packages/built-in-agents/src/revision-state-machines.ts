@@ -210,6 +210,25 @@ export function assertProgressiveKnowledgeStructure(
   if (diagnostics.length > 0) throw new KnowledgeDraftValidationError(diagnostics);
 }
 
+/** Validate a complete candidate, including creation candidates whose base is intentionally empty. */
+export function assertProgressiveKnowledgeSnapshot(
+  snapshot: Pick<ContextStoreRevisionSnapshot, "files">,
+): void {
+  const files = [...snapshot.files];
+  const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
+  const structure = ProgressiveKnowledgeStoreFilesSchema.safeParse(files);
+  if (!structure.success) {
+    diagnostics.push(
+      ...structure.error.issues.map((issue) => ({
+        id: diagnosticFileId(issue.path, issue.message, files),
+        reason: issue.message,
+      })),
+    );
+  }
+  diagnostics.push(...validateNavigationLinks(files));
+  if (diagnostics.length > 0) throw new KnowledgeDraftValidationError(diagnostics);
+}
+
 export interface KnowledgeDraftValidationDiagnostic {
   readonly id: string;
   readonly reason: string;

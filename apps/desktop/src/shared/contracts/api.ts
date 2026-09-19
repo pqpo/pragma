@@ -630,6 +630,10 @@ export interface PragmaDesktopAPI {
     readonly jobId: string;
     readonly expectedRevision: number;
   }) => Promise<ManagedSkillRevisionJob>;
+  retrySkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<ManagedSkillRevisionJob>;
   getRuntimeAvailability: (
     options?: GetDesktopRuntimeAvailabilityOptions,
   ) => Promise<DesktopRuntimeAvailability[]>;

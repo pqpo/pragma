@@ -165,14 +165,28 @@ export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation
   ContextStoreRenameOperationSchema,
 ]);
 
-export const ContextStoreChangeSetSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
-  storeId: ContextStoreIdSchema,
-  baseRevision: z.number().int().positive(),
-  baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  summary: z.string().trim().min(1).max(2_000),
-  operations: ContextStoreChangeOperationSchema.array().min(1).max(1_000),
-});
+export const ContextStoreChangeSetSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-change-set/v2"),
+    operation: z.enum(["revise", "create"]),
+    storeId: ContextStoreIdSchema,
+    baseRevision: z.number().int().nonnegative(),
+    baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    summary: z.string().trim().min(1).max(2_000),
+    operations: ContextStoreChangeOperationSchema.array().min(1).max(1_000),
+  })
+  .superRefine((changeSet, context) => {
+    if (
+      (changeSet.operation === "create" && changeSet.baseRevision !== 0) ||
+      (changeSet.operation === "revise" && changeSet.baseRevision < 1)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseRevision"],
+        message: "Creation change sets require revision 0; revisions require a formal base.",
+      });
+    }
+  });
 
 export const ContextStoreRevisionRecordSchema = z.object({
   schemaVersion: z.literal("pragma.context-store-revision-record/v1"),

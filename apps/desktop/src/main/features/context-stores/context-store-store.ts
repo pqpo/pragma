@@ -198,6 +198,7 @@ export interface ContextStoreStore {
     readonly files: ContextStoreSnapshot["files"];
     readonly author: ContextStoreRevisionRecord["author"];
     readonly summary: string;
+    readonly revisionJobId?: string | undefined;
     readonly expectedSnapshotHash?: string | undefined;
   }): Promise<ContextStore>;
   getSnapshot(storeId: string, revision?: number): Promise<ContextStoreSnapshot>;
@@ -1446,70 +1447,82 @@ export function createContextStoreStore(options: {
     },
 
     async createFromSnapshot(input) {
-      const timestamp = new Date().toISOString();
       const id = input.id === undefined ? randomUUID() : z.string().uuid().parse(input.id);
-      const files = ContextStoreSnapshotSchema.shape.files.parse(input.files);
-      const directories = ContextStoreSnapshotSchema.shape.directories.parse(
-        input.directories ?? [],
-      );
-      const targetPath = storePath(id);
-      const temporaryPath = join(options.storesPath, `.${id}.${randomUUID()}.tmp`);
-      const temporaryFiles = join(temporaryPath, "files");
-      await mkdir(temporaryFiles, { recursive: true, mode: 0o700 });
-      try {
-        await materializeSnapshot(temporaryFiles, { directories, files });
-        const snapshot = await buildSnapshot(id, 1, temporaryFiles, timestamp);
-        if (
-          input.expectedSnapshotHash !== undefined &&
-          snapshot.snapshotHash !== input.expectedSnapshotHash
-        ) {
+      return await withRevisionLock(id, async () => {
+        const timestamp = new Date().toISOString();
+        const files = ContextStoreSnapshotSchema.shape.files.parse(input.files);
+        const directories = ContextStoreSnapshotSchema.shape.directories.parse(
+          input.directories ?? [],
+        );
+        const targetPath = storePath(id);
+        if (await pathExists(targetPath)) {
           throw new ContextStoreStoreError(
-            "config_invalid",
-            "The imported knowledge-base snapshot does not match its declared hash.",
+            "revision_conflict",
+            "The reserved knowledge-base id is already occupied.",
           );
         }
-        const store = ContextStoreSchema.parse({
-          schemaVersion: "pragma.context-store/v4",
-          id,
-          name: input.name,
-          description: input.description,
-          type: "file",
-          status: "ready",
-          source: { origin: "created" },
-          contentRevision: 1,
-          snapshotHash: snapshot.snapshotHash,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        const record = ContextStoreRevisionRecordSchema.parse({
-          schemaVersion: "pragma.context-store-revision-record/v1",
-          storeId: id,
-          revision: 1,
-          snapshotHash: snapshot.snapshotHash,
-          parentRevision: null,
-          author: input.author,
-          summary: input.summary,
-          createdAt: timestamp,
-        });
-        await writeJsonAtomic(join(temporaryPath, "store.json"), store);
-        await writeJsonAtomic(
-          join(temporaryPath, "revisions", "00000001", "snapshot.json"),
-          await persistSnapshotManifest(id, snapshot),
-        );
-        await writeJsonAtomic(join(temporaryPath, "revisions", "00000001", "record.json"), record);
-        await writeJsonAtomic(join(temporaryPath, SNAPSHOT_STORAGE_MARKER), {
-          schemaVersion: "pragma.context-store-snapshot-storage/v2",
-          storeId: id,
-          migratedAt: timestamp,
-        });
-        await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
-        await rename(temporaryPath, targetPath);
-        options.onPublished?.(id);
-        return store;
-      } catch (error) {
-        await rm(temporaryPath, { recursive: true, force: true });
-        throw error;
-      }
+        const temporaryPath = join(options.storesPath, `.${id}.${randomUUID()}.tmp`);
+        const temporaryFiles = join(temporaryPath, "files");
+        await mkdir(temporaryFiles, { recursive: true, mode: 0o700 });
+        try {
+          await materializeSnapshot(temporaryFiles, { directories, files });
+          const snapshot = await buildSnapshot(id, 1, temporaryFiles, timestamp);
+          if (
+            input.expectedSnapshotHash !== undefined &&
+            snapshot.snapshotHash !== input.expectedSnapshotHash
+          ) {
+            throw new ContextStoreStoreError(
+              "config_invalid",
+              "The imported knowledge-base snapshot does not match its declared hash.",
+            );
+          }
+          const store = ContextStoreSchema.parse({
+            schemaVersion: "pragma.context-store/v4",
+            id,
+            name: input.name,
+            description: input.description,
+            type: "file",
+            status: "ready",
+            source: { origin: "created" },
+            contentRevision: 1,
+            snapshotHash: snapshot.snapshotHash,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          });
+          const record = ContextStoreRevisionRecordSchema.parse({
+            schemaVersion: "pragma.context-store-revision-record/v1",
+            storeId: id,
+            revision: 1,
+            snapshotHash: snapshot.snapshotHash,
+            parentRevision: null,
+            author: input.author,
+            ...(input.revisionJobId === undefined ? {} : { revisionJobId: input.revisionJobId }),
+            summary: input.summary,
+            createdAt: timestamp,
+          });
+          await writeJsonAtomic(join(temporaryPath, "store.json"), store);
+          await writeJsonAtomic(
+            join(temporaryPath, "revisions", "00000001", "snapshot.json"),
+            await persistSnapshotManifest(id, snapshot),
+          );
+          await writeJsonAtomic(
+            join(temporaryPath, "revisions", "00000001", "record.json"),
+            record,
+          );
+          await writeJsonAtomic(join(temporaryPath, SNAPSHOT_STORAGE_MARKER), {
+            schemaVersion: "pragma.context-store-snapshot-storage/v2",
+            storeId: id,
+            migratedAt: timestamp,
+          });
+          await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
+          await rename(temporaryPath, targetPath);
+          options.onPublished?.(id);
+          return store;
+        } catch (error) {
+          await rm(temporaryPath, { recursive: true, force: true });
+          throw error;
+        }
+      });
     },
 
     async getSnapshot(storeId, revision) {
@@ -1556,6 +1569,12 @@ export function createContextStoreStore(options: {
 
     async applyChangeSet(input, author, revisionJobId) {
       const changeSet = ContextStoreChangeSetSchema.parse(input);
+      if (changeSet.operation !== "revise") {
+        throw new ContextStoreStoreError(
+          "config_invalid",
+          "Knowledge-base creation candidates must be published through createFromSnapshot.",
+        );
+      }
       return await withRevisionLock(changeSet.storeId, async () => {
         const current = await readStore(changeSet.storeId);
         if (

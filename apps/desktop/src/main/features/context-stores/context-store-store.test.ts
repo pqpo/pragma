@@ -661,7 +661,8 @@ describe("managed context store", () => {
     await expect(
       store.applyChangeSet(
         {
-          schemaVersion: "pragma.context-store-change-set/v1",
+          schemaVersion: "pragma.context-store-change-set/v2",
+          operation: "revise" as const,
           storeId: created.id,
           baseRevision: original.revision,
           baseSnapshotHash: original.snapshotHash,
@@ -674,7 +675,8 @@ describe("managed context store", () => {
 
     const revised = await store.applyChangeSet(
       {
-        schemaVersion: "pragma.context-store-change-set/v1",
+        schemaVersion: "pragma.context-store-change-set/v2",
+        operation: "revise" as const,
         storeId: created.id,
         baseRevision: afterUserEdit.revision,
         baseSnapshotHash: afterUserEdit.snapshotHash,
@@ -829,7 +831,8 @@ describe("managed context store", () => {
 
     await store.applyChangeSet(
       {
-        schemaVersion: "pragma.context-store-change-set/v1",
+        schemaVersion: "pragma.context-store-change-set/v2",
+        operation: "revise" as const,
         storeId: created.id,
         baseRevision: base.revision,
         baseSnapshotHash: base.snapshotHash,
@@ -859,7 +862,8 @@ describe("managed context store", () => {
       store.createFile(created.id, "user.md", "# User\n"),
       store.applyChangeSet(
         {
-          schemaVersion: "pragma.context-store-change-set/v1",
+          schemaVersion: "pragma.context-store-change-set/v2",
+          operation: "revise" as const,
           storeId: created.id,
           baseRevision: base.revision,
           baseSnapshotHash: base.snapshotHash,

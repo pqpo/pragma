@@ -593,6 +593,9 @@ export const studio = {
     "此任務沒有可繼續的關聯任務。請刪除它，然後前往「工作室 → 知識庫 → 對應知識庫 → 提交修訂」，重新建立一份修訂方案。",
   filesChanged: "變更 {{count}} 個檔案",
   baseRevision: "基於版本 {{count}}",
+  newKnowledgeBaseRevision: "新增知識庫",
+  newSkillRevision: "新增 Skill",
+  publishesAsRevisionOne: "將發佈為版本 1",
   revisionOperation: {
     upsert: "更新",
     delete: "刪除",

@@ -54,8 +54,11 @@ export const UpdateContextStoreRevisionProfileSchema = UpdateBuiltInAgentProfile
 
 export const ContextStoreRevisionRequestSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-revision-request/v1"),
+    schemaVersion: z.literal("pragma.context-store-revision-request/v2"),
+    operation: z.enum(["revise", "create"]),
     storeId: z.string().uuid(),
+    resourceName: z.string().trim().min(1).max(120).optional(),
+    resourceDescription: z.string().trim().min(1).max(2_000).optional(),
     prompt: z.string().trim().min(1).max(50_000),
     source: z.enum(["user", "memory-learning", "expert-reflection"]),
     sourceDigest: z
@@ -74,6 +77,26 @@ export const ContextStoreRevisionRequestSchema = z
   })
   .strict()
   .superRefine((request, context) => {
+    if (
+      request.operation === "create" &&
+      (request.resourceName === undefined || request.resourceDescription === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resourceName"],
+        message: "Creating a knowledge base requires its name and description.",
+      });
+    }
+    if (
+      request.operation === "revise" &&
+      (request.resourceName !== undefined || request.resourceDescription !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resourceName"],
+        message: "Knowledge-base metadata is only accepted for creation requests.",
+      });
+    }
     if (request.source !== "user" && request.sourceDigest === undefined) {
       context.addIssue({
         code: "custom",
@@ -152,7 +175,7 @@ export const ContextStoreRevisionSnapshotSchema = z
   .object({
     schemaVersion: z.literal("pragma.context-store-snapshot/v1"),
     storeId: z.string().uuid(),
-    revision: z.number().int().positive(),
+    revision: z.number().int().nonnegative(),
     snapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     createdAt: z.string().datetime(),
     directories: z.array(StoredDirectoryPathSchema).default([]),
@@ -247,14 +270,29 @@ export const ContextStoreChangeOperationSchema = z.discriminatedUnion("operation
   }),
 ]);
 
-export const ContextStoreChangeSetSchema = z.object({
-  schemaVersion: z.literal("pragma.context-store-change-set/v1"),
-  storeId: z.string().uuid(),
-  baseRevision: z.number().int().positive(),
-  baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  summary: z.string().trim().min(1).max(2_000),
-  operations: z.array(ContextStoreChangeOperationSchema).min(1).max(1_000),
-});
+export const ContextStoreChangeSetSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.context-store-change-set/v2"),
+    operation: z.enum(["revise", "create"]),
+    storeId: z.string().uuid(),
+    baseRevision: z.number().int().nonnegative(),
+    baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    summary: z.string().trim().min(1).max(2_000),
+    operations: z.array(ContextStoreChangeOperationSchema).min(1).max(1_000),
+  })
+  .strict()
+  .superRefine((changeSet, context) => {
+    if (
+      (changeSet.operation === "create" && changeSet.baseRevision !== 0) ||
+      (changeSet.operation === "revise" && changeSet.baseRevision < 1)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseRevision"],
+        message: "Creation change sets require revision 0; revisions require a formal base.",
+      });
+    }
+  });
 
 export const ContextStoreDraftStateSchema = z.enum([
   "editing",
@@ -314,12 +352,15 @@ export const ContextStoreDraftOverlaySchema = z
 
 export const ContextStoreDraftSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-draft/v1"),
+    schemaVersion: z.literal("pragma.context-store-draft/v2"),
+    operation: z.enum(["revise", "create"]),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     name: z.string().trim().min(1).max(120),
     storeId: z.string().uuid(),
-    baseRevision: z.number().int().positive(),
+    resourceName: z.string().trim().min(1).max(120).optional(),
+    resourceDescription: z.string().trim().min(1).max(2_000).optional(),
+    baseRevision: z.number().int().nonnegative(),
     baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
     state: ContextStoreDraftStateSchema,
     overlay: ContextStoreDraftOverlaySchema,
@@ -331,6 +372,32 @@ export const ContextStoreDraftSchema = z
   })
   .strict()
   .superRefine((draft, context) => {
+    if (draft.operation === "create") {
+      if (draft.baseRevision !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["baseRevision"],
+          message: "A creation draft must use the empty revision 0 baseline.",
+        });
+      }
+      if (draft.resourceName === undefined || draft.resourceDescription === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["resourceName"],
+          message: "A creation draft requires resource metadata.",
+        });
+      }
+    } else if (
+      draft.baseRevision < 1 ||
+      draft.resourceName !== undefined ||
+      draft.resourceDescription !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseRevision"],
+        message: "A revision draft requires a positive formal base and no creation metadata.",
+      });
+    }
     if (
       (draft.state === "pending_review" || draft.state === "merging") &&
       draft.submittedRevision !== draft.revision
@@ -446,7 +513,7 @@ export const ContextStoreRevisionJobStateSchema = z.enum([
 
 export const ContextStoreRevisionJobSchema = z
   .object({
-    schemaVersion: z.literal("pragma.context-store-revision-job/v2"),
+    schemaVersion: z.literal("pragma.context-store-revision-job/v3"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     draftId: z.string().uuid(),
@@ -560,16 +627,29 @@ export const SkillFileChangeOperationSchema = z.discriminatedUnion("operation", 
 
 export const SkillRevisionChangeSetSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-change-set/v1"),
+    schemaVersion: z.literal("pragma.skill-revision-change-set/v2"),
+    operation: z.enum(["revise", "create"]),
     capabilityId: z.string().uuid(),
-    baseRevision: z.number().int().positive(),
+    baseRevision: z.number().int().nonnegative(),
     baseContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),
     summary: z.string().trim().min(1).max(2_000),
     operations: z.array(SkillFileChangeOperationSchema).min(1).max(100),
   })
-  .strict();
+  .strict()
+  .superRefine((changeSet, context) => {
+    if (
+      (changeSet.operation === "create" && changeSet.baseRevision !== 0) ||
+      (changeSet.operation === "revise" && changeSet.baseRevision < 1)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseRevision"],
+        message: "Creation change sets require revision 0; revisions require a formal base.",
+      });
+    }
+  });
 
 export const SkillRevisionRequestSchema = z
   .object({
@@ -643,10 +723,13 @@ export const SkillRevisionProvenanceSchema = z
   })
   .strict();
 
-export const SkillRevisionRequestV2Schema = z
+export const SkillRevisionRequestV3Schema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-request/v2"),
+    schemaVersion: z.literal("pragma.skill-revision-request/v3"),
+    operation: z.enum(["revise", "create"]),
     capabilityId: z.string().uuid(),
+    resourceName: z.string().trim().min(1).max(120).optional(),
+    resourceDescription: z.string().trim().min(1).max(500).optional(),
     prompt: z.string().trim().min(1).max(50_000),
     source: SkillRevisionSourceSchema,
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -657,6 +740,26 @@ export const SkillRevisionRequestV2Schema = z
   })
   .strict()
   .superRefine((request, context) => {
+    if (
+      request.operation === "create" &&
+      (request.resourceName === undefined || request.resourceDescription === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resourceName"],
+        message: "Creating a Skill requires its name and description.",
+      });
+    }
+    if (
+      request.operation === "revise" &&
+      (request.resourceName !== undefined || request.resourceDescription !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["resourceName"],
+        message: "Skill metadata is only accepted for creation requests.",
+      });
+    }
     if (
       request.source === "memory-learning" &&
       (request.replayCases === undefined || request.boundaryCase === undefined)
@@ -680,12 +783,14 @@ export const SkillRevisionDraftStateSchema = z.enum([
 
 export const SkillRevisionDraftSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-draft/v1"),
+    schemaVersion: z.literal("pragma.skill-revision-draft/v2"),
+    operation: z.enum(["revise", "create"]),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     capabilityId: z.string().uuid(),
     name: z.string().trim().min(1).max(120),
-    baseRevision: z.number().int().positive(),
+    resourceDescription: z.string().trim().min(1).max(500).optional(),
+    baseRevision: z.number().int().nonnegative(),
     baseContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
     state: SkillRevisionDraftStateSchema,
     activeMissionId: z.string().uuid().optional(),
@@ -702,7 +807,24 @@ export const SkillRevisionDraftSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .superRefine((draft, context) => {
+    if (draft.operation === "create") {
+      if (draft.baseRevision !== 0 || draft.resourceDescription === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["baseRevision"],
+          message: "A new Skill draft requires revision 0 and creation metadata.",
+        });
+      }
+    } else if (draft.baseRevision < 1 || draft.resourceDescription !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseRevision"],
+        message: "A Skill revision draft requires a positive formal base.",
+      });
+    }
+  });
 
 export const SkillRevisionJobStateSchema = z.enum([
   "editing",
@@ -718,12 +840,12 @@ export const SkillRevisionJobStateSchema = z.enum([
 
 export const ManagedSkillRevisionJobSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-job/v2"),
+    schemaVersion: z.literal("pragma.skill-revision-job/v3"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     draftId: z.string().uuid(),
     missionId: z.string().uuid().optional(),
-    request: SkillRevisionRequestV2Schema,
+    request: SkillRevisionRequestV3Schema,
     state: SkillRevisionJobStateSchema,
     evaluation: SkillEvaluationSnapshotSchema.optional(),
     publishedRevision: z.number().int().positive().optional(),
@@ -764,7 +886,7 @@ export type UpdateContextStoreRevisionProfile = z.infer<
 >;
 export type SkillRevisionChangeSet = z.infer<typeof SkillRevisionChangeSetSchema>;
 export type SkillRevisionRequest = z.infer<typeof SkillRevisionRequestSchema>;
-export type SkillRevisionRequestV2 = z.infer<typeof SkillRevisionRequestV2Schema>;
+export type SkillRevisionRequestV3 = z.infer<typeof SkillRevisionRequestV3Schema>;
 export type SkillRevisionDraft = z.infer<typeof SkillRevisionDraftSchema>;
 export type SkillRevisionJob = z.infer<typeof SkillRevisionJobSchema>;
 export type ManagedSkillRevisionJob = z.infer<typeof ManagedSkillRevisionJobSchema>;
