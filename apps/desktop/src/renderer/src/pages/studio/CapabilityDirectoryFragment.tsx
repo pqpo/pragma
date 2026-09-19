@@ -1,6 +1,7 @@
 import {
   Archive,
   CaretDown,
+  ClockCounterClockwise,
   Code,
   DotsThree,
   Globe,
@@ -127,6 +128,7 @@ export function CapabilityDirectoryFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly onOpen: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
+  readonly revisionTaskCount?: number | undefined;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -432,7 +434,11 @@ export function CapabilityDirectoryFragment(props: {
           <div className="studio-create-wrap">
             {props.kind === "skills" && props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
-                <Archive size={17} /> {t("skillRevisions")}
+                <ClockCounterClockwise size={17} aria-hidden="true" />
+                {t("revisionTasks")}
+                {(props.revisionTaskCount ?? 0) > 0 ? (
+                  <span className="revision-task-count">{props.revisionTaskCount}</span>
+                ) : null}
               </button>
             ) : null}
             <button
@@ -449,7 +455,7 @@ export function CapabilityDirectoryFragment(props: {
                 setMenuOpen(!menuOpen);
               }}
             >
-              <Plus size={17} /> {t("addCapability")}
+              <Plus size={17} /> {t(props.kind === "connectors" ? "addConnection" : "addSkill")}
               {props.kind === "connectors" ? <CaretDown size={14} /> : null}
             </button>
             {props.kind === "connectors" && menuOpen ? (

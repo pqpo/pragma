@@ -1563,7 +1563,7 @@
   gap: 8px;
 }
 
-.knowledge-revision-count {
+.revision-task-count {
   display: inline-grid;
   min-width: 20px;
   height: 20px;

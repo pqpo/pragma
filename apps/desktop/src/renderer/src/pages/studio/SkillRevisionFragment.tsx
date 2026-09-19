@@ -13,6 +13,13 @@ import { desktopApi } from "./studio-model.ts";
 
 type Entry = { readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft };
 
+export function activeSkillRevisionTaskCount(
+  entries: readonly { readonly job: Pick<ManagedSkillRevisionJob, "state"> }[],
+): number {
+  return entries.filter(({ job }) => !["completed", "rejected", "superseded"].includes(job.state))
+    .length;
+}
+
 export function SkillRevisionEmptyState() {
   const { t } = useTranslation("studio");
 
@@ -28,6 +35,7 @@ export function SkillRevisionEmptyState() {
 export function SkillRevisionFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly capabilityId?: string | undefined;
+  readonly onCountChanged?: ((count: number) => void) | undefined;
   readonly onBack: () => void;
 }) {
   const { t } = useTranslation("studio");
@@ -40,14 +48,16 @@ export function SkillRevisionFragment(props: {
     if (api === undefined) return;
     setLoading(true);
     try {
-      setEntries(await api.listSkillRevisionJobs(props.capabilityId));
+      const nextEntries = await api.listSkillRevisionJobs(props.capabilityId);
+      setEntries(nextEntries);
+      props.onCountChanged?.(activeSkillRevisionTaskCount(nextEntries));
       setError(undefined);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setLoading(false);
     }
-  }, [props.capabilityId]);
+  }, [props.capabilityId, props.onCountChanged]);
 
   useEffect(() => void load(), [load]);
 

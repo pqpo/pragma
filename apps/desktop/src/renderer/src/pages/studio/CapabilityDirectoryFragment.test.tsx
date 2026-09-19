@@ -209,6 +209,23 @@ describe("capability row actions", () => {
     expect(html).toContain("data-capability-row-action");
   });
 
+  it("shows active revision tasks with the shared revision badge", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="skills"
+        capabilities={[capability]}
+        revisionTaskCount={2}
+        onOpenRevisions={() => undefined}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Revision tasks");
+    expect(html).toContain('class="revision-task-count">2</span>');
+    expect(html).not.toContain("Skill revisions");
+  });
+
   it("lists system capabilities as built-in without mutation actions", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment

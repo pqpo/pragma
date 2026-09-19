@@ -429,7 +429,7 @@
 
 .agent-evaluation-empty-state {
   display: grid;
-  min-height: 320px;
+  min-height: clamp(320px, calc(100vh - 560px), 640px);
   place-content: center;
   justify-items: center;
   margin-top: 24px;
@@ -461,6 +461,21 @@
 
 .agent-evaluation-empty-state .secondary-button {
   margin-top: 20px;
+}
+
+.agent-evaluation-run-setup .agent-evaluation-section-heading p {
+  max-width: 760px;
+}
+
+.agent-evaluation-run-form {
+  max-width: 720px;
+  margin-top: 32px;
+}
+
+.agent-evaluation-run-form > .primary-button {
+  justify-self: start;
+  min-height: 40px;
+  padding: 0 16px;
 }
 
 .agent-evaluation-empty-icon,

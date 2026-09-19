@@ -23,6 +23,7 @@ export function AgentEvaluationRunSetup(props: {
   readonly project: PragmaProjectSnapshot;
   readonly target: AgentTarget;
   readonly onBack: () => void;
+  readonly onOpenDatasets?: (() => void) | undefined;
   readonly onCreated: () => void;
 }) {
   const { t } = useTranslation("studio");
@@ -63,19 +64,43 @@ export function AgentEvaluationRunSetup(props: {
   };
 
   return (
-    <section className="agent-evaluation-card" aria-labelledby="agent-evaluation-run-heading">
-      <button className="secondary-button" type="button" onClick={props.onBack}>
-        {t("agentEvaluation.back")}
+    <section
+      className="agent-evaluation-page-section agent-evaluation-run-setup"
+      aria-labelledby="agent-evaluation-run-heading"
+    >
+      <button
+        className="agent-evaluation-secondary-back"
+        type="button"
+        autoFocus
+        onClick={props.onBack}
+      >
+        <ArrowLeft size={16} aria-hidden="true" />
+        {t("agentEvaluation.backToTarget")}
       </button>
-      <header>
-        <p className="studio-eyebrow">{t("agentEvaluation.newRun")}</p>
-        <h1 id="agent-evaluation-run-heading">{props.target.metadata.name}</h1>
-        <p>{t("agentEvaluation.runDescription")}</p>
+      <header className="agent-evaluation-section-heading">
+        <div>
+          <h1 id="agent-evaluation-run-heading">{t("agentEvaluation.newRun")}</h1>
+          <p>
+            {props.target.metadata.name} · {t("agentEvaluation.runDescription")}
+          </p>
+        </div>
       </header>
       {datasets.length === 0 ? (
-        <p className="studio-empty-copy">{t("agentEvaluation.noDatasetsForRun")}</p>
+        <div className="agent-evaluation-empty-state">
+          <span className="agent-evaluation-empty-icon">
+            <Flask size={24} aria-hidden="true" />
+          </span>
+          <h2>{t("agentEvaluation.noDatasets")}</h2>
+          <p>{t("agentEvaluation.noDatasetsForRun")}</p>
+          {props.onOpenDatasets !== undefined ? (
+            <button className="secondary-button" type="button" onClick={props.onOpenDatasets}>
+              <Plus size={17} aria-hidden="true" />
+              {t("agentEvaluation.createFirstDataset")}
+            </button>
+          ) : null}
+        </div>
       ) : (
-        <div className="agent-evaluation-form">
+        <div className="agent-evaluation-form agent-evaluation-run-form">
           <div className="agent-evaluation-field">
             <span>{t("agentEvaluation.dataset")}</span>
             <SelectMenu

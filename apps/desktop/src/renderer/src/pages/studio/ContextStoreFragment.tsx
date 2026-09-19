@@ -283,9 +283,9 @@ export function ContextStoreDirectoryFragment(props: {
             {props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
                 <ClockCounterClockwise size={17} aria-hidden="true" />
-                {t("viewAllStoreRevisions")}
+                {t("revisionTasks")}
                 {(props.revisionTaskCount ?? 0) > 0 ? (
-                  <span className="knowledge-revision-count">{props.revisionTaskCount}</span>
+                  <span className="revision-task-count">{props.revisionTaskCount}</span>
                 ) : null}
               </button>
             ) : null}

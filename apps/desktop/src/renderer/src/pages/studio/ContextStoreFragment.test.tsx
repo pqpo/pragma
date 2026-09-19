@@ -57,7 +57,7 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Markdown");
     expect(html).toContain("Copied into Pragma");
     expect(html).toContain("Revision tasks");
-    expect(html).toContain('class="knowledge-revision-count">2</span>');
+    expect(html).toContain('class="revision-task-count">2</span>');
     expect(html).not.toContain("Context note");
     expect(html).not.toContain("/Users/");
   });

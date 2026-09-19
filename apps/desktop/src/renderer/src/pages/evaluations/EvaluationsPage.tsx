@@ -131,8 +131,20 @@ export function EvaluationsPage(
             setDraft(evaluation);
           }}
           onCreateAgentEvaluation={(target) => {
-            setSecondaryView(null);
             setDraft(null);
+            setSecondaryReturnFocus(null);
+
+            const hasAgentEvaluationDataset = project.resources.some(
+              (resource) =>
+                resource.kind === "Evaluation" && resource.spec.method.type === "agent-judge",
+            );
+            if (!hasAgentEvaluationDataset) {
+              setRunTarget(null);
+              setSecondaryView("datasets");
+              return;
+            }
+
+            setSecondaryView(null);
             setRunTarget(target);
           }}
           onSelectTarget={() => {
@@ -187,6 +199,10 @@ export function EvaluationsPage(
                 project={project}
                 target={runTarget}
                 onBack={() => setRunTarget(null)}
+                onOpenDatasets={() => {
+                  setRunTarget(null);
+                  setSecondaryView("datasets");
+                }}
                 onCreated={() => {
                   setRunTarget(null);
                   setSecondaryView("queue");

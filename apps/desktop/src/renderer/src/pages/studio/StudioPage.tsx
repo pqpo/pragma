@@ -45,7 +45,7 @@ import {
   type ExpertEditorStep,
 } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
-import { SkillRevisionFragment } from "./SkillRevisionFragment.tsx";
+import { activeSkillRevisionTaskCount, SkillRevisionFragment } from "./SkillRevisionFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import {
   PragmaResourceDetailFragment,
@@ -190,6 +190,7 @@ export function StudioPage(props: {
     props.initialRevisionStoreId,
   );
   const [revisionTaskCount, setRevisionTaskCount] = useState(0);
+  const [skillRevisionTaskCount, setSkillRevisionTaskCount] = useState(0);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
   const userCapabilities = capabilities.filter((capability) => capability.managedBy !== "system");
   const [plugins, setPlugins] = useState<readonly DesktopPlugin[]>([]);
@@ -310,6 +311,14 @@ export function StudioPage(props: {
               .length,
           );
         }
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .listSkillRevisionJobs()
+      .then((entries) => {
+        if (!cancelled) setSkillRevisionTaskCount(activeSkillRevisionTaskCount(entries));
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -1113,6 +1122,7 @@ export function StudioPage(props: {
           <SkillRevisionFragment
             capabilities={capabilities}
             capabilityId={selectedCapabilityId ?? undefined}
+            onCountChanged={selectedCapabilityId === null ? setSkillRevisionTaskCount : undefined}
             onBack={() =>
               setScreen(selectedCapabilityId === null ? "directory" : "capability-detail")
             }
@@ -1122,6 +1132,7 @@ export function StudioPage(props: {
           <CapabilityDirectoryFragment
             kind={activeView}
             capabilities={capabilities}
+            revisionTaskCount={skillRevisionTaskCount}
             onOpenRevisions={() => {
               setSelectedCapabilityId(null);
               setScreen("skill-revisions");

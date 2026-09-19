@@ -1,4 +1,8 @@
-import { PragmaAgentJudgeEvaluationResourceSchema } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaAgentJudgeEvaluationResourceSchema,
+  PragmaExpertResourceSchema,
+} from "@pragma/interpreter/ast";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -6,6 +10,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/contracts/index.t
 
 import {
   AgentEvaluationDatasets,
+  AgentEvaluationRunSetup,
   AgentEvaluationQueue,
   createDatasetCaseDraft,
   createDatasetCriterionDraft,
@@ -23,6 +28,35 @@ const emptyProject = {
 } satisfies PragmaProjectSnapshot;
 
 describe("agent evaluation secondary pages", () => {
+  it("uses the shared secondary-page empty state when starting without datasets", () => {
+    const target = PragmaExpertResourceSchema.parse({
+      apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+      kind: "Expert",
+      metadata: {
+        id: "1h2j3k4m5n6p7q8r",
+        name: "Research expert",
+        description: "Answers research questions.",
+        tags: [],
+      },
+      spec: { scope: "general", instructions: "Help with research." },
+    });
+    const html = renderToStaticMarkup(
+      createElement(AgentEvaluationRunSetup, {
+        project: emptyProject,
+        target,
+        onBack: () => undefined,
+        onOpenDatasets: () => undefined,
+        onCreated: () => undefined,
+      }),
+    );
+
+    expect(html).toContain('class="agent-evaluation-page-section agent-evaluation-run-setup"');
+    expect(html).toContain("Back to target");
+    expect(html).toContain("No evaluation datasets yet");
+    expect(html).toContain("Create first dataset");
+    expect(html).not.toContain('class="agent-evaluation-card"');
+  });
+
   it("provides an explicit route back to the selected target", () => {
     const datasetsHtml = renderToStaticMarkup(
       createElement(AgentEvaluationDatasets, {
