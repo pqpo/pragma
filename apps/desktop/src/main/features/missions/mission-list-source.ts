@@ -25,6 +25,13 @@ export async function resolveMissionListSource(
             storeId: mission.origin.storeId,
           };
     }
+    case "system-skill-revision":
+      return {
+        type: "managed-automation",
+        kind: "skill-revision",
+        jobId: mission.origin.jobId,
+        capabilityId: mission.origin.capabilityId,
+      };
     default:
       return { type: "internal" };
   }

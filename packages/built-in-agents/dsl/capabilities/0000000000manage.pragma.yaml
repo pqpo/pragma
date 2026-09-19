@@ -3,7 +3,7 @@ kind: Capability
 metadata:
   id: 0000000000manage
   name: Pragma management tools
-  description: Host tools for managing Pragma resources, evaluations, Missions, Automations, and knowledge revisions.
+  description: Host tools for managing Pragma resources, evaluations, Missions, Automations, knowledge revisions, and Skill revisions.
   tags: [builtin, system, pragma, management]
 spec:
   adapter: pragma.capability.host@v1

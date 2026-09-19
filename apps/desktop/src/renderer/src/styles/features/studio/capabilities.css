@@ -6,6 +6,12 @@
   position: relative;
 }
 
+.capability-heading .studio-create-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .capability-create-menu {
   width: 310px;
   padding: 7px;
@@ -220,6 +226,66 @@
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
+}
+
+.skill-revision-page .capability-table {
+  display: grid;
+  gap: 14px;
+  border-top: 0;
+}
+
+.skill-revision-page .studio-screen-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skill-revision-page .revision-task-empty {
+  margin-top: 24px;
+}
+
+.skill-revision-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(160px, 0.55fr) minmax(280px, 1.2fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.skill-revision-main,
+.skill-revision-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.skill-revision-main small,
+.skill-revision-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.skill-revision-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.skill-revision-error {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 980px) {
+  .skill-revision-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .skill-revision-summary {
+    grid-column: 1 / -1;
+  }
 }
 
 .capability-row-menu {

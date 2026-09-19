@@ -82,7 +82,7 @@ it("lists only background revisions while retaining foreground revision details 
     else visible.push(mission.id);
   }
   await missions.create({ ...base, origin: { type: "system-memory", jobId: "curator" } });
-  await missions.create({
+  const skillRevision = await missions.create({
     ...base,
     origin: {
       type: "system-skill-revision",
@@ -90,6 +90,7 @@ it("lists only background revisions while retaining foreground revision details 
       capabilityId: "00000000-0000-4000-8000-000000000002",
     },
   });
+  visible.push(skillRevision.id);
   const orphan = await missions.create({
     ...base,
     origin: {

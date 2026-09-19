@@ -22,7 +22,10 @@ describe("Pragma management tools", () => {
       knowledgeRevisions: revisionPort(),
     });
 
-    expect(tools).toHaveLength(PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.length);
+    const availableDefinitions = PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.filter(
+      ({ name }) => !name.startsWith("skill_revision_"),
+    );
+    expect(tools).toHaveLength(availableDefinitions.length);
     expect(new Set(tools.map(({ name }) => name)).size).toBe(tools.length);
     expect(
       tools.map(({ name, description, inputSchema, approval }) => ({
@@ -32,7 +35,7 @@ describe("Pragma management tools", () => {
         approval,
       })),
     ).toEqual(
-      PRAGMA_MANAGEMENT_TOOL_DEFINITIONS.map(({ name, description, inputSchema, approval }) => ({
+      availableDefinitions.map(({ name, description, inputSchema, approval }) => ({
         name,
         description,
         inputSchema,

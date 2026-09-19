@@ -856,7 +856,7 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     });
     expect(created.id).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/);
     expect(created.avatarId).toBe("pragma.avatar.expert.writer");
-    expect(await experts.list()).toHaveLength(3);
+    expect(await experts.list()).toHaveLength(4);
     const opened = await projectRevisionFile(directory, 1, `experts/${created.id}.pragma.yaml`);
     expect(opened).toContain("scope: Release communication");
     expect(opened).toContain("avatarId: pragma.avatar.expert.writer");

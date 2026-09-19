@@ -27,6 +27,7 @@ export function CapabilityDetailFragment(props: {
   readonly capability: Capability;
   readonly onBack: () => void;
   readonly onChanged: (capability: Capability) => void;
+  readonly onOpenRevisions?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
@@ -222,14 +223,19 @@ export function CapabilityDetailFragment(props: {
             <p>{definition.description}</p>
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void updateSkill()}
-            >
-              <ArrowsClockwise size={17} /> {busy ? t("updatingSkill") : t("updateSkill")}
-            </button>
+            <div className="capability-row-actions">
+              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+                <Archive size={17} /> {t("skillRevisions")}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void updateSkill()}
+              >
+                <ArrowsClockwise size={17} /> {busy ? t("updatingSkill") : t("updateSkill")}
+              </button>
+            </div>
           ) : definition.kind === "mcp_server" ? (
             <button
               className="secondary-button"

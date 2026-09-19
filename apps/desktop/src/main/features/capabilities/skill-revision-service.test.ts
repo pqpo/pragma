@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { SkillRevisionJob } from "@pragma/built-in-agents/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityStore } from "./capability-store.ts";
@@ -18,116 +17,228 @@ afterEach(async () => {
 });
 
 describe("Skill revision service", () => {
-  it("publishes a passing Memory learning revision without an unreachable review step", async () => {
-    const { service, updateGeneratedSkill } = createService();
-
-    await service.submit(memoryRequest());
-    await service.processPending();
-
-    expect(updateGeneratedSkill).toHaveBeenCalledWith({
-      id: capabilityId,
-      baseRevision: 1,
-      package: expect.objectContaining({ description: "Updated workflow." }),
+  it("publishes a raw package including binary files and executable scripts", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("memory-learning"), {
+      missionId,
     });
-    await expect(service.list()).resolves.toEqual([
-      expect.objectContaining({ state: "completed", revision: 6 }),
-    ]);
+    const draft = await fixture.service.inspectDraft(job.draftId, job.missionId);
+    await writeFile(join(draft.draftPath!, "asset.bin"), Uint8Array.from([0, 255, 42]));
+    await mkdir(join(draft.draftPath!, "scripts"));
+    await writeFile(join(draft.draftPath!, "scripts", "verify.mjs"), "process.exit(0);\n");
+    await chmod(join(draft.draftPath!, "scripts", "verify.mjs"), 0o755);
+
+    const inspected = await fixture.service.inspectDraft(job.draftId, job.missionId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspected.draft.revision,
+      expectedWorkingTreeHash: inspected.workingTree.hash,
+      summary: "Add a binary fixture and executable verifier.",
+      missionId,
+    });
+    await fixture.service.processPending();
+
+    const completed = await fixture.service.get(job.id);
+    expect(completed.error).toBeUndefined();
+    expect(completed).toMatchObject({ state: "completed" });
+    expect(fixture.publish).toHaveBeenCalledOnce();
+    const published = fixture.publish.mock.calls[0]![0];
+    await expect(readFile(join(published.sourcePath, "asset.bin"))).resolves.toEqual(
+      Buffer.from([0, 255, 42]),
+    );
   });
 
-  it("resumes a passing Memory revision that stopped after evaluation", async () => {
-    const { service, statePath, updateGeneratedSkill } = createService();
-    const timestamp = "2026-09-08T00:00:00.000Z";
-    const job: SkillRevisionJob = {
-      schemaVersion: "pragma.skill-revision-job/v1",
-      id: randomUUID(),
-      revision: 3,
-      request: memoryRequest(),
-      state: "pending_review",
-      changeSet: changeSet(),
-      evaluation: passingEvaluation(),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const jobsPath = join(statePath, "jobs");
-    await mkdir(jobsPath, { recursive: true });
-    await writeFile(join(jobsPath, `${job.id}.json`), JSON.stringify(job));
+  it("rejects a stale base and preserves a read-only reference", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), {
+      missionId,
+    });
+    const inspected = await fixture.service.inspectDraft(job.draftId, job.missionId);
+    fixture.setCurrentRevision(2);
+    const rejected = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspected.draft.revision,
+      expectedWorkingTreeHash: inspected.workingTree.hash,
+      summary: "No longer current.",
+      missionId,
+    });
 
-    await service.processPending();
-
-    expect(updateGeneratedSkill).toHaveBeenCalledOnce();
-    await expect(service.list()).resolves.toEqual([
-      expect.objectContaining({ id: job.id, state: "completed", revision: 5 }),
-    ]);
+    expect(rejected).toMatchObject({
+      state: "rejected",
+      error: { code: "skill_revision_base_changed" },
+    });
+    const reference = await fixture.service.inspectDraft(job.draftId, job.missionId);
+    expect(reference).toMatchObject({ stale: true, referencePath: expect.any(String) });
+    expect(reference.draftPath).toBeUndefined();
   });
 
-  it("records completion without publishing twice after a post-commit crash", async () => {
-    const { service, statePath, updateGeneratedSkill } = createService({ alreadyApplied: true });
-    const timestamp = "2026-09-08T00:00:00.000Z";
-    const job: SkillRevisionJob = {
-      schemaVersion: "pragma.skill-revision-job/v1",
-      id: randomUUID(),
-      revision: 5,
-      request: memoryRequest(),
-      state: "applying",
-      changeSet: changeSet(),
-      evaluation: passingEvaluation(),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    const jobsPath = join(statePath, "jobs");
-    await mkdir(jobsPath, { recursive: true });
-    await writeFile(join(jobsPath, `${job.id}.json`), JSON.stringify(job));
+  it("resumes the existing Job instead of creating a duplicate", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const initial = await fixture.service.start(request("expert-reflection"), { missionId });
+    await fixture.service.detachMission(initial.id, missionId);
+    const resumed = await fixture.service.start(request("expert-reflection"), {
+      draftId: initial.draftId,
+      missionId,
+    });
+    expect(resumed.id).toBe(initial.id);
+    await expect(fixture.service.list()).resolves.toHaveLength(1);
+  });
 
-    await service.processPending();
+  it("does not allow a missing or different Mission identity to take over a draft", async () => {
+    const fixture = await createService();
+    const ownerMissionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), {
+      missionId: ownerMissionId,
+    });
+    const inspected = await fixture.service.inspectDraft(job.draftId, ownerMissionId);
 
-    expect(updateGeneratedSkill).not.toHaveBeenCalled();
-    await expect(service.list()).resolves.toEqual([
-      expect.objectContaining({ id: job.id, state: "completed", revision: 6 }),
-    ]);
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: inspected.draft.revision,
+        expectedWorkingTreeHash: inspected.workingTree.hash,
+        summary: "Attempt an ownerless submission.",
+      }),
+    ).rejects.toMatchObject({ code: "skill_revision_owned_by_another_context" });
+    await expect(
+      fixture.service.start(request("expert-reflection"), {
+        draftId: job.draftId,
+        missionId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: "skill_revision_owned_by_another_context" });
+  });
+
+  it("omits discarded drafts from live Job listings", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const inspected = await fixture.service.inspectDraft(job.draftId, missionId);
+
+    await fixture.service.discardDraft({
+      draftId: job.draftId,
+      expectedRevision: inspected.draft.revision,
+      expectedWorkingTreeHash: inspected.workingTree.hash,
+      missionId,
+    });
+
+    await expect(fixture.service.list()).resolves.toEqual([]);
+  });
+
+  it("applies generated deletions to the managed worktree", async () => {
+    const fixture = await createService({
+      generator: {
+        async generate() {
+          return {
+            schemaVersion: "pragma.skill-revision-change-set/v1" as const,
+            capabilityId,
+            baseRevision: 1,
+            baseContentHash,
+            name: "safe-workflow",
+            description: "Safe workflow.",
+            summary: "Remove obsolete guidance.",
+            operations: [{ operation: "delete" as const, path: "references/obsolete.md" }],
+          };
+        },
+      },
+    });
+    await mkdir(join(fixture.sourcePath, "references"));
+    await writeFile(join(fixture.sourcePath, "references", "obsolete.md"), "Obsolete.\n");
+
+    const job = await fixture.service.submit(legacyRequest());
+    const draft = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      readFile(join(draft.referencePath!, "references", "obsolete.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await fixture.service.processPending();
+  });
+
+  it("recovers an interrupted publication during startup processing", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const inspected = await fixture.service.inspectDraft(job.draftId, missionId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspected.draft.revision,
+      expectedWorkingTreeHash: inspected.workingTree.hash,
+      summary: "Ready to publish.",
+      missionId,
+    });
+    await fixture.service.processPending();
+    const pendingJob = await fixture.service.get(job.id);
+    const pendingDraft = await fixture.service.getDraft(job.draftId);
+    await writeFile(
+      join(fixture.statePath, "jobs", `${job.id}.json`),
+      `${JSON.stringify({ ...pendingJob, state: "publishing" })}\n`,
+    );
+    await writeFile(
+      join(fixture.draftsPath, job.draftId, "draft.json"),
+      `${JSON.stringify({ ...pendingDraft, state: "publishing" })}\n`,
+    );
+
+    await fixture.service.processPending();
+
+    await expect(fixture.service.get(job.id)).resolves.toMatchObject({ state: "completed" });
+    await expect(fixture.service.getDraft(job.draftId)).resolves.toMatchObject({
+      state: "completed",
+    });
   });
 });
 
-function createService(options: { readonly alreadyApplied?: boolean } = {}) {
-  const statePath = join(tmpdir(), `pragma-skill-revisions-${randomUUID()}`);
-  roots.push(statePath);
-  const updateGeneratedSkill = vi.fn(async () => undefined);
+async function createService(
+  options: {
+    readonly generator?: Parameters<typeof createSkillRevisionService>[0]["generator"];
+  } = {},
+) {
+  const root = join(tmpdir(), `pragma-skill-revisions-${randomUUID()}`);
+  roots.push(root);
+  const sourcePath = join(root, "formal", "1");
+  await mkdir(sourcePath, { recursive: true });
+  await writeFile(
+    join(sourcePath, "SKILL.md"),
+    "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
+  );
+  let currentRevision = 1;
+  const publish = vi.fn(async (input: { readonly sourcePath: string }) => {
+    void input;
+    return { manifest: { latestRevision: 2 } };
+  });
   const capabilities = {
     async get(_id: string, requestedRevision?: number) {
-      const applied = options.alreadyApplied === true && requestedRevision === undefined;
+      const revision = requestedRevision ?? currentRevision;
       return {
-        manifest: { latestRevision: applied ? 2 : 1 },
+        manifest: { latestRevision: revision },
         definition: {
           kind: "skill",
           name: "safe-workflow",
-          description: applied ? "Updated workflow." : "Safe workflow.",
-          contentHash: applied ? "d".repeat(64) : baseContentHash,
+          description: "Safe workflow.",
+          contentHash: revision === 1 ? baseContentHash : "d".repeat(64),
         },
       };
     },
-    async listSkillFiles() {
-      return [{ path: "SKILL.md" }];
+    async skillFilesPath() {
+      return sourcePath;
     },
-    async getSkillFile(input: { readonly revision: number }) {
-      return {
-        content:
-          input.revision === 2
-            ? "---\nname: safe-workflow\ndescription: Updated workflow.\n---\n\nFollow the improved workflow."
-            : "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.",
-      };
-    },
-    updateGeneratedSkill,
+    publishSkillRevisionCandidate: publish,
   } as unknown as CapabilityStore;
   return {
-    statePath,
-    updateGeneratedSkill,
+    publish,
+    setCurrentRevision(revision: number) {
+      currentRevision = revision;
+    },
+    sourcePath,
+    statePath: join(root, "state"),
+    draftsPath: join(root, "data", "skill-revision-drafts"),
     service: createSkillRevisionService({
-      statePath,
+      statePath: join(root, "state"),
+      draftsPath: join(root, "data", "skill-revision-drafts"),
+      draftsTrashPath: join(root, "trash", "skill-revision-drafts"),
       capabilities,
-      generator: {
-        async generate() {
-          return changeSet();
-        },
-      },
+      ...(options.generator === undefined ? {} : { generator: options.generator }),
       evaluator: {
         async evaluate() {
           return passingEvaluation();
@@ -137,48 +248,49 @@ function createService(options: { readonly alreadyApplied?: boolean } = {}) {
   };
 }
 
-function memoryRequest() {
+function legacyRequest() {
   return {
     schemaVersion: "pragma.skill-revision-request/v1" as const,
     capabilityId,
     source: "memory-learning" as const,
-    sourceDigest: "b".repeat(64),
-    sourceRefs: [1, 2, 3].map((revision) => ({
-      kind: "episodic" as const,
-      id: `episode-${revision}`,
-      revision,
-    })),
+    sourceDigest: randomUUID().replaceAll("-", "").padEnd(64, "0"),
+    sourceRefs: [],
     replayCases: [1, 2, 3].map((index) => ({
       objective: `Replay ${index}`,
-      requiredBehaviors: ["Complete the workflow."],
+      requiredBehaviors: ["Pass"],
       forbiddenBehaviors: [],
     })),
     boundaryCase: {
-      objective: "Reject an unrelated request.",
-      requiredBehaviors: ["Explain that the workflow does not apply."],
+      objective: "Boundary",
+      requiredBehaviors: ["Decline"],
       forbiddenBehaviors: [],
     },
-    prompt: "Improve the workflow from validated Memory evidence.",
+    prompt: "Remove obsolete guidance.",
   };
 }
 
-function changeSet() {
+function request(source: "memory-learning" | "expert-reflection") {
   return {
-    schemaVersion: "pragma.skill-revision-change-set/v1" as const,
+    schemaVersion: "pragma.skill-revision-request/v2" as const,
     capabilityId,
-    baseRevision: 1,
-    baseContentHash,
-    name: "safe-workflow",
-    description: "Updated workflow.",
-    summary: "Improve the instructions.",
-    operations: [
-      {
-        operation: "upsert" as const,
-        path: "SKILL.md",
-        content:
-          "---\nname: safe-workflow\ndescription: Updated workflow.\n---\n\nFollow the improved workflow.",
-      },
-    ],
+    source,
+    sourceDigest: randomUUID().replaceAll("-", "").padEnd(64, "0"),
+    sourceRefs: [],
+    ...(source === "memory-learning"
+      ? {
+          replayCases: [1, 2, 3].map((index) => ({
+            objective: `Replay ${index}`,
+            requiredBehaviors: ["Pass"],
+            forbiddenBehaviors: [],
+          })),
+          boundaryCase: {
+            objective: "Boundary",
+            requiredBehaviors: ["Decline"],
+            forbiddenBehaviors: [],
+          },
+        }
+      : {}),
+    prompt: "Improve the workflow.",
   };
 }
 

@@ -122,7 +122,7 @@ const MissionExecutionStatusSchema = z.enum([
   "cancelled",
 ]);
 
-const MissionBaseSchema = z.object({
+export const MissionBaseSchema = z.object({
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
@@ -190,7 +190,7 @@ export const MissionOriginSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-export const MissionContextMountSchema = z.discriminatedUnion("kind", [
+export const MissionContextMountV10Schema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("context-store"),
@@ -206,6 +206,18 @@ export const MissionContextMountSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+export const MissionContextMountSchema = z.discriminatedUnion("kind", [
+  ...MissionContextMountV10Schema.options,
+  z
+    .object({
+      kind: z.literal("skill-revision-draft"),
+      draftId: z.string().uuid(),
+      revisionJobId: z.string().uuid(),
+      capabilityId: z.string().uuid(),
+    })
+    .strict(),
+]);
+
 export const MissionContextMountsSchema = z
   .array(MissionContextMountSchema)
   .max(200)
@@ -213,7 +225,9 @@ export const MissionContextMountsSchema = z
     const seen = new Set<string>();
     for (const [index, mount] of mounts.entries()) {
       const identity =
-        mount.kind === "context-store" ? `store:${mount.storeId}` : `draft:${mount.draftId}`;
+        mount.kind === "context-store"
+          ? `store:${mount.storeId}`
+          : `${mount.kind}:${mount.draftId}`;
       if (seen.has(identity)) {
         context.addIssue({
           code: "custom",
@@ -234,7 +248,7 @@ export const MissionBranchSourceSchema = z.object({
 });
 
 export const MissionSchema = MissionBaseSchema.extend({
-  schemaVersion: z.literal("pragma.mission/v10"),
+  schemaVersion: z.literal("pragma.mission/v11"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
   origin: MissionOriginSchema.default({ type: "user" }),
   contextMounts: MissionContextMountsSchema,
@@ -288,9 +302,10 @@ export const MissionSummarySchema = z.object({
     }),
     z.object({
       type: z.literal("managed-automation"),
-      kind: z.literal("knowledge-revision"),
+      kind: z.enum(["knowledge-revision", "skill-revision"]),
       jobId: z.string().uuid(),
-      storeId: z.string().uuid(),
+      storeId: z.string().uuid().optional(),
+      capabilityId: z.string().uuid().optional(),
     }),
   ]),
   lifecycleStatus: MissionLifecycleStatusSchema,
@@ -325,7 +340,8 @@ export function isUserFacingMissionOrigin(origin: z.infer<typeof MissionOriginSc
   return (
     origin.type === "user" ||
     origin.type === "automation" ||
-    origin.type === "system-store-revision"
+    origin.type === "system-store-revision" ||
+    origin.type === "system-skill-revision"
   );
 }
 

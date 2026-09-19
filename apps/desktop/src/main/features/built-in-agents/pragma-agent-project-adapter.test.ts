@@ -177,6 +177,14 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         readOnly: true,
       }),
       expect.objectContaining({
+        ref: "expert:0000000000sk1rev",
+        name: "Skill Revision Agent",
+        model: { mode: "system-default" },
+        assignableAs: ["team-member", "coordinator"],
+        origin: "system",
+        readOnly: true,
+      }),
+      expect.objectContaining({
         ref: "expert:0000000000st0rev",
         name: "Store Revision Agent",
         model: { mode: "system-default" },

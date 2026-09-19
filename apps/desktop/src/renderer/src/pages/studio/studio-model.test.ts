@@ -97,7 +97,8 @@ describe("studioSections", () => {
       "teams",
       "flows",
       "integrations",
-      "capabilities",
+      "connectors",
+      "skills",
       "context-stores",
       "square",
     ]);

@@ -32,6 +32,8 @@ import {
   ContextStoreDraftRebaseResolutionSchema,
   ContextStoreDraftSchema,
   GetContextStoreDraftFileSchema,
+  ManagedSkillRevisionJobSchema,
+  SkillRevisionDraftSchema,
 } from "./revision-contracts.ts";
 
 export const KNOWLEDGE_REVISION_LIST_TARGETS_TOOL_NAME = "knowledge_revision_list_targets" as const;
@@ -46,6 +48,12 @@ export const KNOWLEDGE_REVISION_REBASE_TOOL_NAME = "knowledge_revision_rebase" a
 export const KNOWLEDGE_REVISION_SUBMIT_DRAFT_TOOL_NAME = "knowledge_revision_submit_draft" as const;
 export const KNOWLEDGE_REVISION_DISCARD_DRAFT_TOOL_NAME =
   "knowledge_revision_discard_draft" as const;
+export const SKILL_REVISION_LIST_TARGETS_TOOL_NAME = "skill_revision_list_targets" as const;
+export const SKILL_REVISION_LIST_DRAFTS_TOOL_NAME = "skill_revision_list_drafts" as const;
+export const SKILL_REVISION_START_TOOL_NAME = "skill_revision_start" as const;
+export const SKILL_REVISION_GET_DRAFT_TOOL_NAME = "skill_revision_get_draft" as const;
+export const SKILL_REVISION_SUBMIT_DRAFT_TOOL_NAME = "skill_revision_submit_draft" as const;
+export const SKILL_REVISION_DISCARD_DRAFT_TOOL_NAME = "skill_revision_discard_draft" as const;
 
 export const KnowledgeRevisionTargetMountSchema = z
   .object({
@@ -363,11 +371,185 @@ export interface KnowledgeRevisionSubmissionPort {
   ): Promise<z.infer<typeof KnowledgeRevisionDiscardDraftResultSchema>>;
 }
 
+const SkillTargetRefSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .describe("Exact opaque targetRef returned by skill_revision_list_targets.");
+const SkillDraftIdSchema = z.string().uuid();
+const SkillWorkingTreeHashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+export const ReadySkillRevisionTargetSchema = z
+  .object({
+    availability: z.literal("ready"),
+    targetRef: SkillTargetRefSchema,
+    capabilityId: z.string().uuid(),
+    name: z.string().min(1).max(120),
+    description: z.string().max(2_000),
+    revision: z.number().int().positive(),
+    contentHash: SkillWorkingTreeHashSchema,
+    mounted: z.boolean(),
+  })
+  .strict();
+export const SkillRevisionTargetSchema = z.discriminatedUnion("availability", [
+  ReadySkillRevisionTargetSchema,
+  z
+    .object({
+      availability: z.literal("degraded"),
+      targetRef: SkillTargetRefSchema,
+      diagnostic: PragmaManagementErrorSchema,
+    })
+    .strict(),
+]);
+export const SkillRevisionTargetPageSchema = PragmaManagementPageSchema(SkillRevisionTargetSchema);
+export const SkillRevisionListTargetsInputSchema = PragmaManagementPageInputSchema.extend({
+  mounted: z.boolean().optional(),
+  query: z.string().trim().min(1).max(200).optional(),
+}).strict();
+
+export const ReadySkillRevisionDraftSummarySchema = z
+  .object({
+    availability: z.literal("ready"),
+    draftId: SkillDraftIdSchema,
+    jobId: z.string().uuid(),
+    revision: SkillRevisionDraftSchema.shape.revision,
+    capabilityId: SkillRevisionDraftSchema.shape.capabilityId,
+    name: SkillRevisionDraftSchema.shape.name,
+    baseRevision: SkillRevisionDraftSchema.shape.baseRevision,
+    state: SkillRevisionDraftSchema.shape.state,
+    missionId: z.string().uuid().optional(),
+    draftPath: z.string().min(1).max(4_000).optional(),
+    referencePath: z.string().min(1).max(4_000).optional(),
+    summary: SkillRevisionDraftSchema.shape.summary,
+    error: SkillRevisionDraftSchema.shape.error,
+    createdAt: SkillRevisionDraftSchema.shape.createdAt,
+    updatedAt: SkillRevisionDraftSchema.shape.updatedAt,
+  })
+  .strict();
+export const SkillRevisionDraftSummarySchema = z.discriminatedUnion("availability", [
+  ReadySkillRevisionDraftSummarySchema,
+  z
+    .object({
+      availability: z.literal("degraded"),
+      draftId: SkillDraftIdSchema,
+      diagnostic: PragmaManagementErrorSchema,
+    })
+    .strict(),
+]);
+export const SkillRevisionDraftPageSchema = PragmaManagementPageSchema(
+  SkillRevisionDraftSummarySchema,
+);
+export const SkillRevisionListDraftsInputSchema = PragmaManagementPageInputSchema.extend({
+  targetRef: SkillTargetRefSchema.optional(),
+  states: z.array(SkillRevisionDraftSchema.shape.state).max(8).optional(),
+  query: z.string().trim().min(1).max(200).optional(),
+}).strict();
+
+export const SkillRevisionStartInputSchema = z
+  .object({
+    targetRef: SkillTargetRefSchema,
+    prompt: z.string().trim().min(1).max(50_000),
+    draftId: SkillDraftIdSchema.optional(),
+    draftName: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.draftId !== undefined && input.draftName !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["draftName"],
+        message: "Choose an existing Skill draft or name a new one, not both.",
+      });
+    }
+  });
+export const SkillRevisionStartResultSchema = z
+  .object({
+    jobId: z.string().uuid(),
+    draftId: SkillDraftIdSchema,
+    missionId: z.string().uuid().optional(),
+    state: ManagedSkillRevisionJobSchema.shape.state,
+    target: ReadySkillRevisionTargetSchema,
+    draftPath: z.string().min(1).max(4_000).optional(),
+  })
+  .strict();
+
+export const SkillRevisionGetDraftInputSchema = PragmaManagementPageInputSchema.extend({
+  draftId: SkillDraftIdSchema,
+}).strict();
+export const SkillRevisionDraftChangeSchema = z
+  .object({
+    path: z.string().min(1).max(1_000),
+    kind: z.enum(["added", "modified", "deleted", "type-changed"]),
+    sizeBytes: z.number().int().nonnegative().optional(),
+    sha256: SkillWorkingTreeHashSchema.optional(),
+    executable: z.boolean().optional(),
+  })
+  .strict();
+export const SkillRevisionDraftInspectionSchema = z
+  .object({
+    draft: ReadySkillRevisionDraftSummarySchema,
+    workingTreeHash: SkillWorkingTreeHashSchema,
+    currentRevision: z.number().int().positive(),
+    currentContentHash: SkillWorkingTreeHashSchema,
+    stale: z.boolean(),
+    items: z.array(SkillRevisionDraftChangeSchema).max(PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT),
+    nextCursor: PragmaShortPageCursorSchema.optional(),
+  })
+  .strict();
+export const SkillRevisionSubmitDraftInputSchema = z
+  .object({
+    draftId: SkillDraftIdSchema,
+    expectedRevision: z.number().int().positive(),
+    expectedWorkingTreeHash: SkillWorkingTreeHashSchema,
+    summary: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+export const SkillRevisionDiscardDraftInputSchema = z
+  .object({
+    draftId: SkillDraftIdSchema,
+    expectedRevision: z.number().int().positive(),
+    expectedWorkingTreeHash: SkillWorkingTreeHashSchema,
+  })
+  .strict();
+export const SkillRevisionDraftReceiptSchema = z
+  .object({
+    draftId: SkillDraftIdSchema,
+    jobId: z.string().uuid(),
+    revision: z.number().int().positive(),
+    state: ManagedSkillRevisionJobSchema.shape.state,
+  })
+  .strict();
+export const SkillRevisionDiscardDraftResultSchema = z
+  .object({ draftId: SkillDraftIdSchema, discarded: z.literal(true) })
+  .strict();
+
+export interface SkillRevisionSubmissionPort {
+  listTargets(
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof SkillRevisionListTargetsInputSchema>,
+  ): Promise<z.infer<typeof SkillRevisionTargetPageSchema>>;
+  listDrafts(
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof SkillRevisionListDraftsInputSchema>,
+  ): Promise<z.infer<typeof SkillRevisionDraftPageSchema>>;
+  start(
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof SkillRevisionStartInputSchema>,
+  ): Promise<z.infer<typeof SkillRevisionStartResultSchema>>;
+  getDraft(
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof SkillRevisionGetDraftInputSchema>,
+  ): Promise<z.infer<typeof SkillRevisionDraftInspectionSchema>>;
+  submitDraft(
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof SkillRevisionSubmitDraftInputSchema>,
+  ): Promise<z.infer<typeof SkillRevisionDraftReceiptSchema>>;
+  discardDraft(
+    input: KnowledgeRevisionToolInvocation & z.infer<typeof SkillRevisionDiscardDraftInputSchema>,
+  ): Promise<z.infer<typeof SkillRevisionDiscardDraftResultSchema>>;
+}
+
 export interface PragmaManagementToolPorts {
   readonly project?: PragmaAgentDslProjectPort | undefined;
   readonly missions?: PragmaAgentMissionPort | undefined;
   readonly automations?: PragmaAgentAutomationPort | undefined;
   readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
+  readonly skillRevisions?: SkillRevisionSubmissionPort | undefined;
 }
 
 type PragmaManagementTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
@@ -452,9 +634,51 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
   ),
 ] as const;
 
+const PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS = [
+  definition(
+    SKILL_REVISION_LIST_TARGETS_TOOL_NAME,
+    "List Skill capabilities that may be revised, including unmounted authorized Skills.",
+    SkillRevisionListTargetsInputSchema,
+    SkillRevisionTargetPageSchema,
+  ),
+  definition(
+    SKILL_REVISION_LIST_DRAFTS_TOOL_NAME,
+    "List managed Skill revision drafts. Only the owning Mission receives a writable draftPath.",
+    SkillRevisionListDraftsInputSchema,
+    SkillRevisionDraftPageSchema,
+  ),
+  definition(
+    SKILL_REVISION_START_TOOL_NAME,
+    "Start or continue a Skill revision. Edit only the returned draftPath with native Runtime file tools; never edit the formal Skill.",
+    SkillRevisionStartInputSchema,
+    SkillRevisionStartResultSchema,
+    { reason: "Start or continue a managed Skill revision." },
+  ),
+  definition(
+    SKILL_REVISION_GET_DRAFT_TOOL_NAME,
+    "Inspect a Skill draft's hashes and paginated file changes without reading file contents. Use native Runtime file tools for content.",
+    SkillRevisionGetDraftInputSchema,
+    SkillRevisionDraftInspectionSchema,
+  ),
+  definition(
+    SKILL_REVISION_SUBMIT_DRAFT_TOOL_NAME,
+    "Submit a stable Skill working tree for evaluation and human review. This does not approve or publish it.",
+    SkillRevisionSubmitDraftInputSchema,
+    SkillRevisionDraftReceiptSchema,
+  ),
+  definition(
+    SKILL_REVISION_DISCARD_DRAFT_TOOL_NAME,
+    "Discard an unpublished Skill draft, reject its unfinished task, and move its directory to recoverable Trash.",
+    SkillRevisionDiscardDraftInputSchema,
+    SkillRevisionDiscardDraftResultSchema,
+    { reason: "Discard this unpublished Skill draft." },
+  ),
+] as const;
+
 export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
   ...PRAGMA_MANAGEMENT_HOST_TOOL_DEFINITIONS,
   ...PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS,
+  ...PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS,
 ] as const;
 
 export function createPragmaManagementTools(
@@ -475,51 +699,90 @@ export function createPragmaManagementTools(
           ...(ports.automations === undefined ? {} : { automations: ports.automations }),
         });
   const port = ports.knowledgeRevisions;
-  if (port === undefined) return hostTools;
-  const [
-    listTargets,
-    listDrafts,
-    start,
-    getDraft,
-    inspectRebase,
-    getRebaseConflict,
-    rebase,
-    submitDraft,
-    discardDraft,
-  ] = PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS;
-  return [
-    ...hostTools,
-    tool(
+  const knowledgeTools: PragmaManagementTool[] = [];
+  if (port !== undefined) {
+    const [
       listTargets,
-      async (input, context) => await port.listTargets({ ...invocation(context), ...input }),
-    ),
-    tool(
       listDrafts,
-      async (input, context) => await port.listDrafts({ ...invocation(context), ...input }),
-    ),
-    tool(start, async (input, context) => await port.start({ ...invocation(context), ...input })),
-    tool(
+      start,
       getDraft,
-      async (input, context) => await port.getDraft({ ...invocation(context), ...input }),
-    ),
-    tool(
       inspectRebase,
-      async (input, context) => await port.inspectRebase({ ...invocation(context), ...input }),
-    ),
-    tool(
       getRebaseConflict,
-      async (input, context) => await port.getRebaseConflict({ ...invocation(context), ...input }),
-    ),
-    tool(rebase, async (input, context) => await port.rebase({ ...invocation(context), ...input })),
-    tool(
+      rebase,
       submitDraft,
-      async (input, context) => await port.submitDraft({ ...invocation(context), ...input }),
-    ),
-    tool(
       discardDraft,
-      async (input, context) => await port.discardDraft({ ...invocation(context), ...input }),
-    ),
-  ];
+    ] = PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS;
+    knowledgeTools.push(
+      tool(
+        listTargets,
+        async (input, context) => await port.listTargets({ ...invocation(context), ...input }),
+      ),
+      tool(
+        listDrafts,
+        async (input, context) => await port.listDrafts({ ...invocation(context), ...input }),
+      ),
+      tool(start, async (input, context) => await port.start({ ...invocation(context), ...input })),
+      tool(
+        getDraft,
+        async (input, context) => await port.getDraft({ ...invocation(context), ...input }),
+      ),
+      tool(
+        inspectRebase,
+        async (input, context) => await port.inspectRebase({ ...invocation(context), ...input }),
+      ),
+      tool(
+        getRebaseConflict,
+        async (input, context) =>
+          await port.getRebaseConflict({ ...invocation(context), ...input }),
+      ),
+      tool(
+        rebase,
+        async (input, context) => await port.rebase({ ...invocation(context), ...input }),
+      ),
+      tool(
+        submitDraft,
+        async (input, context) => await port.submitDraft({ ...invocation(context), ...input }),
+      ),
+      tool(
+        discardDraft,
+        async (input, context) => await port.discardDraft({ ...invocation(context), ...input }),
+      ),
+    );
+  }
+  const skillPort = ports.skillRevisions;
+  const skillTools: PragmaManagementTool[] = [];
+  if (skillPort !== undefined) {
+    const [listTargets, listDrafts, start, getDraft, submitDraft, discardDraft] =
+      PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS;
+    skillTools.push(
+      tool(
+        listTargets,
+        async (input, context) => await skillPort.listTargets({ ...invocation(context), ...input }),
+      ),
+      tool(
+        listDrafts,
+        async (input, context) => await skillPort.listDrafts({ ...invocation(context), ...input }),
+      ),
+      tool(
+        start,
+        async (input, context) => await skillPort.start({ ...invocation(context), ...input }),
+      ),
+      tool(
+        getDraft,
+        async (input, context) => await skillPort.getDraft({ ...invocation(context), ...input }),
+      ),
+      tool(
+        submitDraft,
+        async (input, context) => await skillPort.submitDraft({ ...invocation(context), ...input }),
+      ),
+      tool(
+        discardDraft,
+        async (input, context) =>
+          await skillPort.discardDraft({ ...invocation(context), ...input }),
+      ),
+    );
+  }
+  return [...hostTools, ...knowledgeTools, ...skillTools];
 }
 
 function tool<TSchema extends z.ZodType>(

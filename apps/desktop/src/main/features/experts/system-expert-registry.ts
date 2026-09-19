@@ -11,6 +11,7 @@ import {
 import {
   BUILT_IN_AGENT_REFS,
   BUILT_IN_PRAGMA_REF,
+  SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
   builtInAgentResource,
@@ -37,11 +38,11 @@ import {
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-const CONFIG_SCHEMA_VERSION = 5;
+const CONFIG_SCHEMA_VERSION = 6;
 const LEGACY_BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0";
 
 const SystemExpertCustomizationSchema = UpdateBuiltInExpertDefinitionSchema.extend({
-  ref: z.enum([BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF]),
+  ref: z.enum([BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF, SKILL_REVISION_EXPERT_REF]),
   revision: z.number().int().min(2),
   updatedAt: z.string().datetime(),
 });
@@ -64,12 +65,25 @@ const LegacySystemExpertCustomizationConfigSchema = z.object({
     .max(100),
 });
 
-const PreviousSystemExpertCustomizationConfigSchema = z.object({
+const V4SystemExpertCustomizationConfigSchema = z.object({
   schemaVersion: z.literal(4),
   customizations: z
     .array(
       UpdateBuiltInExpertDefinitionSchema.extend({
         ref: z.literal(BUILT_IN_PRAGMA_REF),
+        revision: z.number().int().min(2),
+        updatedAt: z.string().datetime(),
+      }),
+    )
+    .max(100),
+});
+
+const V5SystemExpertCustomizationConfigSchema = z.object({
+  schemaVersion: z.literal(5),
+  customizations: z
+    .array(
+      UpdateBuiltInExpertDefinitionSchema.extend({
+        ref: z.enum([BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF]),
         revision: z.number().int().min(2),
         updatedAt: z.string().datetime(),
       }),
@@ -103,7 +117,11 @@ export function createDesktopSystemExpertRegistry(options?: {
   readonly configPath?: string | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): DesktopSystemExpertRegistry {
-  const editableRefs = [BUILT_IN_PRAGMA_REF, STORE_REVISION_EXPERT_REF] as const;
+  const editableRefs = [
+    BUILT_IN_PRAGMA_REF,
+    STORE_REVISION_EXPERT_REF,
+    SKILL_REVISION_EXPERT_REF,
+  ] as const;
   const defaultResources = new Map<string, PragmaExpertResource>(
     editableRefs.map((ref) => [ref, builtInAgentResource(ref)] as const),
   );
@@ -204,7 +222,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       if (current.success) {
         if (options.configPath !== undefined) {
           await Promise.all(
-            ([3, 4] as const).map(
+            ([3, 4, 5] as const).map(
               async (sourceVersion) =>
                 await rm(
                   `${options.configPath}.migration-v${sourceVersion}-to-v${CONFIG_SCHEMA_VERSION}.json`,
@@ -217,7 +235,18 @@ export function createDesktopSystemExpertRegistry(options?: {
           current.data.customizations.map((customization) => [customization.ref, customization]),
         );
       }
-      const previous = PreviousSystemExpertCustomizationConfigSchema.safeParse(raw);
+      const v5 = V5SystemExpertCustomizationConfigSchema.safeParse(raw);
+      if (v5.success) {
+        const migrated = new Map<string, SystemExpertCustomization>(
+          v5.data.customizations.map((customization) => {
+            const parsed = SystemExpertCustomizationSchema.parse(customization);
+            return [parsed.ref, parsed];
+          }),
+        );
+        await migrateConfig(raw, 5, migrated);
+        return migrated;
+      }
+      const previous = V4SystemExpertCustomizationConfigSchema.safeParse(raw);
       if (previous.success) {
         const migrated = new Map<string, SystemExpertCustomization>(
           previous.data.customizations.map((customization) => {
@@ -265,7 +294,7 @@ export function createDesktopSystemExpertRegistry(options?: {
 
   const migrateConfig = async (
     source: unknown,
-    sourceVersion: 3 | 4,
+    sourceVersion: 3 | 4 | 5,
     migrated: ReadonlyMap<string, SystemExpertCustomization>,
   ): Promise<void> => {
     if (options?.configPath === undefined) return;

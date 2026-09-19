@@ -126,7 +126,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(store.storagePath!(created.id), "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v10");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v11");
     expect(created.contextMounts).toEqual([]);
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
@@ -558,7 +558,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     });
 
     expect(branch).toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       title: `分支 · ${source.title}`,
       workspace: source.workspace,
       project: { id: "studio", revision: 7 },
@@ -1565,7 +1565,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v10", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v11", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -1595,7 +1595,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v10",
+        "pragma.mission/v11",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -1635,7 +1635,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(
       unsupportedManifest,
       (await readFile(unsupportedManifest, "utf8")).replace(
-        "pragma.mission/v10",
+        "pragma.mission/v11",
         "pragma.mission/v99",
       ),
       "utf8",
@@ -1670,10 +1670,10 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v10");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v11");
     for (const version of ["v3", "v4", "v5"]) {
       await expect(
         readFile(
@@ -1705,7 +1705,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       origin: { type: "user" },
     });
     expect(await readFile(manifestPath, "utf8")).toContain("type: user");
@@ -1753,7 +1753,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       origin: { type: "user" },
     });
     await expect(
@@ -1767,7 +1767,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const { id, source } = await installMissionV7Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       contextMounts: [],
     });
     expect(
@@ -1800,7 +1800,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       contextMounts: [],
     });
     await expect(
@@ -1815,7 +1815,7 @@ describe("mission store", { timeout: 30_000 }, () => {
 
     const migrated = await store.get(id);
     expect(migrated).toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
     });
     expect(migrated.branch).toBeUndefined();
@@ -1847,7 +1847,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       "utf8",
     );
 
-    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v10" });
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v11" });
     await expect(
       readFile(join(store.storagePath!(id), ".v8-to-v9.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -1859,7 +1859,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     const { id, source } = await installMissionV9Fixture(root);
 
     await expect(store.get(id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       contextMounts: [{ kind: "context-store", storeId: "10000000-0000-4000-8000-000000000001" }],
       branch: {
         sourceMissionId: "80000000-0000-4000-8000-000000000008",
@@ -1901,7 +1901,7 @@ describe("mission store", { timeout: 30_000 }, () => {
       "utf8",
     );
 
-    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v10" });
+    await expect(store.get(id)).resolves.toMatchObject({ schemaVersion: "pragma.mission/v11" });
     await expect(
       readFile(join(store.storagePath!(id), ".v9-to-v10.transaction.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -2012,7 +2012,7 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v10",
+      schemaVersion: "pragma.mission/v11",
       id: created.id,
     });
     await expect(

@@ -53,6 +53,10 @@ import type {
 } from "./capability-credential-store.ts";
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
+import {
+  copySkillTree,
+  scanSkillWorkingTree,
+} from "./skill-revision-draft-store.ts";
 
 const MAX_SKILL_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_FILES = 1000;
@@ -109,14 +113,16 @@ export interface CapabilityStore extends CapabilityRepository {
   importSkill(input: ImportSkillCapability): Promise<Capability>;
   importBundleRevisions(input: ImportBundleCapabilityRevisions): Promise<Capability>;
   updateSkill(input: UpdateSkillCapability): Promise<Capability>;
+  publishSkillRevisionCandidate(input: {
+    readonly id: string;
+    readonly baseRevision: number;
+    readonly baseContentHash: string;
+    readonly sourcePath: string;
+    readonly candidateContentHash: string;
+  }): Promise<Capability>;
   createGeneratedSkill(input: {
     readonly package: SkillPackage;
     readonly id?: string;
-  }): Promise<Capability>;
-  updateGeneratedSkill(input: {
-    readonly id: string;
-    readonly baseRevision: number;
-    readonly package: SkillPackage;
   }): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
@@ -1035,49 +1041,77 @@ export function createCapabilityStore(options: {
         throw error;
       }
     },
-    async updateGeneratedSkill(rawInput) {
+    async publishSkillRevisionCandidate(rawInput) {
       const input = {
         id: CapabilityIdSchema.parse(rawInput.id),
         baseRevision: z.number().int().positive().parse(rawInput.baseRevision),
-        package: SkillPackageSchema.parse(rawInput.package),
+        baseContentHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/u)
+          .parse(rawInput.baseContentHash),
+        sourcePath: z.string().min(1).parse(rawInput.sourcePath),
+        candidateContentHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/u)
+          .parse(rawInput.candidateContentHash),
       };
       const current = await readCapability(input.id);
-      if (current.manifest.latestRevision !== input.baseRevision) {
-        throw new CapabilityStoreError(
-          "revision_conflict",
-          `Capability revision changed from ${input.baseRevision} to ${current.manifest.latestRevision}.`,
-        );
-      }
       if (current.definition.kind !== "skill") {
-        throw new CapabilityStoreError(
-          "config_invalid",
-          "Only Skill capabilities can be updated here.",
-        );
+        throw new CapabilityStoreError("config_invalid", "Only Skill capabilities can be revised.");
       }
-      const revision = current.manifest.latestRevision + 1;
-      const revisionsPath = join(capabilityPath(input.id), "revisions");
-      const temporaryPath = join(
-        revisionsPath,
-        `.${revisionDirectory(revision)}.${randomUUID()}.tmp`,
+      const stagedRoot = join(
+        capabilityPath(input.id),
+        "revisions",
+        `.${revisionDirectory(input.baseRevision + 1)}.${randomUUID()}.tmp`,
       );
-      const payloadPath = join(temporaryPath, "payload");
-      await mkdir(payloadPath, { recursive: true, mode: 0o700 });
+      const payloadPath = join(stagedRoot, "payload");
       try {
-        await writeGeneratedSkillPayload(input.package, payloadPath);
+        await copySkillTree(input.sourcePath, payloadPath);
+        const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
+        const metadata = readSkillMetadata(skillDocument);
+        const contentHash = await hashDirectory(payloadPath);
+        const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
+        if (candidateSnapshot.hash !== input.candidateContentHash) {
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            "The immutable Skill candidate no longer matches its submitted content hash.",
+          );
+        }
+        if (
+          current.manifest.latestRevision === input.baseRevision + 1 &&
+          current.definition.contentHash === contentHash
+        ) {
+          const publishedSnapshot = await scanSkillWorkingTree(
+            join(revisionPath(input.id, current.manifest.latestRevision), "payload"),
+          );
+          if (publishedSnapshot.hash === input.candidateContentHash) return current;
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            "The published Skill revision has different file metadata from this candidate.",
+          );
+        }
+        if (
+          current.manifest.latestRevision !== input.baseRevision ||
+          current.definition.contentHash !== input.baseContentHash
+        ) {
+          throw new CapabilityStoreError(
+            "revision_conflict",
+            `Capability revision changed from ${input.baseRevision} to ${current.manifest.latestRevision}.`,
+          );
+        }
+        const revision = input.baseRevision + 1;
+        const timestamp = new Date().toISOString();
+        const name = metadata.name ?? current.definition.name;
+        const description = metadata.description ?? current.definition.description;
         const definition = CapabilityDefinitionSchema.parse({
           ...current.definition,
-          name: input.package.name,
-          description: input.package.description,
-          contentHash: await hashDirectory(payloadPath),
+          name,
+          description,
+          contentHash,
         });
-        if (stableStringify(definition) === stableStringify(current.definition)) {
-          await rm(temporaryPath, { recursive: true, force: true });
-          return current;
-        }
-        const timestamp = new Date().toISOString();
         const manifest = CapabilityManifestSchema.parse({
           ...current.manifest,
-          name: input.package.name,
+          name,
           latestRevision: revision,
           updatedAt: timestamp,
         });
@@ -1087,20 +1121,20 @@ export function createCapabilityStore(options: {
           checkedAt: timestamp,
         });
         const candidate = CapabilitySchema.parse({ manifest, definition, health });
-        await writeJson(join(temporaryPath, "definition.json"), definition);
+        await writeJson(join(stagedRoot, "definition.json"), definition);
         return await publishRevision({
           current,
           candidate,
           mutationType: "skill-update",
           commit: async () => {
-            await rename(temporaryPath, revisionPath(input.id, revision));
+            await rename(stagedRoot, revisionPath(input.id, revision));
             await writeJson(healthPath(input.id), health);
             await writeJson(manifestPath(input.id), manifest);
             return await readCapability(input.id);
           },
         });
       } catch (error) {
-        await rm(temporaryPath, { recursive: true, force: true });
+        await rm(stagedRoot, { recursive: true, force: true });
         throw error;
       }
     },

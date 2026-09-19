@@ -45,6 +45,7 @@ import {
   type ExpertEditorStep,
 } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
+import { SkillRevisionFragment } from "./SkillRevisionFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import {
   PragmaResourceDetailFragment,
@@ -153,6 +154,7 @@ export function StudioPage(props: {
     | "context-store-detail"
     | "context-store-revisions"
     | "capability-detail"
+    | "skill-revisions"
     | "plugin-detail"
     | "resource-detail"
     | "resource-edit"
@@ -802,9 +804,11 @@ export function StudioPage(props: {
                       0)
                     : section.id === "integrations"
                       ? automations.length
-                      : section.id === "capabilities"
-                        ? capabilities.length
-                        : undefined;
+                      : section.id === "connectors"
+                        ? capabilities.filter((item) => item.definition.kind !== "skill").length
+                        : section.id === "skills"
+                          ? capabilities.filter((item) => item.definition.kind === "skill").length
+                          : undefined;
           return (
             <button
               key={section.id}
@@ -1098,11 +1102,30 @@ export function StudioPage(props: {
             capability={selectedCapability}
             onBack={() => setScreen("directory")}
             onChanged={updateCapability}
+            onOpenRevisions={
+              selectedCapability.definition.kind === "skill"
+                ? () => setScreen("skill-revisions")
+                : undefined
+            }
           />
         ) : null}
-        {screen === "directory" && activeView === "capabilities" ? (
-          <CapabilityDirectoryFragment
+        {screen === "skill-revisions" && activeView === "skills" ? (
+          <SkillRevisionFragment
             capabilities={capabilities}
+            capabilityId={selectedCapabilityId ?? undefined}
+            onBack={() =>
+              setScreen(selectedCapabilityId === null ? "directory" : "capability-detail")
+            }
+          />
+        ) : null}
+        {screen === "directory" && (activeView === "connectors" || activeView === "skills") ? (
+          <CapabilityDirectoryFragment
+            kind={activeView}
+            capabilities={capabilities}
+            onOpenRevisions={() => {
+              setSelectedCapabilityId(null);
+              setScreen("skill-revisions");
+            }}
             onOpen={(capability) => {
               setSelectedCapabilityId(capability.manifest.id);
               setScreen("capability-detail");
@@ -1322,7 +1345,12 @@ export function StudioPage(props: {
             setBundleMode(null);
             setSquareBundlePath(undefined);
             setBundleRootRef(undefined);
-            setActiveView("capabilities");
+            setActiveView(
+              capabilities.find((item) => item.manifest.id === capabilityId)?.definition.kind ===
+                "skill"
+                ? "skills"
+                : "connectors",
+            );
             setSelectedCapabilityId(capabilityId);
             setScreen("capability-detail");
           }}

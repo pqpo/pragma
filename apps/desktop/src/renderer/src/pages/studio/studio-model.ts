@@ -26,7 +26,8 @@ export type StudioView =
   | "teams"
   | "flows"
   | "integrations"
-  | "capabilities"
+  | "connectors"
+  | "skills"
   | "plugins"
   | "context-stores";
 
@@ -201,7 +202,8 @@ export const studioSections = [
   { id: "teams", labelKey: "teams", icon: UsersThree },
   { id: "flows", labelKey: "flows", icon: GitBranch },
   { id: "integrations", labelKey: "integrations", icon: PlugsConnected },
-  { id: "capabilities", labelKey: "capabilities", icon: Wrench },
+  { id: "connectors", labelKey: "connectors", icon: PlugsConnected },
+  { id: "skills", labelKey: "skills", icon: Wrench },
   { id: "context-stores", labelKey: "contextStores", icon: Database },
   { id: "square", labelKey: "square.navigation", icon: Storefront },
 ] as const satisfies readonly {

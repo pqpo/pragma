@@ -67,6 +67,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Mission Board Context Store](./037-mission-board-context-store.md)
 - [Promoted Knowledge Stores 与 Agent revision](./039-promoted-knowledge-stores-and-agent-revision.md) — published authority 仍适用
 - [Sparse Context Store revision drafts](./044-sparse-context-store-revision-drafts.md)
+- [Raw Skill revision drafts](./051-raw-skill-revision-drafts.md)
 
 ## 维护规则
 
