@@ -203,7 +203,7 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
         .digest("hex");
       const job = await options.revisions.start(
         {
-          schemaVersion: "pragma.skill-revision-request/v3",
+          schemaVersion: "pragma.skill-revision-request/v4",
           operation,
           capabilityId,
           ...(creation === undefined

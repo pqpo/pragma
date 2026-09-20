@@ -564,16 +564,6 @@ function metadata(input: SkillExtractionInput = skillInput()) {
       failureModes: ["Generated output may be malformed."],
       recoverySteps: ["Use staged validation feedback."],
       package: { name: "resilient-skill", description: "A reusable resilient workflow." },
-      replayCases: [1, 2, 3].map((index) => ({
-        objective: `Replay ${index}`,
-        requiredBehaviors: ["Use the staged workflow."],
-        forbiddenBehaviors: [],
-      })),
-      boundaryCase: {
-        objective: "An unrelated task",
-        requiredBehaviors: ["Recognize non-applicability."],
-        forbiddenBehaviors: ["Force the workflow."],
-      },
     },
     sourceRefs: input.sources.map((source) => source.ref),
     route: { type: "create" as const },

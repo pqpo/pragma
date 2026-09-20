@@ -111,16 +111,6 @@ export const settings = {
     revisionAgentChooseModel: "Choose a model",
     revisionAgentSave: "Save revision model",
     revisionAgentSaveDescription: "New revision tasks will use this Runtime and model.",
-    evaluationAgent: "Skill Evaluation Agent",
-    evaluationAgentDescription:
-      "Choose the independent Runtime and model that runs replay and boundary evaluations before Skill review.",
-    evaluationAgentRuntime: "Evaluation Runtime",
-    evaluationAgentRuntimeDescription: "Runtime used only for memory-derived Skill evaluations.",
-    evaluationAgentModel: "Evaluation model",
-    evaluationAgentModelDescription:
-      "Model that judges applicability, correctness, recovery, and safety.",
-    evaluationAgentSave: "Save evaluation model",
-    evaluationAgentSaveDescription: "New Skill evaluations will use this Runtime and model.",
     saveError: "The general setting could not be saved.",
   },
   evaluations: {

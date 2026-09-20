@@ -68,6 +68,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Promoted Knowledge Stores 与 Agent revision](./039-promoted-knowledge-stores-and-agent-revision.md) — published authority 仍适用
 - [Sparse Context Store revision drafts](./044-sparse-context-store-revision-drafts.md)
 - [Raw Skill revision drafts](./051-raw-skill-revision-drafts.md)
+- [Synchronous Skill validation and manual review](./052-synchronous-skill-validation.md)
 
 ## 维护规则
 

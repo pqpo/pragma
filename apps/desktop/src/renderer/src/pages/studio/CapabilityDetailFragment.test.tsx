@@ -105,7 +105,7 @@ describe("CapabilityDetailFragment", () => {
     expect(html).not.toContain("Refresh tools");
   });
 
-  it("renders Skill content without the removed revision panel", () => {
+  it("renders Skill content with a link to the standalone revision screen", () => {
     const html = renderToStaticMarkup(
       <CapabilityDetailFragment
         capability={{
@@ -125,7 +125,7 @@ describe("CapabilityDetailFragment", () => {
     );
 
     expect(html).toContain("SKILL.md");
-    expect(html).not.toContain("Skill revisions");
+    expect(html).toContain("Skill revisions");
     expect(html).not.toContain("Prepare revision");
     expect(html).not.toContain("skill-revisions-heading");
   });

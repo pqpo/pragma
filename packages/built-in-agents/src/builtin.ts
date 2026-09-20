@@ -48,9 +48,6 @@ export const STORE_REVISION_EXPERT_ID = PragmaExpertIdSchema.parse(
 export const SKILL_REVISION_EXPERT_ID = PragmaExpertIdSchema.parse(
   "0000000000sk1rev",
 ) as "0000000000sk1rev";
-export const SKILL_EVALUATION_EXPERT_ID = PragmaExpertIdSchema.parse(
-  "0000000000sk1eva",
-) as "0000000000sk1eva";
 export const EVALUATION_JUDGE_EXPERT_ID = PragmaExpertIdSchema.parse(
   "00000000000j0dg3",
 ) as "00000000000j0dg3";
@@ -84,9 +81,6 @@ export const STORE_REVISION_EXPERT_REF = PragmaExpertRefSchema.parse(
 export const SKILL_REVISION_EXPERT_REF = PragmaExpertRefSchema.parse(
   `expert:${SKILL_REVISION_EXPERT_ID}`,
 ) as `expert:${typeof SKILL_REVISION_EXPERT_ID}`;
-export const SKILL_EVALUATION_EXPERT_REF = PragmaExpertRefSchema.parse(
-  `expert:${SKILL_EVALUATION_EXPERT_ID}`,
-) as `expert:${typeof SKILL_EVALUATION_EXPERT_ID}`;
 export const EVALUATION_JUDGE_EXPERT_REF = PragmaExpertRefSchema.parse(
   `expert:${EVALUATION_JUDGE_EXPERT_ID}`,
 ) as `expert:${typeof EVALUATION_JUDGE_EXPERT_ID}`;
@@ -96,7 +90,6 @@ export const BUILT_IN_AGENT_REFS = [
   MEMORY_CURATOR_REF,
   STORE_REVISION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
-  SKILL_EVALUATION_EXPERT_REF,
   EVALUATION_JUDGE_EXPERT_REF,
 ] as const;
 
@@ -107,7 +100,6 @@ const BUILT_IN_AGENT_PATHS: Readonly<Record<BuiltInAgentRef, string>> = {
   [MEMORY_CURATOR_REF]: "experts/0000000000mem0ry.pragma.yaml",
   [STORE_REVISION_EXPERT_REF]: "experts/0000000000st0rev.pragma.yaml",
   [SKILL_REVISION_EXPERT_REF]: "experts/0000000000sk1rev.pragma.yaml",
-  [SKILL_EVALUATION_EXPERT_REF]: "experts/0000000000sk1eva.pragma.yaml",
   [EVALUATION_JUDGE_EXPERT_REF]: "experts/00000000000j0dg3.pragma.yaml",
 };
 const PRAGMA_SKILL_PREFIX = "skills/author-pragma-dsl/";
@@ -130,7 +122,6 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
     BUILT_IN_AGENT_PATHS[SKILL_REVISION_EXPERT_REF],
     "capabilities/0000000000manage.pragma.yaml",
   ],
-  [SKILL_EVALUATION_EXPERT_REF]: [BUILT_IN_AGENT_PATHS[SKILL_EVALUATION_EXPERT_REF]],
   [EVALUATION_JUDGE_EXPERT_REF]: [BUILT_IN_AGENT_PATHS[EVALUATION_JUDGE_EXPERT_REF]],
 };
 const builtInProjectCache = new Map<string, Promise<PragmaProject>>();

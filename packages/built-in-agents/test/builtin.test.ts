@@ -30,7 +30,6 @@ import {
   EVALUATION_JUDGE_EXPERT_REF,
   MEMORY_CURATOR_REF,
   MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF,
-  SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
@@ -45,8 +44,8 @@ import {
 } from "../src/pragma-management-tools.ts";
 
 describe("built-in Pragma Agent DSL", () => {
-  it("defines all six built-in Agents as canonical DSL Experts", () => {
-    expect(BUILT_IN_AGENT_REFS).toHaveLength(6);
+  it("defines all five built-in Agents as canonical DSL Experts", () => {
+    expect(BUILT_IN_AGENT_REFS).toHaveLength(5);
     expect(BUILT_IN_AGENT_REFS.map((ref) => builtInAgentResource(ref).metadata.id)).toEqual(
       BUILT_IN_AGENT_REFS.map((ref) => ref.slice("expert:".length)),
     );
@@ -68,7 +67,6 @@ describe("built-in Pragma Agent DSL", () => {
       "Capability",
       "Capability",
       "Capability",
-      "Expert",
       "Expert",
       "Expert",
       "Expert",
@@ -166,7 +164,6 @@ describe("built-in Pragma Agent DSL", () => {
       MEMORY_CURATOR_REF,
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
-      SKILL_EVALUATION_EXPERT_REF,
       EVALUATION_JUDGE_EXPERT_REF,
     ]) {
       const hidden = await project.compile<Expert>(ref, {
@@ -550,7 +547,6 @@ describe("built-in Pragma Agent DSL", () => {
       MEMORY_CURATOR_REF,
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
-      SKILL_EVALUATION_EXPERT_REF,
       EVALUATION_JUDGE_EXPERT_REF,
     ]) {
       const compiled = await compileBuiltInAgent({

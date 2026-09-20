@@ -3,11 +3,11 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
+import { validateSkillPackage } from "@pragma/built-in-agents";
 import type {
   ExistingMemorySkillTarget,
   MemorySubjectRef,
   SkillExtractionCandidate,
-  SkillPackage,
   SkillSourceSnapshot,
 } from "@pragma/shared";
 import { z } from "zod";
@@ -20,11 +20,11 @@ import {
   type MemorySkillCandidate,
   type MemorySkillCandidateRef,
   type ResolveMemorySkillTarget,
-  type SkillEvaluationSnapshot,
   type UpdateMemorySkillCandidate,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { SkillRevisionService } from "../capabilities/skill-revision-service.ts";
+import { readMemorySkillCandidateWithMigration } from "./memory-skill-candidate-migrations/index.ts";
 
 const BindingSchema = z
   .object({
@@ -51,15 +51,6 @@ const PromotionJournalSchema = z
   })
   .strict();
 
-export interface MemorySkillCandidateEvaluator {
-  evaluate(input: {
-    readonly candidateId: string;
-    readonly package: SkillPackage;
-    readonly replayCases: MemorySkillCandidate["replayCases"];
-    readonly boundaryCase: MemorySkillCandidate["boundaryCase"];
-  }): Promise<SkillEvaluationSnapshot>;
-}
-
 export interface MemorySkillPromotionService {
   readonly targetReader: {
     listTargets(input: {
@@ -78,7 +69,6 @@ export interface MemorySkillPromotionService {
   resolveTarget(input: ResolveMemorySkillTarget): Promise<MemorySkillCandidate>;
   reject(input: MemorySkillCandidateRef): Promise<MemorySkillCandidate>;
   approve(input: MemorySkillCandidateRef): Promise<MemorySkillCandidate>;
-  retry(input: MemorySkillCandidateRef): Promise<MemorySkillCandidate>;
   clearExpertBinding(expertRef: string): Promise<void>;
   clearCapabilityBinding(capabilityId: string): Promise<void>;
   recover(): Promise<void>;
@@ -113,7 +103,6 @@ export function createMemorySkillPromotionService(options: {
   readonly statePath: string;
   readonly capabilities: CapabilityStore;
   readonly revisions: SkillRevisionService;
-  readonly evaluator: MemorySkillCandidateEvaluator;
   readonly expertExists: (expertRef: string) => Promise<boolean>;
   readonly bindSkill: (expertRef: string, capabilityId: string, revision: number) => Promise<void>;
 }): MemorySkillPromotionService {
@@ -122,7 +111,6 @@ export function createMemorySkillPromotionService(options: {
   const journalPath = join(options.statePath, "promotion.json");
   const lockPath = join(options.statePath, ".lock");
   const candidatePath = (id: string) => join(candidatesPath, `${id}.json`);
-  let evaluationQueue: Promise<void> = Promise.resolve();
 
   const readBindings = async () => {
     try {
@@ -142,7 +130,11 @@ export function createMemorySkillPromotionService(options: {
       bindings,
     });
   const readCandidate = async (id: string) =>
-    MemorySkillCandidateSchema.parse(JSON.parse(await readFile(candidatePath(id), "utf8")));
+    await readMemorySkillCandidateWithMigration({
+      statePath: options.statePath,
+      recordPath: candidatePath(id),
+      id,
+    });
   const writeCandidate = async (candidate: MemorySkillCandidate) =>
     await writeJsonAtomic(candidatePath(candidate.id), candidate);
   const readCandidates = async () => {
@@ -160,90 +152,84 @@ export function createMemorySkillPromotionService(options: {
     );
   };
 
-  const scheduleEvaluation = (candidateId: string): void => {
-    evaluationQueue = evaluationQueue.then(async () => {
-      const candidate = await readCandidate(candidateId);
-      if (candidate.state !== "evaluating") return;
-      try {
-        const evaluation = await options.evaluator.evaluate({
-          candidateId,
-          package: candidate.package,
-          replayCases: candidate.replayCases,
-          boundaryCase: candidate.boundaryCase,
-        });
-        await withFileLock(lockPath, async () => {
-          const current = await readCandidate(candidateId);
-          if (
-            current.state !== "evaluating" ||
-            current.revision !== candidate.revision ||
-            evaluation.subjectHash !== packageHash(current.package)
-          )
-            return;
-          await writeCandidate(
-            MemorySkillCandidateSchema.parse({
-              ...current,
-              revision: current.revision + 1,
-              state: evaluation.passed ? "pending_review" : "needs_attention",
-              evaluation,
-              ...(evaluation.passed
-                ? { lastErrorCode: undefined }
-                : { lastErrorCode: "skill_evaluation_failed" }),
-              updatedAt: new Date().toISOString(),
-            }),
-          );
-        });
-      } catch (error) {
-        await withFileLock(lockPath, async () => {
-          const current = await readCandidate(candidateId);
-          if (current.state !== "evaluating" || current.revision !== candidate.revision) return;
-          await writeCandidate(
-            MemorySkillCandidateSchema.parse({
-              ...current,
-              revision: current.revision + 1,
-              state: "needs_attention",
-              lastErrorCode: errorCode(error),
-              updatedAt: new Date().toISOString(),
-            }),
-          );
-        });
-      }
-    });
-  };
-
   const submitRevision = async (
-    expertRef: string,
     sourceDigest: string,
     candidate: SkillExtractionCandidate,
     capabilityId: string,
   ) => {
-    await options.revisions.submit({
-      schemaVersion: "pragma.skill-revision-request/v1",
+    return await options.revisions.submit({
+      schemaVersion: "pragma.skill-revision-submission/v1",
       capabilityId,
       source: "memory-learning",
       sourceDigest: digest(sourceDigest, candidate.content.normalizedKey),
       sourceRefs: candidate.sourceRefs,
-      replayCases: candidate.content.replayCases,
-      boundaryCase: candidate.content.boundaryCase,
       prompt: renderRevisionPrompt(candidate),
     });
-    await withFileLock(lockPath, async () => {
+  };
+
+  const reconcileRevisionCandidate = async (
+    candidate: MemorySkillCandidate,
+  ): Promise<MemorySkillCandidate> => {
+    if (candidate.state !== "revision_pending" || candidate.revisionJobId === undefined) {
+      return candidate;
+    }
+    const job = await options.revisions.get(candidate.revisionJobId);
+    if (job.state === "completed") {
+      const timestamp = new Date().toISOString();
       const bindings = await readBindings();
       await writeBindings(
         bindings.bindings.map((binding) =>
-          binding.expertRef === expertRef && binding.capabilityId === capabilityId
+          binding.expertRef === candidate.expertRef &&
+          binding.capabilityId === candidate.capabilityId
             ? {
                 ...binding,
-                normalizedKeys: [
-                  ...new Set([...binding.normalizedKeys, candidate.content.normalizedKey]),
-                ],
-                lastSourceDigest: sourceDigest,
-                updatedAt: new Date().toISOString(),
+                normalizedKeys: [...new Set([...binding.normalizedKeys, candidate.normalizedKey])],
+                lastSourceDigest: candidate.sourceDigest,
+                updatedAt: timestamp,
               }
             : binding,
         ),
       );
-    });
-    options.revisions.scheduleProcessing();
+      const promoted = MemorySkillCandidateSchema.parse({
+        ...candidate,
+        revision: candidate.revision + 1,
+        state: "promoted",
+        lastErrorCode: undefined,
+        updatedAt: timestamp,
+      });
+      await writeCandidate(promoted);
+      return promoted;
+    }
+    if (["rejected", "superseded"].includes(job.state)) {
+      const rejected = MemorySkillCandidateSchema.parse({
+        ...candidate,
+        revision: candidate.revision + 1,
+        state: "rejected",
+        lastErrorCode: job.error?.code,
+        updatedAt: new Date().toISOString(),
+      });
+      await writeCandidate(rejected);
+      return rejected;
+    }
+    if (job.state === "needs_attention" && candidate.lastErrorCode !== job.error?.code) {
+      const attention = MemorySkillCandidateSchema.parse({
+        ...candidate,
+        revision: candidate.revision + 1,
+        lastErrorCode: job.error?.code ?? "skill_revision_needs_attention",
+        updatedAt: new Date().toISOString(),
+      });
+      await writeCandidate(attention);
+      return attention;
+    }
+    return candidate;
+  };
+
+  const reconcileRevisionCandidates = async (): Promise<MemorySkillCandidate[]> => {
+    const reconciled: MemorySkillCandidate[] = [];
+    for (const candidate of await readCandidates()) {
+      reconciled.push(await reconcileRevisionCandidate(candidate));
+    }
+    return reconciled;
   };
 
   const finalizePromotion = async (
@@ -297,9 +283,12 @@ export function createMemorySkillPromotionService(options: {
   const service: MemorySkillPromotionService = {
     targetReader: {
       async listTargets(input) {
-        const bindings = (await readBindings()).bindings.filter(
-          (binding) => binding.expertRef === input.expertRef,
-        );
+        const bindings = await withFileLock(lockPath, async () => {
+          await reconcileRevisionCandidates();
+          return (await readBindings()).bindings.filter(
+            (binding) => binding.expertRef === input.expertRef,
+          );
+        });
         const targets: ExistingMemorySkillTarget[] = [];
         for (const binding of bindings) {
           try {
@@ -330,12 +319,34 @@ export function createMemorySkillPromotionService(options: {
             ),
           );
           if (binding === undefined) throw new Error("skill_target_binding_missing");
-          await submitRevision(
-            input.expertRef,
-            input.sourceDigest,
-            extracted,
-            binding.capabilityId,
-          );
+          const job = await submitRevision(input.sourceDigest, extracted, binding.capabilityId);
+          await withFileLock(lockPath, async () => {
+            const timestamp = new Date().toISOString();
+            const existing = (await readCandidates()).find(
+              (item) =>
+                item.expertRef === input.expertRef &&
+                item.normalizedKey === extracted.content.normalizedKey &&
+                ["revision_pending", "needs_attention"].includes(item.state),
+            );
+            await writeCandidate(
+              MemorySkillCandidateSchema.parse({
+                schemaVersion: "pragma.memory-skill-candidate/v2",
+                id: existing?.id ?? randomUUID(),
+                revision: (existing?.revision ?? 0) + 1,
+                expertRef: input.expertRef,
+                sourceDigest: input.sourceDigest,
+                normalizedKey: extracted.content.normalizedKey,
+                sourceRefs: extracted.sourceRefs,
+                package: extracted.content.package,
+                route: { type: "revise", bindingId },
+                state: "revision_pending",
+                capabilityId: binding.capabilityId,
+                revisionJobId: job.id,
+                createdAt: existing?.createdAt ?? timestamp,
+                updatedAt: timestamp,
+              }),
+            );
+          });
           continue;
         }
         const route =
@@ -356,19 +367,19 @@ export function createMemorySkillPromotionService(options: {
                   })),
               }
             : { type: "create" as const };
-        const candidate = await withFileLock(lockPath, async () => {
+        await withFileLock(lockPath, async () => {
           const timestamp = new Date().toISOString();
           const existing = (await readCandidates()).find(
             (item) =>
               item.expertRef === input.expertRef &&
               item.normalizedKey === extracted.content.normalizedKey &&
-              ["needs_target", "evaluating", "pending_review", "needs_attention"].includes(
+              ["needs_target", "pending_review", "revision_pending", "needs_attention"].includes(
                 item.state,
               ),
           );
           if (existing?.sourceDigest === input.sourceDigest) return undefined;
           const next = MemorySkillCandidateSchema.parse({
-            schemaVersion: "pragma.memory-skill-candidate/v1",
+            schemaVersion: "pragma.memory-skill-candidate/v2",
             id: existing?.id ?? randomUUID(),
             revision: (existing?.revision ?? 0) + 1,
             expertRef: input.expertRef,
@@ -376,23 +387,23 @@ export function createMemorySkillPromotionService(options: {
             normalizedKey: extracted.content.normalizedKey,
             sourceRefs: extracted.sourceRefs,
             package: extracted.content.package,
-            replayCases: extracted.content.replayCases,
-            boundaryCase: extracted.content.boundaryCase,
             route,
-            state: route.type === "needs_target" ? "needs_target" : "evaluating",
+            state: route.type === "needs_target" ? "needs_target" : "pending_review",
             createdAt: existing?.createdAt ?? timestamp,
             updatedAt: timestamp,
           });
           await writeCandidate(next);
           return next;
         });
-        if (candidate?.state === "evaluating") scheduleEvaluation(candidate.id);
       }
     },
     async list(input = {}) {
-      return (await readCandidates())
-        .filter((candidate) => input.state === undefined || candidate.state === input.state)
-        .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return await withFileLock(lockPath, async () => {
+        const reconciled = await reconcileRevisionCandidates();
+        return reconciled
+          .filter((candidate) => input.state === undefined || candidate.state === input.state)
+          .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      });
     },
     async update(rawInput) {
       const input = UpdateMemorySkillCandidateSchema.parse(rawInput);
@@ -401,19 +412,19 @@ export function createMemorySkillPromotionService(options: {
         assertRevision(current, input.expectedRevision);
         if (!["pending_review", "needs_attention"].includes(current.state))
           throw new Error("skill_candidate_state_invalid");
+        const validation = validateSkillPackage(input.package);
+        if (!validation.passed) throw validationError(validation.diagnostics);
         const updated = MemorySkillCandidateSchema.parse({
           ...current,
           revision: current.revision + 1,
           package: input.package,
-          state: "evaluating",
-          evaluation: undefined,
+          state: "pending_review",
           lastErrorCode: undefined,
           updatedAt: new Date().toISOString(),
         });
         await writeCandidate(updated);
         return updated;
       });
-      scheduleEvaluation(next.id);
       return next;
     },
     async resolveTarget(rawInput) {
@@ -429,22 +440,21 @@ export function createMemorySkillPromotionService(options: {
               ? current.route.options.find((item) => item.bindingId === bindingId)
               : undefined;
           if (option === undefined) throw new Error("skill_target_binding_invalid");
-          await options.revisions.submit({
-            schemaVersion: "pragma.skill-revision-request/v1",
+          const job = await options.revisions.submit({
+            schemaVersion: "pragma.skill-revision-submission/v1",
             capabilityId: option.capabilityId,
             source: "memory-learning",
             sourceDigest: digest(current.sourceDigest, current.normalizedKey),
             sourceRefs: current.sourceRefs,
-            replayCases: current.replayCases,
-            boundaryCase: current.boundaryCase,
             prompt: renderCandidateRevisionPrompt(current),
           });
-          options.revisions.scheduleProcessing();
           const revised = MemorySkillCandidateSchema.parse({
             ...current,
             revision: current.revision + 1,
-            state: "promoted",
+            route: { type: "revise", bindingId },
+            state: "revision_pending",
             capabilityId: option.capabilityId,
+            revisionJobId: job.id,
             updatedAt: new Date().toISOString(),
           });
           await writeCandidate(revised);
@@ -454,13 +464,12 @@ export function createMemorySkillPromotionService(options: {
           ...current,
           revision: current.revision + 1,
           route: { type: "create" },
-          state: "evaluating",
+          state: "pending_review",
           updatedAt: new Date().toISOString(),
         });
         await writeCandidate(created);
         return created;
       });
-      if (next.state === "evaluating") scheduleEvaluation(next.id);
       return next;
     },
     async reject(rawInput) {
@@ -485,12 +494,10 @@ export function createMemorySkillPromotionService(options: {
       return await withFileLock(lockPath, async () => {
         const current = await readCandidate(input.id);
         assertRevision(current, input.expectedRevision);
-        if (
-          current.state !== "pending_review" ||
-          current.evaluation?.passed !== true ||
-          current.evaluation.subjectHash !== packageHash(current.package)
-        )
+        if (current.state !== "pending_review")
           throw new Error("skill_candidate_not_approved_for_promotion");
+        const validation = validateSkillPackage(current.package);
+        if (!validation.passed) throw validationError(validation.diagnostics);
         const approved = MemorySkillCandidateSchema.parse({
           ...current,
           revision: current.revision + 1,
@@ -508,26 +515,6 @@ export function createMemorySkillPromotionService(options: {
         return await finalizePromotion(journal);
       });
     },
-    async retry(rawInput) {
-      const input = MemorySkillCandidateRefSchema.parse(rawInput);
-      const next = await withFileLock(lockPath, async () => {
-        const current = await readCandidate(input.id);
-        assertRevision(current, input.expectedRevision);
-        if (current.state !== "needs_attention") throw new Error("skill_candidate_state_invalid");
-        const updated = MemorySkillCandidateSchema.parse({
-          ...current,
-          revision: current.revision + 1,
-          state: "evaluating",
-          evaluation: undefined,
-          lastErrorCode: undefined,
-          updatedAt: new Date().toISOString(),
-        });
-        await writeCandidate(updated);
-        return updated;
-      });
-      scheduleEvaluation(next.id);
-      return next;
-    },
     async clearExpertBinding(expertRef) {
       await withFileLock(lockPath, async () => {
         const bindings = await readBindings();
@@ -541,14 +528,17 @@ export function createMemorySkillPromotionService(options: {
       });
     },
     async recover() {
-      try {
-        const journal = PromotionJournalSchema.parse(
-          JSON.parse(await readFile(journalPath, "utf8")),
-        );
-        await withFileLock(lockPath, async () => await finalizePromotion(journal));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      await withFileLock(lockPath, async () => {
+        try {
+          const journal = PromotionJournalSchema.parse(
+            JSON.parse(await readFile(journalPath, "utf8")),
+          );
+          await finalizePromotion(journal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        await reconcileRevisionCandidates();
+      });
     },
   };
   return service;
@@ -572,9 +562,6 @@ function renderCandidateRevisionPrompt(candidate: MemorySkillCandidate): string 
     JSON.stringify({ normalizedKey: candidate.normalizedKey, proposedPackage: candidate.package }),
   ].join("\n\n");
 }
-function packageHash(skill: SkillPackage): string {
-  return createHash("sha256").update(JSON.stringify(skill)).digest("hex");
-}
 function digest(...parts: readonly string[]): string {
   return createHash("sha256").update(parts.join("\0")).digest("hex");
 }
@@ -584,10 +571,22 @@ function assertRevision(candidate: MemorySkillCandidate, expected: number): void
       code: "revision_conflict",
     });
 }
-function errorCode(error: unknown): string {
-  return error instanceof Error && /^[a-z0-9_:-]+$/iu.test(error.message)
-    ? error.message.slice(0, 100)
-    : "skill_evaluation_failed";
+function validationError(
+  diagnostics: readonly {
+    readonly path: string;
+    readonly code: string;
+    readonly message: string;
+  }[],
+): Error & { code: string; retryable: boolean; validation: { diagnostics: typeof diagnostics } } {
+  return Object.assign(
+    new Error(
+      diagnostics
+        .map((item) => `${item.path}: ${item.code}: ${item.message}`)
+        .join(" | ")
+        .slice(0, 2_000),
+    ),
+    { code: "invalid_input", retryable: true, validation: { diagnostics } },
+  );
 }
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });

@@ -25,7 +25,6 @@ describe("SettingsPage", () => {
     expect(html).toContain("Approve for me");
     expect(html).toContain("Full access");
     expect(html).toContain("Skill Revision Agent");
-    expect(html).toContain("Skill Evaluation Agent");
     expect(html).toContain("Inherit system default");
     expect(html).not.toContain("Default Runtime");
     expect(html).not.toContain("Task workspace");
@@ -52,7 +51,6 @@ describe("SettingsPage", () => {
     expect(html).toContain("工具权限");
     expect(html).toContain("替我审批");
     expect(html).toContain("技能修订 Agent");
-    expect(html).toContain("技能评测 Agent");
     expect(html).toContain("继承系统默认");
     expect(html).toContain("跟随系统");
     expect(html).toContain("繁體中文");

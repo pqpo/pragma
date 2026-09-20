@@ -19,14 +19,6 @@ export const SkillSourceRevisionRefSchema = z
   })
   .strict();
 
-export const SkillReplayExpectationSchema = z
-  .object({
-    objective: z.string().trim().min(1).max(4_000),
-    requiredBehaviors: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
-    forbiddenBehaviors: z.array(z.string().trim().min(1).max(2_000)).max(20).default([]),
-  })
-  .strict();
-
 export const SkillSourceSnapshotSchema = z
   .object({
     ref: SkillSourceRevisionRefSchema,
@@ -143,8 +135,6 @@ const SkillCandidateContentSchema = z
     failureModes: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
     recoverySteps: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
     package: SkillPackageSchema,
-    replayCases: z.array(SkillReplayExpectationSchema).min(3).max(10),
-    boundaryCase: SkillReplayExpectationSchema,
   })
   .strict();
 
