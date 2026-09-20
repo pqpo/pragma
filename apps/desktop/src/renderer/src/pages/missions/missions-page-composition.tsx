@@ -620,7 +620,10 @@ export function MissionsPage(props: {
           statusUpdate === undefined
             ? loadedMission
             : applyMissionStatusUpdateToMission(loadedMission, statusUpdate);
-        cacheMissionDetail(mission);
+        // The detail read can contain a newer terminal execution state than the
+        // summary that populated the rail. Keep both projections in sync after
+        // navigation so a completed Mission cannot remain visually running.
+        replaceMission(mission);
         if (selectedMissionIdRef.current === id) {
           setSelectedMission((current) =>
             current === null || mission.updatedAt >= current.updatedAt ? mission : current,
@@ -635,7 +638,7 @@ export function MissionsPage(props: {
         setLoadingMissionId((current) => (current === id ? null : current));
       }
     },
-    [cacheMissionDetail, markMissionOutputRead, missionError],
+    [markMissionOutputRead, missionError, replaceMission],
   );
 
   useEffect(() => {
