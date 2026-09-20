@@ -231,10 +231,13 @@
 .skill-revision-page .capability-table {
   display: grid;
   gap: 14px;
+  margin-top: 20px;
   border-top: 0;
 }
 
 .skill-revision-page .studio-screen-body {
+  container-name: skill-revision-list;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   overflow: auto;
@@ -246,9 +249,9 @@
 
 .skill-revision-row {
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(160px, 0.55fr) minmax(280px, 1.2fr) auto;
-  align-items: center;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+  align-items: start;
+  gap: 16px 24px;
   padding: 20px 22px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -275,7 +278,21 @@
   line-height: 1.55;
 }
 
+.skill-revision-request {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.skill-revision-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .skill-revision-actions {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -284,34 +301,18 @@
 
 .skill-revision-error {
   grid-column: 1 / -1;
-}
-
-.skill-revision-error {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 980px) {
-  .skill-revision-row {
-    grid-template-columns: 1fr auto;
-  }
-
-  .skill-revision-summary {
-    grid-column: 1 / -1;
-  }
-
-  .skill-revision-actions {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 640px) {
+@container skill-revision-list (max-width: 700px) {
   .skill-revision-row {
     grid-template-columns: minmax(0, 1fr);
-    align-items: start;
   }
 
+  .skill-revision-meta,
   .skill-revision-summary,
+  .skill-revision-error,
   .skill-revision-actions {
     grid-column: 1;
   }
