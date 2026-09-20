@@ -31,6 +31,7 @@ export interface DesktopSkillAgents {
   readonly revisionGenerator: SkillRevisionGenerator;
   compile(input: {
     readonly runtimes?: RuntimeResolver;
+    readonly workspace?: string;
     readonly adapterHost?: PragmaCompileOptions["adapterHost"];
     readonly expertResource?: PragmaExpertResource;
     readonly additionalResources?: readonly PragmaResource[];
@@ -47,9 +48,9 @@ export function createDesktopSkillAgents(options: {
   readonly runtimes: RuntimeResolver;
   readonly pragmaHome: string;
   readonly loggerProvider?: PragmaLoggerProvider;
+  readonly resolveDraftWorkspace: (draftId: string) => Promise<string>;
   readonly onMissionCreated?:
-    | ((input: { readonly jobId: string; readonly missionId: string }) => Promise<void>)
-    | undefined;
+    ((input: { readonly jobId: string; readonly missionId: string }) => Promise<void>) | undefined;
   readonly isDraftSubmitted?: ((jobId: string) => Promise<boolean>) | undefined;
 }): DesktopSkillAgents {
   const workspace = join(options.pragmaHome, "tmp", "skill-agents");
@@ -81,9 +82,9 @@ export function createDesktopSkillAgents(options: {
   }) => {
     const runtime = await resolveRuntime(input.profile);
     const project = await options.project.ensurePublished();
-    await mkdir(workspace, { recursive: true, mode: 0o700 });
+    const draftWorkspace = await options.resolveDraftWorkspace(input.draftId);
     const mission = await options.missions.create({
-      workspace: { path: workspace, basename: basename(workspace) },
+      workspace: { path: draftWorkspace, basename: basename(draftWorkspace) },
       goal: input.goal,
       title: "Revise Skill Capability",
       project: { id: project.projectId, revision: project.revision },
@@ -156,7 +157,7 @@ export function createDesktopSkillAgents(options: {
         ref: SKILL_REVISION_EXPERT_REF,
         environmentId: "desktop",
         definitionStateRoot: join(options.pragmaHome, "cache", "built-in-agents", "definitions"),
-        workspace,
+        workspace: input.workspace ?? workspace,
         pragmaHome: options.pragmaHome,
         runtimes: input.runtimes ?? options.runtimes,
         rootExecutionOverride: {

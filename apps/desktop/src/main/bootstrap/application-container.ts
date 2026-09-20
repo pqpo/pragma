@@ -1125,6 +1125,7 @@ export async function createDesktopApplicationContainer(
         const additionalResources = systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
         return await skillAgentsRef.current.compile({
           runtimes: scopedRuntimes,
+          workspace: skillRevisionWorkspace ?? mission.workspace.path,
           adapterHost: createDesktopAdapterHost(
             {
               capabilityStore,
@@ -1281,11 +1282,18 @@ export async function createDesktopApplicationContainer(
     runtimes,
     pragmaHome: pragmaPaths.root,
     loggerProvider,
+    resolveDraftWorkspace: async (draftId) => {
+      const inspection = await skillRevisions.inspectDraft(draftId);
+      const draftWorkspace = inspection.draftPath ?? inspection.referencePath;
+      if (draftWorkspace === undefined) {
+        throw new Error(`Skill revision draft workspace is unavailable: ${draftId}`);
+      }
+      return draftWorkspace;
+    },
     onMissionCreated: async ({ jobId, missionId }) => {
       await skillRevisions.attachMission(jobId, missionId);
     },
-    isDraftSubmitted: async (jobId) =>
-      (await skillRevisions.get(jobId)).state === "pending_review",
+    isDraftSubmitted: async (jobId) => (await skillRevisions.get(jobId)).state === "pending_review",
   });
   const evaluationService = createEvaluationService({
     store: evaluationStore,

@@ -20,6 +20,21 @@ export function activeSkillRevisionTaskCount(
     .length;
 }
 
+export function skillRevisionAttentionActions(
+  entry: {
+    readonly job: Pick<ManagedSkillRevisionJob, "error" | "missionId">;
+    readonly draft: Pick<SkillRevisionDraft, "state">;
+  },
+  canOpenMission: boolean,
+): { readonly canContinue: boolean; readonly canRetry: boolean } {
+  const canContinue =
+    canOpenMission &&
+    entry.job.missionId !== undefined &&
+    (entry.draft.state === "editing" ||
+      entry.job.error?.code === "skill_revision_validation_required");
+  return { canContinue, canRetry: !canContinue };
+}
+
 export function SkillRevisionEmptyState() {
   const { t } = useTranslation("studio");
 
@@ -110,6 +125,10 @@ export function SkillRevisionFragment(props: {
             const capability = props.capabilities.find(
               (item) => item.manifest.id === entry.draft.capabilityId,
             );
+            const attentionActions = skillRevisionAttentionActions(
+              entry,
+              props.onOpenMission !== undefined,
+            );
             return (
               <article className="skill-revision-row" role="listitem" key={entry.job.id}>
                 <div className="skill-revision-main">
@@ -155,8 +174,7 @@ export function SkillRevisionFragment(props: {
                   ) : null}
                   {entry.job.state === "needs_attention" ? (
                     <>
-                      {entry.job.missionId !== undefined &&
-                      props.onOpenMission !== undefined ? (
+                      {attentionActions.canContinue ? (
                         <button
                           className="primary-button"
                           type="button"
@@ -171,7 +189,7 @@ export function SkillRevisionFragment(props: {
                           {t("continueSkillRevision")}
                         </button>
                       ) : null}
-                      {entry.job.missionId === undefined ? (
+                      {attentionActions.canRetry ? (
                         <button
                           className="secondary-button"
                           type="button"
