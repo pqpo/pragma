@@ -234,7 +234,7 @@ describe("Memory Plane phase one", () => {
       ok: false,
       error: { code: "permission_denied" },
     });
-    canonical.close();
+    await canonical.close();
   });
 
   it("advances the canonical cursor without publishing evidence when capture is disabled", async () => {
@@ -282,7 +282,7 @@ describe("Memory Plane phase one", () => {
       processed: 0,
       skipped: 1,
     });
-    canonical.close();
+    await canonical.close();
   });
 
   it("does not deliver evidence while the pipeline is disabled", async () => {
@@ -354,7 +354,7 @@ describe("Memory Plane phase one", () => {
       ok: true,
       value: { content: expect.not.stringContaining("pipeline-disabled-evidence") },
     });
-    canonical.close();
+    await canonical.close();
   });
 
   it.each([
@@ -479,7 +479,7 @@ describe("Memory Plane phase one", () => {
     });
     const record = await context.readContext({ id: "probe/items/entries.md" });
     expect(record.ok && record.value.content.match(/^- /gm)).toHaveLength(1);
-    canonical.close();
+    await canonical.close();
   });
 
   it("migrates legacy dead letters and removes expired content", async () => {

@@ -343,6 +343,7 @@ export function MissionsPage(props: {
   const missionConversationRequestsRef = useRef(
     new Map<string, Promise<MissionConversationPrefetch | undefined>>(),
   );
+  const missionDetailRequestsRef = useRef(new Map<string, Promise<Mission>>());
   const missionNavigationIdsRef = useRef(new Map<string, string>());
   const initialRunStartedRef = useRef(false);
   const hadInitialMemoryStateRef = useRef(props.initialMemoryState !== undefined);
@@ -583,36 +584,55 @@ export function MissionsPage(props: {
           elapsedMs: Math.round((performance.now() - navigationStartedAt) * 100) / 100,
         });
       });
-      const missionPromise = api.getMission(id);
-      const chatPromise = loadMissionConversationProjection(api, id)
-        .then(({ page, state, stateUnavailable }) => {
-          const cached = cache.get(id);
-          const existing = isMissionConversationCacheReady(cached) ? cached : null;
-          const loadedPage = conversationFromPage(page, existing);
-          const pageSnapshot = mergeLatestChatPage(
-            existing,
-            stateUnavailable ? markConversationStateUnavailable(loadedPage) : loadedPage,
-          );
-          const snapshot =
-            state === undefined
-              ? pageSnapshot
-              : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
-          cache.delete(id);
-          cache.set(id, snapshot);
-          while (cache.size > 8) {
-            const oldest = cache.keys().next().value as string | undefined;
-            if (oldest === undefined) break;
-            cache.delete(oldest);
+      const existingMissionRequest = missionDetailRequestsRef.current.get(id);
+      const missionPromise = existingMissionRequest ?? api.getMission(id);
+      if (existingMissionRequest === undefined) {
+        missionDetailRequestsRef.current.set(id, missionPromise);
+        const clearMissionRequest = () => {
+          if (missionDetailRequestsRef.current.get(id) === missionPromise) {
+            missionDetailRequestsRef.current.delete(id);
           }
-          return { page, state, ...(stateUnavailable ? { stateUnavailable: true as const } : {}) };
-        })
-        .catch(() => undefined);
-      missionConversationRequestsRef.current.set(id, chatPromise);
-      void chatPromise.finally(() => {
-        if (missionConversationRequestsRef.current.get(id) === chatPromise) {
-          missionConversationRequestsRef.current.delete(id);
-        }
-      });
+        };
+        void missionPromise.then(clearMissionRequest, clearMissionRequest);
+      }
+      const existingConversationRequest = missionConversationRequestsRef.current.get(id);
+      const chatPromise =
+        existingConversationRequest ??
+        loadMissionConversationProjection(api, id)
+          .then(({ page, state, stateUnavailable }) => {
+            const cached = cache.get(id);
+            const existing = isMissionConversationCacheReady(cached) ? cached : null;
+            const loadedPage = conversationFromPage(page, existing);
+            const pageSnapshot = mergeLatestChatPage(
+              existing,
+              stateUnavailable ? markConversationStateUnavailable(loadedPage) : loadedPage,
+            );
+            const snapshot =
+              state === undefined
+                ? pageSnapshot
+                : (mergeConversationState(pageSnapshot, state) ?? pageSnapshot);
+            cache.delete(id);
+            cache.set(id, snapshot);
+            while (cache.size > 8) {
+              const oldest = cache.keys().next().value as string | undefined;
+              if (oldest === undefined) break;
+              cache.delete(oldest);
+            }
+            return {
+              page,
+              state,
+              ...(stateUnavailable ? { stateUnavailable: true as const } : {}),
+            };
+          })
+          .catch(() => undefined);
+      if (existingConversationRequest === undefined) {
+        missionConversationRequestsRef.current.set(id, chatPromise);
+        void chatPromise.finally(() => {
+          if (missionConversationRequestsRef.current.get(id) === chatPromise) {
+            missionConversationRequestsRef.current.delete(id);
+          }
+        });
+      }
       try {
         const loadedMission = await missionPromise;
         const statusUpdate = missionStatusUpdatesRef.current.get(id);

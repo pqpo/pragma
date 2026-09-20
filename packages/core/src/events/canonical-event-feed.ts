@@ -1,6 +1,7 @@
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 
 import {
   CanonicalEventEnvelopeSchema,
@@ -67,10 +68,102 @@ export interface CanonicalEventFeed {
   inspect(): Promise<CanonicalEventFeedDiagnostic>;
   maintain(input: CanonicalEventMaintenanceInput): Promise<CanonicalEventMaintenanceResult>;
   forgetCorrelation(correlationId: string): Promise<{ readonly deletedEvents: number }>;
-  close(): void;
+  close(): Promise<void>;
 }
 
 export async function createFileCanonicalEventFeed(
+  options: { readonly pragmaHome?: string | undefined } = {},
+): Promise<CanonicalEventFeed> {
+  const workerUrl = canonicalEventFeedWorkerUrl();
+  const worker = new Worker(workerUrl, {
+    workerData: options,
+    execArgv: workerUrl.pathname.endsWith(".ts") ? ["--experimental-strip-types"] : [],
+  });
+  let nextRequestId = 0;
+  let closed = false;
+  let closeRequest: Promise<void> | undefined;
+  const pending = new Map<
+    number,
+    { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void }
+  >();
+  const ready = new Promise<void>((resolve, reject) => {
+    worker.on("message", (message: unknown) => {
+      if (!isWorkerResponse(message)) return;
+      if (message.type === "ready") {
+        resolve();
+        return;
+      }
+      if (message.type === "fatal") {
+        reject(new Error(message.message));
+        void worker.terminate();
+        return;
+      }
+      const request = pending.get(message.requestId);
+      if (request === undefined) return;
+      pending.delete(message.requestId);
+      if (message.ok) request.resolve(message.value);
+      else request.reject(new Error(message.message));
+    });
+    worker.on("error", (error) => {
+      const workerError = error instanceof Error ? error : new Error(String(error));
+      reject(workerError);
+      for (const request of pending.values()) request.reject(workerError);
+      pending.clear();
+    });
+    worker.once("exit", (code) => {
+      if (!closed && code !== 0) reject(new Error(`Canonical event feed worker exited: ${code}`));
+      for (const request of pending.values()) {
+        request.reject(new Error("Canonical event feed worker exited before replying."));
+      }
+      pending.clear();
+    });
+  });
+  await ready;
+
+  const request = async <T>(operation: string, input?: unknown): Promise<T> => {
+    if (closed) throw new Error("Canonical event feed is closed.");
+    const requestId = nextRequestId;
+    nextRequestId += 1;
+    return await new Promise<T>((resolve, reject) => {
+      pending.set(requestId, {
+        resolve: (value) => resolve(value as T),
+        reject,
+      });
+      try {
+        worker.postMessage({ type: "request", requestId, operation, input });
+      } catch (error) {
+        pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  };
+
+  return {
+    append: async (events) => await request<void>("append", events),
+    read: async (input) => await request<CanonicalEventPage>("read", input),
+    inspect: async () => await request<CanonicalEventFeedDiagnostic>("inspect"),
+    maintain: async (input) => await request<CanonicalEventMaintenanceResult>("maintain", input),
+    forgetCorrelation: async (correlationId) =>
+      await request<{ readonly deletedEvents: number }>("forgetCorrelation", correlationId),
+    close() {
+      closeRequest ??= (async () => {
+        if (closed) return;
+        try {
+          await request<void>("close");
+        } finally {
+          closed = true;
+          const error = new Error("Canonical event feed closed before replying.");
+          for (const pendingRequest of pending.values()) pendingRequest.reject(error);
+          pending.clear();
+          await worker.terminate();
+        }
+      })();
+      return closeRequest;
+    },
+  };
+}
+
+export async function createSynchronousFileCanonicalEventFeed(
   options: { readonly pragmaHome?: string | undefined } = {},
 ): Promise<CanonicalEventFeed> {
   const paths = new PragmaPaths(options);
@@ -299,10 +392,37 @@ export async function createFileCanonicalEventFeed(
       }
     },
 
-    close() {
+    async close() {
       database.close();
     },
   };
+}
+
+function canonicalEventFeedWorkerUrl(): URL {
+  const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+  return new URL(`./canonical-event-feed-worker.${extension}`, import.meta.url);
+}
+
+type CanonicalEventFeedWorkerResponse =
+  | { readonly type: "ready" }
+  | { readonly type: "fatal"; readonly message: string }
+  | {
+      readonly type: "response";
+      readonly requestId: number;
+      readonly ok: true;
+      readonly value: unknown;
+    }
+  | {
+      readonly type: "response";
+      readonly requestId: number;
+      readonly ok: false;
+      readonly message: string;
+    };
+
+function isWorkerResponse(value: unknown): value is CanonicalEventFeedWorkerResponse {
+  if (typeof value !== "object" || value === null || !("type" in value)) return false;
+  const type = (value as { readonly type?: unknown }).type;
+  return type === "ready" || type === "fatal" || type === "response";
 }
 
 async function ensureV1Backup(database: DatabaseSync, databasePath: string): Promise<void> {

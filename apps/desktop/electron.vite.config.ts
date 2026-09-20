@@ -30,6 +30,12 @@ export default defineConfig({
           "code-service-worker": fileURLToPath(
             new URL("../../packages/core/src/code-service-worker.ts", import.meta.url),
           ),
+          "canonical-event-feed-worker": fileURLToPath(
+            new URL(
+              "../../packages/core/src/events/canonical-event-feed-worker.ts",
+              import.meta.url,
+            ),
+          ),
         },
       },
     },

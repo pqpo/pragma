@@ -39,6 +39,7 @@ import {
 } from "../runtime/session-record.ts";
 import { mergeUsages, type UsageSink } from "../runtime/usage.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
+import { FileLockTimeoutError } from "../storage/file-lock.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
 import {
   ExecutionController,
@@ -243,6 +244,7 @@ interface ValidDefinitionMigration {
 
 const EXPERT_SESSION_LEASE_MS = 30_000;
 const EXPERT_SESSION_LEASE_RENEWAL_MS = 10_000;
+const EXPERT_SESSION_LEASE_RETRY_MS = 500;
 
 interface QueuedSteerClaim {
   readonly requestId: string;
@@ -716,6 +718,8 @@ class ExpertSessionImpl implements ExpertSession {
   private waitingForRecoveredHumanInput: boolean;
   private leaseRenewalTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
+  private leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
+  private leaseRenewalStopped = false;
   private readonly leaseRenewal: ReturnType<typeof setInterval>;
 
   constructor(
@@ -952,7 +956,7 @@ class ExpertSessionImpl implements ExpertSession {
       throw error;
     }
     await this.processing;
-    clearInterval(this.leaseRenewal);
+    this.stopLeaseRenewal();
     await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
     this.controller = undefined;
     this.onClosed();
@@ -1006,7 +1010,7 @@ class ExpertSessionImpl implements ExpertSession {
     }
 
     const errors: unknown[] = [];
-    clearInterval(this.leaseRenewal);
+    this.stopLeaseRenewal();
     try {
       await this.runtimeSessions.clear();
     } catch (error) {
@@ -1059,7 +1063,7 @@ class ExpertSessionImpl implements ExpertSession {
     }
 
     const errors: unknown[] = [];
-    clearInterval(this.leaseRenewal);
+    this.stopLeaseRenewal();
     try {
       await this.runtimeSessions.clear();
     } catch (error) {
@@ -1085,7 +1089,7 @@ class ExpertSessionImpl implements ExpertSession {
   close(reason?: string): Promise<void> {
     if (this.closePromise === undefined) {
       this.paused = true;
-      clearInterval(this.leaseRenewal);
+      this.stopLeaseRenewal();
       this.runtimeSessions.seal();
       this.closePromise = this.closeInternal(reason);
     }
@@ -1164,18 +1168,52 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async renewLease(): Promise<void> {
     if (this.closePromise !== undefined) return;
-    try {
-      const renewed = await this.dependencies.sessions.claimLease(
-        this.sessionId,
-        this.claimId,
-        EXPERT_SESSION_LEASE_MS,
-      );
-      if (!renewed) throw new Error(`ExpertSession lease was lost: ${this.sessionId}`);
-    } catch (error) {
-      this.leaseError = error instanceof Error ? error : new Error(String(error));
-      this.paused = true;
-      await this.controller?.cancel(this.leaseError.message).catch(() => undefined);
+    let lastError: Error | undefined;
+    while (!this.leaseRenewalStopped && Date.now() < this.leaseExpiresAt) {
+      try {
+        const renewed = await this.dependencies.sessions.claimLease(
+          this.sessionId,
+          this.claimId,
+          EXPERT_SESSION_LEASE_MS,
+        );
+        if (!renewed) {
+          await this.failLease(new Error(`ExpertSession lease was lost: ${this.sessionId}`));
+          return;
+        }
+        this.leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (!isRetryableLeaseRenewalError(error)) {
+          await this.failLease(lastError);
+          return;
+        }
+        const remainingMs = this.leaseExpiresAt - Date.now();
+        if (remainingMs <= 0) break;
+        await new Promise<void>((resolve) => {
+          const retry = setTimeout(resolve, Math.min(EXPERT_SESSION_LEASE_RETRY_MS, remainingMs));
+          retry.unref();
+        });
+      }
     }
+    if (this.leaseRenewalStopped) return;
+    await this.failLease(
+      new Error(
+        `ExpertSession lease renewal deadline expired: ${this.sessionId}${lastError === undefined ? "" : `: ${lastError.message}`}`,
+        lastError === undefined ? undefined : { cause: lastError },
+      ),
+    );
+  }
+
+  private async failLease(error: Error): Promise<void> {
+    this.leaseError = error;
+    this.paused = true;
+    await this.controller?.cancel(error.message).catch(() => undefined);
+  }
+
+  private stopLeaseRenewal(): void {
+    this.leaseRenewalStopped = true;
+    clearInterval(this.leaseRenewal);
   }
 
   async getState(): Promise<ExpertSessionRecord> {
@@ -2410,6 +2448,12 @@ class ExpertSessionImpl implements ExpertSession {
   private createExecutionView(executionId: string): StoredExecutionView {
     return new StoredExecutionView(executionId, this.dependencies.executions, this.sessionId);
   }
+}
+
+function isRetryableLeaseRenewalError(error: unknown): boolean {
+  if (error instanceof FileLockTimeoutError) return true;
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return ["EAGAIN", "EBUSY", "EMFILE", "ENFILE", "ETIMEDOUT"].includes(String(error.code));
 }
 
 function recoveryPrompt(originalPrompt: string): string {

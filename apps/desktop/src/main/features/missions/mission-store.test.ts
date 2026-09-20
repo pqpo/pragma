@@ -122,7 +122,9 @@ describe("mission store", { timeout: 30_000 }, () => {
       thinkingLevel: "high",
     });
     await expect(store.get(created.id)).resolves.toEqual(created);
-    await expect(store.list()).resolves.toEqual([
+    const listRequest = store.list();
+    expect(store.list()).toBe(listRequest);
+    await expect(listRequest).resolves.toEqual([
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(store.storagePath!(created.id), "mission.yaml"), "utf8");

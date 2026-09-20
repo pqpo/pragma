@@ -92,14 +92,21 @@ export function createFileExpertSessionStore(options: {
   readonly pragmaHome?: string;
 }): ExpertSessionStore {
   const paths = new PragmaPaths(options);
+  const withExpertSessionLock = async <T>(
+    sessionId: string,
+    action: () => Promise<T>,
+  ): Promise<T> =>
+    await withFileLock(paths.expertSessionLock(sessionId), action, {
+      operation: "expert-session.aggregate",
+    });
   return {
     async delete(sessionId) {
-      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      await withExpertSessionLock(sessionId, async () => {
         await rm(paths.expertSessionRoot(sessionId), { recursive: true, force: true });
       });
     },
     async create(record) {
-      await withFileLock(paths.expertSessionLock(record.sessionId), async () => {
+      await withExpertSessionLock(record.sessionId, async () => {
         await prepareExpertSession(paths, options.executions, record.sessionId);
         if ((await readJson(paths.expertSessionState(record.sessionId))) !== undefined) {
           throw new Error(`ExpertSession already exists: ${record.sessionId}`);
@@ -140,7 +147,7 @@ export function createFileExpertSessionStore(options: {
     },
     async enqueue(transaction) {
       const sessionId = transaction.prompt.sessionId;
-      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      return await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         const session = ExpertSessionRecordSchema.parse(
           await requireJson(paths.expertSessionState(sessionId), sessionId),
@@ -276,7 +283,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async get(sessionId) {
-      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      return await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         const value = await readJson(paths.expertSessionState(sessionId));
         if (value === undefined) return undefined;
@@ -286,7 +293,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async recoverClosed(input) {
-      return await withFileLock(paths.expertSessionLock(input.sessionId), async () => {
+      return await withExpertSessionLock(input.sessionId, async () => {
         await prepareExpertSession(paths, options.executions, input.sessionId);
         const session = ExpertSessionRecordSchema.parse(
           await requireJson(paths.expertSessionState(input.sessionId), input.sessionId),
@@ -369,7 +376,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async transact(sessionId, action) {
-      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      return await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         const sessionValue = await readJson(paths.expertSessionState(sessionId));
         if (sessionValue === undefined) throw new Error(`ExpertSession not found: ${sessionId}`);
@@ -398,7 +405,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async listPrompts(sessionId) {
-      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      return await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         return PromptRequestSchema.array().parse(
           (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
@@ -406,7 +413,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async listEvents(sessionId) {
-      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      return await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         return ExpertSessionEventSchema.array().parse(
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
@@ -414,7 +421,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async appendEvent(sessionId, event) {
-      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         const session = ExpertSessionRecordSchema.parse(
           await requireJson(paths.expertSessionState(sessionId), sessionId),
@@ -443,7 +450,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async claimLease(sessionId, claimId, leaseMs) {
-      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      return await withExpertSessionLock(sessionId, async () => {
         await prepareExpertSession(paths, options.executions, sessionId);
         const session = ExpertSessionRecordSchema.parse(
           await requireJson(paths.expertSessionState(sessionId), sessionId),
@@ -469,7 +476,7 @@ export function createFileExpertSessionStore(options: {
       });
     },
     async releaseLease(sessionId, claimId) {
-      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+      await withExpertSessionLock(sessionId, async () => {
         const existingValue = await readJson(paths.expertSessionLease(sessionId));
         const existing =
           existingValue === undefined ? undefined : ExpertSessionLeaseSchema.parse(existingValue);

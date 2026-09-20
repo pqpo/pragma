@@ -306,6 +306,7 @@ export async function createDesktopMemoryPlane(options: {
   let lastMaintenanceAtMs = 0;
   let safeThroughSequence = 0;
   let blockedBytes = 0;
+  let nextPollDelayMs = options.pollIntervalMs ?? 1_000;
   let maintenanceDiagnostic: {
     readonly lastRunAt?: string | undefined;
     readonly deletedEvents: number;
@@ -384,7 +385,7 @@ export async function createDesktopMemoryPlane(options: {
         running = undefined;
         schedule();
       });
-    }, options.pollIntervalMs ?? 1_000);
+    }, nextPollDelayMs);
   };
 
   const reportExtractionIssues = (
@@ -414,9 +415,49 @@ export async function createDesktopMemoryPlane(options: {
     reportedExtractionIssues = current;
   };
 
+  const skipDisabledPipeline = async (): Promise<void> => {
+    const through = (await canonical.inspect()).lastSequence;
+    const current = await state.read(EXECUTION_EVIDENCE_ADAPTER_ID);
+    if (current.sequence < through) {
+      await state.update(EXECUTION_EVIDENCE_ADAPTER_ID, (checkpoint) => ({
+        ...checkpoint,
+        sequence: through,
+        attempts: {},
+        retryAfter: undefined,
+        updatedAt: new Date().toISOString(),
+      }));
+      options.logger.info(
+        "desktop.memory_policy_disabled_skip",
+        "Memory capture is disabled; the adapter checkpoint advanced without consuming events.",
+        {
+          consumerId: EXECUTION_EVIDENCE_ADAPTER_ID,
+          from: current.sequence,
+          through,
+          reason: "policy-disabled-skip",
+        },
+      );
+    }
+    await scheduler.runOnce();
+  };
+
   const tick = async (): Promise<void> => {
     try {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
+      const learningEnabled = (await policies.getGlobal()).policy.enabled === "enabled";
+      nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
+      if (!learningEnabled) {
+        await skipDisabledPipeline();
+        if (
+          Date.now() - lastMaintenanceAtMs >=
+          DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs
+        ) {
+          await maintainStorage();
+        }
+        if (recovery.quarantined > 0) markDegraded("canonical_event_handoff_quarantined");
+        else if (recovery.failed > 0) markDegraded("canonical_event_delivery_failed");
+        else lastError = undefined;
+        return;
+      }
       const adapted = await adapter.runOnce();
       await scheduler.runOnce();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
@@ -793,7 +834,7 @@ export async function createDesktopMemoryPlane(options: {
       knowledge.close();
       skill.close();
       semantic.close();
-      canonical.close();
+      await canonical.close();
     },
   };
 }

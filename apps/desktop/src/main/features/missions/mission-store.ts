@@ -335,12 +335,17 @@ export function createMissionStore(options: {
     { readonly missionId: string; readonly title: string }
   >();
   let executionTitleIndexInitialized = false;
+  let listRequest: Promise<MissionSummary[]> | undefined;
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
-    await withFileLock(lockPath(id), async () => {
-      await migrateLegacyMissionPath(id);
-      return await operation();
-    });
+    await withFileLock(
+      lockPath(id),
+      async () => {
+        await migrateLegacyMissionPath(id);
+        return await operation();
+      },
+      { operation: "mission.aggregate" },
+    );
 
   const migrateLegacyMissionPath = async (id: string): Promise<void> => {
     const legacy = legacyMissionPath(id);
@@ -953,6 +958,39 @@ export function createMissionStore(options: {
     await rm(transactionPath(id), { force: true });
   };
 
+  const listMissions = async (): Promise<MissionSummary[]> => {
+    try {
+      const missionIds = await listMissionIds();
+      const results = await mapWithConcurrency(missionIds, 4, async (missionId) => {
+        try {
+          const mission = await readMission(missionId);
+          if (!isUserFacingMissionOrigin(mission.origin)) return { missionId } as const;
+          const summary = toMissionSummary(mission, await getListSource(mission));
+          return { missionId, summary } as const;
+        } catch (error) {
+          return { missionId, error: normalizeReadError(error, missionId) } as const;
+        }
+      });
+      const summaries: MissionSummary[] = [];
+      const failures: MissionStoreReadIssue[] = [];
+      for (const result of results) {
+        if ("error" in result) {
+          const issue = { missionId: result.missionId, error: result.error };
+          failures.push(issue);
+          options.onReadIssue?.(issue);
+        } else if (result.summary !== undefined && result.summary.source.type !== "internal") {
+          summaries.push(result.summary);
+        }
+      }
+      summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
+      return summaries;
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    }
+  };
+
   return {
     storagePath: missionPath,
     forget(id) {
@@ -1012,42 +1050,12 @@ export function createMissionStore(options: {
       });
     },
     getListSource,
-    async list() {
-      try {
-        const missionIds = await listMissionIds();
-        const results = await Promise.allSettled(
-          missionIds.map(async (missionId) => ({
-            missionId,
-            mission: await readMission(missionId),
-          })),
-        );
-        const missions: Mission[] = [];
-        const failures: MissionStoreReadIssue[] = [];
-        for (const [index, result] of results.entries()) {
-          if (result?.status === "fulfilled") {
-            missions.push(result.value.mission);
-            continue;
-          }
-          const missionId = missionIds[index] ?? "unknown";
-          const issue = { missionId, error: normalizeReadError(result?.reason, missionId) };
-          failures.push(issue);
-          options.onReadIssue?.(issue);
-        }
-        const summaries = (
-          await Promise.all(
-            missions
-              .filter((mission) => isUserFacingMissionOrigin(mission.origin))
-              .map(async (mission) => toMissionSummary(mission, await getListSource(mission))),
-          )
-        )
-          .filter((mission) => mission.source.type !== "internal")
-          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-        if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
-        return summaries;
-      } catch (error) {
-        if (isNodeError(error, "ENOENT")) return [];
-        throw error;
-      }
+    list() {
+      if (listRequest !== undefined) return listRequest;
+      listRequest = listMissions().finally(() => {
+        listRequest = undefined;
+      });
+      return listRequest;
     },
     async resolveExecutionTitles(executionIds) {
       const unresolved = new Set(executionIds);
@@ -2306,4 +2314,26 @@ async function directoryContainsFiles(root: string): Promise<boolean> {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const value = values[index];
+        if (value !== undefined) results[index] = await operation(value);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
