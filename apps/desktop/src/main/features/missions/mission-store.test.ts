@@ -157,6 +157,37 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(false);
   });
 
+  it("unmounts a submitted Skill draft while its owning execution is still running", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Submit a Skill revision",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [
+        {
+          kind: "skill-revision-draft",
+          draftId,
+          revisionJobId,
+          capabilityId: "40000000-0000-4000-8000-000000000004",
+        },
+      ],
+    });
+    await store.updateExecution(created.id, {
+      id: "50000000-0000-4000-8000-000000000005",
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt: "2026-09-20T00:00:00.000Z",
+    });
+
+    await expect(
+      store.unmountSkillRevisionDraft({ id: created.id, draftId }),
+    ).resolves.toMatchObject({ contextMounts: [] });
+  });
+
   it("replaces a published mount with an owning revision draft and restores it", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

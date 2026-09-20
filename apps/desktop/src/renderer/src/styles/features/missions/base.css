@@ -1287,10 +1287,36 @@
 }
 
 .mission-user-message.is-failed small {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 7px;
   color: #a5453c;
   font-size: 11px;
+}
+
+.mission-message-retry {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: currentColor;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mission-message-retry:hover:not(:disabled),
+.mission-message-retry:focus-visible {
+  background: rgb(165 69 60 / 12%);
+}
+
+.mission-message-retry:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .mission-assistant-message > div,

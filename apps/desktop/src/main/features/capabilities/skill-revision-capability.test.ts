@@ -5,6 +5,42 @@ import { createDesktopSkillRevisionSubmissionPort } from "./skill-revision-capab
 import type { SkillRevisionService } from "./skill-revision-service.ts";
 
 describe("Skill revision management capability", () => {
+  it("unmounts a submitted draft before returning its receipt", async () => {
+    const draftId = "10000000-0000-4000-8000-000000000001";
+    const jobId = "20000000-0000-4000-8000-000000000001";
+    const missionId = "30000000-0000-4000-8000-000000000001";
+    const unmountDraft = vi.fn(async () => undefined);
+    const revisions = {
+      submitDraft: vi.fn(async () => ({
+        id: jobId,
+        draftId,
+        revision: 2,
+        state: "pending_review",
+      })),
+      getDraft: vi.fn(async () => ({ id: draftId, revision: 2 })),
+    } as unknown as SkillRevisionService;
+    const port = createDesktopSkillRevisionSubmissionPort({
+      capabilities: {} as CapabilityStore,
+      revisions,
+      inlineMissionId: missionId,
+      unmountDraft,
+    });
+
+    await expect(
+      port.submitDraft({
+        executionId: "40000000-0000-4000-8000-000000000001",
+        invocationId: "50000000-0000-4000-8000-000000000001",
+        expertId: "0000000000sk1rev",
+        operationId: "60000000-0000-4000-8000-000000000001",
+        draftId,
+        expectedRevision: 1,
+        expectedWorkingTreeHash: "a".repeat(64),
+        summary: "Submit the draft.",
+      }),
+    ).resolves.toMatchObject({ draftId, jobId, revision: 2, state: "pending_review" });
+    expect(unmountDraft).toHaveBeenCalledWith({ missionId, draftId });
+  });
+
   it("starts an empty creation draft without a synthetic target", async () => {
     const draftId = "10000000-0000-4000-8000-000000000001";
     const jobId = "20000000-0000-4000-8000-000000000001";
@@ -18,7 +54,7 @@ describe("Skill revision management capability", () => {
       start,
       inspectDraft: vi.fn(async () => ({
         draft: {
-          schemaVersion: "pragma.skill-revision-draft/v3",
+          schemaVersion: "pragma.skill-revision-draft/v4",
           operation: "create",
           id: draftId,
           revision: 1,
@@ -27,6 +63,7 @@ describe("Skill revision management capability", () => {
           resourceDescription: "Created through review.",
           baseRevision: 0,
           baseContentHash: "a".repeat(64),
+          workspacePath: "/tmp/workspace",
           state: "editing",
           createdAt: "2026-09-19T00:00:00.000Z",
           updatedAt: "2026-09-19T00:00:00.000Z",
@@ -82,7 +119,7 @@ describe("Skill revision management capability", () => {
       start,
       inspectDraft: vi.fn(async () => ({
         draft: {
-          schemaVersion: "pragma.skill-revision-draft/v3",
+          schemaVersion: "pragma.skill-revision-draft/v4",
           operation: "create",
           id: draftId,
           revision: 1,
@@ -91,6 +128,7 @@ describe("Skill revision management capability", () => {
           resourceDescription: "Created through review.",
           baseRevision: 0,
           baseContentHash: "a".repeat(64),
+          workspacePath: "/tmp/workspace",
           state: "editing",
           createdAt: "2026-09-19T00:00:00.000Z",
           updatedAt: "2026-09-19T00:00:00.000Z",

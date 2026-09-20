@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +20,217 @@ afterEach(async () => {
 });
 
 describe("Skill revision service", () => {
+  it("stores the editable tree in the owning Workspace and removes it after submission", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const expectedDraftPath = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      job.draftId,
+      "worktree",
+    );
+    expect(inspection.draftPath).toBe(expectedDraftPath);
+    await expect(stat(join(expectedDraftPath, "SKILL.md"))).resolves.toBeDefined();
+
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Move the draft into review.",
+    });
+
+    await expect(stat(dirname(expectedDraftPath))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fixture.service.getReview(pending.id)).resolves.toMatchObject({
+      jobId: pending.id,
+      draftId: job.draftId,
+    });
+  });
+
+  it("replays a committed submission cleanup journal after restart", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Persist the submitted snapshot.",
+    });
+    const draft = await fixture.service.getDraft(job.draftId);
+    const workspaceDraftPath = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      draft.id,
+    );
+    await mkdir(join(workspaceDraftPath, "worktree"), { recursive: true });
+    const journalPath = join(fixture.statePath, "submission-cleanup-journals", `${draft.id}.json`);
+    await writeFile(
+      journalPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-submission-cleanup/v1",
+        draftId: draft.id,
+        jobId: pending.id,
+        workspacePath: draft.workspacePath,
+        submissionHash: draft.submissionHash,
+        draftRevision: draft.revision,
+        jobRevision: pending.revision,
+        state: "committed",
+      })}\n`,
+    );
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+    });
+
+    await recovered.getDraft(draft.id);
+
+    await expect(stat(workspaceDraftPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("repairs the Job when submission crashes after committing the Draft", async () => {
+    const fixture = await createService();
+    const originalJob = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(originalJob.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: originalJob.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Recover both submitted records.",
+    });
+    const draft = await fixture.service.getDraft(originalJob.draftId);
+    const workspaceDraftPath = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      draft.id,
+    );
+    await mkdir(join(workspaceDraftPath, "worktree"), { recursive: true });
+    await writeFile(
+      join(fixture.statePath, "jobs", `${originalJob.id}.json`),
+      `${JSON.stringify(originalJob)}\n`,
+    );
+    await writeFile(
+      join(fixture.statePath, "submission-cleanup-journals", `${draft.id}.json`),
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-submission-cleanup/v1",
+        draftId: draft.id,
+        jobId: originalJob.id,
+        workspacePath: draft.workspacePath,
+        submissionHash: draft.submissionHash,
+        draftRevision: draft.revision,
+        jobRevision: pending.revision,
+        state: "prepared",
+      })}\n`,
+    );
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+    });
+
+    await expect(recovered.getDraft(draft.id)).resolves.toMatchObject({ state: "pending_review" });
+    await expect(recovered.get(originalJob.id)).resolves.toMatchObject({
+      revision: pending.revision,
+      state: "pending_review",
+    });
+    await expect(stat(workspaceDraftPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("abandons a prepared cleanup journal when neither submitted record was committed", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const draft = await fixture.service.getDraft(job.draftId);
+    const journalPath = join(fixture.statePath, "submission-cleanup-journals", `${draft.id}.json`);
+    await mkdir(dirname(journalPath), { recursive: true });
+    await writeFile(
+      journalPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-submission-cleanup/v1",
+        draftId: draft.id,
+        jobId: job.id,
+        workspacePath: draft.workspacePath,
+        submissionHash: "f".repeat(64),
+        draftRevision: draft.revision + 1,
+        jobRevision: job.revision + 1,
+        state: "prepared",
+      })}\n`,
+    );
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+    });
+
+    await expect(recovered.getDraft(draft.id)).resolves.toMatchObject({ state: "editing" });
+    await expect(recovered.get(job.id)).resolves.toMatchObject({ state: "editing" });
+    await expect(stat(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      stat(join(fixture.workspacePath, ".pragma", "skill-revision-drafts", draft.id, "worktree")),
+    ).resolves.toBeDefined();
+  });
+
+  it("does not block submitted records or delete an unverified cleanup target", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Keep cleanup failures non-blocking.",
+    });
+    const draft = await fixture.service.getDraft(job.draftId);
+    const unrelatedWorkspace = join(dirname(fixture.workspacePath), "unrelated-workspace");
+    const sentinel = join(
+      unrelatedWorkspace,
+      ".pragma",
+      "skill-revision-drafts",
+      draft.id,
+      "sentinel.txt",
+    );
+    await mkdir(dirname(sentinel), { recursive: true });
+    await writeFile(sentinel, "keep\n");
+    await writeFile(
+      join(fixture.statePath, "submission-cleanup-journals", `${draft.id}.json`),
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-submission-cleanup/v1",
+        draftId: draft.id,
+        jobId: pending.id,
+        workspacePath: unrelatedWorkspace,
+        submissionHash: draft.submissionHash,
+        draftRevision: draft.revision,
+        jobRevision: pending.revision,
+        state: "committed",
+      })}\n`,
+    );
+    const warn = vi.fn();
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+      warn,
+    });
+
+    await expect(recovered.getDraft(draft.id)).resolves.toMatchObject({ state: "pending_review" });
+    await expect(readFile(sentinel, "utf8")).resolves.toBe("keep\n");
+    expect(warn).toHaveBeenCalledWith(
+      "Failed to recover a submitted Skill draft cleanup.",
+      expect.anything(),
+    );
+  });
+
   it("publishes an approved empty-baseline Skill as revision 1", async () => {
     const fixture = await createService();
     const missionId = randomUUID();
@@ -107,6 +318,7 @@ describe("Skill revision service", () => {
       draftsPath: fixture.draftsPath,
       draftsTrashPath: fixture.draftsTrashPath,
       capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
     });
     await recovered.processPending();
 
@@ -720,6 +932,11 @@ describe("Skill revision service", () => {
       join(fixture.draftsPath, draftId, "draft.json"),
       `${JSON.stringify(historicalDraft)}\n`,
     );
+    await mkdir(join(fixture.draftsPath, draftId, "worktree"), { recursive: true });
+    await writeFile(
+      join(fixture.draftsPath, draftId, "worktree", "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n",
+    );
 
     await expect(fixture.service.get(jobId)).resolves.toMatchObject({
       schemaVersion: "pragma.skill-revision-job/v4",
@@ -727,8 +944,9 @@ describe("Skill revision service", () => {
       request: { schemaVersion: "pragma.skill-revision-request/v4", operation: "revise" },
     });
     await expect(fixture.service.getDraft(draftId)).resolves.toMatchObject({
-      schemaVersion: "pragma.skill-revision-draft/v3",
+      schemaVersion: "pragma.skill-revision-draft/v4",
       operation: "revise",
+      workspacePath: fixture.workspacePath,
     });
     await expect(
       readFile(join(fixture.statePath, "migration-backups", `${jobId}.v2.json`), "utf8"),
@@ -736,6 +954,94 @@ describe("Skill revision service", () => {
     await expect(
       readFile(join(fixture.statePath, "migration-backups", `draft-${draftId}.v1.json`), "utf8"),
     ).resolves.toContain("pragma.skill-revision-draft/v1");
+  });
+
+  it("moves a frozen v3 editable worktree into the resolved Workspace on first access", async () => {
+    const fixture = await createService();
+    const historicalDraft = await historicalFixture("skill-revision-draft-v3.json");
+    const draftId = String(historicalDraft["id"]);
+    const legacyWorktree = join(fixture.draftsPath, draftId, "worktree");
+    await mkdir(legacyWorktree, { recursive: true });
+    await writeFile(
+      join(legacyWorktree, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n",
+    );
+    await writeFile(
+      join(fixture.draftsPath, draftId, "draft.json"),
+      `${JSON.stringify(historicalDraft)}\n`,
+    );
+
+    const migrated = await fixture.service.getDraft(draftId);
+    const migratedWorktree = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      draftId,
+      "worktree",
+    );
+
+    expect(migrated).toMatchObject({
+      schemaVersion: "pragma.skill-revision-draft/v4",
+      workspacePath: fixture.workspacePath,
+    });
+    await expect(stat(join(migratedWorktree, "SKILL.md"))).resolves.toBeDefined();
+    await expect(stat(legacyWorktree)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("replays an interrupted v3 Workspace migration from its stable journal", async () => {
+    const fixture = await createService();
+    const historicalDraft = await historicalFixture("skill-revision-draft-v3.json");
+    const draftId = String(historicalDraft["id"]);
+    const legacyWorktree = join(fixture.draftsPath, draftId, "worktree");
+    const targetWorktree = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      draftId,
+      "worktree",
+    );
+    const skill = "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n";
+    await mkdir(legacyWorktree, { recursive: true });
+    await mkdir(targetWorktree, { recursive: true });
+    await writeFile(join(legacyWorktree, "SKILL.md"), skill);
+    await writeFile(join(targetWorktree, "SKILL.md"), skill);
+    await writeFile(
+      join(fixture.draftsPath, draftId, "draft.json"),
+      `${JSON.stringify(historicalDraft)}\n`,
+    );
+    const backupPath = join(fixture.statePath, "migration-backups", `draft-${draftId}.v3.json`);
+    const journalPath = join(
+      fixture.statePath,
+      "migration-journals",
+      `draft-${draftId}.v3-to-v4.json`,
+    );
+    await mkdir(dirname(backupPath), { recursive: true });
+    await mkdir(dirname(journalPath), { recursive: true });
+    await writeFile(backupPath, `${JSON.stringify(historicalDraft)}\n`);
+    await writeFile(
+      journalPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-migration/v1",
+        kind: "draft",
+        recordId: draftId,
+        recordPath: join(fixture.draftsPath, draftId, "draft.json"),
+        backupPath,
+        sourceHash: jsonHash(historicalDraft),
+        sourceVersion: "pragma.skill-revision-draft/v3",
+        targetVersion: "pragma.skill-revision-draft/v4",
+        workspacePath: fixture.workspacePath,
+        sourceWorktreePath: legacyWorktree,
+        targetWorktreePath: targetWorktree,
+      })}\n`,
+    );
+
+    await expect(fixture.service.getDraft(draftId)).resolves.toMatchObject({
+      schemaVersion: "pragma.skill-revision-draft/v4",
+      workspacePath: fixture.workspacePath,
+    });
+    await expect(readFile(join(targetWorktree, "SKILL.md"), "utf8")).resolves.toBe(skill);
+    await expect(stat(legacyWorktree)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("reads current revision records without running a migration", async () => {
@@ -768,6 +1074,11 @@ describe("Skill revision service", () => {
     await mkdir(join(fixture.draftsPath, draftId), { recursive: true });
     await writeFile(jobPath, `${JSON.stringify(historicalJob)}\n`);
     await writeFile(draftPath, `${JSON.stringify(historicalDraft)}\n`);
+    await mkdir(join(fixture.draftsPath, draftId, "worktree"), { recursive: true });
+    await writeFile(
+      join(fixture.draftsPath, draftId, "worktree", "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n",
+    );
     await fixture.service.get(jobId);
     await fixture.service.getDraft(draftId);
 
@@ -845,7 +1156,7 @@ describe("Skill revision service", () => {
       request: { schemaVersion: "pragma.skill-revision-request/v4", operation: "revise" },
     });
     await expect(fixture.service.getDraft(migrated.draftId)).resolves.toMatchObject({
-      schemaVersion: "pragma.skill-revision-draft/v3",
+      schemaVersion: "pragma.skill-revision-draft/v4",
       operation: "revise",
     });
     await expect(
@@ -863,14 +1174,14 @@ describe("Skill revision service", () => {
     const jobPath = join(fixture.statePath, "jobs", `${job.id}.json`);
     const draftPath = join(fixture.draftsPath, draft.id, "draft.json");
     const futureJob = { ...job, schemaVersion: "pragma.skill-revision-job/v5" };
-    const futureDraft = { ...draft, schemaVersion: "pragma.skill-revision-draft/v4" };
+    const futureDraft = { ...draft, schemaVersion: "pragma.skill-revision-draft/v5" };
     await writeFile(jobPath, `${JSON.stringify(futureJob)}\n`);
     await writeFile(draftPath, `${JSON.stringify(futureDraft)}\n`);
 
     await expect(fixture.service.get(job.id)).rejects.toThrow();
     await expect(fixture.service.getDraft(draft.id)).rejects.toThrow();
     await expect(readFile(jobPath, "utf8")).resolves.toContain("pragma.skill-revision-job/v5");
-    await expect(readFile(draftPath, "utf8")).resolves.toContain("pragma.skill-revision-draft/v4");
+    await expect(readFile(draftPath, "utf8")).resolves.toContain("pragma.skill-revision-draft/v5");
   });
 
   it("deletes only terminal or actionable Skill revision tasks", async () => {
@@ -1022,7 +1333,10 @@ async function createService(
   const root = join(tmpdir(), `pragma-skill-revisions-${randomUUID()}`);
   roots.push(root);
   const sourcePath = join(root, "formal", "1");
+  const workspacePath = join(root, "workspace");
   await mkdir(sourcePath, { recursive: true });
+  await mkdir(workspacePath, { recursive: true });
+  const canonicalWorkspacePath = await realpath(workspacePath);
   await writeFile(
     join(sourcePath, "SKILL.md"),
     "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
@@ -1064,6 +1378,7 @@ async function createService(
       currentRevision = revision;
     },
     sourcePath,
+    workspacePath: canonicalWorkspacePath,
     statePath: join(root, "state"),
     draftsPath: join(root, "data", "skill-revision-drafts"),
     draftsTrashPath: join(root, "trash", "skill-revision-drafts"),
@@ -1073,6 +1388,7 @@ async function createService(
       draftsPath: join(root, "data", "skill-revision-drafts"),
       draftsTrashPath: join(root, "trash", "skill-revision-drafts"),
       capabilities,
+      resolveWorkspacePath: async () => canonicalWorkspacePath,
       ...(options.generator === undefined ? {} : { generator: options.generator }),
     }),
   };

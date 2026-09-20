@@ -60,6 +60,11 @@ export function createFencedMissionStore(
           operation.input.contextMounts as Parameters<MissionStore["updateContextMounts"]>[1],
         );
         return;
+      case "mission.skill-revision-draft.unmount":
+        await store.unmountSkillRevisionDraft(
+          operation.input.input as Parameters<MissionStore["unmountSkillRevisionDraft"]>[0],
+        );
+        return;
       case "mission.execution.update": {
         const mission = await store.updateExecution(
           String(operation.input.id),
@@ -160,6 +165,13 @@ export function createFencedMissionStore(
         "mission.context-stores.updated",
         named("mission.context-stores.update", { id, contextMounts: [...contextMounts] }),
         async () => await store.updateContextMounts(id, contextMounts),
+      ),
+    unmountSkillRevisionDraft: async (input) =>
+      await write(
+        input.id,
+        "mission.skill-revision-draft.unmounted",
+        named("mission.skill-revision-draft.unmount", { input }),
+        async () => await store.unmountSkillRevisionDraft(input),
       ),
     updateExecution: async (id, execution, guard) => {
       const mission = await write(

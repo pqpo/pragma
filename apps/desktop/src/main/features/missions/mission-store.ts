@@ -137,6 +137,10 @@ export interface MissionStore {
     readonly revisionJobId: string;
     readonly capabilityId: string;
   }): Promise<Mission>;
+  unmountSkillRevisionDraft(input: {
+    readonly id: string;
+    readonly draftId: string;
+  }): Promise<Mission>;
   restoreManagedRevisionStore(input: {
     readonly id: string;
     readonly preserveSession?: boolean;
@@ -1500,6 +1504,17 @@ export function createMissionStore(options: {
           ],
           updatedAt: timestamp,
         };
+      });
+    },
+    async unmountSkillRevisionDraft(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const contextMounts = current.contextMounts.filter(
+          (candidate) =>
+            candidate.kind !== "skill-revision-draft" || candidate.draftId !== input.draftId,
+        );
+        return contextMounts.length === current.contextMounts.length
+          ? current
+          : { ...current, contextMounts, updatedAt: timestamp };
       });
     },
     async restoreManagedRevisionStore(input) {
