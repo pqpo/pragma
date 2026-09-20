@@ -1646,4 +1646,8 @@ export const studio = {
     "“{{name}}”将从技能修订列表中移除。删除任务不会回滚已经发布的修订，也不会删除技能。",
   continueSkillRevision: "继续修订",
   skillRevisionContinuePrompt: "查看校验问题，更新现有 Skill 草稿，然后重新提交。",
+  skillRevisionRequest: "修订要求",
+  skillRevisionSummary: "变更摘要",
+  skillRevisionSummaryUnavailable: "暂无变更摘要。",
+  skillRevisionAttention: "需要处理",
 } as const;

@@ -229,12 +229,47 @@
 }
 
 .skill-revision-page {
-  --revision-task-actions-width: 250px;
+  --revision-task-actions-width: 80px;
   --revision-task-content-columns: minmax(260px, 1.25fr) minmax(170px, 0.7fr) 104px;
 }
 
-.skill-revision-page .revision-task-open {
-  cursor: default;
+.skill-revision-review {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+.skill-revision-review section {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-subtle);
+}
+
+.skill-revision-review section > span {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.skill-revision-review section > p {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.skill-revision-review section.is-error {
+  border-color: color-mix(in srgb, var(--ui-warning) 32%, var(--ui-line));
+  background: color-mix(in srgb, var(--ui-warning) 7%, var(--ui-surface));
 }
 
 .capability-row-menu {

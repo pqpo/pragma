@@ -19,7 +19,10 @@ import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
-type Entry = { readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft };
+export type SkillRevisionEntry = {
+  readonly job: ManagedSkillRevisionJob;
+  readonly draft: SkillRevisionDraft;
+};
 
 export function activeSkillRevisionTaskCount(
   entries: readonly { readonly job: Pick<ManagedSkillRevisionJob, "state"> }[],
@@ -66,10 +69,7 @@ export function SkillRevisionTaskActions(props: {
   readonly errorCode?: string | undefined;
   readonly busy: boolean;
   readonly canOpenMission: boolean;
-  readonly onApprove: () => void;
-  readonly onReject: () => void;
   readonly onRetry: () => void;
-  readonly onContinue: () => void;
   readonly onDelete: () => void;
 }) {
   const { t } = useTranslation("studio");
@@ -88,36 +88,6 @@ export function SkillRevisionTaskActions(props: {
 
   return (
     <div className="revision-task-actions">
-      {props.jobState === "pending_review" ? (
-        <>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={props.busy}
-            onClick={props.onApprove}
-          >
-            <Check size={15} aria-hidden="true" /> {t("approveAndPublish")}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={props.busy}
-            onClick={props.onReject}
-          >
-            <X size={15} aria-hidden="true" /> {t("rejectRevision")}
-          </button>
-        </>
-      ) : null}
-      {props.jobState === "needs_attention" && attentionActions.canContinue ? (
-        <button
-          className="primary-button"
-          type="button"
-          disabled={props.busy}
-          onClick={props.onContinue}
-        >
-          {t("continueSkillRevision")}
-        </button>
-      ) : null}
       {(props.jobState === "needs_attention" && attentionActions.canRetry) ||
       props.jobState === "rejected" ? (
         <button
@@ -147,6 +117,121 @@ export function SkillRevisionTaskActions(props: {
   );
 }
 
+export function SkillRevisionDetailFragment(props: {
+  readonly entry: SkillRevisionEntry;
+  readonly busy: boolean;
+  readonly error?: string | undefined;
+  readonly canOpenMission: boolean;
+  readonly onBack: () => void;
+  readonly onApprove: () => void;
+  readonly onReject: () => void;
+  readonly onRetry: () => void;
+  readonly onContinue: () => void;
+}) {
+  const { t, i18n } = useTranslation("studio");
+  const { job, draft } = props.entry;
+  const attentionActions = skillRevisionAttentionActions(props.entry, props.canOpenMission);
+  const revisionMetadata = `${draft.name} · ${
+    draft.operation === "create"
+      ? t("publishesAsRevisionOne")
+      : t("baseRevision", { count: draft.baseRevision })
+  } · ${formatRevisionTimestamp(job.updatedAt, i18n.language)}`;
+
+  return (
+    <StudioScreenFrame
+      className="context-store-revision-detail skill-revision-detail"
+      labelledBy="skill-revision-detail-title"
+      header={
+        <header className="revision-diff-heading">
+          <button className="back-link" type="button" onClick={props.onBack}>
+            <ArrowLeft size={18} aria-hidden="true" />
+            {t("backRevisionTasks")}
+          </button>
+          <div className="revision-diff-title-row">
+            <div>
+              <h1 id="skill-revision-detail-title">{t("revisionResult")}</h1>
+              <p>{revisionMetadata}</p>
+            </div>
+            <div className="revision-diff-actions">
+              <span className={`revision-task-state is-${job.state}`}>
+                {t(`revisionState.${job.state}`)}
+              </span>
+              {job.state === "pending_review" ? (
+                <>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={props.onApprove}
+                  >
+                    <Check size={15} aria-hidden="true" />
+                    {t("approveAndPublish")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={props.busy}
+                    onClick={props.onReject}
+                  >
+                    <X size={15} aria-hidden="true" />
+                    {t("rejectRevision")}
+                  </button>
+                </>
+              ) : null}
+              {(job.state === "needs_attention" && attentionActions.canRetry) ||
+              job.state === "rejected" ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={props.onRetry}
+                >
+                  <ArrowClockwise size={15} aria-hidden="true" />
+                  {t("retryRevision")}
+                </button>
+              ) : null}
+              {job.state === "needs_attention" && attentionActions.canContinue ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={props.busy}
+                  onClick={props.onContinue}
+                >
+                  {t("continueSkillRevision")}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </header>
+      }
+    >
+      <div className="revision-diff-content">
+        <div className="skill-revision-review">
+          <section>
+            <span>{t("skillRevisionRequest")}</span>
+            <p>{job.request.prompt}</p>
+          </section>
+          <section>
+            <span>{t("skillRevisionSummary")}</span>
+            <p>{draft.summary ?? t("skillRevisionSummaryUnavailable")}</p>
+          </section>
+          {job.error ? (
+            <section className="is-error">
+              <span>{t("skillRevisionAttention")}</span>
+              <p>{job.error.message}</p>
+            </section>
+          ) : null}
+        </div>
+        {props.error ? (
+          <p className="form-error" role="alert">
+            {props.error}
+          </p>
+        ) : null}
+      </div>
+    </StudioScreenFrame>
+  );
+}
+
 export function SkillRevisionFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly capabilityId?: string | undefined;
@@ -156,11 +241,12 @@ export function SkillRevisionFragment(props: {
   readonly onBack: () => void;
 }) {
   const { t, i18n } = useTranslation("studio");
-  const [entries, setEntries] = useState<readonly Entry[]>([]);
+  const [entries, setEntries] = useState<readonly SkillRevisionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string>();
   const [error, setError] = useState<string>();
-  const [pendingDelete, setPendingDelete] = useState<Entry>();
+  const [pendingDelete, setPendingDelete] = useState<SkillRevisionEntry>();
+  const [selectedJobId, setSelectedJobId] = useState<string>();
   const load = useCallback(async () => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -179,7 +265,10 @@ export function SkillRevisionFragment(props: {
 
   useEffect(() => void load(), [load]);
 
-  const act = async (entry: Entry, action: "approve" | "reject" | "retry" | "delete") => {
+  const act = async (
+    entry: SkillRevisionEntry,
+    action: "approve" | "reject" | "retry" | "delete",
+  ) => {
     const api = desktopApi();
     if (api === undefined) return;
     setBusyId(entry.job.id);
@@ -190,7 +279,10 @@ export function SkillRevisionFragment(props: {
       else if (action === "retry") await api.retrySkillRevision(input);
       else await api.deleteSkillRevision(input);
       if (action === "approve") await props.onPublished?.();
-      if (action === "delete") setPendingDelete(undefined);
+      if (action === "delete") {
+        setPendingDelete(undefined);
+        setSelectedJobId(undefined);
+      }
       await load();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -198,6 +290,25 @@ export function SkillRevisionFragment(props: {
       setBusyId(undefined);
     }
   };
+
+  const selectedEntry = entries.find((entry) => entry.job.id === selectedJobId);
+  if (selectedEntry !== undefined) {
+    return (
+      <SkillRevisionDetailFragment
+        entry={selectedEntry}
+        busy={busyId === selectedEntry.job.id}
+        error={error}
+        canOpenMission={props.onOpenMission !== undefined}
+        onBack={() => setSelectedJobId(undefined)}
+        onApprove={() => void act(selectedEntry, "approve")}
+        onReject={() => void act(selectedEntry, "reject")}
+        onRetry={() => void act(selectedEntry, "retry")}
+        onContinue={() =>
+          props.onOpenMission?.(selectedEntry.job.missionId!, t("skillRevisionContinuePrompt"))
+        }
+      />
+    );
+  }
 
   return (
     <StudioScreenFrame
@@ -241,7 +352,12 @@ export function SkillRevisionFragment(props: {
                 const busy = busyId === entry.job.id;
                 return (
                   <article className="revision-task-row" role="listitem" key={entry.job.id}>
-                    <div className="revision-task-open">
+                    <button
+                      className="revision-task-open"
+                      type="button"
+                      aria-label={t("viewRevisionChanges")}
+                      onClick={() => setSelectedJobId(entry.job.id)}
+                    >
                       <span className="revision-task-summary">
                         <strong title={entry.job.request.prompt}>{entry.job.request.prompt}</strong>
                         <small>
@@ -269,7 +385,7 @@ export function SkillRevisionFragment(props: {
                       >
                         {formatRevisionTimestamp(entry.job.updatedAt, i18n.language)}
                       </time>
-                    </div>
+                    </button>
                     <SkillRevisionTaskActions
                       jobState={entry.job.state}
                       draftState={entry.draft.state}
@@ -277,15 +393,7 @@ export function SkillRevisionFragment(props: {
                       errorCode={entry.job.error?.code}
                       busy={busy}
                       canOpenMission={props.onOpenMission !== undefined}
-                      onApprove={() => void act(entry, "approve")}
-                      onReject={() => void act(entry, "reject")}
                       onRetry={() => void act(entry, "retry")}
-                      onContinue={() =>
-                        props.onOpenMission?.(
-                          entry.job.missionId!,
-                          t("skillRevisionContinuePrompt"),
-                        )
-                      }
                       onDelete={() => setPendingDelete(entry)}
                     />
                   </article>

@@ -6,8 +6,10 @@ import {
   activeSkillRevisionTaskCount,
   canDeleteSkillRevisionJob,
   skillRevisionAttentionActions,
+  SkillRevisionDetailFragment,
   SkillRevisionEmptyState,
   SkillRevisionTaskActions,
+  type SkillRevisionEntry,
 } from "./SkillRevisionFragment.tsx";
 
 afterEach(async () => {
@@ -45,7 +47,7 @@ describe("SkillRevisionEmptyState", () => {
     ).toEqual(["completed", "rejected", "needs_attention", "superseded"]);
   });
 
-  it("uses the knowledge revision action styles for approval, rejection, and deletion", async () => {
+  it("keeps list actions icon-only like the knowledge revision list", async () => {
     await i18n.changeLanguage("zh-Hans");
     const noop = () => undefined;
     const review = renderToStaticMarkup(
@@ -54,10 +56,7 @@ describe("SkillRevisionEmptyState", () => {
         draftState="pending_review"
         busy={false}
         canOpenMission={false}
-        onApprove={noop}
-        onReject={noop}
         onRetry={noop}
-        onContinue={noop}
         onDelete={noop}
       />,
     );
@@ -67,21 +66,61 @@ describe("SkillRevisionEmptyState", () => {
         draftState="rejected"
         busy={false}
         canOpenMission={false}
-        onApprove={noop}
-        onReject={noop}
         onRetry={noop}
-        onContinue={noop}
         onDelete={noop}
       />,
     );
 
     expect(review).toContain('class="revision-task-actions"');
-    expect(review).toContain('class="primary-button"');
-    expect(review).toContain("批准并发布");
-    expect(review).toContain("拒绝");
+    expect(review).not.toContain('class="primary-button"');
+    expect(review).not.toContain("批准并发布");
+    expect(review).not.toContain("拒绝");
     expect(terminal).toContain('aria-label="重试"');
     expect(terminal).toContain("revision-task-icon-button is-danger");
     expect(terminal).toContain('aria-label="删除任务"');
+  });
+
+  it("places approval and rejection in the revision detail header", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const noop = () => undefined;
+    const entry = {
+      job: {
+        id: "00000000-0000-4000-8000-000000000001",
+        revision: 2,
+        state: "pending_review",
+        request: { prompt: "完善 Git 冲突处理流程" },
+        updatedAt: "2026-09-20T08:00:00.000Z",
+      },
+      draft: {
+        name: "git-merge-conflict-resolver",
+        operation: "create",
+        state: "pending_review",
+        baseRevision: 0,
+        summary: "新增合并前分析与合并后验证。",
+      },
+    } as unknown as SkillRevisionEntry;
+    const html = renderToStaticMarkup(
+      <SkillRevisionDetailFragment
+        entry={entry}
+        busy={false}
+        canOpenMission={false}
+        onBack={noop}
+        onApprove={noop}
+        onReject={noop}
+        onRetry={noop}
+        onContinue={noop}
+      />,
+    );
+
+    expect(html).toContain(
+      'class="studio-screen context-store-revision-detail skill-revision-detail"',
+    );
+    expect(html).toContain('class="revision-diff-actions"');
+    expect(html).toContain('class="primary-button"');
+    expect(html).toContain("批准并发布");
+    expect(html).toContain("拒绝");
+    expect(html).toContain("完善 Git 冲突处理流程");
+    expect(html).toContain("新增合并前分析与合并后验证。");
   });
 
   it("matches the knowledge revision empty-state structure", async () => {
