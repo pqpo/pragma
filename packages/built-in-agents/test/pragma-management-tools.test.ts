@@ -53,7 +53,7 @@ describe("Pragma management tools", () => {
     );
   });
 
-  it("lists knowledge without approval and requires approval for starting or discarding a draft", async () => {
+  it("lists and starts knowledge drafts without approval but requires approval to discard one", async () => {
     const target = {
       targetRef: "context-store:0000000000000001",
       name: "Shared knowledge",
@@ -89,10 +89,7 @@ describe("Pragma management tools", () => {
     };
 
     expect(tools[0]?.approval).toEqual({ mode: "none" });
-    expect(tools[2]?.approval).toEqual({
-      mode: "required",
-      reason: "Start a managed knowledge revision Mission.",
-    });
+    expect(tools[2]?.approval).toEqual({ mode: "none" });
     expect(
       tools.find((tool) => tool.name === "knowledge_revision_discard_draft")?.approval,
     ).toEqual({
@@ -198,6 +195,27 @@ describe("Pragma management tools", () => {
     await expect(tools[0]!.call({}, undefined, { toolCallId: "call-1" })).resolves.toMatchObject({
       isError: true,
       details: { code: "unavailable", retryable: false },
+    });
+  });
+
+  it("starts Skill drafts without approval", () => {
+    const tools = createPragmaManagementTools({
+      skillRevisions: {
+        listTargets: vi.fn(),
+        listDrafts: vi.fn(),
+        start: vi.fn(),
+        getDraft: vi.fn(),
+        submitDraft: vi.fn(),
+        discardDraft: vi.fn(),
+      },
+    });
+
+    expect(tools.find((tool) => tool.name === "skill_revision_start")?.approval).toEqual({
+      mode: "none",
+    });
+    expect(tools.find((tool) => tool.name === "skill_revision_discard_draft")?.approval).toEqual({
+      mode: "required",
+      reason: "Discard this unpublished Skill draft.",
     });
   });
 
