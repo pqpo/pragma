@@ -1724,7 +1724,31 @@ export const studio = {
   noSkillRevisions: "No skill revisions yet.",
   noSkillRevisionsDescription: "Submitted candidates and changes awaiting review will appear here.",
   approveAndPublish: "Approve and publish",
+  deleteSkillRevisionTaskTitle: "Delete this Skill revision task?",
+  deleteSkillRevisionTaskDescription:
+    '"{{name}}" will be removed from the Skill revision list. Deleting the task does not roll back a published revision or delete the Skill.',
   continueSkillRevision: "Continue revision",
   skillRevisionContinuePrompt:
     "Review the validation findings, update the existing Skill draft, and submit it again.",
+  skillRevisionSummaryUnavailable: "No change summary was recorded.",
+  skillRevisionRequestDocumentDescription:
+    "Records the original request that initiated this Skill revision.",
+  skillRevisionSummaryDocumentDescription:
+    "Summarizes the scope of this Skill revision for review before publishing.",
+  loadingSkillRevisionFile: "Loading file preview…",
+  skillRevisionFileMissing: "File is not present in this snapshot.",
+  skillRevisionFileMetadata: "{{size}} · {{hash}} · {{mode}}",
+  skillRevisionFileTransition: "{{before}} → {{after}}",
+  skillRevisionExecutable: "executable",
+  skillRevisionNotExecutable: "not executable",
+  skillRevisionPreviewUnavailable: {
+    binary: "Binary file cannot be previewed ({{size}}, SHA-256 {{hash}}).",
+    size_limit: "File exceeds the preview size limit ({{size}}, SHA-256 {{hash}}).",
+    line_limit: "File exceeds the preview line limit ({{size}}, SHA-256 {{hash}}).",
+  },
+  skillRevisionOperation: {
+    added: "Added",
+    modified: "Modified",
+    deleted: "Deleted",
+  },
 } as const;

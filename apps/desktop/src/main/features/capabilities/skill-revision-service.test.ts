@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -366,6 +366,142 @@ describe("Skill revision service", () => {
     );
   });
 
+  it("returns review metadata and loads file previews on demand", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const draft = await fixture.service.inspectDraft(job.draftId, missionId);
+    await writeFile(
+      join(draft.draftPath!, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the safer workflow.\n",
+    );
+    await mkdir(join(draft.draftPath!, "references"));
+    await writeFile(join(draft.draftPath!, "references", "checks.md"), "# Checks\n\nRun tests.\n");
+    await writeFile(join(draft.draftPath!, "asset.bin"), Uint8Array.from([0, 255, 42]));
+    const ready = await fixture.service.inspectDraft(job.draftId, missionId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: ready.draft.revision,
+      expectedWorkingTreeHash: ready.workingTree.hash,
+      summary: "Review every changed file.",
+      missionId,
+    });
+
+    const review = await fixture.service.getReview(job.id);
+    expect(review).toMatchObject({
+      jobId: job.id,
+      draftId: job.draftId,
+      operations: [
+        {
+          path: "SKILL.md",
+          operation: "modified",
+          before: { executable: false },
+          after: { executable: false },
+        },
+        { path: "asset.bin", operation: "added", before: null, after: { executable: false } },
+        {
+          path: "references/checks.md",
+          operation: "added",
+          before: null,
+          after: { executable: false },
+        },
+      ],
+    });
+    expect(review.baseSnapshotHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(review.candidateSnapshotHash).toMatch(/^[a-f0-9]{64}$/u);
+
+    await expect(fixture.service.getReviewFile(job.id, "SKILL.md")).resolves.toMatchObject({
+      jobId: job.id,
+      path: "SKILL.md",
+      before: {
+        content:
+          "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
+        unavailableReason: null,
+      },
+      after: {
+        content:
+          "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the safer workflow.\n",
+        unavailableReason: null,
+      },
+    });
+    await expect(fixture.service.getReviewFile(job.id, "asset.bin")).resolves.toMatchObject({
+      before: null,
+      after: { content: null, unavailableReason: "binary", executable: false },
+    });
+  });
+
+  it("keeps executable-only changes visible in review metadata", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "scripts"));
+    await writeFile(join(fixture.sourcePath, "scripts", "verify.mjs"), "export const ok = true;\n");
+    await chmod(join(fixture.sourcePath, "scripts", "verify.mjs"), 0o644);
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const draft = await fixture.service.inspectDraft(job.draftId, missionId);
+    await chmod(join(draft.draftPath!, "scripts", "verify.mjs"), 0o755);
+
+    const review = await fixture.service.getReview(job.id);
+    expect(review.operations).toContainEqual(
+      expect.objectContaining({
+        path: "scripts/verify.mjs",
+        operation: "modified",
+        before: expect.objectContaining({ executable: false }),
+        after: expect.objectContaining({ executable: true }),
+      }),
+    );
+  });
+
+  it("supports a legal 600-file directory move with 1,200 review operations", async () => {
+    const fixture = await createService();
+    const oldDirectory = join(fixture.sourcePath, "references", "old");
+    await mkdir(oldDirectory, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 600 }, async (_, index) => {
+        const name = `${index.toString().padStart(3, "0")}.md`;
+        await writeFile(join(oldDirectory, name), `# Reference ${index}\n`);
+      }),
+    );
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const draft = await fixture.service.inspectDraft(job.draftId, missionId);
+    await rename(
+      join(draft.draftPath!, "references", "old"),
+      join(draft.draftPath!, "references", "new"),
+    );
+    const review = await fixture.service.getReview(job.id);
+    expect(review.operations).toHaveLength(1_200);
+    expect(review.operations.filter((operation) => operation.operation === "added")).toHaveLength(
+      600,
+    );
+    expect(review.operations.filter((operation) => operation.operation === "deleted")).toHaveLength(
+      600,
+    );
+  });
+
+  it("does not send line-unbounded file content through the review IPC contract", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const draft = await fixture.service.inspectDraft(job.draftId, missionId);
+    await mkdir(join(draft.draftPath!, "references"));
+    await writeFile(join(draft.draftPath!, "references", "large.md"), "line\n".repeat(6_000));
+    const changed = await fixture.service.inspectDraft(job.draftId, missionId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: changed.draft.revision,
+      expectedWorkingTreeHash: changed.workingTree.hash,
+      summary: "Add a large reference.",
+      missionId,
+    });
+
+    await expect(
+      fixture.service.getReviewFile(job.id, "references/large.md"),
+    ).resolves.toMatchObject({
+      before: null,
+      after: { content: null, unavailableReason: "line_limit", sizeBytes: 30_000 },
+    });
+  });
+
   it("rejects a stale base and preserves a read-only reference", async () => {
     const fixture = await createService();
     const missionId = randomUUID();
@@ -384,6 +520,14 @@ describe("Skill revision service", () => {
 
     expect(rejected).toMatchObject({
       state: "rejected",
+      error: { code: "skill_revision_base_changed" },
+    });
+    await expect(fixture.service.retry(rejected.id, rejected.revision)).rejects.toMatchObject({
+      code: "skill_revision_base_changed",
+    });
+    await expect(fixture.service.get(rejected.id)).resolves.toMatchObject({
+      state: "rejected",
+      revision: rejected.revision,
       error: { code: "skill_revision_base_changed" },
     });
     const reference = await fixture.service.inspectDraft(job.draftId, job.missionId);
@@ -727,6 +871,107 @@ describe("Skill revision service", () => {
     await expect(fixture.service.getDraft(draft.id)).rejects.toThrow();
     await expect(readFile(jobPath, "utf8")).resolves.toContain("pragma.skill-revision-job/v5");
     await expect(readFile(draftPath, "utf8")).resolves.toContain("pragma.skill-revision-draft/v4");
+  });
+
+  it("deletes only terminal or actionable Skill revision tasks", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Review this revision.",
+    });
+
+    await expect(fixture.service.delete(pending.id, pending.revision)).rejects.toMatchObject({
+      code: "skill_revision_state_invalid",
+    });
+
+    const rejected = await fixture.service.reject(pending.id, pending.revision);
+    const reopened = await fixture.service.retry(rejected.id, rejected.revision);
+    expect(reopened.state).toBe("pending_review");
+    const rejectedAgain = await fixture.service.reject(reopened.id, reopened.revision);
+    await fixture.service.delete(rejectedAgain.id, rejectedAgain.revision);
+
+    await expect(fixture.service.get(rejectedAgain.id)).resolves.toMatchObject({
+      state: "rejected",
+      error: { code: "draft_discarded" },
+    });
+    await expect(fixture.service.list()).resolves.toEqual([]);
+    await expect(fixture.service.listDrafts()).resolves.toEqual([]);
+    await expect(fixture.service.getDraft(job.draftId)).rejects.toThrow();
+  });
+
+  it("deletes the managed draft together with a needs-attention task", async () => {
+    const fixture = await createService({
+      generator: {
+        async generate() {
+          return {
+            schemaVersion: "pragma.skill-revision-change-set/v2" as const,
+            operation: "revise" as const,
+            capabilityId,
+            baseRevision: 1,
+            baseContentHash,
+            name: "safe-workflow",
+            description: "Safe workflow.",
+            summary: "Add an unsafe helper.",
+            operations: [
+              {
+                operation: "upsert" as const,
+                path: "scripts/run.mjs",
+                content: "export const run = () => fetch('https://example.test');\n",
+              },
+            ],
+          };
+        },
+      },
+    });
+    const started = await fixture.service.submit(legacyRequest());
+    await fixture.service.processPending();
+    const failed = await fixture.service.get(started.id);
+    expect(failed.state).toBe("needs_attention");
+    const editing = await fixture.service.inspectDraft(failed.draftId);
+    expect(editing.draft.state).toBe("editing");
+
+    await fixture.service.delete(failed.id, failed.revision);
+
+    await expect(fixture.service.list()).resolves.toEqual([]);
+    await expect(fixture.service.listDrafts()).resolves.toEqual([]);
+    await expect(fixture.service.getDraft(failed.draftId)).rejects.toThrow();
+    await expect(
+      fixture.service.start(request("expert-reflection"), { draftId: failed.draftId }),
+    ).rejects.toThrow();
+    await expect(
+      fixture.service.submitDraft({
+        draftId: failed.draftId,
+        expectedRevision: editing.draft.revision,
+        expectedWorkingTreeHash: editing.workingTree.hash,
+        summary: "Cannot submit a discarded draft.",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("deletes completed review history without removing the published Skill", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Publish this revision.",
+    });
+    const completed = await fixture.service.approve(pending.id, pending.revision);
+    expect(completed).toMatchObject({ state: "completed", publishedRevision: 2 });
+
+    await fixture.service.delete(completed.id, completed.revision);
+
+    await expect(fixture.service.list()).resolves.toEqual([]);
+    await expect(fixture.capabilities.get(capabilityId)).resolves.toMatchObject({
+      definition: { kind: "skill", name: "safe-workflow" },
+    });
+    expect(fixture.publish).toHaveBeenCalledOnce();
   });
 
   it("recovers an interrupted publication during startup processing", async () => {

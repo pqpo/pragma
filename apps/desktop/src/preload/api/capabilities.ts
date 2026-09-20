@@ -15,6 +15,7 @@ import {
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
   GetSkillFileSchema,
+  GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
   ListSkillFilesSchema,
@@ -23,6 +24,8 @@ import {
   SkillDocumentSchema,
   SkillFileContentSchema,
   SkillFileEntrySchema,
+  SkillRevisionReviewSchema,
+  SkillRevisionReviewFileSchema,
   UpdateCapabilitySchema,
   UpdateSkillCapabilitySchema,
 } from "../../shared/contracts/capabilities.ts";
@@ -97,6 +100,17 @@ export const capabilitiesApi = {
     z
       .array(z.object({ job: ManagedSkillRevisionJobSchema, draft: SkillRevisionDraftSchema }))
       .parse(await ipcRenderer.invoke("capabilities:list-skill-revisions", capabilityId)),
+  getSkillRevisionReview: async (jobId) =>
+    SkillRevisionReviewSchema.parse(
+      await ipcRenderer.invoke("capabilities:get-skill-revision-review", jobId),
+    ),
+  getSkillRevisionReviewFile: async (input) =>
+    SkillRevisionReviewFileSchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:get-skill-revision-review-file",
+        GetSkillRevisionReviewFileSchema.parse(input),
+      ),
+    ),
   approveSkillRevision: async (input) =>
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:approve-skill-revision", input),
@@ -109,6 +123,9 @@ export const capabilitiesApi = {
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:retry-skill-revision", input),
     ),
+  deleteSkillRevision: async (input) => {
+    await ipcRenderer.invoke("capabilities:delete-skill-revision", input);
+  },
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listCapabilities"
@@ -126,7 +143,10 @@ export const capabilitiesApi = {
   | "deleteCapability"
   | "pickSkillSource"
   | "listSkillRevisionJobs"
+  | "getSkillRevisionReview"
+  | "getSkillRevisionReviewFile"
   | "approveSkillRevision"
   | "rejectSkillRevision"
   | "retrySkillRevision"
+  | "deleteSkillRevision"
 >;

@@ -1641,6 +1641,28 @@ export const studio = {
   noSkillRevisions: "暂无技能修订。",
   noSkillRevisionsDescription: "已提交的候选以及等待审批的变更会显示在这里。",
   approveAndPublish: "批准并发布",
+  deleteSkillRevisionTaskTitle: "删除此技能修订任务？",
+  deleteSkillRevisionTaskDescription:
+    "“{{name}}”将从技能修订列表中移除。删除任务不会回滚已经发布的修订，也不会删除技能。",
   continueSkillRevision: "继续修订",
   skillRevisionContinuePrompt: "查看校验问题，更新现有 Skill 草稿，然后重新提交。",
+  skillRevisionSummaryUnavailable: "暂无变更摘要。",
+  skillRevisionRequestDocumentDescription: "记录发起本次 Skill 修订的原始要求。",
+  skillRevisionSummaryDocumentDescription: "概括本次 Skill 修订的变更范围，便于发布前审批。",
+  loadingSkillRevisionFile: "正在加载文件预览…",
+  skillRevisionFileMissing: "此快照中不存在该文件。",
+  skillRevisionFileMetadata: "{{size}} · {{hash}} · {{mode}}",
+  skillRevisionFileTransition: "{{before}} → {{after}}",
+  skillRevisionExecutable: "可执行",
+  skillRevisionNotExecutable: "不可执行",
+  skillRevisionPreviewUnavailable: {
+    binary: "二进制文件无法预览（{{size}}，SHA-256 {{hash}}）。",
+    size_limit: "文件超过预览大小限制（{{size}}，SHA-256 {{hash}}）。",
+    line_limit: "文件超过预览行数限制（{{size}}，SHA-256 {{hash}}）。",
+  },
+  skillRevisionOperation: {
+    added: "新增",
+    modified: "修改",
+    deleted: "删除",
+  },
 } as const;

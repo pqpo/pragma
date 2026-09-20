@@ -77,6 +77,7 @@ import {
   ExpertModelConfigSchema,
   GetSkillDocumentSchema,
   GetSkillFileSchema,
+  GetSkillRevisionReviewFileSchema,
   ImportSkillCapabilitySchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
@@ -84,6 +85,8 @@ import {
   SkillDocumentSchema,
   SkillFileContentSchema,
   SkillFileEntrySchema,
+  SkillRevisionReviewSchema,
+  SkillRevisionReviewFileSchema,
   UpdateSkillCapabilitySchema,
   UpdateCapabilitySchema,
 } from "./capabilities.ts";
@@ -656,6 +659,9 @@ export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;
 export type CapabilityDeleteResult = z.infer<typeof CapabilityDeleteResultSchema>;
 export type GetSkillDocument = z.infer<typeof GetSkillDocumentSchema>;
 export type SkillDocument = z.infer<typeof SkillDocumentSchema>;
+export type SkillRevisionReview = z.infer<typeof SkillRevisionReviewSchema>;
+export type GetSkillRevisionReviewFile = z.infer<typeof GetSkillRevisionReviewFileSchema>;
+export type SkillRevisionReviewFile = z.infer<typeof SkillRevisionReviewFileSchema>;
 export type ListSkillFiles = z.infer<typeof ListSkillFilesSchema>;
 export type SkillFileEntry = z.infer<typeof SkillFileEntrySchema>;
 export type GetSkillFile = z.infer<typeof GetSkillFileSchema>;
