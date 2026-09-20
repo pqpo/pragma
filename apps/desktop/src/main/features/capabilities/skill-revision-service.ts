@@ -2181,7 +2181,7 @@ export function createSkillRevisionService(options: {
                 });
               } else {
                 const completedByAgent = await readJob(running.id);
-                if (completedByAgent.state !== "pending_review") {
+                if (!["pending_review", "needs_rebase"].includes(completedByAgent.state)) {
                   throw coded("skill_revision_agent_did_not_submit");
                 }
               }
@@ -2189,7 +2189,9 @@ export function createSkillRevisionService(options: {
               const failed = await readJob(running.id).catch(() => undefined);
               if (
                 failed !== undefined &&
-                !["pending_review", "completed", "rejected", "superseded"].includes(failed.state)
+                !["pending_review", "needs_rebase", "completed", "rejected", "superseded"].includes(
+                  failed.state,
+                )
               ) {
                 await mutateJob(failed.id, failed.revision, () => ({
                   state: "needs_attention",

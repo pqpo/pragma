@@ -1109,6 +1109,42 @@ describe("Skill revision service", () => {
     });
   });
 
+  it("preserves needs_rebase when a managed revision becomes stale during generation", async () => {
+    const serviceRef: { current?: ReturnType<typeof createSkillRevisionService> } = {};
+    const missionId = randomUUID();
+    const fixture = await createService({
+      generator: {
+        async generate(input) {
+          if (serviceRef.current === undefined) throw new Error("service unavailable");
+          await serviceRef.current.attachMission(input.jobId, missionId);
+          const inspection = await serviceRef.current.inspectDraft(input.draftId, missionId);
+          fixture.setCurrentRevision(2);
+          await serviceRef.current.submitDraft({
+            draftId: input.draftId,
+            expectedRevision: inspection.draft.revision,
+            expectedWorkingTreeHash: inspection.workingTree.hash,
+            summary: "Submit after the formal Skill changed.",
+            missionId,
+          });
+          return undefined;
+        },
+      },
+    });
+    serviceRef.current = fixture.service;
+
+    const started = await fixture.service.submit(legacyRequest());
+    await fixture.service.processPending();
+
+    await expect(fixture.service.get(started.id)).resolves.toMatchObject({
+      state: "needs_rebase",
+      error: { code: "skill_revision_base_changed" },
+    });
+    await expect(fixture.service.getDraft(started.draftId)).resolves.toMatchObject({
+      state: "needs_rebase",
+      error: { code: "skill_revision_base_changed" },
+    });
+  });
+
   it("migrates frozen historical job and draft fixtures to creation-aware schemas", async () => {
     const fixture = await createService();
     const historicalJob = await historicalFixture("skill-revision-job-v2.json");

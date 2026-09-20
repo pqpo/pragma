@@ -515,7 +515,7 @@ export function SkillRevisionFragment(props: {
     if (api === undefined) return;
     setLoading(true);
     try {
-      const nextEntries = await api.listSkillRevisionJobs(props.capabilityId);
+      const nextEntries = await api.listSkillRevisionJobs();
       setEntries(nextEntries);
       props.onCountChanged?.(activeSkillRevisionTaskCount(nextEntries));
       setError(undefined);

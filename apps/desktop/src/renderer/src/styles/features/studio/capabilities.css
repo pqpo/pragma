@@ -647,7 +647,7 @@
   display: grid;
   grid-template-columns: 0.8fr 1.2fr 1.6fr 1fr;
   gap: 18px;
-  padding: 14px 0;
+  padding: 16px 0;
 }
 
 .capability-detail-meta > div {
@@ -692,7 +692,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
-  margin-top: 14px;
+  margin-top: 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
