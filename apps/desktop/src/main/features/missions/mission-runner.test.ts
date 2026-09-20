@@ -2565,6 +2565,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
+    const getProjectRevision = vi.spyOn(project, "getRevision");
     const historicalBoardOutput: { id: string | undefined } = { id: undefined };
     const runtime = defineRuntimeTestDriver<
       never,
@@ -2696,6 +2697,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     expect((await activeMissions.get(mission.id)).execution?.sessionId).not.toBe(originalSessionId);
     expect(compileSystemExecutor).toHaveBeenCalledTimes(2);
+    expect(getProjectRevision).not.toHaveBeenCalled();
     await expect(readMissionConversationSnapshot(runner, mission.id)).resolves.toMatchObject({
       entries: expect.arrayContaining([
         expect.objectContaining({ kind: "assistant", content: "successor-read-ok" }),

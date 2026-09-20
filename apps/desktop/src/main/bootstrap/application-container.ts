@@ -1,5 +1,5 @@
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -214,6 +214,7 @@ async function migrateLegacyStoreRevisionProfile(options: {
     toolApprovals: current.toolApprovals,
     plugins: current.plugins,
     contextStoreMounts: current.contextStoreMounts,
+    resourceTools: current.resourceTools,
   });
   await rm(journalPath, { force: true });
 }
@@ -749,6 +750,7 @@ export async function createDesktopApplicationContainer(
           toolApprovals: expert.toolApprovals,
           plugins: expert.plugins,
           contextStoreMounts,
+          resourceTools: expert.resourceTools,
         });
         return;
       }
@@ -814,6 +816,7 @@ export async function createDesktopApplicationContainer(
           toolApprovals: expert.toolApprovals,
           plugins: expert.plugins,
           contextStoreMounts: expert.contextStoreMounts,
+          resourceTools: expert.resourceTools,
         });
         return;
       }
@@ -1010,6 +1013,7 @@ export async function createDesktopApplicationContainer(
         name: expert.name,
         avatarId: expert.avatarId,
       })),
+    getSystemExecutorResource: (ref) => systemExperts.getResource(ref),
     onExecutionTerminal: async ({ mission, executionId, status, result, error }) => {
       await executionEventProjector.terminal({ mission, executionId, status, result, error });
       if (!isUserFacingMissionOrigin(mission.origin)) return;
@@ -1032,14 +1036,23 @@ export async function createDesktopApplicationContainer(
         : mission.executor.ref === STORE_REVISION_EXPERT_REF
           ? systemExperts.fingerprint(STORE_REVISION_EXPERT_REF)
           : mission.executor.ref === SKILL_REVISION_EXPERT_REF
-            ? await skillAgentsRef.current?.fingerprint("revision")
+            ? createHash("sha256")
+                .update((await skillAgentsRef.current?.fingerprint("revision")) ?? "unavailable")
+                .update("\0")
+                .update(systemExperts.fingerprint(SKILL_REVISION_EXPERT_REF) ?? "unavailable")
+                .digest("hex")
             : mission.executor.ref === SKILL_EVALUATION_EXPERT_REF
               ? await skillAgentsRef.current?.fingerprint("evaluation")
               : mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF
                 ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
                 : systemExperts.fingerprint(mission.executor.ref),
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "run_mission"),
-    compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes, knowledgeRevisions }) => {
+    compileSystemExecutor: async ({
+      mission,
+      runtimes: scopedRuntimes,
+      knowledgeRevisions,
+      resolveExternalInvocable,
+    }) => {
       if (mission.executor.ref === MEMORY_CURATOR_REF) {
         if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
           throw new Error("The Memory Curator has not been initialized.");
@@ -1093,6 +1106,7 @@ export async function createDesktopApplicationContainer(
           adapterHost: managementHost,
           expertResource: systemExperts.getResource(STORE_REVISION_EXPERT_REF),
           additionalResources: systemExperts.getAdditionalResources(STORE_REVISION_EXPERT_REF),
+          resolveExternalInvocable,
         });
       }
       if (mission.executor.ref === SKILL_REVISION_EXPERT_REF) {
@@ -1155,6 +1169,7 @@ export async function createDesktopApplicationContainer(
           ),
           ...(expertResource === undefined ? {} : { expertResource }),
           ...(additionalResources === undefined ? {} : { additionalResources }),
+          resolveExternalInvocable,
         });
       }
       if (mission.executor.ref === SKILL_EVALUATION_EXPERT_REF) {
@@ -1237,6 +1252,7 @@ export async function createDesktopApplicationContainer(
           ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
           : {}),
         additionalResources: systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
+        resolveExternalInvocable,
         adapterHost: createDesktopAdapterHost(
           {
             capabilityStore,

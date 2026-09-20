@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 6,
+  "customizations": [
+    {
+      "avatarId": "pragma.avatar.expert.default",
+      "name": "Pragma",
+      "description": "The app's built-in general-purpose Agent for everyday work and expert orchestration.",
+      "tags": ["builtin", "pragma", "default-agent"],
+      "additionalInstructions": "Preserve this v6 customization.",
+      "capabilities": [],
+      "toolApprovals": {},
+      "plugins": [],
+      "contextStoreMounts": [],
+      "ref": "expert:0000000000pragma",
+      "revision": 2,
+      "updatedAt": "2026-08-14T15:17:13.045Z"
+    }
+  ]
+}

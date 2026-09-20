@@ -18,7 +18,7 @@ import {
   type PragmaResourcePickerItem,
 } from "../../components/PragmaResourcePickerDialog.tsx";
 import { ContextStorePickerDialog } from "../../components/ContextStorePickerDialog.tsx";
-import type { ExpertDraft } from "./studio-model.ts";
+import type { ExpertDraft, ExpertRecord } from "./studio-model.ts";
 
 type PickerKind = "resources" | "context-stores" | "skills" | "tools";
 const TOOL_SERVICE_PAGE_SIZE = 20;
@@ -157,6 +157,7 @@ function SummaryNames(props: { readonly names: readonly string[] }) {
 
 export function ExpertCapabilityPicker(props: {
   readonly currentExpertId: string;
+  readonly experts: readonly ExpertRecord[];
   readonly resources: readonly PragmaResource[];
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
@@ -165,7 +166,6 @@ export function ExpertCapabilityPicker(props: {
   readonly capabilityReferences: ExpertDraft["capabilities"];
   readonly fixedCapabilities?: PragmaExpertResource["spec"]["capabilities"] | undefined;
   readonly toolApprovals: ExpertDraft["toolApprovals"];
-  readonly allowResourceTools?: boolean | undefined;
   readonly onResourceToolsChange: (value: ExpertDraft["resourceTools"]) => void;
   readonly onContextStoreMountsChange: (value: ExpertDraft["contextStoreMounts"]) => void;
   readonly onCapabilityReferencesChange: (value: ExpertDraft["capabilities"]) => void;
@@ -174,15 +174,38 @@ export function ExpertCapabilityPicker(props: {
   const { t } = useTranslation("studio");
   const [activePicker, setActivePicker] = useState<PickerKind | null>(null);
   const [search, setSearch] = useState("");
-  const invocableResources = useMemo(
-    () =>
-      props.resources.filter(
-        (resource): resource is InvocableResource =>
-          isInvocableResource(resource) &&
-          !(resource.kind === "Expert" && resource.metadata.id === props.currentExpertId),
-      ),
-    [props.currentExpertId, props.resources],
-  );
+  const resourcePickerItems = useMemo(() => {
+    const items = new Map<string, PragmaResourcePickerItem>();
+    for (const resource of props.resources) {
+      if (!isInvocableResource(resource)) continue;
+      const details = resourceDetails(resource);
+      if (resource.kind === "Expert" && resource.metadata.id === props.currentExpertId) continue;
+      items.set(details.ref, {
+        ref: details.ref,
+        name: resource.metadata.name,
+        description: resource.metadata.description,
+        searchTerms: [resource.metadata.id, ...resource.metadata.tags],
+        kind: details.kind,
+        avatarId: "avatarId" in resource.metadata ? resource.metadata.avatarId : undefined,
+      });
+    }
+    for (const expert of props.experts) {
+      if (expert.id === props.currentExpertId || expert.ref === undefined) continue;
+      items.set(expert.ref, {
+        ref: expert.ref,
+        name: expert.name,
+        description: expert.description,
+        searchTerms: [
+          expert.id,
+          ...expert.tags,
+          ...(expert.origin === "built-in" ? [t("builtIn")] : []),
+        ],
+        kind: "expert",
+        avatarId: expert.avatarId,
+      });
+    }
+    return [...items.values()];
+  }, [props.currentExpertId, props.experts, props.resources, t]);
   const skills = props.capabilities.filter((capability) => capability.definition.kind === "skill");
   const toolServices = props.capabilities.filter(
     (capability) => capability.definition.kind !== "skill",
@@ -255,10 +278,8 @@ export function ExpertCapabilityPicker(props: {
   }, [activePicker]);
 
   const selectedResourceNames = props.resourceTools.flatMap((binding) => {
-    const resource = invocableResources.find(
-      (candidate) => resourceDetails(candidate).ref === binding.target?.ref,
-    );
-    return resource ? [resource.metadata.name] : [];
+    const resource = resourcePickerItems.find((candidate) => candidate.ref === binding.target?.ref);
+    return resource ? [resource.name] : [];
   });
   const selectedStoreNames = props.contextStoreMounts.flatMap((mount) => {
     const store = props.contextStores.find((candidate) => candidate.id === mount.storeId);
@@ -272,20 +293,6 @@ export function ExpertCapabilityPicker(props: {
     ...fixedToolNames.map((name) => `${name} · ${t("fixedSystemTool")}`),
     ...selectedToolReferences.flatMap((reference) => reference.toolNames),
   ];
-  const resourcePickerItems: readonly PragmaResourcePickerItem[] = invocableResources.map(
-    (resource) => {
-      const details = resourceDetails(resource);
-      return {
-        ref: details.ref,
-        name: resource.metadata.name,
-        description: resource.metadata.description,
-        searchTerms: [resource.metadata.id, ...resource.metadata.tags],
-        kind: details.kind,
-        avatarId: "avatarId" in resource.metadata ? resource.metadata.avatarId : undefined,
-      };
-    },
-  );
-
   const summaries: readonly {
     readonly id: PickerKind;
     readonly icon: typeof Network;
@@ -293,17 +300,13 @@ export function ExpertCapabilityPicker(props: {
     readonly available: number;
     readonly names: readonly string[];
   }[] = [
-    ...(props.allowResourceTools === false
-      ? []
-      : [
-          {
-            id: "resources" as const,
-            icon: Network,
-            selected: props.resourceTools.length,
-            available: invocableResources.length,
-            names: selectedResourceNames,
-          },
-        ]),
+    {
+      id: "resources",
+      icon: Network,
+      selected: props.resourceTools.length,
+      available: resourcePickerItems.length,
+      names: selectedResourceNames,
+    },
     {
       id: "context-stores",
       icon: Database,
@@ -438,21 +441,18 @@ export function ExpertCapabilityPicker(props: {
               refs.flatMap((ref) => {
                 const existing = props.resourceTools.find((binding) => binding.target?.ref === ref);
                 if (existing !== undefined) return [existing];
-                const resource = invocableResources.find(
-                  (candidate) => resourceDetails(candidate).ref === ref,
-                );
+                const resource = resourcePickerItems.find((candidate) => candidate.ref === ref);
                 if (resource === undefined) return [];
-                const details = resourceDetails(resource);
                 return [
                   {
                     adapter: "pragma.tool.call@v1",
                     target: { ref },
                     tool: {
-                      name: `call_${details.kind}_${resource.metadata.id}`.replace(
+                      name: `call_${resource.kind}_${ref.slice(ref.indexOf(":") + 1)}`.replace(
                         /[^A-Za-z0-9_-]/g,
                         "_",
                       ),
-                      description: `Call ${resource.metadata.name}.`,
+                      description: `Call ${resource.name}.`,
                       approval: "ask",
                     },
                   },

@@ -66,9 +66,15 @@ import type {
   InvocableResource,
   CompiledResource,
   PragmaAdapterHost,
+  PragmaInvocableResource,
   PragmaResource,
+  PragmaResourceRef,
+  ResolvedInvocableResource,
 } from "@pragma/interpreter";
-import { createPragmaResourceIdentityMigrationIndex } from "@pragma/interpreter";
+import {
+  canonicalPragmaResourceRef,
+  createPragmaResourceIdentityMigrationIndex,
+} from "@pragma/interpreter";
 import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
@@ -319,12 +325,17 @@ export function createMissionRunner(options: {
         readonly mission: Mission;
         readonly runtimes: RuntimeResolver;
         readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
+        readonly resolveExternalInvocable: (
+          ref: PragmaResourceRef,
+        ) => Promise<ResolvedInvocableResource | undefined>;
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
   readonly getSystemExecutorFingerprint?:
     ((mission: Mission) => string | undefined | Promise<string | undefined>) | undefined;
   readonly getSystemExecutorMetadata?:
     (() => readonly MissionExecutorPresentationMetadata[]) | undefined;
+  readonly getSystemExecutorResource?:
+    ((ref: string) => PragmaInvocableResource | undefined) | undefined;
   readonly assertStorageWriteAllowed?: (() => Promise<void>) | undefined;
   readonly pragmaManagementPorts?:
     (() => Omit<PragmaManagementToolPorts, "knowledgeRevisions">) | undefined;
@@ -1359,8 +1370,6 @@ export function createMissionRunner(options: {
               },
             },
           });
-    const system = await options.compileSystemExecutor?.({ mission, runtimes, knowledgeRevisions });
-    if (system !== undefined) return system;
     const pragmaManagement = {
       ...options.pragmaManagementPorts?.(),
       ...(knowledgeRevisions === undefined ? {} : { knowledgeRevisions }),
@@ -1372,52 +1381,125 @@ export function createMissionRunner(options: {
       },
       mission.workspace.path,
     );
-    const compiled = await options.project.compile<InvocableResource>({
-      projectId: mission.project.id,
-      revision: mission.project.revision,
-      ref: mission.executor.ref,
-      workspace: mission.workspace.path,
-      pragmaHome: options.pragmaHome,
-      environmentId: "desktop",
-      adapterHost:
-        options.adapterHostForMission?.(mission, desktopAdapterHost) ?? desktopAdapterHost,
-      runtimes,
-      resolveExternalInvocable: async (ref) => {
-        const compiled = await options.compileSystemExecutor?.({
-          mission: {
-            ...mission,
-            executor: { kind: "expert", ref, name: ref },
-          },
+    let projectSnapshotPromise: ReturnType<typeof options.project.getRevision> | undefined;
+    const getProjectSnapshot = () =>
+      (projectSnapshotPromise ??= options.project.getRevision(mission.project.revision));
+    const completed = new Map<
+      string,
+      {
+        readonly resource?: PragmaInvocableResource | undefined;
+        readonly compiled: CompiledResource<InvocableResource>;
+      }
+    >();
+    const compileRef = async (
+      ref: PragmaResourceRef,
+      ancestors: ReadonlySet<string> = new Set(),
+    ): Promise<{
+      readonly resource?: PragmaInvocableResource | undefined;
+      readonly compiled: CompiledResource<InvocableResource>;
+    }> => {
+      const cached = completed.get(ref);
+      if (cached !== undefined) return cached;
+      if (ancestors.has(ref)) {
+        throw new Error(`Cyclic external resource dependency: ${ref}`);
+      }
+      const nextAncestors = new Set(ancestors).add(ref);
+      return await (async () => {
+        const resolveExternalInvocable = async (
+          targetRef: PragmaResourceRef,
+        ): Promise<ResolvedInvocableResource | undefined> => {
+          const target = await compileRef(targetRef, nextAncestors);
+          if (target.resource === undefined) {
+            throw new Error(`System resource descriptor not found: ${targetRef}`);
+          }
+          return { resource: target.resource, value: target.compiled.value };
+        };
+        const externalMission = {
+          ...mission,
+          executor:
+            ref === mission.executor.ref
+              ? mission.executor
+              : {
+                  kind: ref.startsWith("team:")
+                    ? ("team" as const)
+                    : ref.startsWith("flow:")
+                      ? ("flow" as const)
+                      : ("expert" as const),
+                  ref,
+                  name: ref,
+                },
+        };
+        const system = await options.compileSystemExecutor?.({
+          mission: externalMission,
           runtimes,
           knowledgeRevisions,
+          resolveExternalInvocable,
         });
-        return compiled?.value;
-      },
-      ...(mission.modelOverride === undefined
-        ? {}
-        : {
-            rootModelSelectionOverride: toRuntimeModelSelection(mission.modelOverride),
-          }),
-      ...(options.plugins === undefined
-        ? {}
-        : {
-            plugins: {
-              inspect: async ({ binding }) =>
-                await options.plugins!.inspect({
-                  ref: binding.ref,
-                  config: binding.config,
-                  secretBindings: binding.secretBindings,
-                }),
-              resolve: async ({ binding }) =>
-                await options.plugins!.resolve({
-                  ref: binding.ref,
-                  config: binding.config,
-                  secretBindings: binding.secretBindings,
-                }),
-            },
-          }),
-    });
-    return compiled;
+        const systemResource = options.getSystemExecutorResource?.(ref);
+        if (
+          system !== undefined &&
+          (systemResource !== undefined || ref === mission.executor.ref)
+        ) {
+          const resolved = { resource: systemResource, compiled: system };
+          completed.set(ref, resolved);
+          return resolved;
+        }
+        const projectSnapshot = await getProjectSnapshot();
+        const projectResource = projectSnapshot.resources.find(
+          (candidate): candidate is PragmaInvocableResource =>
+            (candidate.kind === "Expert" ||
+              candidate.kind === "ExpertTeam" ||
+              candidate.kind === "Flow") &&
+            canonicalPragmaResourceRef(candidate) === ref,
+        );
+        if (system !== undefined && projectResource !== undefined) {
+          const resolved = { resource: projectResource, compiled: system };
+          completed.set(ref, resolved);
+          return resolved;
+        }
+        const resource = projectResource;
+        if (resource === undefined) throw new Error(`Pragma resource not found: ${ref}`);
+        const compiled = await options.project.compile<InvocableResource>({
+          projectId: mission.project.id,
+          revision: mission.project.revision,
+          ref,
+          workspace: mission.workspace.path,
+          pragmaHome: options.pragmaHome,
+          environmentId: "desktop",
+          adapterHost:
+            options.adapterHostForMission?.(externalMission, desktopAdapterHost) ??
+            desktopAdapterHost,
+          runtimes,
+          resolveExternalInvocable,
+          ...(mission.modelOverride === undefined || ref !== mission.executor.ref
+            ? {}
+            : { rootModelSelectionOverride: toRuntimeModelSelection(mission.modelOverride) }),
+          ...(options.plugins === undefined
+            ? {}
+            : {
+                plugins: {
+                  inspect: async ({ binding }) =>
+                    await options.plugins!.inspect({
+                      ref: binding.ref,
+                      config: binding.config,
+                      secretBindings: binding.secretBindings,
+                    }),
+                  resolve: async ({ binding }) =>
+                    await options.plugins!.resolve({
+                      ref: binding.ref,
+                      config: binding.config,
+                      secretBindings: binding.secretBindings,
+                    }),
+                },
+              }),
+        });
+        const resolved = { resource, compiled };
+        completed.set(ref, resolved);
+        return resolved;
+      })();
+    };
+
+    return (await compileRef(mission.executor.ref as PragmaResourceRef)).compiled;
   };
 
   const compilationIdentity = async (mission: Mission): Promise<string> =>

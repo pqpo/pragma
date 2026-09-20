@@ -12,6 +12,7 @@ import type {
   CompiledResource,
   InvocableResource,
   PragmaAdapterHost,
+  PragmaCompileOptions,
   PragmaExpertResource,
   PragmaResource,
 } from "@pragma/interpreter";
@@ -31,6 +32,7 @@ export interface DesktopStoreRevisionAgent {
     readonly adapterHost?: PragmaAdapterHost | undefined;
     readonly expertResource?: PragmaExpertResource | undefined;
     readonly additionalResources?: readonly PragmaResource[] | undefined;
+    readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
   }): Promise<CompiledResource<InvocableResource>>;
   fingerprint(profile: ContextStoreRevisionProfile): Promise<string>;
 }
@@ -131,6 +133,9 @@ export function createDesktopStoreRevisionAgent(options: {
         loggerProvider: options.loggerProvider,
         ...(input.expertResource === undefined ? {} : { expertResource: input.expertResource }),
         additionalResources: input.additionalResources,
+        ...(input.resolveExternalInvocable === undefined
+          ? {}
+          : { resolveExternalInvocable: input.resolveExternalInvocable }),
         adapterHost: {
           environmentId: input.adapterHost?.environmentId ?? "desktop-store-revision",
           projectRoot: isolatedWorkspace,

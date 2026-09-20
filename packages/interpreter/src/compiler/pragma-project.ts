@@ -50,7 +50,6 @@ import {
   type PragmaFlowResource,
   type PragmaFlowTarget,
   type PragmaFlowTransition,
-  type PragmaInvocableResource,
   type PragmaLock,
   type PragmaResource,
   type PragmaResourceRef,
@@ -74,6 +73,7 @@ import {
   type InvocableResource,
   type PragmaCompileHost,
   type PragmaPluginResolution,
+  type ResolvedInvocableResource,
 } from "../runtime/registries.ts";
 import {
   createContextSystem,
@@ -1687,7 +1687,7 @@ class PragmaProjectImpl implements PragmaProject {
         errors,
       );
     }
-    const cache = new Map<string, InvocableResource>();
+    const cache = new Map<string, ResolvedInvocableResource>();
     const compiling = new Set<string>();
     const contextPolicies = host.contextPolicies ?? new ContextPolicyRegistry();
     const actions = host.actions ?? new FlowActionRegistry();
@@ -1787,7 +1787,7 @@ class PragmaProjectImpl implements PragmaProject {
       rootExpertRefs.add(indexed.resource.spec.coordinator.ref);
     }
 
-    const instantiate = async (resourceRef: string): Promise<InvocableResource> => {
+    const instantiate = async (resourceRef: string): Promise<ResolvedInvocableResource> => {
       const parsedRef = parsePragmaReference(resourceRef);
       const externalKey = `${parsedRef.kind}:${parsedRef.id}` as PragmaResourceRef;
       const indexed = this.resources.get(externalKey);
@@ -1812,10 +1812,7 @@ class PragmaProjectImpl implements PragmaProject {
         for (const binding of indexed.resource.spec.tools) {
           const targetRefs = binding.target === undefined ? binding.targets! : [binding.target];
           const targets = await Promise.all(
-            targetRefs.map(async (target) => ({
-              resource: this.resolveResource(target.ref).resource as PragmaInvocableResource,
-              value: await instantiate(target.ref),
-            })),
+            targetRefs.map(async (target) => await instantiate(target.ref)),
           );
           const runtimeEntries = await Promise.all(
             Object.entries(binding.policy?.runtimes ?? {}).map(
@@ -1875,9 +1872,11 @@ class PragmaProjectImpl implements PragmaProject {
           },
         );
       } else if (indexed.resource.kind === "ExpertTeam") {
-        const coordinator = await instantiate(indexed.resource.spec.coordinator.ref);
+        const coordinator = (await instantiate(indexed.resource.spec.coordinator.ref)).value;
         const members = await Promise.all(
-          indexed.resource.spec.members.map(async (member) => await instantiate(member.ref)),
+          indexed.resource.spec.members.map(
+            async (member) => (await instantiate(member.ref)).value,
+          ),
         );
         if (!isPlainExpert(coordinator) || members.some((member) => !isPlainExpert(member))) {
           throw new PragmaDslError(
@@ -1924,7 +1923,7 @@ class PragmaProjectImpl implements PragmaProject {
       } else if (indexed.resource.kind === "Flow") {
         value = await compileFlowResource(
           indexed.resource,
-          instantiate,
+          async (targetRef) => (await instantiate(targetRef)).value,
           actions,
           contextPolicies,
           resolveRuntime,
@@ -1933,12 +1932,13 @@ class PragmaProjectImpl implements PragmaProject {
         throw new PragmaDslError(`Resource is not invocable: ${resourceRef}`);
       }
       compiling.delete(key);
-      cache.set(key, value);
+      const resolved = { resource: indexed.resource, value } satisfies ResolvedInvocableResource;
+      cache.set(key, resolved);
       provenance.set(value, { project: this, root: indexed });
-      return value;
+      return resolved;
     };
 
-    const value = (await instantiate(ref)) as T;
+    const value = (await instantiate(ref)).value as T;
     const rootRuntimeId = await resolveRootRuntime(
       indexed.resource,
       this.resources,
