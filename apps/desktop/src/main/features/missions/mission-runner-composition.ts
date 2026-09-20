@@ -96,6 +96,7 @@ import {
 } from "@pragma/shared";
 
 import {
+  ContextStoreIdSchema,
   isUserFacingMissionOrigin,
   type Mission,
   type MissionChatPage,
@@ -640,14 +641,9 @@ export function createMissionRunner(options: {
     const resolveActiveKnowledgeRevisionBindings = async (): Promise<
       readonly ExpertAgentContextStoreRegistrationInput[]
     > => {
-      const revisionTargetStoreIds =
-        options.contextStoreRevisions === undefined
-          ? []
-          : ((await options.contextStores?.list()) ?? []).map((store) => store.id);
-      return revisionTargetStoreIds.map((storeId) => ({
-        namespace: activeMissionKnowledgeDraftNamespace(storeId),
-        storeName: "Active Mission Knowledge draft",
-        store: new DynamicContextStore(async (operation, runContext) => {
+      if (options.contextStoreRevisions === undefined) return [];
+      const createActiveDraftStore = (storeId: string) =>
+        new DynamicContextStore(async (operation, runContext) => {
           const currentMission = await options.missions.get(mission.id);
           const claimedMounts = currentMission.contextMounts.filter(
             (
@@ -726,10 +722,49 @@ export function createMissionRunner(options: {
             );
           }
           return ok(resolved.store);
-        }),
-        required: false,
-        mutationApproval: "none" as const,
-      }));
+        });
+      const currentMission = await options.missions.get(mission.id);
+      const claimedDraftStoreIds = await Promise.all(
+        currentMission.contextMounts
+          .filter(
+            (
+              mount,
+            ): mount is Extract<
+              Mission["contextMounts"][number],
+              { kind: "context-store-draft" }
+            > => mount.kind === "context-store-draft" && mount.revisionJobId !== undefined,
+          )
+          .map(
+            async (mount) => (await options.contextStoreRevisions!.getDraft(mount.draftId)).storeId,
+          ),
+      );
+      const revisionTargetStoreIds = [
+        ...new Set([
+          ...((await options.contextStores?.list()) ?? []).map((store) => store.id),
+          ...claimedDraftStoreIds,
+        ]),
+      ];
+      const namespacePrefix = activeMissionKnowledgeDraftNamespace("");
+      return [
+        {
+          namespace: namespacePrefix,
+          storeName: "Active Mission Knowledge draft",
+          resolveStore: (namespace) => {
+            const storeId = namespace.slice(namespacePrefix.length);
+            const parsed = ContextStoreIdSchema.safeParse(storeId);
+            return parsed.success ? createActiveDraftStore(parsed.data) : undefined;
+          },
+          required: false,
+          mutationApproval: "none" as const,
+        },
+        ...revisionTargetStoreIds.map((storeId) => ({
+          namespace: activeMissionKnowledgeDraftNamespace(storeId),
+          storeName: "Active Mission Knowledge draft",
+          store: createActiveDraftStore(storeId),
+          required: false,
+          mutationApproval: "none" as const,
+        })),
+      ];
     };
     const branchHistory = await options.missions.readBranchHistory(mission.id);
     const branchHistoryBindings: readonly ExpertAgentContextStoreRegistrationInput[] =

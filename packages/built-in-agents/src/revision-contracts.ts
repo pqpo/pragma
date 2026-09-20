@@ -645,12 +645,13 @@ export const SkillRevisionDraftStateSchema = z.enum([
   "publishing",
   "completed",
   "rejected",
+  "needs_rebase",
   "needs_attention",
 ]);
 
 export const SkillRevisionDraftSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-draft/v4"),
+    schemaVersion: z.literal("pragma.skill-revision-draft/v5"),
     operation: z.enum(["revise", "create"]),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
@@ -663,6 +664,10 @@ export const SkillRevisionDraftSchema = z
     state: SkillRevisionDraftStateSchema,
     activeMissionId: z.string().uuid().optional(),
     submissionHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    rebaseReferenceHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/u)
       .optional(),
@@ -701,13 +706,14 @@ export const SkillRevisionJobStateSchema = z.enum([
   "publishing",
   "completed",
   "rejected",
+  "needs_rebase",
   "needs_attention",
   "superseded",
 ]);
 
 export const ManagedSkillRevisionJobSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-job/v4"),
+    schemaVersion: z.literal("pragma.skill-revision-job/v5"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     draftId: z.string().uuid(),

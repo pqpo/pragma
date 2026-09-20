@@ -1056,18 +1056,31 @@ export function StudioPage(props: {
             onSubmitRevision={async (prompt) => {
               const api = desktopApi();
               if (api === undefined) throw new Error("Desktop bridge is unavailable.");
-              await api.submitContextStoreRevision({
+              const created = await api.submitContextStoreRevision({
                 schemaVersion: "pragma.context-store-revision-request/v2",
                 operation: "revise" as const,
                 storeId: selectedContextStore.id,
                 prompt,
                 source: "user",
               });
+              let missionId = created.missionId;
+              for (let attempt = 0; missionId === undefined && attempt < 40; attempt += 1) {
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                const jobs = await api.listContextStoreRevisions({
+                  storeId: selectedContextStore.id,
+                });
+                missionId = jobs.find((job) => job.id === created.id)?.missionId;
+              }
+              if (missionId === undefined) {
+                throw new Error("The revision task was created, but its Mission is still starting.");
+              }
+              return { ...created, missionId };
             }}
-            onRevisionSubmitted={() => {
+            onRevisionSubmitted={(job) => {
               setRevisionStoreFilter(selectedContextStore.id);
               setRevisionTaskCount((count) => count + 1);
-              setScreen("context-store-revisions");
+              if (job?.missionId !== undefined) props.onOpenMission?.(job.missionId);
+              else setScreen("context-store-revisions");
             }}
             onListEntries={listContextStoreEntries}
             onGetContent={getContextStoreContent}
@@ -1118,6 +1131,7 @@ export function StudioPage(props: {
             capability={selectedCapability}
             onBack={() => setScreen("directory")}
             onChanged={updateCapability}
+            onOpenMission={props.onOpenMission}
             onOpenRevisions={
               selectedCapability.definition.kind === "skill"
                 ? () => setScreen("skill-revisions")

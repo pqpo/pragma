@@ -16,6 +16,7 @@ export function hostContextBindingsFingerprint(bindings: HostContextBindings | u
     [...(bindings ?? [])]
       .map((binding) => ({
         namespace: binding.namespace,
+        dynamic: binding.resolveStore !== undefined,
         storeName: binding.storeName ?? "",
         required: binding.required ?? false,
         mutationApproval: binding.mutationApproval ?? "required",

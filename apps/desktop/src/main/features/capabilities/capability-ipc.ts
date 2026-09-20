@@ -14,10 +14,10 @@ import {
   GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
+  SubmitSkillRevisionSchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
   UpdateCapabilitySchema,
-  UpdateSkillCapabilitySchema,
   type PickWorkspaceResult,
 } from "../../../shared/contracts/index.ts";
 import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
@@ -54,9 +54,16 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:import-skill", (_event, input: unknown) =>
     store.importSkill(ImportSkillCapabilitySchema.parse(input)),
   );
-  ipcMain.handle("capabilities:update-skill", (_event, input: unknown) =>
-    store.updateSkill(UpdateSkillCapabilitySchema.parse(input)),
-  );
+  ipcMain.handle("capabilities:submit-skill-revision", (_event, input: unknown) => {
+    const parsed = SubmitSkillRevisionSchema.parse(input);
+    return skillRevisions.submit({
+      schemaVersion: "pragma.skill-revision-submission/v1",
+      capabilityId: parsed.capabilityId,
+      prompt: parsed.prompt,
+      source: "user",
+      sourceRefs: [],
+    });
+  });
   ipcMain.handle("capabilities:create", (_event, input: unknown) =>
     store.create(CreateCapabilitySchema.parse(input)),
   );

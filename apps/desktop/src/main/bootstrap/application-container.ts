@@ -1176,7 +1176,7 @@ export async function createDesktopApplicationContainer(
           }
           if (
             inspection.draft.submissionHash !== undefined ||
-            ["pending_review", "publishing", "completed", "rejected"].includes(
+            ["pending_review", "publishing", "completed", "rejected", "needs_rebase"].includes(
               inspection.draft.state,
             )
           ) {

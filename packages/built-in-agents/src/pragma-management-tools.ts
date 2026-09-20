@@ -557,6 +557,7 @@ export const SkillRevisionStartResultSchema = z
       .strict()
       .optional(),
     draftPath: z.string().min(1).max(4_000).optional(),
+    referencePath: z.string().min(1).max(4_000).optional(),
   })
   .strict()
   .superRefine((result, context) => {

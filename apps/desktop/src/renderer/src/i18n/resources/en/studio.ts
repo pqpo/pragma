@@ -4,6 +4,8 @@ export const studio = {
   revisionErrors: "Errors",
   revisionApplied: "Applied",
   revisionStatusFilter: "Status",
+  revisionSkillFilter: "Skill filter",
+  allSkills: "All skills",
   revisionAllStates: "All statuses",
   revisionActionable: "Needs action",
   revisionSourceFilter: "Source",
@@ -789,7 +791,7 @@ export const studio = {
   capabilitiesDescription:
     "Reusable skills and external tools that Experts can select when creating or editing.",
   connectorsDescription: "Connect MCP, HTTP, and Function tools for Experts to use.",
-  skillsDescription: "Browse, import, update, and revise reusable Skill packages.",
+  skillsDescription: "Browse, import, and revise reusable Skill packages.",
   contextStoresDescription: "Managed Markdown knowledge sources for your experts.",
   pluginsDescription: "Install reusable Expert extensions and configure their Desktop defaults.",
   availableExperts: "Available experts",
@@ -911,11 +913,6 @@ export const studio = {
   configureExternalTool: "Configure a reusable external tool connection.",
   importing: "Importing…",
   choosePackage: "Choose package",
-  chooseReplacementPackage: "Choose replacement",
-  updateSkill: "Update Skill",
-  updatingSkill: "Updating Skill…",
-  updateSkillDescription:
-    "Replace all package files while preserving this Skill's identity and configuration.",
   saveCapability: "Save capability",
   saveCapabilityChanges: "Save changes",
   editCapability: "Edit capability",
@@ -1719,6 +1716,9 @@ export const studio = {
   done: "Done",
   fixedSystemTool: "fixed system tool",
   skillRevisions: "Skill revisions",
+  submitSkillRevision: "Submit revision",
+  submitSkillRevisionDescription:
+    "Describe the changes Pragma should prepare for “{{name}}”. The revision will require approval before publishing.",
   skillRevisionsDescription: "Review validated Skill candidates and approve or reject publishing.",
   loadingSkillRevisions: "Loading revisions…",
   noSkillRevisions: "No skill revisions yet.",
@@ -1730,6 +1730,22 @@ export const studio = {
   continueSkillRevision: "Continue revision",
   skillRevisionContinuePrompt:
     "Review the validation findings, update the existing Skill draft, and submit it again.",
+  openSkillRevisionMissionToRebase: "Open task to rebase",
+  skillRevisionNeedsRebaseTitle: "The Skill changed — rebase first",
+  skillRevisionNeedsRebaseDescription:
+    "This draft is based on an older Skill revision, so it cannot be published directly. Continue the related task so the revision Agent can inspect the latest version and update the draft. The published Skill is unchanged.",
+  skillRevisionNeedsRebaseStepOpenMission:
+    "Choose “Open task to rebase” below; the next instruction will be prefilled in the task composer.",
+  skillRevisionNeedsRebaseStepReopen:
+    "If the task is completed, choose “Reopen” before continuing the conversation.",
+  skillRevisionNeedsRebasePrompt:
+    "Inspect the latest knowledge base and rebase this draft onto the latest version. If there are conflicts, explain each one and confirm the resolution with me, then submit the revision again.",
+  skillRevisionNeedsRebaseStepAskAgent:
+    "Review the prefilled instruction in the task composer and send it to the revision Agent: “{{prompt}}”",
+  skillRevisionNeedsRebaseStepReview:
+    "Return to Studio → Skills → Revision tasks, review the new proposal, then choose Approve and publish.",
+  skillRevisionNeedsRebaseNoMission:
+    "This task has no related task to continue. Delete it, then submit a new revision from the relevant Skill.",
   skillRevisionSummaryUnavailable: "No change summary was recorded.",
   skillRevisionRequestDocumentDescription:
     "Records the original request that initiated this Skill revision.",

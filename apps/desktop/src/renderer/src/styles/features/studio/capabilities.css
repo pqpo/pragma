@@ -590,6 +590,12 @@
   overflow: hidden;
 }
 
+.capability-detail:not(.has-tool-workspace) .studio-screen-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
 .capability-detail-overview {
   min-width: 0;
 }
@@ -598,9 +604,8 @@
   display: flex;
   align-items: flex-start;
   gap: 18px;
-  margin-top: 24px;
-  padding-bottom: 26px;
-  border-bottom: 1px solid var(--border);
+  margin-top: 12px;
+  padding-bottom: 16px;
 }
 
 .capability-detail-title {
@@ -642,8 +647,7 @@
   display: grid;
   grid-template-columns: 0.8fr 1.2fr 1.6fr 1fr;
   gap: 18px;
-  padding: 22px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 0;
 }
 
 .capability-detail-meta > div {
@@ -685,11 +689,15 @@
 }
 
 .skill-document {
-  margin-top: 26px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  margin-top: 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
   box-shadow: var(--shadow-soft);
+  overflow: hidden;
 }
 
 .skill-content-tabs {
@@ -727,7 +735,14 @@
   text-align: center;
 }
 
-.skill-document > header {
+.skill-document-content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.skill-document-content > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -752,12 +767,15 @@
 
 .skill-markdown,
 .skill-document-source {
+  min-height: 0;
+  overflow: auto;
   padding: 28px 32px;
 }
 
 .skill-file-browser {
   display: grid;
-  min-height: 400px;
+  min-height: 0;
+  height: 100%;
   grid-template-columns: minmax(190px, 0.32fr) minmax(0, 1fr);
 }
 
@@ -808,6 +826,8 @@
 
 .skill-file-browser > section {
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .skill-file-browser > section > header {

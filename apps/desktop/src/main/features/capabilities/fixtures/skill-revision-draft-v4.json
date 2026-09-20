@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "pragma.skill-revision-draft/v4",
+  "operation": "revise",
+  "id": "74000000-0000-4000-8000-000000000004",
+  "revision": 6,
+  "capabilityId": "00000000-0000-4000-8000-000000000001",
+  "name": "safe-workflow",
+  "baseRevision": 1,
+  "baseContentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "workspacePath": "/workspace/project",
+  "state": "editing",
+  "activeMissionId": "75000000-0000-4000-8000-000000000005",
+  "createdAt": "2026-09-19T08:00:00.000Z",
+  "updatedAt": "2026-09-19T08:05:00.000Z"
+}

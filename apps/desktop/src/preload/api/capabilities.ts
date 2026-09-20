@@ -18,6 +18,7 @@ import {
   GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
+  SubmitSkillRevisionSchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
   PreviewCodeServiceResultSchema,
@@ -27,7 +28,6 @@ import {
   SkillRevisionReviewSchema,
   SkillRevisionReviewFileSchema,
   UpdateCapabilitySchema,
-  UpdateSkillCapabilitySchema,
 } from "../../shared/contracts/capabilities.ts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
@@ -60,11 +60,11 @@ export const capabilitiesApi = {
         ImportSkillCapabilitySchema.parse(input),
       ),
     ),
-  updateSkillCapability: async (input) =>
-    CapabilitySchema.parse(
+  submitSkillRevision: async (input) =>
+    ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke(
-        "capabilities:update-skill",
-        UpdateSkillCapabilitySchema.parse(input),
+        "capabilities:submit-skill-revision",
+        SubmitSkillRevisionSchema.parse(input),
       ),
     ),
   createCapability: async (input) =>
@@ -134,7 +134,7 @@ export const capabilitiesApi = {
   | "listSkillFiles"
   | "getSkillFile"
   | "importSkillCapability"
-  | "updateSkillCapability"
+  | "submitSkillRevision"
   | "createCapability"
   | "updateCapability"
   | "retryCapability"

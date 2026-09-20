@@ -79,6 +79,7 @@ import {
   GetSkillFileSchema,
   GetSkillRevisionReviewFileSchema,
   ImportSkillCapabilitySchema,
+  SubmitSkillRevisionSchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
   PreviewCodeServiceResultSchema,
@@ -87,7 +88,6 @@ import {
   SkillFileEntrySchema,
   SkillRevisionReviewSchema,
   SkillRevisionReviewFileSchema,
-  UpdateSkillCapabilitySchema,
   UpdateCapabilitySchema,
 } from "./capabilities.ts";
 import {
@@ -653,7 +653,7 @@ export type CapabilityHealth = z.infer<typeof CapabilityHealthSchema>;
 export type CapabilityDefinition = z.infer<typeof CapabilityDefinitionSchema>;
 export type ExpertCapabilityReference = z.infer<typeof ExpertCapabilityReferenceSchema>;
 export type ImportSkillCapability = z.infer<typeof ImportSkillCapabilitySchema>;
-export type UpdateSkillCapability = z.infer<typeof UpdateSkillCapabilitySchema>;
+export type SubmitSkillRevision = z.infer<typeof SubmitSkillRevisionSchema>;
 export type CreateCapability = z.infer<typeof CreateCapabilitySchema>;
 export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;
 export type CapabilityDeleteResult = z.infer<typeof CapabilityDeleteResultSchema>;

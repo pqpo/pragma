@@ -1,9 +1,10 @@
 import {
   ArrowLeft,
-  Archive,
   ArrowsClockwise,
+  Archive,
   Code,
   Globe,
+  PaperPlaneTilt,
   Play,
   Plug,
 } from "@phosphor-icons/react";
@@ -19,7 +20,10 @@ import type {
   SkillFileEntry,
 } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { CharacterCount } from "../../components/CharacterCount.tsx";
+import { Dialog } from "../../components/Dialog.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
@@ -28,6 +32,7 @@ export function CapabilityDetailFragment(props: {
   readonly onBack: () => void;
   readonly onChanged: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
+  readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
@@ -45,6 +50,10 @@ export function CapabilityDetailFragment(props: {
   const [testResult, setTestResult] = useState<CapabilityTestResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
+  const [revisionPrompt, setRevisionPrompt] = useState("");
+  const [revisionSubmitting, setRevisionSubmitting] = useState(false);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
   const tools = useMemo(() => capabilityTools(capability), [capability]);
 
   useEffect(() => {
@@ -139,33 +148,6 @@ export function CapabilityDetailFragment(props: {
     }
   };
 
-  const updateSkill = async () => {
-    const api = desktopApi();
-    if (api === undefined || definition.kind !== "skill") return;
-    setBusy(true);
-    setError(null);
-    try {
-      const selected = await api.pickSkillSource();
-      if (!selected.ok) {
-        if (selected.reason !== "cancelled") {
-          throw new Error(selected.error ?? "Skill source unavailable.");
-        }
-        return;
-      }
-      props.onChanged(
-        await api.updateSkillCapability({
-          id: capability.manifest.id,
-          baseRevision: capability.manifest.latestRevision,
-          sourcePath: selected.path as string,
-        }),
-      );
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const selectSkillFile = async (path: string) => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -183,6 +165,36 @@ export function CapabilityDetailFragment(props: {
       if (skillFileRequest.current === request) setSkillFileContent(content);
     } catch (cause) {
       if (skillFileRequest.current === request) setError(errorMessage(cause));
+    }
+  };
+
+  const submitSkillRevision = async () => {
+    const api = desktopApi();
+    if (api === undefined || revisionPrompt.trim() === "") return;
+    setRevisionSubmitting(true);
+    setRevisionError(null);
+    try {
+      const created = await api.submitSkillRevision({
+        capabilityId: capability.manifest.id,
+        prompt: revisionPrompt.trim(),
+      });
+      let missionId = created.missionId;
+      for (let attempt = 0; missionId === undefined && attempt < 40; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const entries = await api.listSkillRevisionJobs(capability.manifest.id);
+        missionId = entries.find((entry) => entry.job.id === created.id)?.job.missionId;
+      }
+      if (missionId === undefined) {
+        throw new Error("The revision task was created, but its Mission is still starting.");
+      }
+      setRevisionDialogOpen(false);
+      setRevisionPrompt("");
+      if (props.onOpenMission !== undefined) props.onOpenMission(missionId);
+      else props.onOpenRevisions?.();
+    } catch (cause) {
+      setRevisionError(errorMessage(cause));
+    } finally {
+      setRevisionSubmitting(false);
     }
   };
 
@@ -223,19 +235,14 @@ export function CapabilityDetailFragment(props: {
             <p>{definition.description}</p>
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
-            <div className="capability-row-actions">
-              <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
-                <Archive size={17} /> {t("skillRevisions")}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={busy}
-                onClick={() => void updateSkill()}
-              >
-                <ArrowsClockwise size={17} /> {busy ? t("updatingSkill") : t("updateSkill")}
-              </button>
-            </div>
+            <StudioActionButton
+              label={t("submitSkillRevision")}
+              icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
+              onClick={() => {
+                setRevisionError(null);
+                setRevisionDialogOpen(true);
+              }}
+            />
           ) : definition.kind === "mcp_server" ? (
             <button
               className="secondary-button"
@@ -307,7 +314,7 @@ export function CapabilityDetailFragment(props: {
               </button>
             </nav>
             {skillTab === "document" ? (
-              <>
+              <div className="skill-document-content">
                 <header>
                   <div>
                     <h2>SKILL.md</h2>
@@ -331,7 +338,7 @@ export function CapabilityDetailFragment(props: {
                     <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
                   </article>
                 )}
-              </>
+              </div>
             ) : (
               <div className="skill-file-browser">
                 <aside aria-label={t("skillFiles")}>
@@ -435,6 +442,69 @@ export function CapabilityDetailFragment(props: {
           </aside>
         </section>
       )}
+      {revisionDialogOpen ? (
+        <Dialog
+          title={t("submitSkillRevision")}
+          description={t("submitSkillRevisionDescription", {
+            name: capability.manifest.name,
+          })}
+          busy={revisionSubmitting}
+          className="knowledge-revision-dialog"
+          onCancel={() => {
+            setRevisionDialogOpen(false);
+            setRevisionError(null);
+          }}
+          footer={
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={revisionSubmitting}
+                onClick={() => setRevisionDialogOpen(false)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                form="skill-revision-form"
+                disabled={revisionSubmitting || revisionPrompt.trim() === ""}
+              >
+                {revisionSubmitting ? t("submittingRevision") : t("submitSkillRevision")}
+              </button>
+            </>
+          }
+        >
+          <form
+            id="skill-revision-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitSkillRevision();
+            }}
+          >
+            <label>
+              <span>{t("revisionPrompt")}</span>
+              <textarea
+                data-dialog-initial-focus
+                value={revisionPrompt}
+                maxLength={50_000}
+                disabled={revisionSubmitting}
+                placeholder={t("revisionPromptPlaceholder")}
+                onChange={(event) => setRevisionPrompt(event.target.value)}
+              />
+            </label>
+            <div className="knowledge-revision-dialog-meta">
+              <small>{t("revisionPromptHint")}</small>
+              <CharacterCount value={revisionPrompt} max={50_000} trim={false} />
+            </div>
+            {revisionError !== null ? (
+              <p className="form-error" role="alert">
+                {revisionError}
+              </p>
+            ) : null}
+          </form>
+        </Dialog>
+      ) : null}
     </StudioScreenFrame>
   );
 }

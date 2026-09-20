@@ -249,11 +249,12 @@ export const ImportSkillCapabilitySchema = z.object({
   description: capabilityDescriptionSchema(true).optional(),
 });
 
-export const UpdateSkillCapabilitySchema = z.object({
-  id: CapabilityIdSchema,
-  baseRevision: z.number().int().positive(),
-  sourcePath: z.string().trim().min(1).max(2_000),
-});
+export const SubmitSkillRevisionSchema = z
+  .object({
+    capabilityId: CapabilityIdSchema,
+    prompt: z.string().trim().min(1).max(50_000),
+  })
+  .strict();
 
 export const CreateCapabilitySchema = z
   .object({

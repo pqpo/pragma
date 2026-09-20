@@ -140,7 +140,7 @@ import type {
   RespondMissionHumanInteraction,
   Capability,
   ImportSkillCapability,
-  UpdateSkillCapability,
+  SubmitSkillRevision,
   CreateCapability,
   UpdateCapability,
   CapabilityDeleteResult,
@@ -605,7 +605,7 @@ export interface PragmaDesktopAPI {
   getCapability: (id: string, revision?: number) => Promise<Capability>;
   getSkillDocument: (input: GetSkillDocument) => Promise<SkillDocument>;
   importSkillCapability: (input: ImportSkillCapability) => Promise<Capability>;
-  updateSkillCapability: (input: UpdateSkillCapability) => Promise<Capability>;
+  submitSkillRevision: (input: SubmitSkillRevision) => Promise<ManagedSkillRevisionJob>;
   listSkillFiles: (input: ListSkillFiles) => Promise<SkillFileEntry[]>;
   getSkillFile: (input: GetSkillFile) => Promise<SkillFileContent>;
   createCapability: (input: CreateCapability) => Promise<Capability>;

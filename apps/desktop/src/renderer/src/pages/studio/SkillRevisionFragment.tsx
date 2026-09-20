@@ -4,8 +4,10 @@ import {
   Check,
   ClockCounterClockwise,
   FileText,
+  FunnelSimple,
   Plus,
   Trash,
+  WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -21,6 +23,7 @@ import type {
   SkillRevisionReview,
   SkillRevisionReviewFile,
 } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { buildRevisionLineDiff, RevisionDiffCode } from "./ContextStoreRevisionFragment.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
@@ -31,6 +34,22 @@ export type SkillRevisionEntry = {
   readonly job: ManagedSkillRevisionJob;
   readonly draft: SkillRevisionDraft;
 };
+
+export function filterSkillRevisionEntries(
+  entries: readonly SkillRevisionEntry[],
+  stateFilter: string,
+  capabilityFilter = "",
+): readonly SkillRevisionEntry[] {
+  return entries.filter(({ job, draft }) => {
+    const matchesCapability = capabilityFilter === "" || draft.capabilityId === capabilityFilter;
+    const matchesState =
+      stateFilter === "" ||
+      (stateFilter === "actionable"
+        ? ["pending_review", "needs_rebase", "needs_attention"].includes(job.state)
+        : job.state === stateFilter);
+    return matchesCapability && matchesState;
+  });
+}
 
 type SkillRevisionDetailSelection =
   | { readonly kind: "request" }
@@ -55,6 +74,7 @@ export function skillRevisionAttentionActions(
     canOpenMission &&
     entry.job.missionId !== undefined &&
     (entry.draft.state === "editing" ||
+      entry.draft.state === "needs_rebase" ||
       entry.job.error?.code === "skill_revision_validation_required");
   return { canContinue, canRetry: !canContinue };
 }
@@ -154,6 +174,7 @@ export function SkillRevisionDetailFragment(props: {
   readonly onReject: () => void;
   readonly onRetry: () => void;
   readonly onContinue: () => void;
+  readonly onRebase: () => void;
 }) {
   const { t, i18n } = useTranslation("studio");
   const { job, draft } = props.entry;
@@ -214,6 +235,7 @@ export function SkillRevisionDetailFragment(props: {
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
   const attentionActions = skillRevisionAttentionActions(props.entry, props.canOpenMission);
+  const needsRebase = job.state === "needs_rebase";
   const revisionMetadata = `${draft.name} · ${
     draft.operation === "create"
       ? t("publishesAsRevisionOne")
@@ -285,6 +307,50 @@ export function SkillRevisionDetailFragment(props: {
               ) : null}
             </div>
           </div>
+          {needsRebase ? (
+            <aside
+              className="revision-rebase-guidance"
+              aria-labelledby="skill-revision-rebase-guidance-title"
+            >
+              <WarningCircle
+                className="revision-rebase-guidance-icon"
+                size={22}
+                aria-hidden="true"
+              />
+              <div className="revision-rebase-guidance-body">
+                <h2 id="skill-revision-rebase-guidance-title">
+                  {t("skillRevisionNeedsRebaseTitle")}
+                </h2>
+                <p>{t("skillRevisionNeedsRebaseDescription")}</p>
+                {job.missionId !== undefined && props.canOpenMission ? (
+                  <>
+                    <ol>
+                      <li>{t("skillRevisionNeedsRebaseStepOpenMission")}</li>
+                      <li>{t("skillRevisionNeedsRebaseStepReopen")}</li>
+                      <li>
+                        {t("skillRevisionNeedsRebaseStepAskAgent", {
+                          prompt: t("skillRevisionNeedsRebasePrompt"),
+                        })}
+                      </li>
+                      <li>{t("skillRevisionNeedsRebaseStepReview")}</li>
+                    </ol>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={props.busy}
+                      onClick={props.onRebase}
+                    >
+                      {t("openSkillRevisionMissionToRebase")}
+                    </button>
+                  </>
+                ) : (
+                  <p className="revision-rebase-guidance-fallback">
+                    {t("skillRevisionNeedsRebaseNoMission")}
+                  </p>
+                )}
+              </div>
+            </aside>
+          ) : null}
         </header>
       }
     >
@@ -440,6 +506,10 @@ export function SkillRevisionFragment(props: {
   const [error, setError] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<SkillRevisionEntry>();
   const [selectedJobId, setSelectedJobId] = useState<string>();
+  const [capabilityFilter, setCapabilityFilter] = useState(props.capabilityId ?? "");
+  const [stateFilter, setStateFilter] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const load = useCallback(async () => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -457,6 +527,27 @@ export function SkillRevisionFragment(props: {
   }, [props.capabilityId, props.onCountChanged]);
 
   useEffect(() => void load(), [load]);
+  useEffect(() => {
+    setCapabilityFilter(props.capabilityId ?? "");
+  }, [props.capabilityId]);
+  const skillCapabilities = useMemo(
+    () => props.capabilities.filter((capability) => capability.definition.kind === "skill"),
+    [props.capabilities],
+  );
+
+  const filteredEntries = useMemo(
+    () => filterSkillRevisionEntries(entries, stateFilter, capabilityFilter),
+    [entries, stateFilter, capabilityFilter],
+  );
+  const pageCount = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageEntries = filteredEntries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(() => {
+    setPage(currentPage);
+  }, [currentPage]);
+  useEffect(() => {
+    setPage(1);
+  }, [capabilityFilter, stateFilter, pageSize]);
 
   const act = async (
     entry: SkillRevisionEntry,
@@ -499,6 +590,9 @@ export function SkillRevisionFragment(props: {
         onContinue={() =>
           props.onOpenMission?.(selectedEntry.job.missionId!, t("skillRevisionContinuePrompt"))
         }
+        onRebase={() =>
+          props.onOpenMission?.(selectedEntry.job.missionId!, t("skillRevisionNeedsRebasePrompt"))
+        }
       />
     );
   }
@@ -523,13 +617,62 @@ export function SkillRevisionFragment(props: {
               </span>
             </div>
           </div>
+          <SelectMenu
+            className="revision-task-select"
+            ariaLabel={t("revisionSkillFilter")}
+            value={capabilityFilter}
+            icon={<FunnelSimple size={15} aria-hidden="true" />}
+            align="end"
+            options={[
+              { value: "", label: t("allSkills") },
+              ...skillCapabilities.map((capability) => ({
+                value: capability.manifest.id,
+                label: capability.manifest.name,
+              })),
+            ]}
+            onChange={setCapabilityFilter}
+          />
         </header>
       }
     >
       <div className="revision-task-content">
+        {entries.length > 0 ? (
+          <div className="revision-task-toolbar">
+            <SelectMenu
+              ariaLabel={t("revisionStatusFilter")}
+              value={stateFilter}
+              onChange={setStateFilter}
+              options={[
+                { value: "", label: t("revisionAllStates") },
+                { value: "actionable", label: t("revisionActionable") },
+                ...[
+                  "editing",
+                  "running",
+                  "pending_review",
+                  "publishing",
+                  "completed",
+                  "rejected",
+                  "needs_rebase",
+                  "needs_attention",
+                  "superseded",
+                ].map((value) => ({ value, label: t(`revisionState.${value}`) })),
+              ]}
+            />
+          </div>
+        ) : null}
         {loading ? <p className="directory-empty">{t("loadingSkillRevisions")}</p> : null}
         {!loading && entries.length === 0 ? <SkillRevisionEmptyState /> : null}
-        {entries.length > 0 ? (
+        {!loading && entries.length > 0 && filteredEntries.length === 0 ? (
+          <div className="revision-task-empty">
+            <ClockCounterClockwise size={28} aria-hidden="true" />
+            <h3>{t("revisionNoMatches")}</h3>
+            <p>{t("revisionNoMatchesDescription")}</p>
+            <button className="secondary-button" type="button" onClick={() => setStateFilter("")}>
+              {t("revisionClearFilters")}
+            </button>
+          </div>
+        ) : null}
+        {!loading && filteredEntries.length > 0 ? (
           <div className="revision-task-table">
             <div className="revision-task-list-header" aria-hidden="true">
               <span>{t("revisionTaskColumn")}</span>
@@ -538,7 +681,7 @@ export function SkillRevisionFragment(props: {
               <span>{t("actions")}</span>
             </div>
             <div className="revision-task-list" role="list" aria-label={t("skillRevisions")}>
-              {entries.map((entry) => {
+              {pageEntries.map((entry) => {
                 const capability = props.capabilities.find(
                   (item) => item.manifest.id === entry.draft.capabilityId,
                 );
@@ -594,6 +737,45 @@ export function SkillRevisionFragment(props: {
               })}
             </div>
           </div>
+        ) : null}
+        {filteredEntries.length > 0 ? (
+          <nav className="revision-task-pagination" aria-label={t("revisionPagination")}>
+            <span>
+              {t("revisionPageRange", {
+                start: (currentPage - 1) * pageSize + 1,
+                end: Math.min(currentPage * pageSize, filteredEntries.length),
+                count: filteredEntries.length,
+              })}
+            </span>
+            <SelectMenu
+              ariaLabel={t("revisionPageSize")}
+              value={String(pageSize)}
+              onChange={(value) => setPageSize(Number(value))}
+              options={[20, 50, 100].map((value) => ({
+                value: String(value),
+                label: t("revisionPerPage", { count: value }),
+              }))}
+            />
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              {t("revisionPreviousPage")}
+            </button>
+            <span>
+              {currentPage} / {pageCount}
+            </span>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={currentPage >= pageCount}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              {t("revisionNextPage")}
+            </button>
+          </nav>
         ) : null}
         {error ? (
           <p className="form-error" role="alert">
