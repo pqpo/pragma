@@ -168,6 +168,12 @@ function filterCollapsedContextStoreEntries(
   });
 }
 
+export function firstContextStoreFile(
+  entries: readonly ContextStoreEntry[],
+): ContextStoreEntry | undefined {
+  return entries.find((entry) => entry.kind === "file");
+}
+
 function withMarkdownExtension(value: string): string {
   const trimmed = value.trim();
   return trimmed.toLowerCase().endsWith(".md") ? trimmed : `${trimmed}.md`;
@@ -738,6 +744,12 @@ export function ContextStoreDetailFragment(props: {
       })();
     });
   }, [loadEntries, loadFile, props.onGetEditorDraft, props.onSubscribe, props.store.id]);
+
+  useEffect(() => {
+    if (loading || selectedEntry !== null) return;
+    const firstFile = firstContextStoreFile(entries);
+    if (firstFile !== undefined) void loadFile(firstFile);
+  }, [entries, loadFile, loading, selectedEntry]);
 
   useEffect(() => {
     setCollapsedDirectoryIds(new Set());

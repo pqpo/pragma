@@ -10,6 +10,7 @@ import {
   ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
   ExpertContextMountDrawer,
+  firstContextStoreFile,
   moveEntryTargetId,
   rebaseEntryId,
 } from "./ContextStoreFragment.tsx";
@@ -33,6 +34,21 @@ describe("knowledge base UI", () => {
     expect(contextStorePreviewAfterLoad(false, true)).toBe(false);
     expect(contextStorePreviewAfterLoad(true, true)).toBe(true);
     expect(contextStorePreviewAfterLoad(false, false)).toBe(true);
+  });
+
+  it("opens the first file when a knowledge base has directories before its files", () => {
+    const firstFile = {
+      id: "guides/getting-started.md",
+      kind: "file" as const,
+      revision: "revision-1",
+    };
+    expect(
+      firstContextStoreFile([
+        { id: "guides", kind: "directory" },
+        firstFile,
+        { id: "overview.md", kind: "file", revision: "revision-2" },
+      ]),
+    ).toEqual(firstFile);
   });
 
   it("presents a single managed Markdown knowledge-base model", () => {
