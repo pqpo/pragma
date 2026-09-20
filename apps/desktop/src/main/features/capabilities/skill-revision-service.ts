@@ -307,6 +307,40 @@ export function createSkillRevisionService(options: {
     }
   };
 
+  const cleanupCommittedDraftWorkspace = async (
+    draft: SkillRevisionDraft,
+    job: ManagedSkillRevisionJob,
+  ): Promise<void> => {
+    if (draft.submissionHash === undefined) {
+      throw coded("skill_revision_state_invalid");
+    }
+    const journalPath = join(submissionCleanupJournalsPath, `${draft.id}.json`);
+    const journal = SubmissionCleanupJournalSchema.parse({
+      schemaVersion: "pragma.skill-revision-submission-cleanup/v1",
+      draftId: draft.id,
+      jobId: job.id,
+      workspacePath: draft.workspacePath,
+      submissionHash: draft.submissionHash,
+      draftRevision: draft.revision,
+      jobRevision: job.revision,
+      state: "committed",
+    });
+    await withFileLock(submissionCleanupLockPath, async () => {
+      await writeJsonAtomic(journalPath, journal);
+      submissionCleanupRecovery = undefined;
+      try {
+        await rm(await resolveSkillRevisionDraftRootForRemoval(draft.workspacePath, draft.id), {
+          recursive: true,
+          force: true,
+        });
+        await writeJsonAtomic(journalPath, { ...journal, state: "completed" });
+      } catch (error) {
+        submissionCleanupRecovery = undefined;
+        options.warn?.("Failed to remove a submitted Skill draft working directory.", error);
+      }
+    });
+  };
+
   const recoverDiscardJournals = async (): Promise<void> => {
     discardRecovery ??= (async () => {
       for (const name of await readJsonNames(discardJournalsPath)) {
@@ -513,11 +547,7 @@ export function createSkillRevisionService(options: {
       await assertAdjacentMigrationBackup(journal);
       if (journal.sourceVersion === "pragma.skill-revision-draft/v3") {
         await rm(journal.sourceWorktreePath, { recursive: true, force: true });
-        if (
-          currentDraft !== undefined &&
-          currentDraft.state !== "editing" &&
-          !(currentDraft.state === "needs_attention" && currentDraft.submissionHash === undefined)
-        ) {
+        if (currentDraft?.submissionHash !== undefined) {
           await rm(
             await resolveSkillRevisionDraftRootForRemoval(journal.workspacePath, journal.recordId),
             { recursive: true, force: true },
@@ -618,10 +648,7 @@ export function createSkillRevisionService(options: {
       } finally {
         await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
       }
-    } else if (
-      source.state === "editing" ||
-      (source.state === "needs_attention" && source.submissionHash === undefined)
-    ) {
+    } else if (source.submissionHash === undefined) {
       throw coded("skill_revision_working_tree_missing");
     }
     const migrated = migrateSkillRevisionDraftV3ToV4(source, workspace.workspacePath);
@@ -635,10 +662,7 @@ export function createSkillRevisionService(options: {
       write: writeDraft,
       afterWrite: async () => {
         await rm(sourceWorktree, { recursive: true, force: true });
-        if (
-          migrated.state !== "editing" &&
-          !(migrated.state === "needs_attention" && migrated.submissionHash === undefined)
-        ) {
+        if (migrated.submissionHash !== undefined) {
           await rm(workspace.draftRoot, { recursive: true, force: true });
         }
       },
@@ -1779,13 +1803,6 @@ export function createSkillRevisionService(options: {
               updatedAt: new Date().toISOString(),
             });
             await writeDraft(replacementDraft);
-            await rm(
-              await resolveSkillRevisionDraftRootForRemoval(
-                replacementDraft.workspacePath,
-                replacementDraft.id,
-              ),
-              { recursive: true, force: true },
-            );
           }
           let replacementJob: ManagedSkillRevisionJob;
           try {
@@ -1817,6 +1834,7 @@ export function createSkillRevisionService(options: {
             });
             await writeJob(replacementJob);
           }
+          await cleanupCommittedDraftWorkspace(replacementDraft, replacementJob);
           await writeJob(
             ManagedSkillRevisionJobSchema.parse({
               ...job,

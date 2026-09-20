@@ -506,6 +506,36 @@ describe("Skill revision service", () => {
     expect(replacement.id).not.toBe(job.id);
     expect(replacement.draftId).not.toBe(job.draftId);
     expect(replacement.request.capabilityId).not.toBe(reservedId);
+    const replacementWorkspaceRoot = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      replacement.draftId,
+    );
+    await expect(stat(replacementWorkspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // Recreate the exact crash window where both replacement records were committed but the
+    // Workspace cleanup had not run and the original conflict had not yet been superseded.
+    await mkdir(join(replacementWorkspaceRoot, "worktree"), { recursive: true });
+    await writeFile(join(replacementWorkspaceRoot, "worktree", "sentinel.txt"), "remove\n");
+    await writeFile(
+      join(fixture.statePath, "jobs", `${conflicted.id}.json`),
+      `${JSON.stringify(conflicted)}\n`,
+    );
+    const recoveredService = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+      resolveWorkspacePath: async () => fixture.workspacePath,
+    });
+    await expect(recoveredService.retry(conflicted.id, conflicted.revision)).resolves.toMatchObject(
+      {
+        id: replacement.id,
+        draftId: replacement.draftId,
+      },
+    );
+    await expect(stat(replacementWorkspaceRoot)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fixture.service.get(job.id)).resolves.toMatchObject({
       state: "superseded",
       supersededBy: replacement.id,
@@ -986,6 +1016,109 @@ describe("Skill revision service", () => {
     });
     await expect(stat(join(migratedWorktree, "SKILL.md"))).resolves.toBeDefined();
     await expect(stat(legacyWorktree)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves an unsubmitted rejected v3 worktree when migrating it into the Workspace", async () => {
+    const fixture = await createService();
+    const historical = await historicalFixture("skill-revision-draft-v3.json");
+    const draftId = String(historical["id"]);
+    const historicalDraft = {
+      ...historical,
+      state: "rejected",
+      activeMissionId: undefined,
+      error: {
+        code: "skill_revision_base_changed",
+        message: "The Skill changed after this draft was created.",
+      },
+    };
+    const legacyWorktree = join(fixture.draftsPath, draftId, "worktree");
+    const migratedWorktree = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      draftId,
+      "worktree",
+    );
+    const skill = "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n";
+    await mkdir(legacyWorktree, { recursive: true });
+    await writeFile(join(legacyWorktree, "SKILL.md"), skill);
+    await writeFile(
+      join(fixture.draftsPath, draftId, "draft.json"),
+      `${JSON.stringify(historicalDraft)}\n`,
+    );
+
+    await expect(fixture.service.getDraft(draftId)).resolves.toMatchObject({
+      schemaVersion: "pragma.skill-revision-draft/v4",
+      state: "rejected",
+    });
+    await expect(readFile(join(migratedWorktree, "SKILL.md"), "utf8")).resolves.toBe(skill);
+    await expect(stat(legacyWorktree)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves an unsubmitted worktree when finishing an interrupted v3 migration", async () => {
+    const fixture = await createService();
+    const historical = await historicalFixture("skill-revision-draft-v3.json");
+    const draftId = String(historical["id"]);
+    const historicalDraft = {
+      ...historical,
+      state: "rejected",
+      activeMissionId: undefined,
+      error: {
+        code: "skill_revision_base_changed",
+        message: "The Skill changed after this draft was created.",
+      },
+    };
+    const legacyWorktree = join(fixture.draftsPath, draftId, "worktree");
+    const targetWorktree = join(
+      fixture.workspacePath,
+      ".pragma",
+      "skill-revision-drafts",
+      draftId,
+      "worktree",
+    );
+    const backupPath = join(fixture.statePath, "migration-backups", `draft-${draftId}.v3.json`);
+    const journalPath = join(
+      fixture.statePath,
+      "migration-journals",
+      `draft-${draftId}.v3-to-v4.json`,
+    );
+    const skill = "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n";
+    await mkdir(targetWorktree, { recursive: true });
+    await mkdir(join(fixture.draftsPath, draftId), { recursive: true });
+    await mkdir(dirname(backupPath), { recursive: true });
+    await mkdir(dirname(journalPath), { recursive: true });
+    await writeFile(join(targetWorktree, "SKILL.md"), skill);
+    await writeFile(backupPath, `${JSON.stringify(historicalDraft)}\n`);
+    await writeFile(
+      join(fixture.draftsPath, draftId, "draft.json"),
+      `${JSON.stringify({
+        ...historicalDraft,
+        schemaVersion: "pragma.skill-revision-draft/v4",
+        workspacePath: fixture.workspacePath,
+      })}\n`,
+    );
+    await writeFile(
+      journalPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-revision-migration/v1",
+        kind: "draft",
+        recordId: draftId,
+        recordPath: join(fixture.draftsPath, draftId, "draft.json"),
+        backupPath,
+        sourceHash: jsonHash(historicalDraft),
+        sourceVersion: "pragma.skill-revision-draft/v3",
+        targetVersion: "pragma.skill-revision-draft/v4",
+        workspacePath: fixture.workspacePath,
+        sourceWorktreePath: legacyWorktree,
+        targetWorktreePath: targetWorktree,
+      })}\n`,
+    );
+
+    await expect(fixture.service.getDraft(draftId)).resolves.toMatchObject({
+      state: "rejected",
+    });
+    await expect(readFile(join(targetWorktree, "SKILL.md"), "utf8")).resolves.toBe(skill);
+    await expect(stat(journalPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("replays an interrupted v3 Workspace migration from its stable journal", async () => {
