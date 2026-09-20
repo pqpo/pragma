@@ -105,6 +105,10 @@ export const capabilitiesApi = {
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:reject-skill-revision", input),
     ),
+  retrySkillRevision: async (input) =>
+    ManagedSkillRevisionJobSchema.parse(
+      await ipcRenderer.invoke("capabilities:retry-skill-revision", input),
+    ),
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listCapabilities"
@@ -124,4 +128,5 @@ export const capabilitiesApi = {
   | "listSkillRevisionJobs"
   | "approveSkillRevision"
   | "rejectSkillRevision"
+  | "retrySkillRevision"
 >;

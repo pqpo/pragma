@@ -32,6 +32,7 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import type { ContextStoreStore } from "./context-store-store.ts";
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
+import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
 
 export function createDesktopKnowledgeRevisionSubmissionPort(options: {
   readonly project: PragmaProjectStore;
@@ -181,6 +182,11 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
             name: draft.name,
             storeId: draft.storeId,
             baseRevision: draft.baseRevision,
+            operation: draft.operation,
+            ...(draft.resourceName === undefined ? {} : { resourceName: draft.resourceName }),
+            ...(draft.resourceDescription === undefined
+              ? {}
+              : { resourceDescription: draft.resourceDescription }),
             state: draft.state,
             ...(draft.activeMissionId === undefined
               ? {}
@@ -216,20 +222,55 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
     },
     async start(input) {
       const inlineMission = options.inlineMission;
-      const selected = (await targets()).find(
-        (candidate) => candidate.target.targetRef === input.targetRef,
-      );
-      if (selected === undefined) {
+      const continuedDraft =
+        input.draftId === undefined ? undefined : await options.revisions.getDraft(input.draftId);
+      const allTargets = await targets();
+      const selected =
+        input.targetRef !== undefined
+          ? allTargets.find((candidate) => candidate.target.targetRef === input.targetRef)
+          : continuedDraft?.operation === "revise"
+            ? allTargets.find((candidate) => candidate.storeId === continuedDraft.storeId)
+            : undefined;
+      if (input.targetRef !== undefined && selected === undefined) {
         throw new KnowledgeRevisionToolError(
           "not_found",
           "knowledge_revision_target_unavailable",
           false,
         );
       }
-      const sourceDigest = digestSubmission(input, selected.storeId, input.prompt, input.draftId);
+      if (
+        continuedDraft !== undefined &&
+        selected !== undefined &&
+        (continuedDraft.operation === "create" || selected.storeId !== continuedDraft.storeId)
+      ) {
+        throw new KnowledgeRevisionToolError(
+          "revision_conflict",
+          "knowledge_revision_target_draft_mismatch",
+          false,
+        );
+      }
+      const storeId =
+        input.create !== undefined
+          ? reservedRevisionResourceId("context-store", input)
+          : (continuedDraft?.storeId ?? selected!.storeId);
+      const operation: "create" | "revise" =
+        input.create !== undefined || continuedDraft?.operation === "create" ? "create" : "revise";
+      const creation =
+        input.create ??
+        (continuedDraft?.operation === "create"
+          ? {
+              name: continuedDraft.resourceName!,
+              description: continuedDraft.resourceDescription!,
+            }
+          : undefined);
+      const sourceDigest = digestSubmission(input, storeId, input.prompt, input.draftId);
       const request = {
-        schemaVersion: "pragma.context-store-revision-request/v1" as const,
-        storeId: selected.storeId,
+        schemaVersion: "pragma.context-store-revision-request/v2" as const,
+        operation,
+        storeId,
+        ...(creation === undefined
+          ? {}
+          : { resourceName: creation.name, resourceDescription: creation.description }),
         prompt: input.prompt,
         source: "expert-reflection" as const,
         sourceDigest,
@@ -297,10 +338,12 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           draftId: job.draftId,
           ...(job.missionId === undefined ? {} : { missionId: job.missionId }),
           state: job.state,
-          target: selected.target,
+          ...(selected === undefined
+            ? { creation: { resourceId: storeId, ...creation! } }
+            : { target: selected.target }),
         };
       }
-      const activeRevisionJobId = await inlineMission.activeRevisionJobIdForStore(selected.storeId);
+      const activeRevisionJobId = await inlineMission.activeRevisionJobIdForStore(storeId);
       if (activeRevisionJobId !== undefined) {
         const active = await options.revisions.get(activeRevisionJobId);
         await inlineMission.assertOwnership?.(active, input);
@@ -312,7 +355,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           );
         }
         const { writableNamespace } = await inlineMission.mountDraft({
-          storeId: selected.storeId,
+          storeId,
           draftId: active.draftId,
           revisionJobId: active.id,
         });
@@ -321,7 +364,9 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           draftId: active.draftId,
           missionId: active.missionId,
           state: active.state,
-          target: selected.target,
+          ...(selected === undefined
+            ? { creation: { resourceId: storeId, ...creation! } }
+            : { target: selected.target }),
           writableNamespace,
         };
       }
@@ -337,7 +382,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           ? undefined
           : job.missionId;
       const { writableNamespace } = await inlineMission.mountDraft({
-        storeId: selected.storeId,
+        storeId,
         draftId: job.draftId,
         revisionJobId: job.id,
         ...(previousMissionId === undefined ? {} : { previousMissionId }),
@@ -348,7 +393,9 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
         draftId: attached.draftId,
         missionId: attached.missionId,
         state: attached.state,
-        target: selected.target,
+        ...(selected === undefined
+          ? { creation: { resourceId: storeId, ...creation! } }
+          : { target: selected.target }),
         writableNamespace,
       };
     },
@@ -377,7 +424,7 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           sizeBytes: bytes.byteLength,
         });
       }
-      const current = await options.contextStores.getSnapshot(draft.storeId);
+      const current = await currentSnapshotForDraft(draft, options.contextStores);
       return KnowledgeRevisionDraftInspectionSchema.parse({
         mode: "summary",
         draft: {
@@ -386,6 +433,11 @@ export function createDesktopKnowledgeRevisionSubmissionPort(options: {
           name: draft.name,
           storeId: draft.storeId,
           baseRevision: draft.baseRevision,
+          operation: draft.operation,
+          ...(draft.resourceName === undefined ? {} : { resourceName: draft.resourceName }),
+          ...(draft.resourceDescription === undefined
+            ? {}
+            : { resourceDescription: draft.resourceDescription }),
           baseSnapshotHash: draft.baseSnapshotHash,
           state: draft.state,
           activeMissionId: draft.activeMissionId,
@@ -577,7 +629,7 @@ function digestSubmission(
 }
 
 async function draftReceipt(draft: ContextStoreDraft, stores: ContextStoreStore) {
-  const current = await stores.getSnapshot(draft.storeId);
+  const current = await currentSnapshotForDraft(draft, stores);
   return KnowledgeRevisionDraftReceiptSchema.parse({
     draftId: draft.id,
     revision: draft.revision,
@@ -595,6 +647,14 @@ async function draftReceipt(draft: ContextStoreDraft, stores: ContextStoreStore)
       ? {}
       : { submittedRevision: draft.submittedRevision }),
   });
+}
+
+async function currentSnapshotForDraft(
+  draft: ContextStoreDraft,
+  stores: ContextStoreStore,
+): Promise<{ readonly revision: number; readonly snapshotHash: string }> {
+  if (draft.operation === "revise") return await stores.getSnapshot(draft.storeId);
+  return { revision: 0, snapshotHash: draft.baseSnapshotHash };
 }
 
 function contentChunk(source: string, offset: number, limitChars: number) {

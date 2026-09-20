@@ -15,6 +15,7 @@ import {
 } from "@pragma/built-in-agents";
 
 import { paginateManagementItems } from "../built-in-agents/management-pagination.ts";
+import { reservedRevisionResourceId } from "../built-in-agents/revision-resource-id.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import type { SkillRevisionService } from "./skill-revision-service.ts";
 
@@ -110,6 +111,10 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
             capabilityId: draft.capabilityId,
             name: draft.name,
             baseRevision: draft.baseRevision,
+            operation: draft.operation,
+            ...(draft.resourceDescription === undefined
+              ? {}
+              : { resourceDescription: draft.resourceDescription }),
             state: draft.state,
             ...(job.missionId === undefined ? {} : { missionId: job.missionId }),
             ...(inspection?.draftPath === undefined ? {} : { draftPath: inspection.draftPath }),
@@ -150,11 +155,41 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
       );
     },
     async start(input) {
-      const target = await resolveTarget(input.targetRef);
+      const continuedDraft =
+        input.draftId === undefined ? undefined : await options.revisions.getDraft(input.draftId);
+      const target =
+        input.targetRef !== undefined
+          ? await resolveTarget(input.targetRef)
+          : continuedDraft?.operation === "revise"
+            ? await resolveTarget(targetRef(continuedDraft.capabilityId))
+            : undefined;
+      if (
+        continuedDraft !== undefined &&
+        input.targetRef !== undefined &&
+        (continuedDraft.operation === "create" ||
+          target?.capabilityId !== continuedDraft.capabilityId)
+      ) {
+        throw new KnowledgeRevisionToolError(
+          "revision_conflict",
+          "skill_revision_target_draft_mismatch",
+          false,
+        );
+      }
+      const capabilityId =
+        input.create !== undefined
+          ? reservedRevisionResourceId("skill", input)
+          : (continuedDraft?.capabilityId ?? target!.capabilityId);
+      const operation: "create" | "revise" =
+        input.create !== undefined || continuedDraft?.operation === "create" ? "create" : "revise";
+      const creation =
+        input.create ??
+        (continuedDraft?.operation === "create"
+          ? { name: continuedDraft.name, description: continuedDraft.resourceDescription! }
+          : undefined);
       const sourceDigest = createHash("sha256")
         .update(
           JSON.stringify({
-            capabilityId: target.capabilityId,
+            capabilityId,
             prompt: input.prompt,
             draftId: input.draftId,
             provenance: {
@@ -168,8 +203,12 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
         .digest("hex");
       const job = await options.revisions.start(
         {
-          schemaVersion: "pragma.skill-revision-request/v2",
-          capabilityId: target.capabilityId,
+          schemaVersion: "pragma.skill-revision-request/v3",
+          operation,
+          capabilityId,
+          ...(creation === undefined
+            ? {}
+            : { resourceName: creation.name, resourceDescription: creation.description }),
           prompt: input.prompt,
           source: "expert-reflection",
           sourceDigest,
@@ -193,7 +232,7 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
           missionId: options.inlineMissionId,
           draftId: job.draftId,
           jobId: job.id,
-          capabilityId: target.capabilityId,
+          capabilityId,
         });
       }
       return SkillRevisionStartResultSchema.parse({
@@ -201,7 +240,9 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
         draftId: job.draftId,
         ...(job.missionId === undefined ? {} : { missionId: job.missionId }),
         state: job.state,
-        target,
+        ...(target === undefined
+          ? { creation: { resourceId: capabilityId, ...creation! } }
+          : { target }),
         ...(inspection.draftPath === undefined ? {} : { draftPath: inspection.draftPath }),
       });
     },
@@ -224,6 +265,10 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
         capabilityId: inspection.draft.capabilityId,
         name: inspection.draft.name,
         baseRevision: inspection.draft.baseRevision,
+        operation: inspection.draft.operation,
+        ...(inspection.draft.resourceDescription === undefined
+          ? {}
+          : { resourceDescription: inspection.draft.resourceDescription }),
         state: inspection.draft.state,
         ...(job.missionId === undefined ? {} : { missionId: job.missionId }),
         ...(inspection.draftPath === undefined ? {} : { draftPath: inspection.draftPath }),

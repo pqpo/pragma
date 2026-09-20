@@ -457,6 +457,61 @@ describe("capability store", () => {
     expect(executable.mode & 0o111).not.toBe(0);
   });
 
+  it("publishes a reviewed new Skill candidate idempotently as revision 1", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "new-skill-candidate");
+    await mkdir(join(source, "scripts"), { recursive: true });
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: reviewed-skill\ndescription: Reviewed Skill.\n---\n\nFollow it.\n",
+    );
+    await writeFile(join(source, "scripts", "verify.mjs"), "process.exit(0);\n");
+    await chmod(join(source, "scripts", "verify.mjs"), 0o755);
+    const snapshot = await scanSkillWorkingTree(source);
+    const id = randomUUID();
+
+    const published = await store.publishNewSkillRevisionCandidate({
+      id,
+      name: "reviewed-skill",
+      description: "Reviewed Skill.",
+      sourcePath: source,
+      candidateContentHash: snapshot.hash,
+    });
+    const replayed = await store.publishNewSkillRevisionCandidate({
+      id,
+      name: "reviewed-skill",
+      description: "Reviewed Skill.",
+      sourcePath: source,
+      candidateContentHash: snapshot.hash,
+    });
+
+    expect(published.manifest.latestRevision).toBe(1);
+    expect(replayed.manifest.latestRevision).toBe(1);
+    const formalHash = createHash("sha256");
+    for (const path of ["SKILL.md", "scripts/verify.mjs"]) {
+      formalHash.update(path);
+      formalHash.update(await readFile(join(source, ...path.split("/"))));
+    }
+    expect(published.definition.kind).toBe("skill");
+    if (published.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    expect(published.definition.contentHash).toBe(formalHash.digest("hex"));
+    expect(published.definition.contentHash).not.toBe(snapshot.hash);
+    await expect(
+      stat(
+        join(
+          directory,
+          "capabilities",
+          id,
+          "revisions",
+          "000001",
+          "payload",
+          "scripts",
+          "verify.mjs",
+        ),
+      ),
+    ).resolves.toMatchObject({ mode: expect.any(Number) });
+  });
+
   it("reports corrupted or missing Skill package files with capability errors", async () => {
     const { directory, store } = await createStore();
     const source = join(directory, "source-skill");

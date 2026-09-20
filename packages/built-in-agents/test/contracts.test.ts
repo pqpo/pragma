@@ -5,13 +5,37 @@ import {
   ContextStoreRevisionProfileSchema,
   ContextStoreChangeSetSchema,
   ContextStoreRevisionSnapshotSchema,
+  SkillRevisionChangeSetSchema,
   PragmaAgentEvaluationDraftOperationSchema,
   PragmaAgentEvaluationDraftSchema,
   PragmaAgentFlowDraftOperationSchema,
   PragmaAgentFlowDraftSchema,
 } from "../src/contracts.ts";
+import {
+  KnowledgeRevisionStartInputSchema,
+  SkillRevisionStartInputSchema,
+} from "../src/pragma-management-tools.ts";
 
 describe("revision contracts", () => {
+  it("accepts explicit creation metadata and rejects ambiguous revision starts", () => {
+    for (const schema of [KnowledgeRevisionStartInputSchema, SkillRevisionStartInputSchema]) {
+      expect(
+        schema.safeParse({
+          create: { name: "New resource", description: "Created through review." },
+          prompt: "Create it.",
+        }).success,
+      ).toBe(true);
+      expect(
+        schema.safeParse({
+          targetRef: "existing:target",
+          create: { name: "New resource", description: "Ambiguous." },
+          prompt: "Create it.",
+        }).success,
+      ).toBe(false);
+      expect(schema.safeParse({ prompt: "Missing selector." }).success).toBe(false);
+    }
+  });
+
   it("keeps unknown historical model fields readable in v1 profiles", () => {
     const profile = ContextStoreRevisionProfileSchema.parse({
       schemaVersion: "pragma.context-store-revision-profile/v1",
@@ -26,6 +50,50 @@ describe("revision contracts", () => {
       updatedAt: "2026-07-22T00:00:00.000Z",
     });
     expect(profile.model).not.toHaveProperty("historicalHostField");
+  });
+
+  it("requires creation change sets to use revision 0 and revisions to use a formal base", () => {
+    const contextChangeSet = {
+      schemaVersion: "pragma.context-store-change-set/v2" as const,
+      storeId: "10000000-0000-4000-8000-000000000001",
+      baseSnapshotHash: "a".repeat(64),
+      summary: "Update knowledge.",
+      operations: [
+        {
+          operation: "upsert" as const,
+          id: "items/fact.md",
+          content: "# Fact\n",
+          metadata: { trigger: "model_decision" as const, priority: "normal" as const },
+        },
+      ],
+    };
+    const skillChangeSet = {
+      schemaVersion: "pragma.skill-revision-change-set/v2" as const,
+      capabilityId: "20000000-0000-4000-8000-000000000001",
+      baseContentHash: "b".repeat(64),
+      name: "test-skill",
+      description: "Test Skill.",
+      summary: "Update Skill.",
+      operations: [{ operation: "upsert" as const, path: "SKILL.md", content: "# Test\n" }],
+    };
+
+    for (const [schema, value] of [
+      [ContextStoreChangeSetSchema, contextChangeSet],
+      [SkillRevisionChangeSetSchema, skillChangeSet],
+    ] as const) {
+      expect(schema.safeParse({ ...value, operation: "create", baseRevision: 0 }).success).toBe(
+        true,
+      );
+      expect(schema.safeParse({ ...value, operation: "create", baseRevision: 1 }).success).toBe(
+        false,
+      );
+      expect(schema.safeParse({ ...value, operation: "revise", baseRevision: 1 }).success).toBe(
+        true,
+      );
+      expect(schema.safeParse({ ...value, operation: "revise", baseRevision: 0 }).success).toBe(
+        false,
+      );
+    }
   });
 
   it("keeps historical stored paths readable but enforces portable names for new files", () => {
@@ -47,7 +115,8 @@ describe("revision contracts", () => {
     expect(ContextStoreRevisionSnapshotSchema.safeParse(snapshot).success).toBe(true);
     expect(
       ContextStoreChangeSetSchema.safeParse({
-        schemaVersion: "pragma.context-store-change-set/v1",
+        schemaVersion: "pragma.context-store-change-set/v2",
+        operation: "revise",
         storeId: snapshot.storeId,
         baseRevision: 1,
         baseSnapshotHash: snapshot.snapshotHash,

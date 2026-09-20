@@ -45,7 +45,8 @@ describe("built-in revision state machines", () => {
       {
         type: "generation_succeeded",
         changeSet: {
-          schemaVersion: "pragma.skill-revision-change-set/v1",
+          schemaVersion: "pragma.skill-revision-change-set/v2",
+          operation: "revise",
           capabilityId: running.request.capabilityId,
           baseRevision: 1,
           baseContentHash: "b".repeat(64),
@@ -95,12 +96,13 @@ describe("built-in revision state machines", () => {
 
 function contextJob(): ContextStoreRevisionJob {
   return {
-    schemaVersion: "pragma.context-store-revision-job/v2",
+    schemaVersion: "pragma.context-store-revision-job/v3",
     id: "10000000-0000-4000-8000-000000000001",
     revision: 1,
     draftId: "10000000-0000-4000-8000-000000000002",
     request: {
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
       storeId: "20000000-0000-4000-8000-000000000002",
       prompt: "Add knowledge.",
       source: "user",

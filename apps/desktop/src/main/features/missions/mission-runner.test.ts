@@ -2792,7 +2792,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       generator: { generate: async () => undefined },
     });
     const job = await revisions.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Keep this draft after deleting the Mission",
       source: "user",
@@ -2865,7 +2866,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       generator: { generate: async () => undefined },
     });
     const job = await revisions.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: store.id,
       prompt: "Do not release this claim until deletion commits",
       source: "user",
@@ -3523,9 +3525,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
     const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
     expect(
-      chat.entries
-        .filter((entry) => entry.kind === "assistant")
-        .map((entry) => entry.content),
+      chat.entries.filter((entry) => entry.kind === "assistant").map((entry) => entry.content),
     ).toEqual(["I will ask the user now.", "The user answered: Received."]);
     expect(chat.entries).toEqual(
       expect.arrayContaining([
@@ -3556,8 +3556,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mission.id,
       executionId,
       projection!.filter(
-        (entry) =>
-          entry.kind !== "assistant" || entry.content !== "The user answered: Received.",
+        (entry) => entry.kind !== "assistant" || entry.content !== "The user answered: Received.",
       ),
       execution.updatedAt,
     );

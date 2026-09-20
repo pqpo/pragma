@@ -49,7 +49,8 @@ it("lists only background revisions while retaining foreground revision details 
   let foregroundId = "";
   for (const source of ["user", "memory-learning", "expert-reflection"] as const) {
     const job = await revisions.start({
-      schemaVersion: "pragma.context-store-revision-request/v1",
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise" as const,
       storeId: target.id,
       prompt: source,
       source,
