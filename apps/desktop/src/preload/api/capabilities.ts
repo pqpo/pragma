@@ -23,6 +23,7 @@ import {
   SkillDocumentSchema,
   SkillFileContentSchema,
   SkillFileEntrySchema,
+  SkillRevisionReviewSchema,
   UpdateCapabilitySchema,
   UpdateSkillCapabilitySchema,
 } from "../../shared/contracts/capabilities.ts";
@@ -97,6 +98,10 @@ export const capabilitiesApi = {
     z
       .array(z.object({ job: ManagedSkillRevisionJobSchema, draft: SkillRevisionDraftSchema }))
       .parse(await ipcRenderer.invoke("capabilities:list-skill-revisions", capabilityId)),
+  getSkillRevisionReview: async (jobId) =>
+    SkillRevisionReviewSchema.parse(
+      await ipcRenderer.invoke("capabilities:get-skill-revision-review", jobId),
+    ),
   approveSkillRevision: async (input) =>
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:approve-skill-revision", input),
@@ -129,6 +134,7 @@ export const capabilitiesApi = {
   | "deleteCapability"
   | "pickSkillSource"
   | "listSkillRevisionJobs"
+  | "getSkillRevisionReview"
   | "approveSkillRevision"
   | "rejectSkillRevision"
   | "retrySkillRevision"

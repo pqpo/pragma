@@ -19,6 +19,10 @@ import {
 import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import { z } from "zod";
 
+import {
+  SkillRevisionReviewSchema,
+  type SkillRevisionReview,
+} from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import {
   SkillWorkingTreeError,
@@ -120,6 +124,7 @@ export interface SkillRevisionService {
   listDiagnostics(): Promise<readonly SkillRevisionRecordDiagnostic[]>;
   get(jobId: string): Promise<ManagedSkillRevisionJob>;
   getDraft(draftId: string): Promise<SkillRevisionDraft>;
+  getReview(jobId: string): Promise<SkillRevisionReview>;
   inspectDraft(draftId: string, missionId?: string): Promise<SkillDraftInspection>;
   attachMission(jobId: string, missionId: string): Promise<ManagedSkillRevisionJob>;
   detachMission(jobId: string, missionId: string): Promise<ManagedSkillRevisionJob>;
@@ -997,6 +1002,68 @@ export function createSkillRevisionService(options: {
     },
     get: readJob,
     getDraft: readDraft,
+    async getReview(jobId) {
+      const job = await readJob(jobId);
+      const draft = await readDraft(job.draftId);
+      const candidateRoot =
+        draft.submissionHash === undefined
+          ? worktreePath(draft.id)
+          : join(submissionsPath(draft.id), draft.submissionHash);
+      const baseRoot =
+        draft.operation === "create"
+          ? undefined
+          : await options.capabilities.skillFilesPath(draft.capabilityId, draft.baseRevision);
+      const [candidate, base] = await Promise.all([
+        scanSkillWorkingTree(candidateRoot, {
+          allowMissingSkillDocument: draft.operation === "create" && draft.state === "editing",
+        }),
+        baseRoot === undefined
+          ? Promise.resolve(emptySkillWorkingTreeSnapshot())
+          : scanSkillWorkingTree(baseRoot),
+      ]);
+      const operations: SkillRevisionReview["operations"][number][] = [];
+      const baseByPath = new Map(base.entries.map((entry) => [entry.path, entry]));
+      const candidateByPath = new Map(candidate.entries.map((entry) => [entry.path, entry]));
+      for (const path of [
+        ...new Set([...baseByPath.keys(), ...candidateByPath.keys()]),
+      ].toSorted()) {
+        const previous = baseByPath.get(path);
+        const next = candidateByPath.get(path);
+        if (
+          previous !== undefined &&
+          next !== undefined &&
+          previous.sha256 === next.sha256 &&
+          previous.executable === next.executable
+        ) {
+          continue;
+        }
+        const previousContent =
+          previous === undefined || baseRoot === undefined
+            ? ""
+            : await readUtf8File(baseRoot, path);
+        if (next === undefined) {
+          operations.push({
+            path,
+            operation: "deleted",
+            before: previousContent,
+            after: "",
+          });
+          continue;
+        }
+        const content = await readUtf8File(candidateRoot, path);
+        operations.push({
+          path,
+          operation: previous === undefined ? "added" : "modified",
+          before: previousContent,
+          after: content,
+        });
+      }
+      return SkillRevisionReviewSchema.parse({
+        jobId: job.id,
+        draftId: draft.id,
+        operations,
+      });
+    },
     async inspectDraft(id, missionId) {
       const draft = await readDraft(id);
       const workingTree = await scanSkillWorkingTree(worktreePath(id), {
@@ -1476,6 +1543,13 @@ function diffSnapshots(
     }
   }
   return changes;
+}
+
+async function readUtf8File(root: string, logicalPath: string): Promise<string | null> {
+  const bytes = await readFile(join(root, ...logicalPath.split("/")));
+  if (bytes.byteLength > 1_000_000) return null;
+  const content = bytes.toString("utf8");
+  return Buffer.from(content, "utf8").equals(bytes) ? content : null;
 }
 
 async function readSkillPackage(

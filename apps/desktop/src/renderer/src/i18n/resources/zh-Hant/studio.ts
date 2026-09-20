@@ -1649,8 +1649,12 @@ export const studio = {
     "「{{name}}」將從技能修訂列表中移除。刪除任務不會回復已發佈的修訂，也不會刪除技能。",
   continueSkillRevision: "繼續修訂",
   skillRevisionContinuePrompt: "查看校驗問題，更新現有 Skill 草稿，然後重新提交。",
-  skillRevisionRequest: "修訂要求",
-  skillRevisionSummary: "變更摘要",
   skillRevisionSummaryUnavailable: "暫無變更摘要。",
-  skillRevisionAttention: "需要處理",
+  skillRevisionRequestDocumentDescription: "記錄發起本次 Skill 修訂的原始要求。",
+  skillRevisionSummaryDocumentDescription: "概括本次 Skill 修訂的變更範圍，便於發佈前審批。",
+  skillRevisionOperation: {
+    added: "新增",
+    modified: "修改",
+    deleted: "刪除",
+  },
 } as const;

@@ -116,10 +116,12 @@ describe("SkillRevisionEmptyState", () => {
       'class="studio-screen context-store-revision-detail skill-revision-detail"',
     );
     expect(html).toContain('class="revision-diff-actions"');
+    expect(html).toContain('class="revision-diff-workspace"');
+    expect(html).toContain("revision-summary.md");
+    expect(html).toContain("revision-request.md");
     expect(html).toContain('class="primary-button"');
     expect(html).toContain("批准并发布");
     expect(html).toContain("拒绝");
-    expect(html).toContain("完善 Git 冲突处理流程");
     expect(html).toContain("新增合并前分析与合并后验证。");
   });
 

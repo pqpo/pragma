@@ -366,6 +366,50 @@ describe("Skill revision service", () => {
     );
   });
 
+  it("returns file previews and before-after content for revision review", async () => {
+    const fixture = await createService();
+    const missionId = randomUUID();
+    const job = await fixture.service.start(request("expert-reflection"), { missionId });
+    const draft = await fixture.service.inspectDraft(job.draftId, missionId);
+    await writeFile(
+      join(draft.draftPath!, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the safer workflow.\n",
+    );
+    await mkdir(join(draft.draftPath!, "references"));
+    await writeFile(join(draft.draftPath!, "references", "checks.md"), "# Checks\n\nRun tests.\n");
+    await writeFile(join(draft.draftPath!, "asset.bin"), Uint8Array.from([0, 255, 42]));
+    const ready = await fixture.service.inspectDraft(job.draftId, missionId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: ready.draft.revision,
+      expectedWorkingTreeHash: ready.workingTree.hash,
+      summary: "Review every changed file.",
+      missionId,
+    });
+
+    await expect(fixture.service.getReview(job.id)).resolves.toEqual({
+      jobId: job.id,
+      draftId: job.draftId,
+      operations: [
+        {
+          path: "SKILL.md",
+          operation: "modified",
+          before:
+            "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
+          after:
+            "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the safer workflow.\n",
+        },
+        { path: "asset.bin", operation: "added", before: "", after: null },
+        {
+          path: "references/checks.md",
+          operation: "added",
+          before: "",
+          after: "# Checks\n\nRun tests.\n",
+        },
+      ],
+    });
+  });
+
   it("rejects a stale base and preserves a read-only reference", async () => {
     const fixture = await createService();
     const missionId = randomUUID();

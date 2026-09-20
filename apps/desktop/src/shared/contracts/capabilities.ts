@@ -340,6 +340,20 @@ export const SkillFileContentSchema = SkillFileEntrySchema.extend({
   revision: z.number().int().positive(),
   content: z.string().nullable(),
 });
+export const SkillRevisionReviewSchema = z.object({
+  jobId: z.string().uuid(),
+  draftId: z.string().uuid(),
+  operations: z
+    .array(
+      z.object({
+        path: SkillFilePathSchema,
+        operation: z.enum(["added", "modified", "deleted"]),
+        before: z.string().max(1_000_000).nullable(),
+        after: z.string().max(1_000_000).nullable(),
+      }),
+    )
+    .max(1_000),
+});
 export const CapabilityTestRequestSchema = z.object({
   id: CapabilityIdSchema,
   expectedRevision: z.number().int().positive(),

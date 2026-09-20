@@ -130,6 +130,9 @@ export function installCapabilityHandlers(
       jobs.map(async (job) => ({ job, draft: await skillRevisions.getDraft(job.draftId) })),
     );
   });
+  ipcMain.handle("capabilities:get-skill-revision-review", (_event, jobId: unknown) =>
+    skillRevisions.getReview(z.string().uuid().parse(jobId)),
+  );
   const actionSchema = z
     .object({ jobId: z.string().uuid(), expectedRevision: z.number().int().positive() })
     .strict();

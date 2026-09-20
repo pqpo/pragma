@@ -1730,8 +1730,14 @@ export const studio = {
   continueSkillRevision: "Continue revision",
   skillRevisionContinuePrompt:
     "Review the validation findings, update the existing Skill draft, and submit it again.",
-  skillRevisionRequest: "Revision request",
-  skillRevisionSummary: "Change summary",
   skillRevisionSummaryUnavailable: "No change summary was recorded.",
-  skillRevisionAttention: "Attention required",
+  skillRevisionRequestDocumentDescription:
+    "Records the original request that initiated this Skill revision.",
+  skillRevisionSummaryDocumentDescription:
+    "Summarizes the scope of this Skill revision for review before publishing.",
+  skillRevisionOperation: {
+    added: "Added",
+    modified: "Modified",
+    deleted: "Deleted",
+  },
 } as const;

@@ -3,18 +3,21 @@ import {
   ArrowLeft,
   Check,
   ClockCounterClockwise,
+  FileText,
+  Plus,
   Trash,
   X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ManagedSkillRevisionJob,
   SkillRevisionDraft,
 } from "@pragma/built-in-agents/contracts";
 
-import type { Capability } from "../../../../shared/contracts/index.ts";
+import type { Capability, SkillRevisionReview } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { buildRevisionLineDiff, RevisionDiffCode } from "./ContextStoreRevisionFragment.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
@@ -23,6 +26,11 @@ export type SkillRevisionEntry = {
   readonly job: ManagedSkillRevisionJob;
   readonly draft: SkillRevisionDraft;
 };
+
+type SkillRevisionDetailSelection =
+  | { readonly kind: "request" }
+  | { readonly kind: "summary" }
+  | { readonly kind: "operation"; readonly index: number };
 
 export function activeSkillRevisionTaskCount(
   entries: readonly { readonly job: Pick<ManagedSkillRevisionJob, "state"> }[],
@@ -130,6 +138,39 @@ export function SkillRevisionDetailFragment(props: {
 }) {
   const { t, i18n } = useTranslation("studio");
   const { job, draft } = props.entry;
+  const [selection, setSelection] = useState<SkillRevisionDetailSelection>({ kind: "summary" });
+  const [review, setReview] = useState<SkillRevisionReview>();
+  const [reviewError, setReviewError] = useState<string>();
+  useEffect(() => {
+    const api = desktopApi();
+    let active = true;
+    setReview(undefined);
+    setReviewError(undefined);
+    setSelection({ kind: "summary" });
+    if (api === undefined) return () => undefined;
+    void api
+      .getSkillRevisionReview(job.id)
+      .then((value) => {
+        if (active) setReview(value);
+      })
+      .catch((cause) => {
+        if (active) setReviewError(errorMessage(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [job.id, job.revision]);
+  const operation =
+    selection.kind === "operation" ? review?.operations[selection.index] : undefined;
+  const diff = useMemo(
+    () =>
+      operation?.before === null || operation?.after === null
+        ? []
+        : buildRevisionLineDiff(operation?.before ?? "", operation?.after ?? ""),
+    [operation],
+  );
+  const additions = diff.filter((line) => line.kind === "addition").length;
+  const deletions = diff.filter((line) => line.kind === "deletion").length;
   const attentionActions = skillRevisionAttentionActions(props.entry, props.canOpenMission);
   const revisionMetadata = `${draft.name} · ${
     draft.operation === "create"
@@ -206,25 +247,120 @@ export function SkillRevisionDetailFragment(props: {
       }
     >
       <div className="revision-diff-content">
-        <div className="skill-revision-review">
-          <section>
-            <span>{t("skillRevisionRequest")}</span>
-            <p>{job.request.prompt}</p>
+        <div className="revision-diff-workspace">
+          <aside className="revision-diff-files" aria-label={t("revisionReviewContents")}>
+            <div className="revision-diff-files-heading">
+              <span>{t("revisionReviewContents")}</span>
+            </div>
+            <nav>
+              <button
+                className={selection.kind === "summary" ? "is-active" : undefined}
+                type="button"
+                onClick={() => setSelection({ kind: "summary" })}
+              >
+                <FileText size={17} aria-hidden="true" />
+                <span>
+                  <strong>{t("revisionSummaryFile")}</strong>
+                  <small>{t("revisionSummaryFileLabel")}</small>
+                </span>
+              </button>
+              <button
+                className={selection.kind === "request" ? "is-active" : undefined}
+                type="button"
+                onClick={() => setSelection({ kind: "request" })}
+              >
+                <FileText size={17} aria-hidden="true" />
+                <span>
+                  <strong>{t("revisionRequestFile")}</strong>
+                  <small>{t("revisionRequestFileLabel")}</small>
+                </span>
+              </button>
+              <div className="revision-diff-file-group-label">
+                {t("filesChanged", { count: review?.operations.length ?? 0 })}
+              </div>
+              {(review?.operations ?? []).map((candidate, index) => (
+                <button
+                  className={
+                    selection.kind === "operation" && selection.index === index
+                      ? "is-active"
+                      : undefined
+                  }
+                  type="button"
+                  key={`${candidate.operation}:${candidate.path}`}
+                  onClick={() => setSelection({ kind: "operation", index })}
+                >
+                  {candidate.operation === "deleted" ? (
+                    <Trash size={15} aria-hidden="true" />
+                  ) : candidate.operation === "added" ? (
+                    <Plus size={15} aria-hidden="true" />
+                  ) : (
+                    <FileText size={15} aria-hidden="true" />
+                  )}
+                  <span>
+                    <strong>{candidate.path}</strong>
+                    <small>{t(`skillRevisionOperation.${candidate.operation}`)}</small>
+                  </span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+          <section className="revision-diff-view" aria-label={t("revisionDiff")}>
+            <header>
+              <div className="revision-diff-view-heading">
+                <FileText size={16} aria-hidden="true" />
+                <span>
+                  <strong>
+                    {selection.kind === "request"
+                      ? t("revisionRequestFile")
+                      : selection.kind === "summary"
+                        ? t("revisionSummaryFile")
+                        : (operation?.path ?? "")}
+                  </strong>
+                  {selection.kind === "request" ? (
+                    <small>{t("skillRevisionRequestDocumentDescription")}</small>
+                  ) : selection.kind === "summary" ? (
+                    <small>{t("skillRevisionSummaryDocumentDescription")}</small>
+                  ) : null}
+                </span>
+              </div>
+              {operation === undefined ? null : (
+                <span className="revision-diff-stats">
+                  <b>+{additions}</b>
+                  <i>−{deletions}</i>
+                </span>
+              )}
+            </header>
+            <div className="revision-diff-scroll-area">
+              {selection.kind === "request" ? (
+                <article className="revision-review-document">
+                  <p>{job.request.prompt}</p>
+                </article>
+              ) : selection.kind === "summary" ? (
+                <article className="revision-review-document">
+                  <p>{draft.summary ?? t("skillRevisionSummaryUnavailable")}</p>
+                  {job.error ? <p className="form-error">{job.error.message}</p> : null}
+                </article>
+              ) : operation === undefined ? (
+                <div className="revision-diff-unavailable">
+                  <p>
+                    {review === undefined
+                      ? t("loadingSkillRevisions")
+                      : t("revisionDiffUnavailable")}
+                  </p>
+                </div>
+              ) : operation.before === null || operation.after === null ? (
+                <div className="revision-diff-unavailable">
+                  <p>{t("revisionDiffUnavailable")}</p>
+                </div>
+              ) : (
+                <RevisionDiffCode lines={diff} />
+              )}
+            </div>
           </section>
-          <section>
-            <span>{t("skillRevisionSummary")}</span>
-            <p>{draft.summary ?? t("skillRevisionSummaryUnavailable")}</p>
-          </section>
-          {job.error ? (
-            <section className="is-error">
-              <span>{t("skillRevisionAttention")}</span>
-              <p>{job.error.message}</p>
-            </section>
-          ) : null}
         </div>
-        {props.error ? (
+        {(props.error ?? reviewError) ? (
           <p className="form-error" role="alert">
-            {props.error}
+            {props.error ?? reviewError}
           </p>
         ) : null}
       </div>
