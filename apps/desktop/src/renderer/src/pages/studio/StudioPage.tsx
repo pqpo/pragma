@@ -428,6 +428,7 @@ export function StudioPage(props: {
             toolApprovals: expert.toolApprovals,
             plugins: [...expert.plugins],
             contextStoreMounts: [...expert.contextStoreMounts],
+            resourceTools: [...expert.resourceTools],
           })
         : mode !== "edit"
           ? await api.createExpert(
@@ -866,6 +867,7 @@ export function StudioPage(props: {
             contextStores={contextStores}
             capabilities={capabilities}
             plugins={plugins}
+            experts={experts}
             resources={project?.resources ?? []}
             runtimes={runtimes}
             backLabel={
@@ -912,6 +914,7 @@ export function StudioPage(props: {
             contextStores={contextStores}
             capabilities={capabilities}
             plugins={plugins}
+            experts={experts}
             resources={project?.resources ?? []}
             memoryEnabled={props.memoryEnabled}
             initialStep={expertEditorInitialStep}

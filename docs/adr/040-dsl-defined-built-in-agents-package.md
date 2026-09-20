@@ -20,9 +20,10 @@ rules, Skill validation, and pure revision state machines.
 
 Each Agent keeps a separate invocation port. They are not modeled as one workflow and Hosts are
 not required to expose one common calling convention. Hosts own Runtime selection and execution,
-permissions, Mission integration, persistence, scheduling, and UI. Pragma remains visible and
-customizable through its existing product surface. Store Revision is exposed as a managed Mission
-executor with locked system tools; the remaining service Agents are selected through their owning
+permissions, Mission integration, persistence, scheduling, and UI. Pragma, Store Revision, and
+Skill Revision remain visible and customizable through Studio, including their callable Expert,
+ExpertTeam, and Flow tools. Store Revision keeps its locked system tools. Memory Curator, Skill
+Evaluation, and Evaluation Judge remain hidden managed Agents selected through their owning
 workflows.
 
 Persistent identifiers and protocol strings are constructed through their authoritative runtime

@@ -204,6 +204,7 @@ export function ExpertDetailFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
   readonly plugins: readonly DesktopPlugin[];
+  readonly experts: readonly ExpertRecord[];
   readonly resources: readonly PragmaResource[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly backLabel?: string | undefined;
@@ -263,6 +264,8 @@ export function ExpertDetailFragment(props: {
     return t("runtimeDefault");
   })();
   const selectedResources = props.expert.resourceTools.map((binding) => {
+    const expert = props.experts.find((candidate) => candidate.ref === binding.target?.ref);
+    if (expert !== undefined) return expert.name;
     const resource = props.resources.find(
       (candidate) => canonicalPragmaResourceRef(candidate) === binding.target?.ref,
     );

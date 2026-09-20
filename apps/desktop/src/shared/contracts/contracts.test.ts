@@ -710,6 +710,7 @@ describe("built-in expert customization contracts", () => {
     toolApprovals: {},
     plugins: [],
     contextStoreMounts: [],
+    resourceTools: [],
   };
 
   it("accepts only the user customization layer", () => {

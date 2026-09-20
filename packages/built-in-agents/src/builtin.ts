@@ -192,6 +192,7 @@ export async function compileBuiltInAgent(options: {
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
   readonly loggerProvider?: PragmaCompileOptions["loggerProvider"];
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
+  readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
 }): Promise<CompiledResource<Expert>> {
   const entry = await materializeBuiltInAgent(
     options.definitionStateRoot,
@@ -201,6 +202,17 @@ export async function compileBuiltInAgent(options: {
   );
   let projectPromise = builtInProjectCache.get(entry);
   if (projectPromise === undefined) {
+    const effectiveExpert =
+      options.expertResource?.metadata.id === options.ref.slice("expert:".length)
+        ? options.expertResource
+        : builtInAgentResource(options.ref);
+    const externalResourceRefs = new Set(
+      effectiveExpert.spec.tools.flatMap((binding) =>
+        binding.target === undefined
+          ? binding.targets!.map((target) => target.ref)
+          : [binding.target.ref],
+      ),
+    );
     projectPromise = loadPragmaProject(entry, {
       rootDir: dirname(entry),
       sourceIdentity: builtInAgentFingerprint(
@@ -209,6 +221,7 @@ export async function compileBuiltInAgent(options: {
         options.additionalResources,
       ),
       blueprintCache: options.blueprintCache,
+      externalResourceRefs,
     });
     builtInProjectCache.set(entry, projectPromise);
     void projectPromise.catch(() => {
@@ -234,6 +247,9 @@ export async function compileBuiltInAgent(options: {
       ? {}
       : { rootExecutionOverride: options.rootExecutionOverride }),
     ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
+    ...(options.resolveExternalInvocable === undefined
+      ? {}
+      : { resolveExternalInvocable: options.resolveExternalInvocable }),
     adapterHost: builtInAgentAdapterHost(
       options.environmentId,
       dirname(entry),
@@ -334,7 +350,10 @@ function builtInAgentSourceEntries(
     if (source === undefined) throw new Error(`Missing built-in Agent dependency: ${path}`);
     entries.push([
       path,
-      customizedBuiltInSource(path, source, expertResource, additionalResources),
+      path === BUILT_IN_AGENT_PATHS[ref] &&
+      expertResource?.metadata.id === ref.slice("expert:".length)
+        ? formatPragmaYaml(PragmaExpertResourceSchema.parse(expertResource))
+        : customizedBuiltInSource(path, source, undefined, additionalResources),
     ]);
   }
   return entries;

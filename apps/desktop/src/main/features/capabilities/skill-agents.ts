@@ -35,6 +35,7 @@ export interface DesktopSkillAgents {
     readonly adapterHost?: PragmaCompileOptions["adapterHost"];
     readonly expertResource?: PragmaExpertResource;
     readonly additionalResources?: readonly PragmaResource[];
+    readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
   }): Promise<CompiledResource<InvocableResource>>;
   fingerprint(): Promise<string>;
   recoverOrphans(): Promise<number>;
@@ -175,6 +176,9 @@ export function createDesktopSkillAgents(options: {
         ...(input.additionalResources === undefined
           ? {}
           : { additionalResources: input.additionalResources }),
+        ...(input.resolveExternalInvocable === undefined
+          ? {}
+          : { resolveExternalInvocable: input.resolveExternalInvocable }),
       });
     },
     async fingerprint() {

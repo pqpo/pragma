@@ -44,6 +44,7 @@ export function ExpertEditorFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
   readonly plugins: readonly DesktopPlugin[];
+  readonly experts: readonly ExpertRecord[];
   readonly resources: readonly PragmaResource[];
   readonly memoryEnabled: boolean;
   readonly initialStep?: ExpertEditorStep | undefined;
@@ -589,6 +590,7 @@ export function ExpertEditorFragment(props: {
                 ) : null}
                 <ExpertCapabilityPicker
                   currentExpertId={draft.id}
+                  experts={props.experts}
                   resources={props.resources}
                   contextStores={props.contextStores}
                   capabilities={props.capabilities}
@@ -597,7 +599,6 @@ export function ExpertEditorFragment(props: {
                   capabilityReferences={draft.capabilities}
                   fixedCapabilities={draft.persisted?.opaqueCapabilities}
                   toolApprovals={draft.toolApprovals}
-                  allowResourceTools={!isBuiltIn}
                   onResourceToolsChange={(resourceTools) =>
                     setDraft((current) => ({ ...current, resourceTools }))
                   }

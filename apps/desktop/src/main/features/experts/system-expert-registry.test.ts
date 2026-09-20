@@ -51,6 +51,9 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.isReservedRef(BUILT_IN_PRAGMA_REF)).toBe(true);
     expect(registry.isReservedId("0000000000pragma")).toBe(true);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
+    expect(
+      registry.get(BUILT_IN_PRAGMA_REF)?.resourceTools.map((binding) => binding.tool?.name),
+    ).toEqual(["call_store_revision_agent", "call_skill_revision_agent"]);
   });
 
   it("exposes Store and Skill Revision while keeping the other managed identities internal", async () => {
@@ -96,9 +99,30 @@ describe("DesktopSystemExpertRegistry", () => {
           toolApprovals: {},
           plugins: [],
           contextStoreMounts: [],
+          resourceTools: [],
         }),
       ).rejects.toThrow("Built-in Expert not found");
     }
+  });
+
+  it("invalidates the Pragma fingerprint when a referenced built-in Agent changes", async () => {
+    const registry = createDesktopSystemExpertRegistry();
+    const before = registry.fingerprint(BUILT_IN_PRAGMA_REF);
+    const storeRevision = registry.get(STORE_REVISION_EXPERT_REF)!;
+
+    await registry.update(STORE_REVISION_EXPERT_REF, {
+      name: "Customized Store Revision",
+      description: storeRevision.description,
+      tags: storeRevision.tags,
+      additionalInstructions: storeRevision.additionalInstructions,
+      capabilities: storeRevision.capabilities,
+      toolApprovals: storeRevision.toolApprovals,
+      plugins: storeRevision.plugins,
+      contextStoreMounts: storeRevision.contextStoreMounts,
+      resourceTools: storeRevision.resourceTools,
+    });
+
+    expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).not.toBe(before);
   });
 
   it("persists an editable override and resets to the shipped definition", async () => {
@@ -128,6 +152,7 @@ describe("DesktopSystemExpertRegistry", () => {
       toolApprovals: { mcp_docs_search_docs: "required" },
       plugins: [],
       contextStoreMounts: [{ storeId: contextStoreId, enabled: true, priority: 0 }],
+      resourceTools: [],
     });
 
     expect(customized).toMatchObject({
@@ -139,6 +164,7 @@ describe("DesktopSystemExpertRegistry", () => {
       instructions: original.instructions,
       additionalInstructions: "Prefer concise plans and confirm destructive operations.",
       executionProfile: { mode: "pinned", model: { runtimeId: "codex", modelId: "gpt-5.6" } },
+      resourceTools: [],
     });
     expect(registry.listExecutors()).toContainEqual(
       expect.objectContaining({
@@ -200,6 +226,10 @@ describe("DesktopSystemExpertRegistry", () => {
       customized: false,
       revision: 1,
     });
+    expect(reset.resourceTools.map((binding) => binding.tool?.name)).toEqual([
+      "call_store_revision_agent",
+      "call_skill_revision_agent",
+    ]);
   });
 
   it("customizes and resets Store Revision without removing its required tools", async () => {
@@ -214,6 +244,7 @@ describe("DesktopSystemExpertRegistry", () => {
       toolApprovals: {},
       plugins: [],
       contextStoreMounts: [],
+      resourceTools: [],
     });
     expect(customized).toMatchObject({ name: "Knowledge Editor", customized: true });
     expect(customized.opaqueCapabilities).toEqual(original.opaqueCapabilities);
@@ -230,36 +261,30 @@ describe("DesktopSystemExpertRegistry", () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v3-"));
     directories.push(directory);
     const configPath = join(directory, "system-experts.json");
-    const registry = createDesktopSystemExpertRegistry({ configPath });
-    await registry.initialize();
-    await registry.update(BUILT_IN_PRAGMA_REF, {
-      name: "Legacy Pragma",
-      description: "A legacy customized built-in Pragma Agent.",
-      tags: ["builtin", "legacy"],
-      additionalInstructions: "Preserve this customization.",
-      capabilities: [],
-      toolApprovals: {},
-      plugins: [],
-      contextStoreMounts: [],
-    });
-    const legacy = JSON.parse(await readFile(configPath, "utf8")) as {
-      schemaVersion: number;
-      customizations: { ref: string }[];
-    };
-    legacy.schemaVersion = 3;
-    legacy.customizations[0]!.ref = "expert:pragma@1.0.0";
-    await writeFile(configPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    // Captured from the v3 writer at 0bb33b457cab25484a373a6a394ca3c3d4ab4d68.
+    const fixture = await readFile(
+      new URL("./__fixtures__/system-experts-v3.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, fixture);
 
     const reloaded = createDesktopSystemExpertRegistry({ configPath });
     await reloaded.initialize();
 
     expect(reloaded.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
-      name: "Legacy Pragma",
-      additionalInstructions: "Preserve this customization.",
+      name: "My Pragma",
+      additionalInstructions: "Prefer concise plans and confirm destructive operations.",
       customized: true,
+      executionProfile: { mode: "pinned", model: { runtimeId: "codex", modelId: "gpt-5.6" } },
+      capabilities: [
+        expect.objectContaining({ capabilityId: "11111111-1111-4111-8111-111111111111" }),
+      ],
+      contextStoreMounts: [
+        expect.objectContaining({ storeId: "22222222-2222-4222-8222-222222222222" }),
+      ],
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       customizations: [{ ref: BUILT_IN_PRAGMA_REF }],
     });
     await expect(readFile(`${configPath}.v3.backup.json`, "utf8")).resolves.toContain(
@@ -323,10 +348,75 @@ describe("DesktopSystemExpertRegistry", () => {
         { storeId: "26980318-cc35-4a16-95ae-fd8806492c4a", enabled: true, priority: 0 },
       ],
     });
-    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 6 });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 7 });
     await expect(readFile(`${configPath}.v5.backup.json`, "utf8")).resolves.toContain(
       "deepseek-v4-flash",
     );
+  });
+
+  it("migrates v6 Pragma customizations with the new default revision agents", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v6-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const fixture = await readFile(
+      new URL("./__fixtures__/system-experts-v6.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, fixture);
+    const interruptedJournalPath = `${configPath}.migration-v6-to-v7.json`;
+    await writeFile(
+      interruptedJournalPath,
+      JSON.stringify({
+        schemaVersion: "pragma.system-expert-customization-migration/v1",
+        sourceVersion: 6,
+        targetVersion: 7,
+        backupPath: `${configPath}.v6.backup.json`,
+      }),
+    );
+
+    const reloaded = createDesktopSystemExpertRegistry({ configPath });
+    await reloaded.initialize();
+
+    expect(reloaded.get(BUILT_IN_PRAGMA_REF)?.resourceTools).toEqual([
+      expect.objectContaining({
+        tool: expect.objectContaining({ name: "call_store_revision_agent" }),
+      }),
+      expect.objectContaining({
+        tool: expect.objectContaining({ name: "call_skill_revision_agent" }),
+      }),
+    ]);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 7 });
+    await expect(readFile(`${configPath}.v6.backup.json`, "utf8")).resolves.toContain(
+      "Preserve this v6 customization.",
+    );
+    await expect(readFile(interruptedJournalPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not rewrite a current v7 customization during initialization", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v7-noop-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    const current = registry.get(BUILT_IN_PRAGMA_REF)!;
+    await registry.update(BUILT_IN_PRAGMA_REF, {
+      name: current.name,
+      description: current.description,
+      tags: current.tags,
+      additionalInstructions: "Keep the current document byte-for-byte stable.",
+      capabilities: [],
+      toolApprovals: {},
+      plugins: [],
+      contextStoreMounts: [],
+      resourceTools: current.resourceTools,
+    });
+    const before = await readFile(configPath, "utf8");
+
+    await createDesktopSystemExpertRegistry({ configPath }).initialize();
+
+    await expect(readFile(configPath, "utf8")).resolves.toBe(before);
   });
 
   it("fails closed on future customization schemas", async () => {

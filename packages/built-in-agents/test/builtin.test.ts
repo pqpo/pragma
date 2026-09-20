@@ -8,6 +8,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import {
   createPragmaLogger,
   createStaticRuntimeResolver,
+  defineExpert,
   registerExpertToolsMcpSession,
   snapshotRuntimeFeatures,
   StaticContextStore,
@@ -143,7 +144,9 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(31);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(33);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
@@ -590,6 +593,57 @@ describe("built-in Pragma Agent DSL", () => {
     }
   });
 
+  it("compiles customization for an editable built-in Agent other than Pragma", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-customized-store-revision-agent-"));
+    const base = builtInAgentResource(STORE_REVISION_EXPERT_REF);
+    const expertResource = PragmaExpertResourceSchema.parse({
+      ...base,
+      metadata: { ...base.metadata, name: "Customized Store Revision" },
+    });
+    const runtimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "test-runtime",
+      runtimes: [
+        {
+          features: snapshotRuntimeFeatures(createRuntimeTestFeatures()),
+          descriptor: { id: "test-runtime", kind: "test", displayName: "Test Runtime" },
+          canUse: () => ({ usable: true }),
+        },
+      ],
+    });
+
+    const compiled = await compileBuiltInAgent({
+      ref: STORE_REVISION_EXPERT_REF,
+      environmentId: "test-host",
+      definitionStateRoot: join(root, "definitions"),
+      workspace: root,
+      pragmaHome: root,
+      runtimes,
+      expertResource,
+      adapterHost: {
+        environmentId: "test-host",
+        projectRoot: root,
+        async resolveBinding(ref) {
+          return ref === "binding:pragma.management"
+            ? {
+                ref,
+                revision: "1",
+                fingerprint: "a".repeat(64),
+                value: { contribution: { tools: [] } },
+              }
+            : undefined;
+        },
+        async resolveArtifact(source) {
+          throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+      },
+    });
+
+    expect(compiled.value.name).toBe("Customized Store Revision");
+  });
+
   it("preserves the Host file Context factory while wrapping a built-in Agent", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-built-in-file-context-"));
     const contextId = "0123456789abcdef";
@@ -629,6 +683,27 @@ describe("built-in Pragma Agent DSL", () => {
         },
       ],
     });
+    const resolveExternalInvocable = vi.fn(async (ref: string) => {
+      const resource = builtInAgentResource(
+        ref === STORE_REVISION_EXPERT_REF ? STORE_REVISION_EXPERT_REF : SKILL_REVISION_EXPERT_REF,
+      );
+      return {
+        resource,
+        value: await defineExpert({
+          id: resource.metadata.id,
+          name:
+            ref === STORE_REVISION_EXPERT_REF
+              ? "Customized Store Revision"
+              : resource.metadata.name,
+          description: resource.metadata.description,
+          tags: resource.metadata.tags,
+          scope: resource.spec.scope,
+          workspace: root,
+          pragmaHome: root,
+          defaultRuntimeId: "test-runtime",
+        }),
+      };
+    });
 
     const compiled = await compileBuiltInAgent({
       ref: BUILT_IN_PRAGMA_REF,
@@ -639,6 +714,7 @@ describe("built-in Pragma Agent DSL", () => {
       runtimes,
       expertResource,
       additionalResources: [contextResource],
+      resolveExternalInvocable,
       adapterHost: {
         environmentId: "test-host",
         projectRoot: root,
@@ -669,6 +745,8 @@ describe("built-in Pragma Agent DSL", () => {
     });
 
     expect(compiled.value.id).toBe(BUILT_IN_PRAGMA_REF.slice("expert:".length));
+    expect(resolveExternalInvocable).toHaveBeenCalledWith(STORE_REVISION_EXPERT_REF);
+    expect(resolveExternalInvocable).toHaveBeenCalledWith(SKILL_REVISION_EXPERT_REF);
     expect(openFileContextStore).toHaveBeenCalledWith({ rootDir: root });
   });
 

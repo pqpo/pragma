@@ -188,9 +188,14 @@ export interface PragmaCompileHost {
   readonly plugins?: PragmaPluginResolver | undefined;
   readonly adapterHost?: PragmaAdapterHost | undefined;
   readonly resolveExternalInvocable?:
-    ((ref: PragmaResourceRef) => Promise<InvocableResource | undefined>) | undefined;
+    ((ref: PragmaResourceRef) => Promise<ResolvedInvocableResource | undefined>) | undefined;
   readonly pragmaHome?: string | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
+}
+
+export interface ResolvedInvocableResource {
+  readonly resource: PragmaInvocableResource;
+  readonly value: InvocableResource;
 }
 
 export interface DefinitionSerializer {

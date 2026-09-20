@@ -744,7 +744,8 @@ Expert API 设计要求：
 
 - 主入口 `@pragma/built-in-agents` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
 - `@pragma/built-in-agents/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
-- Pragma 是默认存在且可交互的通用 Agent；另外四个系统 Agent 为隐藏、不可定制的托管能力。
+- Pragma、Store Revision 和 Skill Revision 是可在 Studio 配置的系统 Agent；Memory Curator、
+  Skill Evaluation 和 Evaluation Judge 是隐藏、不可定制的托管能力。
 - Pragma 修改 Expert、ExpertTeam 和 Flow 时只通过 DSL 能力；应用层实现持久化与任务端口。
 - Desktop 将 Pragma 注册为只读系统专家；Home 只负责创建全新 Mission，不维护独立 Chat。
 - Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Home
