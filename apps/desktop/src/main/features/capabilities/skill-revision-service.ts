@@ -28,6 +28,7 @@ import {
 import type { CapabilityStore } from "./capability-store.ts";
 import {
   SkillWorkingTreeError,
+  assertSkillCopyTarget,
   copySkillTree,
   createStableSkillSubmission,
   emptySkillWorkingTreeSnapshot,
@@ -181,7 +182,8 @@ export function createSkillRevisionService(options: {
   readonly draftsTrashPath?: string;
   readonly capabilities: CapabilityStore;
   readonly generator?: SkillRevisionGenerator;
-  readonly resolveWorkspacePath?: ((missionId?: string | undefined) => Promise<string>) | undefined;
+  readonly resolveWorkspacePath?:
+    ((missionId?: string | undefined, draftId?: string | undefined) => Promise<string>) | undefined;
   readonly warn?: (message: string, error: unknown) => void;
 }): SkillRevisionService {
   const jobsPath = join(options.statePath, "jobs");
@@ -200,11 +202,17 @@ export function createSkillRevisionService(options: {
   const worktreePath = (draft: Pick<SkillRevisionDraft, "id" | "workspacePath">) =>
     skillRevisionWorkspacePaths(draft.workspacePath, draft.id).worktreePath;
   const submissionsPath = (id: string) => join(draftRoot(id), "submissions");
+  const candidatePath = (
+    draft: Pick<SkillRevisionDraft, "id" | "workspacePath" | "state" | "submissionHash">,
+  ) =>
+    draft.state === "editing" || draft.submissionHash === undefined
+      ? worktreePath(draft)
+      : join(submissionsPath(draft.id), draft.submissionHash);
   let processing: Promise<void> | undefined;
   let processingRequested = false;
   let diagnostics: readonly SkillRevisionRecordDiagnostic[] = [];
   let discardRecovery: Promise<void> | undefined;
-  let submissionCleanupRecovery: Promise<boolean> | undefined;
+  let submissionCleanupRecovery: Promise<void> | undefined;
 
   const SubmissionCleanupJournalSchema = z
     .object({
@@ -223,7 +231,6 @@ export function createSkillRevisionService(options: {
     const recovery = (submissionCleanupRecovery ??= withFileLock(
       submissionCleanupLockPath,
       async () => {
-        let retryRequired = false;
         for (const name of await readJsonNames(submissionCleanupJournalsPath)) {
           const journalPath = join(submissionCleanupJournalsPath, `${name}.json`);
           try {
@@ -294,16 +301,17 @@ export function createSkillRevisionService(options: {
             await rm(removableDraftRoot, { recursive: true, force: true });
             await writeJsonAtomic(journalPath, { ...journal, state: "completed" });
           } catch (error) {
-            retryRequired = true;
             options.warn?.("Failed to recover a submitted Skill draft cleanup.", error);
           }
         }
-        return retryRequired;
       },
     ));
-    const retryRequired = await recovery;
-    if (submissionCleanupRecovery === recovery && retryRequired) {
-      submissionCleanupRecovery = undefined;
+    try {
+      await recovery;
+    } finally {
+      if (submissionCleanupRecovery === recovery) {
+        submissionCleanupRecovery = undefined;
+      }
     }
   };
 
@@ -623,14 +631,23 @@ export function createSkillRevisionService(options: {
     const requestedWorkspacePath =
       existingJournal?.sourceVersion === "pragma.skill-revision-draft/v3"
         ? existingJournal.workspacePath
-        : await options.resolveWorkspacePath?.(source.activeMissionId);
+        : await options.resolveWorkspacePath?.(source.activeMissionId, source.id);
     if (requestedWorkspacePath === undefined) throw coded("skill_revision_workspace_unavailable");
+    const sourceWorktree = legacyWorktreePath(source.id);
+    assertSkillCopyTarget(
+      sourceWorktree,
+      skillRevisionWorkspacePaths(requestedWorkspacePath, source.id).worktreePath,
+    );
+    const resolvedWorkspacePath = await resolveSkillRevisionWorkspacePath(requestedWorkspacePath);
+    assertSkillCopyTarget(
+      sourceWorktree,
+      skillRevisionWorkspacePaths(resolvedWorkspacePath, source.id).worktreePath,
+    );
     const workspace = await prepareSkillRevisionWorkspace(
-      requestedWorkspacePath,
+      resolvedWorkspacePath,
       source.id,
       options.warn,
     );
-    const sourceWorktree = legacyWorktreePath(source.id);
     if (await pathExists(sourceWorktree)) {
       const temporary = `${workspace.worktreePath}.${randomUUID()}.tmp`;
       try {
@@ -1247,10 +1264,7 @@ export function createSkillRevisionService(options: {
     await recoverSubmissionCleanupJournals();
     const job = await readJob(jobId);
     const draft = await readDraft(job.draftId);
-    const candidateRoot =
-      draft.submissionHash === undefined
-        ? worktreePath(draft)
-        : join(submissionsPath(draft.id), draft.submissionHash);
+    const candidateRoot = candidatePath(draft);
     const baseRoot =
       draft.operation === "create"
         ? undefined
@@ -1476,10 +1490,7 @@ export function createSkillRevisionService(options: {
     async inspectDraft(id, missionId) {
       await recoverSubmissionCleanupJournals();
       const draft = await readDraft(id);
-      const candidateRoot =
-        draft.state === "editing" || draft.submissionHash === undefined
-          ? worktreePath(draft)
-          : join(submissionsPath(draft.id), draft.submissionHash);
+      const candidateRoot = candidatePath(draft);
       const workingTree = await scanSkillWorkingTree(candidateRoot, {
         allowMissingSkillDocument: draft.operation === "create" && draft.state === "editing",
       });
@@ -1892,7 +1903,9 @@ export function createSkillRevisionService(options: {
         if (draft.revision !== input.expectedRevision) throw coded("skill_revision_conflict");
         if (draft.state === "completed") throw coded("skill_revision_state_invalid");
         requireOwner(draft, input.missionId);
-        const snapshot = await scanSkillWorkingTree(worktreePath(draft));
+        const snapshot = await scanSkillWorkingTree(candidatePath(draft), {
+          allowMissingSkillDocument: draft.operation === "create" && draft.state === "editing",
+        });
         if (snapshot.hash !== input.expectedWorkingTreeHash) {
           throw coded("skill_revision_working_tree_changed");
         }
@@ -1917,10 +1930,7 @@ export function createSkillRevisionService(options: {
           throw coded("skill_revision_state_invalid");
         }
         const draft = await readDraft(job.draftId);
-        const candidateRoot =
-          draft.submissionHash === undefined
-            ? worktreePath(draft)
-            : join(submissionsPath(draft.id), draft.submissionHash);
+        const candidateRoot = candidatePath(draft);
         const snapshot = await scanSkillWorkingTree(candidateRoot, {
           allowMissingSkillDocument: draft.operation === "create" && draft.state !== "completed",
         });

@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityStore } from "./capability-store.ts";
+import { copySkillTree } from "./skill-revision-draft-store.ts";
 import {
   createSkillRevisionService,
   SkillRevisionValidationError,
@@ -46,6 +47,54 @@ describe("Skill revision service", () => {
       jobId: pending.id,
       draftId: job.draftId,
     });
+  });
+
+  it("discards a submitted draft from its immutable candidate snapshot", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Discard this submitted candidate.",
+    });
+    const submitted = await fixture.service.getDraft(job.draftId);
+
+    await fixture.service.discardDraft({
+      draftId: submitted.id,
+      expectedRevision: submitted.revision,
+      expectedWorkingTreeHash: submitted.submissionHash!,
+    });
+
+    await expect(fixture.service.list()).resolves.toEqual([]);
+    await expect(fixture.service.listDrafts()).resolves.toEqual([]);
+    await expect(stat(join(fixture.draftsPath, submitted.id))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("discards a rejected submitted draft from its immutable candidate snapshot", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const inspection = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: inspection.draft.revision,
+      expectedWorkingTreeHash: inspection.workingTree.hash,
+      summary: "Reject and discard this submitted candidate.",
+    });
+    await fixture.service.reject(pending.id, pending.revision);
+    const rejected = await fixture.service.getDraft(job.draftId);
+
+    await fixture.service.discardDraft({
+      draftId: rejected.id,
+      expectedRevision: rejected.revision,
+      expectedWorkingTreeHash: rejected.submissionHash!,
+    });
+
+    await expect(fixture.service.list()).resolves.toEqual([]);
+    await expect(fixture.service.listDrafts()).resolves.toEqual([]);
   });
 
   it("replays a committed submission cleanup journal after restart", async () => {
@@ -128,16 +177,10 @@ describe("Skill revision service", () => {
         state: "prepared",
       })}\n`,
     );
-    const recovered = createSkillRevisionService({
-      statePath: fixture.statePath,
-      draftsPath: fixture.draftsPath,
-      draftsTrashPath: fixture.draftsTrashPath,
-      capabilities: fixture.capabilities,
-      resolveWorkspacePath: async () => fixture.workspacePath,
+    await expect(fixture.service.getDraft(draft.id)).resolves.toMatchObject({
+      state: "pending_review",
     });
-
-    await expect(recovered.getDraft(draft.id)).resolves.toMatchObject({ state: "pending_review" });
-    await expect(recovered.get(originalJob.id)).resolves.toMatchObject({
+    await expect(fixture.service.get(originalJob.id)).resolves.toMatchObject({
       revision: pending.revision,
       state: "pending_review",
     });
@@ -987,7 +1030,10 @@ describe("Skill revision service", () => {
   });
 
   it("moves a frozen v3 editable worktree into the resolved Workspace on first access", async () => {
-    const fixture = await createService();
+    let resolvedWorkspace = "";
+    const resolveWorkspacePath = vi.fn(async () => resolvedWorkspace);
+    const fixture = await createService({ resolveWorkspacePath });
+    resolvedWorkspace = fixture.workspacePath;
     const historicalDraft = await historicalFixture("skill-revision-draft-v3.json");
     const draftId = String(historicalDraft["id"]);
     const legacyWorktree = join(fixture.draftsPath, draftId, "worktree");
@@ -1016,6 +1062,44 @@ describe("Skill revision service", () => {
     });
     await expect(stat(join(migratedWorktree, "SKILL.md"))).resolves.toBeDefined();
     await expect(stat(legacyWorktree)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(resolveWorkspacePath).toHaveBeenCalledWith(historicalDraft["activeMissionId"], draftId);
+  });
+
+  it("rejects copying a Skill tree into itself before creating the target", async () => {
+    const fixture = await createService();
+    const source = join(fixture.workspacePath, "source");
+    const nestedTarget = join(source, ".pragma", "skill-revision-drafts", randomUUID());
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "---\nname: nested\ndescription: Nested.\n---\n");
+
+    await expect(copySkillTree(source, nestedTarget)).rejects.toMatchObject({
+      code: "skill_revision_invalid_copy_target",
+    });
+    await expect(stat(nestedTarget)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a legacy Mission worktree as its migration Workspace before creating metadata", async () => {
+    let legacyWorkspace = "";
+    const fixture = await createService({
+      resolveWorkspacePath: async () => legacyWorkspace,
+    });
+    const historicalDraft = await historicalFixture("skill-revision-draft-v3.json");
+    const draftId = String(historicalDraft["id"]);
+    legacyWorkspace = join(fixture.draftsPath, draftId, "worktree");
+    await mkdir(legacyWorkspace, { recursive: true });
+    await writeFile(
+      join(legacyWorkspace, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n",
+    );
+    await writeFile(
+      join(fixture.draftsPath, draftId, "draft.json"),
+      `${JSON.stringify(historicalDraft)}\n`,
+    );
+
+    await expect(fixture.service.getDraft(draftId)).rejects.toMatchObject({
+      code: "skill_revision_invalid_copy_target",
+    });
+    await expect(stat(join(legacyWorkspace, ".pragma"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("preserves an unsubmitted rejected v3 worktree when migrating it into the Workspace", async () => {
@@ -1454,6 +1538,9 @@ describe("Skill revision service", () => {
 async function createService(
   options: {
     readonly generator?: Parameters<typeof createSkillRevisionService>[0]["generator"];
+    readonly resolveWorkspacePath?: Parameters<
+      typeof createSkillRevisionService
+    >[0]["resolveWorkspacePath"];
     readonly publish?: (input: {
       readonly sourcePath: string;
     }) => Promise<{ readonly manifest: { readonly latestRevision: number } }>;
@@ -1521,7 +1608,7 @@ async function createService(
       draftsPath: join(root, "data", "skill-revision-drafts"),
       draftsTrashPath: join(root, "trash", "skill-revision-drafts"),
       capabilities,
-      resolveWorkspacePath: async () => canonicalWorkspacePath,
+      resolveWorkspacePath: options.resolveWorkspacePath ?? (async () => canonicalWorkspacePath),
       ...(options.generator === undefined ? {} : { generator: options.generator }),
     }),
   };

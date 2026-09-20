@@ -1,7 +1,7 @@
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
@@ -686,16 +686,41 @@ export async function createDesktopApplicationContainer(
       return await skillAgentsRef.current.revisionGenerator.generate(input);
     },
   };
+  const skillRevisionDraftsPath = join(pragmaPaths.dataRoot(), "skill-revision-drafts");
   const skillRevisions = createSkillRevisionService({
     statePath: join(pragmaPaths.stateRoot(), "skill-revisions"),
-    draftsPath: join(pragmaPaths.dataRoot(), "skill-revision-drafts"),
+    draftsPath: skillRevisionDraftsPath,
     draftsTrashPath: join(pragmaPaths.trashRoot(), "skill-revision-drafts"),
     capabilities: capabilityStore,
     generator: skillRevisionGenerator,
-    resolveWorkspacePath: async (missionId) => {
+    resolveWorkspacePath: async (missionId, draftId) => {
       if (missionId !== undefined) {
         try {
-          return (await missionStore.get(missionId)).workspace.path;
+          const mission = await missionStore.get(missionId);
+          const legacyWorkspace =
+            draftId === undefined ? undefined : join(skillRevisionDraftsPath, draftId, "worktree");
+          if (
+            draftId !== undefined &&
+            legacyWorkspace !== undefined &&
+            mission.workspace.path === legacyWorkspace
+          ) {
+            const defaultWorkspace = (
+              await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())
+            ).defaultWorkspace;
+            if (defaultWorkspace === legacyWorkspace) {
+              throw Object.assign(new Error("skill_revision_workspace_unavailable"), {
+                code: "skill_revision_workspace_unavailable",
+              });
+            }
+            await guardedMissionStore.rebindLegacySkillRevisionWorkspace({
+              id: mission.id,
+              draftId,
+              expectedWorkspacePath: legacyWorkspace,
+              workspace: { path: defaultWorkspace, basename: basename(defaultWorkspace) },
+            });
+            return defaultWorkspace;
+          }
+          return mission.workspace.path;
         } catch (error) {
           if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found") {
             throw error;

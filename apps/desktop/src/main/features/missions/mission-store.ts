@@ -141,6 +141,12 @@ export interface MissionStore {
     readonly id: string;
     readonly draftId: string;
   }): Promise<Mission>;
+  rebindLegacySkillRevisionWorkspace(input: {
+    readonly id: string;
+    readonly draftId: string;
+    readonly expectedWorkspacePath: string;
+    readonly workspace: { readonly path: string; readonly basename: string };
+  }): Promise<Mission>;
   restoreManagedRevisionStore(input: {
     readonly id: string;
     readonly preserveSession?: boolean;
@@ -1515,6 +1521,27 @@ export function createMissionStore(options: {
         return contextMounts.length === current.contextMounts.length
           ? current
           : { ...current, contextMounts, updatedAt: timestamp };
+      });
+    },
+    async rebindLegacySkillRevisionWorkspace(input) {
+      return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
+        const ownsDraft = current.contextMounts.some(
+          (mount) => mount.kind === "skill-revision-draft" && mount.draftId === input.draftId,
+        );
+        if (current.origin.type !== "system-skill-revision" || !ownsDraft) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${current.id} is not the legacy owner of Skill draft ${input.draftId}.`,
+          );
+        }
+        if (current.workspace.path === input.workspace.path) return current;
+        if (current.workspace.path !== input.expectedWorkspacePath) {
+          throw new MissionStoreError(
+            "config_invalid",
+            `Mission ${current.id} no longer uses the expected legacy Skill draft workspace.`,
+          );
+        }
+        return { ...current, workspace: input.workspace, updatedAt: timestamp };
       });
     },
     async restoreManagedRevisionStore(input) {
