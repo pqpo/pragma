@@ -5,6 +5,8 @@ import { i18n } from "../../i18n/index.ts";
 import {
   activeSkillRevisionTaskCount,
   canDeleteSkillRevisionJob,
+  canRetrySkillRevisionJob,
+  formatSkillFileMetadata,
   skillRevisionAttentionActions,
   SkillRevisionDetailFragment,
   SkillRevisionEmptyState,
@@ -45,6 +47,40 @@ describe("SkillRevisionEmptyState", () => {
         canDeleteSkillRevisionJob(state as Parameters<typeof canDeleteSkillRevisionJob>[0]),
       ),
     ).toEqual(["completed", "rejected", "needs_attention", "superseded"]);
+  });
+
+  it("does not retry a revision whose base has changed", () => {
+    expect(canRetrySkillRevisionJob("rejected", "skill_revision_base_changed")).toBe(false);
+    expect(canRetrySkillRevisionJob("rejected", undefined)).toBe(true);
+    expect(canRetrySkillRevisionJob("needs_attention", "invalid_input")).toBe(true);
+  });
+
+  it("shows executable-only file changes in review metadata", () => {
+    const t = i18n.getFixedT("en", "studio");
+    const metadata = formatSkillFileMetadata(
+      {
+        jobId: "00000000-0000-4000-8000-000000000001",
+        path: "scripts/run.mjs",
+        before: {
+          sizeBytes: 20,
+          sha256: "a".repeat(64),
+          executable: false,
+          content: "export const run = 1;\n",
+          unavailableReason: null,
+        },
+        after: {
+          sizeBytes: 20,
+          sha256: "a".repeat(64),
+          executable: true,
+          content: "export const run = 1;\n",
+          unavailableReason: null,
+        },
+      },
+      t,
+    );
+
+    expect(metadata).toContain("not executable → 20 B");
+    expect(metadata).toContain("executable");
   });
 
   it("keeps list actions icon-only like the knowledge revision list", async () => {

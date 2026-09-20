@@ -15,6 +15,7 @@ import {
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
   GetSkillFileSchema,
+  GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
   ListSkillFilesSchema,
@@ -24,6 +25,7 @@ import {
   SkillFileContentSchema,
   SkillFileEntrySchema,
   SkillRevisionReviewSchema,
+  SkillRevisionReviewFileSchema,
   UpdateCapabilitySchema,
   UpdateSkillCapabilitySchema,
 } from "../../shared/contracts/capabilities.ts";
@@ -102,6 +104,13 @@ export const capabilitiesApi = {
     SkillRevisionReviewSchema.parse(
       await ipcRenderer.invoke("capabilities:get-skill-revision-review", jobId),
     ),
+  getSkillRevisionReviewFile: async (input) =>
+    SkillRevisionReviewFileSchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:get-skill-revision-review-file",
+        GetSkillRevisionReviewFileSchema.parse(input),
+      ),
+    ),
   approveSkillRevision: async (input) =>
     ManagedSkillRevisionJobSchema.parse(
       await ipcRenderer.invoke("capabilities:approve-skill-revision", input),
@@ -135,6 +144,7 @@ export const capabilitiesApi = {
   | "pickSkillSource"
   | "listSkillRevisionJobs"
   | "getSkillRevisionReview"
+  | "getSkillRevisionReviewFile"
   | "approveSkillRevision"
   | "rejectSkillRevision"
   | "retrySkillRevision"

@@ -11,6 +11,7 @@ import {
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
   GetSkillFileSchema,
+  GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
   ListSkillFilesSchema,
@@ -133,6 +134,10 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:get-skill-revision-review", (_event, jobId: unknown) =>
     skillRevisions.getReview(z.string().uuid().parse(jobId)),
   );
+  ipcMain.handle("capabilities:get-skill-revision-review-file", (_event, input: unknown) => {
+    const parsed = GetSkillRevisionReviewFileSchema.parse(input);
+    return skillRevisions.getReviewFile(parsed.jobId, parsed.path);
+  });
   const actionSchema = z
     .object({ jobId: z.string().uuid(), expectedRevision: z.number().int().positive() })
     .strict();

@@ -1649,6 +1649,17 @@ export const studio = {
   skillRevisionSummaryUnavailable: "暂无变更摘要。",
   skillRevisionRequestDocumentDescription: "记录发起本次 Skill 修订的原始要求。",
   skillRevisionSummaryDocumentDescription: "概括本次 Skill 修订的变更范围，便于发布前审批。",
+  loadingSkillRevisionFile: "正在加载文件预览…",
+  skillRevisionFileMissing: "此快照中不存在该文件。",
+  skillRevisionFileMetadata: "{{size}} · {{hash}} · {{mode}}",
+  skillRevisionFileTransition: "{{before}} → {{after}}",
+  skillRevisionExecutable: "可执行",
+  skillRevisionNotExecutable: "不可执行",
+  skillRevisionPreviewUnavailable: {
+    binary: "二进制文件无法预览（{{size}}，SHA-256 {{hash}}）。",
+    size_limit: "文件超过预览大小限制（{{size}}，SHA-256 {{hash}}）。",
+    line_limit: "文件超过预览行数限制（{{size}}，SHA-256 {{hash}}）。",
+  },
   skillRevisionOperation: {
     added: "新增",
     modified: "修改",

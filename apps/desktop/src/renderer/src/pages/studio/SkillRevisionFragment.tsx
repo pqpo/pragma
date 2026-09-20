@@ -10,12 +10,17 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type {
   ManagedSkillRevisionJob,
   SkillRevisionDraft,
 } from "@pragma/built-in-agents/contracts";
 
-import type { Capability, SkillRevisionReview } from "../../../../shared/contracts/index.ts";
+import type {
+  Capability,
+  SkillRevisionReview,
+  SkillRevisionReviewFile,
+} from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { buildRevisionLineDiff, RevisionDiffCode } from "./ContextStoreRevisionFragment.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
@@ -58,6 +63,16 @@ export function canDeleteSkillRevisionJob(state: ManagedSkillRevisionJob["state"
   return ["completed", "rejected", "needs_attention", "superseded"].includes(state);
 }
 
+export function canRetrySkillRevisionJob(
+  state: ManagedSkillRevisionJob["state"],
+  errorCode?: string,
+): boolean {
+  return (
+    (state === "needs_attention" || state === "rejected") &&
+    errorCode !== "skill_revision_base_changed"
+  );
+}
+
 export function SkillRevisionEmptyState() {
   const { t } = useTranslation("studio");
 
@@ -96,8 +111,8 @@ export function SkillRevisionTaskActions(props: {
 
   return (
     <div className="revision-task-actions">
-      {(props.jobState === "needs_attention" && attentionActions.canRetry) ||
-      props.jobState === "rejected" ? (
+      {canRetrySkillRevisionJob(props.jobState, props.errorCode) &&
+      (props.jobState !== "needs_attention" || attentionActions.canRetry) ? (
         <button
           className="revision-task-icon-button"
           type="button"
@@ -141,6 +156,8 @@ export function SkillRevisionDetailFragment(props: {
   const [selection, setSelection] = useState<SkillRevisionDetailSelection>({ kind: "summary" });
   const [review, setReview] = useState<SkillRevisionReview>();
   const [reviewError, setReviewError] = useState<string>();
+  const [fileReview, setFileReview] = useState<SkillRevisionReviewFile>();
+  const [fileReviewError, setFileReviewError] = useState<string>();
   useEffect(() => {
     const api = desktopApi();
     let active = true;
@@ -162,12 +179,33 @@ export function SkillRevisionDetailFragment(props: {
   }, [job.id, job.revision]);
   const operation =
     selection.kind === "operation" ? review?.operations[selection.index] : undefined;
+  useEffect(() => {
+    const api = desktopApi();
+    let active = true;
+    setFileReview(undefined);
+    setFileReviewError(undefined);
+    if (api === undefined || operation === undefined) return () => undefined;
+    void api
+      .getSkillRevisionReviewFile({ jobId: job.id, path: operation.path })
+      .then((value) => {
+        if (active) setFileReview(value);
+      })
+      .catch((cause) => {
+        if (active) setFileReviewError(errorMessage(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [job.id, job.revision, operation?.path]);
+  const previewUnavailable =
+    fileReview !== undefined &&
+    (fileReview.before?.content === null || fileReview.after?.content === null);
   const diff = useMemo(
     () =>
-      operation?.before === null || operation?.after === null
+      fileReview === undefined || previewUnavailable
         ? []
-        : buildRevisionLineDiff(operation?.before ?? "", operation?.after ?? ""),
-    [operation],
+        : buildRevisionLineDiff(fileReview.before?.content ?? "", fileReview.after?.content ?? ""),
+    [fileReview, previewUnavailable],
   );
   const additions = diff.filter((line) => line.kind === "addition").length;
   const deletions = diff.filter((line) => line.kind === "deletion").length;
@@ -219,8 +257,8 @@ export function SkillRevisionDetailFragment(props: {
                   </button>
                 </>
               ) : null}
-              {(job.state === "needs_attention" && attentionActions.canRetry) ||
-              job.state === "rejected" ? (
+              {canRetrySkillRevisionJob(job.state, job.error?.code) &&
+              (job.state !== "needs_attention" || attentionActions.canRetry) ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -324,10 +362,17 @@ export function SkillRevisionDetailFragment(props: {
                 </span>
               </div>
               {operation === undefined ? null : (
-                <span className="revision-diff-stats">
-                  <b>+{additions}</b>
-                  <i>−{deletions}</i>
-                </span>
+                <div className="skill-revision-file-stats">
+                  {fileReview ? (
+                    <span className="skill-revision-file-metadata">
+                      {formatSkillFileMetadata(fileReview, t)}
+                    </span>
+                  ) : null}
+                  <span className="revision-diff-stats">
+                    <b>+{additions}</b>
+                    <i>−{deletions}</i>
+                  </span>
+                </div>
               )}
             </header>
             <div className="revision-diff-scroll-area">
@@ -348,9 +393,17 @@ export function SkillRevisionDetailFragment(props: {
                       : t("revisionDiffUnavailable")}
                   </p>
                 </div>
-              ) : operation.before === null || operation.after === null ? (
+              ) : fileReviewError ? (
                 <div className="revision-diff-unavailable">
-                  <p>{t("revisionDiffUnavailable")}</p>
+                  <p>{fileReviewError}</p>
+                </div>
+              ) : fileReview === undefined ? (
+                <div className="revision-diff-unavailable">
+                  <p>{t("loadingSkillRevisionFile")}</p>
+                </div>
+              ) : previewUnavailable ? (
+                <div className="revision-diff-unavailable">
+                  <p>{skillFileUnavailableMessage(fileReview, t)}</p>
                 </div>
               ) : (
                 <RevisionDiffCode lines={diff} />
@@ -571,4 +624,39 @@ function formatRevisionTimestamp(value: string, locale: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+export function formatSkillFileMetadata(
+  review: SkillRevisionReviewFile,
+  t: TFunction<"studio">,
+): string {
+  const formatSnapshot = (snapshot: SkillRevisionReviewFile["before"]): string =>
+    snapshot === null
+      ? t("skillRevisionFileMissing")
+      : t("skillRevisionFileMetadata", {
+          size: formatBytes(snapshot.sizeBytes),
+          hash: snapshot.sha256.slice(0, 8),
+          mode: t(snapshot.executable ? "skillRevisionExecutable" : "skillRevisionNotExecutable"),
+        });
+  return t("skillRevisionFileTransition", {
+    before: formatSnapshot(review.before),
+    after: formatSnapshot(review.after),
+  });
+}
+
+function skillFileUnavailableMessage(
+  review: SkillRevisionReviewFile,
+  t: TFunction<"studio">,
+): string {
+  const unavailable = [review.before, review.after].find((snapshot) => snapshot?.content === null);
+  return t(`skillRevisionPreviewUnavailable.${unavailable?.unavailableReason ?? "binary"}`, {
+    size: formatBytes(unavailable?.sizeBytes ?? 0),
+    hash: unavailable?.sha256.slice(0, 8) ?? "",
+  });
+}
+
+function formatBytes(value: number): string {
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`;
+  return `${(value / 1_048_576).toFixed(1)} MiB`;
 }

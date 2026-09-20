@@ -1735,6 +1735,17 @@ export const studio = {
     "Records the original request that initiated this Skill revision.",
   skillRevisionSummaryDocumentDescription:
     "Summarizes the scope of this Skill revision for review before publishing.",
+  loadingSkillRevisionFile: "Loading file preview…",
+  skillRevisionFileMissing: "File is not present in this snapshot.",
+  skillRevisionFileMetadata: "{{size}} · {{hash}} · {{mode}}",
+  skillRevisionFileTransition: "{{before}} → {{after}}",
+  skillRevisionExecutable: "executable",
+  skillRevisionNotExecutable: "not executable",
+  skillRevisionPreviewUnavailable: {
+    binary: "Binary file cannot be previewed ({{size}}, SHA-256 {{hash}}).",
+    size_limit: "File exceeds the preview size limit ({{size}}, SHA-256 {{hash}}).",
+    line_limit: "File exceeds the preview line limit ({{size}}, SHA-256 {{hash}}).",
+  },
   skillRevisionOperation: {
     added: "Added",
     modified: "Modified",

@@ -151,6 +151,8 @@ import type {
   GetSkillFile,
   SkillFileContent,
   SkillRevisionReview,
+  GetSkillRevisionReviewFile,
+  SkillRevisionReviewFile,
   CapabilityTestRequest,
   CapabilityTestResult,
   PreviewCodeServiceRequest,
@@ -617,6 +619,9 @@ export interface PragmaDesktopAPI {
     capabilityId?: string,
   ) => Promise<{ readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft }[]>;
   getSkillRevisionReview: (jobId: string) => Promise<SkillRevisionReview>;
+  getSkillRevisionReviewFile: (
+    input: GetSkillRevisionReviewFile,
+  ) => Promise<SkillRevisionReviewFile>;
   approveSkillRevision: (input: {
     readonly jobId: string;
     readonly expectedRevision: number;

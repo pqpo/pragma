@@ -20,8 +20,10 @@ import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import { z } from "zod";
 
 import {
+  SkillRevisionReviewFileSchema,
   SkillRevisionReviewSchema,
   type SkillRevisionReview,
+  type SkillRevisionReviewFile,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import {
@@ -30,6 +32,7 @@ import {
   createStableSkillSubmission,
   emptySkillWorkingTreeSnapshot,
   scanSkillWorkingTree,
+  type SkillWorkingTreeEntry,
   type SkillWorkingTreeSnapshot,
 } from "./skill-revision-draft-store.ts";
 import {
@@ -125,6 +128,7 @@ export interface SkillRevisionService {
   get(jobId: string): Promise<ManagedSkillRevisionJob>;
   getDraft(draftId: string): Promise<SkillRevisionDraft>;
   getReview(jobId: string): Promise<SkillRevisionReview>;
+  getReviewFile(jobId: string, path: string): Promise<SkillRevisionReviewFile>;
   inspectDraft(draftId: string, missionId?: string): Promise<SkillDraftInspection>;
   attachMission(jobId: string, missionId: string): Promise<ManagedSkillRevisionJob>;
   detachMission(jobId: string, missionId: string): Promise<ManagedSkillRevisionJob>;
@@ -882,6 +886,50 @@ export function createSkillRevisionService(options: {
     return undefined;
   };
 
+  const moveDraftToTrash = async (
+    draft: SkillRevisionDraft,
+    snapshot: SkillWorkingTreeSnapshot,
+  ): Promise<void> => {
+    await mkdir(discardJournalsPath, { recursive: true, mode: 0o700 });
+    await mkdir(draftsTrashPath, { recursive: true, mode: 0o700 });
+    const discardedAt = new Date().toISOString();
+    const trashPath = join(draftsTrashPath, `${draft.id}-${discardedAt.replaceAll(":", "-")}`);
+    const journalPath = join(discardJournalsPath, `${draft.id}.json`);
+    const journal = {
+      schemaVersion: "pragma.skill-revision-draft-discard/v1" as const,
+      draftId: draft.id,
+      sourcePath: draftRoot(draft.id),
+      trashPath,
+      workingTreeHash: snapshot.hash,
+      discardedAt,
+    };
+    await writeJsonAtomic(journalPath, { ...journal, state: "prepared" });
+    await rename(draftRoot(draft.id), trashPath);
+    await writeJsonAtomic(journalPath, { ...journal, state: "completed" });
+  };
+
+  const resolveReviewState = async (jobId: string) => {
+    const job = await readJob(jobId);
+    const draft = await readDraft(job.draftId);
+    const candidateRoot =
+      draft.submissionHash === undefined
+        ? worktreePath(draft.id)
+        : join(submissionsPath(draft.id), draft.submissionHash);
+    const baseRoot =
+      draft.operation === "create"
+        ? undefined
+        : await options.capabilities.skillFilesPath(draft.capabilityId, draft.baseRevision);
+    const [candidate, base] = await Promise.all([
+      scanSkillWorkingTree(candidateRoot, {
+        allowMissingSkillDocument: draft.operation === "create" && draft.state === "editing",
+      }),
+      baseRoot === undefined
+        ? Promise.resolve(emptySkillWorkingTreeSnapshot())
+        : scanSkillWorkingTree(baseRoot),
+    ]);
+    return { job, draft, candidateRoot, baseRoot, candidate, base };
+  };
+
   const service: SkillRevisionService = {
     async submit(rawRequest) {
       const legacy = SkillRevisionSubmissionRequestSchema.parse(rawRequest);
@@ -1003,24 +1051,7 @@ export function createSkillRevisionService(options: {
     get: readJob,
     getDraft: readDraft,
     async getReview(jobId) {
-      const job = await readJob(jobId);
-      const draft = await readDraft(job.draftId);
-      const candidateRoot =
-        draft.submissionHash === undefined
-          ? worktreePath(draft.id)
-          : join(submissionsPath(draft.id), draft.submissionHash);
-      const baseRoot =
-        draft.operation === "create"
-          ? undefined
-          : await options.capabilities.skillFilesPath(draft.capabilityId, draft.baseRevision);
-      const [candidate, base] = await Promise.all([
-        scanSkillWorkingTree(candidateRoot, {
-          allowMissingSkillDocument: draft.operation === "create" && draft.state === "editing",
-        }),
-        baseRoot === undefined
-          ? Promise.resolve(emptySkillWorkingTreeSnapshot())
-          : scanSkillWorkingTree(baseRoot),
-      ]);
+      const { job, draft, candidate, base } = await resolveReviewState(jobId);
       const operations: SkillRevisionReview["operations"][number][] = [];
       const baseByPath = new Map(base.entries.map((entry) => [entry.path, entry]));
       const candidateByPath = new Map(candidate.entries.map((entry) => [entry.path, entry]));
@@ -1037,31 +1068,51 @@ export function createSkillRevisionService(options: {
         ) {
           continue;
         }
-        const previousContent =
-          previous === undefined || baseRoot === undefined
-            ? ""
-            : await readUtf8File(baseRoot, path);
         if (next === undefined) {
           operations.push({
             path,
             operation: "deleted",
-            before: previousContent,
-            after: "",
+            before: previous === undefined ? null : reviewFileMetadata(previous),
+            after: null,
           });
           continue;
         }
-        const content = await readUtf8File(candidateRoot, path);
         operations.push({
           path,
           operation: previous === undefined ? "added" : "modified",
-          before: previousContent,
-          after: content,
+          before: previous === undefined ? null : reviewFileMetadata(previous),
+          after: reviewFileMetadata(next),
         });
       }
       return SkillRevisionReviewSchema.parse({
         jobId: job.id,
         draftId: draft.id,
+        baseSnapshotHash: base.hash,
+        candidateSnapshotHash: candidate.hash,
         operations,
+      });
+    },
+    async getReviewFile(jobId, path) {
+      const { job, candidateRoot, baseRoot, candidate, base } = await resolveReviewState(jobId);
+      const previous = base.entries.find((entry) => entry.path === path);
+      const next = candidate.entries.find((entry) => entry.path === path);
+      if (
+        (previous === undefined && next === undefined) ||
+        (previous !== undefined &&
+          next !== undefined &&
+          previous.sha256 === next.sha256 &&
+          previous.executable === next.executable)
+      ) {
+        throw coded("skill_revision_review_file_not_found");
+      }
+      return SkillRevisionReviewFileSchema.parse({
+        jobId: job.id,
+        path,
+        before:
+          previous === undefined || baseRoot === undefined
+            ? null
+            : await readReviewFile(baseRoot, previous),
+        after: next === undefined ? null : await readReviewFile(candidateRoot, next),
       });
     },
     async inspectDraft(id, missionId) {
@@ -1229,6 +1280,9 @@ export function createSkillRevisionService(options: {
       ) {
         throw coded("skill_revision_conflict");
       }
+      if (candidate.error?.code === "skill_revision_base_changed") {
+        throw coded("skill_revision_base_changed");
+      }
       if (
         candidate.request.operation === "create" &&
         candidate.error?.code === "skill_creation_id_conflict"
@@ -1395,22 +1449,7 @@ export function createSkillRevisionService(options: {
             error: { code: "draft_discarded", message: "The Skill draft was discarded." },
           }));
         }
-        await mkdir(discardJournalsPath, { recursive: true, mode: 0o700 });
-        await mkdir(draftsTrashPath, { recursive: true, mode: 0o700 });
-        const discardedAt = new Date().toISOString();
-        const trashPath = join(draftsTrashPath, `${draft.id}-${discardedAt.replaceAll(":", "-")}`);
-        const journalPath = join(discardJournalsPath, `${draft.id}.json`);
-        const journal = {
-          schemaVersion: "pragma.skill-revision-draft-discard/v1",
-          draftId: draft.id,
-          sourcePath: draftRoot(draft.id),
-          trashPath,
-          workingTreeHash: snapshot.hash,
-          discardedAt,
-        };
-        await writeJsonAtomic(journalPath, { ...journal, state: "prepared" });
-        await rename(draftRoot(draft.id), trashPath);
-        await writeJsonAtomic(journalPath, { ...journal, state: "completed" });
+        await moveDraftToTrash(draft, snapshot);
       });
     },
     async delete(id, revision) {
@@ -1420,7 +1459,23 @@ export function createSkillRevisionService(options: {
         if (!["completed", "rejected", "needs_attention", "superseded"].includes(job.state)) {
           throw coded("skill_revision_state_invalid");
         }
-        await rm(jobPath(id), { force: true });
+        const draft = await readDraft(job.draftId);
+        const snapshot = await scanSkillWorkingTree(worktreePath(draft.id), {
+          allowMissingSkillDocument: draft.operation === "create" && draft.state !== "completed",
+        });
+        for (const related of (await readAllJobs()).filter(
+          (candidate) => candidate.draftId === draft.id,
+        )) {
+          await writeJob({
+            ...related,
+            state: "rejected",
+            missionId: undefined,
+            error: { code: "draft_discarded", message: "The Skill draft was discarded." },
+            revision: related.revision + 1,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        await moveDraftToTrash(draft, snapshot);
       });
     },
     async processPending() {
@@ -1545,11 +1600,35 @@ function diffSnapshots(
   return changes;
 }
 
-async function readUtf8File(root: string, logicalPath: string): Promise<string | null> {
-  const bytes = await readFile(join(root, ...logicalPath.split("/")));
-  if (bytes.byteLength > 1_000_000) return null;
+function reviewFileMetadata(entry: SkillWorkingTreeEntry) {
+  return {
+    sizeBytes: entry.sizeBytes,
+    sha256: entry.sha256,
+    executable: entry.executable,
+  };
+}
+
+async function readReviewFile(
+  root: string,
+  entry: SkillWorkingTreeEntry,
+): Promise<NonNullable<SkillRevisionReviewFile["before"]>> {
+  const metadata = reviewFileMetadata(entry);
+  if (entry.sizeBytes > 1_000_000) {
+    return { ...metadata, content: null, unavailableReason: "size_limit" };
+  }
+  const bytes = await readFile(join(root, ...entry.path.split("/")));
   const content = bytes.toString("utf8");
-  return Buffer.from(content, "utf8").equals(bytes) ? content : null;
+  if (!Buffer.from(content, "utf8").equals(bytes)) {
+    return { ...metadata, content: null, unavailableReason: "binary" };
+  }
+  let lineCount = 1;
+  for (const character of content) {
+    if (character === "\n") lineCount += 1;
+    if (lineCount > 5_000) {
+      return { ...metadata, content: null, unavailableReason: "line_limit" };
+    }
+  }
+  return { ...metadata, content, unavailableReason: null };
 }
 
 async function readSkillPackage(

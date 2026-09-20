@@ -340,19 +340,40 @@ export const SkillFileContentSchema = SkillFileEntrySchema.extend({
   revision: z.number().int().positive(),
   content: z.string().nullable(),
 });
+export const SkillRevisionReviewFileMetadataSchema = z.object({
+  sizeBytes: z.number().int().nonnegative(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  executable: z.boolean(),
+});
 export const SkillRevisionReviewSchema = z.object({
   jobId: z.string().uuid(),
   draftId: z.string().uuid(),
+  baseSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  candidateSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/u),
   operations: z
     .array(
       z.object({
         path: SkillFilePathSchema,
         operation: z.enum(["added", "modified", "deleted"]),
-        before: z.string().max(1_000_000).nullable(),
-        after: z.string().max(1_000_000).nullable(),
+        before: SkillRevisionReviewFileMetadataSchema.nullable(),
+        after: SkillRevisionReviewFileMetadataSchema.nullable(),
       }),
     )
-    .max(1_000),
+    .max(2_000),
+});
+export const GetSkillRevisionReviewFileSchema = z.object({
+  jobId: z.string().uuid(),
+  path: SkillFilePathSchema,
+});
+export const SkillRevisionReviewFileSnapshotSchema = SkillRevisionReviewFileMetadataSchema.extend({
+  content: z.string().max(1_000_000).nullable(),
+  unavailableReason: z.enum(["binary", "size_limit", "line_limit"]).nullable(),
+});
+export const SkillRevisionReviewFileSchema = z.object({
+  jobId: z.string().uuid(),
+  path: SkillFilePathSchema,
+  before: SkillRevisionReviewFileSnapshotSchema.nullable(),
+  after: SkillRevisionReviewFileSnapshotSchema.nullable(),
 });
 export const CapabilityTestRequestSchema = z.object({
   id: CapabilityIdSchema,
