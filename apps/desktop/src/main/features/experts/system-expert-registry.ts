@@ -47,6 +47,7 @@ const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 export interface DesktopSystemExpertRegistry {
   initialize(): Promise<void>;
   list(): readonly ExpertSummary[];
+  listResources(): readonly PragmaExpertResource[];
   get(ref: string): ExpertDefinition | undefined;
   getResource(ref: string): PragmaExpertResource | undefined;
   getAdditionalResources(ref: string): readonly PragmaResource[];
@@ -55,13 +56,22 @@ export interface DesktopSystemExpertRegistry {
   fingerprint(ref: string): string | undefined;
   isReservedRef(ref: string): boolean;
   isReservedId(id: string): boolean;
-  update(ref: string, input: UpdateBuiltInExpertDefinition): Promise<ExpertDefinition>;
+  update(
+    ref: string,
+    input: UpdateBuiltInExpertDefinition,
+    validateResources?:
+      ((resources: readonly PragmaExpertResource[]) => void | Promise<void>) | undefined,
+  ): Promise<ExpertDefinition>;
   validateAndUpgradeCapabilityRevision(
     capabilityId: string,
     revision: number,
     availableTools?: readonly string[],
   ): Promise<boolean>;
-  reset(ref: string): Promise<ExpertDefinition>;
+  reset(
+    ref: string,
+    validateResources?:
+      ((resources: readonly PragmaExpertResource[]) => void | Promise<void>) | undefined,
+  ): Promise<ExpertDefinition>;
 }
 
 export function createDesktopSystemExpertRegistry(options?: {
@@ -84,10 +94,13 @@ export function createDesktopSystemExpertRegistry(options?: {
     if (!defaultResources.has(ref)) throw new Error(`Built-in Expert not found: ${ref}`);
   };
 
-  const effectiveResource = (ref: string): PragmaExpertResource => {
+  const effectiveResource = (
+    ref: string,
+    source: ReadonlyMap<string, SystemExpertCustomization> = customizations,
+  ): PragmaExpertResource => {
     const defaultResource = defaultResources.get(ref);
     if (defaultResource === undefined) throw new Error(`Built-in Expert not found: ${ref}`);
-    const customization = customizations.get(ref);
+    const customization = source.get(ref);
     if (customization === undefined) return defaultResource;
     return {
       ...defaultResource,
@@ -289,6 +302,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       });
     },
     list: () => editableRefs.map((ref) => ExpertSummarySchema.parse(definition(ref))),
+    listResources: () => editableRefs.map((ref) => effectiveResource(ref)),
     get: (ref) => (defaultResources.has(ref) ? definition(ref) : undefined),
     getResource: (ref) => (defaultResources.has(ref) ? effectiveResource(ref) : undefined),
     getAdditionalResources: (ref) =>
@@ -321,7 +335,7 @@ export function createDesktopSystemExpertRegistry(options?: {
     fingerprint: (ref) => fingerprint(ref),
     isReservedRef: (ref) => reservedRefs.has(ref),
     isReservedId: (id) => reservedIds.has(id),
-    async update(ref, input) {
+    async update(ref, input, validateResources) {
       requireBuiltInRef(ref);
       const parsed = UpdateBuiltInExpertDefinitionSchema.parse(input);
       await mutate(async () => {
@@ -335,6 +349,9 @@ export function createDesktopSystemExpertRegistry(options?: {
             revision: (current?.revision ?? 1) + 1,
             updatedAt: new Date().toISOString(),
           }),
+        );
+        await validateResources?.(
+          editableRefs.map((candidateRef) => effectiveResource(candidateRef, latest)),
         );
         await writeConfig(latest);
         customizations = latest;
@@ -392,11 +409,14 @@ export function createDesktopSystemExpertRegistry(options?: {
       });
       return changed;
     },
-    async reset(ref) {
+    async reset(ref, validateResources) {
       requireBuiltInRef(ref);
       await mutate(async () => {
         const latest = await readConfig();
         latest.delete(ref);
+        await validateResources?.(
+          editableRefs.map((candidateRef) => effectiveResource(candidateRef, latest)),
+        );
         await writeConfig(latest);
         customizations = latest;
       });

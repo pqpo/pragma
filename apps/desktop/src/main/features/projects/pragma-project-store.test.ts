@@ -16,12 +16,18 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BUILT_IN_PRAGMA_REF,
+  SKILL_REVISION_EXPERT_REF,
+  STORE_REVISION_EXPERT_REF,
   builtInAgentResource,
   pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
 import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
 
-import type { ExpertDefinition, UpdateExpertDefinition } from "../../../shared/contracts/index.ts";
+import type {
+  ExpertDefinition,
+  UpdateBuiltInExpertDefinition,
+  UpdateExpertDefinition,
+} from "../../../shared/contracts/index.ts";
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
@@ -49,18 +55,21 @@ afterEach(async () => {
 async function stores() {
   const directory = await mkdtemp(join(tmpdir(), "pragma-project-store-"));
   directories.push(directory);
+  const systemExperts = createDesktopSystemExpertRegistry();
   const project = createPragmaProjectStore({
     projectsPath: directory,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
+    externalResources: () => systemExperts.listResources(),
   });
   return {
     directory,
     project,
     experts: createExpertDefinitionStore({
       project,
-      systemExperts: createDesktopSystemExpertRegistry(),
+      systemExperts,
       validateModel: async () => undefined,
     }),
+    systemExperts,
   };
 }
 
@@ -76,6 +85,27 @@ async function projectRevisionFile(
     join(directory, ".cache", "views", manifest.snapshotHash, relativePath),
     "utf8",
   );
+}
+
+function builtInUpdate(
+  definition: ExpertDefinition,
+  resourceTools: UpdateBuiltInExpertDefinition["resourceTools"],
+): UpdateBuiltInExpertDefinition {
+  return {
+    ...(definition.avatarId === undefined ? {} : { avatarId: definition.avatarId }),
+    name: definition.name,
+    description: definition.description,
+    tags: definition.tags,
+    additionalInstructions: definition.additionalInstructions,
+    ...(definition.executionProfile.mode === "pinned"
+      ? { model: definition.executionProfile.model }
+      : {}),
+    capabilities: definition.capabilities,
+    toolApprovals: definition.toolApprovals,
+    plugins: definition.plugins,
+    contextStoreMounts: definition.contextStoreMounts,
+    resourceTools,
+  };
 }
 
 describe("PragmaProjectStore", { timeout: 30_000 }, () => {
@@ -915,6 +945,129 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     await expect(experts.remove(BUILT_IN_PRAGMA_REF)).rejects.toMatchObject({
       code: "built_in_readonly",
     });
+    expect((await project.get()).revision).toBe(1);
+  });
+
+  it("rejects cycles spanning System Experts before persisting their resource tools", async () => {
+    const { experts, systemExperts } = await stores();
+    const storeRevision = systemExperts.get(STORE_REVISION_EXPERT_REF)!;
+    const skillRevision = systemExperts.get(SKILL_REVISION_EXPERT_REF)!;
+    const binding = (targetRef: string, name: string) => ({
+      adapter: "pragma.tool.call@v1" as const,
+      target: { ref: targetRef },
+      tool: { name, description: `Call ${targetRef}.`, approval: "ask" as const },
+    });
+
+    await experts.updateBuiltIn(
+      STORE_REVISION_EXPERT_REF,
+      builtInUpdate(storeRevision, [binding(SKILL_REVISION_EXPERT_REF, "call_skill_revision")]),
+    );
+    await expect(
+      experts.updateBuiltIn(
+        SKILL_REVISION_EXPERT_REF,
+        builtInUpdate(skillRevision, [binding(STORE_REVISION_EXPERT_REF, "call_store_revision")]),
+      ),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    expect(systemExperts.get(SKILL_REVISION_EXPERT_REF)?.resourceTools).toEqual([]);
+  });
+
+  it("rejects a reset that would restore a cyclic System Expert dependency", async () => {
+    const { experts, systemExperts } = await stores();
+    const pragma = systemExperts.get(BUILT_IN_PRAGMA_REF)!;
+    const storeRevision = systemExperts.get(STORE_REVISION_EXPERT_REF)!;
+    await experts.updateBuiltIn(BUILT_IN_PRAGMA_REF, builtInUpdate(pragma, []));
+    await experts.updateBuiltIn(
+      STORE_REVISION_EXPERT_REF,
+      builtInUpdate(storeRevision, [
+        {
+          adapter: "pragma.tool.call@v1",
+          target: { ref: BUILT_IN_PRAGMA_REF },
+          tool: {
+            name: "call_pragma",
+            description: "Call Pragma.",
+            approval: "ask",
+          },
+        },
+      ]),
+    );
+
+    await expect(experts.resetBuiltIn(BUILT_IN_PRAGMA_REF)).rejects.toMatchObject({
+      code: "config_invalid",
+    });
+    expect(systemExperts.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
+      customized: true,
+      resourceTools: [],
+    });
+  });
+
+  it("rejects a project update that closes a cycle through a System Expert", async () => {
+    const { project, experts, systemExperts } = await stores();
+    const published = await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert()],
+    });
+    const storeRevision = systemExperts.get(STORE_REVISION_EXPERT_REF)!;
+    await experts.updateBuiltIn(
+      STORE_REVISION_EXPERT_REF,
+      builtInUpdate(storeRevision, [
+        {
+          adapter: "pragma.tool.call@v1",
+          target: { ref: "expert:1xddvess309a6gme" },
+          tool: {
+            name: "call_project_expert",
+            description: "Call the project Expert.",
+            approval: "ask",
+          },
+        },
+      ]),
+    );
+    const projectExpert = exampleExpert();
+    projectExpert.spec.tools = [
+      {
+        adapter: "pragma.tool.call@v1",
+        target: { ref: STORE_REVISION_EXPERT_REF },
+        tool: {
+          name: "call_store_revision",
+          description: "Call Store Revision Agent.",
+          approval: "ask",
+        },
+      },
+    ];
+
+    await expect(
+      project.upsert({ baseRevision: published.revision, resource: projectExpert }),
+    ).rejects.toMatchObject({ code: "project_invalid" });
+    expect((await project.get()).revision).toBe(published.revision);
+  });
+
+  it("blocks deletion of a project Expert referenced by a System Expert", async () => {
+    const { project, experts, systemExperts } = await stores();
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert()],
+    });
+    const storeRevision = systemExperts.get(STORE_REVISION_EXPERT_REF)!;
+    await experts.updateBuiltIn(
+      STORE_REVISION_EXPERT_REF,
+      builtInUpdate(storeRevision, [
+        {
+          adapter: "pragma.tool.call@v1",
+          target: { ref: "expert:1xddvess309a6gme" },
+          tool: {
+            name: "call_project_expert",
+            description: "Call the project Expert.",
+            approval: "ask",
+          },
+        },
+      ]),
+    );
+
+    await expect(experts.remove("expert:1xddvess309a6gme")).rejects.toMatchObject({
+      code: "expert_referenced",
+    });
+    await expect(
+      project.remove({ baseRevision: 1, ref: "expert:1xddvess309a6gme" }),
+    ).rejects.toMatchObject({ code: "resource_referenced" });
     expect((await project.get()).revision).toBe(1);
   });
 

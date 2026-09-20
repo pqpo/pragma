@@ -261,35 +261,27 @@ describe("DesktopSystemExpertRegistry", () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v3-"));
     directories.push(directory);
     const configPath = join(directory, "system-experts.json");
-    const registry = createDesktopSystemExpertRegistry({ configPath });
-    await registry.initialize();
-    await registry.update(BUILT_IN_PRAGMA_REF, {
-      name: "Legacy Pragma",
-      description: "A legacy customized built-in Pragma Agent.",
-      tags: ["builtin", "legacy"],
-      additionalInstructions: "Preserve this customization.",
-      capabilities: [],
-      toolApprovals: {},
-      plugins: [],
-      contextStoreMounts: [],
-      resourceTools: [],
-    });
-    const legacy = JSON.parse(await readFile(configPath, "utf8")) as {
-      schemaVersion: number;
-      customizations: { ref: string; resourceTools?: unknown }[];
-    };
-    legacy.schemaVersion = 3;
-    legacy.customizations[0]!.ref = "expert:pragma@1.0.0";
-    delete legacy.customizations[0]!.resourceTools;
-    await writeFile(configPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    // Captured from the v3 writer at 0bb33b457cab25484a373a6a394ca3c3d4ab4d68.
+    const fixture = await readFile(
+      new URL("./__fixtures__/system-experts-v3.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(configPath, fixture);
 
     const reloaded = createDesktopSystemExpertRegistry({ configPath });
     await reloaded.initialize();
 
     expect(reloaded.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
-      name: "Legacy Pragma",
-      additionalInstructions: "Preserve this customization.",
+      name: "My Pragma",
+      additionalInstructions: "Prefer concise plans and confirm destructive operations.",
       customized: true,
+      executionProfile: { mode: "pinned", model: { runtimeId: "codex", modelId: "gpt-5.6" } },
+      capabilities: [
+        expect.objectContaining({ capabilityId: "11111111-1111-4111-8111-111111111111" }),
+      ],
+      contextStoreMounts: [
+        expect.objectContaining({ storeId: "22222222-2222-4222-8222-222222222222" }),
+      ],
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       schemaVersion: 7,

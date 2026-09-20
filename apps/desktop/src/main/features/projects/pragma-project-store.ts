@@ -64,6 +64,7 @@ import {
   type PragmaYamlValidationResult,
 } from "../../../shared/contracts/index.ts";
 import { referencingPragmaResources } from "./pragma-resource-references.ts";
+import { findPragmaInvocableDependencyCycle } from "./pragma-invocable-dependency-graph.ts";
 
 const ProjectIdentityMigrationManifestSchema = z
   .object({
@@ -186,6 +187,7 @@ export function createPragmaProjectStore(options: {
   readonly projectId?: string;
   readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
   readonly fixedResources?: readonly PragmaResource[] | undefined;
+  readonly externalResources?: (() => readonly PragmaResource[]) | undefined;
   readonly loggerProvider?: PragmaLoggerProvider | undefined;
   readonly blueprintCache?: PragmaBlueprintCacheStore | undefined;
 }): PragmaProjectStore {
@@ -322,6 +324,41 @@ export function createPragmaProjectStore(options: {
       `Built-in resource cannot be modified: ${canonicalPragmaResourceRef(changed)}.`,
     );
   };
+  const assertCombinedInvocableGraph = (resources: readonly PragmaResource[]): void => {
+    const cycle = findPragmaInvocableDependencyCycle([
+      ...resources,
+      ...(options.externalResources?.() ?? []),
+    ]);
+    if (cycle === undefined) return;
+    throw new PragmaProjectStoreError(
+      "project_invalid",
+      `Invocable resources contain a cyclic dependency: ${cycle.join(" -> ")}.`,
+    );
+  };
+  const assertExternalReferencesPreserved = (
+    resources: readonly PragmaResource[],
+    removalRefs: readonly string[],
+  ): void => {
+    const retainedRefs = new Set(resources.map(canonicalPragmaResourceRef));
+    for (const removalRef of removalRefs) {
+      if (retainedRefs.has(removalRef)) continue;
+      const referencedBy = referencingPragmaResources(
+        options.externalResources?.() ?? [],
+        removalRef,
+      ).map((resource) => ({
+        ref: canonicalPragmaResourceRef(resource),
+        name: resource.metadata.name,
+      }));
+      if (referencedBy.length === 0) continue;
+      throw new PragmaProjectStoreError(
+        "resource_referenced",
+        "This resource is used by a System Expert. Remove that dependency before deleting it.",
+        [],
+        undefined,
+        referencedBy,
+      );
+    }
+  };
 
   const validateChanges = async (
     input: PragmaProjectChangeSetInput,
@@ -377,6 +414,11 @@ export function createPragmaProjectStore(options: {
       } satisfies PragmaProjectChangeSetInput;
       const effectiveCandidate = await service.materializeChangeSet(projectId, effectiveChangeSet);
       assertDesktopExpertAuthoring(effectiveCandidate.resources);
+      assertCombinedInvocableGraph(effectiveCandidate.resources);
+      assertExternalReferencesPreserved(
+        effectiveCandidate.resources,
+        effectiveChangeSet.removals ?? [],
+      );
       return PragmaProjectSnapshotSchema.parse(
         await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet }),
       );
@@ -395,16 +437,20 @@ export function createPragmaProjectStore(options: {
       assertNotReserved(input.resources);
       assertFixedResources(input.resources);
       assertDesktopExpertAuthoring(input.resources);
+      assertCombinedInvocableGraph(input.resources);
+      const current = input.expectedRevision === 0 ? undefined : await get();
+      if (current !== undefined) {
+        const nextRefs = new Set(input.resources.map(canonicalPragmaResourceRef));
+        assertExternalReferencesPreserved(
+          input.resources,
+          current.resources.map(canonicalPragmaResourceRef).filter((ref) => !nextRefs.has(ref)),
+        );
+      }
       const artifacts =
         input.artifacts ??
         (input.expectedRevision === 0
           ? new Map<string, string>()
-          : await readRevisionArtifacts(
-              repository,
-              projectId,
-              input.expectedRevision,
-              await get(),
-            ));
+          : await readRevisionArtifacts(repository, projectId, input.expectedRevision, current!));
       return PragmaProjectSnapshotSchema.parse(
         await service.publish({ projectId, ...input, artifacts }),
       );

@@ -35,6 +35,7 @@ import {
   referencedPragmaResourceRefs,
   referencingPragmaResources,
 } from "../projects/pragma-resource-references.ts";
+import { findPragmaInvocableDependencyCycle } from "../projects/pragma-invocable-dependency-graph.ts";
 
 export interface ExpertDefinitionStore {
   list(): Promise<ExpertSummary[]>;
@@ -73,6 +74,18 @@ export function createExpertDefinitionStore(options: {
   readonly validateModel: (model: CreateExpertDefinition["model"]) => Promise<void>;
   readonly onRemoved?: ((expertRef: string) => Promise<void>) | undefined;
 }): ExpertDefinitionStore {
+  const validateSystemResourceGraph = async (
+    systemResources: readonly PragmaExpertResource[],
+  ): Promise<void> => {
+    const snapshot = await options.project.get();
+    const cycle = findPragmaInvocableDependencyCycle([...snapshot.resources, ...systemResources]);
+    if (cycle !== undefined) {
+      throw new ExpertDefinitionStoreError(
+        "config_invalid",
+        `Expert resource tools contain a cyclic dependency: ${cycle.join(" -> ")}.`,
+      );
+    }
+  };
   const getResource = async (
     ref: string,
   ): Promise<{
@@ -217,10 +230,10 @@ export function createExpertDefinitionStore(options: {
     async updateBuiltIn(id, input) {
       const parsed = UpdateBuiltInExpertDefinitionSchema.parse(input);
       if (parsed.model !== undefined) await options.validateModel(parsed.model);
-      return await options.systemExperts.update(id, parsed);
+      return await options.systemExperts.update(id, parsed, validateSystemResourceGraph);
     },
     async resetBuiltIn(id) {
-      return await options.systemExperts.reset(id);
+      return await options.systemExperts.reset(id, validateSystemResourceGraph);
     },
     async remove(id) {
       if (options.systemExperts.isReservedRef(id)) {
@@ -237,7 +250,12 @@ export function createExpertDefinitionStore(options: {
       if (resource === undefined) {
         throw new ExpertDefinitionStoreError("expert_not_found", "The expert no longer exists.");
       }
-      if (referencingPragmaResources(snapshot.resources, id).length > 0) {
+      if (
+        referencingPragmaResources(
+          [...snapshot.resources, ...options.systemExperts.listResources()],
+          id,
+        ).length > 0
+      ) {
         throw new ExpertDefinitionStoreError(
           "expert_referenced",
           "This Expert is used by an Expert Team, Flow, or resource tool. Remove those dependencies before deleting it.",

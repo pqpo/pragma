@@ -118,6 +118,7 @@ import {
   type UpdateMissionOptions,
   type UpdateMissionContextMounts,
 } from "../../../shared/contracts/index.ts";
+import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
@@ -293,6 +294,44 @@ export function mergeMissionExecutorMetadata(
   return { names, avatarIds };
 }
 
+export async function resolveMissionSystemDependencyFingerprints(input: {
+  readonly mission: Mission;
+  readonly project: Pick<PragmaProjectStore, "getRevision">;
+  readonly getSystemExecutorFingerprint?:
+    ((ref: string) => string | undefined | Promise<string | undefined>) | undefined;
+  readonly getSystemExecutorResource?:
+    ((ref: string) => PragmaInvocableResource | undefined) | undefined;
+}): Promise<readonly (readonly [string, string])[]> {
+  const fingerprints = new Map<string, string>();
+  const visited = new Set<string>();
+  let projectSnapshotPromise: ReturnType<typeof input.project.getRevision> | undefined;
+  const getProjectSnapshot = () =>
+    (projectSnapshotPromise ??= input.project.getRevision(input.mission.project.revision));
+
+  const visit = async (ref: string): Promise<void> => {
+    if (visited.has(ref)) return;
+    visited.add(ref);
+    const fingerprint = await input.getSystemExecutorFingerprint?.(ref);
+    if (fingerprint !== undefined) fingerprints.set(ref, fingerprint);
+    const systemResource = input.getSystemExecutorResource?.(ref);
+    if (systemResource === undefined && fingerprint !== undefined) return;
+    const resource =
+      systemResource ??
+      (await getProjectSnapshot()).resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+      );
+    if (resource === undefined) return;
+    await Promise.all(
+      [...referencedPragmaResourceRefs([resource])].map(async (dependencyRef) => {
+        await visit(dependencyRef);
+      }),
+    );
+  };
+
+  await visit(input.mission.executor.ref);
+  return [...fingerprints.entries()].toSorted(([left], [right]) => left.localeCompare(right));
+}
+
 const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
 
 export function createMissionRunner(options: {
@@ -331,7 +370,7 @@ export function createMissionRunner(options: {
       }) => Promise<CompiledResource<InvocableResource> | undefined>)
     | undefined;
   readonly getSystemExecutorFingerprint?:
-    ((mission: Mission) => string | undefined | Promise<string | undefined>) | undefined;
+    ((ref: string) => string | undefined | Promise<string | undefined>) | undefined;
   readonly getSystemExecutorMetadata?:
     (() => readonly MissionExecutorPresentationMetadata[]) | undefined;
   readonly getSystemExecutorResource?:
@@ -1509,8 +1548,12 @@ export function createMissionRunner(options: {
           project: mission.project,
           executor: mission.executor,
           contextMounts: missionContextMountsFingerprint(mission),
-          systemExecutorFingerprint:
-            (await options.getSystemExecutorFingerprint?.(mission)) ?? null,
+          systemExecutorFingerprints: await resolveMissionSystemDependencyFingerprints({
+            mission,
+            project: options.project,
+            getSystemExecutorFingerprint: options.getSystemExecutorFingerprint,
+            getSystemExecutorResource: options.getSystemExecutorResource,
+          }),
           toolPermissionMode: mission.toolPermissionMode,
           modelOverride: mission.modelOverride ?? null,
         }),

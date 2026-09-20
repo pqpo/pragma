@@ -345,6 +345,7 @@ export async function createDesktopApplicationContainer(
       EVALUATION_JUDGE_EXPERT_REF,
     ]),
     fixedResources: [pragmaManagementCapabilityResource()],
+    externalResources: () => systemExperts.listResources(),
   });
   const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
   installWorkflowLayoutHandlers(workflowLayouts);
@@ -1030,22 +1031,22 @@ export async function createDesktopApplicationContainer(
         );
       }
     },
-    getSystemExecutorFingerprint: async (mission) =>
-      mission.executor.ref === MEMORY_CURATOR_REF
+    getSystemExecutorFingerprint: async (ref) =>
+      ref === MEMORY_CURATOR_REF
         ? await memoryCuratorRef.current?.fingerprint()
-        : mission.executor.ref === STORE_REVISION_EXPERT_REF
+        : ref === STORE_REVISION_EXPERT_REF
           ? systemExperts.fingerprint(STORE_REVISION_EXPERT_REF)
-          : mission.executor.ref === SKILL_REVISION_EXPERT_REF
+          : ref === SKILL_REVISION_EXPERT_REF
             ? createHash("sha256")
                 .update((await skillAgentsRef.current?.fingerprint("revision")) ?? "unavailable")
                 .update("\0")
                 .update(systemExperts.fingerprint(SKILL_REVISION_EXPERT_REF) ?? "unavailable")
                 .digest("hex")
-            : mission.executor.ref === SKILL_EVALUATION_EXPERT_REF
+            : ref === SKILL_EVALUATION_EXPERT_REF
               ? await skillAgentsRef.current?.fingerprint("evaluation")
-              : mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF
+              : ref === EVALUATION_JUDGE_EXPERT_REF
                 ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
-                : systemExperts.fingerprint(mission.executor.ref),
+                : systemExperts.fingerprint(ref),
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "run_mission"),
     compileSystemExecutor: async ({
       mission,
