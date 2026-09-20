@@ -243,7 +243,10 @@ describe("Memory Skill promotion", () => {
       get: async () => ({ id: jobId, state: jobState }),
     } as unknown as SkillRevisionService;
     await mkdir(join(statePath, "candidates"), { recursive: true });
-    await writeFile(join(statePath, "candidates", `${candidate.id}.json`), JSON.stringify(candidate));
+    await writeFile(
+      join(statePath, "candidates", `${candidate.id}.json`),
+      JSON.stringify(candidate),
+    );
     await writeFile(
       join(statePath, "bindings.json"),
       JSON.stringify({
@@ -291,6 +294,157 @@ describe("Memory Skill promotion", () => {
       bindings: Array<{ normalizedKeys: string[] }>;
     };
     expect(after.bindings[0]?.normalizedKeys).toEqual(["existing-pattern", "safe-workflow"]);
+  });
+
+  it("isolates a missing revision Job and keeps other Experts recoverable", async () => {
+    const statePath = join(tmpdir(), `pragma-memory-skill-orphan-${randomUUID()}`);
+    roots.push(statePath);
+    const missingCandidateId = "00000000-0000-4000-8000-000000000011";
+    const completedCandidateId = "00000000-0000-4000-8000-000000000012";
+    const missingJobId = "30000000-0000-4000-8000-000000000011";
+    const completedJobId = "30000000-0000-4000-8000-000000000012";
+    const missingCapabilityId = "20000000-0000-4000-8000-000000000011";
+    const completedCapabilityId = "20000000-0000-4000-8000-000000000012";
+    const missingBindingId = "10000000-0000-4000-8000-000000000011";
+    const completedBindingId = "10000000-0000-4000-8000-000000000012";
+    const timestamp = "2026-08-06T00:00:00.000Z";
+    const pendingCandidate = (input: {
+      id: string;
+      expertRef: string;
+      normalizedKey: string;
+      capabilityId: string;
+      bindingId: string;
+      jobId: string;
+    }) =>
+      MemorySkillCandidateSchema.parse({
+        schemaVersion: "pragma.memory-skill-candidate/v2",
+        id: input.id,
+        revision: 1,
+        expertRef: input.expertRef,
+        sourceDigest: input.id.replaceAll("-", "").padEnd(64, "0"),
+        normalizedKey: input.normalizedKey,
+        sourceRefs: [1, 2, 3].map((revision) => ({
+          kind: "episodic",
+          id: `episode-${input.id}-${revision}`,
+          revision,
+        })),
+        package: { ...validPackage(), name: input.normalizedKey },
+        route: { type: "revise", bindingId: input.bindingId },
+        state: "revision_pending",
+        capabilityId: input.capabilityId,
+        revisionJobId: input.jobId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    const missingCandidate = pendingCandidate({
+      id: missingCandidateId,
+      expertRef: "expert:0000000000000001",
+      normalizedKey: "missing-job-workflow",
+      capabilityId: missingCapabilityId,
+      bindingId: missingBindingId,
+      jobId: missingJobId,
+    });
+    const completedCandidate = pendingCandidate({
+      id: completedCandidateId,
+      expertRef: "expert:0000000000000002",
+      normalizedKey: "completed-workflow",
+      capabilityId: completedCapabilityId,
+      bindingId: completedBindingId,
+      jobId: completedJobId,
+    });
+    await mkdir(join(statePath, "candidates"), { recursive: true });
+    await Promise.all(
+      [missingCandidate, completedCandidate].map(
+        async (candidate) =>
+          await writeFile(
+            join(statePath, "candidates", `${candidate.id}.json`),
+            JSON.stringify(candidate),
+          ),
+      ),
+    );
+    await writeFile(
+      join(statePath, "bindings.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.memory-skill-bindings/v1",
+        bindings: [
+          {
+            bindingId: missingBindingId,
+            expertRef: missingCandidate.expertRef,
+            capabilityId: missingCapabilityId,
+            normalizedKeys: ["existing-missing-pattern"],
+            lastSourceDigest: "a".repeat(64),
+            updatedAt: timestamp,
+          },
+          {
+            bindingId: completedBindingId,
+            expertRef: completedCandidate.expertRef,
+            capabilityId: completedCapabilityId,
+            normalizedKeys: ["existing-completed-pattern"],
+            lastSourceDigest: "b".repeat(64),
+            updatedAt: timestamp,
+          },
+        ],
+      }),
+    );
+    let missingJobRestored = false;
+    const service = createMemorySkillPromotionService({
+      statePath,
+      capabilities: {
+        async get(id: string) {
+          return {
+            manifest: { latestRevision: 2 },
+            definition: {
+              kind: "skill",
+              name: id === completedCapabilityId ? "completed-workflow" : "missing-job-workflow",
+              description: "Recovered Skill.",
+            },
+          };
+        },
+      } as unknown as CapabilityStore,
+      revisions: {
+        async get(id: string) {
+          if (id === missingJobId && !missingJobRestored) {
+            throw Object.assign(new Error("Skill revision job not found."), {
+              code: "skill_revision_job_not_found",
+            });
+          }
+          return { id, state: id === completedJobId ? "completed" : "editing" };
+        },
+      } as unknown as SkillRevisionService,
+      expertExists: async () => true,
+      bindSkill: async () => undefined,
+    });
+
+    const candidates = await service.list();
+    expect(candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: missingCandidateId,
+          state: "revision_pending",
+          lastErrorCode: "memory_skill_revision_job_missing",
+        }),
+        expect.objectContaining({ id: completedCandidateId, state: "promoted" }),
+      ]),
+    );
+    await expect(
+      service.targetReader.listTargets({ expertRef: completedCandidate.expertRef }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        bindingId: completedBindingId,
+        capabilityId: completedCapabilityId,
+      }),
+    ]);
+    await expect(service.recover()).resolves.toBeUndefined();
+
+    missingJobRestored = true;
+    const recovered = (await service.list()).find(
+      (candidate) => candidate.id === missingCandidateId,
+    );
+    expect(recovered).toMatchObject({ state: "revision_pending" });
+    expect(recovered?.lastErrorCode).toBeUndefined();
+    await expect(
+      service.reject({ id: recovered!.id, expectedRevision: recovered!.revision }),
+    ).resolves.toMatchObject({ state: "rejected" });
   });
 });
 

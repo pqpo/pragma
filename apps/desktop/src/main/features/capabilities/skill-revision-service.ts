@@ -761,9 +761,16 @@ export function createSkillRevisionService(options: {
     job: ManagedSkillRevisionJob,
     draft: SkillRevisionDraft,
   ): Promise<ManagedSkillRevisionJob> => {
-    if (draft.submissionHash === undefined || job.state !== "publishing") {
+    if (draft.submissionHash === undefined) {
       throw coded("skill_revision_approval_invalid");
     }
+    let publishingJob = job;
+    if (publishingJob.state === "pending_review" && draft.state === "publishing") {
+      publishingJob = await mutateJob(publishingJob.id, publishingJob.revision, () => ({
+        state: "publishing",
+      }));
+    }
+    if (publishingJob.state !== "publishing") throw coded("skill_revision_approval_invalid");
     try {
       const published =
         draft.operation === "create"
@@ -818,6 +825,31 @@ export function createSkillRevisionService(options: {
         }));
       }
       throw error;
+    }
+  };
+
+  const quarantineInterruptedPublication = async (
+    job: ManagedSkillRevisionJob,
+    draft: SkillRevisionDraft,
+    error: unknown,
+  ): Promise<void> => {
+    const failure = {
+      code: "skill_revision_publication_recovery_failed",
+      message: errorMessage(error),
+    };
+    const currentDraft = await readDraft(draft.id);
+    if (currentDraft.state === "publishing") {
+      await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
+        state: "needs_attention",
+        error: failure,
+      }));
+    }
+    const currentJob = await readJob(job.id);
+    if (currentJob.state === "publishing" || currentJob.state === "pending_review") {
+      await mutateJob(currentJob.id, currentJob.revision, () => ({
+        state: "needs_attention",
+        error: failure,
+      }));
     }
   };
 
@@ -1330,9 +1362,23 @@ export function createSkillRevisionService(options: {
           const jobs = await readAllJobs();
           const interrupted = await nextInterruptedPublication(jobs);
           if (interrupted !== undefined) {
-            await completePublication(interrupted.job, interrupted.draft);
-            processingRequested = true;
-            continue;
+            try {
+              await completePublication(interrupted.job, interrupted.draft);
+              processingRequested = true;
+              continue;
+            } catch (error) {
+              options.warn?.("Failed to recover an interrupted Skill publication.", error);
+              await quarantineInterruptedPublication(
+                interrupted.job,
+                interrupted.draft,
+                error,
+              ).catch((quarantineError) => {
+                options.warn?.(
+                  "Failed to quarantine an interrupted Skill publication.",
+                  quarantineError,
+                );
+              });
+            }
           }
           const candidate = jobs
             .filter((job) => job.state === "editing" && job.missionId === undefined)

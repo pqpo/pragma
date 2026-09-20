@@ -173,7 +173,21 @@ export function createMemorySkillPromotionService(options: {
     if (candidate.state !== "revision_pending" || candidate.revisionJobId === undefined) {
       return candidate;
     }
-    const job = await options.revisions.get(candidate.revisionJobId);
+    let job: Awaited<ReturnType<SkillRevisionService["get"]>>;
+    try {
+      job = await options.revisions.get(candidate.revisionJobId);
+    } catch (error) {
+      const lastErrorCode = revisionJobReadFailureCode(error);
+      if (candidate.lastErrorCode === lastErrorCode) return candidate;
+      const unavailable = MemorySkillCandidateSchema.parse({
+        ...candidate,
+        revision: candidate.revision + 1,
+        lastErrorCode,
+        updatedAt: new Date().toISOString(),
+      });
+      await writeCandidate(unavailable);
+      return unavailable;
+    }
     if (job.state === "completed") {
       const timestamp = new Date().toISOString();
       const bindings = await readBindings();
@@ -220,6 +234,16 @@ export function createMemorySkillPromotionService(options: {
       });
       await writeCandidate(attention);
       return attention;
+    }
+    if (candidate.lastErrorCode?.startsWith("memory_skill_revision_job_")) {
+      const recovered = MemorySkillCandidateSchema.parse({
+        ...candidate,
+        revision: candidate.revision + 1,
+        lastErrorCode: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      await writeCandidate(recovered);
+      return recovered;
     }
     return candidate;
   };
@@ -477,7 +501,11 @@ export function createMemorySkillPromotionService(options: {
       return await withFileLock(lockPath, async () => {
         const current = await readCandidate(input.id);
         assertRevision(current, input.expectedRevision);
-        if (!["pending_review", "needs_attention", "needs_target"].includes(current.state))
+        if (
+          !["pending_review", "revision_pending", "needs_attention", "needs_target"].includes(
+            current.state,
+          )
+        )
           throw new Error("skill_candidate_state_invalid");
         const next = MemorySkillCandidateSchema.parse({
           ...current,
@@ -587,6 +615,17 @@ function validationError(
     ),
     { code: "invalid_input", retryable: true, validation: { diagnostics } },
   );
+}
+function revisionJobReadFailureCode(error: unknown): string {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { readonly code?: unknown }).code
+      : undefined;
+  if (code === "skill_revision_job_not_found" || code === "ENOENT") {
+    return "memory_skill_revision_job_missing";
+  }
+  if (error instanceof z.ZodError) return "memory_skill_revision_job_invalid";
+  return "memory_skill_revision_job_unavailable";
 }
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });

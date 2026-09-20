@@ -81,6 +81,113 @@ describe("Skill revision service", () => {
     expect(fixture.publishNew).toHaveBeenCalledTimes(2);
   });
 
+  it("recovers a publication interrupted after persisting the approval intent", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Approve this revision.",
+    });
+    const pending = await fixture.service.get(job.id);
+    const pendingDraft = await fixture.service.getDraft(job.draftId);
+    await writeFile(
+      join(fixture.draftsPath, job.draftId, "draft.json"),
+      `${JSON.stringify({
+        ...pendingDraft,
+        revision: pendingDraft.revision + 1,
+        state: "publishing",
+      })}\n`,
+    );
+
+    const recovered = createSkillRevisionService({
+      statePath: fixture.statePath,
+      draftsPath: fixture.draftsPath,
+      draftsTrashPath: fixture.draftsTrashPath,
+      capabilities: fixture.capabilities,
+    });
+    await recovered.processPending();
+
+    await expect(recovered.get(pending.id)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 2,
+    });
+    expect(fixture.publish).toHaveBeenCalledTimes(1);
+
+    const unapproved = await recovered.start(request("expert-reflection"));
+    const unapprovedDraft = await recovered.inspectDraft(unapproved.draftId);
+    await recovered.submitDraft({
+      draftId: unapproved.draftId,
+      expectedRevision: unapprovedDraft.draft.revision,
+      expectedWorkingTreeHash: unapprovedDraft.workingTree.hash,
+      summary: "Do not publish without approval intent.",
+    });
+    await recovered.processPending();
+    await expect(recovered.get(unapproved.id)).resolves.toMatchObject({ state: "pending_review" });
+    expect(fixture.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("isolates a failed interrupted publication from later generated revisions", async () => {
+    const fixture = await createService({
+      async publish() {
+        throw Object.assign(new Error("Publication backend unavailable."), {
+          code: "publication_unavailable",
+        });
+      },
+      generator: {
+        async generate() {
+          return {
+            schemaVersion: "pragma.skill-revision-change-set/v2" as const,
+            operation: "revise" as const,
+            capabilityId,
+            baseRevision: 1,
+            baseContentHash,
+            name: "safe-workflow",
+            description: "Safe workflow.",
+            summary: "Process the independent queued revision.",
+            operations: [
+              {
+                operation: "upsert" as const,
+                path: "references/queued.md",
+                content: "Independent queued revision.\n",
+              },
+            ],
+          };
+        },
+      },
+    });
+    const interrupted = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(interrupted.draftId);
+    await fixture.service.submitDraft({
+      draftId: interrupted.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Publish this revision.",
+    });
+    const interruptedDraft = await fixture.service.getDraft(interrupted.draftId);
+    await writeFile(
+      join(fixture.draftsPath, interrupted.draftId, "draft.json"),
+      `${JSON.stringify({
+        ...interruptedDraft,
+        revision: interruptedDraft.revision + 1,
+        state: "publishing",
+      })}\n`,
+    );
+    const independent = await fixture.service.submit(legacyRequest());
+
+    await fixture.service.processPending();
+
+    await expect(fixture.service.get(interrupted.id)).resolves.toMatchObject({
+      state: "needs_attention",
+      error: { code: "publication_unavailable" },
+    });
+    await expect(fixture.service.get(independent.id)).resolves.toMatchObject({
+      state: "pending_review",
+    });
+  });
+
   it("returns actionable validation diagnostics without changing the editable draft", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));
@@ -658,6 +765,9 @@ describe("Skill revision service", () => {
 async function createService(
   options: {
     readonly generator?: Parameters<typeof createSkillRevisionService>[0]["generator"];
+    readonly publish?: (input: {
+      readonly sourcePath: string;
+    }) => Promise<{ readonly manifest: { readonly latestRevision: number } }>;
     readonly publishNew?: (input: {
       readonly id: string;
       readonly sourcePath: string;
@@ -673,10 +783,11 @@ async function createService(
     "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nFollow the workflow.\n",
   );
   let currentRevision = 1;
-  const publish = vi.fn(async (input: { readonly sourcePath: string }) => {
-    void input;
-    return { manifest: { latestRevision: 2 } };
-  });
+  const publish = vi.fn(async (input: { readonly sourcePath: string }) =>
+    options.publish === undefined
+      ? { manifest: { latestRevision: 2 } }
+      : await options.publish(input),
+  );
   const publishNew = vi.fn(async (input: { readonly id: string; readonly sourcePath: string }) =>
     options.publishNew === undefined
       ? { manifest: { latestRevision: 1 } }
@@ -710,6 +821,8 @@ async function createService(
     sourcePath,
     statePath: join(root, "state"),
     draftsPath: join(root, "data", "skill-revision-drafts"),
+    draftsTrashPath: join(root, "trash", "skill-revision-drafts"),
+    capabilities,
     service: createSkillRevisionService({
       statePath: join(root, "state"),
       draftsPath: join(root, "data", "skill-revision-drafts"),

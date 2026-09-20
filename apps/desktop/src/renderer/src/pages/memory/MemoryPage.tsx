@@ -1731,7 +1731,9 @@ function MemorySkillCandidates(props: {
                   ) : null}
                 </>
               ) : null}
-              {["pending_review", "needs_attention", "needs_target"].includes(candidate.state) ? (
+              {["pending_review", "revision_pending", "needs_attention", "needs_target"].includes(
+                candidate.state,
+              ) ? (
                 <button
                   className="danger-button is-danger"
                   type="button"
@@ -1750,6 +1752,11 @@ function MemorySkillCandidates(props: {
                 </button>
               ) : null}
             </div>
+            {candidate.lastErrorCode !== undefined ? (
+              <p className="form-error" role="alert">
+                <strong>{candidate.lastErrorCode}</strong>
+              </p>
+            ) : null}
           </>
         )}
       </main>
