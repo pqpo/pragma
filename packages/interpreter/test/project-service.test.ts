@@ -192,6 +192,16 @@ describe("PragmaProjectService", () => {
       instructions: "Complete the Flow step.",
       workspace: repository.root,
     });
+    const systemResource: PragmaExpertResource = {
+      ...expert(),
+      metadata: {
+        ...expert().metadata,
+        id: "0000000000pragma",
+        name: "Pragma",
+        description: "External system Expert.",
+      },
+      spec: { ...expert().spec, capabilities: [] },
+    };
     const resolved: string[] = [];
 
     const compiled = await service.compile<Flow>({
@@ -215,12 +225,88 @@ describe("PragmaProjectService", () => {
       },
       resolveExternalInvocable: async (ref) => {
         resolved.push(ref);
-        return ref === systemRef ? systemExpert : undefined;
+        return ref === systemRef ? { resource: systemResource, value: systemExpert } : undefined;
       },
     });
 
     expect(compiled.value.kind).toBe("flow");
     expect(resolved).toEqual([systemRef]);
+  });
+
+  it("compiles a resource-call tool that targets an external system Expert", async () => {
+    const repository = await createRepository();
+    const systemRef = "expert:0000000000pragma" as const;
+    const service = new PragmaProjectService({
+      repository,
+      externalResourceRefs: new Set([systemRef]),
+    });
+    const caller: PragmaExpertResource = {
+      ...expert(),
+      spec: {
+        ...expert().spec,
+        tools: [
+          {
+            adapter: "pragma.tool.call@v1",
+            target: { ref: systemRef },
+            tool: {
+              name: "call_pragma",
+              description: "Call Pragma.",
+              approval: "ask",
+            },
+          },
+        ],
+      },
+    };
+    const published = await service.publish({
+      projectId: "studio",
+      expectedRevision: 0,
+      resources: [runtime(), skill(), caller],
+      artifacts: new Map([["assets/writing-skill/SKILL.md", "# Writing\n"]]),
+    });
+    const systemExpert = await defineExpert({
+      id: "0000000000pragma",
+      name: "Pragma",
+      description: "External system Expert.",
+      tags: [],
+      scope: "Complete the delegated task.",
+      instructions: "Complete the delegated task.",
+      workspace: repository.root,
+    });
+    const systemResource: PragmaExpertResource = {
+      ...expert(),
+      metadata: {
+        ...expert().metadata,
+        id: "0000000000pragma",
+        name: "Pragma",
+        description: "External system Expert.",
+      },
+      spec: { ...expert().spec, capabilities: [] },
+    };
+
+    const compiled = await service.compile<Expert>({
+      projectId: "studio",
+      revision: published.revision,
+      ref: "expert:1xddvess309a6gme",
+      workspace: repository.root,
+      environmentId: "test",
+      adapterHost: {
+        environmentId: "test",
+        projectRoot: repository.root,
+        async resolveBinding() {
+          return undefined;
+        },
+        async resolveArtifact(source) {
+          throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+      },
+      resolveExternalInvocable: async (ref) =>
+        ref === systemRef ? { resource: systemResource, value: systemExpert } : undefined,
+    });
+
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_pragma");
   });
 
   it("rebases changes to different refs and reports changes to the same ref", async () => {

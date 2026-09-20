@@ -2,6 +2,7 @@ import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PragmaExpertResourceSchema } from "@pragma/interpreter/ast";
+import { User } from "@phosphor-icons/react";
 
 import type { Capability, ContextStore } from "../../../../shared/contracts/index.ts";
 import { PragmaResourcePickerDialog } from "../../components/PragmaResourcePickerDialog.tsx";
@@ -11,6 +12,7 @@ import {
   ToolResults,
   updateToolSelection,
 } from "./ExpertCapabilityPicker.tsx";
+import type { ExpertRecord } from "./studio-model.ts";
 
 const toolCapability = {
   manifest: {
@@ -81,11 +83,38 @@ const invocableResource = PragmaExpertResourceSchema.parse({
   spec: { scope: "review", instructions: "Review architecture." },
 });
 
+const builtInExpert: ExpertRecord = {
+  ref: "expert:0000000000st0rev",
+  id: "0000000000st0rev",
+  name: "Store Revision Agent",
+  avatarId: "pragma.avatar.expert.22",
+  description: "Revises managed knowledge.",
+  tags: ["builtin", "revision"],
+  scope: "Revise knowledge.",
+  instructions: "Revise knowledge.",
+  additionalInstructions: "",
+  origin: "built-in",
+  readOnly: true,
+  customized: false,
+  model: null,
+  capabilities: [],
+  toolApprovals: {},
+  skills: 0,
+  tools: 0,
+  mcpServers: 0,
+  contextStoreMounts: [],
+  resourceTools: [],
+  plugins: [],
+  usesApproval: false,
+  icon: User,
+};
+
 describe("ExpertCapabilityPicker", () => {
   it("keeps large capability collections behind compact category summaries", () => {
     const html = renderToStaticMarkup(
       <ExpertCapabilityPicker
         currentExpertId="current"
+        experts={[]}
         resources={[]}
         contextStores={[]}
         capabilities={[toolCapability]}
@@ -111,6 +140,7 @@ describe("ExpertCapabilityPicker", () => {
     const html = renderToStaticMarkup(
       <ExpertCapabilityPicker
         currentExpertId="current"
+        experts={[]}
         resources={[]}
         contextStores={[contextStore]}
         capabilities={[]}
@@ -127,6 +157,48 @@ describe("ExpertCapabilityPicker", () => {
 
     expect(html).toContain("Quality handbook");
     expect(html).not.toContain("Edit selection");
+  });
+
+  it("includes built-in experts once in the callable resource summary", () => {
+    const duplicateResource = PragmaExpertResourceSchema.parse({
+      ...invocableResource,
+      metadata: {
+        ...invocableResource.metadata,
+        id: builtInExpert.id,
+        name: "Stale project copy",
+      },
+    });
+    const html = renderToStaticMarkup(
+      <ExpertCapabilityPicker
+        currentExpertId="current"
+        experts={[builtInExpert]}
+        resources={[duplicateResource]}
+        contextStores={[]}
+        capabilities={[]}
+        resourceTools={[
+          {
+            adapter: "pragma.tool.call@v1",
+            target: { ref: builtInExpert.ref! },
+            tool: {
+              name: "call_store_revision_agent",
+              description: "Call Store Revision Agent.",
+              approval: "ask",
+            },
+          },
+        ]}
+        contextStoreMounts={[]}
+        capabilityReferences={[]}
+        toolApprovals={{}}
+        onResourceToolsChange={() => undefined}
+        onContextStoreMountsChange={() => undefined}
+        onCapabilityReferencesChange={() => undefined}
+        onToolApprovalsChange={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Store Revision Agent");
+    expect(html).not.toContain("Stale project copy");
+    expect(html).toContain("1 available");
   });
 
   it("searches tool names, descriptions, and their parent service", () => {

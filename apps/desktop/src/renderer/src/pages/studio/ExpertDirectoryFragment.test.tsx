@@ -186,6 +186,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         runtimes={[runtime]}
         onBack={() => undefined}
@@ -225,6 +226,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[contextStore]}
         capabilities={[skillCapability, toolCapability]}
         plugins={[plugin]}
+        experts={[]}
         resources={resources}
         runtimes={[]}
         onBack={() => undefined}
@@ -267,6 +269,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         runtimes={[]}
         onBack={() => undefined}
@@ -320,6 +323,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         runtimes={[]}
         onBack={() => undefined}
@@ -358,6 +362,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         runtimes={[]}
         onBack={() => undefined}
@@ -490,6 +495,7 @@ describe("ExpertEditorFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         memoryEnabled={true}
         onCancel={() => undefined}
@@ -518,6 +524,7 @@ describe("ExpertEditorFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         memoryEnabled={true}
         onCancel={() => undefined}
@@ -539,6 +546,7 @@ describe("ExpertEditorFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         memoryEnabled={true}
         onCancel={() => undefined}
@@ -548,6 +556,35 @@ describe("ExpertEditorFragment", () => {
 
     expect(html).toContain("Add capabilities");
     expect(html).toMatch(/<button[^>]*aria-current="step"[^>]*>[\s\S]*Capabilities<\/button>/);
+  });
+
+  it("exposes callable resources while customizing a built-in expert", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="edit"
+        initialValue={{
+          ...draft,
+          ref: "expert:0000000000pragma",
+          id: "0000000000pragma",
+          origin: "built-in",
+          readOnly: true,
+          model: null,
+        }}
+        initialStep="capabilities"
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        experts={[]}
+        resources={[]}
+        memoryEnabled={true}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Experts, teams &amp; flows");
+    expect(html).toContain("Let this expert call other Pragma resources");
   });
 
   it("shows the memory policy on the review step when global memory is enabled", () => {
@@ -560,6 +597,7 @@ describe("ExpertEditorFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         memoryEnabled={true}
         onCancel={() => undefined}
@@ -580,6 +618,7 @@ describe("ExpertEditorFragment", () => {
         contextStores={[]}
         capabilities={[]}
         plugins={[]}
+        experts={[]}
         resources={[]}
         memoryEnabled={false}
         onCancel={() => undefined}

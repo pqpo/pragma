@@ -1,5 +1,9 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { STORE_REVISION_EXPERT_REF, createPragmaManagementTools } from "@pragma/built-in-agents";
+import {
+  STORE_REVISION_EXPERT_REF,
+  builtInAgentResource,
+  createPragmaManagementTools,
+} from "@pragma/built-in-agents";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -72,6 +76,7 @@ import {
   missionProjectionAddsUserVisibleOutput,
   listPendingHumanInteractions,
   orderMissionExecutionEntries,
+  resolveMissionSystemDependencyFingerprints,
 } from "./mission-runner-composition.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
@@ -284,6 +289,49 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 30_000 }, () => {
+  it("includes system dependencies reached from a project Expert in the compilation identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-system-dependency-fingerprint-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({
+      projectsPath: join(root, "projects"),
+      reservedResourceRefs: new Set([STORE_REVISION_EXPERT_REF]),
+    });
+    const projectExpert = expertFixture();
+    projectExpert.spec.tools = [
+      {
+        adapter: "pragma.tool.call@v1",
+        target: { ref: STORE_REVISION_EXPERT_REF },
+        tool: {
+          name: "call_store_revision",
+          description: "Call Store Revision Agent.",
+          approval: "ask",
+        },
+      },
+    ];
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), projectExpert],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Use the Store Revision Agent",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(projectExpert),
+    });
+
+    await expect(
+      resolveMissionSystemDependencyFingerprints({
+        mission,
+        project,
+        getSystemExecutorFingerprint: (ref) =>
+          ref === STORE_REVISION_EXPERT_REF ? "store-fingerprint-v2" : undefined,
+        getSystemExecutorResource: (ref) =>
+          ref === STORE_REVISION_EXPERT_REF ? builtInAgentResource(ref) : undefined,
+      }),
+    ).resolves.toContainEqual([STORE_REVISION_EXPERT_REF, "store-fingerprint-v2"]);
+  });
+
   it("does not return a pending human request that raced with a terminal transition", async () => {
     const getState = vi
       .fn()
@@ -2565,6 +2613,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
     });
+    const getProjectRevision = vi.spyOn(project, "getRevision");
     const historicalBoardOutput: { id: string | undefined } = { id: undefined };
     const runtime = defineRuntimeTestDriver<
       never,
@@ -2696,6 +2745,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
 
     expect((await activeMissions.get(mission.id)).execution?.sessionId).not.toBe(originalSessionId);
     expect(compileSystemExecutor).toHaveBeenCalledTimes(2);
+    expect(getProjectRevision).not.toHaveBeenCalled();
     await expect(readMissionConversationSnapshot(runner, mission.id)).resolves.toMatchObject({
       entries: expect.arrayContaining([
         expect.objectContaining({ kind: "assistant", content: "successor-read-ok" }),

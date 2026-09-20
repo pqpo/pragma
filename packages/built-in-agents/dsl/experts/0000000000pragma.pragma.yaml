@@ -58,4 +58,18 @@ spec:
   toolApprovals: {}
   contextStores: []
   plugins: []
-  tools: []
+  tools:
+    - adapter: pragma.tool.call@v1
+      target:
+        ref: expert:0000000000st0rev
+      tool:
+        name: call_store_revision_agent
+        description: Ask the Store Revision Agent to create or revise managed knowledge.
+        approval: ask
+    - adapter: pragma.tool.call@v1
+      target:
+        ref: expert:0000000000sk1rev
+      tool:
+        name: call_skill_revision_agent
+        description: Ask the Skill Revision Agent to create or revise a managed Skill.
+        approval: ask

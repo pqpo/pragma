@@ -116,6 +116,7 @@ export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.
   toolApprovals: true,
   plugins: true,
   contextStoreMounts: true,
+  resourceTools: true,
 })
   .extend({
     avatarId: PragmaAvatarIdSchema.optional(),
@@ -125,6 +126,7 @@ export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.
     toolApprovals: ExpertDefinitionSchema.shape.toolApprovals,
     plugins: ExpertDefinitionSchema.shape.plugins,
     contextStoreMounts: ExpertDefinitionSchema.shape.contextStoreMounts,
+    resourceTools: ExpertDefinitionSchema.shape.resourceTools,
   })
   .strict();
 
