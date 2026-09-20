@@ -190,12 +190,12 @@ export const MissionChatComposer = forwardRef<
       const previousDraft = previousDraftRef.current;
       previousDraftRef.current = draft;
       if (canMeasureMissionComposerGrowthWithoutReset(previousDraft, draft)) {
-        const nextHeight = `${Math.min(input.scrollHeight, 130)}px`;
+        const nextHeight = `${Math.min(input.scrollHeight, 300)}px`;
         if (input.style.height !== nextHeight) input.style.height = nextHeight;
         return;
       }
       input.style.height = "auto";
-      const nextHeight = `${Math.min(input.scrollHeight, 130)}px`;
+      const nextHeight = `${Math.min(input.scrollHeight, 300)}px`;
       if (input.style.height !== nextHeight) input.style.height = nextHeight;
     });
     return () => {

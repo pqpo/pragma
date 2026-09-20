@@ -248,7 +248,7 @@
 .mission-chat-composer textarea {
   width: 100%;
   min-height: 52px;
-  max-height: 130px;
+  max-height: 300px;
   resize: none;
   padding: 18px 18px 8px;
   border: 0;

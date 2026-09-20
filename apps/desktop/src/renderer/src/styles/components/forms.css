@@ -605,7 +605,7 @@
 
 .team-mention-editor.is-home {
   min-height: 80px;
-  max-height: 240px;
+  max-height: 300px;
   padding: 14px 20px;
   font-size: 16px;
   overflow-y: auto;
@@ -613,7 +613,7 @@
 
 .team-mention-editor.is-mission {
   min-height: 52px;
-  max-height: 130px;
+  max-height: 300px;
   padding: 18px 18px 8px;
   overflow-y: auto;
 }

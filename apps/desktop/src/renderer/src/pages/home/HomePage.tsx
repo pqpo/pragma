@@ -158,6 +158,7 @@ export function HomePage(props: {
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
+  const goalInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [attachments, setAttachments] = useState<readonly ExpertPromptAttachment[]>([]);
   const [contextStoresReady, setContextStoresReady] = useState(false);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
@@ -375,6 +376,13 @@ export function HomePage(props: {
   const hasStructuredFlowInput = flowInputSchema !== undefined;
   const structuredFlowInputValid =
     flowInputSchema === undefined || isSchemaInputValid(flowInputSchema, flowInput);
+
+  useLayoutEffect(() => {
+    const input = goalInputRef.current;
+    if (input === null) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 300)}px`;
+  }, [goal, selectedExecutor?.kind]);
   const executorConfigurationUnavailable = homeExecutorConfigurationUnavailable({
     executorKind: selectedExecutor?.kind,
     models,
@@ -900,6 +908,7 @@ export function HomePage(props: {
                 />
               ) : (
                 <textarea
+                  ref={goalInputRef}
                   id="mission-goal"
                   aria-label={t("goalPlaceholder")}
                   value={goal}
