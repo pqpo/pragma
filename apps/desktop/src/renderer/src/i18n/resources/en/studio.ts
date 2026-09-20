@@ -1724,6 +1724,9 @@ export const studio = {
   noSkillRevisions: "No skill revisions yet.",
   noSkillRevisionsDescription: "Submitted candidates and changes awaiting review will appear here.",
   approveAndPublish: "Approve and publish",
+  deleteSkillRevisionTaskTitle: "Delete this Skill revision task?",
+  deleteSkillRevisionTaskDescription:
+    '"{{name}}" will be removed from the Skill revision list. Deleting the task does not roll back a published revision or delete the Skill.',
   continueSkillRevision: "Continue revision",
   skillRevisionContinuePrompt:
     "Review the validation findings, update the existing Skill draft, and submit it again.",

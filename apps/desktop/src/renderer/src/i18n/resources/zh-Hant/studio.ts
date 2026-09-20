@@ -1644,6 +1644,9 @@ export const studio = {
   noSkillRevisions: "暫無技能修訂。",
   noSkillRevisionsDescription: "已提交的候選以及等待審批的變更會顯示在這裡。",
   approveAndPublish: "批准並發佈",
+  deleteSkillRevisionTaskTitle: "刪除此技能修訂任務？",
+  deleteSkillRevisionTaskDescription:
+    "「{{name}}」將從技能修訂列表中移除。刪除任務不會回復已發佈的修訂，也不會刪除技能。",
   continueSkillRevision: "繼續修訂",
   skillRevisionContinuePrompt: "查看校驗問題，更新現有 Skill 草稿，然後重新提交。",
 } as const;

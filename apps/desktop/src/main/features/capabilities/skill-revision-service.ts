@@ -1156,7 +1156,10 @@ export function createSkillRevisionService(options: {
     },
     async retry(id, revision) {
       const candidate = await readJob(id);
-      if (candidate.revision !== revision || candidate.state !== "needs_attention") {
+      if (
+        candidate.revision !== revision ||
+        !["needs_attention", "rejected"].includes(candidate.state)
+      ) {
         throw coded("skill_revision_conflict");
       }
       if (
@@ -1165,7 +1168,7 @@ export function createSkillRevisionService(options: {
       ) {
         const replacement = await withFileLock(lockPath, async () => {
           const job = await readJob(id);
-          if (job.revision !== revision || job.state !== "needs_attention") {
+          if (job.revision !== revision || !["needs_attention", "rejected"].includes(job.state)) {
             throw coded("skill_revision_conflict");
           }
           const draft = await readDraft(job.draftId);

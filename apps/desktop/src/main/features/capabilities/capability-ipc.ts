@@ -145,6 +145,10 @@ export function installCapabilityHandlers(
     const parsed = actionSchema.parse(input);
     return skillRevisions.retry(parsed.jobId, parsed.expectedRevision);
   });
+  ipcMain.handle("capabilities:delete-skill-revision", async (_event, input: unknown) => {
+    const parsed = actionSchema.parse(input);
+    await skillRevisions.delete(parsed.jobId, parsed.expectedRevision);
+  });
 }
 
 function managementApprovalDetail(reason: string, input: unknown): string {

@@ -1,4 +1,11 @@
-import { ArrowLeft, Check, ClockCounterClockwise, X } from "@phosphor-icons/react";
+import {
+  ArrowClockwise,
+  ArrowLeft,
+  Check,
+  ClockCounterClockwise,
+  Trash,
+  X,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -8,6 +15,7 @@ import type {
 
 import type { Capability } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
@@ -35,6 +43,10 @@ export function skillRevisionAttentionActions(
   return { canContinue, canRetry: !canContinue };
 }
 
+export function canDeleteSkillRevisionJob(state: ManagedSkillRevisionJob["state"]): boolean {
+  return ["completed", "rejected", "needs_attention", "superseded"].includes(state);
+}
+
 export function SkillRevisionEmptyState() {
   const { t } = useTranslation("studio");
 
@@ -47,6 +59,94 @@ export function SkillRevisionEmptyState() {
   );
 }
 
+export function SkillRevisionTaskActions(props: {
+  readonly jobState: ManagedSkillRevisionJob["state"];
+  readonly draftState: SkillRevisionDraft["state"];
+  readonly missionId?: string | undefined;
+  readonly errorCode?: string | undefined;
+  readonly busy: boolean;
+  readonly canOpenMission: boolean;
+  readonly onApprove: () => void;
+  readonly onReject: () => void;
+  readonly onRetry: () => void;
+  readonly onContinue: () => void;
+  readonly onDelete: () => void;
+}) {
+  const { t } = useTranslation("studio");
+  const attentionActions = skillRevisionAttentionActions(
+    {
+      job: {
+        ...(props.missionId === undefined ? {} : { missionId: props.missionId }),
+        ...(props.errorCode === undefined
+          ? {}
+          : { error: { code: props.errorCode, message: props.errorCode } }),
+      },
+      draft: { state: props.draftState },
+    },
+    props.canOpenMission,
+  );
+
+  return (
+    <div className="revision-task-actions">
+      {props.jobState === "pending_review" ? (
+        <>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={props.busy}
+            onClick={props.onApprove}
+          >
+            <Check size={15} aria-hidden="true" /> {t("approveAndPublish")}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={props.busy}
+            onClick={props.onReject}
+          >
+            <X size={15} aria-hidden="true" /> {t("rejectRevision")}
+          </button>
+        </>
+      ) : null}
+      {props.jobState === "needs_attention" && attentionActions.canContinue ? (
+        <button
+          className="primary-button"
+          type="button"
+          disabled={props.busy}
+          onClick={props.onContinue}
+        >
+          {t("continueSkillRevision")}
+        </button>
+      ) : null}
+      {(props.jobState === "needs_attention" && attentionActions.canRetry) ||
+      props.jobState === "rejected" ? (
+        <button
+          className="revision-task-icon-button"
+          type="button"
+          aria-label={t("retryRevision")}
+          title={t("retryRevision")}
+          disabled={props.busy}
+          onClick={props.onRetry}
+        >
+          <ArrowClockwise size={16} aria-hidden="true" />
+        </button>
+      ) : null}
+      {canDeleteSkillRevisionJob(props.jobState) ? (
+        <button
+          className="revision-task-icon-button is-danger"
+          type="button"
+          aria-label={t("deleteRevisionTask")}
+          title={t("deleteRevisionTask")}
+          disabled={props.busy}
+          onClick={props.onDelete}
+        >
+          <Trash size={16} aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function SkillRevisionFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly capabilityId?: string | undefined;
@@ -55,11 +155,12 @@ export function SkillRevisionFragment(props: {
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onBack: () => void;
 }) {
-  const { t } = useTranslation("studio");
+  const { t, i18n } = useTranslation("studio");
   const [entries, setEntries] = useState<readonly Entry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string>();
   const [error, setError] = useState<string>();
+  const [pendingDelete, setPendingDelete] = useState<Entry>();
   const load = useCallback(async () => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -78,7 +179,7 @@ export function SkillRevisionFragment(props: {
 
   useEffect(() => void load(), [load]);
 
-  const act = async (entry: Entry, action: "approve" | "reject" | "retry") => {
+  const act = async (entry: Entry, action: "approve" | "reject" | "retry" | "delete") => {
     const api = desktopApi();
     if (api === undefined) return;
     setBusyId(entry.job.id);
@@ -86,8 +187,10 @@ export function SkillRevisionFragment(props: {
       const input = { jobId: entry.job.id, expectedRevision: entry.job.revision };
       if (action === "approve") await api.approveSkillRevision(input);
       else if (action === "reject") await api.rejectSkillRevision(input);
-      else await api.retrySkillRevision(input);
+      else if (action === "retry") await api.retrySkillRevision(input);
+      else await api.deleteSkillRevision(input);
       if (action === "approve") await props.onPublished?.();
+      if (action === "delete") setPendingDelete(undefined);
       await load();
     } catch (cause) {
       setError(errorMessage(cause));
@@ -98,120 +201,130 @@ export function SkillRevisionFragment(props: {
 
   return (
     <StudioScreenFrame
-      className="knowledge-revision-page skill-revision-page"
+      className="context-store-revisions skill-revision-page"
       labelledBy="skill-revisions-heading"
       header={
-        <button className="back-link" type="button" onClick={props.onBack}>
-          <ArrowLeft size={18} aria-hidden="true" /> {t("backCapabilities")}
-        </button>
+        <header className="studio-heading revision-task-heading">
+          <div className="revision-task-heading-copy">
+            <button className="back-link" type="button" onClick={props.onBack}>
+              <ArrowLeft size={18} aria-hidden="true" /> {t("backCapabilities")}
+            </button>
+            <div>
+              <div>
+                <h1 id="skill-revisions-heading">{t("skillRevisions")}</h1>
+                <p>{t("skillRevisionsDescription")}</p>
+              </div>
+              <span className="revision-task-count">
+                {t("revisionTaskCount", { count: entries.length })}
+              </span>
+            </div>
+          </div>
+        </header>
       }
     >
-      <header className="studio-heading">
-        <div>
-          <h1 id="skill-revisions-heading">{t("skillRevisions")}</h1>
-          <p>{t("skillRevisionsDescription")}</p>
-        </div>
-      </header>
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {loading ? <p className="directory-empty">{t("loadingSkillRevisions")}</p> : null}
-      {!loading && entries.length === 0 ? <SkillRevisionEmptyState /> : null}
-      {entries.length > 0 ? (
-        <div className="capability-table" role="list" aria-label={t("skillRevisions")}>
-          {entries.map((entry) => {
-            const capability = props.capabilities.find(
-              (item) => item.manifest.id === entry.draft.capabilityId,
-            );
-            const attentionActions = skillRevisionAttentionActions(
-              entry,
-              props.onOpenMission !== undefined,
-            );
-            return (
-              <article className="skill-revision-row" role="listitem" key={entry.job.id}>
-                <div className="skill-revision-main">
-                  <strong>{capability?.manifest.name ?? entry.draft.name}</strong>
-                  {entry.draft.operation === "create" ? (
-                    <small>{t("newSkillRevision")}</small>
-                  ) : null}
-                  <small className="skill-revision-request">{entry.job.request.prompt}</small>
-                </div>
-                <div className="skill-revision-meta">
-                  <span className="version-label">
-                    {entry.draft.operation === "create"
-                      ? t("publishesAsRevisionOne")
-                      : t("baseRevision", { count: entry.draft.baseRevision })}
-                  </span>
-                  <span className={`capability-status is-${entry.job.state}`}>
-                    {t(`revisionState.${entry.job.state}`)}
-                  </span>
-                </div>
-                {entry.draft.summary ? (
-                  <p className="skill-revision-summary">{entry.draft.summary}</p>
-                ) : null}
-                <div className="skill-revision-actions">
-                  {entry.job.state === "pending_review" ? (
-                    <>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        disabled={busyId === entry.job.id}
-                        onClick={() => void act(entry, "reject")}
+      <div className="revision-task-content">
+        {loading ? <p className="directory-empty">{t("loadingSkillRevisions")}</p> : null}
+        {!loading && entries.length === 0 ? <SkillRevisionEmptyState /> : null}
+        {entries.length > 0 ? (
+          <div className="revision-task-table">
+            <div className="revision-task-list-header" aria-hidden="true">
+              <span>{t("revisionTaskColumn")}</span>
+              <span>{t("status")}</span>
+              <span>{t("revisionUpdatedAt")}</span>
+              <span>{t("actions")}</span>
+            </div>
+            <div className="revision-task-list" role="list" aria-label={t("skillRevisions")}>
+              {entries.map((entry) => {
+                const capability = props.capabilities.find(
+                  (item) => item.manifest.id === entry.draft.capabilityId,
+                );
+                const busy = busyId === entry.job.id;
+                return (
+                  <article className="revision-task-row" role="listitem" key={entry.job.id}>
+                    <div className="revision-task-open">
+                      <span className="revision-task-summary">
+                        <strong title={entry.job.request.prompt}>{entry.job.request.prompt}</strong>
+                        <small>
+                          {capability?.manifest.name ?? entry.draft.name} ·{` `}
+                          {entry.draft.operation === "create"
+                            ? t("newSkillRevision")
+                            : t("baseRevision", { count: entry.draft.baseRevision })}
+                          {entry.draft.summary ? ` · ${entry.draft.summary}` : ""}
+                        </small>
+                      </span>
+                      <span className="revision-task-result">
+                        <span className={`revision-task-state is-${entry.job.state}`}>
+                          {t(`revisionState.${entry.job.state}`)}
+                        </span>
+                        {entry.job.error ? (
+                          <span className="form-error" role="alert" title={entry.job.error.message}>
+                            {entry.job.error.message}
+                          </span>
+                        ) : null}
+                      </span>
+                      <time
+                        className="revision-task-updated"
+                        dateTime={entry.job.updatedAt}
+                        title={formatRevisionTimestamp(entry.job.updatedAt, i18n.language)}
                       >
-                        <X size={16} /> {t("rejectRevision")}
-                      </button>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        disabled={busyId === entry.job.id}
-                        onClick={() => void act(entry, "approve")}
-                      >
-                        <Check size={16} /> {t("approveAndPublish")}
-                      </button>
-                    </>
-                  ) : null}
-                  {entry.job.state === "needs_attention" ? (
-                    <>
-                      {attentionActions.canContinue ? (
-                        <button
-                          className="primary-button"
-                          type="button"
-                          disabled={busyId === entry.job.id}
-                          onClick={() =>
-                            props.onOpenMission?.(
-                              entry.job.missionId!,
-                              t("skillRevisionContinuePrompt"),
-                            )
-                          }
-                        >
-                          {t("continueSkillRevision")}
-                        </button>
-                      ) : null}
-                      {attentionActions.canRetry ? (
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={busyId === entry.job.id}
-                          onClick={() => void act(entry, "retry")}
-                        >
-                          <ClockCounterClockwise size={16} /> {t("retryRevision")}
-                        </button>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-                {entry.job.error ? (
-                  <p className="form-error skill-revision-error" role="alert">
-                    <strong>{entry.job.error.code}</strong> {entry.job.error.message}
-                  </p>
-                ) : null}
-              </article>
-            );
+                        {formatRevisionTimestamp(entry.job.updatedAt, i18n.language)}
+                      </time>
+                    </div>
+                    <SkillRevisionTaskActions
+                      jobState={entry.job.state}
+                      draftState={entry.draft.state}
+                      missionId={entry.job.missionId}
+                      errorCode={entry.job.error?.code}
+                      busy={busy}
+                      canOpenMission={props.onOpenMission !== undefined}
+                      onApprove={() => void act(entry, "approve")}
+                      onReject={() => void act(entry, "reject")}
+                      onRetry={() => void act(entry, "retry")}
+                      onContinue={() =>
+                        props.onOpenMission?.(
+                          entry.job.missionId!,
+                          t("skillRevisionContinuePrompt"),
+                        )
+                      }
+                      onDelete={() => setPendingDelete(entry)}
+                    />
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+      {pendingDelete ? (
+        <StudioConfirmationDialog
+          className="revision-task-delete-dialog"
+          title={t("deleteSkillRevisionTaskTitle")}
+          description={t("deleteSkillRevisionTaskDescription", {
+            name: pendingDelete.job.request.prompt,
           })}
-        </div>
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteRevisionTask")}
+          busyLabel={t("deleting")}
+          busy={busyId === pendingDelete.job.id}
+          onCancel={() => setPendingDelete(undefined)}
+          onConfirm={() => void act(pendingDelete, "delete")}
+          action="delete"
+        />
       ) : null}
     </StudioScreenFrame>
   );
+}
+
+function formatRevisionTimestamp(value: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }

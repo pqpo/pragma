@@ -729,6 +729,33 @@ describe("Skill revision service", () => {
     await expect(readFile(draftPath, "utf8")).resolves.toContain("pragma.skill-revision-draft/v4");
   });
 
+  it("deletes only terminal or actionable Skill revision tasks", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Review this revision.",
+    });
+
+    await expect(fixture.service.delete(pending.id, pending.revision)).rejects.toMatchObject({
+      code: "skill_revision_state_invalid",
+    });
+
+    const rejected = await fixture.service.reject(pending.id, pending.revision);
+    const reopened = await fixture.service.retry(rejected.id, rejected.revision);
+    expect(reopened.state).toBe("pending_review");
+    const rejectedAgain = await fixture.service.reject(reopened.id, reopened.revision);
+    await fixture.service.delete(rejectedAgain.id, rejectedAgain.revision);
+
+    await expect(fixture.service.get(rejectedAgain.id)).rejects.toMatchObject({
+      code: "skill_revision_job_not_found",
+    });
+    await expect(fixture.service.list()).resolves.toEqual([]);
+  });
+
   it("recovers an interrupted publication during startup processing", async () => {
     const fixture = await createService();
     const missionId = randomUUID();
