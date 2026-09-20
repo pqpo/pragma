@@ -1926,9 +1926,6 @@ export function createSkillRevisionService(options: {
       await withFileLock(lockPath, async () => {
         const job = await readJob(id);
         if (job.revision !== revision) throw coded("skill_revision_conflict");
-        if (!["completed", "rejected", "needs_attention", "superseded"].includes(job.state)) {
-          throw coded("skill_revision_state_invalid");
-        }
         const draft = await readDraft(job.draftId);
         const candidateRoot = candidatePath(draft);
         const snapshot = await scanSkillWorkingTree(candidateRoot, {

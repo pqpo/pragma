@@ -814,7 +814,7 @@
 /* Knowledge-base revision tasks */
 .context-store-revisions {
   --revision-task-actions-width: 80px;
-  --revision-task-content-columns: minmax(260px, 1.25fr) minmax(220px, 1fr) 92px;
+  --revision-task-content-columns: minmax(260px, 1.25fr) 96px 92px;
   container-name: context-store-revisions;
   container-type: inline-size;
 }
@@ -1651,7 +1651,7 @@
 
 @container context-store-revisions (max-width: 900px) {
   .context-store-revisions {
-    --revision-task-content-columns: minmax(240px, 1fr) minmax(180px, 0.8fr) 88px;
+    --revision-task-content-columns: minmax(240px, 1fr) 96px 88px;
   }
 
   .revision-task-list-header {

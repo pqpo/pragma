@@ -228,9 +228,9 @@
   font-weight: 650;
 }
 
-.skill-revision-page {
+.context-store-revisions.skill-revision-page {
   --revision-task-actions-width: 80px;
-  --revision-task-content-columns: minmax(260px, 1.25fr) minmax(170px, 0.7fr) 104px;
+  --revision-task-content-columns: minmax(260px, 1.25fr) 96px 104px;
 }
 
 .capability-row-menu {

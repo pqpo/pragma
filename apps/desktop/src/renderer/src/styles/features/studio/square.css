@@ -168,7 +168,7 @@
 .square-card-title {
   display: flex;
   min-width: 0;
-  align-items: flex-start;
+  align-items: baseline;
   gap: 8px;
 }
 
@@ -188,6 +188,9 @@
   display: block;
   max-width: 42%;
   flex: 0 1 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-line);
+  border-radius: 999px;
   overflow: hidden;
   overflow-wrap: anywhere;
   color: var(--ui-text-secondary);

@@ -60,7 +60,11 @@ export function skillRevisionAttentionActions(
 }
 
 export function canDeleteSkillRevisionJob(state: ManagedSkillRevisionJob["state"]): boolean {
-  return ["completed", "rejected", "needs_attention", "superseded"].includes(state);
+  // A revision task is removable regardless of its current lifecycle state.
+  // The service takes care of marking related jobs as discarded before moving
+  // the draft to trash.
+  void state;
+  return true;
 }
 
 export function canRetrySkillRevisionJob(

@@ -1401,7 +1401,7 @@ describe("Skill revision service", () => {
     await expect(readFile(draftPath, "utf8")).resolves.toContain("pragma.skill-revision-draft/v5");
   });
 
-  it("deletes only terminal or actionable Skill revision tasks", async () => {
+  it("deletes Skill revision tasks in any state", async () => {
     const fixture = await createService();
     const job = await fixture.service.start(request("expert-reflection"));
     const editing = await fixture.service.inspectDraft(job.draftId);
@@ -1412,11 +1412,20 @@ describe("Skill revision service", () => {
       summary: "Review this revision.",
     });
 
-    await expect(fixture.service.delete(pending.id, pending.revision)).rejects.toMatchObject({
-      code: "skill_revision_state_invalid",
-    });
+    await fixture.service.delete(pending.id, pending.revision);
 
-    const rejected = await fixture.service.reject(pending.id, pending.revision);
+    await expect(fixture.service.list()).resolves.toEqual([]);
+    await expect(fixture.service.listDrafts()).resolves.toEqual([]);
+
+    const nextJob = await fixture.service.start(request("expert-reflection"));
+    const nextEditing = await fixture.service.inspectDraft(nextJob.draftId);
+    const nextPending = await fixture.service.submitDraft({
+      draftId: nextJob.draftId,
+      expectedRevision: nextEditing.draft.revision,
+      expectedWorkingTreeHash: nextEditing.workingTree.hash,
+      summary: "Review this revision.",
+    });
+    const rejected = await fixture.service.reject(nextPending.id, nextPending.revision);
     const reopened = await fixture.service.retry(rejected.id, rejected.revision);
     expect(reopened.state).toBe("pending_review");
     const rejectedAgain = await fixture.service.reject(reopened.id, reopened.revision);

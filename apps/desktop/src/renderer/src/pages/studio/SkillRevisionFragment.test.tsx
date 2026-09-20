@@ -32,7 +32,7 @@ describe("SkillRevisionEmptyState", () => {
     ).toBe(3);
   });
 
-  it("only offers deletion for states accepted by the revision service", () => {
+  it("offers deletion for every revision state", () => {
     expect(
       [
         "editing",
@@ -46,7 +46,16 @@ describe("SkillRevisionEmptyState", () => {
       ].filter((state) =>
         canDeleteSkillRevisionJob(state as Parameters<typeof canDeleteSkillRevisionJob>[0]),
       ),
-    ).toEqual(["completed", "rejected", "needs_attention", "superseded"]);
+    ).toEqual([
+      "editing",
+      "running",
+      "pending_review",
+      "publishing",
+      "completed",
+      "rejected",
+      "needs_attention",
+      "superseded",
+    ]);
   });
 
   it("does not retry a revision whose base has changed", () => {
