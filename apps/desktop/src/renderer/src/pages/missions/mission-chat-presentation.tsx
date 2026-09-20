@@ -1,6 +1,7 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import {
+  ArrowClockwise,
   CaretDown,
   CheckCircle,
   Copy,
@@ -72,11 +73,14 @@ export function LocalMissionUserMessageView(props: {
             {t("messageSendFailed")}
             {props.onRetry === undefined ? null : (
               <button
+                className="mission-message-retry"
                 type="button"
                 disabled={props.retryDisabled}
+                aria-label={t("actions.retry", { ns: "common" })}
+                title={t("actions.retry", { ns: "common" })}
                 onClick={() => props.onRetry?.(props.message)}
               >
-                {t("retryChatSync")}
+                <ArrowClockwise size={14} weight="bold" aria-hidden="true" />
               </button>
             )}
           </small>

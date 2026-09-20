@@ -150,6 +150,9 @@ import type {
   SkillFileEntry,
   GetSkillFile,
   SkillFileContent,
+  SkillRevisionReview,
+  GetSkillRevisionReviewFile,
+  SkillRevisionReviewFile,
   CapabilityTestRequest,
   CapabilityTestResult,
   PreviewCodeServiceRequest,
@@ -615,6 +618,10 @@ export interface PragmaDesktopAPI {
   listSkillRevisionJobs: (
     capabilityId?: string,
   ) => Promise<{ readonly job: ManagedSkillRevisionJob; readonly draft: SkillRevisionDraft }[]>;
+  getSkillRevisionReview: (jobId: string) => Promise<SkillRevisionReview>;
+  getSkillRevisionReviewFile: (
+    input: GetSkillRevisionReviewFile,
+  ) => Promise<SkillRevisionReviewFile>;
   approveSkillRevision: (input: {
     readonly jobId: string;
     readonly expectedRevision: number;
@@ -627,6 +634,10 @@ export interface PragmaDesktopAPI {
     readonly jobId: string;
     readonly expectedRevision: number;
   }) => Promise<ManagedSkillRevisionJob>;
+  deleteSkillRevision: (input: {
+    readonly jobId: string;
+    readonly expectedRevision: number;
+  }) => Promise<void>;
   getRuntimeAvailability: (
     options?: GetDesktopRuntimeAvailabilityOptions,
   ) => Promise<DesktopRuntimeAvailability[]>;

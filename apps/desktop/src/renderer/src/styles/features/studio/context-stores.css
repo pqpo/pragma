@@ -1447,6 +1447,24 @@
   line-height: 1.45;
 }
 
+.skill-revision-file-stats {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.skill-revision-file-metadata {
+  max-width: min(44vw, 520px);
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-family: var(--ui-font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .revision-diff-scroll-area {
   min-width: 0;
   min-height: 0;

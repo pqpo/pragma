@@ -29,6 +29,14 @@ export const SkillRevisionMigrationJournalSchema = z.discriminatedUnion("sourceV
     sourceVersion: z.literal("pragma.skill-revision-draft/v2"),
     targetVersion: z.literal("pragma.skill-revision-draft/v3"),
   }).strict(),
+  BaseSkillRevisionMigrationJournalSchema.extend({
+    kind: z.literal("draft"),
+    sourceVersion: z.literal("pragma.skill-revision-draft/v3"),
+    targetVersion: z.literal("pragma.skill-revision-draft/v4"),
+    workspacePath: z.string().min(1).max(4_000),
+    sourceWorktreePath: z.string().min(1).max(4_000),
+    targetWorktreePath: z.string().min(1).max(4_000),
+  }).strict(),
 ]);
 
 export type SkillRevisionMigrationJournal = z.infer<typeof SkillRevisionMigrationJournalSchema>;

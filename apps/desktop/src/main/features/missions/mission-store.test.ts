@@ -157,6 +157,95 @@ describe("mission store", { timeout: 30_000 }, () => {
     await expect(store.isContextStoreReferenced(contextStoreId)).resolves.toBe(false);
   });
 
+  it("unmounts a submitted Skill draft while its owning execution is still running", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const revisionJobId = "30000000-0000-4000-8000-000000000003";
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Submit a Skill revision",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [
+        {
+          kind: "skill-revision-draft",
+          draftId,
+          revisionJobId,
+          capabilityId: "40000000-0000-4000-8000-000000000004",
+        },
+      ],
+    });
+    await store.updateExecution(created.id, {
+      id: "50000000-0000-4000-8000-000000000005",
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt: "2026-09-20T00:00:00.000Z",
+    });
+
+    await expect(
+      store.unmountSkillRevisionDraft({ id: created.id, draftId }),
+    ).resolves.toMatchObject({ contextMounts: [] });
+  });
+
+  it("rebinds only the owning legacy Skill revision Mission workspace", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const draftId = "20000000-0000-4000-8000-000000000002";
+    const jobId = "30000000-0000-4000-8000-000000000003";
+    const capabilityId = "40000000-0000-4000-8000-000000000004";
+    const legacyWorkspace = join(root, "data", "skill-revision-drafts", draftId, "worktree");
+    const targetWorkspace = join(root, "workspace");
+    const created = await store.create({
+      workspace: { path: legacyWorkspace, basename: "worktree" },
+      goal: "Continue a legacy Skill revision",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      origin: { type: "system-skill-revision", jobId, capabilityId },
+      contextMounts: [
+        { kind: "skill-revision-draft", draftId, revisionJobId: jobId, capabilityId },
+      ],
+    });
+
+    await expect(
+      store.rebindLegacySkillRevisionWorkspace({
+        id: created.id,
+        draftId,
+        expectedWorkspacePath: legacyWorkspace,
+        workspace: { path: targetWorkspace, basename: "workspace" },
+      }),
+    ).resolves.toMatchObject({
+      workspace: { path: targetWorkspace, basename: "workspace" },
+      contextMounts: [expect.objectContaining({ kind: "skill-revision-draft", draftId })],
+    });
+    await expect(
+      store.rebindLegacySkillRevisionWorkspace({
+        id: created.id,
+        draftId,
+        expectedWorkspacePath: legacyWorkspace,
+        workspace: { path: targetWorkspace, basename: "workspace" },
+      }),
+    ).resolves.toMatchObject({ workspace: { path: targetWorkspace } });
+
+    const unrelated = await store.create({
+      workspace: { path: legacyWorkspace, basename: "worktree" },
+      goal: "Do unrelated work",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+      contextMounts: [
+        { kind: "skill-revision-draft", draftId, revisionJobId: jobId, capabilityId },
+      ],
+    });
+    await expect(
+      store.rebindLegacySkillRevisionWorkspace({
+        id: unrelated.id,
+        draftId,
+        expectedWorkspacePath: legacyWorkspace,
+        workspace: { path: targetWorkspace, basename: "workspace" },
+      }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+  });
+
   it("replaces a published mount with an owning revision draft and restores it", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

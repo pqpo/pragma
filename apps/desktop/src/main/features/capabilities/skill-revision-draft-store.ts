@@ -117,6 +117,7 @@ export async function scanSkillWorkingTree(
 }
 
 export async function copySkillTree(source: string, target: string): Promise<void> {
+  assertSkillCopyTarget(source, target);
   const sourceRoot = resolve(source);
   const targetRoot = resolve(target);
   await mkdir(targetRoot, { recursive: true, mode: 0o700 });
@@ -149,6 +150,17 @@ export async function copySkillTree(source: string, target: string): Promise<voi
     }
   };
   await visit(sourceRoot);
+}
+
+export function assertSkillCopyTarget(source: string, target: string): void {
+  const sourceRoot = resolve(source);
+  const targetRoot = resolve(target);
+  if (targetRoot === sourceRoot || targetRoot.startsWith(`${sourceRoot}${sep}`)) {
+    throw new SkillWorkingTreeError(
+      "skill_revision_invalid_copy_target",
+      "A Skill draft cannot be copied onto itself or into one of its descendants.",
+    );
+  }
 }
 
 export async function createStableSkillSubmission(input: {

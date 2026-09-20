@@ -11,6 +11,7 @@ import {
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
   GetSkillFileSchema,
+  GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
   ListSkillFilesSchema,
@@ -130,6 +131,13 @@ export function installCapabilityHandlers(
       jobs.map(async (job) => ({ job, draft: await skillRevisions.getDraft(job.draftId) })),
     );
   });
+  ipcMain.handle("capabilities:get-skill-revision-review", (_event, jobId: unknown) =>
+    skillRevisions.getReview(z.string().uuid().parse(jobId)),
+  );
+  ipcMain.handle("capabilities:get-skill-revision-review-file", (_event, input: unknown) => {
+    const parsed = GetSkillRevisionReviewFileSchema.parse(input);
+    return skillRevisions.getReviewFile(parsed.jobId, parsed.path);
+  });
   const actionSchema = z
     .object({ jobId: z.string().uuid(), expectedRevision: z.number().int().positive() })
     .strict();
@@ -144,6 +152,10 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:retry-skill-revision", (_event, input: unknown) => {
     const parsed = actionSchema.parse(input);
     return skillRevisions.retry(parsed.jobId, parsed.expectedRevision);
+  });
+  ipcMain.handle("capabilities:delete-skill-revision", async (_event, input: unknown) => {
+    const parsed = actionSchema.parse(input);
+    await skillRevisions.delete(parsed.jobId, parsed.expectedRevision);
   });
 }
 

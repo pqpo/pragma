@@ -1644,6 +1644,28 @@ export const studio = {
   noSkillRevisions: "暫無技能修訂。",
   noSkillRevisionsDescription: "已提交的候選以及等待審批的變更會顯示在這裡。",
   approveAndPublish: "批准並發佈",
+  deleteSkillRevisionTaskTitle: "刪除此技能修訂任務？",
+  deleteSkillRevisionTaskDescription:
+    "「{{name}}」將從技能修訂列表中移除。刪除任務不會回復已發佈的修訂，也不會刪除技能。",
   continueSkillRevision: "繼續修訂",
   skillRevisionContinuePrompt: "查看校驗問題，更新現有 Skill 草稿，然後重新提交。",
+  skillRevisionSummaryUnavailable: "暫無變更摘要。",
+  skillRevisionRequestDocumentDescription: "記錄發起本次 Skill 修訂的原始要求。",
+  skillRevisionSummaryDocumentDescription: "概括本次 Skill 修訂的變更範圍，便於發佈前審批。",
+  loadingSkillRevisionFile: "正在載入檔案預覽…",
+  skillRevisionFileMissing: "此快照中不存在該檔案。",
+  skillRevisionFileMetadata: "{{size}} · {{hash}} · {{mode}}",
+  skillRevisionFileTransition: "{{before}} → {{after}}",
+  skillRevisionExecutable: "可執行",
+  skillRevisionNotExecutable: "不可執行",
+  skillRevisionPreviewUnavailable: {
+    binary: "二進位檔案無法預覽（{{size}}，SHA-256 {{hash}}）。",
+    size_limit: "檔案超過預覽大小限制（{{size}}，SHA-256 {{hash}}）。",
+    line_limit: "檔案超過預覽行數限制（{{size}}，SHA-256 {{hash}}）。",
+  },
+  skillRevisionOperation: {
+    added: "新增",
+    modified: "修改",
+    deleted: "刪除",
+  },
 } as const;

@@ -1,7 +1,7 @@
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
@@ -686,12 +686,50 @@ export async function createDesktopApplicationContainer(
       return await skillAgentsRef.current.revisionGenerator.generate(input);
     },
   };
+  const skillRevisionDraftsPath = join(pragmaPaths.dataRoot(), "skill-revision-drafts");
   const skillRevisions = createSkillRevisionService({
     statePath: join(pragmaPaths.stateRoot(), "skill-revisions"),
-    draftsPath: join(pragmaPaths.dataRoot(), "skill-revision-drafts"),
+    draftsPath: skillRevisionDraftsPath,
     draftsTrashPath: join(pragmaPaths.trashRoot(), "skill-revision-drafts"),
     capabilities: capabilityStore,
     generator: skillRevisionGenerator,
+    resolveWorkspacePath: async (missionId, draftId) => {
+      if (missionId !== undefined) {
+        try {
+          const mission = await missionStore.get(missionId);
+          const legacyWorkspace =
+            draftId === undefined ? undefined : join(skillRevisionDraftsPath, draftId, "worktree");
+          if (
+            draftId !== undefined &&
+            legacyWorkspace !== undefined &&
+            mission.workspace.path === legacyWorkspace
+          ) {
+            const defaultWorkspace = (
+              await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())
+            ).defaultWorkspace;
+            if (defaultWorkspace === legacyWorkspace) {
+              throw Object.assign(new Error("skill_revision_workspace_unavailable"), {
+                code: "skill_revision_workspace_unavailable",
+              });
+            }
+            await guardedMissionStore.rebindLegacySkillRevisionWorkspace({
+              id: mission.id,
+              draftId,
+              expectedWorkspacePath: legacyWorkspace,
+              workspace: { path: defaultWorkspace, basename: basename(defaultWorkspace) },
+            });
+            return defaultWorkspace;
+          }
+          return mission.workspace.path;
+        } catch (error) {
+          if (!(error instanceof MissionStoreError) || error.code !== "mission_not_found") {
+            throw error;
+          }
+        }
+      }
+      return (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages()))
+        .defaultWorkspace;
+    },
     warn: (message, error) =>
       mainLogger.warn("desktop.skill_revision_processing_failed", message, { error }),
   });
@@ -1092,6 +1130,7 @@ export async function createDesktopApplicationContainer(
           capabilities: capabilityStore,
           revisions: skillRevisions,
           inlineMissionId: mission.id,
+          inlineWorkspacePath: mission.workspace.path,
           mountDraft: async (input) => {
             await missionStore.mountSkillRevisionDraft({
               id: input.missionId,
@@ -1101,20 +1140,24 @@ export async function createDesktopApplicationContainer(
             });
           },
           unmountDraft: async (input) => {
-            const current = await missionStore.get(input.missionId);
-            await missionStore.updateContextMounts(
-              input.missionId,
-              current.contextMounts.filter(
-                (mount) => mount.kind !== "skill-revision-draft" || mount.draftId !== input.draftId,
-              ),
-            );
+            await missionStore.unmountSkillRevisionDraft({
+              id: input.missionId,
+              draftId: input.draftId,
+            });
           },
+          onUnmountDraftError: (error) =>
+            mainLogger.warn(
+              "desktop.skill_revision_unmount_failed",
+              "Failed to unmount a submitted Skill draft from its Mission.",
+              { error },
+            ),
         });
-        const mountedDraft = mission.contextMounts.find(
-          (mount) => mount.kind === "skill-revision-draft",
+        const mountedDrafts = mission.contextMounts.filter(
+          (mount): mount is Extract<typeof mount, { kind: "skill-revision-draft" }> =>
+            mount.kind === "skill-revision-draft",
         );
-        let skillRevisionWorkspace: string | undefined = mission.workspace.path;
-        if (mountedDraft !== undefined) {
+        const staleDraftIds: string[] = [];
+        for (const mountedDraft of mountedDrafts) {
           let inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
           const mountedJob = await skillRevisions.get(mountedDraft.revisionJobId);
           if (
@@ -1128,19 +1171,36 @@ export async function createDesktopApplicationContainer(
             });
             inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
           }
-          skillRevisionWorkspace = inspection.draftPath;
-        }
-        if (mountedDraft !== undefined && skillRevisionWorkspace === undefined) {
+          if (inspection.draftPath !== undefined) {
+            continue;
+          }
+          if (
+            inspection.draft.submissionHash !== undefined ||
+            ["pending_review", "publishing", "completed", "rejected"].includes(
+              inspection.draft.state,
+            )
+          ) {
+            staleDraftIds.push(mountedDraft.draftId);
+            continue;
+          }
           throw Object.assign(
             new Error("The mounted Skill draft is not writable by this Mission."),
             { code: "skill_revision_runtime_file_tools_unavailable" },
           );
         }
+        if (
+          staleDraftIds.length > 0 &&
+          !["queued", "running", "waiting"].includes(mission.execution?.status ?? "")
+        ) {
+          for (const draftId of staleDraftIds) {
+            await missionStore.unmountSkillRevisionDraft({ id: mission.id, draftId });
+          }
+        }
         const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
         const additionalResources = systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
         return await skillAgentsRef.current.compile({
           runtimes: scopedRuntimes,
-          workspace: skillRevisionWorkspace ?? mission.workspace.path,
+          workspace: mission.workspace.path,
           adapterHost: createDesktopAdapterHost(
             {
               capabilityStore,
@@ -1150,7 +1210,7 @@ export async function createDesktopApplicationContainer(
               contextStores,
               pragmaManagement: { skillRevisions: skillRevisionPort },
             },
-            skillRevisionWorkspace ?? mission.workspace.path,
+            mission.workspace.path,
           ),
           ...(expertResource === undefined ? {} : { expertResource }),
           ...(additionalResources === undefined ? {} : { additionalResources }),
@@ -1299,14 +1359,8 @@ export async function createDesktopApplicationContainer(
     runtimes,
     pragmaHome: pragmaPaths.root,
     loggerProvider,
-    resolveDraftWorkspace: async (draftId) => {
-      const inspection = await skillRevisions.inspectDraft(draftId);
-      const draftWorkspace = inspection.draftPath ?? inspection.referencePath;
-      if (draftWorkspace === undefined) {
-        throw new Error(`Skill revision draft workspace is unavailable: ${draftId}`);
-      }
-      return draftWorkspace;
-    },
+    resolveDraftWorkspace: async (draftId) =>
+      (await skillRevisions.getDraft(draftId)).workspacePath,
     onMissionCreated: async ({ jobId, missionId }) => {
       await skillRevisions.attachMission(jobId, missionId);
     },

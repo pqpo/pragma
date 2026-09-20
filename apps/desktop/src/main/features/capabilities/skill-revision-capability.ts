@@ -23,6 +23,7 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
   readonly capabilities: CapabilityStore;
   readonly revisions: SkillRevisionService;
   readonly inlineMissionId?: string | undefined;
+  readonly inlineWorkspacePath?: string | undefined;
   readonly mountDraft?:
     | ((input: {
         readonly missionId: string;
@@ -34,6 +35,7 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
   readonly unmountDraft?:
     | ((input: { readonly missionId: string; readonly draftId: string }) => Promise<void>)
     | undefined;
+  readonly onUnmountDraftError?: ((error: unknown) => void) | undefined;
 }): SkillRevisionSubmissionPort {
   const targets = async () =>
     (await options.capabilities.list())
@@ -224,6 +226,9 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
           ...(input.draftId === undefined ? {} : { draftId: input.draftId }),
           ...(input.draftName === undefined ? {} : { draftName: input.draftName }),
           ...(options.inlineMissionId === undefined ? {} : { missionId: options.inlineMissionId }),
+          ...(options.inlineWorkspacePath === undefined
+            ? {}
+            : { workspacePath: options.inlineWorkspacePath }),
         },
       );
       const inspection = await options.revisions.inspectDraft(job.draftId, options.inlineMissionId);
@@ -304,6 +309,11 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
         summary: input.summary,
         ...(options.inlineMissionId === undefined ? {} : { missionId: options.inlineMissionId }),
       });
+      if (options.inlineMissionId !== undefined && options.unmountDraft !== undefined) {
+        await options
+          .unmountDraft({ missionId: options.inlineMissionId, draftId: input.draftId })
+          .catch((error) => options.onUnmountDraftError?.(error));
+      }
       const draft = await options.revisions.getDraft(job.draftId);
       return SkillRevisionDraftReceiptSchema.parse({
         draftId: draft.id,

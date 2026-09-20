@@ -650,7 +650,7 @@ export const SkillRevisionDraftStateSchema = z.enum([
 
 export const SkillRevisionDraftSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-draft/v3"),
+    schemaVersion: z.literal("pragma.skill-revision-draft/v4"),
     operation: z.enum(["revise", "create"]),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
@@ -659,6 +659,7 @@ export const SkillRevisionDraftSchema = z
     resourceDescription: z.string().trim().min(1).max(500).optional(),
     baseRevision: z.number().int().nonnegative(),
     baseContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    workspacePath: z.string().trim().min(1).max(4_000),
     state: SkillRevisionDraftStateSchema,
     activeMissionId: z.string().uuid().optional(),
     submissionHash: z
