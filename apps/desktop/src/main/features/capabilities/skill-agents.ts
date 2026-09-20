@@ -83,9 +83,9 @@ export function createDesktopSkillAgents(options: {
   }) => {
     const runtime = await resolveRuntime(input.profile);
     const project = await options.project.ensurePublished();
-    const draftWorkspace = await options.resolveDraftWorkspace(input.draftId);
+    const missionWorkspace = await options.resolveDraftWorkspace(input.draftId);
     const mission = await options.missions.create({
-      workspace: { path: draftWorkspace, basename: basename(draftWorkspace) },
+      workspace: { path: missionWorkspace, basename: basename(missionWorkspace) },
       goal: input.goal,
       title: "Revise Skill Capability",
       project: { id: project.projectId, revision: project.revision },

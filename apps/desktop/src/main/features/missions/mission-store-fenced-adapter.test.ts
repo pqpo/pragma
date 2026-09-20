@@ -29,11 +29,28 @@ describe("Desktop fenced MissionStore adapter", () => {
     roots.push(root);
     const missionsPath = join(root, "missions");
     const rawStore = createMissionStore({ missionsPath });
+    const skillDraftId = "11111111-1111-4111-8111-111111111111";
+    const skillJobId = "33333333-3333-4333-8333-333333333333";
+    const skillCapabilityId = "44444444-4444-4444-8444-444444444444";
+    const legacyWorkspace = join(root, "legacy-worktree");
     const mission = await rawStore.create({
-      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      workspace: { path: legacyWorkspace, basename: "legacy-worktree" },
       goal: "Check the shared owner boundary",
       project: { id: "studio", revision: 1 },
       executor: missionExecutorSnapshot(expertFixture()),
+      origin: {
+        type: "system-skill-revision",
+        jobId: skillJobId,
+        capabilityId: skillCapabilityId,
+      },
+      contextMounts: [
+        {
+          kind: "skill-revision-draft",
+          draftId: skillDraftId,
+          revisionJobId: skillJobId,
+          capabilityId: skillCapabilityId,
+        },
+      ],
     });
     const controller = createMissionControllerStore({
       missionsPath,
@@ -57,13 +74,24 @@ describe("Desktop fenced MissionStore adapter", () => {
       status: "running",
       startedAt: "2026-09-16T00:00:00.000Z",
     });
+    await fencedStore.rebindLegacySkillRevisionWorkspace({
+      id: mission.id,
+      draftId: skillDraftId,
+      expectedWorkspacePath: legacyWorkspace,
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+    });
+    await fencedStore.unmountSkillRevisionDraft({ id: mission.id, draftId: skillDraftId });
     await expect(rawStore.get(mission.id)).resolves.toMatchObject({
       toolPermissionMode: "full-access",
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      contextMounts: [],
     });
     await expect(controller.readSnapshot({ missionId: mission.id })).resolves.toMatchObject({
       events: expect.arrayContaining([
         expect.objectContaining({ type: "mission.options.updated" }),
         expect.objectContaining({ type: "mission.execution.updated" }),
+        expect.objectContaining({ type: "mission.skill-revision-workspace.rebound" }),
+        expect.objectContaining({ type: "mission.skill-revision-draft.unmounted" }),
       ]),
     });
     expect(onExecutionChanged).toHaveBeenCalledWith({

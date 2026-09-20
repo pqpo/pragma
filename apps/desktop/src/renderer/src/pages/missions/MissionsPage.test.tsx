@@ -58,6 +58,7 @@ import {
   teamMissionsForMentionCandidates,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
+import { LocalMissionUserMessageView } from "./mission-chat-presentation.tsx";
 import {
   canMeasureMissionComposerGrowthWithoutReset,
   MissionChatComposer,
@@ -2605,6 +2606,27 @@ describe("Mission tool call grouping", () => {
 
 describe("Mission Expert output labels", () => {
   const createdAt = "2026-07-21T00:00:00.000Z";
+
+  it("renders failed message retry as an accessible icon button", () => {
+    const html = renderToStaticMarkup(
+      <LocalMissionUserMessageView
+        missionId="00000000-0000-4000-8000-000000000001"
+        message={{
+          id: "failed-message",
+          content: "Try this again.",
+          createdAt,
+          attachments: [],
+          status: "failed",
+          retryMode: "same-request",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="mission-message-retry"');
+    expect(html).toContain('aria-label="Retry"');
+    expect(html).not.toContain(">Retry<");
+  });
 
   it("renders Mission image previews and file attachment labels", () => {
     const html = renderToStaticMarkup(

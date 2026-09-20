@@ -11,10 +11,17 @@ images, binary fixtures, and executable files. A text-only change-set cannot pre
 
 ## Decision
 
-Desktop stores each draft under `data/skill-revision-drafts/<draftId>/` with a private control record,
-a writable `worktree/`, and content-addressed immutable `submissions/`. Only the exact worktree is
-made writable to its owning Mission. Runtime-native file and shell tools perform edits; the six
-management tools only discover, create, inspect, submit, and discard drafts.
+Desktop stores the authoritative control record and content-addressed immutable submissions under
+`data/skill-revision-drafts/<draftId>/`. The editable tree lives in the owning user Workspace at
+`.pragma/skill-revision-drafts/<draftId>/worktree`. The Mission keeps its user-selected Workspace;
+the revision Agent receives the draft path from `skill_revision_start` and uses Runtime-native file
+and shell tools to edit that path. In Git repositories Desktop adds the Workspace-local `.pragma`
+directory to `.git/info/exclude` without changing the repository's tracked `.gitignore`.
+
+Successful submission first publishes an immutable global candidate, atomically advances the Draft
+and Job into review through a recoverable journal, and then removes the Workspace draft directory.
+Cleanup failure does not make the committed submission unreadable and is retried from the journal.
+Legacy globally stored editable trees migrate into their resolved owning Workspace on first access.
 
 The Host preserves regular-file bytes and legal executable bits and rejects links, special files,
 path escapes, packages without `SKILL.md`, and packages beyond the file and byte limits. Submission
@@ -35,4 +42,7 @@ draft is claimed.
 - Binary and executable package content survives revision without a Skill-specific file API.
 - Formal revisions remain immutable and publication stays idempotent.
 - Conflicts are deterministic but require regenerating a new proposal.
+- A Mission's configured Workspace does not change when it creates or resumes a Skill draft.
+- Submitted editable trees do not remain in the user's Workspace; immutable review history remains
+  in authoritative Desktop storage.
 - Draft cleanup uses Host Trash; published revisions and completed history are never draft-deleted.
