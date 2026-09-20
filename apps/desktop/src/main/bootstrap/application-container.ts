@@ -15,7 +15,6 @@ import {
 import {
   BUILT_IN_PRAGMA_REF,
   EVALUATION_JUDGE_EXPERT_REF,
-  SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
   compileBuiltInAgent,
@@ -56,12 +55,10 @@ import { createCapabilityStore } from "../features/capabilities/capability-store
 import { createDesktopSkillRevisionSubmissionPort } from "../features/capabilities/skill-revision-capability.ts";
 import {
   createDesktopSkillAgents,
-  createSkillEvaluationProfileStore,
   type DesktopSkillAgents,
 } from "../features/capabilities/skill-agents.ts";
 import {
   createSkillRevisionService,
-  type SkillRevisionEvaluator,
   type SkillRevisionGenerator,
 } from "../features/capabilities/skill-revision-service.ts";
 import { installSkillLearningHandlers } from "../features/capabilities/skill-learning-ipc.ts";
@@ -341,7 +338,6 @@ export async function createDesktopApplicationContainer(
       MEMORY_CURATOR_REF,
       STORE_REVISION_EXPERT_REF,
       SKILL_REVISION_EXPERT_REF,
-      SKILL_EVALUATION_EXPERT_REF,
       EVALUATION_JUDGE_EXPERT_REF,
     ]),
     fixedResources: [pragmaManagementCapabilityResource()],
@@ -682,9 +678,6 @@ export async function createDesktopApplicationContainer(
     additionalMountResources: systemExpertKnowledgeRevisionMountResources,
   });
   const skillAgentsRef: { current?: DesktopSkillAgents } = {};
-  const skillEvaluationProfiles = createSkillEvaluationProfileStore(
-    join(pragmaPaths.stateRoot(), "skill-evaluation", "profile.json"),
-  );
   const skillRevisionGenerator: SkillRevisionGenerator = {
     async generate(input) {
       if (skillAgentsRef.current === undefined) {
@@ -693,21 +686,12 @@ export async function createDesktopApplicationContainer(
       return await skillAgentsRef.current.revisionGenerator.generate(input);
     },
   };
-  const skillRevisionEvaluator: SkillRevisionEvaluator = {
-    async evaluate(input) {
-      if (skillAgentsRef.current === undefined) {
-        throw new Error("skill_evaluation_agent_unavailable");
-      }
-      return await skillAgentsRef.current.revisionEvaluator.evaluate(input);
-    },
-  };
   const skillRevisions = createSkillRevisionService({
     statePath: join(pragmaPaths.stateRoot(), "skill-revisions"),
     draftsPath: join(pragmaPaths.dataRoot(), "skill-revision-drafts"),
     draftsTrashPath: join(pragmaPaths.trashRoot(), "skill-revision-drafts"),
     capabilities: capabilityStore,
     generator: skillRevisionGenerator,
-    evaluator: skillRevisionEvaluator,
     warn: (message, error) =>
       mainLogger.warn("desktop.skill_revision_processing_failed", message, { error }),
   });
@@ -781,14 +765,6 @@ export async function createDesktopApplicationContainer(
     statePath: join(pragmaPaths.stateRoot(), "memory-skill-promotion"),
     capabilities: capabilityStore,
     revisions: skillRevisions,
-    evaluator: {
-      async evaluate(input) {
-        if (skillAgentsRef.current === undefined) {
-          throw new Error("skill_evaluation_agent_unavailable");
-        }
-        return await skillAgentsRef.current.evaluateCandidate(input);
-      },
-    },
     expertExists: async (expertRef) =>
       (await expertStore.list()).some((expert) => expert.ref === expertRef),
     bindSkill: async (expertRef, capabilityId, revision) => {
@@ -843,10 +819,7 @@ export async function createDesktopApplicationContainer(
     },
   });
   skillPromotionRef.current = skillPromotion;
-  installSkillLearningHandlers({
-    promotion: skillPromotion,
-    evaluationProfiles: skillEvaluationProfiles,
-  });
+  installSkillLearningHandlers({ promotion: skillPromotion });
   installContextStoreHandlers(
     contextStores,
     options.getWindow,
@@ -1038,15 +1011,13 @@ export async function createDesktopApplicationContainer(
           ? systemExperts.fingerprint(STORE_REVISION_EXPERT_REF)
           : ref === SKILL_REVISION_EXPERT_REF
             ? createHash("sha256")
-                .update((await skillAgentsRef.current?.fingerprint("revision")) ?? "unavailable")
+                .update((await skillAgentsRef.current?.fingerprint()) ?? "unavailable")
                 .update("\0")
                 .update(systemExperts.fingerprint(SKILL_REVISION_EXPERT_REF) ?? "unavailable")
                 .digest("hex")
-            : ref === SKILL_EVALUATION_EXPERT_REF
-              ? await skillAgentsRef.current?.fingerprint("evaluation")
-              : ref === EVALUATION_JUDGE_EXPERT_REF
-                ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
-                : systemExperts.fingerprint(ref),
+            : ref === EVALUATION_JUDGE_EXPERT_REF
+              ? builtInAgentFingerprint(EVALUATION_JUDGE_EXPERT_REF)
+              : systemExperts.fingerprint(ref),
     assertExecutorReady: async (ref) => await assertBundleExecutorReady(ref, "run_mission"),
     compileSystemExecutor: async ({
       mission,
@@ -1142,10 +1113,23 @@ export async function createDesktopApplicationContainer(
         const mountedDraft = mission.contextMounts.find(
           (mount) => mount.kind === "skill-revision-draft",
         );
-        const skillRevisionWorkspace =
-          mountedDraft === undefined
-            ? mission.workspace.path
-            : (await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id)).draftPath;
+        let skillRevisionWorkspace: string | undefined = mission.workspace.path;
+        if (mountedDraft !== undefined) {
+          let inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
+          const mountedJob = await skillRevisions.get(mountedDraft.revisionJobId);
+          if (
+            inspection.draft.state === "needs_attention" &&
+            mountedJob.state === "needs_attention" &&
+            mountedJob.error?.code === "skill_revision_validation_required"
+          ) {
+            await skillRevisions.start(mountedJob.request, {
+              draftId: mountedDraft.draftId,
+              missionId: mission.id,
+            });
+            inspection = await skillRevisions.inspectDraft(mountedDraft.draftId, mission.id);
+          }
+          skillRevisionWorkspace = inspection.draftPath;
+        }
         if (mountedDraft !== undefined && skillRevisionWorkspace === undefined) {
           throw Object.assign(
             new Error("The mounted Skill draft is not writable by this Mission."),
@@ -1155,8 +1139,8 @@ export async function createDesktopApplicationContainer(
         const expertResource = systemExperts.getResource(SKILL_REVISION_EXPERT_REF);
         const additionalResources = systemExperts.getAdditionalResources(SKILL_REVISION_EXPERT_REF);
         return await skillAgentsRef.current.compile({
-          kind: "revision",
           runtimes: scopedRuntimes,
+          workspace: skillRevisionWorkspace ?? mission.workspace.path,
           adapterHost: createDesktopAdapterHost(
             {
               capabilityStore,
@@ -1171,18 +1155,6 @@ export async function createDesktopApplicationContainer(
           ...(expertResource === undefined ? {} : { expertResource }),
           ...(additionalResources === undefined ? {} : { additionalResources }),
           resolveExternalInvocable,
-        });
-      }
-      if (mission.executor.ref === SKILL_EVALUATION_EXPERT_REF) {
-        if (
-          skillAgentsRef.current === undefined ||
-          mission.origin.type !== "system-skill-evaluation"
-        ) {
-          throw new Error("The Skill Evaluation Agent mission is invalid or unavailable.");
-        }
-        return await skillAgentsRef.current.compile({
-          kind: "evaluation",
-          runtimes: scopedRuntimes,
         });
       }
       if (mission.executor.ref === EVALUATION_JUDGE_EXPERT_REF) {
@@ -1321,13 +1293,24 @@ export async function createDesktopApplicationContainer(
   });
   skillAgentsRef.current = createDesktopSkillAgents({
     revisionProfiles: storeRevisions,
-    evaluationProfiles: skillEvaluationProfiles,
     missions: missionStore,
     runner: missionRunner,
     project: pragmaProjectStore,
     runtimes,
     pragmaHome: pragmaPaths.root,
     loggerProvider,
+    resolveDraftWorkspace: async (draftId) => {
+      const inspection = await skillRevisions.inspectDraft(draftId);
+      const draftWorkspace = inspection.draftPath ?? inspection.referencePath;
+      if (draftWorkspace === undefined) {
+        throw new Error(`Skill revision draft workspace is unavailable: ${draftId}`);
+      }
+      return draftWorkspace;
+    },
+    onMissionCreated: async ({ jobId, missionId }) => {
+      await skillRevisions.attachMission(jobId, missionId);
+    },
+    isDraftSubmitted: async (jobId) => (await skillRevisions.get(jobId)).state === "pending_review",
   });
   const evaluationService = createEvaluationService({
     store: evaluationStore,

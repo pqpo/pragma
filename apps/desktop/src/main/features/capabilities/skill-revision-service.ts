@@ -3,19 +3,18 @@ import { access, mkdir, readFile, readdir, rename, rm, unlink, writeFile } from 
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
-import { applySkillChangeSet } from "@pragma/built-in-agents";
+import {
+  applySkillChangeSet,
+  validateSkillPackage,
+  type GeneratedSkillValidationResult,
+} from "@pragma/built-in-agents";
 import {
   SkillRevisionDraftSchema,
   ManagedSkillRevisionJobSchema,
-  SkillRevisionJobSchema,
-  SkillRevisionRequestSchema,
-  SkillRevisionRequestV3Schema,
-  type SkillEvaluationSnapshot,
+  SkillRevisionRequestV4Schema,
   type SkillRevisionDraft,
   type ManagedSkillRevisionJob,
-  type SkillRevisionJob,
-  type SkillRevisionRequest,
-  type SkillRevisionRequestV3,
+  type SkillRevisionRequestV4,
 } from "@pragma/built-in-agents/contracts";
 import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import { z } from "zod";
@@ -31,10 +30,16 @@ import {
 } from "./skill-revision-draft-store.ts";
 import {
   SkillRevisionDraftV1Schema,
+  SkillRevisionDraftV2StoredSchema,
+  SkillRevisionJobV1StoredSchema,
   SkillRevisionJobV2StoredSchema,
+  SkillRevisionJobV3StoredSchema,
   SkillRevisionMigrationJournalSchema,
   migrateSkillRevisionDraftV1ToV2,
+  migrateSkillRevisionDraftV2ToV3,
   migrateSkillRevisionJobV2ToV3,
+  migrateSkillRevisionJobV3ToV4,
+  type SkillRevisionJobV1Stored,
   type SkillRevisionMigrationJournal,
 } from "./skill-revision-migrations/index.ts";
 import { deterministicRevisionUuid } from "../built-in-agents/revision-resource-id.ts";
@@ -42,20 +47,39 @@ import { deterministicRevisionUuid } from "../built-in-agents/revision-resource-
 export interface SkillRevisionGenerator {
   generate(input: {
     readonly jobId: string;
-    readonly request: SkillRevisionRequest;
+    readonly draftId: string;
+    readonly request: SkillRevisionRequestV4;
     readonly current: SkillPackage;
     readonly revision: number;
     readonly contentHash: string;
-  }): Promise<import("@pragma/built-in-agents/contracts").SkillRevisionChangeSet>;
+  }): Promise<import("@pragma/built-in-agents/contracts").SkillRevisionChangeSet | undefined>;
 }
 
-export interface SkillRevisionEvaluator {
-  evaluate(input: {
-    readonly jobId: string;
-    readonly package: SkillPackage;
-    readonly request: SkillRevisionRequest | SkillRevisionRequestV3;
-  }): Promise<SkillEvaluationSnapshot>;
-}
+const SkillRevisionSubmissionRequestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.skill-revision-submission/v1"),
+    capabilityId: z.string().uuid(),
+    prompt: z.string().trim().min(1).max(50_000),
+    source: z.enum(["user", "memory-learning"]),
+    sourceDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    sourceRefs: z
+      .array(
+        z
+          .object({
+            kind: z.enum(["episodic", "semantic", "knowledge"]),
+            id: z.string().min(1),
+            revision: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .default([]),
+  })
+  .strict();
+export type SkillRevisionSubmissionRequest = z.infer<typeof SkillRevisionSubmissionRequestSchema>;
 
 export interface SkillDraftInspection {
   readonly draft: SkillRevisionDraft;
@@ -76,9 +100,9 @@ export interface SkillDraftInspection {
 
 export interface SkillRevisionService {
   /** Compatibility entry used by Memory while it moves to managed Skill Missions. */
-  submit(request: SkillRevisionRequest): Promise<ManagedSkillRevisionJob>;
+  submit(request: SkillRevisionSubmissionRequest): Promise<ManagedSkillRevisionJob>;
   start(
-    request: SkillRevisionRequestV3,
+    request: SkillRevisionRequestV4,
     options?: {
       readonly draftId?: string;
       readonly draftName?: string;
@@ -133,7 +157,6 @@ export function createSkillRevisionService(options: {
   readonly draftsTrashPath?: string;
   readonly capabilities: CapabilityStore;
   readonly generator?: SkillRevisionGenerator;
-  readonly evaluator: SkillRevisionEvaluator;
   readonly warn?: (message: string, error: unknown) => void;
 }): SkillRevisionService {
   const jobsPath = join(options.statePath, "jobs");
@@ -191,8 +214,13 @@ export function createSkillRevisionService(options: {
   const adjacentMigration = (
     kind: "job" | "draft",
     id: string,
+    sourceVersion:
+      | "pragma.skill-revision-job/v2"
+      | "pragma.skill-revision-job/v3"
+      | "pragma.skill-revision-draft/v1"
+      | "pragma.skill-revision-draft/v2",
   ): Omit<SkillRevisionMigrationJournal, "sourceHash"> =>
-    kind === "job"
+    kind === "job" && sourceVersion === "pragma.skill-revision-job/v2"
       ? {
           schemaVersion: "pragma.skill-revision-migration/v1",
           kind,
@@ -202,27 +230,58 @@ export function createSkillRevisionService(options: {
           recordPath: jobPath(id),
           backupPath: join(migrationBackupsPath, `${id}.v2.json`),
         }
-      : {
-          schemaVersion: "pragma.skill-revision-migration/v1",
-          kind,
-          recordId: id,
-          sourceVersion: "pragma.skill-revision-draft/v1",
-          targetVersion: "pragma.skill-revision-draft/v2",
-          recordPath: draftPath(id),
-          backupPath: join(migrationBackupsPath, `draft-${id}.v1.json`),
-        };
+      : kind === "job" && sourceVersion === "pragma.skill-revision-job/v3"
+        ? {
+            schemaVersion: "pragma.skill-revision-migration/v1",
+            kind,
+            recordId: id,
+            sourceVersion,
+            targetVersion: "pragma.skill-revision-job/v4",
+            recordPath: jobPath(id),
+            backupPath: join(migrationBackupsPath, `${id}.v3.json`),
+          }
+        : kind === "draft" && sourceVersion === "pragma.skill-revision-draft/v1"
+          ? {
+              schemaVersion: "pragma.skill-revision-migration/v1",
+              kind,
+              recordId: id,
+              sourceVersion: "pragma.skill-revision-draft/v1",
+              targetVersion: "pragma.skill-revision-draft/v2",
+              recordPath: draftPath(id),
+              backupPath: join(migrationBackupsPath, `draft-${id}.v1.json`),
+            }
+          : {
+              schemaVersion: "pragma.skill-revision-migration/v1",
+              kind: "draft",
+              recordId: id,
+              sourceVersion: "pragma.skill-revision-draft/v2",
+              targetVersion: "pragma.skill-revision-draft/v3",
+              recordPath: draftPath(id),
+              backupPath: join(migrationBackupsPath, `draft-${id}.v2.json`),
+            };
 
-  const adjacentMigrationJournalPath = (kind: "job" | "draft", id: string): string =>
+  const adjacentMigrationJournalPath = (
+    kind: "job" | "draft",
+    id: string,
+    sourceVersion: SkillRevisionMigrationJournal["sourceVersion"],
+  ): string =>
     join(
       migrationJournalsPath,
-      kind === "job" ? `job-${id}.v2-to-v3.json` : `draft-${id}.v1-to-v2.json`,
+      `${kind}-${id}.${sourceVersion.slice(sourceVersion.lastIndexOf("/") + 1)}-to-${adjacentMigration(
+        kind,
+        id,
+        sourceVersion,
+      ).targetVersion.slice(
+        adjacentMigration(kind, id, sourceVersion).targetVersion.lastIndexOf("/") + 1,
+      )}.json`,
     );
 
   const readAdjacentMigrationJournal = async (
     kind: "job" | "draft",
     id: string,
+    sourceVersion: SkillRevisionMigrationJournal["sourceVersion"],
   ): Promise<SkillRevisionMigrationJournal | undefined> => {
-    const path = adjacentMigrationJournalPath(kind, id);
+    const path = adjacentMigrationJournalPath(kind, id, sourceVersion);
     let raw: unknown;
     try {
       raw = JSON.parse(await readFile(path, "utf8"));
@@ -231,7 +290,7 @@ export function createSkillRevisionService(options: {
       throw error;
     }
     const journal = SkillRevisionMigrationJournalSchema.parse(raw);
-    const expected = adjacentMigration(kind, id);
+    const expected = adjacentMigration(kind, id, sourceVersion);
     for (const [key, value] of Object.entries(expected)) {
       if (journal[key as keyof typeof journal] !== value) {
         throw coded("skill_revision_migration_journal_invalid");
@@ -244,33 +303,45 @@ export function createSkillRevisionService(options: {
     journal: SkillRevisionMigrationJournal,
   ): Promise<void> => {
     const source = JSON.parse(await readFile(journal.backupPath, "utf8")) as unknown;
-    if (journal.kind === "job") SkillRevisionJobV2StoredSchema.parse(source);
-    else SkillRevisionDraftV1Schema.parse(source);
+    if (journal.sourceVersion === "pragma.skill-revision-job/v2")
+      SkillRevisionJobV2StoredSchema.parse(source);
+    else if (journal.sourceVersion === "pragma.skill-revision-job/v3")
+      SkillRevisionJobV3StoredSchema.parse(source);
+    else if (journal.sourceVersion === "pragma.skill-revision-draft/v1")
+      SkillRevisionDraftV1Schema.parse(source);
+    else SkillRevisionDraftV2StoredSchema.parse(source);
     if (jsonHash(source) !== journal.sourceHash) {
       throw coded("skill_revision_migration_backup_mismatch");
     }
   };
 
   const finishAdjacentMigration = async (kind: "job" | "draft", id: string): Promise<void> => {
-    const journal = await readAdjacentMigrationJournal(kind, id);
-    if (journal === undefined) return;
-    await assertAdjacentMigrationBackup(journal);
-    await rm(adjacentMigrationJournalPath(kind, id), { force: true });
+    const versions =
+      kind === "job"
+        ? (["pragma.skill-revision-job/v2", "pragma.skill-revision-job/v3"] as const)
+        : (["pragma.skill-revision-draft/v1", "pragma.skill-revision-draft/v2"] as const);
+    for (const sourceVersion of versions) {
+      const journal = await readAdjacentMigrationJournal(kind, id, sourceVersion);
+      if (journal === undefined) continue;
+      await assertAdjacentMigrationBackup(journal);
+      await rm(adjacentMigrationJournalPath(kind, id, sourceVersion), { force: true });
+    }
   };
 
   const persistAdjacentMigration = async <T>(input: {
     readonly kind: "job" | "draft";
     readonly id: string;
+    readonly sourceVersion: SkillRevisionMigrationJournal["sourceVersion"];
     readonly source: unknown;
     readonly migrated: T;
     readonly write: (value: T) => Promise<void>;
   }): Promise<T> => {
-    const details = adjacentMigration(input.kind, input.id);
+    const details = adjacentMigration(input.kind, input.id, input.sourceVersion);
     const journal = SkillRevisionMigrationJournalSchema.parse({
       ...details,
       sourceHash: jsonHash(input.source),
     });
-    const existing = await readAdjacentMigrationJournal(input.kind, input.id);
+    const existing = await readAdjacentMigrationJournal(input.kind, input.id, input.sourceVersion);
     if (existing === undefined) {
       try {
         const backup = JSON.parse(await readFile(journal.backupPath, "utf8")) as unknown;
@@ -281,13 +352,18 @@ export function createSkillRevisionService(options: {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         await writeJsonAtomic(journal.backupPath, input.source);
       }
-      await writeJsonAtomic(adjacentMigrationJournalPath(input.kind, input.id), journal);
+      await writeJsonAtomic(
+        adjacentMigrationJournalPath(input.kind, input.id, input.sourceVersion),
+        journal,
+      );
     } else if (existing.sourceHash !== journal.sourceHash) {
       throw coded("skill_revision_migration_journal_invalid");
     }
     await assertAdjacentMigrationBackup(journal);
     await input.write(input.migrated);
-    await rm(adjacentMigrationJournalPath(input.kind, input.id), { force: true });
+    await rm(adjacentMigrationJournalPath(input.kind, input.id, input.sourceVersion), {
+      force: true,
+    });
     return input.migrated;
   };
 
@@ -305,20 +381,30 @@ export function createSkillRevisionService(options: {
         await finishAdjacentMigration("draft", id);
         return latest.data;
       }
-      const legacy = SkillRevisionDraftV1Schema.parse(latestRaw);
-      const migrated = migrateSkillRevisionDraftV1ToV2(legacy);
+      const storedV2 = SkillRevisionDraftV2StoredSchema.safeParse(latestRaw);
+      const v2 = storedV2.success
+        ? storedV2.data
+        : await persistAdjacentMigration({
+            kind: "draft",
+            id,
+            sourceVersion: "pragma.skill-revision-draft/v1",
+            source: SkillRevisionDraftV1Schema.parse(latestRaw),
+            migrated: migrateSkillRevisionDraftV1ToV2(SkillRevisionDraftV1Schema.parse(latestRaw)),
+            write: async (value) => await writeJsonAtomic(draftPath(id), value),
+          });
       return await persistAdjacentMigration({
         kind: "draft",
         id,
-        source: legacy,
-        migrated,
+        sourceVersion: "pragma.skill-revision-draft/v2",
+        source: v2,
+        migrated: migrateSkillRevisionDraftV2ToV3(v2),
         write: writeDraft,
       });
     });
   };
 
   const createDraft = async (input: {
-    readonly request: SkillRevisionRequestV3;
+    readonly request: SkillRevisionRequestV4;
     readonly name?: string;
     readonly id?: string;
   }): Promise<SkillRevisionDraft> => {
@@ -347,7 +433,7 @@ export function createSkillRevisionService(options: {
         name = capability.definition.name;
       }
       const draft = SkillRevisionDraftSchema.parse({
-        schemaVersion: "pragma.skill-revision-draft/v2",
+        schemaVersion: "pragma.skill-revision-draft/v3",
         operation: input.request.operation,
         id,
         revision: 1,
@@ -370,7 +456,9 @@ export function createSkillRevisionService(options: {
     }
   };
 
-  const migrateLegacyJob = async (legacy: SkillRevisionJob): Promise<ManagedSkillRevisionJob> => {
+  const migrateLegacyJob = async (
+    legacy: SkillRevisionJobV1Stored,
+  ): Promise<ManagedSkillRevisionJob> => {
     const migrationPath = join(options.statePath, "migrations", `${legacy.id}.v1-to-v2.json`);
     let migration: { readonly draftId: string } | undefined;
     try {
@@ -403,7 +491,7 @@ export function createSkillRevisionService(options: {
         await applyLegacyChangeSetToTree(worktreePath(migration.draftId), legacy.changeSet);
       }
       draft = SkillRevisionDraftSchema.parse({
-        schemaVersion: "pragma.skill-revision-draft/v2",
+        schemaVersion: "pragma.skill-revision-draft/v3",
         operation: "revise",
         id: migration.draftId,
         revision: 1,
@@ -490,12 +578,20 @@ export function createSkillRevisionService(options: {
       createdAt: legacy.createdAt,
       updatedAt: legacy.updatedAt,
     });
-    const migrated = migrateSkillRevisionJobV2ToV3(migratedV2);
-    await persistAdjacentMigration({
+    const migratedV3 = await persistAdjacentMigration({
       kind: "job",
       id: legacy.id,
+      sourceVersion: "pragma.skill-revision-job/v2",
       source: migratedV2,
-      migrated,
+      migrated: migrateSkillRevisionJobV2ToV3(migratedV2),
+      write: async (value) => await writeJsonAtomic(jobPath(legacy.id), value),
+    });
+    const migrated = await persistAdjacentMigration({
+      kind: "job",
+      id: legacy.id,
+      sourceVersion: "pragma.skill-revision-job/v3",
+      source: migratedV3,
+      migrated: migrateSkillRevisionJobV3ToV4(migratedV3),
       write: writeJob,
     });
     await rm(migrationPath, { force: true });
@@ -521,16 +617,35 @@ export function createSkillRevisionService(options: {
         }
         const legacyV2 = SkillRevisionJobV2StoredSchema.safeParse(latestRaw);
         if (legacyV2.success) {
-          const migrated = migrateSkillRevisionJobV2ToV3(legacyV2.data);
+          const migratedV3 = await persistAdjacentMigration({
+            kind: "job",
+            id,
+            sourceVersion: "pragma.skill-revision-job/v2",
+            source: legacyV2.data,
+            migrated: migrateSkillRevisionJobV2ToV3(legacyV2.data),
+            write: async (value) => await writeJsonAtomic(jobPath(id), value),
+          });
           return await persistAdjacentMigration({
             kind: "job",
             id,
-            source: legacyV2.data,
-            migrated,
+            sourceVersion: "pragma.skill-revision-job/v3",
+            source: migratedV3,
+            migrated: migrateSkillRevisionJobV3ToV4(migratedV3),
             write: writeJob,
           });
         }
-        return await migrateLegacyJob(SkillRevisionJobSchema.parse(latestRaw));
+        const legacyV3 = SkillRevisionJobV3StoredSchema.safeParse(latestRaw);
+        if (legacyV3.success) {
+          return await persistAdjacentMigration({
+            kind: "job",
+            id,
+            sourceVersion: "pragma.skill-revision-job/v3",
+            source: legacyV3.data,
+            migrated: migrateSkillRevisionJobV3ToV4(legacyV3.data),
+            write: writeJob,
+          });
+        }
+        return await migrateLegacyJob(SkillRevisionJobV1StoredSchema.parse(latestRaw));
       });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -642,74 +757,20 @@ export function createSkillRevisionService(options: {
     }));
   };
 
-  const processEvaluation = async (job: ManagedSkillRevisionJob): Promise<void> => {
-    const draft = await readDraft(job.draftId);
-    if (job.state !== "evaluating" || draft.submissionHash === undefined) return;
-    try {
-      const skillPackage = await readEvaluationPackage(
-        options.capabilities,
-        draft.capabilityId,
-        join(submissionsPath(draft.id), draft.submissionHash),
-        draft.operation === "create"
-          ? { name: draft.name, description: draft.resourceDescription! }
-          : undefined,
-      );
-      const evaluationResult = await options.evaluator.evaluate({
-        jobId: job.id,
-        package: skillPackage,
-        request: job.request,
-      });
-      const evaluation: SkillEvaluationSnapshot = {
-        ...evaluationResult,
-        subjectHash: draft.submissionHash,
-      };
-      const state = evaluation.passed ? "pending_review" : "needs_attention";
-      const failure = evaluation.passed
-        ? undefined
-        : {
-            code: "skill_evaluation_failed",
-            message: "The Skill candidate did not pass evaluation.",
-          };
-      await mutateDraft(draft.id, draft.revision, () => ({ state, error: failure }));
-      const evaluated = await mutateJob(job.id, job.revision, () => ({
-        state,
-        evaluation,
-        error: failure,
-      }));
-      if (
-        state === "pending_review" &&
-        evaluated.request.source === "memory-learning" &&
-        evaluated.request.operation === "revise"
-      ) {
-        await service.approve(evaluated.id, evaluated.revision);
-      }
-    } catch (error) {
-      const currentJob = await readJob(job.id);
-      const currentDraft = await readDraft(job.draftId);
-      if (currentJob.state !== "evaluating") return;
-      const failure = { code: errorCode(error), message: errorMessage(error) };
-      await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
-        state: "needs_attention",
-        error: failure,
-      }));
-      await mutateJob(currentJob.id, currentJob.revision, () => ({
-        state: "needs_attention",
-        error: failure,
-      }));
-    }
-  };
-
   const completePublication = async (
     job: ManagedSkillRevisionJob,
     draft: SkillRevisionDraft,
   ): Promise<ManagedSkillRevisionJob> => {
-    if (
-      draft.submissionHash === undefined ||
-      job.evaluation?.passed !== true ||
-      job.evaluation.subjectHash !== draft.submissionHash
-    ) {
+    if (draft.submissionHash === undefined) {
       throw coded("skill_revision_approval_invalid");
     }
+    let publishingJob = job;
+    if (publishingJob.state === "pending_review" && draft.state === "publishing") {
+      publishingJob = await mutateJob(publishingJob.id, publishingJob.revision, () => ({
+        state: "publishing",
+      }));
+    }
+    if (publishingJob.state !== "publishing") throw coded("skill_revision_approval_invalid");
     try {
       const published =
         draft.operation === "create"
@@ -767,6 +828,31 @@ export function createSkillRevisionService(options: {
     }
   };
 
+  const quarantineInterruptedPublication = async (
+    job: ManagedSkillRevisionJob,
+    draft: SkillRevisionDraft,
+    error: unknown,
+  ): Promise<void> => {
+    const failure = {
+      code: "skill_revision_publication_recovery_failed",
+      message: errorMessage(error),
+    };
+    const currentDraft = await readDraft(draft.id);
+    if (currentDraft.state === "publishing") {
+      await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
+        state: "needs_attention",
+        error: failure,
+      }));
+    }
+    const currentJob = await readJob(job.id);
+    if (currentJob.state === "publishing" || currentJob.state === "pending_review") {
+      await mutateJob(currentJob.id, currentJob.revision, () => ({
+        state: "needs_attention",
+        error: failure,
+      }));
+    }
+  };
+
   const nextInterruptedPublication = async (
     jobs: readonly ManagedSkillRevisionJob[],
   ): Promise<
@@ -793,9 +879,9 @@ export function createSkillRevisionService(options: {
 
   const service: SkillRevisionService = {
     async submit(rawRequest) {
-      const legacy = SkillRevisionRequestSchema.parse(rawRequest);
-      const request = SkillRevisionRequestV3Schema.parse({
-        schemaVersion: "pragma.skill-revision-request/v3",
+      const legacy = SkillRevisionSubmissionRequestSchema.parse(rawRequest);
+      const request = SkillRevisionRequestV4Schema.parse({
+        schemaVersion: "pragma.skill-revision-request/v4",
         operation: "revise",
         capabilityId: legacy.capabilityId,
         prompt: legacy.prompt,
@@ -803,50 +889,13 @@ export function createSkillRevisionService(options: {
         sourceDigest:
           legacy.sourceDigest ?? createHash("sha256").update(JSON.stringify(legacy)).digest("hex"),
         sourceRefs: legacy.sourceRefs,
-        replayCases: legacy.replayCases,
-        boundaryCase: legacy.boundaryCase,
       });
       const job = await service.start(request);
-      if (options.generator === undefined) return job;
-      const draft = await readDraft(job.draftId);
-      try {
-        const base = await readEvaluationPackage(
-          options.capabilities,
-          draft.capabilityId,
-          worktreePath(draft.id),
-        );
-        const changeSet = await options.generator.generate({
-          jobId: job.id,
-          request: legacy,
-          current: base,
-          revision: draft.baseRevision,
-          contentHash: draft.baseContentHash,
-        });
-        applySkillChangeSet(base, changeSet);
-        await applyLegacyChangeSetToTree(worktreePath(draft.id), changeSet);
-        const inspection = await service.inspectDraft(draft.id);
-        return await service.submitDraft({
-          draftId: draft.id,
-          expectedRevision: inspection.draft.revision,
-          expectedWorkingTreeHash: inspection.workingTree.hash,
-          summary: changeSet.summary,
-        });
-      } catch (error) {
-        const currentJob = await readJob(job.id);
-        const currentDraft = await readDraft(job.draftId);
-        const failure = { code: errorCode(error), message: errorMessage(error) };
-        await mutateDraft(currentDraft.id, currentDraft.revision, () => ({
-          state: "needs_attention",
-          error: failure,
-        }));
-        return await mutateJob(currentJob.id, currentJob.revision, () => ({
-          state: "needs_attention",
-          error: failure,
-        }));
-      }
+      service.scheduleProcessing();
+      return job;
     },
     async start(rawRequest, startOptions = {}) {
-      const request = SkillRevisionRequestV3Schema.parse(rawRequest);
+      const request = SkillRevisionRequestV4Schema.parse(rawRequest);
       return await withFileLock(lockPath, async () => {
         const existing = (await readAllJobs()).find(
           (job) =>
@@ -891,7 +940,6 @@ export function createSkillRevisionService(options: {
             ...(startOptions.missionId === undefined ? {} : { missionId: startOptions.missionId }),
             request,
             state: startOptions.missionId === undefined ? "editing" : "running",
-            evaluation: undefined,
             error: undefined,
             revision: resumedJob.revision + 1,
             updatedAt: new Date().toISOString(),
@@ -909,7 +957,7 @@ export function createSkillRevisionService(options: {
         }
         const timestamp = new Date().toISOString();
         const job = ManagedSkillRevisionJobSchema.parse({
-          schemaVersion: "pragma.skill-revision-job/v3",
+          schemaVersion: "pragma.skill-revision-job/v4",
           id: randomUUID(),
           revision: 1,
           draftId: draft.id,
@@ -1022,7 +1070,7 @@ export function createSkillRevisionService(options: {
           return await rejectForChangedBase(job, draft);
         }
       }
-      const candidate = await readEvaluationPackage(
+      const candidate = await readSkillPackage(
         options.capabilities,
         draft.capabilityId,
         worktreePath(draft.id),
@@ -1036,13 +1084,15 @@ export function createSkillRevisionService(options: {
       ) {
         throw coded("skill_revision_metadata_mismatch");
       }
+      const validation = validateSkillPackage(candidate);
+      if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const submission = await createStableSkillSubmission({
         worktreePath: worktreePath(draft.id),
         submissionsPath: submissionsPath(draft.id),
         expectedHash: input.expectedWorkingTreeHash,
       });
       await mutateDraft(draft.id, draft.revision, () => ({
-        state: "evaluating",
+        state: "pending_review",
         activeMissionId: undefined,
         submissionHash: submission.snapshot.hash,
         submittedRevision: draft.revision + 1,
@@ -1050,10 +1100,9 @@ export function createSkillRevisionService(options: {
         error: undefined,
       }));
       const nextJob = await mutateJob(job.id, job.revision, () => ({
-        state: "evaluating",
+        state: "pending_review",
         error: undefined,
       }));
-      service.scheduleProcessing();
       return nextJob;
     },
     async approve(id, expectedRevision) {
@@ -1072,13 +1121,19 @@ export function createSkillRevisionService(options: {
           return await rejectForChangedBase(job, draft);
         }
       }
-      if (
-        draft.submissionHash === undefined ||
-        job.evaluation?.passed !== true ||
-        job.evaluation.subjectHash !== draft.submissionHash
-      ) {
+      if (draft.submissionHash === undefined || draft.state !== "pending_review") {
         throw coded("skill_revision_approval_invalid");
       }
+      const candidate = await readSkillPackage(
+        options.capabilities,
+        draft.capabilityId,
+        join(submissionsPath(draft.id), draft.submissionHash),
+        draft.operation === "create"
+          ? { name: draft.name, description: draft.resourceDescription! }
+          : undefined,
+      );
+      const validation = validateSkillPackage(candidate);
+      if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
         state: "publishing",
       }));
@@ -1140,7 +1195,7 @@ export function createSkillRevisionService(options: {
             replacementDraft = await readDraft(replacementDraftId);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-            const request = SkillRevisionRequestV3Schema.parse({
+            const request = SkillRevisionRequestV4Schema.parse({
               ...job.request,
               capabilityId: replacementCapabilityId,
               sourceDigest: createHash("sha256")
@@ -1160,7 +1215,7 @@ export function createSkillRevisionService(options: {
             });
           }
           if (
-            replacementDraft.state !== "evaluating" ||
+            replacementDraft.state !== "pending_review" ||
             replacementDraft.submissionHash !== draft.submissionHash
           ) {
             const replacementWorktree = `${worktreePath(replacementDraft.id)}.${randomUUID()}.tmp`;
@@ -1178,7 +1233,7 @@ export function createSkillRevisionService(options: {
             replacementDraft = SkillRevisionDraftSchema.parse({
               ...replacementDraft,
               revision: replacementDraft.revision + 1,
-              state: "evaluating",
+              state: "pending_review",
               submissionHash: submission.snapshot.hash,
               submittedRevision: replacementDraft.revision + 1,
               summary: draft.summary,
@@ -1193,7 +1248,7 @@ export function createSkillRevisionService(options: {
             if (errorCode(error) !== "skill_revision_job_not_found") throw error;
             const timestamp = new Date().toISOString();
             replacementJob = ManagedSkillRevisionJobSchema.parse({
-              schemaVersion: "pragma.skill-revision-job/v3",
+              schemaVersion: "pragma.skill-revision-job/v4",
               id: replacementJobId,
               revision: 1,
               draftId: replacementDraft.id,
@@ -1210,7 +1265,7 @@ export function createSkillRevisionService(options: {
                   )
                   .digest("hex"),
               },
-              state: "evaluating",
+              state: "pending_review",
               createdAt: timestamp,
               updatedAt: timestamp,
             });
@@ -1232,20 +1287,23 @@ export function createSkillRevisionService(options: {
           );
           return replacementJob;
         });
-        service.scheduleProcessing();
         return replacement;
       }
       const job = candidate;
       const draft = await readDraft(job.draftId);
+      const requiresValidation = job.error?.code === "skill_revision_validation_required";
+      const nextState =
+        requiresValidation || draft.submissionHash === undefined ? "editing" : "pending_review";
       await mutateDraft(draft.id, draft.revision, () => ({
-        state: "evaluating",
+        state: nextState,
+        ...(requiresValidation ? { submissionHash: undefined, submittedRevision: undefined } : {}),
         error: undefined,
       }));
       const next = await mutateJob(job.id, job.revision, () => ({
-        state: "evaluating",
+        state: nextState,
         error: undefined,
       }));
-      service.scheduleProcessing();
+      if (nextState === "editing" && next.missionId === undefined) service.scheduleProcessing();
       return next;
     },
     async discardDraft(input) {
@@ -1302,17 +1360,76 @@ export function createSkillRevisionService(options: {
         do {
           processingRequested = false;
           const jobs = await readAllJobs();
-          const next = jobs
-            .filter((job) => job.state === "evaluating")
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
-          if (next !== undefined) {
-            await processEvaluation(next);
-            processingRequested = true;
-            continue;
-          }
           const interrupted = await nextInterruptedPublication(jobs);
           if (interrupted !== undefined) {
-            await completePublication(interrupted.job, interrupted.draft);
+            try {
+              await completePublication(interrupted.job, interrupted.draft);
+              processingRequested = true;
+              continue;
+            } catch (error) {
+              options.warn?.("Failed to recover an interrupted Skill publication.", error);
+              await quarantineInterruptedPublication(
+                interrupted.job,
+                interrupted.draft,
+                error,
+              ).catch((quarantineError) => {
+                options.warn?.(
+                  "Failed to quarantine an interrupted Skill publication.",
+                  quarantineError,
+                );
+              });
+            }
+          }
+          const candidate = jobs
+            .filter((job) => job.state === "editing" && job.missionId === undefined)
+            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+          if (candidate !== undefined && options.generator !== undefined) {
+            const running = await mutateJob(candidate.id, candidate.revision, () => ({
+              state: "running",
+            }));
+            try {
+              const draft = await readDraft(running.draftId);
+              const base = await readSkillPackage(
+                options.capabilities,
+                draft.capabilityId,
+                worktreePath(draft.id),
+              );
+              const changeSet = await options.generator.generate({
+                jobId: running.id,
+                draftId: draft.id,
+                request: running.request,
+                current: base,
+                revision: draft.baseRevision,
+                contentHash: draft.baseContentHash,
+              });
+              if (changeSet !== undefined) {
+                applySkillChangeSet(base, changeSet);
+                await applyLegacyChangeSetToTree(worktreePath(draft.id), changeSet);
+                const inspection = await service.inspectDraft(draft.id);
+                await service.submitDraft({
+                  draftId: draft.id,
+                  expectedRevision: inspection.draft.revision,
+                  expectedWorkingTreeHash: inspection.workingTree.hash,
+                  summary: changeSet.summary,
+                });
+              } else {
+                const completedByAgent = await readJob(running.id);
+                if (completedByAgent.state !== "pending_review") {
+                  throw coded("skill_revision_agent_did_not_submit");
+                }
+              }
+            } catch (error) {
+              const failed = await readJob(running.id).catch(() => undefined);
+              if (
+                failed !== undefined &&
+                !["pending_review", "completed", "rejected", "superseded"].includes(failed.state)
+              ) {
+                await mutateJob(failed.id, failed.revision, () => ({
+                  state: "needs_attention",
+                  error: { code: errorCode(error), message: errorMessage(error) },
+                })).catch(() => undefined);
+              }
+            }
             processingRequested = true;
           }
         } while (processingRequested);
@@ -1358,7 +1475,7 @@ function diffSnapshots(
   return changes;
 }
 
-async function readEvaluationPackage(
+async function readSkillPackage(
   capabilities: CapabilityStore,
   capabilityId: string,
   root: string,
@@ -1445,6 +1562,21 @@ function errorCode(error: unknown): string {
 
 function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : "Skill revision failed.").slice(0, 2_000);
+}
+
+export class SkillRevisionValidationError extends Error {
+  readonly code = "invalid_input";
+  readonly retryable = true;
+
+  constructor(readonly validation: GeneratedSkillValidationResult) {
+    super(
+      validation.diagnostics
+        .map((diagnostic) => `${diagnostic.path}: ${diagnostic.code}: ${diagnostic.message}`)
+        .join(" | ")
+        .slice(0, 2_000),
+    );
+    this.name = "SkillRevisionValidationError";
+  }
 }
 
 function isReservedSkillIdConflict(error: unknown): boolean {

@@ -2,13 +2,9 @@ import {
   ContextStoreChangeSetSchema,
   ContextStoreRevisionJobSchema,
   ProgressiveKnowledgeStoreFilesSchema,
-  SkillRevisionJobSchema,
   type ContextStoreChangeSet,
   type ContextStoreRevisionJob,
   type ContextStoreRevisionSnapshot,
-  type SkillEvaluationSnapshot,
-  type SkillRevisionChangeSet,
-  type SkillRevisionJob,
 } from "./revision-contracts.ts";
 
 export type ContextStoreRevisionEvent =
@@ -63,88 +59,6 @@ export function transitionContextStoreRevisionJob(
     }
   })();
   return ContextStoreRevisionJobSchema.parse({
-    ...next,
-    revision: current.revision + 1,
-    updatedAt,
-  });
-}
-
-export type SkillRevisionEvent =
-  | { readonly type: "generation_started" }
-  | { readonly type: "generation_succeeded"; readonly changeSet: SkillRevisionChangeSet }
-  | { readonly type: "evaluation_succeeded"; readonly evaluation: SkillEvaluationSnapshot }
-  | { readonly type: "processing_failed"; readonly code: string; readonly message: string }
-  | { readonly type: "approved" }
-  | { readonly type: "rejected" }
-  | { readonly type: "retried" }
-  | { readonly type: "apply_succeeded" }
-  | { readonly type: "apply_failed"; readonly code: string; readonly message: string }
-  | { readonly type: "superseded"; readonly replacementId: string };
-
-export function transitionSkillRevisionJob(
-  current: SkillRevisionJob,
-  event: SkillRevisionEvent,
-  updatedAt = new Date().toISOString(),
-): SkillRevisionJob {
-  const next = (() => {
-    switch (event.type) {
-      case "generation_started":
-        requireState(current.state, ["pending"]);
-        return { ...current, state: "running" as const };
-      case "generation_succeeded":
-        requireState(current.state, ["running"]);
-        return { ...current, state: "evaluating" as const, changeSet: event.changeSet };
-      case "evaluation_succeeded":
-        requireState(current.state, ["evaluating"]);
-        return event.evaluation.passed
-          ? {
-              ...current,
-              state: "pending_review" as const,
-              evaluation: event.evaluation,
-              error: undefined,
-            }
-          : {
-              ...current,
-              state: "needs_attention" as const,
-              evaluation: event.evaluation,
-              error: {
-                code: "skill_evaluation_failed",
-                message: "The proposed Skill revision did not pass evaluation.",
-              },
-            };
-      case "processing_failed":
-        requireState(current.state, ["running", "evaluating"]);
-        return { ...current, state: "needs_attention" as const, error: errorOf(event) };
-      case "approved":
-        requireState(current.state, ["pending_review"]);
-        if (current.changeSet === undefined || current.evaluation?.passed !== true) {
-          throw new Error("skill_revision_approval_invalid");
-        }
-        return { ...current, state: "applying" as const };
-      case "rejected":
-        requireState(current.state, ["pending_review"]);
-        return { ...current, state: "rejected" as const };
-      case "retried":
-        requireState(current.state, ["needs_attention"]);
-        return {
-          ...current,
-          state: "pending" as const,
-          changeSet: undefined,
-          evaluation: undefined,
-          error: undefined,
-        };
-      case "apply_succeeded":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "completed" as const, error: undefined };
-      case "apply_failed":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "needs_attention" as const, error: errorOf(event) };
-      case "superseded":
-        requireState(current.state, ["applying"]);
-        return { ...current, state: "superseded" as const, supersededBy: event.replacementId };
-    }
-  })();
-  return SkillRevisionJobSchema.parse({
     ...next,
     revision: current.revision + 1,
     updatedAt,

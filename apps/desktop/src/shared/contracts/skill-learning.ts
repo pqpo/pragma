@@ -1,20 +1,7 @@
-import { SkillEvaluationSnapshotSchema } from "@pragma/built-in-agents/contracts";
 import { SkillPackageSchema, SkillSourceRevisionRefSchema } from "@pragma/shared";
 import { z } from "zod";
 
 import { CapabilityIdSchema } from "./capabilities.ts";
-
-export {
-  SkillEvaluationProfileSchema,
-  SkillEvaluationSnapshotSchema,
-  UpdateSkillEvaluationProfileSchema,
-} from "@pragma/built-in-agents/contracts";
-
-export type {
-  SkillEvaluationProfile,
-  SkillEvaluationSnapshot,
-  UpdateSkillEvaluationProfile,
-} from "@pragma/built-in-agents/contracts";
 
 export const MemorySkillTargetOptionSchema = z
   .object({
@@ -27,7 +14,7 @@ export const MemorySkillTargetOptionSchema = z
 
 export const MemorySkillCandidateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-skill-candidate/v1"),
+    schemaVersion: z.literal("pragma.memory-skill-candidate/v2"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     expertRef: z.string().regex(/^expert:[0-9a-hjkmnp-tv-z]{16}$/u),
@@ -35,27 +22,9 @@ export const MemorySkillCandidateSchema = z
     normalizedKey: z.string().min(1).max(300),
     sourceRefs: z.array(SkillSourceRevisionRefSchema).min(3).max(100),
     package: SkillPackageSchema,
-    replayCases: z
-      .array(
-        z
-          .object({
-            objective: z.string().min(1).max(4_000),
-            requiredBehaviors: z.array(z.string().min(1).max(2_000)).min(1).max(20),
-            forbiddenBehaviors: z.array(z.string().min(1).max(2_000)).max(20),
-          })
-          .strict(),
-      )
-      .min(3)
-      .max(10),
-    boundaryCase: z
-      .object({
-        objective: z.string().min(1).max(4_000),
-        requiredBehaviors: z.array(z.string().min(1).max(2_000)).min(1).max(20),
-        forbiddenBehaviors: z.array(z.string().min(1).max(2_000)).max(20),
-      })
-      .strict(),
     route: z.discriminatedUnion("type", [
       z.object({ type: z.literal("create") }).strict(),
+      z.object({ type: z.literal("revise"), bindingId: z.string().uuid() }).strict(),
       z
         .object({
           type: z.literal("needs_target"),
@@ -65,33 +34,36 @@ export const MemorySkillCandidateSchema = z
     ]),
     state: z.enum([
       "needs_target",
-      "evaluating",
       "pending_review",
+      "revision_pending",
       "needs_attention",
       "rejected",
       "approved",
       "promoted",
     ]),
-    evaluation: SkillEvaluationSnapshotSchema.optional(),
     capabilityId: CapabilityIdSchema.optional(),
+    revisionJobId: z.string().uuid().optional(),
     lastErrorCode: z.string().min(1).max(100).optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
   .strict()
   .superRefine((candidate, context) => {
-    if (candidate.state === "pending_review" && candidate.evaluation?.passed !== true) {
-      context.addIssue({
-        code: "custom",
-        path: ["evaluation"],
-        message: "Reviewable candidates require a passing evaluation.",
-      });
-    }
     if (candidate.state === "promoted" && candidate.capabilityId === undefined) {
       context.addIssue({
         code: "custom",
         path: ["capabilityId"],
         message: "Promoted candidates require a Capability id.",
+      });
+    }
+    if (
+      candidate.state === "revision_pending" &&
+      (candidate.capabilityId === undefined || candidate.revisionJobId === undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["revisionJobId"],
+        message: "Pending Memory revisions require Capability and revision job ids.",
       });
     }
   });

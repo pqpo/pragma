@@ -200,6 +200,66 @@ describe("Pragma management tools", () => {
       details: { code: "unavailable", retryable: false },
     });
   });
+
+  it("returns path-addressed Skill validation feedback to the revision Agent", async () => {
+    const validation = {
+      passed: false,
+      diagnostics: [
+        {
+          path: "scripts/run.mjs",
+          code: "skill_network_access_forbidden",
+          message: "Network access is forbidden.",
+        },
+      ],
+    };
+    const tools = createPragmaManagementTools({
+      skillRevisions: {
+        listTargets: vi.fn(),
+        listDrafts: vi.fn(),
+        start: vi.fn(),
+        getDraft: vi.fn(),
+        submitDraft: vi.fn(async () => {
+          throw Object.assign(new Error("scripts/run.mjs: network access is forbidden"), {
+            code: "invalid_input",
+            retryable: true,
+            validation,
+          });
+        }),
+        discardDraft: vi.fn(),
+      },
+    });
+    const submit = tools.find((tool) => tool.name === "skill_revision_submit_draft")!;
+
+    const response = await submit.call(
+      {
+        draftId: "10000000-0000-4000-8000-000000000001",
+        expectedRevision: 2,
+        expectedWorkingTreeHash: "a".repeat(64),
+        summary: "Validate the candidate.",
+      },
+      undefined,
+      {
+        toolCallId: "call",
+        runContext: {
+          attributes: {
+            [EXECUTION_ID_ATTR]: "execution",
+            [INVOCATION_ID_ATTR]: "invocation",
+            [EXECUTION_CURRENT_EXPERT_ID_ATTR]: "0000000000sk1rev",
+          },
+        },
+      },
+    );
+
+    expect(response).toMatchObject({
+      isError: true,
+      details: {
+        code: "invalid_input",
+        retryable: true,
+        details: { validation },
+        recovery: { tool: "skill_revision_submit_draft" },
+      },
+    });
+  });
 });
 
 function revisionPort(overrides: Record<string, unknown> = {}) {

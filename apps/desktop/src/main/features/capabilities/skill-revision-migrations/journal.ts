@@ -8,16 +8,26 @@ const BaseSkillRevisionMigrationJournalSchema = z.object({
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 
-export const SkillRevisionMigrationJournalSchema = z.discriminatedUnion("kind", [
+export const SkillRevisionMigrationJournalSchema = z.discriminatedUnion("sourceVersion", [
   BaseSkillRevisionMigrationJournalSchema.extend({
     kind: z.literal("job"),
     sourceVersion: z.literal("pragma.skill-revision-job/v2"),
     targetVersion: z.literal("pragma.skill-revision-job/v3"),
   }).strict(),
   BaseSkillRevisionMigrationJournalSchema.extend({
+    kind: z.literal("job"),
+    sourceVersion: z.literal("pragma.skill-revision-job/v3"),
+    targetVersion: z.literal("pragma.skill-revision-job/v4"),
+  }).strict(),
+  BaseSkillRevisionMigrationJournalSchema.extend({
     kind: z.literal("draft"),
     sourceVersion: z.literal("pragma.skill-revision-draft/v1"),
     targetVersion: z.literal("pragma.skill-revision-draft/v2"),
+  }).strict(),
+  BaseSkillRevisionMigrationJournalSchema.extend({
+    kind: z.literal("draft"),
+    sourceVersion: z.literal("pragma.skill-revision-draft/v2"),
+    targetVersion: z.literal("pragma.skill-revision-draft/v3"),
   }).strict(),
 ]);
 

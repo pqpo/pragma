@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 052](./052-synchronous-skill-validation.md)
 
 ## Context
 
@@ -19,12 +19,12 @@ management tools only discover, create, inspect, submit, and discard drafts.
 The Host preserves regular-file bytes and legal executable bits and rejects links, special files,
 path escapes, packages without `SKILL.md`, and packages beyond the file and byte limits. Submission
 checks the caller's tree hash, copies while verifying file hashes, rescans source and candidate, and
-atomically publishes an immutable candidate. Evaluation and publication read only that candidate.
+atomically publishes an immutable candidate. Validation and publication read only that candidate.
 
 There is no rebase or merge protocol. A base change before submission or approval rejects the draft
 with `skill_revision_base_changed`, revokes write ownership, and retains a read-only reference. The
-Agent starts a new draft from the latest revision and regenerates still-valid work. Ordinary candidates
-require user approval; authenticated `memory-learning` requests may auto-approve after evaluation.
+Agent starts a new draft from the latest revision and regenerates still-valid work. All candidates,
+including authenticated `memory-learning` requests, require user approval after synchronous validation.
 
 Mission storage v11 adds the `skill-revision-draft` mount so ownership participates in session context
 fingerprints and permission rebuilding. A Runtime without native file access must fail before a usable

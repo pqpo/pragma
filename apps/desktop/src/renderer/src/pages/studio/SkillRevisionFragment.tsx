@@ -20,6 +20,21 @@ export function activeSkillRevisionTaskCount(
     .length;
 }
 
+export function skillRevisionAttentionActions(
+  entry: {
+    readonly job: Pick<ManagedSkillRevisionJob, "error" | "missionId">;
+    readonly draft: Pick<SkillRevisionDraft, "state">;
+  },
+  canOpenMission: boolean,
+): { readonly canContinue: boolean; readonly canRetry: boolean } {
+  const canContinue =
+    canOpenMission &&
+    entry.job.missionId !== undefined &&
+    (entry.draft.state === "editing" ||
+      entry.job.error?.code === "skill_revision_validation_required");
+  return { canContinue, canRetry: !canContinue };
+}
+
 export function SkillRevisionEmptyState() {
   const { t } = useTranslation("studio");
 
@@ -37,6 +52,7 @@ export function SkillRevisionFragment(props: {
   readonly capabilityId?: string | undefined;
   readonly onCountChanged?: ((count: number) => void) | undefined;
   readonly onPublished?: (() => Promise<void>) | undefined;
+  readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onBack: () => void;
 }) {
   const { t } = useTranslation("studio");
@@ -109,6 +125,10 @@ export function SkillRevisionFragment(props: {
             const capability = props.capabilities.find(
               (item) => item.manifest.id === entry.draft.capabilityId,
             );
+            const attentionActions = skillRevisionAttentionActions(
+              entry,
+              props.onOpenMission !== undefined,
+            );
             return (
               <article className="skill-revision-row" role="listitem" key={entry.job.id}>
                 <div className="skill-revision-main">
@@ -116,7 +136,7 @@ export function SkillRevisionFragment(props: {
                   {entry.draft.operation === "create" ? (
                     <small>{t("newSkillRevision")}</small>
                   ) : null}
-                  <small>{entry.job.request.prompt}</small>
+                  <small className="skill-revision-request">{entry.job.request.prompt}</small>
                 </div>
                 <div className="skill-revision-meta">
                   <span className="version-label">
@@ -125,7 +145,7 @@ export function SkillRevisionFragment(props: {
                       : t("baseRevision", { count: entry.draft.baseRevision })}
                   </span>
                   <span className={`capability-status is-${entry.job.state}`}>
-                    {entry.job.state}
+                    {t(`revisionState.${entry.job.state}`)}
                   </span>
                 </div>
                 {entry.draft.summary ? (
@@ -153,18 +173,37 @@ export function SkillRevisionFragment(props: {
                     </>
                   ) : null}
                   {entry.job.state === "needs_attention" ? (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={busyId === entry.job.id}
-                      onClick={() => void act(entry, "retry")}
-                    >
-                      <ClockCounterClockwise size={16} /> {t("retryRevision")}
-                    </button>
+                    <>
+                      {attentionActions.canContinue ? (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={busyId === entry.job.id}
+                          onClick={() =>
+                            props.onOpenMission?.(
+                              entry.job.missionId!,
+                              t("skillRevisionContinuePrompt"),
+                            )
+                          }
+                        >
+                          {t("continueSkillRevision")}
+                        </button>
+                      ) : null}
+                      {attentionActions.canRetry ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={busyId === entry.job.id}
+                          onClick={() => void act(entry, "retry")}
+                        >
+                          <ClockCounterClockwise size={16} /> {t("retryRevision")}
+                        </button>
+                      ) : null}
+                    </>
                   ) : null}
                 </div>
                 {entry.job.error ? (
-                  <p className="form-error skill-revision-error">
+                  <p className="form-error skill-revision-error" role="alert">
                     <strong>{entry.job.error.code}</strong> {entry.job.error.message}
                   </p>
                 ) : null}

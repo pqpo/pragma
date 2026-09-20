@@ -132,23 +132,23 @@ Store Revision Agent 负责编辑并提交可审阅的稀疏草稿
 
 知识库采用渐进披露结构：有界的 `guide.md`、`overview.md`、`index.md` 或分片索引负责导航，详细内容进入 `items/**`。系统不会把所有历史 Memory 合并成一个无限增长的巨型文档。
 
-## Skill 的升级还需要 Evaluation
+## Skill 的升级需要同步校验与人工审核
 
 “知道一件事”和“掌握一种可复用能力”不是同一回事。Memory 可以发现重复出现的有效做法，并生成 Skill Candidate，但 Candidate 不能直接成为当前 Capability。
 
-Pragma 把 Skill Revision 和 Skill Evaluation 建模为独立的内置 Agent 能力：
+Pragma 由 Skill Revision Agent 生成候选，并在提交工具中执行确定性校验：
 
 ```text
 Memory 提炼候选经验
         ↓
 Skill Revision 生成候选变更
         ↓
-Skill Evaluation 验证任务表现
+同步规则校验候选包
         ↓
 Host 审批并激活 Capability Revision
 ```
 
-这形成了一个关键的治理原则：Agent 可以提出如何改进自己，但不能在没有验证和审批的情况下直接修改自己的生产能力。
+校验失败会把带文件路径的原因直接返回给 Revision Agent，修复后可再次提交；校验通过仍必须由用户审核。Agent 可以提出如何改进自己，但不能绕过校验和审批直接修改生产能力。
 
 ## Mission Board 不是 Memory 的前置条件
 

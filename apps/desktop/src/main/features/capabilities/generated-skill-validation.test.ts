@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { validateGeneratedSkillPackage } from "@pragma/built-in-agents";
+import { validateSkillPackage } from "@pragma/built-in-agents";
 
 describe("generated Skill validation", () => {
-  it("runs covered Node 22 ESM scripts in the restricted test process", async () => {
-    const result = await validateGeneratedSkillPackage({
+  it("checks script coverage without executing script or test files", () => {
+    const result = validateSkillPackage({
       name: "safe-workflow",
       description: "Run a deterministic safe workflow.",
       files: [
@@ -13,23 +13,21 @@ describe("generated Skill validation", () => {
           content:
             "---\nname: safe-workflow\ndescription: Run a deterministic safe workflow.\n---\n\nUse the script.",
         },
-        { path: "scripts/run.mjs", content: "export const add = (left, right) => left + right;\n" },
+        { path: "scripts/run.mjs", content: "throw new Error('must not execute');\n" },
         {
           path: "tests/run.test.mjs",
-          content:
-            "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { add } from '../scripts/run.mjs';\ntest('adds', () => assert.equal(add(1, 2), 3));\n",
+          content: "import '../scripts/run.mjs';\nthrow new Error('must not execute');\n",
         },
       ],
     });
     expect(result).toMatchObject({
-      staticChecksPassed: true,
-      scriptTestsPassed: true,
+      passed: true,
       diagnostics: [],
     });
   });
 
-  it("rejects mismatched metadata and network APIs before execution", async () => {
-    const result = await validateGeneratedSkillPackage({
+  it("rejects mismatched metadata and network APIs", () => {
+    const result = validateSkillPackage({
       name: "safe-workflow",
       description: "Safe.",
       files: [
@@ -41,7 +39,7 @@ describe("generated Skill validation", () => {
         { path: "tests/run.test.mjs", content: "import '../scripts/run.mjs';" },
       ],
     });
-    expect(result.staticChecksPassed).toBe(false);
+    expect(result.passed).toBe(false);
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
       expect.arrayContaining(["skill_metadata_mismatch", "skill_network_access_forbidden"]),
     );

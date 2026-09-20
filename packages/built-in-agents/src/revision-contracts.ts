@@ -540,66 +540,6 @@ export const ContextStoreRevisionJobRefSchema = z
   .object({ jobId: z.string().uuid(), expectedRevision: z.number().int().positive() })
   .strict();
 
-export const SkillReplayCaseSchema = z
-  .object({
-    objective: z.string().min(1).max(4_000),
-    requiredBehaviors: z.array(z.string().min(1).max(2_000)).min(1).max(20),
-    forbiddenBehaviors: z.array(z.string().min(1).max(2_000)).max(20),
-  })
-  .strict();
-
-export const SkillEvaluationSnapshotSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.skill-evaluation-snapshot/v1"),
-    subjectHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    passed: z.boolean(),
-    staticChecksPassed: z.boolean(),
-    scriptTestsPassed: z.boolean(),
-    profileRevision: z.number().int().nonnegative(),
-    runtimeId: z.string().min(1),
-    providerId: z.string().min(1),
-    modelId: z.string().min(1),
-    cases: z
-      .array(
-        z
-          .object({
-            id: z.string().min(1),
-            kind: z.enum(["source-replay", "boundary"]),
-            passed: z.boolean(),
-            assertions: z.array(
-              z
-                .object({
-                  dimension: z.enum([
-                    "applicability",
-                    "correctness",
-                    "completeness",
-                    "recovery",
-                    "safety",
-                  ]),
-                  passed: z.boolean(),
-                  message: z.string().min(1).max(2_000),
-                })
-                .strict(),
-            ),
-          })
-          .strict(),
-      )
-      .min(4)
-      .max(20),
-    evaluatedAt: z.string().datetime(),
-  })
-  .strict();
-
-export const SkillEvaluationProfileSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.skill-evaluation-profile/v1"),
-    ...RevisionProfileShape,
-  })
-  .strict()
-  .superRefine(validateProfile);
-
-export const UpdateSkillEvaluationProfileSchema = UpdateBuiltInAgentProfileSchema;
-
 export const SkillFileChangeOperationSchema = z.discriminatedUnion("operation", [
   z
     .object({
@@ -651,67 +591,6 @@ export const SkillRevisionChangeSetSchema = z
     }
   });
 
-export const SkillRevisionRequestSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.skill-revision-request/v1"),
-    capabilityId: z.string().uuid(),
-    prompt: z.string().trim().min(1).max(50_000),
-    source: z.enum(["user", "memory-learning"]),
-    sourceDigest: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/u)
-      .optional(),
-    sourceRefs: z.array(SkillSourceRevisionRefSchema).max(100).default([]),
-    replayCases: z.array(SkillReplayCaseSchema).min(3).max(10).optional(),
-    boundaryCase: SkillReplayCaseSchema.optional(),
-  })
-  .strict()
-  .superRefine((request, context) => {
-    if (
-      request.source === "memory-learning" &&
-      (request.sourceDigest === undefined ||
-        request.replayCases === undefined ||
-        request.boundaryCase === undefined)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Memory Skill revisions require a digest and replay cases.",
-      });
-    }
-  });
-
-/** Frozen legacy contract written by the pre-directory Skill revision service. */
-export const SkillRevisionJobV1StateSchema = z.enum([
-  "pending",
-  "running",
-  "evaluating",
-  "pending_review",
-  "applying",
-  "completed",
-  "rejected",
-  "needs_attention",
-  "superseded",
-]);
-
-export const SkillRevisionJobSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.skill-revision-job/v1"),
-    id: z.string().uuid(),
-    revision: z.number().int().positive(),
-    request: SkillRevisionRequestSchema,
-    state: SkillRevisionJobV1StateSchema,
-    changeSet: SkillRevisionChangeSetSchema.optional(),
-    evaluation: SkillEvaluationSnapshotSchema.optional(),
-    supersededBy: z.string().uuid().optional(),
-    error: z
-      .object({ code: z.string().min(1).max(100), message: z.string().min(1).max(2_000) })
-      .strict()
-      .optional(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
-  })
-  .strict();
-
 export const SkillRevisionSourceSchema = z.enum(["user", "expert-reflection", "memory-learning"]);
 
 export const SkillRevisionProvenanceSchema = z
@@ -723,9 +602,9 @@ export const SkillRevisionProvenanceSchema = z
   })
   .strict();
 
-export const SkillRevisionRequestV3Schema = z
+export const SkillRevisionRequestV4Schema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-request/v3"),
+    schemaVersion: z.literal("pragma.skill-revision-request/v4"),
     operation: z.enum(["revise", "create"]),
     capabilityId: z.string().uuid(),
     resourceName: z.string().trim().min(1).max(120).optional(),
@@ -735,8 +614,6 @@ export const SkillRevisionRequestV3Schema = z
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
     provenance: SkillRevisionProvenanceSchema.optional(),
     sourceRefs: z.array(SkillSourceRevisionRefSchema).max(100).default([]),
-    replayCases: z.array(SkillReplayCaseSchema).min(3).max(10).optional(),
-    boundaryCase: SkillReplayCaseSchema.optional(),
   })
   .strict()
   .superRefine((request, context) => {
@@ -760,20 +637,10 @@ export const SkillRevisionRequestV3Schema = z
         message: "Skill metadata is only accepted for creation requests.",
       });
     }
-    if (
-      request.source === "memory-learning" &&
-      (request.replayCases === undefined || request.boundaryCase === undefined)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Memory Skill revisions require replay and boundary cases.",
-      });
-    }
   });
 
 export const SkillRevisionDraftStateSchema = z.enum([
   "editing",
-  "evaluating",
   "pending_review",
   "publishing",
   "completed",
@@ -783,7 +650,7 @@ export const SkillRevisionDraftStateSchema = z.enum([
 
 export const SkillRevisionDraftSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-draft/v2"),
+    schemaVersion: z.literal("pragma.skill-revision-draft/v3"),
     operation: z.enum(["revise", "create"]),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
@@ -829,7 +696,6 @@ export const SkillRevisionDraftSchema = z
 export const SkillRevisionJobStateSchema = z.enum([
   "editing",
   "running",
-  "evaluating",
   "pending_review",
   "publishing",
   "completed",
@@ -840,14 +706,13 @@ export const SkillRevisionJobStateSchema = z.enum([
 
 export const ManagedSkillRevisionJobSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-revision-job/v3"),
+    schemaVersion: z.literal("pragma.skill-revision-job/v4"),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
     draftId: z.string().uuid(),
     missionId: z.string().uuid().optional(),
-    request: SkillRevisionRequestV3Schema,
+    request: SkillRevisionRequestV4Schema,
     state: SkillRevisionJobStateSchema,
-    evaluation: SkillEvaluationSnapshotSchema.optional(),
     publishedRevision: z.number().int().positive().optional(),
     supersededBy: z.string().uuid().optional(),
     error: z
@@ -885,11 +750,6 @@ export type UpdateContextStoreRevisionProfile = z.infer<
   typeof UpdateContextStoreRevisionProfileSchema
 >;
 export type SkillRevisionChangeSet = z.infer<typeof SkillRevisionChangeSetSchema>;
-export type SkillRevisionRequest = z.infer<typeof SkillRevisionRequestSchema>;
-export type SkillRevisionRequestV3 = z.infer<typeof SkillRevisionRequestV3Schema>;
+export type SkillRevisionRequestV4 = z.infer<typeof SkillRevisionRequestV4Schema>;
 export type SkillRevisionDraft = z.infer<typeof SkillRevisionDraftSchema>;
-export type SkillRevisionJob = z.infer<typeof SkillRevisionJobSchema>;
 export type ManagedSkillRevisionJob = z.infer<typeof ManagedSkillRevisionJobSchema>;
-export type SkillEvaluationSnapshot = z.infer<typeof SkillEvaluationSnapshotSchema>;
-export type SkillEvaluationProfile = z.infer<typeof SkillEvaluationProfileSchema>;
-export type UpdateSkillEvaluationProfile = z.infer<typeof UpdateSkillEvaluationProfileSchema>;

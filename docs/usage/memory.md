@@ -118,8 +118,7 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 
 设置 → General：
 
-- Knowledge and Skill revision Agent：Knowledge Store 和 Skill 修订共用的 Runtime/model profile；
-- Skill Evaluation Agent：独立执行 Skill replay/boundary judge 的 Runtime/model profile。
+- Knowledge and Skill revision Agent：Knowledge Store 和 Skill 修订使用的 Runtime/model profile。
 
 默认记忆功能关闭；关闭时所有有效记忆能力均停用。启用总开关后，系统保留此前的 capture、recall、learning 选择。
 
@@ -226,7 +225,6 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 ~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
 ~/.pragma/state/memory-skill-promotion/                  # Skill Candidate、content-free Expert binding 与 promotion journal
 ~/.pragma/state/skill-revisions/                         # Skill 修订任务与 change set
-~/.pragma/state/skill-evaluation/profile.json             # 独立 Skill Evaluation Agent profile
 ~/.pragma/state/skill-agents/missions.json                # 隐藏 Skill Agent Mission 定向恢复 registry
 ~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
 ~/.pragma/state/memory/cleanup-journal/     # Mission/Execution transient cleanup journal

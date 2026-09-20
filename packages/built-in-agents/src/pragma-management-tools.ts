@@ -951,6 +951,8 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
   const rawMessage = error instanceof Error ? error.message : "Unknown management tool failure.";
   const hostCode = error instanceof Error && "code" in error ? error.code : undefined;
   const parsedHostCode = PragmaManagementErrorSchema.shape.code.safeParse(hostCode);
+  const validation = (error as { validation?: unknown })?.validation;
+  const retryable = (error as { retryable?: unknown })?.retryable;
   const code =
     error instanceof KnowledgeRevisionToolError
       ? error.code
@@ -983,13 +985,27 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
         ? "The management tool failed unexpectedly."
         : rawMessage.slice(0, 2_000),
     retryable:
-      error instanceof KnowledgeRevisionToolError
-        ? error.retryable
-        : ["revision_conflict", "cursor_expired"].includes(code) ||
-          (code === "unavailable" &&
-            hostCode !== "invalid_state" &&
-            !/execution_context|mission_unavailable/u.test(rawMessage)),
-    ...(error instanceof z.ZodError ? { details: { issues: error.issues } } : {}),
+      typeof retryable === "boolean"
+        ? retryable
+        : error instanceof KnowledgeRevisionToolError
+          ? error.retryable
+          : ["revision_conflict", "cursor_expired"].includes(code) ||
+            (code === "unavailable" &&
+              hostCode !== "invalid_state" &&
+              !/execution_context|mission_unavailable/u.test(rawMessage)),
+    ...(error instanceof z.ZodError
+      ? { details: { issues: error.issues } }
+      : validation === undefined
+        ? {}
+        : { details: { validation } }),
+    ...(code === "invalid_input" && validation !== undefined
+      ? {
+          recovery: {
+            tool: toolName,
+            reason: "Fix the reported Skill files, then submit the same draft again.",
+          },
+        }
+      : {}),
     ...(code === "cursor_expired"
       ? { recovery: { tool: toolName, reason: "Run the same listing again without cursor." } }
       : code === "response_too_large"

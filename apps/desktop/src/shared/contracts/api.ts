@@ -253,9 +253,7 @@ import type {
   MemorySkillCandidate,
   MemorySkillCandidateRef,
   ResolveMemorySkillTarget,
-  SkillEvaluationProfile,
   UpdateMemorySkillCandidate,
-  UpdateSkillEvaluationProfile,
 } from "./skill-learning.ts";
 
 export interface PragmaDesktopAPI {
@@ -337,11 +335,6 @@ export interface PragmaDesktopAPI {
   resolveMemorySkillTarget: (input: ResolveMemorySkillTarget) => Promise<MemorySkillCandidate>;
   rejectMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   approveMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
-  retryMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
-  getSkillEvaluationProfile: () => Promise<SkillEvaluationProfile>;
-  updateSkillEvaluationProfile: (
-    input: UpdateSkillEvaluationProfile,
-  ) => Promise<SkillEvaluationProfile>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   getMissionContextStore: (input: GetMissionContextStore) => Promise<MissionContextStoreDescriptor>;
   listMissionContextStoreEntries: (

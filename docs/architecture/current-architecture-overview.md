@@ -131,7 +131,7 @@ customization，历史 Project Revision、Mission 与 Execution 保持固定。C
 Evaluation 是独立、可版本化的资源。它可以针对真实任务定义输入与判定标准，通过 Run Dry 验证 Flow，
 并为 Runtime、模型、Prompt、Context 或 Capability revision 的变更提供可重复比较的依据。
 
-六个内置 Agent 均由 `@pragma/built-in-agents` 中的静态 DSL 定义。包内保存 descriptor、compiler、提示词、
+五个内置 Agent 均由 `@pragma/built-in-agents` 中的静态 DSL 定义。包内保存 descriptor、compiler、提示词、
 结构化输出解析与纯状态机；Desktop 或 CLI Host 提供 Runtime、权限、持久化、Mission 和 UI 端口。
 
 ## 存储与可恢复性

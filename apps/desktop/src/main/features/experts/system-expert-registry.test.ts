@@ -83,7 +83,7 @@ describe("DesktopSystemExpertRegistry", () => {
         ref !== SKILL_REVISION_EXPERT_REF,
     );
 
-    expect(managedRefs).toHaveLength(3);
+    expect(managedRefs).toHaveLength(2);
     for (const ref of managedRefs) {
       expect(registry.isReservedRef(ref)).toBe(true);
       expect(registry.isReservedId(ref.slice("expert:".length))).toBe(true);

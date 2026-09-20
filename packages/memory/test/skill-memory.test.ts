@@ -363,11 +363,6 @@ function candidate(
   normalizedKey: string,
   sourceRefs: SkillExtractionCandidate["sourceRefs"],
 ): SkillExtractionCandidate {
-  const replay = (objective: string) => ({
-    objective,
-    requiredBehaviors: ["Apply the reusable workflow."],
-    forbiddenBehaviors: [],
-  });
   return {
     content: {
       normalizedKey: `workflow.${normalizedKey}`,
@@ -383,12 +378,6 @@ function candidate(
             content: `---\nname: workflow-${normalizedKey}\ndescription: Reusable workflow\n---\n`,
           },
         ],
-      },
-      replayCases: [replay("Replay one"), replay("Replay two"), replay("Replay three")],
-      boundaryCase: {
-        objective: "Recognize when the workflow does not apply.",
-        requiredBehaviors: ["Decline to force the workflow."],
-        forbiddenBehaviors: ["Apply the workflow anyway."],
       },
     },
     sourceRefs,

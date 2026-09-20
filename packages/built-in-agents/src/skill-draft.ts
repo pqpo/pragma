@@ -12,7 +12,7 @@ import {
 } from "@pragma/shared";
 import { z } from "zod";
 
-import { validateGeneratedSkillPackage } from "./skill-validation.ts";
+import { validateSkillPackage } from "./skill-validation.ts";
 
 const MAX_DRAFTS = 3;
 const MAX_BEGIN_VALIDATION_ATTEMPTS = 3;
@@ -83,8 +83,6 @@ const BeginSkillDraftInputSchema = z
             description: SkillPackageSchema.shape.description,
           })
           .strict(),
-        replayCases: CandidateContentSchema.shape.replayCases,
-        boundaryCase: CandidateContentSchema.shape.boundaryCase,
       })
       .strict(),
     sourceRefs: SkillExtractionCandidateSchema.shape.sourceRefs,
@@ -284,7 +282,7 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
           repairExhausted,
         );
       }
-      const packageValidation = await validateGeneratedSkillPackage(candidate.data.content.package);
+      const packageValidation = validateSkillPackage(candidate.data.content.package);
       const errors = [
         ...validateSkillExtractionCandidate(
           candidate.data,

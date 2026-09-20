@@ -780,7 +780,7 @@ export function createMissionRunner(options: {
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) => {
           if (
-            ["system-store-revision", "system-skill-revision", "system-skill-evaluation"].includes(
+            ["system-store-revision", "system-skill-revision"].includes(
               mission.origin.type,
             ) &&
             request.kind === "tool_approval"

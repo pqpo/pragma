@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "pragma.memory-skill-candidate/v1",
+  "id": "00000000-0000-4000-8000-000000000009",
+  "revision": 2,
+  "expertRef": "expert:0000000000000001",
+  "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalizedKey": "safe-workflow",
+  "sourceRefs": [
+    { "kind": "episodic", "id": "episode-1", "revision": 1 },
+    { "kind": "episodic", "id": "episode-2", "revision": 2 },
+    { "kind": "episodic", "id": "episode-3", "revision": 3 }
+  ],
+  "package": {
+    "name": "safe-workflow",
+    "description": "Run a safe workflow.",
+    "files": [
+      {
+        "path": "SKILL.md",
+        "content": "---\nname: safe-workflow\ndescription: Run a safe workflow.\n---\n\nFollow the workflow."
+      }
+    ]
+  },
+  "replayCases": [{}, {}, {}],
+  "boundaryCase": {},
+  "route": { "type": "create" },
+  "state": "evaluating",
+  "evaluation": { "passed": false },
+  "createdAt": "2026-08-06T00:00:00.000Z",
+  "updatedAt": "2026-08-06T00:00:00.000Z"
+}

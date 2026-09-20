@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 052](./052-synchronous-skill-validation.md)
 
 ## Context
 
@@ -13,7 +13,7 @@ validation, and revision rules.
 
 ## Decision
 
-Use `@pragma/built-in-agents` for all six Agents and define them as static resources using the
+Use `@pragma/built-in-agents` for the built-in Agents and define them as static resources using the
 current Pragma DSL version exported by the Interpreter. The package owns their canonical refs, compilation,
 portable contracts, prompts, structured-output parsing, Memory curation, Store/Skill revision
 rules, Skill validation, and pure revision state machines.
@@ -31,7 +31,7 @@ schemas and remain stable across Host surfaces.
 
 ## Consequences
 
-Hosts can compile the same six Agent definitions and reuse product behavior while choosing
+Hosts can compile the same Agent definitions and reuse product behavior while choosing
 different execution and storage adapters. The package stays independent of Desktop, Server,
 Client, concrete Runtime adapters, and UI frameworks. Browser consumers use only
 `@pragma/built-in-agents/contracts`.

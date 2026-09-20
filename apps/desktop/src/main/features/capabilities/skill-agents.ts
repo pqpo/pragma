@@ -4,11 +4,9 @@ import { basename, dirname, join } from "node:path";
 
 import { withFileLock, type PragmaLoggerProvider, type RuntimeResolver } from "@pragma/core";
 import {
-  SKILL_EVALUATION_EXPERT_REF,
   SKILL_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
   compileBuiltInAgent,
-  createBuiltInSkillAgents,
 } from "@pragma/built-in-agents";
 import type {
   CompiledResource,
@@ -17,115 +15,53 @@ import type {
   PragmaExpertResource,
   PragmaResource,
 } from "@pragma/interpreter";
-import type { SkillPackage } from "@pragma/shared";
 import { z } from "zod";
 
 import {
   ContextStoreRevisionProfileSchema,
-  SkillEvaluationProfileSchema,
-  UpdateSkillEvaluationProfileSchema,
   type ContextStoreRevisionProfile,
-  type SkillEvaluationProfile,
-  type SkillEvaluationSnapshot,
-  type UpdateSkillEvaluationProfile,
 } from "../../../shared/contracts/index.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import type { SkillRevisionEvaluator, SkillRevisionGenerator } from "./skill-revision-service.ts";
-
-export interface SkillEvaluationProfileStore {
-  get(): Promise<SkillEvaluationProfile>;
-  update(input: UpdateSkillEvaluationProfile): Promise<SkillEvaluationProfile>;
-}
-
-export function createSkillEvaluationProfileStore(path: string): SkillEvaluationProfileStore {
-  const get = async () => {
-    try {
-      return SkillEvaluationProfileSchema.parse(JSON.parse(await readFile(path, "utf8")));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return SkillEvaluationProfileSchema.parse({
-        schemaVersion: "pragma.skill-evaluation-profile/v1",
-        revision: 0,
-        mode: "inherit-default",
-        updatedAt: new Date(0).toISOString(),
-      });
-    }
-  };
-  return {
-    get,
-    async update(rawInput) {
-      const input = UpdateSkillEvaluationProfileSchema.parse(rawInput);
-      const current = await get();
-      if (current.revision !== input.expectedRevision)
-        throw Object.assign(new Error("skill_evaluation_profile_conflict"), {
-          code: "revision_conflict",
-        });
-      const next = SkillEvaluationProfileSchema.parse({
-        schemaVersion: "pragma.skill-evaluation-profile/v1",
-        revision: current.revision + 1,
-        mode: input.mode,
-        ...(input.model === undefined ? {} : { model: input.model }),
-        updatedAt: new Date().toISOString(),
-      });
-      await writeJsonAtomic(path, next);
-      return next;
-    },
-  };
-}
+import type { SkillRevisionGenerator } from "./skill-revision-service.ts";
 
 export interface DesktopSkillAgents {
   readonly revisionGenerator: SkillRevisionGenerator;
-  readonly revisionEvaluator: SkillRevisionEvaluator;
-  evaluateCandidate(input: {
-    readonly candidateId: string;
-    readonly package: SkillPackage;
-    readonly replayCases: readonly {
-      readonly objective: string;
-      readonly requiredBehaviors: readonly string[];
-      readonly forbiddenBehaviors: readonly string[];
-    }[];
-    readonly boundaryCase: {
-      readonly objective: string;
-      readonly requiredBehaviors: readonly string[];
-      readonly forbiddenBehaviors: readonly string[];
-    };
-  }): Promise<SkillEvaluationSnapshot>;
   compile(input: {
-    readonly kind: "revision" | "evaluation";
     readonly runtimes?: RuntimeResolver;
+    readonly workspace?: string;
     readonly adapterHost?: PragmaCompileOptions["adapterHost"];
     readonly expertResource?: PragmaExpertResource;
     readonly additionalResources?: readonly PragmaResource[];
     readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
   }): Promise<CompiledResource<InvocableResource>>;
-  fingerprint(kind: "revision" | "evaluation"): Promise<string>;
+  fingerprint(): Promise<string>;
   recoverOrphans(): Promise<number>;
 }
 
 export function createDesktopSkillAgents(options: {
   readonly revisionProfiles: { getProfile(): Promise<ContextStoreRevisionProfile> };
-  readonly evaluationProfiles: SkillEvaluationProfileStore;
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly project: PragmaProjectStore;
   readonly runtimes: RuntimeResolver;
   readonly pragmaHome: string;
   readonly loggerProvider?: PragmaLoggerProvider;
+  readonly resolveDraftWorkspace: (draftId: string) => Promise<string>;
+  readonly onMissionCreated?:
+    ((input: { readonly jobId: string; readonly missionId: string }) => Promise<void>) | undefined;
+  readonly isDraftSubmitted?: ((jobId: string) => Promise<boolean>) | undefined;
 }): DesktopSkillAgents {
   const workspace = join(options.pragmaHome, "tmp", "skill-agents");
   const registryPath = join(options.pragmaHome, "state", "skill-agents", "missions.json");
 
   const resolveRuntime = async (
-    profile: ContextStoreRevisionProfile | SkillEvaluationProfile,
+    profile: ContextStoreRevisionProfile,
     resolver = options.runtimes,
   ) => {
-    const parsed =
-      profile.schemaVersion === "pragma.context-store-revision-profile/v1"
-        ? ContextStoreRevisionProfileSchema.parse(profile)
-        : SkillEvaluationProfileSchema.parse(profile);
+    const parsed = ContextStoreRevisionProfileSchema.parse(profile);
     const defaults = await resolveSystemExpertRuntimeDefaults(
       resolver,
       parsed.mode === "pinned" ? parsed.model : undefined,
@@ -139,35 +75,39 @@ export function createDesktopSkillAgents(options: {
   };
 
   const run = async (input: {
-    readonly kind: "revision" | "evaluation";
     readonly jobId: string;
+    readonly draftId: string;
     readonly goal: string;
-    readonly profile: ContextStoreRevisionProfile | SkillEvaluationProfile;
+    readonly profile: ContextStoreRevisionProfile;
     readonly capabilityId?: string | undefined;
-    readonly phase?: "subject" | "judge";
   }) => {
     const runtime = await resolveRuntime(input.profile);
     const project = await options.project.ensurePublished();
-    await mkdir(workspace, { recursive: true, mode: 0o700 });
+    const draftWorkspace = await options.resolveDraftWorkspace(input.draftId);
     const mission = await options.missions.create({
-      workspace: { path: workspace, basename: basename(workspace) },
+      workspace: { path: draftWorkspace, basename: basename(draftWorkspace) },
       goal: input.goal,
-      title: input.kind === "revision" ? "Revise Skill Capability" : "Evaluate Skill Capability",
+      title: "Revise Skill Capability",
       project: { id: project.projectId, revision: project.revision },
       executor: {
         kind: "expert",
-        ref: input.kind === "revision" ? SKILL_REVISION_EXPERT_REF : SKILL_EVALUATION_EXPERT_REF,
-        name: input.kind === "revision" ? "Skill Revision Agent" : "Skill Evaluation Agent",
+        ref: SKILL_REVISION_EXPERT_REF,
+        name: "Skill Revision Agent",
       },
-      origin:
-        input.kind === "revision"
-          ? {
-              type: "system-skill-revision",
-              jobId: input.jobId,
-              capabilityId: input.capabilityId!,
-            }
-          : { type: "system-skill-evaluation", jobId: input.jobId, phase: input.phase ?? "judge" },
+      origin: {
+        type: "system-skill-revision",
+        jobId: input.jobId,
+        capabilityId: input.capabilityId!,
+      },
       toolPermissionMode: "request-approval",
+      contextMounts: [
+        {
+          kind: "skill-revision-draft",
+          draftId: input.draftId,
+          revisionJobId: input.jobId,
+          capabilityId: input.capabilityId!,
+        },
+      ],
       ...(runtime.modelSelection === undefined
         ? {}
         : {
@@ -180,84 +120,45 @@ export function createDesktopSkillAgents(options: {
             },
           }),
     });
-    await registerMission(registryPath, mission.id, input.jobId, input.kind);
-    try {
-      await options.runner.run(mission.id);
-      await waitForMission(options.missions, mission.id);
-      const finished = await options.missions.get(mission.id);
-      if (finished.execution?.status !== "succeeded")
-        throw new Error(`skill_agent_failed:${finished.execution?.error ?? "unknown"}`);
-      const chat = await options.runner.getChatPage({ id: mission.id, limit: 50 });
-      const output = chat.entries
-        .filter((entry) => entry.kind === "assistant")
-        .map((entry) => entry.content)
-        .at(-1);
-      if (output === undefined) throw new Error("skill_agent_output_missing");
-      return {
-        content: output,
-        runtimeId: runtime.runtimeId,
-        providerId: runtime.modelSelection?.model.providerId ?? "runtime-managed",
-        modelId: runtime.modelSelection?.model.modelId ?? "runtime-default",
-      };
-    } finally {
-      if (await cleanupMission(options.runner, mission.id)) {
-        await unregisterMission(registryPath, mission.id).catch(() => undefined);
-      }
+    await options.onMissionCreated?.({ jobId: input.jobId, missionId: mission.id });
+    await options.runner.run(mission.id);
+    await waitForMission(options.missions, mission.id);
+    const finished = await options.missions.get(mission.id);
+    if (finished.execution?.status !== "succeeded") {
+      throw new Error(`skill_agent_failed:${finished.execution?.error ?? "unknown"}`);
     }
+    if ((await options.isDraftSubmitted?.(input.jobId)) !== true) {
+      throw new Error("skill_revision_agent_did_not_submit");
+    }
+    await options.missions.markComplete(mission.id);
   };
 
-  const reusableAgents = createBuiltInSkillAgents({
-    revisionProfiles: options.revisionProfiles,
-    evaluationProfiles: options.evaluationProfiles,
-    revisionExecution: {
-      async generate(input) {
-        const result = await run({
-          kind: "revision",
-          jobId: input.jobId,
-          goal: input.prompt,
-          profile: input.profile,
-          capabilityId: input.capabilityId,
-        });
-        return { content: result.content };
-      },
-    },
-    evaluationExecution: {
-      async runSubject(input) {
-        return await run({
-          kind: "evaluation",
-          jobId: input.jobId,
-          goal: input.prompt,
-          profile: input.profile,
-          phase: "subject",
-        });
-      },
-      async runJudge(input) {
-        return await run({
-          kind: "evaluation",
-          jobId: input.jobId,
-          goal: input.prompt,
-          profile: input.profile,
-          phase: "judge",
-        });
-      },
-    },
-  });
-
   const api: DesktopSkillAgents = {
-    revisionGenerator: reusableAgents.revisionGenerator,
-    revisionEvaluator: reusableAgents.revisionEvaluator,
-    evaluateCandidate: async (input) => await reusableAgents.evaluateCandidate(input),
+    revisionGenerator: {
+      async generate(input) {
+        const profile = await options.revisionProfiles.getProfile();
+        await run({
+          jobId: input.jobId,
+          draftId: input.draftId,
+          goal: [
+            input.request.prompt,
+            `The managed Skill draft ${input.draftId} is already mounted and writable.`,
+            "Inspect and edit this draft directly. Submit it for review, repair every synchronous validation diagnostic in this same Mission, and resubmit until it passes.",
+          ].join("\n\n"),
+          profile,
+          capabilityId: input.request.capabilityId,
+        });
+        return undefined;
+      },
+    },
     async compile(input) {
-      const profile =
-        input.kind === "revision"
-          ? await options.revisionProfiles.getProfile()
-          : await options.evaluationProfiles.get();
+      const profile = await options.revisionProfiles.getProfile();
       const runtime = await resolveRuntime(profile, input.runtimes);
       return await compileBuiltInAgent({
-        ref: input.kind === "revision" ? SKILL_REVISION_EXPERT_REF : SKILL_EVALUATION_EXPERT_REF,
+        ref: SKILL_REVISION_EXPERT_REF,
         environmentId: "desktop",
         definitionStateRoot: join(options.pragmaHome, "cache", "built-in-agents", "definitions"),
-        workspace,
+        workspace: input.workspace ?? workspace,
         pragmaHome: options.pragmaHome,
         runtimes: input.runtimes ?? options.runtimes,
         rootExecutionOverride: {
@@ -280,20 +181,15 @@ export function createDesktopSkillAgents(options: {
           : { resolveExternalInvocable: input.resolveExternalInvocable }),
       });
     },
-    async fingerprint(kind) {
-      const profile =
-        kind === "revision"
-          ? await options.revisionProfiles.getProfile()
-          : await options.evaluationProfiles.get();
+    async fingerprint() {
+      const profile = await options.revisionProfiles.getProfile();
       return createHash("sha256")
         .update(
           JSON.stringify({
             version: 2,
-            kind,
+            kind: "revision",
             profile,
-            definition: builtInAgentFingerprint(
-              kind === "revision" ? SKILL_REVISION_EXPERT_REF : SKILL_EVALUATION_EXPERT_REF,
-            ),
+            definition: builtInAgentFingerprint(SKILL_REVISION_EXPERT_REF),
           }),
         )
         .digest("hex");
@@ -384,17 +280,6 @@ async function updateMissionRegistry(
       }),
     );
   });
-}
-async function registerMission(
-  path: string,
-  missionId: string,
-  jobId: string,
-  kind: "revision" | "evaluation",
-): Promise<void> {
-  await updateMissionRegistry(path, (entries) => [
-    ...entries.filter((entry) => entry.missionId !== missionId).slice(-999),
-    { missionId, jobId, kind, createdAt: new Date().toISOString() },
-  ]);
 }
 async function unregisterMission(path: string, missionId: string): Promise<void> {
   await updateMissionRegistry(path, (entries) =>

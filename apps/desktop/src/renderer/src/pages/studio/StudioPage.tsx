@@ -1133,6 +1133,7 @@ export function StudioPage(props: {
             onPublished={async () => {
               setCapabilities(await window.pragmaDesktop.listCapabilities());
             }}
+            onOpenMission={props.onOpenMission}
             onBack={() =>
               setScreen(selectedCapabilityId === null ? "directory" : "capability-detail")
             }

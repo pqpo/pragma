@@ -237,7 +237,7 @@
 .skill-revision-page .studio-screen-body {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .skill-revision-page .revision-task-empty {
@@ -256,6 +256,13 @@
 }
 
 .skill-revision-main,
+.skill-revision-meta,
+.skill-revision-summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.skill-revision-main,
 .skill-revision-meta {
   display: grid;
   gap: 6px;
@@ -270,12 +277,18 @@
 
 .skill-revision-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }
 
 .skill-revision-error {
   grid-column: 1 / -1;
+}
+
+.skill-revision-error {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 980px) {
@@ -285,6 +298,26 @@
 
   .skill-revision-summary {
     grid-column: 1 / -1;
+  }
+
+  .skill-revision-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .skill-revision-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .skill-revision-summary,
+  .skill-revision-actions {
+    grid-column: 1;
+  }
+
+  .skill-revision-actions {
+    justify-content: flex-start;
   }
 }
 

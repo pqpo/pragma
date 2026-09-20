@@ -1691,35 +1691,8 @@ function MemorySkillCandidates(props: {
                 ))}
               </section>
             )}
-            {candidate.evaluation === undefined ? null : (
-              <section>
-                <h3>{t("skillEvaluation")}</h3>
-                <p className="memory-note">
-                  {t(
-                    candidate.evaluation.passed ? "skillEvaluationPassed" : "skillEvaluationFailed",
-                  )}
-                </p>
-                {candidate.evaluation.cases.map((testCase) => (
-                  <details className="memory-candidate-file" key={testCase.id}>
-                    <summary>
-                      <span>
-                        {testCase.kind}: {testCase.id}
-                      </span>
-                      <small>{testCase.passed ? t("passed") : t("failed")}</small>
-                    </summary>
-                    <ul>
-                      {testCase.assertions.map((assertion, index) => (
-                        <li key={`${assertion.dimension}:${index}`}>
-                          {assertion.dimension}: {assertion.message}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ))}
-              </section>
-            )}
             <div className="memory-actions memory-candidate-actions">
-              {candidate.state === "pending_review" ? (
+              {["pending_review", "needs_attention"].includes(candidate.state) ? (
                 <>
                   <button
                     className="secondary-button"
@@ -1736,45 +1709,31 @@ function MemorySkillCandidates(props: {
                       )
                     }
                   >
-                    {t("saveAndReevaluate")}
+                    {t("saveAndValidate")}
                   </button>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={props.busy}
-                    onClick={() =>
-                      void runAndReplace(
-                        async () =>
-                          await window.pragmaDesktop.approveMemorySkillCandidate({
-                            id: candidate.id,
-                            expectedRevision: candidate.revision,
-                          }),
-                      )
-                    }
-                  >
-                    {t("approveSkill")}
-                  </button>
+                  {candidate.state === "pending_review" ? (
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={props.busy}
+                      onClick={() =>
+                        void runAndReplace(
+                          async () =>
+                            await window.pragmaDesktop.approveMemorySkillCandidate({
+                              id: candidate.id,
+                              expectedRevision: candidate.revision,
+                            }),
+                        )
+                      }
+                    >
+                      {t("approveSkill")}
+                    </button>
+                  ) : null}
                 </>
               ) : null}
-              {candidate.state === "needs_attention" ? (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={props.busy}
-                  onClick={() =>
-                    void runAndReplace(
-                      async () =>
-                        await window.pragmaDesktop.retryMemorySkillCandidate({
-                          id: candidate.id,
-                          expectedRevision: candidate.revision,
-                        }),
-                    )
-                  }
-                >
-                  {t("retrySkillEvaluation")}
-                </button>
-              ) : null}
-              {["pending_review", "needs_attention", "needs_target"].includes(candidate.state) ? (
+              {["pending_review", "revision_pending", "needs_attention", "needs_target"].includes(
+                candidate.state,
+              ) ? (
                 <button
                   className="danger-button is-danger"
                   type="button"
@@ -1793,6 +1752,11 @@ function MemorySkillCandidates(props: {
                 </button>
               ) : null}
             </div>
+            {candidate.lastErrorCode !== undefined ? (
+              <p className="form-error" role="alert">
+                <strong>{candidate.lastErrorCode}</strong>
+              </p>
+            ) : null}
           </>
         )}
       </main>

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "pragma.skill-revision-job/v3",
+  "id": "10000000-0000-4000-8000-000000000001",
+  "revision": 2,
+  "draftId": "20000000-0000-4000-8000-000000000002",
+  "request": {
+    "schemaVersion": "pragma.skill-revision-request/v3",
+    "operation": "revise",
+    "capabilityId": "30000000-0000-4000-8000-000000000003",
+    "prompt": "Improve the Skill.",
+    "source": "memory-learning",
+    "sourceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceRefs": [],
+    "replayCases": [{}, {}, {}],
+    "boundaryCase": {}
+  },
+  "state": "evaluating",
+  "evaluation": { "passed": false },
+  "createdAt": "2026-09-20T00:00:00.000Z",
+  "updatedAt": "2026-09-20T00:00:00.000Z"
+}
