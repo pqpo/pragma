@@ -361,54 +361,6 @@ describe("capability store", () => {
     });
   });
 
-  it("updates Skill files in a new revision while preserving identity and configuration", async () => {
-    const { directory, store } = await createStore();
-    const originalSource = join(directory, "original-skill");
-    const updatedSource = join(directory, "updated-skill");
-    await mkdir(originalSource);
-    await mkdir(join(updatedSource, "assets"), { recursive: true });
-    await writeFile(
-      join(originalSource, "SKILL.md"),
-      "---\nname: stable-name\ndescription: Stable description.\n---\n\nOriginal.\n",
-    );
-    await writeFile(
-      join(updatedSource, "SKILL.md"),
-      "---\nname: changed-name\ndescription: Changed description.\n---\n\nUpdated.\n",
-    );
-    await writeFile(join(updatedSource, "assets", "raw.bin"), new Uint8Array([0xff, 0xfe]));
-
-    const original = await store.importSkill({ sourcePath: originalSource });
-    if (original.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
-    const updated = await store.updateSkill({
-      id: original.manifest.id,
-      baseRevision: original.manifest.latestRevision,
-      sourcePath: updatedSource,
-    });
-
-    expect(updated.manifest).toMatchObject({
-      id: original.manifest.id,
-      runtimeKey: original.manifest.runtimeKey,
-      name: "stable-name",
-      latestRevision: 2,
-      createdAt: original.manifest.createdAt,
-    });
-    expect(updated.definition).toMatchObject({
-      kind: "skill",
-      name: "stable-name",
-      description: "Stable description.",
-    });
-    expect(updated.definition).not.toMatchObject({ contentHash: original.definition.contentHash });
-    await expect(
-      store.getSkillDocument({ id: original.manifest.id, revision: 1 }),
-    ).resolves.toMatchObject({ content: expect.stringContaining("Original.") });
-    await expect(
-      store.getSkillDocument({ id: original.manifest.id, revision: 2 }),
-    ).resolves.toMatchObject({ content: expect.stringContaining("Updated.") });
-    await expect(
-      store.getSkillFile({ id: original.manifest.id, revision: 2, path: "assets/raw.bin" }),
-    ).resolves.toMatchObject({ content: null, size: 2 });
-  });
-
   it("preserves executable bits when publishing an immutable Skill candidate", async () => {
     const { directory, store } = await createStore();
     const originalSource = join(directory, "original-executable-skill");

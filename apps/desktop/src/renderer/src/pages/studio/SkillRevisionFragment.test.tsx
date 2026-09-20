@@ -7,6 +7,7 @@ import {
   canDeleteSkillRevisionJob,
   canRetrySkillRevisionJob,
   formatSkillFileMetadata,
+  filterSkillRevisionEntries,
   skillRevisionAttentionActions,
   SkillRevisionDetailFragment,
   SkillRevisionEmptyState,
@@ -19,17 +20,42 @@ afterEach(async () => {
 });
 
 describe("SkillRevisionEmptyState", () => {
+  it("filters skill revisions by status and actionable state", () => {
+    const entries = [
+      { job: { state: "pending_review" }, draft: {} },
+      { job: { state: "needs_rebase" }, draft: {} },
+      { job: { state: "needs_attention" }, draft: {} },
+      { job: { state: "completed" }, draft: {} },
+    ] as unknown as SkillRevisionEntry[];
+
+    expect(filterSkillRevisionEntries(entries, "actionable")).toHaveLength(3);
+    expect(filterSkillRevisionEntries(entries, "completed")).toHaveLength(1);
+    expect(filterSkillRevisionEntries(entries, "")).toHaveLength(4);
+    expect(filterSkillRevisionEntries(entries, "", "skill-a")).toHaveLength(0);
+    expect(
+      filterSkillRevisionEntries(
+        entries.map((entry, index) => ({
+          ...entry,
+          draft: { capabilityId: index === 0 ? "skill-a" : "skill-b" },
+        })) as unknown as SkillRevisionEntry[],
+        "",
+        "skill-a",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("counts only non-terminal revision tasks", () => {
     expect(
       activeSkillRevisionTaskCount([
         { job: { state: "running" } },
         { job: { state: "pending_review" } },
+        { job: { state: "needs_rebase" } },
         { job: { state: "needs_attention" } },
         { job: { state: "completed" } },
         { job: { state: "rejected" } },
         { job: { state: "superseded" } },
       ]),
-    ).toBe(3);
+    ).toBe(4);
   });
 
   it("offers deletion for every revision state", () => {
@@ -41,6 +67,7 @@ describe("SkillRevisionEmptyState", () => {
         "publishing",
         "completed",
         "rejected",
+        "needs_rebase",
         "needs_attention",
         "superseded",
       ].filter((state) =>
@@ -53,12 +80,14 @@ describe("SkillRevisionEmptyState", () => {
       "publishing",
       "completed",
       "rejected",
+      "needs_rebase",
       "needs_attention",
       "superseded",
     ]);
   });
 
-  it("does not retry a revision whose base has changed", () => {
+  it("routes a revision whose base changed through its Mission instead of retry", () => {
+    expect(canRetrySkillRevisionJob("needs_rebase", "skill_revision_base_changed")).toBe(false);
     expect(canRetrySkillRevisionJob("rejected", "skill_revision_base_changed")).toBe(false);
     expect(canRetrySkillRevisionJob("rejected", undefined)).toBe(true);
     expect(canRetrySkillRevisionJob("needs_attention", "invalid_input")).toBe(true);
@@ -154,6 +183,7 @@ describe("SkillRevisionEmptyState", () => {
         onReject={noop}
         onRetry={noop}
         onContinue={noop}
+        onRebase={noop}
       />,
     );
 
@@ -200,6 +230,9 @@ describe("SkillRevisionEmptyState", () => {
       skillRevisionAttentionActions({ job: { missionId }, draft: { state: "editing" } }, true),
     ).toEqual({ canContinue: true, canRetry: false });
     expect(
+      skillRevisionAttentionActions({ job: { missionId }, draft: { state: "needs_rebase" } }, true),
+    ).toEqual({ canContinue: true, canRetry: false });
+    expect(
       skillRevisionAttentionActions(
         {
           job: {
@@ -214,5 +247,49 @@ describe("SkillRevisionEmptyState", () => {
         true,
       ),
     ).toEqual({ canContinue: true, canRetry: false });
+  });
+
+  it("shows rebase guidance and the carried Agent prompt", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const noop = () => undefined;
+    const entry = {
+      job: {
+        id: "00000000-0000-4000-8000-000000000001",
+        revision: 3,
+        state: "needs_rebase",
+        missionId: "00000000-0000-4000-8000-000000000002",
+        request: { prompt: "更新现有 Skill" },
+        error: {
+          code: "skill_revision_base_changed",
+          message: "The formal Skill changed after this draft was created.",
+        },
+        updatedAt: "2026-09-20T08:00:00.000Z",
+      },
+      draft: {
+        name: "safe-workflow",
+        operation: "revise",
+        state: "needs_rebase",
+        baseRevision: 1,
+      },
+    } as unknown as SkillRevisionEntry;
+    const html = renderToStaticMarkup(
+      <SkillRevisionDetailFragment
+        entry={entry}
+        busy={false}
+        canOpenMission
+        onBack={noop}
+        onApprove={noop}
+        onReject={noop}
+        onRetry={noop}
+        onContinue={noop}
+        onRebase={noop}
+      />,
+    );
+
+    expect(html).toContain("Skill 已更新，需要先变基");
+    expect(html).toContain("打开任务并变基");
+    expect(html).toContain(
+      "请检查最新知识库，将此草稿变基到最新版本；如有冲突，请逐项说明并和我确认处理方式，然后重新提交修订。",
+    );
   });
 });

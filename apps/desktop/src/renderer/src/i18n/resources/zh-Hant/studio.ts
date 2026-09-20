@@ -3,6 +3,8 @@ export const studio = {
   revisionErrors: "異常",
   revisionApplied: "已套用",
   revisionStatusFilter: "狀態篩選",
+  revisionSkillFilter: "技能篩選",
+  allSkills: "全部技能",
   revisionAllStates: "全部狀態",
   revisionActionable: "需要處理",
   revisionSourceFilter: "來源篩選",
@@ -577,20 +579,20 @@ export const studio = {
   revisionDraftAwaitingConfirmationTitle: "草稿仍可修改",
   revisionDraftAwaitingConfirmationDescription:
     "Agent 已暫停且尚未提交草稿。你可以先審核目前變更；需要調整時開啟原任務繼續修改，確認無誤後再讓 Agent 提交審批。",
-  revisionNeedsRebaseTitle: "知識庫已更新，需要先變基",
+  revisionNeedsRebaseTitle: "Skill 已更新，需要先變基",
   revisionNeedsRebaseDescription:
-    "這份草稿基於較早的知識庫版本，不能直接套用。請繼續關聯任務，讓修訂 Agent 將草稿變基到最新版本。已發佈的知識庫不會被修改。",
+    "這份草稿基於較早的 Skill 版本，不能直接套用。請繼續關聯任務，讓修訂 Agent 將草稿變基到最新版本。已發佈的 Skill 不會被修改。",
   revisionNeedsRebaseStepOpenMission:
     "點擊下方「開啟任務並變基」；下一步指令會自動帶入任務輸入框。",
   revisionNeedsRebaseStepReopen: "如果任務顯示為已完成，先點擊「重新開啟」，再繼續對話。",
   revisionNeedsRebasePrompt:
-    "請檢查最新知識庫，將此草稿變基到最新版本；如有衝突，請逐項說明並和我確認處理方式，然後重新提交修訂。",
+    "請檢查最新 Skill，將此草稿變基到最新版本；如有衝突，請逐項說明並和我確認處理方式，然後重新提交修訂。",
   revisionNeedsRebaseStepAskAgent:
     "檢查任務輸入框中已帶入的提示詞，確認後傳送給修訂 Agent：「{{prompt}}」",
   revisionNeedsRebaseStepReview:
-    "返回「工作室 → 知識庫 → 修訂任務」，審核新的變更方案，然後點擊「同意並套用」。",
+    "返回「工作室 → Skill → 修訂任務」，審核新的變更方案，然後點擊「同意並套用」。",
   revisionNeedsRebaseNoMission:
-    "此任務沒有可繼續的關聯任務。請刪除它，然後前往「工作室 → 知識庫 → 對應知識庫 → 提交修訂」，重新建立一份修訂方案。",
+    "此任務沒有可繼續的關聯任務。請刪除它，然後前往「工作室 → Skill → 對應 Skill → 提交修訂」，重新建立一份修訂方案。",
   filesChanged: "變更 {{count}} 個檔案",
   baseRevision: "基於版本 {{count}}",
   newKnowledgeBaseRevision: "新增知識庫",
@@ -745,7 +747,7 @@ export const studio = {
   expertsDescription: "可供任務使用的可重複使用專家。",
   capabilitiesDescription: "建立或編輯專家時可選擇的可重複使用技能和外部工具。",
   connectorsDescription: "連接供專家使用的 MCP、HTTP 與函式工具。",
-  skillsDescription: "瀏覽、匯入、更新與修訂可重複使用的 Skill 套件。",
+  skillsDescription: "瀏覽、匯入與修訂可重複使用的 Skill 套件。",
   contextStoresDescription: "供專家使用的代管 Markdown 知識來源。",
   pluginsDescription: "安裝可重複使用的專家擴充功能，並設定其 Desktop 預設值。",
   availableExperts: "可用專家",
@@ -864,10 +866,6 @@ export const studio = {
   configureExternalTool: "設定可重複使用的外部工具連線。",
   importing: "匯入中…",
   choosePackage: "選擇套件",
-  chooseReplacementPackage: "選擇替換套件",
-  updateSkill: "更新技能",
-  updatingSkill: "正在更新技能…",
-  updateSkillDescription: "替換套件中的全部檔案，同時保留此技能的識別和設定。",
   saveCapability: "儲存能力",
   saveCapabilityChanges: "儲存變更",
   editCapability: "編輯能力",
@@ -1639,6 +1637,10 @@ export const studio = {
   done: "完成",
   fixedSystemTool: "系統固定工具",
   skillRevisions: "技能修訂",
+  submitSkillRevision: "提交修訂",
+  updateSkillFromPackage: "從本機套件更新",
+  submitSkillRevisionDescription:
+    "描述 Pragma 需要為「{{name}}」準備的變更。修訂需要審批後才會發佈。",
   skillRevisionsDescription: "查看已校驗的 Skill 候選，並批准或拒絕發佈。",
   loadingSkillRevisions: "正在載入修訂…",
   noSkillRevisions: "暫無技能修訂。",
@@ -1649,6 +1651,21 @@ export const studio = {
     "「{{name}}」將從技能修訂列表中移除。刪除任務不會回復已發佈的修訂，也不會刪除技能。",
   continueSkillRevision: "繼續修訂",
   skillRevisionContinuePrompt: "查看校驗問題，更新現有 Skill 草稿，然後重新提交。",
+  openSkillRevisionMissionToRebase: "開啟任務並變基",
+  skillRevisionNeedsRebaseTitle: "Skill 已更新，需要先變基",
+  skillRevisionNeedsRebaseDescription:
+    "這份草稿基於較早的 Skill 版本，不能直接發佈。請繼續關聯任務，讓修訂 Agent 基於最新版本檢查並更新草稿。已發佈的 Skill 不會被修改。",
+  skillRevisionNeedsRebaseStepOpenMission:
+    "點擊下方「開啟任務並變基」；下一步指令會自動帶入任務輸入框。",
+  skillRevisionNeedsRebaseStepReopen: "如果任務顯示為已完成，先點擊「重新開啟」，再繼續對話。",
+  skillRevisionNeedsRebasePrompt:
+    "請檢查最新知識庫，將此草稿變基到最新版本；如有衝突，請逐項說明並和我確認處理方式，然後重新提交修訂。",
+  skillRevisionNeedsRebaseStepAskAgent:
+    "檢查任務輸入框中已帶入的提示詞，確認後傳送給修訂 Agent：「{{prompt}}」",
+  skillRevisionNeedsRebaseStepReview:
+    "返回「工作室 → 技能 → 修訂任務」，審核新的變更方案，然後點擊「批准並發佈」。",
+  skillRevisionNeedsRebaseNoMission:
+    "此任務沒有可繼續的關聯任務。請刪除它，然後從對應 Skill 重新提交修訂。",
   skillRevisionSummaryUnavailable: "暫無變更摘要。",
   skillRevisionRequestDocumentDescription: "記錄發起本次 Skill 修訂的原始要求。",
   skillRevisionSummaryDocumentDescription: "概括本次 Skill 修訂的變更範圍，便於發佈前審批。",

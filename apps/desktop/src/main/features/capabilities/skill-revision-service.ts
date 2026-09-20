@@ -25,7 +25,7 @@ import {
   type SkillRevisionReview,
   type SkillRevisionReviewFile,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "./capability-store.ts";
+import { copySkillSource, type CapabilityStore } from "./capability-store.ts";
 import {
   SkillWorkingTreeError,
   assertSkillCopyTarget,
@@ -40,15 +40,20 @@ import {
   SkillRevisionDraftV1Schema,
   SkillRevisionDraftV2StoredSchema,
   SkillRevisionDraftV3StoredSchema,
+  SkillRevisionDraftV4StoredSchema,
   SkillRevisionJobV1StoredSchema,
   SkillRevisionJobV2StoredSchema,
   SkillRevisionJobV3StoredSchema,
+  SkillRevisionJobV4StoredSchema,
   SkillRevisionMigrationJournalSchema,
   migrateSkillRevisionDraftV1ToV2,
   migrateSkillRevisionDraftV2ToV3,
   migrateSkillRevisionDraftV3ToV4,
+  migrateSkillRevisionDraftV4ToV5,
   migrateSkillRevisionJobV2ToV3,
   migrateSkillRevisionJobV3ToV4,
+  migrateSkillRevisionJobV4ToV5,
+  type SkillRevisionDraftV4Stored,
   type SkillRevisionJobV1Stored,
   type SkillRevisionMigrationJournal,
 } from "./skill-revision-migrations/index.ts";
@@ -117,6 +122,10 @@ export interface SkillDraftInspection {
 export interface SkillRevisionService {
   /** Compatibility entry used by Memory while it moves to managed Skill Missions. */
   submit(request: SkillRevisionSubmissionRequest): Promise<ManagedSkillRevisionJob>;
+  importSource(input: {
+    readonly capabilityId: string;
+    readonly sourcePath: string;
+  }): Promise<ManagedSkillRevisionJob>;
   start(
     request: SkillRevisionRequestV4,
     options?: {
@@ -203,11 +212,18 @@ export function createSkillRevisionService(options: {
     skillRevisionWorkspacePaths(draft.workspacePath, draft.id).worktreePath;
   const submissionsPath = (id: string) => join(draftRoot(id), "submissions");
   const candidatePath = (
-    draft: Pick<SkillRevisionDraft, "id" | "workspacePath" | "state" | "submissionHash">,
+    draft: Pick<
+      SkillRevisionDraft,
+      "id" | "workspacePath" | "state" | "submissionHash" | "rebaseReferenceHash"
+    >,
   ) =>
-    draft.state === "editing" || draft.submissionHash === undefined
+    draft.state === "editing"
       ? worktreePath(draft)
-      : join(submissionsPath(draft.id), draft.submissionHash);
+      : draft.submissionHash !== undefined
+        ? join(submissionsPath(draft.id), draft.submissionHash)
+        : draft.rebaseReferenceHash !== undefined
+          ? join(submissionsPath(draft.id), draft.rebaseReferenceHash)
+          : worktreePath(draft);
   let processing: Promise<void> | undefined;
   let processingRequested = false;
   let diagnostics: readonly SkillRevisionRecordDiagnostic[] = [];
@@ -397,9 +413,11 @@ export function createSkillRevisionService(options: {
     sourceVersion:
       | "pragma.skill-revision-job/v2"
       | "pragma.skill-revision-job/v3"
+      | "pragma.skill-revision-job/v4"
       | "pragma.skill-revision-draft/v1"
       | "pragma.skill-revision-draft/v2"
-      | "pragma.skill-revision-draft/v3",
+      | "pragma.skill-revision-draft/v3"
+      | "pragma.skill-revision-draft/v4",
     workspacePath?: string,
   ): SkillRevisionMigrationJournalWithoutHash => {
     const base = {
@@ -426,6 +444,15 @@ export function createSkillRevisionService(options: {
         backupPath: join(migrationBackupsPath, `${id}.v3.json`),
       };
     }
+    if (kind === "job" && sourceVersion === "pragma.skill-revision-job/v4") {
+      return {
+        ...base,
+        kind,
+        sourceVersion,
+        targetVersion: "pragma.skill-revision-job/v5",
+        backupPath: join(migrationBackupsPath, `${id}.v4.json`),
+      };
+    }
     if (kind === "draft" && sourceVersion === "pragma.skill-revision-draft/v1") {
       return {
         ...base,
@@ -442,6 +469,15 @@ export function createSkillRevisionService(options: {
         sourceVersion,
         targetVersion: "pragma.skill-revision-draft/v3",
         backupPath: join(migrationBackupsPath, `draft-${id}.v2.json`),
+      };
+    }
+    if (kind === "draft" && sourceVersion === "pragma.skill-revision-draft/v4") {
+      return {
+        ...base,
+        kind,
+        sourceVersion,
+        targetVersion: "pragma.skill-revision-draft/v5",
+        backupPath: join(migrationBackupsPath, `draft-${id}.v4.json`),
       };
     }
     if (kind !== "draft" || sourceVersion !== "pragma.skill-revision-draft/v3") {
@@ -470,11 +506,15 @@ export function createSkillRevisionService(options: {
         ? "pragma.skill-revision-job/v3"
         : sourceVersion === "pragma.skill-revision-job/v3"
           ? "pragma.skill-revision-job/v4"
-          : sourceVersion === "pragma.skill-revision-draft/v1"
-            ? "pragma.skill-revision-draft/v2"
-            : sourceVersion === "pragma.skill-revision-draft/v2"
-              ? "pragma.skill-revision-draft/v3"
-              : "pragma.skill-revision-draft/v4";
+          : sourceVersion === "pragma.skill-revision-job/v4"
+            ? "pragma.skill-revision-job/v5"
+            : sourceVersion === "pragma.skill-revision-draft/v1"
+              ? "pragma.skill-revision-draft/v2"
+              : sourceVersion === "pragma.skill-revision-draft/v2"
+                ? "pragma.skill-revision-draft/v3"
+                : sourceVersion === "pragma.skill-revision-draft/v3"
+                  ? "pragma.skill-revision-draft/v4"
+                  : "pragma.skill-revision-draft/v5";
     return join(
       migrationJournalsPath,
       `${kind}-${id}.${sourceVersion.slice(sourceVersion.lastIndexOf("/") + 1)}-to-${targetVersion.slice(targetVersion.lastIndexOf("/") + 1)}.json`,
@@ -521,11 +561,15 @@ export function createSkillRevisionService(options: {
       SkillRevisionJobV2StoredSchema.parse(source);
     else if (journal.sourceVersion === "pragma.skill-revision-job/v3")
       SkillRevisionJobV3StoredSchema.parse(source);
+    else if (journal.sourceVersion === "pragma.skill-revision-job/v4")
+      SkillRevisionJobV4StoredSchema.parse(source);
     else if (journal.sourceVersion === "pragma.skill-revision-draft/v1")
       SkillRevisionDraftV1Schema.parse(source);
     else if (journal.sourceVersion === "pragma.skill-revision-draft/v2")
       SkillRevisionDraftV2StoredSchema.parse(source);
-    else SkillRevisionDraftV3StoredSchema.parse(source);
+    else if (journal.sourceVersion === "pragma.skill-revision-draft/v3")
+      SkillRevisionDraftV3StoredSchema.parse(source);
+    else SkillRevisionDraftV4StoredSchema.parse(source);
     if (jsonHash(source) !== journal.sourceHash) {
       throw coded("skill_revision_migration_backup_mismatch");
     }
@@ -538,11 +582,16 @@ export function createSkillRevisionService(options: {
   ): Promise<void> => {
     const versions =
       kind === "job"
-        ? (["pragma.skill-revision-job/v2", "pragma.skill-revision-job/v3"] as const)
+        ? ([
+            "pragma.skill-revision-job/v2",
+            "pragma.skill-revision-job/v3",
+            "pragma.skill-revision-job/v4",
+          ] as const)
         : ([
             "pragma.skill-revision-draft/v1",
             "pragma.skill-revision-draft/v2",
             "pragma.skill-revision-draft/v3",
+            "pragma.skill-revision-draft/v4",
           ] as const);
     for (const sourceVersion of versions) {
       const journal = await readAdjacentMigrationJournal(
@@ -622,7 +671,7 @@ export function createSkillRevisionService(options: {
 
   const migrateDraftV3 = async (
     source: import("./skill-revision-migrations/index.ts").SkillRevisionDraftV3Stored,
-  ): Promise<SkillRevisionDraft> => {
+  ): Promise<SkillRevisionDraftV4Stored> => {
     const existingJournal = await readAdjacentMigrationJournal(
       "draft",
       source.id,
@@ -676,7 +725,7 @@ export function createSkillRevisionService(options: {
       source,
       migrated,
       workspacePath: workspace.workspacePath,
-      write: writeDraft,
+      write: async (value) => await writeJsonAtomic(draftPath(source.id), value),
       afterWrite: async () => {
         await rm(sourceWorktree, { recursive: true, force: true });
         if (migrated.submissionHash !== undefined) {
@@ -701,7 +750,30 @@ export function createSkillRevisionService(options: {
         return latest.data;
       }
       const storedV3 = SkillRevisionDraftV3StoredSchema.safeParse(latestRaw);
-      if (storedV3.success) return await migrateDraftV3(storedV3.data);
+      const storedV4 = SkillRevisionDraftV4StoredSchema.safeParse(latestRaw);
+      if (storedV4.success) {
+        const migrated = await persistAdjacentMigration({
+          kind: "draft",
+          id,
+          sourceVersion: "pragma.skill-revision-draft/v4",
+          source: storedV4.data,
+          migrated: migrateSkillRevisionDraftV4ToV5(storedV4.data),
+          write: writeDraft,
+        });
+        await finishAdjacentMigration("draft", id, migrated);
+        return migrated;
+      }
+      if (storedV3.success) {
+        const v4 = await migrateDraftV3(storedV3.data);
+        return await persistAdjacentMigration({
+          kind: "draft",
+          id,
+          sourceVersion: "pragma.skill-revision-draft/v4",
+          source: v4,
+          migrated: migrateSkillRevisionDraftV4ToV5(v4),
+          write: writeDraft,
+        });
+      }
       const storedV2 = SkillRevisionDraftV2StoredSchema.safeParse(latestRaw);
       const v2 = storedV2.success
         ? storedV2.data
@@ -721,7 +793,15 @@ export function createSkillRevisionService(options: {
         migrated: migrateSkillRevisionDraftV2ToV3(v2),
         write: async (value) => await writeJsonAtomic(draftPath(id), value),
       });
-      return await migrateDraftV3(v3);
+      const v4 = await migrateDraftV3(v3);
+      return await persistAdjacentMigration({
+        kind: "draft",
+        id,
+        sourceVersion: "pragma.skill-revision-draft/v4",
+        source: v4,
+        migrated: migrateSkillRevisionDraftV4ToV5(v4),
+        write: writeDraft,
+      });
     });
   };
 
@@ -758,7 +838,7 @@ export function createSkillRevisionService(options: {
         name = capability.definition.name;
       }
       const draft = SkillRevisionDraftSchema.parse({
-        schemaVersion: "pragma.skill-revision-draft/v4",
+        schemaVersion: "pragma.skill-revision-draft/v5",
         operation: input.request.operation,
         id,
         revision: 1,
@@ -829,7 +909,7 @@ export function createSkillRevisionService(options: {
         await applyLegacyChangeSetToTree(workspace.worktreePath, legacy.changeSet);
       }
       draft = SkillRevisionDraftSchema.parse({
-        schemaVersion: "pragma.skill-revision-draft/v4",
+        schemaVersion: "pragma.skill-revision-draft/v5",
         operation: "revise",
         id: migration.draftId,
         revision: 1,
@@ -926,16 +1006,23 @@ export function createSkillRevisionService(options: {
       migrated: migrateSkillRevisionJobV2ToV3(migratedV2),
       write: async (value) => await writeJsonAtomic(jobPath(legacy.id), value),
     });
-    const migrated = await persistAdjacentMigration({
+    const migratedV4 = await persistAdjacentMigration({
       kind: "job",
       id: legacy.id,
       sourceVersion: "pragma.skill-revision-job/v3",
       source: migratedV3,
       migrated: migrateSkillRevisionJobV3ToV4(migratedV3),
-      write: writeJob,
+      write: async (value) => await writeJsonAtomic(jobPath(legacy.id), value),
     });
     await rm(migrationPath, { force: true });
-    return migrated;
+    return await persistAdjacentMigration({
+      kind: "job",
+      id: legacy.id,
+      sourceVersion: "pragma.skill-revision-job/v4",
+      source: migratedV4,
+      migrated: migrateSkillRevisionJobV4ToV5(migratedV4),
+      write: writeJob,
+    });
   };
 
   const readJob = async (id: string): Promise<ManagedSkillRevisionJob> => {
@@ -965,25 +1052,54 @@ export function createSkillRevisionService(options: {
             migrated: migrateSkillRevisionJobV2ToV3(legacyV2.data),
             write: async (value) => await writeJsonAtomic(jobPath(id), value),
           });
-          return await persistAdjacentMigration({
+          const migratedV4 = await persistAdjacentMigration({
             kind: "job",
             id,
             sourceVersion: "pragma.skill-revision-job/v3",
             source: migratedV3,
             migrated: migrateSkillRevisionJobV3ToV4(migratedV3),
+            write: async (value) => await writeJsonAtomic(jobPath(id), value),
+          });
+          return await persistAdjacentMigration({
+            kind: "job",
+            id,
+            sourceVersion: "pragma.skill-revision-job/v4",
+            source: migratedV4,
+            migrated: migrateSkillRevisionJobV4ToV5(migratedV4),
             write: writeJob,
           });
         }
         const legacyV3 = SkillRevisionJobV3StoredSchema.safeParse(latestRaw);
         if (legacyV3.success) {
-          return await persistAdjacentMigration({
+          const migratedV4 = await persistAdjacentMigration({
             kind: "job",
             id,
             sourceVersion: "pragma.skill-revision-job/v3",
             source: legacyV3.data,
             migrated: migrateSkillRevisionJobV3ToV4(legacyV3.data),
+            write: async (value) => await writeJsonAtomic(jobPath(id), value),
+          });
+          return await persistAdjacentMigration({
+            kind: "job",
+            id,
+            sourceVersion: "pragma.skill-revision-job/v4",
+            source: migratedV4,
+            migrated: migrateSkillRevisionJobV4ToV5(migratedV4),
             write: writeJob,
           });
+        }
+        const legacyV4 = SkillRevisionJobV4StoredSchema.safeParse(latestRaw);
+        if (legacyV4.success) {
+          const migrated = await persistAdjacentMigration({
+            kind: "job",
+            id,
+            sourceVersion: "pragma.skill-revision-job/v4",
+            source: legacyV4.data,
+            migrated: migrateSkillRevisionJobV4ToV5(legacyV4.data),
+            write: writeJob,
+          });
+          await finishAdjacentMigration("job", id);
+          return migrated;
         }
         return await migrateLegacyJob(SkillRevisionJobV1StoredSchema.parse(latestRaw));
       });
@@ -1078,7 +1194,7 @@ export function createSkillRevisionService(options: {
     return matches[0]!;
   };
 
-  const rejectForChangedBase = async (
+  const requireRebaseForChangedBase = async (
     job: ManagedSkillRevisionJob,
     draft: SkillRevisionDraft,
   ): Promise<ManagedSkillRevisionJob> => {
@@ -1087,12 +1203,13 @@ export function createSkillRevisionService(options: {
       message: "The formal Skill changed after this draft was created.",
     };
     await mutateDraft(draft.id, draft.revision, () => ({
-      state: "rejected",
+      state: "needs_rebase",
       activeMissionId: undefined,
+      rebaseReferenceHash: undefined,
       error,
     }));
     return await mutateJob(job.id, job.revision, () => ({
-      state: "rejected",
+      state: "needs_rebase",
       error,
     }));
   };
@@ -1297,6 +1414,32 @@ export function createSkillRevisionService(options: {
       service.scheduleProcessing();
       return job;
     },
+    async importSource(input) {
+      const request = SkillRevisionRequestV4Schema.parse({
+        schemaVersion: "pragma.skill-revision-request/v4",
+        operation: "revise",
+        capabilityId: input.capabilityId,
+        prompt: "Update this Skill from the selected local package.",
+        source: "user",
+        sourceDigest: createHash("sha256")
+          .update(`${input.sourcePath}:${randomUUID()}`)
+          .digest("hex"),
+        sourceRefs: [],
+      });
+      const job = await service.start(request);
+      const draft = await readDraft(job.draftId);
+      const candidatePath = worktreePath(draft);
+      await rm(candidatePath, { recursive: true, force: true });
+      await mkdir(candidatePath, { recursive: true, mode: 0o700 });
+      await copySkillSource(input.sourcePath, candidatePath);
+      const workingTree = await scanSkillWorkingTree(candidatePath);
+      return await service.submitDraft({
+        draftId: draft.id,
+        expectedRevision: draft.revision,
+        expectedWorkingTreeHash: workingTree.hash,
+        summary: "Update the Skill from a local package.",
+      });
+    },
     async start(rawRequest, startOptions = {}) {
       const request = SkillRevisionRequestV4Schema.parse(rawRequest);
       return await withFileLock(lockPath, async () => {
@@ -1319,13 +1462,14 @@ export function createSkillRevisionService(options: {
           });
         } else {
           draft = await readDraft(startOptions.draftId);
+          const needsRebase = draft.state === "needs_rebase";
           if (
             draft.capabilityId !== request.capabilityId ||
             draft.operation !== request.operation
           ) {
             throw coded("skill_revision_target_unavailable");
           }
-          if (!["editing", "needs_attention"].includes(draft.state)) {
+          if (!["editing", "needs_attention", "needs_rebase"].includes(draft.state)) {
             throw coded("skill_revision_state_invalid");
           }
           requireOwner(draft, startOptions.missionId);
@@ -1346,9 +1490,61 @@ export function createSkillRevisionService(options: {
             await rm(prepared.worktreePath, { recursive: true, force: true });
             await rename(replacement, prepared.worktreePath);
           }
+          let preservedCandidateHash = draft.submissionHash ?? draft.rebaseReferenceHash;
+          if (needsRebase && preservedCandidateHash === undefined) {
+            const candidate = await scanSkillWorkingTree(worktreePath(draft));
+            preservedCandidateHash = (
+              await createStableSkillSubmission({
+                worktreePath: worktreePath(draft),
+                submissionsPath: submissionsPath(draft.id),
+                expectedHash: candidate.hash,
+              })
+            ).snapshot.hash;
+          }
+          if (needsRebase && draft.rebaseReferenceHash !== preservedCandidateHash) {
+            draft = await mutateDraft(draft.id, draft.revision, () => ({
+              rebaseReferenceHash: preservedCandidateHash,
+            }));
+          }
+          const latestBase =
+            needsRebase && draft.operation === "revise"
+              ? await options.capabilities.get(draft.capabilityId)
+              : undefined;
+          if (latestBase !== undefined && latestBase.definition.kind !== "skill") {
+            throw coded("skill_revision_target_unavailable");
+          }
+          const rebasedBase =
+            latestBase?.definition.kind === "skill"
+              ? {
+                  baseRevision: latestBase.manifest.latestRevision,
+                  baseContentHash: latestBase.definition.contentHash,
+                }
+              : undefined;
+          if (rebasedBase !== undefined) {
+            const prepared = await prepareSkillRevisionWorkspace(
+              draft.workspacePath,
+              draft.id,
+              options.warn,
+            );
+            const replacement = `${prepared.worktreePath}.${randomUUID()}.tmp`;
+            try {
+              await copySkillTree(
+                await options.capabilities.skillFilesPath(
+                  draft.capabilityId,
+                  rebasedBase.baseRevision,
+                ),
+                replacement,
+              );
+              await rm(prepared.worktreePath, { recursive: true, force: true });
+              await rename(replacement, prepared.worktreePath);
+            } finally {
+              await rm(replacement, { recursive: true, force: true }).catch(() => undefined);
+            }
+          }
           draft = await mutateDraft(draft.id, draft.revision, () => ({
             state: "editing",
             activeMissionId: startOptions.missionId,
+            ...rebasedBase,
             submissionHash: undefined,
             submittedRevision: undefined,
             error: undefined,
@@ -1376,7 +1572,7 @@ export function createSkillRevisionService(options: {
         }
         const timestamp = new Date().toISOString();
         const job = ManagedSkillRevisionJobSchema.parse({
-          schemaVersion: "pragma.skill-revision-job/v4",
+          schemaVersion: "pragma.skill-revision-job/v5",
           id: randomUUID(),
           revision: 1,
           draftId: draft.id,
@@ -1512,7 +1708,14 @@ export function createSkillRevisionService(options: {
       return {
         draft,
         ...(draft.state === "editing" && draft.activeMissionId === missionId
-          ? { draftPath: worktreePath(draft) }
+          ? {
+              draftPath: worktreePath(draft),
+              ...(draft.rebaseReferenceHash === undefined
+                ? {}
+                : {
+                    referencePath: join(submissionsPath(draft.id), draft.rebaseReferenceHash),
+                  }),
+            }
           : { referencePath: candidateRoot }),
         workingTree,
         currentRevision: current?.manifest.latestRevision ?? 0,
@@ -1562,7 +1765,7 @@ export function createSkillRevisionService(options: {
           current.manifest.latestRevision !== draft.baseRevision ||
           current.definition.contentHash !== draft.baseContentHash
         ) {
-          return await rejectForChangedBase(job, draft);
+          return await requireRebaseForChangedBase(job, draft);
         }
       }
       const candidate = await readSkillPackage(
@@ -1631,6 +1834,7 @@ export function createSkillRevisionService(options: {
                     state: "pending_review",
                     activeMissionId: undefined,
                     submissionHash: submission.snapshot.hash,
+                    rebaseReferenceHash: undefined,
                     submittedRevision: cleanupJournal.draftRevision,
                     summary: input.summary,
                     error: undefined,
@@ -1683,7 +1887,7 @@ export function createSkillRevisionService(options: {
           current.manifest.latestRevision !== draft.baseRevision ||
           current.definition.contentHash !== draft.baseContentHash
         ) {
-          return await rejectForChangedBase(job, draft);
+          return await requireRebaseForChangedBase(job, draft);
         }
       }
       if (draft.submissionHash === undefined || draft.state !== "pending_review") {
@@ -1822,7 +2026,7 @@ export function createSkillRevisionService(options: {
             if (errorCode(error) !== "skill_revision_job_not_found") throw error;
             const timestamp = new Date().toISOString();
             replacementJob = ManagedSkillRevisionJobSchema.parse({
-              schemaVersion: "pragma.skill-revision-job/v4",
+              schemaVersion: "pragma.skill-revision-job/v5",
               id: replacementJobId,
               revision: 1,
               draftId: replacementDraft.id,
@@ -2007,7 +2211,7 @@ export function createSkillRevisionService(options: {
                 });
               } else {
                 const completedByAgent = await readJob(running.id);
-                if (completedByAgent.state !== "pending_review") {
+                if (!["pending_review", "needs_rebase"].includes(completedByAgent.state)) {
                   throw coded("skill_revision_agent_did_not_submit");
                 }
               }
@@ -2015,7 +2219,9 @@ export function createSkillRevisionService(options: {
               const failed = await readJob(running.id).catch(() => undefined);
               if (
                 failed !== undefined &&
-                !["pending_review", "completed", "rejected", "superseded"].includes(failed.state)
+                !["pending_review", "needs_rebase", "completed", "rejected", "superseded"].includes(
+                  failed.state,
+                )
               ) {
                 await mutateJob(failed.id, failed.revision, () => ({
                   state: "needs_attention",

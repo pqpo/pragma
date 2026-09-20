@@ -20,6 +20,11 @@ export const SkillRevisionMigrationJournalSchema = z.discriminatedUnion("sourceV
     targetVersion: z.literal("pragma.skill-revision-job/v4"),
   }).strict(),
   BaseSkillRevisionMigrationJournalSchema.extend({
+    kind: z.literal("job"),
+    sourceVersion: z.literal("pragma.skill-revision-job/v4"),
+    targetVersion: z.literal("pragma.skill-revision-job/v5"),
+  }).strict(),
+  BaseSkillRevisionMigrationJournalSchema.extend({
     kind: z.literal("draft"),
     sourceVersion: z.literal("pragma.skill-revision-draft/v1"),
     targetVersion: z.literal("pragma.skill-revision-draft/v2"),
@@ -36,6 +41,11 @@ export const SkillRevisionMigrationJournalSchema = z.discriminatedUnion("sourceV
     workspacePath: z.string().min(1).max(4_000),
     sourceWorktreePath: z.string().min(1).max(4_000),
     targetWorktreePath: z.string().min(1).max(4_000),
+  }).strict(),
+  BaseSkillRevisionMigrationJournalSchema.extend({
+    kind: z.literal("draft"),
+    sourceVersion: z.literal("pragma.skill-revision-draft/v4"),
+    targetVersion: z.literal("pragma.skill-revision-draft/v5"),
   }).strict(),
 ]);
 

@@ -8,6 +8,8 @@ import {
 
 import type {
   ContextTrigger,
+  ContextTrustLevel,
+  ContextSensitivity,
   ContextMutationApproval,
   ContextPriority,
   ContextIndex,
@@ -247,6 +249,16 @@ export function createContextTools(
           content: stringSchema("Context content."),
           description: stringSchema("Optional context description."),
           trigger: triggerSchema(),
+          trustLevel: {
+            type: "string",
+            enum: ["system", "workspace", "user", "external"],
+            description: "Optional provenance/trust classification for the context.",
+          },
+          sensitivity: {
+            type: "string",
+            enum: ["public", "internal", "confidential", "restricted"],
+            description: "Optional data-sensitivity classification for the context.",
+          },
           priority: prioritySchema(),
         },
         ["namespace", "id", "content"],
@@ -311,6 +323,16 @@ export function createContextTools(
             'Replacement context description for mode="replace". Omit to preserve the current description.',
           ),
           trigger: editTriggerSchema(),
+          trustLevel: {
+            type: "string",
+            enum: ["system", "workspace", "user", "external"],
+            description: 'Replacement trust classification for mode="replace".',
+          },
+          sensitivity: {
+            type: "string",
+            enum: ["public", "internal", "confidential", "restricted"],
+            description: 'Replacement sensitivity classification for mode="replace".',
+          },
           priority: editPrioritySchema(),
           search: nonBlankStringSchema('The exact text to search for in mode="search_replace".'),
           replace: stringSchema('Replacement text for mode="search_replace".'),
@@ -831,13 +853,46 @@ function normalizeListLimit(value: number | undefined): number {
 function readMetadataParams(params: unknown): Partial<ExpertAgentContextItemMetadata> {
   const description = readOptionalStringParam(params, "description");
   const trigger = readOptionalTriggerParam(params);
+  const trustLevel = readOptionalTrustLevelParam(params);
+  const sensitivity = readOptionalSensitivityParam(params);
   const priority = readOptionalPriorityParam(params);
 
   return {
     ...(description === undefined ? {} : { description }),
     ...(trigger === undefined ? {} : { trigger }),
+    ...(trustLevel === undefined ? {} : { trustLevel }),
+    ...(sensitivity === undefined ? {} : { sensitivity }),
     ...(priority === undefined ? {} : { priority }),
   };
+}
+
+function readOptionalTrustLevelParam(params: unknown): ContextTrustLevel | undefined {
+  const value = readParam(params, "trustLevel");
+
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) return undefined;
+  if (value === "system" || value === "workspace" || value === "user" || value === "external") {
+    return value;
+  }
+  throw new Error(
+    'Context tool parameter "trustLevel" must be system, workspace, user, or external.',
+  );
+}
+
+function readOptionalSensitivityParam(params: unknown): ContextSensitivity | undefined {
+  const value = readParam(params, "sensitivity");
+
+  if (value === undefined || (typeof value === "string" && value.trim() === "")) return undefined;
+  if (
+    value === "public" ||
+    value === "internal" ||
+    value === "confidential" ||
+    value === "restricted"
+  ) {
+    return value;
+  }
+  throw new Error(
+    'Context tool parameter "sensitivity" must be public, internal, confidential, or restricted.',
+  );
 }
 
 function readOptionalPriorityParam(params: unknown): ContextPriority | undefined {

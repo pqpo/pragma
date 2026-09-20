@@ -1056,18 +1056,20 @@ export function StudioPage(props: {
             onSubmitRevision={async (prompt) => {
               const api = desktopApi();
               if (api === undefined) throw new Error("Desktop bridge is unavailable.");
-              await api.submitContextStoreRevision({
+              const created = await api.submitContextStoreRevision({
                 schemaVersion: "pragma.context-store-revision-request/v2",
                 operation: "revise" as const,
                 storeId: selectedContextStore.id,
                 prompt,
                 source: "user",
               });
+              return created;
             }}
-            onRevisionSubmitted={() => {
+            onRevisionSubmitted={(job) => {
               setRevisionStoreFilter(selectedContextStore.id);
               setRevisionTaskCount((count) => count + 1);
-              setScreen("context-store-revisions");
+              if (job?.missionId !== undefined) props.onOpenMission?.(job.missionId);
+              else setScreen("context-store-revisions");
             }}
             onListEntries={listContextStoreEntries}
             onGetContent={getContextStoreContent}
@@ -1118,6 +1120,12 @@ export function StudioPage(props: {
             capability={selectedCapability}
             onBack={() => setScreen("directory")}
             onChanged={updateCapability}
+            onOpenMission={props.onOpenMission}
+            onDeleted={(id) => {
+              setCapabilities((current) => current.filter((item) => item.manifest.id !== id));
+              setSelectedCapabilityId(null);
+              setScreen("directory");
+            }}
             onOpenRevisions={
               selectedCapability.definition.kind === "skill"
                 ? () => setScreen("skill-revisions")

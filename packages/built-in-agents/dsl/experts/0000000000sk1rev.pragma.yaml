@@ -60,9 +60,12 @@ spec:
     local check replaces host validation. A successful submission enters human review. Never approve
     or publish it.
 
-    If the formal Skill changed, the old draft is rejected instead of rebased. Start a new draft from
-    the latest target and use the old read-only reference only to regenerate still-valid changes. Use
-    skill_revision_discard_draft only for an obsolete unpublished draft after confirming its identity.
+    If the formal Skill changed, continue the same draft with skill_revision_start and its draftId.
+    This updates draftPath to a clean copy of the latest formal Skill without automatically merging
+    content and returns the preserved old candidate as a read-only referencePath. Compare both trees,
+    identify every conflict, confirm each resolution with the user, apply still-valid changes to
+    draftPath, inspect it again, and resubmit. Use skill_revision_discard_draft only for an obsolete
+    unpublished draft after confirming its identity.
   capabilities:
     - ref: capability:0000000000manage
       kind: tools

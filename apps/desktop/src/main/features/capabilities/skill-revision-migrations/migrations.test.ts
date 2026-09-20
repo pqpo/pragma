@@ -5,10 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { SkillRevisionDraftV2StoredSchema } from "./schemas/draft-v2.ts";
 import { SkillRevisionDraftV3StoredSchema } from "./schemas/draft-v3.ts";
+import { SkillRevisionDraftV4StoredSchema } from "./schemas/draft-v4.ts";
 import { SkillRevisionJobV3StoredSchema } from "./schemas/job-v3.ts";
+import { SkillRevisionJobV4StoredSchema } from "./schemas/job-v4.ts";
 import { migrateSkillRevisionDraftV2ToV3 } from "./steps/draft-v2-to-v3.ts";
 import { migrateSkillRevisionDraftV3ToV4 } from "./steps/draft-v3-to-v4.ts";
+import { migrateSkillRevisionDraftV4ToV5 } from "./steps/draft-v4-to-v5.ts";
 import { migrateSkillRevisionJobV3ToV4 } from "./steps/job-v3-to-v4.ts";
+import { migrateSkillRevisionJobV4ToV5 } from "./steps/job-v4-to-v5.ts";
 
 describe("Skill revision storage migrations", () => {
   it("turns an in-flight evaluation into an explicit resubmission requirement", async () => {
@@ -49,6 +53,26 @@ describe("Skill revision storage migrations", () => {
       schemaVersion: "pragma.skill-revision-draft/v4",
       revision: 5,
       workspacePath: "/workspace/project",
+    });
+  });
+
+  it("upgrades frozen v4 records to v5 without changing business state", async () => {
+    const draft = SkillRevisionDraftV4StoredSchema.parse(
+      await historicalFixture("skill-revision-draft-v4.json"),
+    );
+    const job = SkillRevisionJobV4StoredSchema.parse(
+      await historicalFixture("skill-revision-job-v4.json"),
+    );
+
+    expect(migrateSkillRevisionDraftV4ToV5(draft)).toMatchObject({
+      schemaVersion: "pragma.skill-revision-draft/v5",
+      revision: draft.revision,
+      state: draft.state,
+    });
+    expect(migrateSkillRevisionJobV4ToV5(job)).toMatchObject({
+      schemaVersion: "pragma.skill-revision-job/v5",
+      revision: job.revision,
+      state: job.state,
     });
   });
 });

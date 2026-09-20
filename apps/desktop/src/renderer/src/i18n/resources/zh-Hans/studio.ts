@@ -3,6 +3,8 @@ export const studio = {
   revisionErrors: "异常",
   revisionApplied: "已应用",
   revisionStatusFilter: "状态筛选",
+  revisionSkillFilter: "技能筛选",
+  allSkills: "全部技能",
   revisionAllStates: "全部状态",
   revisionActionable: "需要处理",
   revisionSourceFilter: "来源筛选",
@@ -577,19 +579,19 @@ export const studio = {
   revisionDraftAwaitingConfirmationTitle: "草稿仍可修改",
   revisionDraftAwaitingConfirmationDescription:
     "Agent 已暂停且尚未提交草稿。你可以先审核当前变更；需要调整时打开原任务继续修改，确认无误后再让 Agent 提交审批。",
-  revisionNeedsRebaseTitle: "知识库已更新，需要先变基",
+  revisionNeedsRebaseTitle: "Skill 已更新，需要先变基",
   revisionNeedsRebaseDescription:
-    "这份草稿基于较早的知识库版本，不能直接应用。请继续关联任务，让修订 Agent 把草稿变基到最新版本。已发布的知识库不会被修改。",
+    "这份草稿基于较早的 Skill 版本，不能直接应用。请继续关联任务，让修订 Agent 把草稿变基到最新版本。已发布的 Skill 不会被修改。",
   revisionNeedsRebaseStepOpenMission: "点击下方“打开任务并变基”；下一步指令会自动带入任务输入框。",
   revisionNeedsRebaseStepReopen: "如果任务显示为已完成，先点击“重新打开”，再继续对话。",
   revisionNeedsRebasePrompt:
-    "请检查最新知识库，将此草稿变基到最新版本；如有冲突，请逐项说明并和我确认处理方式，然后重新提交修订。",
+    "请检查最新 Skill，将此草稿变基到最新版本；如有冲突，请逐项说明并和我确认处理方式，然后重新提交修订。",
   revisionNeedsRebaseStepAskAgent:
     "检查任务输入框中已带入的提示词，确认后发送给修订 Agent：“{{prompt}}”",
   revisionNeedsRebaseStepReview:
-    "返回“工作室 → 知识库 → 修订任务”，审核新的变更方案，然后点击“同意并应用”。",
+    "返回“工作室 → Skill → 修订任务”，审核新的变更方案，然后点击“同意并应用”。",
   revisionNeedsRebaseNoMission:
-    "此任务没有可继续的关联任务。请删除它，然后前往“工作室 → 知识库 → 对应知识库 → 提交修订”，重新创建一份修订方案。",
+    "此任务没有可继续的关联任务。请删除它，然后前往“工作室 → Skill → 对应 Skill → 提交修订”，重新创建一份修订方案。",
   filesChanged: "变更 {{count}} 个文件",
   baseRevision: "基于版本 {{count}}",
   newKnowledgeBaseRevision: "新建知识库",
@@ -744,7 +746,7 @@ export const studio = {
   expertsDescription: "可供任务使用的可复用专家。",
   capabilitiesDescription: "创建或编辑专家时可选择的可复用技能和外部工具。",
   connectorsDescription: "连接供专家使用的 MCP、HTTP 和函数工具。",
-  skillsDescription: "浏览、导入、更新和修订可复用的 Skill 包。",
+  skillsDescription: "浏览、导入和修订可复用的 Skill 包。",
   contextStoresDescription: "供专家使用的托管 Markdown 知识源。",
   pluginsDescription: "安装可复用的专家扩展，并配置其 Desktop 默认值。",
   availableExperts: "可用专家",
@@ -863,10 +865,6 @@ export const studio = {
   configureExternalTool: "配置可复用的外部工具连接。",
   importing: "导入中…",
   choosePackage: "选择包",
-  chooseReplacementPackage: "选择替换包",
-  updateSkill: "更新技能",
-  updatingSkill: "正在更新技能…",
-  updateSkillDescription: "替换包中的全部文件，同时保留此技能的标识和配置。",
   saveCapability: "保存能力",
   saveCapabilityChanges: "保存更改",
   editCapability: "编辑能力",
@@ -1636,6 +1634,10 @@ export const studio = {
   done: "完成",
   fixedSystemTool: "系统固定工具",
   skillRevisions: "技能修订",
+  submitSkillRevision: "提交修订",
+  updateSkillFromPackage: "从本地包更新",
+  submitSkillRevisionDescription:
+    "描述 Pragma 需要为“{{name}}”准备的变更。修订需要审批后才会发布。",
   skillRevisionsDescription: "查看已校验的 Skill 候选，并批准或拒绝发布。",
   loadingSkillRevisions: "正在加载修订…",
   noSkillRevisions: "暂无技能修订。",
@@ -1646,6 +1648,21 @@ export const studio = {
     "“{{name}}”将从技能修订列表中移除。删除任务不会回滚已经发布的修订，也不会删除技能。",
   continueSkillRevision: "继续修订",
   skillRevisionContinuePrompt: "查看校验问题，更新现有 Skill 草稿，然后重新提交。",
+  openSkillRevisionMissionToRebase: "打开任务并变基",
+  skillRevisionNeedsRebaseTitle: "Skill 已更新，需要先变基",
+  skillRevisionNeedsRebaseDescription:
+    "这份草稿基于较早的 Skill 版本，不能直接发布。请继续关联任务，让修订 Agent 基于最新版本检查并更新草稿。已发布的 Skill 不会被修改。",
+  skillRevisionNeedsRebaseStepOpenMission:
+    "点击下方“打开任务并变基”；下一步指令会自动带入任务输入框。",
+  skillRevisionNeedsRebaseStepReopen: "如果任务显示为已完成，先点击“重新打开”，再继续对话。",
+  skillRevisionNeedsRebasePrompt:
+    "请检查最新知识库，将此草稿变基到最新版本；如有冲突，请逐项说明并和我确认处理方式，然后重新提交修订。",
+  skillRevisionNeedsRebaseStepAskAgent:
+    "检查任务输入框中已带入的提示词，确认后发送给修订 Agent：“{{prompt}}”",
+  skillRevisionNeedsRebaseStepReview:
+    "返回“工作室 → 技能 → 修订任务”，审核新的变更方案，然后点击“批准并发布”。",
+  skillRevisionNeedsRebaseNoMission:
+    "此任务没有可继续的关联任务。请删除它，然后从对应 Skill 重新提交修订。",
   skillRevisionSummaryUnavailable: "暂无变更摘要。",
   skillRevisionRequestDocumentDescription: "记录发起本次 Skill 修订的原始要求。",
   skillRevisionSummaryDocumentDescription: "概括本次 Skill 修订的变更范围，便于发布前审批。",

@@ -193,7 +193,7 @@ describe("capability row actions", () => {
     },
   };
 
-  it("presents the overflow button as a menu trigger instead of a delete action", () => {
+  it("does not expose mutation actions for Skills", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment
         kind="skills"
@@ -203,9 +203,9 @@ describe("capability row actions", () => {
       />,
     );
 
-    expect(html).toContain('aria-label="More actions for Test Skill"');
-    expect(html).toContain('aria-haspopup="menu"');
-    expect(html).not.toContain('aria-label="Delete Test Skill"');
+    expect(html).not.toContain('aria-label="More actions for Test Skill"');
+    expect(html).not.toContain('aria-haspopup="menu"');
+    expect(html).not.toContain("Delete capability");
     expect(html).toContain("data-capability-row-action");
   });
 

@@ -557,6 +557,7 @@ export const SkillRevisionStartResultSchema = z
       .strict()
       .optional(),
     draftPath: z.string().min(1).max(4_000).optional(),
+    referencePath: z.string().min(1).max(4_000).optional(),
   })
   .strict()
   .superRefine((result, context) => {
@@ -689,7 +690,6 @@ const PRAGMA_KNOWLEDGE_REVISION_TOOL_DEFINITIONS = [
     "Start or continue a revision for any listed target; a current Mission mount is not required. In a Store Revision Mission with that target mounted, returns writableNamespace for immediate editing. Otherwise schedules a background Store Revision Mission and omits writableNamespace: follow the returned job/draft through existing listings, do not guess a namespace or start again. Include complete requirements and source content in prompt; read required Mission Board materials before calling, because background Missions do not inherit the caller's board or relative paths. Never changes formal knowledge.",
     KnowledgeRevisionStartInputSchema,
     KnowledgeRevisionStartResultSchema,
-    { reason: "Start a managed knowledge revision Mission." },
   ),
   definition(
     KNOWLEDGE_REVISION_GET_DRAFT_TOOL_NAME,
@@ -748,7 +748,6 @@ const PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS = [
     "Start or continue a Skill revision. Edit only the returned draftPath with native Runtime file tools; never edit the formal Skill.",
     SkillRevisionStartInputSchema,
     SkillRevisionStartResultSchema,
-    { reason: "Start or continue a managed Skill revision." },
   ),
   definition(
     SKILL_REVISION_GET_DRAFT_TOOL_NAME,

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "pragma.skill-revision-job/v4",
+  "id": "11000000-0000-4000-8000-000000000001",
+  "revision": 3,
+  "draftId": "21000000-0000-4000-8000-000000000002",
+  "request": {
+    "schemaVersion": "pragma.skill-revision-request/v4",
+    "operation": "revise",
+    "capabilityId": "31000000-0000-4000-8000-000000000003",
+    "prompt": "Improve the Skill.",
+    "source": "memory-learning",
+    "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceRefs": []
+  },
+  "state": "needs_attention",
+  "error": {
+    "code": "skill_revision_validation_required",
+    "message": "Skill evaluation was removed. Re-submit the draft for synchronous validation."
+  },
+  "createdAt": "2026-09-20T00:00:00.000Z",
+  "updatedAt": "2026-09-20T00:00:00.000Z"
+}

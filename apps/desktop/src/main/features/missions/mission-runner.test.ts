@@ -2319,6 +2319,153 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     process.env["PRAGMA_REVISION_REAL_SMOKE"] === "1" ? 300_000 : 60_000,
   );
 
+  it("writes a newly created knowledge draft before its formal store exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-create-knowledge-draft-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture()],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const revisions = createContextStoreRevisionService({
+      statePath: join(root, "context-store-revisions"),
+      draftsPath: join(root, "context-store-drafts"),
+      contextStores,
+      generator: { generate: async () => undefined },
+    });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Create knowledge",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: {
+        kind: "expert",
+        ref: STORE_REVISION_EXPERT_REF,
+        name: "Store Revision Agent",
+      },
+      contextMounts: [],
+    });
+    let createdDraftId: string | undefined;
+    let createdStoreId: string | undefined;
+    const runtime = defineRuntimeTestDriver<never, { context: RuntimeNativeSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "runtime" }),
+      async startTurn(session, turn) {
+        const start = session.context.agent.tools?.find(
+          (tool) => tool.name === "knowledge_revision_start",
+        );
+        const add = session.context.agent
+          .createDefaultTools()
+          .find((tool) => tool.name === "add_expert_context");
+        if (start === undefined || add === undefined) {
+          throw new Error("Knowledge creation tools are unavailable.");
+        }
+        const started = await start.call(
+          {
+            create: {
+              name: "New knowledge",
+              description: "A knowledge base that does not exist before review.",
+            },
+            prompt: "Create the new knowledge base.",
+          },
+          turn.signal,
+          { runContext: session.context.runContext, toolCallId: "start-creation" },
+        );
+        expect(started.isError, started.text).not.toBe(true);
+        const details = started.details as {
+          readonly draftId: string;
+          readonly creation: { readonly resourceId: string };
+          readonly writableNamespace: string;
+        };
+        createdDraftId = details.draftId;
+        createdStoreId = details.creation.resourceId;
+        expect(details.writableNamespace).toBe(
+          activeMissionKnowledgeDraftNamespace(createdStoreId),
+        );
+        expect(await contextStores.list()).toEqual([]);
+        const added = await add.call(
+          {
+            namespace: details.writableNamespace,
+            id: "guide.md",
+            content: "# Guide\n",
+          },
+          turn.signal,
+          { execution: session.context.request.executionContext },
+        );
+        expect(added.isError, added.text).not.toBe(true);
+        return { outputText: added.text, runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      contextStoreRevisions: revisions,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      assertStorageWriteAllowed: async () => undefined,
+      compileSystemExecutor: async ({ mission: current, knowledgeRevisions }) => {
+        if (knowledgeRevisions === undefined) {
+          throw new Error("Knowledge revisions are unavailable.");
+        }
+        const expert = await defineExpert({
+          id: "0000000000st0rev",
+          name: "Store Revision Agent",
+          description: "Creates knowledge",
+          tags: [],
+          scope: "system-store-revision",
+          workspace: current.workspace.path,
+          pragmaHome,
+          defaultRuntimeId: "fake",
+          tools: createPragmaManagementTools({ knowledgeRevisions }),
+        });
+        return {
+          ref: current.executor.ref,
+          value: expert,
+          fingerprint: "a".repeat(64),
+          projectFingerprint: "b".repeat(64),
+          environmentFingerprint: {
+            environmentId: "desktop",
+            projectFingerprint: "b".repeat(64),
+            value: "c".repeat(64),
+            resources: [],
+            plugins: [],
+          },
+          rootRuntimeId: "fake",
+          dependencies: [],
+        };
+      },
+    });
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => {
+        const current = await missions.get(mission.id);
+        expect(current.execution?.status, current.execution?.error).toBe("succeeded");
+      },
+      { timeout: settlementTimeoutMs },
+    );
+    expect(createdDraftId).toBeDefined();
+    expect(createdStoreId).toBeDefined();
+    const draft = await revisions.getDraft(createdDraftId!);
+    expect(draft.storeId).toBe(createdStoreId);
+    expect(draft.operation).toBe("create");
+    const resolved = await revisions.resolveDraft(createdDraftId!);
+    await expect(resolved.store.readContext({ id: "guide.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: "# Guide\n" },
+    });
+    expect(await contextStores.list()).toEqual([]);
+  });
+
   it("edits multiple drafts in one turn and transfers one to a later Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-live-knowledge-draft-"));
     temporaryPaths.push(root);

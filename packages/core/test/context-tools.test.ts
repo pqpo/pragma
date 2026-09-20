@@ -13,6 +13,33 @@ import {
 } from "../src/index.ts";
 
 describe("Expert context tools", () => {
+  it("resolves a Host-owned namespace allocated during an Invocation", async () => {
+    const system = new ContextSystem();
+    const store = new InMemoryContextStore();
+    expect(
+      system.register({
+        namespace: "draft:",
+        resolveStore: (namespace) => (namespace === "draft:allocated-id" ? store : undefined),
+        mutationApproval: "none",
+      }).ok,
+    ).toBe(true);
+
+    await expect(
+      system.add({ namespace: "draft:allocated-id", id: "guide.md", content: "# Guide\n" }),
+    ).resolves.toMatchObject({ ok: true, value: { namespace: "draft:allocated-id" } });
+    await expect(system.index()).resolves.toEqual({
+      ok: true,
+      value: { items: [], issues: [], stores: [] },
+    });
+    await expect(
+      system.read({ namespace: "draft:unknown", id: "guide.md" }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "store_unavailable" },
+    });
+    expect(system.mutationApprovalFor("draft:allocated-id")).toBe("none");
+  });
+
   it("preserves omitted metadata fields during replace edits", async () => {
     const system = new ContextSystem();
     expect(
@@ -145,6 +172,8 @@ describe("Expert context tools", () => {
       content: sentinel,
       description: "写入回执测试",
       trigger: "manual",
+      trustLevel: "workspace",
+      sensitivity: "internal",
       priority: "high",
     };
 
@@ -172,6 +201,8 @@ describe("Expert context tools", () => {
       metadata: {
         description: input.description,
         trigger: input.trigger,
+        trustLevel: input.trustLevel,
+        sensitivity: input.sensitivity,
         priority: input.priority,
       },
       context: expect.any(Object),

@@ -102,15 +102,30 @@ export interface ExpertAgentStoredContextItemReadResult extends ExpertAgentStore
   readonly contentRange: ExpertAgentContextItemContentRange;
 }
 
-export interface ExpertAgentContextStoreRegistrationInput {
+interface ExpertAgentContextStoreRegistrationBase {
   readonly namespace: string;
-  readonly store: ExpertAgentContextStore;
   /** Display-only Store name; it never participates in Context addressing. */
   readonly storeName?: string | undefined;
   readonly required?: boolean | undefined;
   readonly mutationApproval?: ContextMutationApproval | undefined;
   readonly overflowTarget?: boolean | undefined;
 }
+
+export type ExpertAgentContextStoreRegistrationInput = ExpertAgentContextStoreRegistrationBase &
+  (
+    | {
+        readonly store: ExpertAgentContextStore;
+        readonly resolveStore?: never;
+      }
+    | {
+        readonly store?: never;
+        /**
+         * Resolves non-enumerable namespaces beneath `namespace` as a prefix. This is intended
+         * for Host-owned resources whose durable identifier is allocated during an Invocation.
+         */
+        readonly resolveStore: (namespace: string) => ExpertAgentContextStore | undefined;
+      }
+  );
 
 /**
  * `always_on_required` keeps ordinary mutations unblocked while requiring approval whenever an
@@ -404,6 +419,16 @@ export class ContextSystem {
       readonly overflowTarget: boolean;
     }
   >();
+  private readonly dynamicStores = new Map<
+    string,
+    {
+      readonly resolveStore: (namespace: string) => ExpertAgentContextStore | undefined;
+      readonly storeName?: string | undefined;
+      readonly required: boolean;
+      readonly mutationApproval: ContextMutationApproval;
+      readonly overflowTarget: false;
+    }
+  >();
   readonly roots: readonly NormalizedExpertAgentContextRoot[];
 
   constructor(options: ContextSystemOptions = {}) {
@@ -431,6 +456,9 @@ export class ContextSystem {
     for (const [namespace, binding] of this.stores) {
       extended.registerOrThrow({ namespace, ...binding });
     }
+    for (const [namespace, binding] of this.dynamicStores) {
+      extended.registerOrThrow({ namespace, ...binding });
+    }
 
     if (options.store !== undefined) {
       extended.registerOrThrow({
@@ -456,7 +484,7 @@ export class ContextSystem {
       return namespaceResult;
     }
 
-    if (this.stores.has(namespaceResult.value)) {
+    if (this.stores.has(namespaceResult.value) || this.dynamicStores.has(namespaceResult.value)) {
       return error(
         "context_already_exists",
         `Context store already exists: ${namespaceResult.value}`,
@@ -472,6 +500,33 @@ export class ContextSystem {
     const mutationApproval = input.mutationApproval ?? "required";
     const overflowTarget = input.overflowTarget ?? false;
 
+    if ((input.store === undefined) === (input.resolveStore === undefined)) {
+      return error(
+        "invalid_input",
+        "A Context store registration must provide exactly one of store or resolveStore.",
+      );
+    }
+
+    if (input.resolveStore !== undefined) {
+      if (overflowTarget) {
+        return error("invalid_input", "A dynamic Context store cannot be the overflow target.");
+      }
+      this.dynamicStores.set(namespaceResult.value, {
+        resolveStore: input.resolveStore,
+        ...(storeName.value === undefined ? {} : { storeName: storeName.value }),
+        required,
+        mutationApproval,
+        overflowTarget: false,
+      });
+      return ok({
+        namespace: namespaceResult.value,
+        ...(storeName.value === undefined ? {} : { storeName: storeName.value }),
+        required,
+        mutationApproval,
+        overflowTarget: false,
+      });
+    }
+
     if (overflowTarget && this.overflowTargetNamespace !== undefined) {
       return error(
         "invalid_input",
@@ -479,8 +534,12 @@ export class ContextSystem {
       );
     }
 
+    const store = input.store;
+    if (store === undefined) {
+      return error("invalid_input", "A static Context store registration must provide store.");
+    }
     this.stores.set(namespaceResult.value, {
-      store: input.store,
+      store,
       ...(storeName.value === undefined ? {} : { storeName: storeName.value }),
       required,
       mutationApproval,
@@ -501,7 +560,7 @@ export class ContextSystem {
   }
 
   mutationApprovalFor(namespace: string): ContextMutationApproval {
-    return this.stores.get(namespace)?.mutationApproval ?? "required";
+    return this.resolveBinding(namespace)?.mutationApproval ?? "required";
   }
 
   private registerOrThrow(input: ExpertAgentContextStoreRegistrationInput): void {
@@ -515,7 +574,7 @@ export class ContextSystem {
   async index(
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<ContextIndex>> {
-    if (this.stores.size === 0) {
+    if (this.stores.size === 0 && this.dynamicStores.size === 0) {
       return ok({ items: [], issues: [], stores: [] });
     }
 
@@ -529,7 +588,7 @@ export class ContextSystem {
     }
 
     for (const [namespace, store] of storesResult.value) {
-      const binding = this.stores.get(namespace)!;
+      const binding = this.resolveBinding(namespace)!;
       const listResult = await store.listContext({ context: input.context });
 
       if (!listResult.ok) {
@@ -811,7 +870,7 @@ export class ContextSystem {
       return namespaceResult;
     }
 
-    const binding = this.stores.get(namespaceResult.value);
+    const binding = this.resolveBinding(namespaceResult.value);
 
     if (binding === undefined) {
       return error(
@@ -824,6 +883,27 @@ export class ContextSystem {
     }
 
     return ok(binding.store);
+  }
+
+  private resolveBinding(namespace: string):
+    | {
+        readonly store: ExpertAgentContextStore;
+        readonly storeName?: string | undefined;
+        readonly required: boolean;
+        readonly mutationApproval: ContextMutationApproval;
+        readonly overflowTarget: boolean;
+      }
+    | undefined {
+    const exact = this.stores.get(namespace);
+    if (exact !== undefined) return exact;
+    for (const [prefix, binding] of [...this.dynamicStores].toSorted(
+      ([left], [right]) => right.length - left.length,
+    )) {
+      if (!namespace.startsWith(prefix)) continue;
+      const store = binding.resolveStore(namespace);
+      if (store !== undefined) return { ...binding, store };
+    }
+    return undefined;
   }
 
   private getStoresForNamespace(

@@ -105,7 +105,7 @@ describe("CapabilityDetailFragment", () => {
     expect(html).not.toContain("Refresh tools");
   });
 
-  it("renders Skill content with a link to the standalone revision screen", () => {
+  it("renders Skill content with a submit revision action", () => {
     const html = renderToStaticMarkup(
       <CapabilityDetailFragment
         capability={{
@@ -125,7 +125,9 @@ describe("CapabilityDetailFragment", () => {
     );
 
     expect(html).toContain("SKILL.md");
-    expect(html).toContain("Skill revisions");
+    expect(html).toContain('aria-label="Submit revision"');
+    expect(html).toContain('role="tooltip">Submit revision</span>');
+    expect(html).not.toContain("Update Skill");
     expect(html).not.toContain("Prepare revision");
     expect(html).not.toContain("skill-revisions-heading");
   });

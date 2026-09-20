@@ -763,7 +763,7 @@ async function openProductionSharedBoardStore(
     return rethrowBoardStorageError(error);
   }
   const shared = bindings.find((binding) => binding.namespace === LOCAL_HOST_SHARED_BOARD_STORE_ID);
-  if (shared === undefined) {
+  if (shared?.store === undefined) {
     throw createIntegrationError({
       code: "DEPENDENCY_UNAVAILABLE",
       category: "dependency",

@@ -27,6 +27,7 @@ import {
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import type { ContextStoreRevisionJob } from "@pragma/built-in-agents/contracts";
 import {
   PRAGMA_TEXT_LIMITS,
   pragmaKnowledgeBaseEntryNameIssue,
@@ -458,8 +459,10 @@ export function ContextStoreDetailFragment(props: {
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly onExport?: (() => Promise<void>) | undefined;
   readonly onPublish?: (() => Promise<void>) | undefined;
-  readonly onSubmitRevision?: ((prompt: string) => Promise<void>) | undefined;
-  readonly onRevisionSubmitted?: (() => void) | undefined;
+  readonly onSubmitRevision?:
+    | ((prompt: string) => Promise<ContextStoreRevisionJob | undefined>)
+    | undefined;
+  readonly onRevisionSubmitted?: ((job: ContextStoreRevisionJob | undefined) => void) | undefined;
   readonly onDelete: () => Promise<void>;
   readonly onListEntries: (storeId: string) => Promise<readonly ContextStoreEntry[]>;
   readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
@@ -1082,10 +1085,10 @@ export function ContextStoreDetailFragment(props: {
     setRevisionSubmitting(true);
     setRevisionError(null);
     try {
-      await props.onSubmitRevision(revisionPrompt.trim());
+      const job = await props.onSubmitRevision(revisionPrompt.trim());
       setRevisionDialogOpen(false);
       setRevisionPrompt("");
-      props.onRevisionSubmitted?.();
+      props.onRevisionSubmitted?.(job);
     } catch (cause) {
       setRevisionError(errorMessage(cause));
     } finally {

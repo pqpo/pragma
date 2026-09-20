@@ -249,6 +249,9 @@ export function createDesktopSkillRevisionSubmissionPort(options: {
           ? { creation: { resourceId: capabilityId, ...creation! } }
           : { target }),
         ...(inspection.draftPath === undefined ? {} : { draftPath: inspection.draftPath }),
+        ...(inspection.referencePath === undefined
+          ? {}
+          : { referencePath: inspection.referencePath }),
       });
     },
     async getDraft(input) {

@@ -26,7 +26,6 @@ import {
   SkillFileContentSchema,
   SkillFileEntrySchema,
   UpdateCapabilitySchema,
-  UpdateSkillCapabilitySchema,
   type Capability,
   type CapabilityDefinition,
   type CapabilityHealth,
@@ -44,7 +43,6 @@ import {
   type PreviewCodeServiceRequest,
   type PreviewCodeServiceResult,
   type UpdateCapability,
-  type UpdateSkillCapability,
 } from "../../../shared/contracts/index.ts";
 import type {
   CapabilityCredentialReader,
@@ -109,7 +107,6 @@ export interface CapabilityStore extends CapabilityRepository {
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
   importBundleRevisions(input: ImportBundleCapabilityRevisions): Promise<Capability>;
-  updateSkill(input: UpdateSkillCapability): Promise<Capability>;
   publishSkillRevisionCandidate(input: {
     readonly id: string;
     readonly baseRevision: number;
@@ -660,7 +657,7 @@ export function createCapabilityStore(options: {
       const payloadPath = join(temporaryPath, "revisions", "000001", "payload");
       await mkdir(payloadPath, { recursive: true, mode: 0o700 });
       try {
-        await importSkillPayload(input.sourcePath, payloadPath);
+        await copySkillSource(input.sourcePath, payloadPath);
         const skillFile = await readFile(join(payloadPath, "SKILL.md"), "utf8");
         const metadata = readSkillMetadata(skillFile);
         const name = input.name ?? metadata.name;
@@ -977,69 +974,6 @@ export function createCapabilityStore(options: {
         await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
         return await readCapability(id);
-      } catch (error) {
-        await rm(temporaryPath, { recursive: true, force: true });
-        throw error;
-      }
-    },
-    async updateSkill(rawInput) {
-      const input = UpdateSkillCapabilitySchema.parse(rawInput);
-      const current = await readCapability(input.id);
-      if (current.manifest.latestRevision !== input.baseRevision) {
-        throw new CapabilityStoreError(
-          "revision_conflict",
-          `Capability revision changed from ${input.baseRevision} to ${current.manifest.latestRevision}.`,
-        );
-      }
-      if (current.definition.kind !== "skill") {
-        throw new CapabilityStoreError(
-          "config_invalid",
-          "Only Skill capabilities can be updated here.",
-        );
-      }
-      const revision = current.manifest.latestRevision + 1;
-      const revisionsPath = join(capabilityPath(input.id), "revisions");
-      const temporaryPath = join(
-        revisionsPath,
-        `.${revisionDirectory(revision)}.${randomUUID()}.tmp`,
-      );
-      const payloadPath = join(temporaryPath, "payload");
-      await mkdir(payloadPath, { recursive: true, mode: 0o700 });
-      try {
-        await importSkillPayload(input.sourcePath, payloadPath);
-        await readFile(join(payloadPath, "SKILL.md"), "utf8");
-        const definition = CapabilityDefinitionSchema.parse({
-          ...current.definition,
-          contentHash: await hashDirectory(payloadPath),
-        });
-        if (stableStringify(definition) === stableStringify(current.definition)) {
-          await rm(temporaryPath, { recursive: true, force: true });
-          return current;
-        }
-        const timestamp = new Date().toISOString();
-        const manifest = CapabilityManifestSchema.parse({
-          ...current.manifest,
-          latestRevision: revision,
-          updatedAt: timestamp,
-        });
-        const health = CapabilityHealthSchema.parse({
-          revision,
-          status: "ready",
-          checkedAt: timestamp,
-        });
-        const candidate = CapabilitySchema.parse({ manifest, definition, health });
-        await writeJson(join(temporaryPath, "definition.json"), definition);
-        return await publishRevision({
-          current,
-          candidate,
-          mutationType: "skill-update",
-          commit: async () => {
-            await rename(temporaryPath, revisionPath(input.id, revision));
-            await writeJson(healthPath(input.id), health);
-            await writeJson(manifestPath(input.id), manifest);
-            return await readCapability(input.id);
-          },
-        });
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -1707,7 +1641,7 @@ async function stageBundleCapabilityRevision(
           "The Bundle is missing the files for a Skill revision.",
         );
       }
-      await importSkillPayload(input.payloadPath, join(temporaryPath, "payload"));
+      await copySkillSource(input.payloadPath, join(temporaryPath, "payload"));
       if ((await hashDirectory(join(temporaryPath, "payload"))) !== input.definition.contentHash) {
         throw new CapabilityStoreError(
           "bundle_identity_conflict",
@@ -1786,7 +1720,7 @@ function validateDefinition(definition: CapabilityDefinition): CapabilityDefinit
   return definition;
 }
 
-async function importSkillPayload(sourcePath: string, targetPath: string): Promise<void> {
+export async function copySkillSource(sourcePath: string, targetPath: string): Promise<void> {
   if (extname(sourcePath).toLowerCase() === ".zip") {
     const archive = unzipSync(new Uint8Array(await readFile(sourcePath)));
     const files = Object.entries(archive)

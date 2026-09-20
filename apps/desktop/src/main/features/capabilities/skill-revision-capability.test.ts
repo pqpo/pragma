@@ -54,7 +54,7 @@ describe("Skill revision management capability", () => {
       start,
       inspectDraft: vi.fn(async () => ({
         draft: {
-          schemaVersion: "pragma.skill-revision-draft/v4",
+          schemaVersion: "pragma.skill-revision-draft/v5",
           operation: "create",
           id: draftId,
           revision: 1,
@@ -119,7 +119,7 @@ describe("Skill revision management capability", () => {
       start,
       inspectDraft: vi.fn(async () => ({
         draft: {
-          schemaVersion: "pragma.skill-revision-draft/v4",
+          schemaVersion: "pragma.skill-revision-draft/v5",
           operation: "create",
           id: draftId,
           revision: 1,
