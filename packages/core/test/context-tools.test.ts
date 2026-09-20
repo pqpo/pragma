@@ -172,6 +172,8 @@ describe("Expert context tools", () => {
       content: sentinel,
       description: "写入回执测试",
       trigger: "manual",
+      trustLevel: "workspace",
+      sensitivity: "internal",
       priority: "high",
     };
 
@@ -199,6 +201,8 @@ describe("Expert context tools", () => {
       metadata: {
         description: input.description,
         trigger: input.trigger,
+        trustLevel: input.trustLevel,
+        sensitivity: input.sensitivity,
         priority: input.priority,
       },
       context: expect.any(Object),

@@ -53,7 +53,7 @@ priority: normal
 `revision` 则是 Store 提供的版本/并发控制标识，可能包含 metadata 或采用其他生成策略，二者不能互相替代。
 
 `edit_expert_context(mode="replace")` 只替换调用中明确提供的 `content` 或 metadata 字段；省略的
-`content`、`description`、`trigger` 和 `priority` 均保留现值。并发编辑时，从最近一次
+`content`、`description`、`trigger`、`trustLevel`、`sensitivity` 和 `priority` 均保留现值。并发编辑时，从最近一次
 `list_expert_context`、`read_expert_context` 或写入回执中复制 `revision` 到 `expectedRevision`，或复制
 `etag` 到 `expectedEtag`。两者同时提供时必须同时匹配；冲突后应重新读取并基于最新 token 重试。
 
@@ -62,6 +62,8 @@ priority: normal
 
 - `trigger` 回答“怎么加载”
 - `priority` 支持 `critical`、`high`、`normal`、`low`；高优先级先装配，预算不足时最后截断
+- `trustLevel` 描述来源可信度：`system`、`workspace`、`user`、`external`
+- `sensitivity` 描述披露影响：`public`、`internal`、`confidential`、`restricted`
 
 ## Root 装配规则
 

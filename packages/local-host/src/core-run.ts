@@ -363,6 +363,13 @@ export function createLocalHostRunHandleState(options: {
   readonly executions: ExecutionStore;
   readonly missionId: string;
   readonly onEvent?: ((event: LocalHostRunEvent) => void) | undefined;
+  /**
+   * Detach Host-owned checkpoint state before input_required becomes
+   * observable to callers. This ordering is important for fast responses:
+   * callers must never be able to race a response against the old in-memory
+   * ExpertSession owner. The callback may finish observer cleanup later.
+   */
+  readonly onCheckpointed?: (() => Promise<void>) | undefined;
 }): LocalHostCoreRunHandleState {
   const pending = new Map<string, HumanInteractionRequestEnvelope>();
   let settled = false;
@@ -418,6 +425,7 @@ export function createLocalHostRunHandleState(options: {
         throw new Error(`Human interaction checkpoint has no pending request.`);
       }
       await pump;
+      await options.onCheckpointed?.();
       resolveCheckpoint?.({
         status: "input_required",
         executionId: options.coreHandle.executionId,

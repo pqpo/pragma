@@ -325,8 +325,8 @@ export const UpdateDesktopMemoryExtractionSettingsSchema = z
   })
   .strict();
 
-export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotFileSchema.array()
-  .min(4)
+export const KnowledgeStoreFilesSchema = ContextStoreSnapshotFileSchema.array()
+  .min(1)
   .max(1_000)
   .superRefine((files, context) => {
     const byId = new Map(files.map((file) => [file.id, file]));
@@ -335,37 +335,6 @@ export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreSnapshotFileSche
         code: "custom",
         message: "Knowledge store file ids must be unique.",
       });
-    }
-    for (const [id, limit, trigger] of [
-      ["guide.md", 2_048, "always_on"],
-      ["overview.md", 3_072, "always_on"],
-      ["index.md", 8_192, "model_decision"],
-    ] as const) {
-      const file = byId.get(id);
-      if (file === undefined) {
-        context.addIssue({ code: "custom", message: `${id} is required.` });
-      } else {
-        if (new TextEncoder().encode(file.content).byteLength > limit) {
-          context.addIssue({ code: "custom", message: `${id} exceeds ${limit} bytes.` });
-        }
-        if (file.metadata.trigger !== trigger) {
-          context.addIssue({ code: "custom", message: `${id} must use ${trigger}.` });
-        }
-      }
-    }
-    if (!files.some((file) => file.id.startsWith("items/"))) {
-      context.addIssue({
-        code: "custom",
-        message: "At least one items/** document is required.",
-      });
-    }
-    for (const file of files.filter((entry) => entry.id.startsWith("indexes/"))) {
-      if (new TextEncoder().encode(file.content).byteLength > 8_192) {
-        context.addIssue({
-          code: "custom",
-          message: `${file.id} exceeds 8192 bytes. Split large indexes into more shards.`,
-        });
-      }
     }
   });
 
@@ -378,7 +347,7 @@ export const MemoryKnowledgeInitializationCandidateSchema = z
     sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
     name: z.string().trim().min(1).max(50),
     description: z.string().trim().max(500),
-    files: ProgressiveKnowledgeStoreFilesSchema,
+    files: KnowledgeStoreFilesSchema,
     state: z.enum(["pending_review", "rejected", "created"]),
     storeId: ContextStoreIdSchema.optional(),
     createdAt: z.string().datetime(),

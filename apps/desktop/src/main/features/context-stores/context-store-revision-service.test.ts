@@ -214,27 +214,27 @@ describe("context store sparse draft revisions", () => {
     });
   });
 
-  it("rejects an incomplete knowledge-base creation draft", async () => {
+  it("accepts a knowledge-base creation draft with one Markdown file", async () => {
     const { service } = await fixture();
     const job = await service.start({
       schemaVersion: "pragma.context-store-revision-request/v2",
       operation: "create",
       storeId: "90000000-0000-4000-8000-000000000002",
       resourceName: "Incomplete",
-      resourceDescription: "Missing required files.",
-      prompt: "Create an incomplete knowledge base.",
+      resourceDescription: "A minimal knowledge base.",
+      prompt: "Create a minimal knowledge base.",
       source: "user",
     });
     const draftStore = (await service.resolveDraft(job.draftId)).store;
     await draftStore.addContext({
-      id: "items/only.md",
+      id: "guide.md",
       content: "# Only\n",
-      metadata: { trigger: "model_decision", priority: "normal" },
+      metadata: { trigger: "always_on", priority: "normal" },
     });
     const draft = await service.getDraft(job.draftId);
-    await expect(
-      service.submitDraft(draft.id, draft.revision, "Incomplete."),
-    ).rejects.toMatchObject({ code: "validation_failed" });
+    await expect(service.submitDraft(draft.id, draft.revision, "Minimal knowledge base.")).resolves.toMatchObject({
+      state: "pending_review",
+    });
   });
 
   it.each(["merged", "discarded", "failed", "orphaned"] as const)(

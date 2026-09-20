@@ -4,8 +4,8 @@ import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
 import {
-  assertProgressiveKnowledgeStructure,
-  assertProgressiveKnowledgeSnapshot,
+  assertKnowledgeStoreStructure,
+  assertKnowledgeStoreSnapshot,
   attachContextStoreBaseContent,
   KnowledgeDraftValidationError,
 } from "@pragma/built-in-agents";
@@ -969,7 +969,7 @@ export function createContextStoreRevisionService(options: {
         const changeSet = changeSetFromDraft(draft, base);
         if (draft.operation === "create") {
           const candidate = materializeDraftSnapshot(draft, base);
-          assertProgressiveKnowledgeSnapshot(candidate);
+          assertKnowledgeStoreSnapshot(candidate);
           const directories = creationDirectories(candidate);
           const expectedSnapshotHash = hashSnapshotContent(candidate.files, directories);
           try {
@@ -994,7 +994,7 @@ export function createContextStoreRevisionService(options: {
             if (existing?.snapshotHash !== expectedSnapshotHash || !applied) throw error;
           }
         } else {
-          assertProgressiveKnowledgeStructure(base, changeSet);
+          assertKnowledgeStoreStructure(base, changeSet);
           await options.contextStores.applyChangeSet(changeSet, "store-revision-agent", merging.id);
         }
         await forceDraftState(await readDraft(draft.id), "merged");
@@ -1306,9 +1306,9 @@ export function createContextStoreRevisionService(options: {
         const base = await draftBaseSnapshot(current, options.contextStores);
         try {
           const candidate = materializeDraftSnapshot(current, base);
-          if (current.operation === "create") assertProgressiveKnowledgeSnapshot(candidate);
+          if (current.operation === "create") assertKnowledgeStoreSnapshot(candidate);
           else
-            assertProgressiveKnowledgeStructure(
+            assertKnowledgeStoreStructure(
               base,
               changeSetFromDraft({ ...current, summary }, base),
             );

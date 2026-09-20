@@ -1,7 +1,7 @@
 import {
   ContextStoreChangeSetSchema,
   ContextStoreRevisionJobSchema,
-  ProgressiveKnowledgeStoreFilesSchema,
+  KnowledgeStoreFilesSchema,
   type ContextStoreChangeSet,
   type ContextStoreRevisionJob,
   type ContextStoreRevisionSnapshot,
@@ -80,18 +80,10 @@ export function attachContextStoreBaseContent(
   });
 }
 
-export function assertProgressiveKnowledgeStructure(
+export function assertKnowledgeStoreStructure(
   base: ContextStoreRevisionSnapshot,
   changeSet: ContextStoreChangeSet,
 ): void {
-  const baseIds = new Set(base.files.map((file) => file.id));
-  if (
-    !baseIds.has("guide.md") ||
-    !baseIds.has("overview.md") ||
-    !baseIds.has("index.md") ||
-    !base.files.some((file) => file.id.startsWith("items/"))
-  )
-    return;
   const projected = new Map(base.files.map((file) => [file.id, file]));
   for (const operation of changeSet.operations) {
     if (operation.operation === "delete") projected.delete(operation.id);
@@ -111,7 +103,7 @@ export function assertProgressiveKnowledgeStructure(
   }
   const files = [...projected.values()];
   const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
-  const structure = ProgressiveKnowledgeStoreFilesSchema.safeParse(files);
+  const structure = KnowledgeStoreFilesSchema.safeParse(files);
   if (!structure.success) {
     diagnostics.push(
       ...structure.error.issues.map((issue) => ({
@@ -125,12 +117,12 @@ export function assertProgressiveKnowledgeStructure(
 }
 
 /** Validate a complete candidate, including creation candidates whose base is intentionally empty. */
-export function assertProgressiveKnowledgeSnapshot(
+export function assertKnowledgeStoreSnapshot(
   snapshot: Pick<ContextStoreRevisionSnapshot, "files">,
 ): void {
   const files = [...snapshot.files];
   const diagnostics: KnowledgeDraftValidationDiagnostic[] = [];
-  const structure = ProgressiveKnowledgeStoreFilesSchema.safeParse(files);
+  const structure = KnowledgeStoreFilesSchema.safeParse(files);
   if (!structure.success) {
     diagnostics.push(
       ...structure.error.issues.map((issue) => ({

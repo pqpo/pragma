@@ -212,41 +212,13 @@ export const ContextStoreRevisionSnapshotSchema = z
     }
   });
 
-export const ProgressiveKnowledgeStoreFilesSchema = ContextStoreRevisionSnapshotSchema.shape.files
-  .min(4)
+export const KnowledgeStoreFilesSchema = ContextStoreRevisionSnapshotSchema.shape.files
+  .min(1)
   .max(1_000)
   .superRefine((files, context) => {
     const byId = new Map(files.map((file) => [file.id, file]));
     if (byId.size !== files.length) {
       context.addIssue({ code: "custom", message: "Knowledge store file ids must be unique." });
-    }
-    for (const [id, limit, trigger] of [
-      ["guide.md", 2_048, "always_on"],
-      ["overview.md", 3_072, "always_on"],
-      ["index.md", 8_192, "model_decision"],
-    ] as const) {
-      const file = byId.get(id);
-      if (file === undefined) {
-        context.addIssue({ code: "custom", message: `${id} is required.` });
-      } else {
-        if (new TextEncoder().encode(file.content).byteLength > limit) {
-          context.addIssue({ code: "custom", message: `${id} exceeds ${limit} bytes.` });
-        }
-        if (file.metadata.trigger !== trigger) {
-          context.addIssue({ code: "custom", message: `${id} must use ${trigger}.` });
-        }
-      }
-    }
-    if (!files.some((file) => file.id.startsWith("items/"))) {
-      context.addIssue({ code: "custom", message: "At least one items/** document is required." });
-    }
-    for (const file of files.filter((entry) => entry.id.startsWith("indexes/"))) {
-      if (new TextEncoder().encode(file.content).byteLength > 8_192) {
-        context.addIssue({
-          code: "custom",
-          message: `${file.id} exceeds 8192 bytes. Split large indexes into more shards.`,
-        });
-      }
     }
   });
 
