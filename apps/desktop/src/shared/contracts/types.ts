@@ -79,6 +79,7 @@ import {
   GetSkillFileSchema,
   GetSkillRevisionReviewFileSchema,
   ImportSkillCapabilitySchema,
+  ImportSkillRevisionSchema,
   SubmitSkillRevisionSchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
@@ -653,6 +654,7 @@ export type CapabilityHealth = z.infer<typeof CapabilityHealthSchema>;
 export type CapabilityDefinition = z.infer<typeof CapabilityDefinitionSchema>;
 export type ExpertCapabilityReference = z.infer<typeof ExpertCapabilityReferenceSchema>;
 export type ImportSkillCapability = z.infer<typeof ImportSkillCapabilitySchema>;
+export type ImportSkillRevision = z.infer<typeof ImportSkillRevisionSchema>;
 export type SubmitSkillRevision = z.infer<typeof SubmitSkillRevisionSchema>;
 export type CreateCapability = z.infer<typeof CreateCapabilitySchema>;
 export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;

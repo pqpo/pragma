@@ -1063,18 +1063,7 @@ export function StudioPage(props: {
                 prompt,
                 source: "user",
               });
-              let missionId = created.missionId;
-              for (let attempt = 0; missionId === undefined && attempt < 40; attempt += 1) {
-                await new Promise((resolve) => setTimeout(resolve, 250));
-                const jobs = await api.listContextStoreRevisions({
-                  storeId: selectedContextStore.id,
-                });
-                missionId = jobs.find((job) => job.id === created.id)?.missionId;
-              }
-              if (missionId === undefined) {
-                throw new Error("The revision task was created, but its Mission is still starting.");
-              }
-              return { ...created, missionId };
+              return created;
             }}
             onRevisionSubmitted={(job) => {
               setRevisionStoreFilter(selectedContextStore.id);
@@ -1132,6 +1121,11 @@ export function StudioPage(props: {
             onBack={() => setScreen("directory")}
             onChanged={updateCapability}
             onOpenMission={props.onOpenMission}
+            onDeleted={(id) => {
+              setCapabilities((current) => current.filter((item) => item.manifest.id !== id));
+              setSelectedCapabilityId(null);
+              setScreen("directory");
+            }}
             onOpenRevisions={
               selectedCapability.definition.kind === "skill"
                 ? () => setScreen("skill-revisions")

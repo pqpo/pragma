@@ -14,6 +14,7 @@ import {
   GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
+  ImportSkillRevisionSchema,
   SubmitSkillRevisionSchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
@@ -63,6 +64,10 @@ export function installCapabilityHandlers(
       source: "user",
       sourceRefs: [],
     });
+  });
+  ipcMain.handle("capabilities:import-skill-revision", (_event, input: unknown) => {
+    const parsed = ImportSkillRevisionSchema.parse(input);
+    return skillRevisions.importSource(parsed);
   });
   ipcMain.handle("capabilities:create", (_event, input: unknown) =>
     store.create(CreateCapabilitySchema.parse(input)),

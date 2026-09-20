@@ -256,6 +256,13 @@ export const SubmitSkillRevisionSchema = z
   })
   .strict();
 
+export const ImportSkillRevisionSchema = z
+  .object({
+    capabilityId: CapabilityIdSchema,
+    sourcePath: z.string().trim().min(1).max(2_000),
+  })
+  .strict();
+
 export const CreateCapabilitySchema = z
   .object({
     definition: z.union([

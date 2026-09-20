@@ -18,6 +18,7 @@ import {
   GetSkillRevisionReviewFileSchema,
   GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
+  ImportSkillRevisionSchema,
   SubmitSkillRevisionSchema,
   ListSkillFilesSchema,
   PreviewCodeServiceRequestSchema,
@@ -65,6 +66,13 @@ export const capabilitiesApi = {
       await ipcRenderer.invoke(
         "capabilities:submit-skill-revision",
         SubmitSkillRevisionSchema.parse(input),
+      ),
+    ),
+  importSkillRevision: async (input) =>
+    ManagedSkillRevisionJobSchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:import-skill-revision",
+        ImportSkillRevisionSchema.parse(input),
       ),
     ),
   createCapability: async (input) =>
@@ -135,6 +143,7 @@ export const capabilitiesApi = {
   | "getSkillFile"
   | "importSkillCapability"
   | "submitSkillRevision"
+  | "importSkillRevision"
   | "createCapability"
   | "updateCapability"
   | "retryCapability"

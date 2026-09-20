@@ -2,11 +2,13 @@ import {
   ArrowLeft,
   ArrowsClockwise,
   Archive,
+  ClockCounterClockwise,
   Code,
   Globe,
   PaperPlaneTilt,
   Play,
   Plug,
+  Trash,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -33,6 +35,7 @@ export function CapabilityDetailFragment(props: {
   readonly onChanged: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
+  readonly onDeleted?: (capabilityId: string) => void;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
@@ -54,6 +57,8 @@ export function CapabilityDetailFragment(props: {
   const [revisionPrompt, setRevisionPrompt] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const tools = useMemo(() => capabilityTools(capability), [capability]);
 
   useEffect(() => {
@@ -178,23 +183,64 @@ export function CapabilityDetailFragment(props: {
         capabilityId: capability.manifest.id,
         prompt: revisionPrompt.trim(),
       });
-      let missionId = created.missionId;
-      for (let attempt = 0; missionId === undefined && attempt < 40; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const entries = await api.listSkillRevisionJobs(capability.manifest.id);
-        missionId = entries.find((entry) => entry.job.id === created.id)?.job.missionId;
-      }
-      if (missionId === undefined) {
-        throw new Error("The revision task was created, but its Mission is still starting.");
-      }
       setRevisionDialogOpen(false);
       setRevisionPrompt("");
-      if (props.onOpenMission !== undefined) props.onOpenMission(missionId);
+      if (created.missionId !== undefined && props.onOpenMission !== undefined)
+        props.onOpenMission(created.missionId);
       else props.onOpenRevisions?.();
     } catch (cause) {
       setRevisionError(errorMessage(cause));
     } finally {
       setRevisionSubmitting(false);
+    }
+  };
+
+  const importSkillRevision = async () => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const selected = await api.pickSkillSource();
+      if (!selected.ok) {
+        if (selected.reason !== "cancelled")
+          throw new Error(selected.error ?? "Skill source unavailable.");
+        return;
+      }
+      await api.importSkillRevision({
+        capabilityId: capability.manifest.id,
+        sourcePath: selected.path as string,
+      });
+      props.onOpenRevisions?.();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteSkill = async () => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const result = await api.deleteCapability(capability.manifest.id);
+      if (!result.ok) {
+        setError(
+          result.code === "capability_referenced"
+            ? t("capabilityDeleteReferenced")
+            : t("capabilityDeleteFailed"),
+        );
+        setDeleteDialogOpen(false);
+        return;
+      }
+      props.onDeleted?.(capability.manifest.id);
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setDeleteDialogOpen(false);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -235,14 +281,37 @@ export function CapabilityDetailFragment(props: {
             <p>{definition.description}</p>
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
-            <StudioActionButton
-              label={t("submitSkillRevision")}
-              icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
-              onClick={() => {
-                setRevisionError(null);
-                setRevisionDialogOpen(true);
-              }}
-            />
+            <div className="capability-detail-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy || deleting}
+                onClick={() => void importSkillRevision()}
+              >
+                <Archive size={17} aria-hidden="true" /> {t("updateSkillFromPackage")}
+              </button>
+              {props.onOpenRevisions !== undefined ? (
+                <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
+                  <ClockCounterClockwise size={17} aria-hidden="true" /> {t("revisionTasks")}
+                </button>
+              ) : null}
+              <StudioActionButton
+                label={t("submitSkillRevision")}
+                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
+                onClick={() => {
+                  setRevisionError(null);
+                  setRevisionDialogOpen(true);
+                }}
+              />
+              <button
+                className="danger-button"
+                type="button"
+                disabled={busy || deleting}
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash size={17} aria-hidden="true" /> {t("deleteCapabilityAction")}
+              </button>
+            </div>
           ) : definition.kind === "mcp_server" ? (
             <button
               className="secondary-button"
@@ -504,6 +573,36 @@ export function CapabilityDetailFragment(props: {
             ) : null}
           </form>
         </Dialog>
+      ) : null}
+      {deleteDialogOpen ? (
+        <Dialog
+          role="alertdialog"
+          title={t("deleteCapability")}
+          description={t("deleteCapabilityDescription", { name: capability.manifest.name })}
+          busy={deleting}
+          onCancel={() => setDeleteDialogOpen(false)}
+          footer={
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteDialogOpen(false)}
+              >
+                {t("cancel")}
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={deleting}
+                onClick={() => void deleteSkill()}
+              >
+                <Trash size={17} aria-hidden="true" />
+                {deleting ? t("deleting") : t("deleteCapabilityAction")}
+              </button>
+            </>
+          }
+        />
       ) : null}
     </StudioScreenFrame>
   );

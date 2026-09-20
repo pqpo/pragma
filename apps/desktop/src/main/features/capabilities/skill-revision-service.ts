@@ -25,7 +25,7 @@ import {
   type SkillRevisionReview,
   type SkillRevisionReviewFile,
 } from "../../../shared/contracts/index.ts";
-import type { CapabilityStore } from "./capability-store.ts";
+import { copySkillSource, type CapabilityStore } from "./capability-store.ts";
 import {
   SkillWorkingTreeError,
   assertSkillCopyTarget,
@@ -122,6 +122,10 @@ export interface SkillDraftInspection {
 export interface SkillRevisionService {
   /** Compatibility entry used by Memory while it moves to managed Skill Missions. */
   submit(request: SkillRevisionSubmissionRequest): Promise<ManagedSkillRevisionJob>;
+  importSource(input: {
+    readonly capabilityId: string;
+    readonly sourcePath: string;
+  }): Promise<ManagedSkillRevisionJob>;
   start(
     request: SkillRevisionRequestV4,
     options?: {
@@ -1409,6 +1413,32 @@ export function createSkillRevisionService(options: {
       const job = await service.start(request);
       service.scheduleProcessing();
       return job;
+    },
+    async importSource(input) {
+      const request = SkillRevisionRequestV4Schema.parse({
+        schemaVersion: "pragma.skill-revision-request/v4",
+        operation: "revise",
+        capabilityId: input.capabilityId,
+        prompt: "Update this Skill from the selected local package.",
+        source: "user",
+        sourceDigest: createHash("sha256")
+          .update(`${input.sourcePath}:${randomUUID()}`)
+          .digest("hex"),
+        sourceRefs: [],
+      });
+      const job = await service.start(request);
+      const draft = await readDraft(job.draftId);
+      const candidatePath = worktreePath(draft);
+      await rm(candidatePath, { recursive: true, force: true });
+      await mkdir(candidatePath, { recursive: true, mode: 0o700 });
+      await copySkillSource(input.sourcePath, candidatePath);
+      const workingTree = await scanSkillWorkingTree(candidatePath);
+      return await service.submitDraft({
+        draftId: draft.id,
+        expectedRevision: draft.revision,
+        expectedWorkingTreeHash: workingTree.hash,
+        summary: "Update the Skill from a local package.",
+      });
     },
     async start(rawRequest, startOptions = {}) {
       const request = SkillRevisionRequestV4Schema.parse(rawRequest);
