@@ -223,6 +223,31 @@ describe("Skill sync service", () => {
     await fixture.service.sync();
     expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(true);
   });
+
+  it("discards bases when configuration changes before state can be reset", async () => {
+    const fixture = await createFixture();
+    const id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    await fixture.addLocalSkill(id, "Source-safe Skill");
+    await fixture.service.configure(configuration());
+
+    await writeFile(
+      join(fixture.root, "state", "skill-sync-settings.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-sync-settings/v1",
+        remote: "https://example.com/replacement.git",
+        autoPush: true,
+        pushDeletions: false,
+      })}\n`,
+    );
+    fixture.provider.repository.skills.clear();
+    fixture.provider.advance();
+    const refreshed = await fixture.service.refresh();
+
+    expect(fixture.capabilities.has(id)).toBe(true);
+    expect(refreshed.skills).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, status: "pending" }),
+    );
+  });
 });
 
 describe("Git Skill sync provider", () => {

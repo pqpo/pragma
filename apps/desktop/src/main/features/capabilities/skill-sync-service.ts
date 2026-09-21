@@ -81,6 +81,7 @@ const StoredSummarySchema = z
 const SkillSyncStateSchema = z
   .object({
     schemaVersion: z.literal("pragma.skill-sync-state/v1"),
+    sourceKey: z.string().min(1).max(4_000).optional(),
     revision: z.string().optional(),
     resolvedBranch: z.string().optional(),
     syncedAt: z.string().datetime().optional(),
@@ -118,8 +119,9 @@ type LocalSkillSnapshot = {
   readonly skills: Map<string, LocalSkill>;
   readonly errors: SkillSyncState["errors"];
 };
-const emptyState = (): SkillSyncState => ({
+const emptyState = (sourceKey?: string): SkillSyncState => ({
   schemaVersion: "pragma.skill-sync-state/v1",
+  ...(sourceKey === undefined ? {} : { sourceKey }),
   bases: {},
   ignoredRemote: [],
   conflicts: {},
@@ -403,6 +405,8 @@ export function createSkillSyncService(options: {
     transientStatus = "syncing";
     const provider = providerFor(configuration);
     let state = await readState();
+    const sourceKey = configurationSourceKey(configuration);
+    if (state.sourceKey !== sourceKey) state = emptyState(sourceKey);
     try {
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const head = await provider.readHead();
@@ -411,7 +415,7 @@ export function createSkillSyncService(options: {
           head.reference !== undefined &&
           state.resolvedBranch !== head.reference
         ) {
-          state = emptyState();
+          state = emptyState(sourceKey);
         }
         const result = await reconcile(configuration, state, head, intent);
         state = result.state;
@@ -506,7 +510,7 @@ export function createSkillSyncService(options: {
           canonicalRemote(previous.remote) !== canonicalRemote(configuration.remote) ||
           previous.branch !== configuration.branch
         ) {
-          await writeState(emptyState());
+          await writeState(emptyState(configurationSourceKey(configuration)));
         }
         void head;
       });
@@ -1068,6 +1072,9 @@ function canonicalRemote(value: string): string {
     .trim()
     .replace(/\/$/u, "")
     .replace(/\.git$/u, "");
+}
+function configurationSourceKey(configuration: SkillSyncConfiguration): string {
+  return JSON.stringify([canonicalRemote(configuration.remote), configuration.branch ?? null]);
 }
 function assertRepositoryBounds(repository: RemoteSkillRepository): void {
   if (repository.skills.size > MAX_REPOSITORY_SKILLS)
