@@ -421,6 +421,7 @@ describe("capability store", () => {
     await chmod(join(source, "scripts", "verify.mjs"), 0o755);
     const snapshot = await scanSkillWorkingTree(source);
     const id = randomUUID();
+    const logicalId = randomUUID();
 
     const published = await store.publishNewSkillRevisionCandidate({
       id,
@@ -428,6 +429,7 @@ describe("capability store", () => {
       description: "Reviewed Skill.",
       sourcePath: source,
       candidateContentHash: snapshot.hash,
+      origin: { kind: "pragma-bundle", logicalId },
     });
     const replayed = await store.publishNewSkillRevisionCandidate({
       id,
@@ -435,9 +437,11 @@ describe("capability store", () => {
       description: "Reviewed Skill.",
       sourcePath: source,
       candidateContentHash: snapshot.hash,
+      origin: { kind: "pragma-bundle", logicalId },
     });
 
     expect(published.manifest.latestRevision).toBe(1);
+    expect(published.manifest.origin).toEqual({ kind: "pragma-bundle", logicalId });
     expect(replayed.manifest.latestRevision).toBe(1);
     const formalHash = createHash("sha256");
     for (const path of ["SKILL.md", "scripts/verify.mjs"]) {

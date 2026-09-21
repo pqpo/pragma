@@ -120,6 +120,7 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly description: string;
     readonly sourcePath: string;
     readonly candidateContentHash: string;
+    readonly origin?: { readonly kind: "pragma-bundle"; readonly logicalId: string } | undefined;
   }): Promise<Capability>;
   createGeneratedSkill(input: {
     readonly package: SkillPackage;
@@ -201,6 +202,7 @@ export function createCapabilityStore(options: {
   readonly mutations: CapabilityMutationService;
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
   readonly onRemoved?: ((capabilityId: string) => Promise<void>) | undefined;
+  readonly onSkillCreated?: ((capability: Capability) => void) | undefined;
 }): CapabilityStore {
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
   const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
@@ -694,7 +696,9 @@ export function createCapabilityStore(options: {
         });
         await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
-        return await readCapability(id);
+        const created = await readCapability(id);
+        options.onSkillCreated?.(created);
+        return created;
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -923,7 +927,9 @@ export function createCapabilityStore(options: {
               await options.credentials.finalize(prepared);
             }
             await rm(creationJournalPath(id), { force: true }).catch(() => undefined);
-            return await readCapability(id);
+            const created = await readCapability(id);
+            if (created.definition.kind === "skill") options.onSkillCreated?.(created);
+            return created;
           } catch (error) {
             if (prepared !== undefined)
               await options.credentials.rollback(prepared).catch(() => undefined);
@@ -973,7 +979,9 @@ export function createCapabilityStore(options: {
         });
         await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
-        return await readCapability(id);
+        const created = await readCapability(id);
+        options.onSkillCreated?.(created);
+        return created;
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -1086,10 +1094,24 @@ export function createCapabilityStore(options: {
           .string()
           .regex(/^[a-f0-9]{64}$/u)
           .parse(rawInput.candidateContentHash),
+        origin:
+          rawInput.origin === undefined
+            ? undefined
+            : z
+                .object({
+                  kind: z.literal("pragma-bundle"),
+                  logicalId: CapabilityIdSchema,
+                })
+                .strict()
+                .parse(rawInput.origin),
       };
       const existing = await readCapability(input.id).catch(() => undefined);
       if (existing !== undefined) {
-        if (existing.definition.kind === "skill" && existing.manifest.latestRevision === 1) {
+        if (
+          existing.definition.kind === "skill" &&
+          existing.manifest.latestRevision === 1 &&
+          JSON.stringify(existing.manifest.origin) === JSON.stringify(input.origin)
+        ) {
           const publishedSnapshot = await scanSkillWorkingTree(
             join(revisionPath(input.id, 1), "payload"),
           ).catch(() => undefined);
@@ -1135,6 +1157,7 @@ export function createCapabilityStore(options: {
           name: input.name,
           kind: "skill",
           latestRevision: 1,
+          ...(input.origin === undefined ? {} : { origin: input.origin }),
           createdAt: timestamp,
           updatedAt: timestamp,
         });
@@ -1148,11 +1171,17 @@ export function createCapabilityStore(options: {
         await writeJson(join(temporaryPath, "health.json"), health);
         await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, capabilityPath(input.id));
-        return await readCapability(input.id);
+        const created = await readCapability(input.id);
+        options.onSkillCreated?.(created);
+        return created;
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         const replay = await readCapability(input.id).catch(() => undefined);
-        if (replay?.definition.kind === "skill" && replay.manifest.latestRevision === 1) {
+        if (
+          replay?.definition.kind === "skill" &&
+          replay.manifest.latestRevision === 1 &&
+          JSON.stringify(replay.manifest.origin) === JSON.stringify(input.origin)
+        ) {
           const publishedSnapshot = await scanSkillWorkingTree(
             join(revisionPath(input.id, 1), "payload"),
           ).catch(() => undefined);

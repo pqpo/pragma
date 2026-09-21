@@ -69,6 +69,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Sparse Context Store revision drafts](./044-sparse-context-store-revision-drafts.md)
 - [Raw Skill revision drafts](./051-raw-skill-revision-drafts.md)
 - [Synchronous Skill validation and manual review](./052-synchronous-skill-validation.md)
+- [Trusted Git Skill synchronization](./053-trusted-git-skill-synchronization.md)
 
 ## 维护规则
 

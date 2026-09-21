@@ -17,6 +17,7 @@ import { projectsApi } from "./api/projects.ts";
 import { runtimesApi } from "./api/runtimes.ts";
 import { settingsApi } from "./api/settings.ts";
 import { skillLearningApi } from "./api/skill-learning.ts";
+import { skillSyncApi } from "./api/skill-sync.ts";
 import { systemApi } from "./api/system.ts";
 import { usageApi } from "./api/usage.ts";
 import { workspacesApi } from "./api/workspaces.ts";
@@ -25,6 +26,7 @@ const api = {
   ...systemApi,
   ...settingsApi,
   ...skillLearningApi,
+  ...skillSyncApi,
   ...memoryApi,
   ...workspacesApi,
   ...modelProvidersApi,

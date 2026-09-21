@@ -75,6 +75,17 @@ describe("SettingsPage", () => {
     expect(html).toContain("How a concurrency slot is counted");
   });
 
+  it("exposes Skill sync as an independent trusted repository setting", () => {
+    const html = renderToStaticMarkup(<SettingsPage initialView="skill-sync" />);
+
+    expect(html).toContain('id="skill-sync-panel"');
+    expect(html).toContain(
+      "Synchronize published Skills through a dedicated, trusted Git repository.",
+    );
+    expect(html).toContain("Automatically upload published Skill changes");
+    expect(html).toContain("Upload local Skill deletions");
+  });
+
   it("exposes the built-in memory plane as a first-class settings section", () => {
     const html = renderToStaticMarkup(<SettingsPage initialView="memory" />);
 

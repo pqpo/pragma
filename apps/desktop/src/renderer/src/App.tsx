@@ -60,6 +60,7 @@ export function App() {
   useEffect(() => {
     const sync = () => {
       void window.pragmaDesktop.refreshKnowledgeBases().catch(() => undefined);
+      void window.pragmaDesktop.refreshSkills().catch(() => undefined);
     };
     window.addEventListener("focus", sync);
     window.addEventListener("online", sync);
