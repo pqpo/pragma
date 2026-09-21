@@ -30,6 +30,7 @@ const expectedFiles = new Set([
   "package/dist/pragma.js",
   "package/dist/cli.js",
   "package/dist/code-service-worker.js",
+  "package/dist/canonical-event-feed-worker.js",
 ]);
 const expectedDirectories = new Set(["package", "package/dist"]);
 const maxTarballBytes = 32 * 1024 * 1024;
@@ -83,7 +84,10 @@ for (const entry of entries) {
     throw new Error(`Tarball contains binary content in an unexpected file: ${entry.name}.`);
   }
   const text = entry.data.toString("utf8");
-  const isBundle = entry.name.endsWith("/cli.js") || entry.name.endsWith("/code-service-worker.js");
+  const isBundle =
+    entry.name.endsWith("/cli.js") ||
+    entry.name.endsWith("/code-service-worker.js") ||
+    entry.name.endsWith("/canonical-event-feed-worker.js");
   assertSafeText(text, entry.name, {
     repositoryDirectory,
     checkDependencyProtocols: true,
@@ -268,6 +272,10 @@ async function readMetafiles() {
   const paths = [
     ["cli bundle", join(releaseDirectory, "cli.metafile.json")],
     ["code service worker", join(releaseDirectory, "code-service-worker.metafile.json")],
+    [
+      "canonical event feed worker",
+      join(releaseDirectory, "canonical-event-feed-worker.metafile.json"),
+    ],
   ];
   return await Promise.all(
     paths.map(async ([label, path]) => {
@@ -302,6 +310,12 @@ function assertMetafile(label, metafile) {
     if (entryPoint.endsWith("/code-service-worker.ts") && label !== "code service worker") {
       throw new Error(`${label} metafile has the worker entry point.`);
     }
+    if (
+      entryPoint.endsWith("/canonical-event-feed-worker.ts") &&
+      label !== "canonical event feed worker"
+    ) {
+      throw new Error(`${label} metafile has the canonical event feed worker entry point.`);
+    }
   }
   const outputPaths = Object.keys(metafile.outputs ?? {}).map((path) => path.replaceAll("\\", "/"));
   if (label === "cli bundle" && !outputPaths.some((path) => path.endsWith("/cli.js"))) {
@@ -312,6 +326,12 @@ function assertMetafile(label, metafile) {
     !outputPaths.some((path) => path.endsWith("/code-service-worker.js"))
   ) {
     throw new Error("Worker metafile is missing code-service-worker.js output.");
+  }
+  if (
+    label === "canonical event feed worker" &&
+    !outputPaths.some((path) => path.endsWith("/canonical-event-feed-worker.js"))
+  ) {
+    throw new Error("Worker metafile is missing canonical-event-feed-worker.js output.");
   }
 }
 

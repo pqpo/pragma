@@ -58,6 +58,14 @@ const workerBundle = await build({
   outfile: join(distDirectory, "code-service-worker.js"),
 });
 
+const canonicalEventFeedWorkerBundle = await build({
+  ...commonBuildOptions,
+  entryPoints: [
+    join(repositoryDirectory, "packages/core/src/events/canonical-event-feed-worker.ts"),
+  ],
+  outfile: join(distDirectory, "canonical-event-feed-worker.js"),
+});
+
 await build({
   absWorkingDir: repositoryDirectory,
   bundle: false,
@@ -82,6 +90,11 @@ await writeFile(
   `${JSON.stringify(workerBundle.metafile, null, 2)}\n`,
   "utf8",
 );
+await writeFile(
+  join(releaseDirectory, "canonical-event-feed-worker.metafile.json"),
+  `${JSON.stringify(canonicalEventFeedWorkerBundle.metafile, null, 2)}\n`,
+  "utf8",
+);
 
 await Promise.all([
   cp(join(distDirectory, "pragma.js"), join(stagingDirectory, "dist/pragma.js")),
@@ -89,6 +102,10 @@ await Promise.all([
   cp(
     join(distDirectory, "code-service-worker.js"),
     join(stagingDirectory, "dist/code-service-worker.js"),
+  ),
+  cp(
+    join(distDirectory, "canonical-event-feed-worker.js"),
+    join(stagingDirectory, "dist/canonical-event-feed-worker.js"),
   ),
   cp(join(packageDirectory, "README.md"), join(stagingDirectory, "README.md")),
   cp(join(repositoryDirectory, "LICENSE"), join(stagingDirectory, "LICENSE")),

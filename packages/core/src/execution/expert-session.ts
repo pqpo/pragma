@@ -389,12 +389,13 @@ export class ExpertSessionManager {
       updatedAt: now,
     });
     const claimId = randomUUID();
+    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     if (
       !(await this.dependencies.sessions.claimLease(sessionId, claimId, EXPERT_SESSION_LEASE_MS))
     ) {
       throw new Error(`ExpertSession lease could not be acquired: ${sessionId}`);
     }
-    const session = this.createActiveSession(expert, sessionId, false, claimId);
+    const session = this.createActiveSession(expert, sessionId, false, claimId, leaseExpiresAt);
     this.active.set(sessionId, session);
     return session;
   }
@@ -420,6 +421,7 @@ export class ExpertSessionManager {
       throw new ExpertDefinitionMismatchError(request.sessionId);
     }
     const claimId = randomUUID();
+    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     if (
       !(await this.dependencies.sessions.claimLease(
         request.sessionId,
@@ -553,6 +555,7 @@ export class ExpertSessionManager {
         request.sessionId,
         true,
         claimId,
+        leaseExpiresAt,
         recoveredExecutionId,
         recoveredHumanInteractionIds,
       );
@@ -590,6 +593,7 @@ export class ExpertSessionManager {
       throw new ExpertDefinitionMismatchError(request.sessionId);
     }
     const claimId = randomUUID();
+    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     const recovered = await this.dependencies.sessions.recoverClosed({
       sessionId: request.sessionId,
       expectedUpdatedAt: record.updatedAt,
@@ -612,7 +616,13 @@ export class ExpertSessionManager {
           reason: migration.reason,
         });
       }
-      const session = this.createActiveSession(expert, request.sessionId, true, claimId);
+      const session = this.createActiveSession(
+        expert,
+        request.sessionId,
+        true,
+        claimId,
+        leaseExpiresAt,
+      );
       this.active.set(request.sessionId, session);
       return session;
     } catch (error) {
@@ -680,6 +690,7 @@ export class ExpertSessionManager {
     sessionId: string,
     paused: boolean,
     claimId: string,
+    leaseExpiresAt: number,
     recoveredExecutionId?: string,
     recoveredHumanInteractionIds: readonly string[] = [],
   ): ExpertSessionImpl {
@@ -689,6 +700,7 @@ export class ExpertSessionManager {
       sessionId,
       paused,
       claimId,
+      leaseExpiresAt,
       recoveredExecutionId,
       recoveredHumanInteractionIds,
       () => {
@@ -718,7 +730,7 @@ class ExpertSessionImpl implements ExpertSession {
   private waitingForRecoveredHumanInput: boolean;
   private leaseRenewalTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
-  private leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
+  private leaseExpiresAt: number;
   private leaseRenewalStopped = false;
   private readonly leaseRenewal: ReturnType<typeof setInterval>;
 
@@ -728,10 +740,12 @@ class ExpertSessionImpl implements ExpertSession {
     readonly sessionId: string,
     private paused: boolean,
     private readonly claimId: string,
+    leaseExpiresAt: number,
     private readonly recoveredExecutionId: string | undefined,
     recoveredHumanInteractionIds: readonly string[],
     private readonly onClosed: () => void,
   ) {
+    this.leaseExpiresAt = leaseExpiresAt;
     this.recoveredHumanInteractionIds = recoveredHumanInteractionIds;
     this.waitingForRecoveredHumanInput = recoveredHumanInteractionIds.length > 0;
     this.leaseRenewal = setInterval(() => {

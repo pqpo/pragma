@@ -77,7 +77,7 @@ export async function createFileCanonicalEventFeed(
   const workerUrl = canonicalEventFeedWorkerUrl();
   const worker = new Worker(workerUrl, {
     workerData: options,
-    execArgv: workerUrl.pathname.endsWith(".ts") ? ["--experimental-strip-types"] : [],
+    execArgv: workerUrl.pathname.endsWith(".ts") ? ["--import", "tsx", "--conditions=types"] : [],
   });
   let nextRequestId = 0;
   let closed = false;

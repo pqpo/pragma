@@ -28,9 +28,11 @@ const cliBundle = await readFile(join(stagingDirectory, "dist", "cli.js"));
 const cliSha256 = createHash("sha256").update(cliBundle).digest("hex");
 const commit = await readGitCommit();
 const metafiles = await Promise.all(
-  ["cli.metafile.json", "code-service-worker.metafile.json"].map(
-    async (filename) => await readJson(join(releaseDirectory, filename)),
-  ),
+  [
+    "cli.metafile.json",
+    "code-service-worker.metafile.json",
+    "canonical-event-feed-worker.metafile.json",
+  ].map(async (filename) => await readJson(join(releaseDirectory, filename))),
 );
 
 await rm(reportDirectory, { recursive: true, force: true });

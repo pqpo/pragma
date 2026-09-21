@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
+import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import { missionExecutorSnapshot } from "../../../shared/contracts/index.ts";
 import {
   MISSION_EXECUTION_PROJECTION_MAX_BYTES,
@@ -138,6 +139,56 @@ describe("mission store", { timeout: 30_000 }, () => {
       await readFile(join(store.storagePath!(created.id), "messages.jsonl"), "utf8"),
     ).toContain('"kind":"user"');
     await expect(store.getAttachments(created.id)).resolves.toEqual([]);
+  });
+
+  it("does not reuse an in-flight list snapshot after a mission mutation", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const first = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Delete this mission",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const blocked = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Block list completion",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    let releaseLock!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let markLockHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      markLockHeld = resolve;
+    });
+    const heldLock = withFileLock(
+      join(missionsPath, ".locks", `${encodePragmaPathSegment(blocked.id)}.lock`),
+      async () => {
+        markLockHeld();
+        await lockReleased;
+      },
+      { operation: "mission.test-list-snapshot" },
+    );
+    await lockHeld;
+
+    const staleList = store.list();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await store.remove(first.id);
+    const freshList = store.list();
+    expect(freshList).not.toBe(staleList);
+
+    releaseLock();
+    await heldLock;
+    await expect(staleList).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+    await expect(freshList).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
   });
 
   it("tracks Knowledge Store references without owning the Store lifecycle", async () => {

@@ -335,7 +335,12 @@ export function createMissionStore(options: {
     { readonly missionId: string; readonly title: string }
   >();
   let executionTitleIndexInitialized = false;
-  let listRequest: Promise<MissionSummary[]> | undefined;
+  let missionMutationVersion = 0;
+  let listRequest:
+    { readonly version: number; readonly promise: Promise<MissionSummary[]> } | undefined;
+  const markMissionMutation = (): void => {
+    missionMutationVersion += 1;
+  };
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
     await withFileLock(
@@ -877,6 +882,7 @@ export function createMissionStore(options: {
       force: true,
     });
     await rm(userMessageAttachmentsTransactionPath(id), { force: true });
+    markMissionMutation();
   };
 
   const recoverUserMessageAttachmentsTransaction = async (id: string): Promise<void> => {
@@ -908,6 +914,7 @@ export function createMissionStore(options: {
       const timestamp = new Date().toISOString();
       const updated = MissionSchema.parse(update(current, timestamp));
       await writeYamlAtomically(manifestPath(id), updated);
+      markMissionMutation();
       return updated;
     });
 
@@ -956,6 +963,7 @@ export function createMissionStore(options: {
     timelineCache.delete(id);
     await writeYamlAtomically(manifestPath(id), { ...mission, updatedAt: transaction.updatedAt });
     await rm(transactionPath(id), { force: true });
+    markMissionMutation();
   };
 
   const listMissions = async (): Promise<MissionSummary[]> => {
@@ -1051,11 +1059,13 @@ export function createMissionStore(options: {
     },
     getListSource,
     list() {
-      if (listRequest !== undefined) return listRequest;
-      listRequest = listMissions().finally(() => {
-        listRequest = undefined;
+      const version = missionMutationVersion;
+      if (listRequest?.version === version) return listRequest.promise;
+      const request = listMissions().finally(() => {
+        if (listRequest?.promise === request) listRequest = undefined;
       });
-      return listRequest;
+      listRequest = { version, promise: request };
+      return request;
     },
     async resolveExecutionTitles(executionIds) {
       const unresolved = new Set(executionIds);
@@ -1122,6 +1132,7 @@ export function createMissionStore(options: {
         }
         const updated = MissionSchema.parse({ ...current, origin: parsedOrigin });
         await writeYamlAtomically(manifestPath(parsedId), updated);
+        markMissionMutation();
         return updated;
       });
     },
@@ -1298,6 +1309,7 @@ export function createMissionStore(options: {
           );
           await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
           await rename(temporaryPath, targetPath);
+          markMissionMutation();
         } catch (error) {
           await rm(temporaryPath, { recursive: true, force: true });
           throw error;
@@ -1381,6 +1393,7 @@ export function createMissionStore(options: {
         );
         await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
+        markMissionMutation();
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -1783,6 +1796,7 @@ export function createMissionStore(options: {
         for (const [executionId, entry] of executionTitleIndex) {
           if (entry.missionId === parsedId) executionTitleIndex.delete(executionId);
         }
+        markMissionMutation();
       });
     },
   };
