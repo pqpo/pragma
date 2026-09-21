@@ -285,7 +285,69 @@ describe("Memory Plane phase one", () => {
     await canonical.close();
   });
 
-  it("does not deliver evidence while the pipeline is disabled", async () => {
+  it("captures enabled occurrence-time events after the global policy is disabled", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-memory-occurrence-policy-"));
+    const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
+    const executions = createFileExecutionStore({
+      pragmaHome: home,
+      canonicalEventFeed: canonical,
+    });
+    let currentTime = new Date(Date.now() - 60_000);
+    const now = () => currentTime;
+    const policies = createFileMemoryPolicyStore({ pragmaHome: home, now });
+    await policies.updateGlobal({
+      expectedRevision: 0,
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
+    });
+    await createExecution(executions);
+    await appendExecutionEvent(
+      executions,
+      "execution",
+      "root",
+      "invocation.message.appended",
+      { message: { role: "user", content: "capture before disable", timestamp: 1 } },
+      "enabled-before-disable",
+    );
+    currentTime = new Date(Date.now() + 60_000);
+    await policies.updateGlobal({
+      expectedRevision: 1,
+      policy: {
+        enabled: "disabled",
+        capture: "disabled",
+        recall: "disabled",
+        learning: "disabled",
+      },
+    });
+
+    const state = createFileMemoryPipelineStateStore({ pragmaHome: home, now });
+    const evidence = createMemoryEvidenceFeed(canonical);
+    const adapter = createExecutionEvidenceAdapter({
+      source: canonical,
+      publisher: createMemoryEvidencePublisher(canonical),
+      checkpoints: state,
+      deadLetters: state,
+      policies,
+      now,
+    });
+
+    await expect(adapter.runOnce()).resolves.toEqual({ published: 1, skipped: 0 });
+    await expect(evidence.read({ limit: 100 })).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          sourceRef: expect.objectContaining({ id: "enabled-before-disable" }),
+          policySnapshot: expect.objectContaining({ capture: true }),
+        }),
+      ],
+    });
+    await canonical.close();
+  });
+
+  it("uses each evidence policy snapshot instead of skipping a mixed-policy backlog", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-memory-pipeline-disabled-"));
     const canonical = await createFileCanonicalEventFeed({ pragmaHome: home });
     const publisher = createMemoryEvidencePublisher(canonical);
@@ -308,18 +370,50 @@ describe("Memory Plane phase one", () => {
         policySnapshot: {
           capture: true,
           recall: true,
-          learning: "local-candidates",
+          learning: "disabled",
           appliedRevisions: [],
         },
         payload: { message: { role: "user", content: "pipeline disabled", timestamp: 1 } },
       }),
     ]);
+    await publisher.publish([
+      MemoryEvidenceEnvelopeSchema.parse({
+        schemaVersion: "pragma.memory-evidence/v1",
+        messageId: "pipeline-enabled-evidence",
+        topic: "execution.message.appended",
+        schemaRef: "pragma.memory.execution-message/v1",
+        sourceRef: {
+          type: "pragma.test-source",
+          id: "pipeline-enabled-source",
+          canonicalEventId: "pipeline-enabled-canonical",
+        },
+        subjectRefs: [{ type: "pragma.execution", id: "pipeline-enabled-execution" }],
+        occurredAt: "2026-08-01T00:00:01.000Z",
+        visibility: { mode: "host-private" },
+        sensitivity: "confidential",
+        bindings: [],
+        policySnapshot: {
+          capture: true,
+          recall: true,
+          learning: "local-candidates",
+          appliedRevisions: [],
+        },
+        payload: { message: { role: "user", content: "pipeline enabled", timestamp: 2 } },
+      }),
+    ]);
 
     const state = createFileMemoryPipelineStateStore({ pragmaHome: home });
     const registry = new MemoryModuleRegistry();
-    registry.register(createProbeMemoryModule({ pragmaHome: home }));
-    let enabled = false;
-    let policyChecked = false;
+    const probe = createProbeMemoryModule({ pragmaHome: home });
+    const consumedMessageIds: string[] = [];
+    registry.register({
+      ...probe,
+      descriptor: { ...probe.descriptor, purpose: "learning" },
+      async consume(envelopes) {
+        consumedMessageIds.push(...envelopes.map((envelope) => envelope.messageId));
+        return await probe.consume(envelopes);
+      },
+    });
     const scheduler = createMemoryPipelineScheduler({
       registry,
       feed: createMemoryEvidenceFeed(canonical),
@@ -327,70 +421,15 @@ describe("Memory Plane phase one", () => {
       checkpoints: state,
       deadLetters: state,
       outbox: state,
-      isEnabled: async () => {
-        if (!policyChecked) {
-          policyChecked = true;
-          await publisher.publish([
-            MemoryEvidenceEnvelopeSchema.parse({
-              schemaVersion: "pragma.memory-evidence/v1",
-              messageId: "pipeline-enabled-during-check",
-              topic: "execution.message.appended",
-              schemaRef: "pragma.memory.execution-message/v1",
-              sourceRef: {
-                type: "pragma.test-source",
-                id: "pipeline-enabled-source",
-                canonicalEventId: "pipeline-enabled-canonical",
-              },
-              subjectRefs: [{ type: "pragma.execution", id: "pipeline-enabled-execution" }],
-              occurredAt: "2026-08-01T00:00:01.000Z",
-              visibility: { mode: "host-private" },
-              sensitivity: "confidential",
-              bindings: [],
-              policySnapshot: {
-                capture: true,
-                recall: true,
-                learning: "local-candidates",
-                appliedRevisions: [],
-              },
-              payload: {
-                message: { role: "user", content: "enabled during policy check", timestamp: 2 },
-              },
-            }),
-          ]);
-        }
-        return enabled;
-      },
     });
 
     await scheduler.runOnce();
     expect(registry.diagnostic("pragma.memory.probe")).toMatchObject({
       status: "healthy",
       lag: 0,
-      lastErrorCode: "policy_disabled_skip",
     });
-    expect((await state.read("pragma.memory.probe")).sequence).toBe(1);
-
-    const context = createFederatedMemoryContextStore(registry, {
-      resolveRecallScope: () => ({
-        rootRef: { type: "pragma.expert", id: "pipeline-disabled-expert" },
-        expertRef: { type: "pragma.expert", id: "pipeline-disabled-expert" },
-      }),
-    });
-    await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
-      ok: true,
-      value: { content: expect.not.stringContaining("pipeline-disabled-evidence") },
-    });
-
-    enabled = true;
-    await scheduler.runOnce();
-    await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
-      ok: true,
-      value: { content: expect.stringContaining("pipeline-enabled-during-check") },
-    });
-    await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
-      ok: true,
-      value: { content: expect.not.stringContaining("pipeline-disabled-evidence") },
-    });
+    expect((await state.read("pragma.memory.probe")).sequence).toBe(2);
+    expect(consumedMessageIds).toEqual(["pipeline-enabled-evidence"]);
     await canonical.close();
   });
 

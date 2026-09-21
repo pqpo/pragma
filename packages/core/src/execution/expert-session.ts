@@ -421,7 +421,6 @@ export class ExpertSessionManager {
       throw new ExpertDefinitionMismatchError(request.sessionId);
     }
     const claimId = randomUUID();
-    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     if (
       !(await this.dependencies.sessions.claimLease(
         request.sessionId,
@@ -550,12 +549,22 @@ export class ExpertSessionManager {
           }));
         }
       }
+      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
+      if (
+        !(await this.dependencies.sessions.claimLease(
+          request.sessionId,
+          claimId,
+          EXPERT_SESSION_LEASE_MS,
+        ))
+      ) {
+        throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
+      }
       const session = this.createActiveSession(
         expert,
         request.sessionId,
         true,
         claimId,
-        leaseExpiresAt,
+        activationLeaseExpiresAt,
         recoveredExecutionId,
         recoveredHumanInteractionIds,
       );
@@ -593,7 +602,6 @@ export class ExpertSessionManager {
       throw new ExpertDefinitionMismatchError(request.sessionId);
     }
     const claimId = randomUUID();
-    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     const recovered = await this.dependencies.sessions.recoverClosed({
       sessionId: request.sessionId,
       expectedUpdatedAt: record.updatedAt,
@@ -616,12 +624,22 @@ export class ExpertSessionManager {
           reason: migration.reason,
         });
       }
+      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
+      if (
+        !(await this.dependencies.sessions.claimLease(
+          request.sessionId,
+          claimId,
+          EXPERT_SESSION_LEASE_MS,
+        ))
+      ) {
+        throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
+      }
       const session = this.createActiveSession(
         expert,
         request.sessionId,
         true,
         claimId,
-        leaseExpiresAt,
+        activationLeaseExpiresAt,
       );
       this.active.set(request.sessionId, session);
       return session;

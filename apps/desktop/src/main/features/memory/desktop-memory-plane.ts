@@ -289,14 +289,6 @@ export async function createDesktopMemoryPlane(options: {
     checkpoints: state,
     deadLetters: state,
     outbox: state,
-    isEnabled: async () => (await policies.getGlobal()).policy.enabled === "enabled",
-    onDisabledSkip: ({ consumerId, from, through }) => {
-      options.logger.info(
-        "desktop.memory_policy_disabled_skip",
-        "Memory learning is disabled; the Module checkpoint advanced without consuming events.",
-        { consumerId, from, through, reason: "policy-disabled-skip" },
-      );
-    },
   });
   let stopped = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -420,38 +412,14 @@ export async function createDesktopMemoryPlane(options: {
     reportedExtractionIssues = current;
   };
 
-  const skipDisabledPipeline = async (through: number): Promise<void> => {
-    const current = await state.read(EXECUTION_EVIDENCE_ADAPTER_ID);
-    if (current.sequence < through) {
-      await state.update(EXECUTION_EVIDENCE_ADAPTER_ID, (checkpoint) => ({
-        ...checkpoint,
-        sequence: through,
-        attempts: {},
-        retryAfter: undefined,
-        updatedAt: new Date().toISOString(),
-      }));
-      options.logger.info(
-        "desktop.memory_policy_disabled_skip",
-        "Memory capture is disabled; the adapter checkpoint advanced without consuming events.",
-        {
-          consumerId: EXECUTION_EVIDENCE_ADAPTER_ID,
-          from: current.sequence,
-          through,
-          reason: "policy-disabled-skip",
-        },
-      );
-    }
-    await scheduler.runOnce();
-  };
-
   const tick = async (): Promise<void> => {
     try {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
-      const disabledThrough = (await canonical.inspect()).lastSequence;
       const learningEnabled = (await policies.getGlobal()).policy.enabled === "enabled";
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
+      const adapted = await adapter.runOnce();
+      await scheduler.runOnce();
       if (!learningEnabled) {
-        await skipDisabledPipeline(disabledThrough);
         if (
           Date.now() - lastMaintenanceAtMs >=
           DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs
@@ -463,8 +431,6 @@ export async function createDesktopMemoryPlane(options: {
         else lastError = undefined;
         return;
       }
-      const adapted = await adapter.runOnce();
-      await scheduler.runOnce();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
       }
