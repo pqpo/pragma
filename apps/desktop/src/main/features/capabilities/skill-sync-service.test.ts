@@ -51,6 +51,7 @@ describe("Skill sync service", () => {
       (capability) => capability.manifest.origin?.logicalId === bundleLogicalId,
     );
     expect(imported?.definition.name).toBe("Bundle Skill");
+    expect(imported?.manifest.id).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/u);
     expect(overview.status).toBe("ready");
   });
 
@@ -659,6 +660,11 @@ describe("Git Skill sync provider", () => {
           content: "import '../scripts/run.mjs';\n",
           executable: false,
         },
+        {
+          path: "references/line\nbreak.md",
+          content: "Line terminator path.\n",
+          executable: false,
+        },
       ],
     };
     await provider.readHead();
@@ -678,6 +684,9 @@ describe("Git Skill sync provider", () => {
 
     expect(head.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
       expect.objectContaining({ path: "scripts/run.mjs", executable: true }),
+    );
+    expect(head.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
+      expect.objectContaining({ path: "references/line\nbreak.md" }),
     );
 
     const nonExecutable = {

@@ -64,7 +64,10 @@ const CapabilityEnvironmentSchema = z
     }
   });
 
-export const CapabilityIdSchema = z.string().uuid();
+export const CapabilityIdSchema = z.union([
+  z.string().regex(/^[0-9a-hjkmnp-tv-z]{16}$/u),
+  z.string().uuid(),
+]);
 export const CapabilityRuntimeKeySchema = z
   .string()
   .trim()

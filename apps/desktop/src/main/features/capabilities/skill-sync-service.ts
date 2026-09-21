@@ -5,7 +5,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { validateSkillPackage } from "@pragma/built-in-agents";
-import { withFileLock } from "@pragma/core";
+import { generatePragmaResourceId, withFileLock } from "@pragma/core";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 
@@ -314,7 +314,10 @@ export function createSkillSyncService(options: {
       await writeSkillTree(incoming, remote);
       const snapshot = await scanSkillWorkingTree(incoming);
       if (local === undefined) {
-        const id = remote.identity.kind === "capability" ? remote.identity.id : randomUUID();
+        const id =
+          remote.identity.kind === "capability"
+            ? remote.identity.id
+            : CapabilityIdSchema.parse(generatePragmaResourceId());
         return await options.capabilities.publishNewSkillRevisionCandidate({
           id,
           name: remote.name,
@@ -1154,9 +1157,14 @@ async function readGitFileModes(
   const modes = new Map<string, string>();
   for (const record of output.split("\0")) {
     if (record === "") continue;
-    const match = /^(\d+) [a-f0-9]+ \d+\t(.+)$/u.exec(record);
-    if (match === null) throw coded("skill_sync_git_index_invalid", "Invalid Git index entry.");
-    modes.set(match[2]!, match[1]!);
+    const separator = record.indexOf("\t");
+    const header =
+      separator < 0 ? undefined : /^(\d+) [a-f0-9]+ \d+$/u.exec(record.slice(0, separator));
+    const path = separator < 0 ? "" : record.slice(separator + 1);
+    if (header === undefined || header === null || path === "") {
+      throw coded("skill_sync_git_index_invalid", "Invalid Git index entry.");
+    }
+    modes.set(path, header[1]!);
   }
   return modes;
 }
