@@ -396,6 +396,156 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     ).rejects.toThrow("target knowledge base changed");
   });
 
+  it.each([
+    { label: "metadata-only", targetContent: "# Imported\n" },
+    { label: "content and metadata", targetContent: "# Local\n" },
+  ])("recovers an interrupted $label knowledge-base update", async ({ targetContent }) => {
+    const source = await createFixture(`knowledge-recovery-source-${targetContent.length}`, {
+      realContextStores: true,
+    });
+    const sourceStore = await source.contextStores.createFromSnapshot({
+      name: "Recovery handbook",
+      description: "Imported description.",
+      author: "user",
+      summary: "Imported content.",
+      files: [knowledgeFile("release.md", "# Imported\n")],
+    });
+    const sourceRevision = await publishKnowledgeResource(source, sourceStore.id);
+    const path = join(source.root, "knowledge-recovery.pragma");
+    await source.service.exportTo(knowledgeExportInput(sourceRevision), path);
+
+    const target = await createFixture(`knowledge-recovery-target-${targetContent.length}`, {
+      realContextStores: true,
+      interruptNextContextAppend: true,
+    });
+    const targetStore = await target.contextStores.createFromSnapshot({
+      name: "Recovery handbook",
+      description: "Local description.",
+      author: "user",
+      summary: "Local content.",
+      files: [knowledgeFile("release.md", targetContent)],
+    });
+    await publishKnowledgeResource(target, targetStore.id);
+    const inspection = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    const failed = await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: inspection.bundleFingerprint,
+      expectedProjectFingerprint: inspection.projectFingerprint,
+      expectedProjectRevision: inspection.projectRevision,
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "update" as const,
+        expectedTargetRevision: conflict.targetRevision,
+        expectedTargetSnapshotHash: conflict.targetSnapshotHash,
+      })),
+      assetConflicts: inspection.assetConflicts.map((conflict) => ({
+        resourceRef: conflict.resourceRef,
+        assetKind: conflict.assetKind,
+        action: "update" as const,
+        targetAssetId: conflict.candidates[0]!.assetId,
+        expectedTarget: {
+          revision: conflict.candidates[0]!.revision,
+          fingerprint: conflict.candidates[0]!.fingerprint,
+        },
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(failed.status).toBe("failed");
+    await markInstallationInterrupted(target.paths, failed.id);
+
+    await expect(target.restartService().listInstallations()).resolves.toContainEqual(
+      expect.objectContaining({ id: failed.id, status: "ready" }),
+    );
+    await expect(target.contextStores.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: targetStore.id,
+        name: "Recovery handbook",
+        description: "Imported description.",
+        contentRevision: 2,
+      }),
+    );
+    await expect(target.contextStores.getSnapshot(targetStore.id)).resolves.toMatchObject({
+      revision: 2,
+      files: [expect.objectContaining({ content: "# Imported\n" })],
+    });
+  });
+
+  it("recovers an interrupted knowledge-base copy with its resolved local name", async () => {
+    const source = await createFixture("knowledge-copy-recovery-source", {
+      realContextStores: true,
+    });
+    const sourceStore = await source.contextStores.createFromSnapshot({
+      name: "Shared handbook",
+      description: "Imported description.",
+      author: "user",
+      summary: "Imported content.",
+      files: [knowledgeFile("guide.md", "# Imported\n")],
+    });
+    const sourceRevision = await publishKnowledgeResource(
+      source,
+      sourceStore.id,
+      "Shared handbook",
+    );
+    const path = join(source.root, "knowledge-copy-recovery.pragma");
+    await source.service.exportTo(knowledgeExportInput(sourceRevision), path);
+
+    const storesRoot = await mkdtemp(join(tmpdir(), "pragma-copy-recovery-stores-"));
+    directories.push(storesRoot);
+    const stores = createContextStoreStore({ storesPath: storesRoot });
+    const existing = await stores.createFromSnapshot({
+      name: "Shared handbook",
+      description: "Local description.",
+      author: "user",
+      summary: "Local content.",
+      files: [knowledgeFile("guide.md", "# Local\n")],
+    });
+    const target = await createFixture("knowledge-copy-recovery-target", {
+      contextStores: stores,
+      interruptNextContextSnapshotCreate: true,
+    });
+    await publishKnowledgeResource(target, existing.id);
+    const inspection = await target.service.inspect(path, "context-store:kqh4nx7rx26mb3e7");
+    const failed = await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: inspection.bundleFingerprint,
+      expectedProjectFingerprint: inspection.projectFingerprint,
+      expectedProjectRevision: inspection.projectRevision,
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+      assetConflicts: inspection.assetConflicts.map((conflict) => ({
+        resourceRef: conflict.resourceRef,
+        assetKind: conflict.assetKind,
+        action: "copy" as const,
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(failed).toMatchObject({
+      status: "failed",
+      knowledgeBaseUpdate: { importedName: "Shared handbook (copy)", phase: "prepared" },
+    });
+    await markInstallationInterrupted(target.paths, failed.id);
+
+    await expect(target.restartService().listInstallations()).resolves.toContainEqual(
+      expect.objectContaining({ id: failed.id, status: "ready" }),
+    );
+    await expect(target.contextStores.list()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Shared handbook" }),
+        expect.objectContaining({ name: "Shared handbook (copy)" }),
+      ]),
+    );
+  });
+
   it("recognizes the built-in Pragma management Capability without an installed payload", async () => {
     await expect(
       inspectBundleReadiness([pragmaManagementCapabilityResource()], {
@@ -1274,6 +1424,161 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
   });
 
+  it("imports one local Skill for duplicate Bundle references on create and update", async () => {
+    const sourceCapabilityId = "0123456789abcdef";
+    const payload = await mkdtemp(join(tmpdir(), "pragma-shared-bundle-skill-"));
+    directories.push(payload);
+    await writeFile(
+      join(payload, "SKILL.md"),
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nShared asset.\n",
+    );
+    const sourceCapabilities = {
+      list: async () => [skillCapability(sourceCapabilityId, 1, "1".repeat(64))],
+      get: async () => skillCapability(sourceCapabilityId, 1, "1".repeat(64)),
+      skillFilesPath: async () => payload,
+    } as unknown as CapabilityStore;
+    const source = await createFixture("shared-skill-source", {
+      capabilities: sourceCapabilities,
+    });
+    const snapshot = await source.project.get();
+    const first = portableCapability();
+    first.spec.binding = desktopCapabilityBindingRef(sourceCapabilityId, 1);
+    const second: PragmaCapabilityResource = {
+      ...first,
+      metadata: { ...first.metadata, id: "2222222222222222", name: "Second Skill Resource" },
+    };
+    const sourceExpert = snapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )!;
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [first, second].map((resource) => ({
+              ref: canonicalPragmaResourceRef(resource),
+              kind: "tools" as const,
+            })),
+          },
+        },
+        ...snapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        first,
+        second,
+      ],
+    });
+    const path = join(source.root, "shared-skill.pragma");
+    await source.service.exportTo(exportInput(published.revision), path);
+
+    let created: Capability | undefined;
+    let createCount = 0;
+    const targetCapabilities = {
+      list: async () => (created === undefined ? [] : [created]),
+      publishNewSkillRevisionCandidate: async (input: { id: string }) => {
+        createCount += 1;
+        created = skillCapability(input.id, 1, "2".repeat(64));
+        return created;
+      },
+      get: async (id: string) => {
+        if (created?.manifest.id !== id) throw new Error(`Unexpected Capability ${id}.`);
+        return created;
+      },
+    } as unknown as CapabilityStore;
+    const target = await createFixture("shared-skill-target", {
+      capabilities: targetCapabilities,
+    });
+    const inspection = await target.service.inspect(path);
+    const installation = await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: inspection.bundleFingerprint,
+      expectedProjectFingerprint: inspection.projectFingerprint,
+      expectedProjectRevision: inspection.projectRevision,
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+      assetConflicts: [],
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+
+    expect(installation.status).toBe("ready");
+    expect(createCount).toBe(1);
+    const imported = await target.project.get();
+    const bindings = imported.resources
+      .filter(
+        (resource): resource is PragmaCapabilityResource =>
+          resource.kind === "Capability" &&
+          (resource.metadata.id === first.metadata.id ||
+            resource.metadata.id === second.metadata.id),
+      )
+      .map((resource) => resource.spec.binding);
+    const expectedBinding = desktopCapabilityBindingRef(created!.manifest.id, 1);
+    expect(bindings).toEqual([expectedBinding, expectedBinding]);
+
+    const existingId = "fedcba9876543210";
+    let updated = skillCapability(existingId, 7, "7".repeat(64));
+    let updateCount = 0;
+    const updateCapabilities = {
+      list: async () => [updated],
+      publishSkillRevisionCandidate: async () => {
+        updateCount += 1;
+        updated = skillCapability(existingId, 8, "8".repeat(64));
+        return updated;
+      },
+      get: async () => updated,
+    } as unknown as CapabilityStore;
+    const updateTarget = await createFixture("shared-skill-update-target", {
+      capabilities: updateCapabilities,
+    });
+    const updateInspection = await updateTarget.service.inspect(path);
+    expect(updateInspection.assetConflicts).toHaveLength(1);
+    const updatedInstallation = await updateTarget.service.startImport({
+      sourcePath: path,
+      rootRef: updateInspection.root.ref,
+      expectedFingerprint: updateInspection.bundleFingerprint,
+      expectedProjectFingerprint: updateInspection.projectFingerprint,
+      expectedProjectRevision: updateInspection.projectRevision,
+      conflicts: updateInspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+      assetConflicts: updateInspection.assetConflicts.map((conflict) => ({
+        resourceRef: conflict.resourceRef,
+        assetKind: conflict.assetKind,
+        action: "update" as const,
+        targetAssetId: existingId,
+        expectedTarget: {
+          revision: conflict.candidates[0]!.revision,
+          fingerprint: conflict.candidates[0]!.fingerprint,
+        },
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(updatedInstallation.status).toBe("ready");
+    expect(updateCount).toBe(1);
+    const updatedProject = await updateTarget.project.get();
+    const updatedBindings = updatedProject.resources
+      .filter(
+        (resource): resource is PragmaCapabilityResource =>
+          resource.kind === "Capability" &&
+          (resource.metadata.id === first.metadata.id ||
+            resource.metadata.id === second.metadata.id),
+      )
+      .map((resource) => resource.spec.binding);
+    expect(updatedBindings).toEqual([
+      desktopCapabilityBindingRef(existingId, 8),
+      desktopCapabilityBindingRef(existingId, 8),
+    ]);
+  });
+
   it("accepts only the .pragma transfer format", async () => {
     const fixture = await createFixture("extension");
 
@@ -1836,6 +2141,8 @@ async function createFixture(
     readonly realContextStores?: boolean;
     readonly capabilities?: CapabilityStore;
     readonly failImportPublishOnce?: boolean;
+    readonly interruptNextContextAppend?: boolean;
+    readonly interruptNextContextSnapshotCreate?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), `pragma-bundle-${name}-`));
@@ -1859,11 +2166,34 @@ async function createFixture(
       runtime(overrides.runtimeId ?? "codex", overrides.runtimeResourceId),
     ],
   });
-  const contextStores =
+  const baseContextStores =
     overrides.contextStores ??
     (overrides.realContextStores
       ? createContextStoreStore({ storesPath: join(root, "context-stores") })
       : ({ list: async () => [] } as unknown as ContextStoreStore));
+  let remainingContextAppendInterruptions = overrides.interruptNextContextAppend ? 1 : 0;
+  let remainingContextCreateInterruptions = overrides.interruptNextContextSnapshotCreate ? 1 : 0;
+  const contextStores = new Proxy(baseContextStores, {
+    get(target, property, receiver) {
+      if (property === "createFromSnapshot") {
+        return async (...args: Parameters<ContextStoreStore["createFromSnapshot"]>) => {
+          if (remainingContextCreateInterruptions > 0) {
+            remainingContextCreateInterruptions -= 1;
+            throw new Error("Injected ContextStore snapshot creation interruption.");
+          }
+          return await target.createFromSnapshot(...args);
+        };
+      }
+      if (property !== "appendSnapshot") return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<ContextStoreStore["appendSnapshot"]>) => {
+        if (remainingContextAppendInterruptions > 0) {
+          remainingContextAppendInterruptions -= 1;
+          throw new Error("Injected ContextStore append interruption.");
+        }
+        return await target.appendSnapshot(...args);
+      };
+    },
+  });
   let remainingPublishFailures = overrides.failImportPublishOnce ? 1 : 0;
   const serviceProject = new Proxy(project, {
     get(target, property, receiver) {
@@ -1932,6 +2262,18 @@ function knowledgeFile(id: string, content: string) {
   };
 }
 
+async function markInstallationInterrupted(paths: PragmaPaths, installationId: string) {
+  const catalog = JSON.parse(await readFile(paths.bundleInstallationsCatalog(), "utf8")) as {
+    installations: Record<string, unknown>[];
+  };
+  catalog.installations = catalog.installations.map((record) =>
+    record["id"] === installationId
+      ? { ...record, status: "installing", error: undefined }
+      : record,
+  );
+  await writeFile(paths.bundleInstallationsCatalog(), `${JSON.stringify(catalog, undefined, 2)}\n`);
+}
+
 function knowledgeExportInput(projectRevision: number) {
   return {
     rootRef: "context-store:kqh4nx7rx26mb3e7" as const,
@@ -1948,13 +2290,16 @@ function knowledgeExportInput(projectRevision: number) {
 async function publishKnowledgeResource(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   storeId: string,
+  resourceName?: string,
 ): Promise<number> {
   const snapshot = await fixture.project.get();
+  const resource = contextStore(storeId);
+  if (resourceName !== undefined) resource.metadata.name = resourceName;
   const published = await fixture.project.publish({
     expectedRevision: snapshot.revision,
     resources: [
       ...snapshot.resources.filter((resource) => resource.kind !== "ContextStore"),
-      contextStore(storeId),
+      resource,
     ],
   });
   return published.revision;

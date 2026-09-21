@@ -233,27 +233,82 @@ describe("capability store", () => {
 
   it("removes Bundle identity while upgrading a v2 manifest without changing its local ID", async () => {
     const { directory, store } = await createStore();
-    const created = await store.create({ definition: httpDefinition, credentials: {} });
-    const root = join(directory, "capabilities", created.manifest.id);
+    const fixture = JSON.parse(
+      await readFile(
+        new URL("./test-fixtures/capability-manifest-v2.json", import.meta.url),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    const id = String(fixture["id"]);
+    const root = join(directory, "capabilities", id);
+    await mkdir(join(root, "revisions", "000001"), { recursive: true });
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(fixture)}\n`);
     await writeFile(
-      join(root, "capability.json"),
+      join(root, "revisions", "000001", "definition.json"),
+      `${JSON.stringify({ ...httpDefinition, name: fixture["name"] })}\n`,
+    );
+    await writeFile(
+      join(root, "health.json"),
       `${JSON.stringify({
-        ...created.manifest,
-        schemaVersion: "pragma.capability/v2",
-        origin: { kind: "pragma-bundle", logicalId: "0123456789abcdef" },
+        revision: 1,
+        status: "ready",
+        checkedAt: fixture["updatedAt"],
       })}\n`,
     );
 
-    const migrated = await store.get(created.manifest.id);
+    const migrated = await store.get(id);
     expect(migrated.manifest).toMatchObject({
       schemaVersion: "pragma.capability/v3",
-      id: created.manifest.id,
-      latestRevision: created.manifest.latestRevision,
+      id,
+      latestRevision: 1,
     });
     expect("origin" in migrated.manifest).toBe(false);
     await expect(
       readFile(join(root, "migration-backups", "capability.v2.json"), "utf8"),
-    ).resolves.toContain("0123456789abcdef");
+    ).resolves.toContain("fedcba9876543210");
+  });
+
+  it("replays an interrupted v2 to v3 manifest journal from a historical fixture", async () => {
+    const { directory, store } = await createStore();
+    const fixture = JSON.parse(
+      await readFile(
+        new URL("./test-fixtures/capability-manifest-v2.json", import.meta.url),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    const id = String(fixture["id"]);
+    const root = join(directory, "capabilities", id);
+    const targetManifest = {
+      ...fixture,
+      schemaVersion: "pragma.capability/v3",
+    } as Record<string, unknown>;
+    delete targetManifest["origin"];
+    await mkdir(join(root, "revisions", "000001"), { recursive: true });
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(fixture)}\n`);
+    await writeFile(
+      join(root, "revisions", "000001", "definition.json"),
+      `${JSON.stringify({ ...httpDefinition, name: fixture["name"] })}\n`,
+    );
+    await writeFile(
+      join(root, "health.json"),
+      `${JSON.stringify({ revision: 1, status: "ready", checkedAt: fixture["updatedAt"] })}\n`,
+    );
+    await writeFile(
+      join(root, "manifest-to-v3.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.capability-manifest-migration/v2",
+        sourceSchema: "pragma.capability/v2",
+        targetSchema: "pragma.capability/v3",
+        targetManifest,
+      })}\n`,
+    );
+
+    await expect(store.get(id)).resolves.toMatchObject({
+      manifest: { schemaVersion: "pragma.capability/v3", id },
+    });
+    await expect(readFile(join(root, "manifest-to-v3.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("leaves an over-limit v1 capability unchanged with an actionable diagnostic", async () => {

@@ -329,6 +329,8 @@ const PragmaBundleKnowledgeBaseUpdateSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
     importedSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    importedName: z.string().trim().min(1).max(200).optional(),
+    importedDescription: z.string().trim().max(2_000).optional(),
     phase: z.enum(["prepared", "applied"]),
   })
   .strict()

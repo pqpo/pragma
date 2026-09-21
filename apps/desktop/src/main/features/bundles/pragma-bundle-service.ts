@@ -429,6 +429,13 @@ export function createPragmaBundleService(options: {
     ) {
       throw new Error("The interrupted knowledge-base import journal does not match its archive.");
     }
+    const importedName = update.importedName ?? dependency.name;
+    const importedDescription = update.importedDescription ?? dependency.description;
+    const importedFingerprint = knowledgeBaseAssetFingerprint({
+      name: importedName,
+      description: importedDescription,
+      snapshotHash: update.importedSnapshotHash,
+    });
     let store = (await options.contextStores.list()).find(
       (candidate) => candidate.id === update.storeId,
     );
@@ -438,8 +445,8 @@ export function createPragmaBundleService(options: {
       }
       store = await options.contextStores.createFromSnapshot({
         id: update.storeId,
-        name: dependency.name,
-        description: dependency.description,
+        name: importedName,
+        description: importedDescription,
         directories: dependency.snapshot.directories,
         files: dependency.snapshot.files,
         author: "import",
@@ -448,10 +455,17 @@ export function createPragmaBundleService(options: {
       });
     } else {
       const snapshot = await options.contextStores.getSnapshot(store.id);
-      if (snapshot.snapshotHash !== update.importedSnapshotHash) {
+      const currentFingerprint = knowledgeBaseAssetFingerprint({
+        name: store.name,
+        description: store.description,
+        snapshotHash: snapshot.snapshotHash,
+      });
+      if (currentFingerprint !== importedFingerprint) {
+        const contentAlreadyApplied = snapshot.snapshotHash === update.importedSnapshotHash;
         if (
-          snapshot.revision !== update.baseRevision ||
-          snapshot.snapshotHash !== update.baseSnapshotHash
+          !contentAlreadyApplied &&
+          (snapshot.revision !== update.baseRevision ||
+            snapshot.snapshotHash !== update.baseSnapshotHash)
         ) {
           throw new Error(
             "The target knowledge base changed after an interrupted import. Inspect the Bundle again.",
@@ -466,6 +480,8 @@ export function createPragmaBundleService(options: {
             directories: dependency.snapshot.directories,
             files: dependency.snapshot.files,
             summary: "Recover interrupted knowledge-base Bundle import.",
+            name: importedName,
+            description: importedDescription,
           },
           "import",
         );
@@ -1095,22 +1111,36 @@ export function createPragmaBundleService(options: {
           }
         }
       }
+      const importedSkillAssets = new Map<
+        string,
+        {
+          readonly resourceRef: PragmaResourceRef;
+          readonly assetKind: "skill";
+          readonly name: string;
+          readonly fingerprint: string;
+        }
+      >();
+      for (const dependency of archive.manifest.dependencies.capabilities) {
+        if (
+          !dependency.included ||
+          dependency.kind !== "skill" ||
+          dependency.definitionFingerprint === undefined
+        ) {
+          continue;
+        }
+        const key = bundleCapabilityAssetKey(dependency);
+        if (!importedSkillAssets.has(key)) {
+          importedSkillAssets.set(key, {
+            resourceRef: PragmaResourceRefSchema.parse(dependency.resourceRef),
+            assetKind: "skill",
+            name: dependency.name,
+            fingerprint: dependency.definitionFingerprint,
+          });
+        }
+      }
       const assetConflicts = findBundleAssetConflicts(
         [
-          ...archive.manifest.dependencies.capabilities.flatMap((dependency) =>
-            dependency.included &&
-            dependency.kind === "skill" &&
-            dependency.definitionFingerprint !== undefined
-              ? [
-                  {
-                    resourceRef: PragmaResourceRefSchema.parse(dependency.resourceRef),
-                    assetKind: "skill" as const,
-                    name: dependency.name,
-                    fingerprint: dependency.definitionFingerprint,
-                  },
-                ]
-              : [],
-          ),
+          ...importedSkillAssets.values(),
           ...archive.manifest.dependencies.contextStores.flatMap((dependency) =>
             dependency.included && dependency.fingerprint !== undefined
               ? [
@@ -1551,9 +1581,10 @@ export function createPragmaBundleService(options: {
               if (dependency.definition === undefined || !dependency.included) {
                 continue;
               }
-              const group = bundleCapabilityGroups.get(dependency.resourceRef) ?? [];
+              const key = bundleCapabilityAssetKey(dependency);
+              const group = bundleCapabilityGroups.get(key) ?? [];
               group.push(dependency);
-              bundleCapabilityGroups.set(dependency.resourceRef, group);
+              bundleCapabilityGroups.set(key, group);
             }
             const importedBundleCapabilities = new Map<
               string,
@@ -1562,9 +1593,10 @@ export function createPragmaBundleService(options: {
                 readonly bindingRevision?: number;
               }
             >();
-            for (const [sourceRef, group] of bundleCapabilityGroups) {
+            for (const group of bundleCapabilityGroups.values()) {
               const temporaryPayloads: string[] = [];
               try {
+                const sourceRef = group[0]!.resourceRef as PragmaResourceRef;
                 const resourceResolution = input.conflicts.find(
                   (candidate) => candidate.resourceRef === sourceRef,
                 );
@@ -1610,10 +1642,12 @@ export function createPragmaBundleService(options: {
                   if (targetCapability === undefined) {
                     throw new Error(`The selected local capability is unavailable: ${targetRef}.`);
                   }
-                  importedBundleCapabilities.set(sourceRef, {
-                    capability: targetCapability,
-                    bindingRevision: targetCapability.manifest.latestRevision,
-                  });
+                  for (const dependency of group) {
+                    importedBundleCapabilities.set(dependency.resourceRef, {
+                      capability: targetCapability,
+                      bindingRevision: targetCapability.manifest.latestRevision,
+                    });
+                  }
                   continue;
                 }
                 const revisionsByNumber = new Map<
@@ -1730,7 +1764,7 @@ export function createPragmaBundleService(options: {
                     throw new Error("The imported Skill payload is unavailable.");
                   }
                   const importedName =
-                    importAction === "copy"
+                    assetResolution?.action === "copy"
                       ? nextBundleAssetCopyName(
                           latest.definition.name,
                           (await options.capabilities.list())
@@ -1756,10 +1790,12 @@ export function createPragmaBundleService(options: {
                     credentials: {},
                   });
                 }
-                importedBundleCapabilities.set(sourceRef, {
-                  capability: imported,
-                  bindingRevision: imported.manifest.latestRevision,
-                });
+                for (const dependency of group) {
+                  importedBundleCapabilities.set(dependency.resourceRef, {
+                    capability: imported,
+                    bindingRevision: imported.manifest.latestRevision,
+                  });
+                }
                 if (!before.has(imported.manifest.id)) {
                   await updateInstallation(initial.id, (record) => ({
                     ...record,
@@ -1982,6 +2018,8 @@ export function createPragmaBundleService(options: {
                       baseRevision: currentSnapshot.revision,
                       baseSnapshotHash: currentSnapshot.snapshotHash,
                       importedSnapshotHash: dependency.snapshot!.snapshotHash,
+                      importedName: dependency.name,
+                      importedDescription: dependency.description,
                       phase: "prepared",
                     },
                     updatedAt: new Date().toISOString(),
@@ -2020,7 +2058,7 @@ export function createPragmaBundleService(options: {
               if (store === undefined && dependency.snapshot !== undefined) {
                 const importedStoreId = randomUUID();
                 const importedName =
-                  importAction === "copy"
+                  assetResolution?.action === "copy"
                     ? nextBundleAssetCopyName(
                         dependency.name,
                         stores.map((candidate) => candidate.name),
@@ -2035,6 +2073,8 @@ export function createPragmaBundleService(options: {
                       targetRef,
                       storeId: importedStoreId,
                       importedSnapshotHash: dependency.snapshot!.snapshotHash,
+                      importedName,
+                      importedDescription: dependency.description,
                       phase: "prepared",
                     },
                     updatedAt: new Date().toISOString(),
@@ -2679,6 +2719,7 @@ async function validateBundleAssetResolutions(input: {
   const capabilities = await input.capabilities.list();
   const stores = await input.contextStores.list();
   const expectedKeys = new Set<string>();
+  const inspectedSkillAssets = new Set<string>();
   for (const dependency of input.archive.manifest.dependencies.capabilities) {
     if (
       !dependency.included ||
@@ -2687,6 +2728,9 @@ async function validateBundleAssetResolutions(input: {
     ) {
       continue;
     }
+    const assetKey = bundleCapabilityAssetKey(dependency);
+    if (inspectedSkillAssets.has(assetKey)) continue;
+    inspectedSkillAssets.add(assetKey);
     const candidates = capabilities.filter(
       (candidate) =>
         candidate.definition.kind === "skill" &&
@@ -2772,6 +2816,15 @@ async function validateBundleAssetResolutions(input: {
     }
   }
   return resolutionByRef;
+}
+
+function bundleCapabilityAssetKey(dependency: {
+  readonly logicalId?: string | undefined;
+  readonly resourceRef: string;
+}): string {
+  return dependency.logicalId === undefined
+    ? `resource:${dependency.resourceRef}`
+    : `logical:${dependency.logicalId}`;
 }
 
 async function readDesktopBundle(
