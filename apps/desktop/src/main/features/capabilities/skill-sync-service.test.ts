@@ -80,6 +80,28 @@ describe("Skill sync service", () => {
     expect((await fixture.restartService().getOverview()).status).toBe("conflict");
   });
 
+  it("restores the selected target without publishing the local Skill", async () => {
+    const fixture = await createFixture();
+    const id = "26262626-2626-4626-8626-262626262626";
+    await fixture.addLocalSkill(id, "Restored Skill");
+    fixture.provider.repository.skills.set(
+      `capability/${id}`,
+      remoteSkill({ kind: "capability", id }, "Restored Skill", "Remote restored content"),
+    );
+    fixture.provider.advance();
+
+    const restored = await fixture.service.configure({
+      ...configuration(),
+      initializationMode: "restore_remote",
+    });
+
+    expect(restored.status).toBe("ready");
+    expect(fixture.capabilities.get(id)).toMatchObject({
+      manifest: { latestRevision: 2 },
+      definition: { description: "Restored Skill description" },
+    });
+  });
+
   it("preserves a conflict across an unrelated local publication", async () => {
     const fixture = await createFixture();
     const conflictedId = "55555555-5555-4555-8555-555555555555";
@@ -364,7 +386,7 @@ describe("Skill sync service", () => {
     );
   });
 
-  it("treats remotes that differ only by a .git suffix as distinct sources", async () => {
+  it("treats remotes that differ only by a .git suffix as the same source", async () => {
     const fixture = await createFixture();
     const id = "24242424-2424-4424-8424-242424242424";
     await fixture.addLocalSkill(id, "Distinct Remote Skill");
@@ -383,10 +405,8 @@ describe("Skill sync service", () => {
 
     const overview = await fixture.service.refresh();
 
-    expect(fixture.capabilities.has(id)).toBe(true);
-    expect(overview.skills).toContainEqual(
-      expect.objectContaining({ syncKey: `capability/${id}`, status: "pending" }),
-    );
+    expect(fixture.capabilities.has(id)).toBe(false);
+    expect(overview.status).toBe("ready");
   });
 
   it("rejects a local Skill file that exceeds the UTF-8 byte limit", async () => {

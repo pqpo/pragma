@@ -29,8 +29,17 @@ import {
   type KnowledgeSyncConfiguration,
   type KnowledgeSyncOverview,
   type KnowledgeSyncStoreManifest,
+  type UpdateKnowledgeSyncConfiguration,
 } from "../../../shared/contracts/index.ts";
 import { hashSnapshotContent, type ContextStoreStore } from "./context-store-store.ts";
+import {
+  backupSourceKey,
+  type BackupProviderHead,
+  canonicalBackupRemote,
+  resolvedReferenceChanged,
+  sourceChanged,
+  type StudioBackupProvider,
+} from "../studio-sync/studio-backup-sync.ts";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
@@ -43,7 +52,7 @@ const MAX_STORE_FILES = 5_000;
 const MAX_REPOSITORY_STORES = 500;
 const MAX_REPOSITORY_CONTENT_BYTES = 100 * 1024 * 1024;
 const MAX_ERROR_MESSAGE_LENGTH = 2_000;
-type SyncIntent = "full" | "pull_only";
+type SyncIntent = "full" | "pull_only" | "restore";
 
 export type RemoteStore = {
   readonly id: string;
@@ -57,24 +66,14 @@ export type RemoteRepository = {
   readonly stores: ReadonlyMap<string, RemoteStore>;
 };
 
-export type ProviderHead = {
-  readonly revision?: string | undefined;
-  readonly reference?: string | undefined;
-  readonly repository: RemoteRepository;
-};
+export type ProviderHead = BackupProviderHead<RemoteRepository>;
 
-export interface ContextStoreSyncProvider {
-  readHead(): Promise<ProviderHead>;
-  publish(input: {
-    readonly expectedRevision?: string | undefined;
-    readonly repository: RemoteRepository;
+export type ContextStoreSyncProvider = StudioBackupProvider<
+  RemoteRepository,
+  {
     readonly alternate?: RemoteRepository | undefined;
-    readonly message: string;
-  }): Promise<
-    | { readonly status: "published"; readonly revision: string }
-    | { readonly status: "head_changed" }
-  >;
-}
+  }
+>;
 
 type LocalStore = RemoteStore & {
   readonly revision: number;
@@ -92,7 +91,8 @@ const StoredStoreSummarySchema = z
 
 const KnowledgeSyncStateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.knowledge-sync-state/v1"),
+    schemaVersion: z.literal("pragma.knowledge-sync-state/v2"),
+    sourceKey: z.string().min(1).max(4_000).optional(),
     revision: z.string().optional(),
     resolvedBranch: z.string().optional(),
     syncedAt: z.string().datetime().optional(),
@@ -115,10 +115,15 @@ const KnowledgeSyncStateSchema = z
   })
   .strict();
 
+const KnowledgeSyncStateV1Schema = KnowledgeSyncStateSchema.omit({ sourceKey: true }).extend({
+  schemaVersion: z.literal("pragma.knowledge-sync-state/v1"),
+});
+
 type SyncState = z.infer<typeof KnowledgeSyncStateSchema>;
 
-const emptyState = (): SyncState => ({
-  schemaVersion: "pragma.knowledge-sync-state/v1",
+const emptyState = (sourceKey?: string): SyncState => ({
+  schemaVersion: "pragma.knowledge-sync-state/v2",
+  ...(sourceKey === undefined ? {} : { sourceKey }),
   bases: {},
   ignoredRemote: [],
   conflicts: {},
@@ -127,7 +132,8 @@ const emptyState = (): SyncState => ({
 export interface KnowledgeSyncService {
   getOverview(): Promise<KnowledgeSyncOverview>;
   configure(
-    input: Omit<KnowledgeSyncConfiguration, "schemaVersion">,
+    input: Omit<UpdateKnowledgeSyncConfiguration, "initializationMode"> &
+      Partial<Pick<UpdateKnowledgeSyncConfiguration, "initializationMode">>,
   ): Promise<KnowledgeSyncOverview>;
   removeConfiguration(): Promise<void>;
   sync(): Promise<KnowledgeSyncOverview>;
@@ -171,7 +177,20 @@ export function createKnowledgeSyncService(options: {
   };
   const readState = async (): Promise<SyncState> => {
     try {
-      return KnowledgeSyncStateSchema.parse(JSON.parse(await readFile(options.statePath, "utf8")));
+      const raw: unknown = JSON.parse(await readFile(options.statePath, "utf8"));
+      if (
+        typeof raw === "object" &&
+        raw !== null &&
+        "schemaVersion" in raw &&
+        raw.schemaVersion === "pragma.knowledge-sync-state/v1"
+      ) {
+        const legacy = KnowledgeSyncStateV1Schema.parse(raw);
+        return KnowledgeSyncStateSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.knowledge-sync-state/v2",
+        });
+      }
+      return KnowledgeSyncStateSchema.parse(raw);
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return emptyState();
       throw error;
@@ -241,12 +260,12 @@ export function createKnowledgeSyncService(options: {
     head: ProviderHead,
     intent: SyncIntent,
   ): Promise<KnowledgeSyncOverview> => {
+    const sourceKey = backupSourceKey(configuration);
     if (
-      state.resolvedBranch !== undefined &&
-      head.reference !== undefined &&
-      state.resolvedBranch !== head.reference
+      sourceChanged(state.sourceKey, configuration) ||
+      resolvedReferenceChanged(state.resolvedBranch, head.reference)
     ) {
-      state = emptyState();
+      state = emptyState(sourceKey);
     }
     const local = await localStores();
     const remote = new Map(head.repository.stores);
@@ -276,6 +295,16 @@ export function createKnowledgeSyncService(options: {
       }
       if (localFingerprint === remoteFingerprint) {
         nextBases[id] = localFingerprint;
+        continue;
+      }
+      if (intent === "restore") {
+        try {
+          await applyRemote(localStore, remoteStore);
+          nextBases[id] = remoteFingerprint;
+        } catch (error) {
+          nextConflicts[id] = conflictState(head, localStore, remoteStore);
+          options.warn?.("Knowledge restore requires attention.", error);
+        }
         continue;
       }
       if (base === undefined) {
@@ -336,7 +365,8 @@ export function createKnowledgeSyncService(options: {
       }
     }
     const next: SyncState = {
-      schemaVersion: "pragma.knowledge-sync-state/v1",
+      schemaVersion: "pragma.knowledge-sync-state/v2",
+      sourceKey,
       ...(revision === undefined ? {} : { revision }),
       ...(head.reference === undefined ? {} : { resolvedBranch: head.reference }),
       syncedAt: new Date().toISOString(),
@@ -439,9 +469,10 @@ export function createKnowledgeSyncService(options: {
       return await buildOverview(configuration, state, await localStores(), status);
     },
     async configure(input) {
+      const { initializationMode = "publish_local", ...settings } = input;
       const configuration = KnowledgeSyncConfigurationSchema.parse({
         schemaVersion: "pragma.knowledge-sync-settings/v1",
-        ...input,
+        ...settings,
       });
       return await withFileLock(lockPath, async () => {
         const provider = providerFor(configuration);
@@ -450,13 +481,18 @@ export function createKnowledgeSyncService(options: {
         await writeJsonAtomic(options.configurationPath, configuration);
         if (
           previous === undefined ||
-          canonicalRemote(previous.remote) !== canonicalRemote(configuration.remote) ||
+          canonicalBackupRemote(previous.remote) !== canonicalBackupRemote(configuration.remote) ||
           previous.branch !== configuration.branch
         ) {
-          await writeState(emptyState());
+          await writeState(emptyState(backupSourceKey(configuration)));
         }
         transientStatus = "syncing";
-        return await runLocked(configuration, "full", head, provider);
+        return await runLocked(
+          configuration,
+          initializationMode === "restore_remote" ? "restore" : "full",
+          head,
+          provider,
+        );
       });
     },
     async removeConfiguration() {
@@ -513,6 +549,14 @@ export function createKnowledgeSyncService(options: {
           | undefined;
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const head = await provider.readHead();
+          if (
+            sourceChanged(state.sourceKey, configuration) ||
+            resolvedReferenceChanged(state.resolvedBranch, head.reference)
+          ) {
+            throw new Error(
+              "The knowledge backup target changed. Synchronize again before resolving this conflict.",
+            );
+          }
           const remote = head.repository.stores.get(storeId);
           if (fingerprint(remote) !== conflict.remote.fingerprint) {
             throw new Error(
@@ -886,7 +930,7 @@ async function ensureGitRepository(path: string, remote: string, git: GitRunner)
   try {
     await access(join(path, ".git"));
     const current = (await git(path, ["config", "--get", "remote.origin.url"])).trim();
-    if (canonicalRemote(current) !== canonicalRemote(remote)) {
+    if (canonicalBackupRemote(current) !== canonicalBackupRemote(remote)) {
       await rm(path, { recursive: true, force: true });
     } else return;
   } catch {
@@ -1057,13 +1101,6 @@ function unconfiguredOverview(): KnowledgeSyncOverview {
   return { configured: false, status: "unconfigured", stores: [], conflicts: [] };
 }
 
-function canonicalRemote(remote: string): string {
-  return remote
-    .trim()
-    .replace(/\.git$/u, "")
-    .replace(/\/$/u, "");
-}
-
 async function assertRegularFile(path: string): Promise<void> {
   const entry = await lstat(path);
   if (!entry.isFile() || entry.isSymbolicLink()) {
@@ -1099,6 +1136,7 @@ function storeSummary(store: RemoteStore | undefined) {
 }
 
 function mergeIntent(left: SyncIntent, right: SyncIntent): SyncIntent {
+  if (left === "restore" || right === "restore") return "restore";
   return left === "full" || right === "full" ? "full" : "pull_only";
 }
 

@@ -399,7 +399,9 @@ function BundleImportDialog(props: {
   const { t } = useTranslation("studio");
   const [step, setStep] = useState<ImportStep>("select");
   const [inspection, setInspection] = useState<PragmaBundleImportInspection | null>(null);
-  const [conflicts, setConflicts] = useState<Record<string, "copy" | "update">>({});
+  const [conflicts, setConflicts] = useState<
+    Record<string, "copy" | "update" | "keep_local">
+  >({});
   const [bindingIndex, setBindingIndex] = useState(0);
   const [runtimeBindings, setRuntimeBindings] = useState<Record<string, RuntimeBindingDraft>>({});
   const [capabilityBindings, setCapabilityBindings] = useState<Record<string, string>>({});
@@ -886,7 +888,10 @@ function BundleImportDialog(props: {
                 Object.fromEntries(
                   inspection.conflicts.map((conflict) => [
                     conflict.ref,
-                    action === "update" && !conflict.updateAllowed ? "copy" : action,
+                    (action === "update" || action === "keep_local") &&
+                    !conflict.updateAllowed
+                      ? "copy"
+                      : action,
                   ]),
                 ),
               )
@@ -1264,8 +1269,8 @@ export function BundleFileStep(props: {
 
 export function BundleInspection(props: {
   readonly inspection: PragmaBundleImportInspection;
-  readonly selections: Readonly<Record<string, "copy" | "update">>;
-  readonly onChange: (ref: string, action: "copy" | "update") => void;
+  readonly selections: Readonly<Record<string, "copy" | "update" | "keep_local">>;
+  readonly onChange: (ref: string, action: "copy" | "update" | "keep_local") => void;
 }) {
   return (
     <BundleConflictStep
@@ -1279,9 +1284,9 @@ export function BundleInspection(props: {
 
 function BundleConflictStep(props: {
   readonly inspection: PragmaBundleImportInspection;
-  readonly selections: Readonly<Record<string, "copy" | "update">>;
-  readonly onChange: (ref: string, action: "copy" | "update") => void;
-  readonly onSetAll: (action: "copy" | "update") => void;
+  readonly selections: Readonly<Record<string, "copy" | "update" | "keep_local">>;
+  readonly onChange: (ref: string, action: "copy" | "update" | "keep_local") => void;
+  readonly onSetAll: (action: "copy" | "update" | "keep_local") => void;
 }) {
   const { t } = useTranslation("studio");
   return (
@@ -1297,6 +1302,9 @@ function BundleConflictStep(props: {
           </button>
           <button type="button" onClick={() => props.onSetAll("update")}>
             {t("bundleAllUpdates")}
+          </button>
+          <button type="button" onClick={() => props.onSetAll("keep_local")}>
+            {t("bundleAllKeepLocal")}
           </button>
         </div>
       </header>
@@ -1323,12 +1331,26 @@ function BundleConflictStep(props: {
             <div className="pragma-bundle-conflict-choice" role="group">
               <button
                 type="button"
-                aria-pressed={props.selections[conflict.ref] !== "update"}
-                className={props.selections[conflict.ref] !== "update" ? "is-selected" : ""}
+                aria-pressed={props.selections[conflict.ref] === "copy"}
+                className={props.selections[conflict.ref] === "copy" ? "is-selected" : ""}
                 onClick={() => props.onChange(conflict.ref, "copy")}
               >
                 <strong>{t("bundleImportCopy")}</strong>
                 <small>{t("bundleImportCopyShortHint")}</small>
+              </button>
+              <button
+                type="button"
+                disabled={!conflict.updateAllowed}
+                aria-pressed={props.selections[conflict.ref] === "keep_local"}
+                className={props.selections[conflict.ref] === "keep_local" ? "is-selected" : ""}
+                onClick={() => props.onChange(conflict.ref, "keep_local")}
+              >
+                <strong>{t("bundleKeepLocal")}</strong>
+                <small>
+                  {conflict.updateAllowed
+                    ? t("bundleKeepLocalHint")
+                    : t("bundleUpdateBlocked")}
+                </small>
               </button>
               <button
                 type="button"
@@ -1584,12 +1606,13 @@ function BundleBindingStep(props: {
 
 function BundleReview(props: {
   readonly inspection: PragmaBundleImportInspection;
-  readonly conflicts: Readonly<Record<string, "copy" | "update">>;
+  readonly conflicts: Readonly<Record<string, "copy" | "update" | "keep_local">>;
   readonly requirements: readonly BindingRequirement[];
 }) {
   const { t } = useTranslation("studio");
   const copies = Object.values(props.conflicts).filter((value) => value === "copy").length;
   const updates = Object.values(props.conflicts).filter((value) => value === "update").length;
+  const kept = Object.values(props.conflicts).filter((value) => value === "keep_local").length;
   const deferred = props.requirements.filter((requirement) => !requirement.required).length;
   return (
     <section className="pragma-bundle-review">
@@ -1616,6 +1639,10 @@ function BundleReview(props: {
         <div>
           <dt>{t("bundleReviewUpdates")}</dt>
           <dd>{updates}</dd>
+        </div>
+        <div>
+          <dt>{t("bundleReviewKeptLocal")}</dt>
+          <dd>{kept}</dd>
         </div>
         <div>
           <dt>{t("bundleReviewBindings")}</dt>

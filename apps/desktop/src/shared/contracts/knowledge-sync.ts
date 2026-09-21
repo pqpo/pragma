@@ -21,6 +21,8 @@ export const KnowledgeSyncConfigurationSchema = z
 
 export const UpdateKnowledgeSyncConfigurationSchema = KnowledgeSyncConfigurationSchema.omit({
   schemaVersion: true,
+}).extend({
+  initializationMode: z.enum(["publish_local", "restore_remote"]).default("publish_local"),
 });
 
 export const KnowledgeSyncRepositoryManifestSchema = z

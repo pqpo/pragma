@@ -104,7 +104,7 @@ import {
 
 const InstallationCatalogSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installations/v5"),
+    schemaVersion: z.literal("pragma.bundle-installations/v6"),
     installations: z.array(PragmaBundleInstallationSchema),
   })
   .strict();
@@ -264,8 +264,14 @@ function assertRequirementTargets(
 }
 
 function sameConflictResolutions(
-  left: readonly { readonly resourceRef: string; readonly action: "update" | "copy" }[],
-  right: readonly { readonly resourceRef: string; readonly action: "update" | "copy" }[],
+  left: readonly {
+    readonly resourceRef: string;
+    readonly action: "update" | "copy" | "keep_local";
+  }[],
+  right: readonly {
+    readonly resourceRef: string;
+    readonly action: "update" | "copy" | "keep_local";
+  }[],
 ): boolean {
   if (left.length !== right.length) return false;
   const rightByRef = new Map(
@@ -337,7 +343,7 @@ export function createPragmaBundleService(options: {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: "pragma.bundle-installations/v5", installations: [] };
+        return { schemaVersion: "pragma.bundle-installations/v6", installations: [] };
       }
       throw error;
     }
@@ -1376,7 +1382,7 @@ export function createPragmaBundleService(options: {
           );
           const timestamp = new Date().toISOString();
           const initial = PragmaBundleInstallationSchema.parse({
-            schemaVersion: "pragma.bundle-installation/v5",
+            schemaVersion: "pragma.bundle-installation/v6",
             bundleVersion: "pragma.bundle/v2",
             sourceProjectFingerprint: archive.manifest.projectFingerprint,
             id: installationId,
@@ -1408,6 +1414,18 @@ export function createPragmaBundleService(options: {
                 : resource,
             );
             const sourceToTarget = localized.resourceMappings;
+            const keptLocalTargets = new Set(
+              input.conflicts
+                .filter((resolution) => resolution.action === "keep_local")
+                .map(
+                  (resolution) =>
+                    sourceToTarget.get(resolution.resourceRef as PragmaResourceRef) ??
+                    resolution.resourceRef,
+                ),
+            );
+            resources = resources.filter(
+              (resource) => !keptLocalTargets.has(canonicalPragmaResourceRef(resource)),
+            );
             const importedRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
             const createdResourceRefs = [...importedRefs].filter((ref) => !currentRefs.has(ref));
@@ -1451,6 +1469,31 @@ export function createPragmaBundleService(options: {
             for (const [logicalId, group] of bundleCapabilityGroups) {
               const temporaryPayloads: string[] = [];
               try {
+                const sourceRef = group[0]!.resourceRef as PragmaResourceRef;
+                const resolution = input.conflicts.find(
+                  (candidate) => candidate.resourceRef === sourceRef,
+                );
+                const targetRef = sourceToTarget.get(sourceRef) ?? sourceRef;
+                const targetResource = current.resources.find(
+                  (candidate) => canonicalPragmaResourceRef(candidate) === targetRef,
+                );
+                const targetCapabilityId =
+                  targetResource?.kind === "Capability"
+                    ? parseDesktopCapabilityBindingRef(targetResource.spec.binding ?? "")
+                    : undefined;
+                const targetCapability =
+                  targetCapabilityId === undefined
+                    ? undefined
+                    : (await options.capabilities.list()).find(
+                        (candidate) => candidate.manifest.id === targetCapabilityId.id,
+                      );
+                if (resolution?.action === "keep_local") {
+                  if (targetCapability === undefined) {
+                    throw new Error(`The selected local capability is unavailable: ${targetRef}.`);
+                  }
+                  importedBundleCapabilities.set(logicalId, targetCapability);
+                  continue;
+                }
                 const revisions: {
                   readonly revision: number;
                   readonly definition: z.infer<typeof CapabilityDefinitionSchema>;
@@ -1521,10 +1564,26 @@ export function createPragmaBundleService(options: {
                 const before = new Set(
                   (await options.capabilities.list()).map((capability) => capability.manifest.id),
                 );
-                const imported = await options.capabilities.importBundleRevisions({
-                  logicalId,
-                  revisions,
-                });
+                const latest = revisions.at(-1)!;
+                const imported =
+                  resolution?.action === "update" &&
+                  targetCapability?.definition.kind === "skill" &&
+                  latest.definition.kind === "skill" &&
+                  latest.payloadPath !== undefined
+                    ? await options.capabilities.publishSkillRevisionCandidate({
+                        id: targetCapability.manifest.id,
+                        baseRevision: targetCapability.manifest.latestRevision,
+                        baseContentHash: targetCapability.definition.contentHash,
+                        sourcePath: latest.payloadPath,
+                        candidateContentHash: latest.definition.contentHash,
+                      })
+                    : await options.capabilities.importBundleRevisions({
+                        logicalId:
+                          resolution?.action === "copy"
+                            ? CapabilityIdSchema.parse(targetRef.slice("capability:".length))
+                            : logicalId,
+                        revisions,
+                      });
                 importedBundleCapabilities.set(logicalId, imported);
                 if (!before.has(imported.manifest.id)) {
                   await updateInstallation(initial.id, (record) => ({
@@ -1680,19 +1739,27 @@ export function createPragmaBundleService(options: {
                 (candidate) => canonicalPragmaResourceRef(candidate) === targetRef,
               );
               const updateStoreId =
-                conflictAction?.action === "update" && currentResource?.kind === "ContextStore"
+                (conflictAction?.action === "update" || conflictAction?.action === "keep_local") &&
+                currentResource?.kind === "ContextStore"
                   ? parseDesktopContextBindingRef(currentResource.spec.binding ?? "")
                   : undefined;
               let store =
                 updateStoreId === undefined
                   ? undefined
                   : stores.find((candidate) => candidate.id === updateStoreId);
-              if (conflictAction?.action === "update" && store === undefined) {
+              if (
+                (conflictAction?.action === "update" || conflictAction?.action === "keep_local") &&
+                store === undefined
+              ) {
                 throw new Error(
                   `The matched knowledge base is not bound to an available managed Store: ${targetRef}.`,
                 );
               }
-              if (store !== undefined && dependency.snapshot !== undefined) {
+              if (
+                store !== undefined &&
+                dependency.snapshot !== undefined &&
+                conflictAction?.action !== "keep_local"
+              ) {
                 const currentSnapshot = await options.contextStores.getSnapshot(store.id);
                 if (
                   conflictAction?.action === "update" &&

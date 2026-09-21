@@ -20,9 +20,18 @@ import {
   type SkillSyncIdentity,
   type SkillSyncOverview,
   type SkillSyncSkillManifest,
+  type UpdateSkillSyncConfiguration,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
+import {
+  backupSourceKey,
+  type BackupProviderHead,
+  canonicalBackupRemote,
+  resolvedReferenceChanged,
+  sourceChanged,
+  type StudioBackupProvider,
+} from "../studio-sync/studio-backup-sync.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT_MANIFEST = "pragma-skill-sync.yaml";
@@ -34,7 +43,7 @@ const MAX_REPOSITORY_SKILLS = 500;
 const MAX_REPOSITORY_BYTES = 25 * 1024 * 1024;
 const MAX_GIT_INDEX_RECORD_BYTES = 16 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
-type SyncIntent = "full" | "pull_only";
+type SyncIntent = "full" | "pull_only" | "restore";
 
 export type RemoteSkillFile = {
   readonly path: string;
@@ -50,28 +59,15 @@ export type RemoteSkill = {
 };
 
 export type RemoteSkillRepository = { readonly skills: ReadonlyMap<string, RemoteSkill> };
-export type SkillSyncProviderHead = {
-  readonly revision?: string | undefined;
-  readonly reference?: string | undefined;
-  readonly repository: RemoteSkillRepository;
-};
+export type SkillSyncProviderHead = BackupProviderHead<RemoteSkillRepository>;
 
-export interface SkillSyncProvider {
-  readHead(): Promise<SkillSyncProviderHead>;
-  publish(input: {
-    readonly expectedRevision?: string | undefined;
-    readonly repository: RemoteSkillRepository;
-    readonly message: string;
-  }): Promise<
-    | { readonly status: "published"; readonly revision: string }
-    | { readonly status: "head_changed" }
-  >;
-}
+export type SkillSyncProvider = StudioBackupProvider<RemoteSkillRepository>;
 
 type LocalSkill = RemoteSkill & {
   readonly capabilityId: string;
   readonly capabilityRevision: number;
   readonly capabilityContentHash: string;
+  readonly legacyBundleLogicalId?: string | undefined;
 };
 
 const StoredSummarySchema = z
@@ -123,7 +119,7 @@ const PendingRemoteActivationSchema = z
 
 const SkillSyncStateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.skill-sync-state/v1"),
+    schemaVersion: z.literal("pragma.skill-sync-state/v2"),
     sourceKey: z.string().min(1).max(4_000).optional(),
     revision: z.string().optional(),
     resolvedBranch: z.string().optional(),
@@ -159,13 +155,17 @@ const SkillSyncStateSchema = z
   })
   .strict();
 
+const SkillSyncStateV1Schema = SkillSyncStateSchema.extend({
+  schemaVersion: z.literal("pragma.skill-sync-state/v1"),
+});
+
 type SkillSyncState = z.infer<typeof SkillSyncStateSchema>;
 type LocalSkillSnapshot = {
   readonly skills: Map<string, LocalSkill>;
   readonly errors: SkillSyncState["errors"];
 };
 const emptyState = (sourceKey?: string): SkillSyncState => ({
-  schemaVersion: "pragma.skill-sync-state/v1",
+  schemaVersion: "pragma.skill-sync-state/v2",
   ...(sourceKey === undefined ? {} : { sourceKey }),
   bases: {},
   portableFiles: {},
@@ -177,7 +177,10 @@ const emptyState = (sourceKey?: string): SkillSyncState => ({
 
 export interface SkillSyncService {
   getOverview(): Promise<SkillSyncOverview>;
-  configure(input: Omit<SkillSyncConfiguration, "schemaVersion">): Promise<SkillSyncOverview>;
+  configure(
+    input: Omit<UpdateSkillSyncConfiguration, "initializationMode"> &
+      Partial<Pick<UpdateSkillSyncConfiguration, "initializationMode">>,
+  ): Promise<SkillSyncOverview>;
   removeConfiguration(): Promise<void>;
   sync(): Promise<SkillSyncOverview>;
   refresh(): Promise<SkillSyncOverview>;
@@ -221,7 +224,20 @@ export function createSkillSyncService(options: {
   };
   const readState = async (): Promise<SkillSyncState> => {
     try {
-      return SkillSyncStateSchema.parse(JSON.parse(await readFile(options.statePath, "utf8")));
+      const raw: unknown = JSON.parse(await readFile(options.statePath, "utf8"));
+      if (
+        typeof raw === "object" &&
+        raw !== null &&
+        "schemaVersion" in raw &&
+        raw.schemaVersion === "pragma.skill-sync-state/v1"
+      ) {
+        const legacy = SkillSyncStateV1Schema.parse(raw);
+        return SkillSyncStateSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.skill-sync-state/v2",
+        });
+      }
+      return SkillSyncStateSchema.parse(raw);
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return emptyState();
       throw error;
@@ -304,6 +320,9 @@ export function createSkillSyncService(options: {
           name: capability.definition.name,
           description: capability.definition.description,
           files,
+          ...(capability.manifest.origin?.kind === "pragma-bundle"
+            ? { legacyBundleLogicalId: capability.manifest.origin.logicalId }
+            : {}),
         };
         validateRemoteSkill(skill);
         skills.set(syncKey, skill);
@@ -387,7 +406,7 @@ export function createSkillSyncService(options: {
   }> => {
     const localSnapshot = await localSkills(state);
     const local = localSnapshot.skills;
-    const remote = new Map(head.repository.skills);
+    const remote = canonicalRemoteSkills(head.repository.skills, local);
     const desired = new Map(remote);
     const bases = { ...state.bases };
     const portableFiles = { ...state.portableFiles };
@@ -439,6 +458,37 @@ export function createSkillSyncService(options: {
         delete conflicts[key];
         delete errors[key];
         ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
+        continue;
+      }
+      if (intent === "restore") {
+        if (remoteSkill !== undefined) {
+          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
+          await writeState(checkpointState());
+        }
+        try {
+          const applied = await applyRemote(key, remoteSkill, localSkill);
+          if (remoteSkill === undefined || applied === undefined) {
+            delete bases[key];
+            delete portableFiles[key];
+          } else {
+            bases[key] = remoteFingerprint;
+            portableFiles[key] = portableFilesFor(applied, remoteSkill);
+          }
+          delete pendingRemoteActivations[key];
+          delete conflicts[key];
+          delete errors[key];
+          await writeState(checkpointState());
+        } catch (error) {
+          delete pendingRemoteActivations[key];
+          errors[key] = {
+            source: "remote",
+            code: errorCode(error),
+            message: errorMessage(error),
+            name: remoteSkill?.name ?? localSkill?.name,
+            capabilityId: localSkill?.capabilityId,
+          };
+          await writeState(checkpointState());
+        }
         continue;
       }
       const localChanged =
@@ -539,16 +589,12 @@ export function createSkillSyncService(options: {
     transientStatus = "syncing";
     const provider = providerFor(configuration);
     let state = await readState();
-    const sourceKey = configurationSourceKey(configuration);
-    if (state.sourceKey !== sourceKey) state = emptyState(sourceKey);
+    const sourceKey = backupSourceKey(configuration);
+    if (sourceChanged(state.sourceKey, configuration)) state = emptyState(sourceKey);
     try {
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const head = await provider.readHead();
-        if (
-          state.resolvedBranch !== undefined &&
-          head.reference !== undefined &&
-          state.resolvedBranch !== head.reference
-        ) {
+        if (resolvedReferenceChanged(state.resolvedBranch, head.reference)) {
           state = emptyState(sourceKey);
         }
         let result: Awaited<ReturnType<typeof reconcile>>;
@@ -628,7 +674,10 @@ export function createSkillSyncService(options: {
   };
 
   const runSync = (intent: SyncIntent): Promise<SkillSyncOverview> => {
-    if (intent === "full") requestedIntent = "full";
+    if (running === undefined) requestedIntent = intent;
+    else if (intent === "restore" || (intent === "full" && requestedIntent === "pull_only")) {
+      requestedIntent = intent;
+    }
     if (running !== undefined) {
       rerun = true;
       return running;
@@ -665,9 +714,10 @@ export function createSkillSyncService(options: {
       );
     },
     async configure(input) {
+      const { initializationMode = "publish_local", ...settings } = input;
       const configuration = SkillSyncConfigurationSchema.parse({
         schemaVersion: "pragma.skill-sync-settings/v1",
-        ...input,
+        ...settings,
       });
       await withFileLock(lockPath, async () => {
         const head = await providerFor(configuration).readHead();
@@ -675,14 +725,14 @@ export function createSkillSyncService(options: {
         await writeJsonAtomic(options.configurationPath, configuration);
         if (
           previous === undefined ||
-          canonicalRemote(previous.remote) !== canonicalRemote(configuration.remote) ||
+          canonicalBackupRemote(previous.remote) !== canonicalBackupRemote(configuration.remote) ||
           previous.branch !== configuration.branch
         ) {
-          await writeState(emptyState(configurationSourceKey(configuration)));
+          await writeState(emptyState(backupSourceKey(configuration)));
         }
         void head;
       });
-      return await runSync("full");
+      return await runSync(initializationMode === "restore_remote" ? "restore" : "full");
     },
     async removeConfiguration() {
       if (scheduled !== undefined) clearTimeout(scheduled);
@@ -728,7 +778,7 @@ export function createSkillSyncService(options: {
         const provider = providerFor(configuration);
         const head = await provider.readHead();
         if (
-          state.sourceKey !== configurationSourceKey(configuration) ||
+          sourceChanged(state.sourceKey, configuration) ||
           state.resolvedBranch !== head.reference ||
           (head.revision ?? "unborn") !== conflict.remoteRevision
         ) {
@@ -998,9 +1048,31 @@ function unconfiguredOverview(): SkillSyncOverview {
 }
 
 function syncIdentity(capability: Capability): SkillSyncIdentity {
-  return capability.manifest.origin === undefined
-    ? { kind: "capability", id: capability.manifest.id }
-    : { kind: "pragma-bundle", logicalId: capability.manifest.origin.logicalId };
+  return { kind: "capability", id: capability.manifest.id };
+}
+
+function canonicalRemoteSkills(
+  stored: ReadonlyMap<string, RemoteSkill>,
+  local: ReadonlyMap<string, LocalSkill>,
+): Map<string, RemoteSkill> {
+  const result = new Map<string, RemoteSkill>();
+  for (const [storedKey, skill] of stored) {
+    if (skill.identity.kind !== "pragma-bundle") {
+      result.set(storedKey, skill);
+      continue;
+    }
+    const logicalId = skill.identity.logicalId;
+    const localSkill = [...local.values()].find(
+      (candidate) => candidate.legacyBundleLogicalId === logicalId,
+    );
+    if (localSkill === undefined) {
+      result.set(storedKey, skill);
+      continue;
+    }
+    const identity = { kind: "capability" as const, id: localSkill.capabilityId };
+    result.set(identityKey(identity), { ...skill, identity });
+  }
+  return result;
 }
 
 function identityKey(identity: SkillSyncIdentity): string {
@@ -1382,8 +1454,8 @@ async function ensureGitRepository(path: string, remote: string, git: GitRunner)
   try {
     await access(join(path, ".git"));
     if (
-      canonicalRemote((await git(path, ["config", "--get", "remote.origin.url"])).trim()) ===
-      canonicalRemote(remote)
+      canonicalBackupRemote((await git(path, ["config", "--get", "remote.origin.url"])).trim()) ===
+      canonicalBackupRemote(remote)
     )
       return;
   } catch {
@@ -1489,12 +1561,6 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await rename(temporary, path);
 }
 
-function canonicalRemote(value: string): string {
-  return value.trim().replace(/\/$/u, "");
-}
-function configurationSourceKey(configuration: SkillSyncConfiguration): string {
-  return JSON.stringify([canonicalRemote(configuration.remote), configuration.branch ?? null]);
-}
 function assertRepositoryBounds(repository: RemoteSkillRepository): void {
   if (repository.skills.size > MAX_REPOSITORY_SKILLS)
     throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");

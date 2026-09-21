@@ -61,7 +61,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const timestamp = new Date().toISOString();
     expect(
       PragmaBundleInstallationSchema.parse({
-        schemaVersion: "pragma.bundle-installation/v5",
+        schemaVersion: "pragma.bundle-installation/v6",
         bundleVersion: "pragma.bundle/v2",
         id: "00000000-0000-4000-8000-000000000001",
         bundleFingerprint: "a".repeat(64),
@@ -468,7 +468,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v5",
+      "pragma.bundle-installations/v6",
     );
   });
 
@@ -480,7 +480,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v6",
+      schemaVersion: "pragma.bundle-installations/v7",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
@@ -1025,6 +1025,37 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     expect((await target.project.get()).resources).toHaveLength(2);
   });
 
+  it("keeps matching local resources when requested", async () => {
+    const source = await createFixture("keep-local-source");
+    const path = join(source.root, "workflow.pragma");
+    const exported = await source.service.exportTo(exportInput(source.projectRevision), path);
+    const target = await createFixture("keep-local-target", {
+      instructions: "Keep this local instruction.",
+      runtimeId: "local-runtime",
+    });
+
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        exported.bundleFingerprint,
+        exported.projectFingerprint,
+        target.projectRevision,
+      ),
+      conflicts: [
+        { resourceRef: "expert:1xddvess309a6gme", action: "keep_local" },
+        { resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "keep_local" },
+      ],
+    });
+    const snapshot = await target.project.get();
+
+    expect(installation.status).toBe("ready");
+    expect(installation.createdResourceRefs).toEqual([]);
+    expect(snapshot.resources).toHaveLength(2);
+    expect(
+      snapshot.resources.find((resource) => resource.kind === "Expert")?.spec.instructions,
+    ).toBe("Keep this local instruction.");
+  });
+
   it("applies a selected Runtime and model during the final import commit", async () => {
     const source = await createFixture("runtime-binding-source");
     const path = join(source.root, "workflow.pragma");
@@ -1249,6 +1280,21 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     expect(copied?.targetId).not.toBe("1xddvess309a6gme");
     expect(updatedRuntime?.targetId).toBe("v3b460tasfhyf22d");
+  });
+
+  it("maps keep-local decisions to the existing local identity", () => {
+    const resolved = resolveBundleIdentities(
+      [runtime("codex")],
+      [runtime("codex", "v3b460tasfhyf22d")],
+      [{ resourceRef: "runtime-profile:zdkgs0fde4xt00vr", action: "keep_local" }],
+    );
+
+    expect(resolved.identities).toContainEqual(
+      expect.objectContaining({
+        sourceRef: "runtime-profile:zdkgs0fde4xt00vr",
+        targetId: "v3b460tasfhyf22d",
+      }),
+    );
   });
 
   it("reserves unchanged imported names when naming conflict copies", () => {

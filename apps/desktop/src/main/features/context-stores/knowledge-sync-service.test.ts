@@ -77,12 +77,13 @@ function memoryProvider(initialStores: ReturnType<typeof remoteStore>[]) {
   let readCount = 0;
   let readError: Error | undefined;
   let forcedHeadChanges = 0;
+  let reference = "main";
   const publications: Parameters<ContextStoreSyncProvider["publish"]>[0][] = [];
   const provider: ContextStoreSyncProvider = {
     async readHead() {
       readCount += 1;
       if (readError !== undefined) throw readError;
-      return { revision, reference: "main", repository: { stores: new Map(stores) } };
+      return { revision, reference, repository: { stores: new Map(stores) } };
     },
     async publish(input) {
       publications.push(input);
@@ -108,6 +109,9 @@ function memoryProvider(initialStores: ReturnType<typeof remoteStore>[]) {
     },
     forceHeadChanges: (count: number) => {
       forcedHeadChanges = count;
+    },
+    setReference: (value: string) => {
+      reference = value;
     },
     replaceRemote: (next: ReturnType<typeof remoteStore>[]) => {
       externalRevision += 1;
@@ -190,6 +194,30 @@ describe("knowledge sync service", () => {
     );
   });
 
+  it("restores the selected target without publishing the local candidate", async () => {
+    const memory = memoryProvider([remoteStore(localStoreId, "Shared", "# Remote\n")]);
+    const { stores, service } = await fixture(memory.provider);
+    await stores.createFromSnapshot({
+      id: localStoreId,
+      name: "Shared",
+      description: "Shared description",
+      files: remoteStore(localStoreId, "Shared", "# Local\n").files,
+      author: "user",
+      summary: "Create local fixture.",
+    });
+
+    const restored = await service.configure({
+      remote: "ssh://git@example.test/knowledge.git",
+      autoPush: true,
+      pushDeletions: false,
+      initializationMode: "restore_remote",
+    });
+
+    expect(restored.status).toBe("ready");
+    expect(memory.publications).toHaveLength(0);
+    expect((await stores.getContent(localStoreId, "guides/readme.md")).content).toBe("# Remote\n");
+  });
+
   it("preserves a remotely synced store after local deletion until explicitly restored", async () => {
     const memory = memoryProvider([]);
     const { stores, service } = await fixture(memory.provider);
@@ -227,6 +255,49 @@ describe("knowledge sync service", () => {
     await configure(service);
 
     expect(memory.readCount()).toBe(1);
+  });
+
+  it("starts with fresh bases when the resolved branch changes", async () => {
+    const memory = memoryProvider([]);
+    const { stores, service } = await fixture(memory.provider);
+    await stores.createFromSnapshot({
+      id: localStoreId,
+      name: "Local",
+      description: "Local description",
+      files: remoteStore(localStoreId, "Local", "# Local\n").files,
+      author: "user",
+      summary: "Create local fixture.",
+    });
+    await configure(service);
+
+    memory.setReference("replacement");
+    memory.replaceRemote([]);
+    const refreshed = await service.refresh();
+
+    expect((await stores.list()).some((store) => store.id === localStoreId)).toBe(true);
+    expect(refreshed).toMatchObject({ resolvedBranch: "replacement", status: "ready" });
+    expect(refreshed.stores).toContainEqual(
+      expect.objectContaining({ storeId: localStoreId, status: "pending" }),
+    );
+  });
+
+  it("rejects a conflict decision after the resolved branch changes", async () => {
+    const memory = memoryProvider([remoteStore(localStoreId, "Shared", "# Remote\n")]);
+    const { stores, service } = await fixture(memory.provider);
+    await stores.createFromSnapshot({
+      id: localStoreId,
+      name: "Shared",
+      description: "Shared description",
+      files: remoteStore(localStoreId, "Shared", "# Local\n").files,
+      author: "user",
+      summary: "Create local fixture.",
+    });
+    expect((await configure(service)).status).toBe("conflict");
+
+    memory.setReference("replacement");
+    await expect(service.resolveConflict(localStoreId, "remote")).rejects.toThrow(
+      "backup target changed",
+    );
   });
 
   it("never publishes local changes during a background pull when auto upload is disabled", async () => {

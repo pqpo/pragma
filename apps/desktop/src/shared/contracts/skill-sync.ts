@@ -18,6 +18,8 @@ export const SkillSyncConfigurationSchema = z
 
 export const UpdateSkillSyncConfigurationSchema = SkillSyncConfigurationSchema.omit({
   schemaVersion: true,
+}).extend({
+  initializationMode: z.enum(["publish_local", "restore_remote"]).default("publish_local"),
 });
 
 export const SkillSyncRepositoryManifestSchema = z
