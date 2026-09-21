@@ -131,7 +131,7 @@ export interface CapabilityStore extends CapabilityRepository {
   retry(id: string, expectedRevision: number): Promise<Capability>;
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
   previewCode(input: PreviewCodeServiceRequest): Promise<PreviewCodeServiceResult>;
-  remove(id: string): Promise<void>;
+  remove(id: string, expectedRevision?: number): Promise<void>;
 }
 
 export interface CapabilityRevisionPublishInput {
@@ -1604,11 +1604,11 @@ export function createCapabilityStore(options: {
           : { output: readStructuredOutput(result) }),
       };
     },
-    async remove(id) {
-      const current = await readManifest(id);
+    async remove(id, expectedRevision) {
+      const revision = expectedRevision ?? (await readManifest(id)).latestRevision;
       await options.mutations.mutate({
         id,
-        expectedRevision: current.latestRevision,
+        expectedRevision: revision,
         mutationType: "delete",
         validateCurrent: async () => {
           if (await options.isReferenced(id)) {
@@ -1618,7 +1618,7 @@ export function createCapabilityStore(options: {
             );
           }
         },
-        commit: async () => await completeRemoval(id, current.latestRevision),
+        commit: async () => await completeRemoval(id, revision),
       });
     },
     completeRemoval,

@@ -202,6 +202,47 @@ describe("Skill sync service", () => {
     expect(overview.status).toBe("ready");
   });
 
+  it("turns a raced remote deletion into a conflict instead of deleting a newer revision", async () => {
+    const fixture = await createFixture();
+    const id = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    await fixture.addLocalSkill(id, "Raced Skill");
+    await fixture.service.configure(configuration());
+    fixture.provider.repository.skills.delete(`capability/${id}`);
+    fixture.provider.advance();
+    fixture.hooks.beforeRemove = async () => {
+      fixture.hooks.beforeRemove = undefined;
+      await fixture.replaceLocalSkill(id, "Raced Skill", "Concurrent local revision");
+    };
+
+    const overview = await fixture.service.refresh();
+
+    expect(fixture.capabilities.get(id)?.manifest.latestRevision).toBe(2);
+    expect(overview.status).toBe("conflict");
+    expect(overview.conflicts).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, remoteExists: false }),
+    );
+  });
+
+  it("clears a base-less conflict after both copies are deleted", async () => {
+    const fixture = await createFixture();
+    const id = "12121212-1212-4212-8212-121212121212";
+    await fixture.addLocalSkill(id, "Ephemeral Conflict");
+    fixture.provider.repository.skills.set(
+      `capability/${id}`,
+      remoteSkill({ kind: "capability", id }, "Ephemeral Conflict", "Different remote copy"),
+    );
+    fixture.provider.advance();
+    expect((await fixture.service.configure(configuration())).status).toBe("conflict");
+
+    fixture.capabilities.delete(id);
+    fixture.provider.repository.skills.delete(`capability/${id}`);
+    fixture.provider.advance();
+    const overview = await fixture.service.refresh();
+
+    expect(overview.status).toBe("ready");
+    expect(overview.conflicts).toEqual([]);
+  });
+
   it("starts with fresh bases when the remote default branch changes", async () => {
     const fixture = await createFixture();
     const id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
@@ -340,6 +381,7 @@ async function createFixture() {
   roots.push(root);
   const capabilities = new Map<string, Capability>();
   const paths = new Map<string, string>();
+  const hooks: { beforeRemove?: ((id: string) => Promise<void>) | undefined } = {};
   const install = async (
     id: string,
     name: string,
@@ -401,7 +443,18 @@ async function createFixture() {
         current.manifest.origin,
       );
     },
-    remove: async (id: string) => {
+    remove: async (id: string, expectedRevision?: number) => {
+      await hooks.beforeRemove?.(id);
+      const current = capabilities.get(id);
+      if (
+        expectedRevision !== undefined &&
+        current !== undefined &&
+        current.manifest.latestRevision !== expectedRevision
+      ) {
+        throw Object.assign(new Error("Capability revision changed."), {
+          code: "revision_conflict",
+        });
+      }
       capabilities.delete(id);
     },
   } as unknown as CapabilityStore;
@@ -444,6 +497,7 @@ async function createFixture() {
     replaceLocalSkill,
     corruptLocalSkill,
     restartService,
+    hooks,
   };
 }
 

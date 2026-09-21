@@ -67,7 +67,11 @@ export interface SkillSyncProvider {
   >;
 }
 
-type LocalSkill = RemoteSkill & { readonly capabilityId: string };
+type LocalSkill = RemoteSkill & {
+  readonly capabilityId: string;
+  readonly capabilityRevision: number;
+  readonly capabilityContentHash: string;
+};
 
 const StoredSummarySchema = z
   .object({
@@ -220,6 +224,8 @@ export function createSkillSyncService(options: {
         const skill = {
           identity,
           capabilityId: capability.manifest.id,
+          capabilityRevision: capability.manifest.latestRevision,
+          capabilityContentHash: capability.definition.contentHash,
           name: capability.definition.name,
           description: capability.definition.description,
           files,
@@ -253,7 +259,8 @@ export function createSkillSyncService(options: {
     local: LocalSkill | undefined,
   ): Promise<void> => {
     if (remote === undefined) {
-      if (local !== undefined) await options.capabilities.remove(local.capabilityId);
+      if (local !== undefined)
+        await options.capabilities.remove(local.capabilityId, local.capabilityRevision);
       return;
     }
     validateRemoteSkill(remote);
@@ -274,13 +281,10 @@ export function createSkillSyncService(options: {
             : {}),
         });
       } else {
-        const current = await options.capabilities.get(local.capabilityId);
-        if (current.definition.kind !== "skill")
-          throw coded("skill_sync_target_invalid", `${syncKey} is not a Skill.`);
         await options.capabilities.publishSkillRevisionCandidate({
           id: local.capabilityId,
-          baseRevision: current.manifest.latestRevision,
-          baseContentHash: current.definition.contentHash,
+          baseRevision: local.capabilityRevision,
+          baseContentHash: local.capabilityContentHash,
           sourcePath: incoming,
           candidateContentHash: snapshot.hash,
         });
@@ -316,6 +320,7 @@ export function createSkillSyncService(options: {
       ...local.keys(),
       ...remote.keys(),
       ...Object.keys(bases),
+      ...Object.keys(conflicts),
       ...Object.keys(errors),
       ...Object.keys(localSnapshot.errors),
     ]);
@@ -356,6 +361,12 @@ export function createSkillSyncService(options: {
           delete conflicts[key];
           ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
         } catch (error) {
+          if (errorCode(error) === "revision_conflict") {
+            throw coded(
+              "skill_sync_local_changed",
+              `The local Skill changed during synchronization: ${key}`,
+            );
+          }
           errors[key] = {
             source: "remote",
             code: errorCode(error),
@@ -417,7 +428,13 @@ export function createSkillSyncService(options: {
         ) {
           state = emptyState(sourceKey);
         }
-        const result = await reconcile(configuration, state, head, intent);
+        let result: Awaited<ReturnType<typeof reconcile>>;
+        try {
+          result = await reconcile(configuration, state, head, intent);
+        } catch (error) {
+          if (errorCode(error) === "skill_sync_local_changed") continue;
+          throw error;
+        }
         state = result.state;
         if (result.publishedKeys.length > 0 && intent === "full") {
           const published = await provider.publish({
@@ -445,7 +462,7 @@ export function createSkillSyncService(options: {
       }
       throw coded(
         "skill_sync_head_changed",
-        "The remote Skill repository changed repeatedly. Try again.",
+        "The local or remote Skill repository changed repeatedly. Try again.",
       );
     } catch (error) {
       state = SkillSyncStateSchema.parse({
