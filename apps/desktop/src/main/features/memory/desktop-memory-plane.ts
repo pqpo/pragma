@@ -467,7 +467,6 @@ export async function createDesktopMemoryPlane(options: {
 
   const wakePipeline = (): void => {
     nextPollDelayMs = options.pollIntervalMs ?? 1_000;
-    scheduler.wake();
     if (stopped) return;
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
@@ -538,19 +537,19 @@ export async function createDesktopMemoryPlane(options: {
     },
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async setSemanticExtractor(extractor) {
       await semantic.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async setKnowledgeExtractor(extractor) {
       await knowledge.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async setSkillExtractor(extractor) {
       await skill.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async registerMemoryExecutionContext(input) {
       const localUser = await subjectIdentities.getLocalUserRef();
@@ -582,7 +581,7 @@ export async function createDesktopMemoryPlane(options: {
         episodic.setConversationState({ conversationRef, state: "running", now }),
         semantic.setConversationState({ conversationRef, state: "running", now }),
       ]);
-      scheduler.wake();
+      wakePipeline();
     },
     async setMemoryConversationState(input) {
       const conversationRef = { type: "pragma.mission" as const, id: input.missionId };
@@ -591,7 +590,7 @@ export async function createDesktopMemoryPlane(options: {
         episodic.setConversationState({ conversationRef, state: input.state, now }),
         semantic.setConversationState({ conversationRef, state: input.state, now }),
       ]);
-      scheduler.wake();
+      wakePipeline();
     },
     async reviseSemanticFact(input) {
       return await semantic.store.revise({
@@ -684,7 +683,7 @@ export async function createDesktopMemoryPlane(options: {
         const unsupported: never = input.action;
         throw new Error(`memory_extraction_job_action_unsupported:${String(unsupported)}`);
       }
-      scheduler.wake();
+      wakePipeline();
     },
     async deleteExecutionState(executionIds) {
       await cleanup.cleanup(executionIds);

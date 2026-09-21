@@ -248,7 +248,12 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
       }),
     );
 
-    await plane.wakeMemoryJobs();
+    await plane.manageMemoryJob({
+      module: "episodic",
+      action: "retry",
+      id: job.id,
+      expectedRevision: job.revision + 1,
+    });
     await vi.waitFor(
       async () => {
         await expect(plane.getStatus()).resolves.toMatchObject({

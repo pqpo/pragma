@@ -302,30 +302,43 @@ export function createFileExecutionStore(
         quarantined: (await listQuarantinedCanonicalHandoffFiles(paths)).length,
       };
     },
-    async withCanonicalEventDeletion(executionIds, action) {
+    async withCanonicalEventDeletion<TValue>(
+      executionIds: readonly string[],
+      action: (handoffFiles: readonly string[]) => Promise<TValue>,
+    ): Promise<TValue> {
       const ids = [...new Set(executionIds)].toSorted();
       for (const executionId of ids) deletingExecutionIds.add(executionId);
       try {
-        await Promise.all(
-          ids.map(
-            async (executionId) =>
-              await withExecutionLock(executionId, "deletion-barrier", async () => undefined),
-          ),
-        );
         await Promise.all(
           ids.map(async (id) => {
             await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
           }),
         );
-        const handoffFiles = (
+        const runWithLocks = async (index: number): Promise<TValue> => {
+          const executionId = ids[index];
+          if (executionId !== undefined) {
+            return await withFileLock(
+              paths.executionLock(executionId),
+              async () => await runWithLocks(index + 1),
+              { operation: "execution.deletion-barrier" },
+            );
+          }
           await Promise.all(
-            ids.map(async (id) => [
-              ...(await listCanonicalHandoffFilesForExecution(paths, id)),
-              ...(await listQuarantinedCanonicalHandoffFilesForExecution(paths, id)),
-            ]),
-          )
-        ).flat();
-        return await action(handoffFiles);
+            ids.map(async (id) => {
+              await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
+            }),
+          );
+          const handoffFiles = (
+            await Promise.all(
+              ids.map(async (id) => [
+                ...(await listCanonicalHandoffFilesForExecution(paths, id)),
+                ...(await listQuarantinedCanonicalHandoffFilesForExecution(paths, id)),
+              ]),
+            )
+          ).flat();
+          return await action(handoffFiles);
+        };
+        return await runWithLocks(0);
       } finally {
         for (const executionId of ids) deletingExecutionIds.delete(executionId);
       }

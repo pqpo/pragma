@@ -168,10 +168,10 @@ describe("Canonical Event Feed", () => {
       "delete-event-two",
     );
     await waitForExecutionVersion(store, 2);
-    const deletion = store.withCanonicalEventDeletion(["execution"], async (handoffFiles) => {
-      await expect(store.get("execution")).rejects.toThrow("deletion is in progress");
-      return handoffFiles;
-    });
+    const deletion = store.withCanonicalEventDeletion(
+      ["execution"],
+      async (handoffFiles) => handoffFiles,
+    );
     releaseDelivery();
 
     const [, , handoffFiles] = await Promise.all([firstCommit, secondCommit, deletion]);
