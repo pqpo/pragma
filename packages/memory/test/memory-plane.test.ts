@@ -319,6 +319,7 @@ describe("Memory Plane phase one", () => {
     const registry = new MemoryModuleRegistry();
     registry.register(createProbeMemoryModule({ pragmaHome: home }));
     let enabled = false;
+    let policyChecked = false;
     const scheduler = createMemoryPipelineScheduler({
       registry,
       feed: createMemoryEvidenceFeed(canonical),
@@ -326,7 +327,39 @@ describe("Memory Plane phase one", () => {
       checkpoints: state,
       deadLetters: state,
       outbox: state,
-      isEnabled: async () => enabled,
+      isEnabled: async () => {
+        if (!policyChecked) {
+          policyChecked = true;
+          await publisher.publish([
+            MemoryEvidenceEnvelopeSchema.parse({
+              schemaVersion: "pragma.memory-evidence/v1",
+              messageId: "pipeline-enabled-during-check",
+              topic: "execution.message.appended",
+              schemaRef: "pragma.memory.execution-message/v1",
+              sourceRef: {
+                type: "pragma.test-source",
+                id: "pipeline-enabled-source",
+                canonicalEventId: "pipeline-enabled-canonical",
+              },
+              subjectRefs: [{ type: "pragma.execution", id: "pipeline-enabled-execution" }],
+              occurredAt: "2026-08-01T00:00:01.000Z",
+              visibility: { mode: "host-private" },
+              sensitivity: "confidential",
+              bindings: [],
+              policySnapshot: {
+                capture: true,
+                recall: true,
+                learning: "local-candidates",
+                appliedRevisions: [],
+              },
+              payload: {
+                message: { role: "user", content: "enabled during policy check", timestamp: 2 },
+              },
+            }),
+          ]);
+        }
+        return enabled;
+      },
     });
 
     await scheduler.runOnce();
@@ -335,7 +368,7 @@ describe("Memory Plane phase one", () => {
       lag: 0,
       lastErrorCode: "policy_disabled_skip",
     });
-    expect((await state.read("pragma.memory.probe")).sequence).toBeGreaterThan(0);
+    expect((await state.read("pragma.memory.probe")).sequence).toBe(1);
 
     const context = createFederatedMemoryContextStore(registry, {
       resolveRecallScope: () => ({
@@ -350,6 +383,10 @@ describe("Memory Plane phase one", () => {
 
     enabled = true;
     await scheduler.runOnce();
+    await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: expect.stringContaining("pipeline-enabled-during-check") },
+    });
     await expect(context.readContext({ id: "probe/items/entries.md" })).resolves.toMatchObject({
       ok: true,
       value: { content: expect.not.stringContaining("pipeline-disabled-evidence") },

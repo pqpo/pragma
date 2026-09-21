@@ -130,6 +130,7 @@ export interface DesktopMemoryPlane {
     readonly reason: string;
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
+  wakePipeline(): void;
   manageMemoryJob(input: {
     readonly module: "episodic" | "semantic" | "knowledge" | "skill";
     readonly action: "expedite" | "retry" | "interrupt" | "delete";
@@ -307,6 +308,7 @@ export async function createDesktopMemoryPlane(options: {
   let safeThroughSequence = 0;
   let blockedBytes = 0;
   let nextPollDelayMs = options.pollIntervalMs ?? 1_000;
+  let wakeRequested = false;
   let maintenanceDiagnostic: {
     readonly lastRunAt?: string | undefined;
     readonly deletedEvents: number;
@@ -383,7 +385,10 @@ export async function createDesktopMemoryPlane(options: {
       timer = undefined;
       running = tick().finally(() => {
         running = undefined;
-        schedule();
+        if (wakeRequested) {
+          wakeRequested = false;
+          wakePipeline();
+        } else schedule();
       });
     }, nextPollDelayMs);
   };
@@ -415,8 +420,7 @@ export async function createDesktopMemoryPlane(options: {
     reportedExtractionIssues = current;
   };
 
-  const skipDisabledPipeline = async (): Promise<void> => {
-    const through = (await canonical.inspect()).lastSequence;
+  const skipDisabledPipeline = async (through: number): Promise<void> => {
     const current = await state.read(EXECUTION_EVIDENCE_ADAPTER_ID);
     if (current.sequence < through) {
       await state.update(EXECUTION_EVIDENCE_ADAPTER_ID, (checkpoint) => ({
@@ -443,10 +447,11 @@ export async function createDesktopMemoryPlane(options: {
   const tick = async (): Promise<void> => {
     try {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
+      const disabledThrough = (await canonical.inspect()).lastSequence;
       const learningEnabled = (await policies.getGlobal()).policy.enabled === "enabled";
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
       if (!learningEnabled) {
-        await skipDisabledPipeline();
+        await skipDisabledPipeline(disabledThrough);
         if (
           Date.now() - lastMaintenanceAtMs >=
           DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs
@@ -504,6 +509,25 @@ export async function createDesktopMemoryPlane(options: {
     } catch (error) {
       markDegraded("memory_pipeline_iteration_failed", error);
     }
+  };
+
+  const wakePipeline = (): void => {
+    nextPollDelayMs = options.pollIntervalMs ?? 1_000;
+    scheduler.wake();
+    if (stopped) return;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (running !== undefined) {
+      wakeRequested = true;
+      return;
+    }
+    running = tick().finally(() => {
+      running = undefined;
+      if (wakeRequested) {
+        wakeRequested = false;
+        wakePipeline();
+      } else schedule();
+    });
   };
 
   const resolveContextStoreViewScope = async (
@@ -678,6 +702,7 @@ export async function createDesktopMemoryPlane(options: {
       ]);
       scheduler.wake();
     },
+    wakePipeline,
     async manageMemoryJob(input) {
       const command = {
         id: input.id,
@@ -818,10 +843,7 @@ export async function createDesktopMemoryPlane(options: {
     start() {
       if (!stopped) return;
       stopped = false;
-      running = tick().finally(() => {
-        running = undefined;
-        schedule();
-      });
+      wakePipeline();
     },
     async stop() {
       stopped = true;

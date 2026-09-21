@@ -1185,6 +1185,7 @@ class ExpertSessionImpl implements ExpertSession {
     let lastError: Error | undefined;
     while (!this.leaseRenewalStopped && Date.now() < this.leaseExpiresAt) {
       try {
+        const renewedLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
         const renewed = await this.dependencies.sessions.claimLease(
           this.sessionId,
           this.claimId,
@@ -1194,7 +1195,7 @@ class ExpertSessionImpl implements ExpertSession {
           await this.failLease(new Error(`ExpertSession lease was lost: ${this.sessionId}`));
           return;
         }
-        this.leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
+        this.leaseExpiresAt = renewedLeaseExpiresAt;
         return;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));

@@ -65,8 +65,10 @@ export function createMemoryPipelineScheduler(options: {
 
   const runOnce = async (): Promise<void> => {
     if (running !== undefined) return await running;
+    const disabledThrough =
+      options.isEnabled === undefined ? undefined : (await options.feed.inspect()).lastSequence;
     if (options.isEnabled !== undefined && !(await options.isEnabled())) {
-      running = skipDisabledEvidence(options).finally(() => {
+      running = skipDisabledEvidence(options, disabledThrough!).finally(() => {
         running = undefined;
       });
       return await running;
@@ -145,9 +147,9 @@ async function skipDisabledEvidence(
     Parameters<typeof createMemoryPipelineScheduler>[0],
     "registry" | "feed" | "checkpoints" | "now" | "onDisabledSkip"
   >,
+  through: number,
 ): Promise<void> {
   const now = options.now ?? (() => new Date());
-  const through = (await options.feed.inspect()).lastSequence;
   await Promise.all(
     options.registry.list().map(async (module) => {
       const current = await options.checkpoints.read(module.descriptor.id);
