@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 import { validateSkillPackage } from "@pragma/built-in-agents";
 import { generatePragmaResourceId, withFileLock } from "@pragma/core";
 import { parse, stringify } from "yaml";
-import { z } from "zod";
 
 import {
   CapabilityIdSchema,
@@ -32,13 +31,20 @@ import {
   sourceChanged,
   type StudioBackupProvider,
 } from "../studio-sync/studio-backup-sync.ts";
+import {
+  PendingSkillRemoteActivationSchema as PendingRemoteActivationSchema,
+  SkillSyncStateV2Schema as SkillSyncStateSchema,
+  StoredPortableSkillFilesSchema as StoredPortableFilesSchema,
+  skillSyncStateMigrationChain,
+  type SkillSyncStateV2 as SkillSyncState,
+} from "../studio-sync/migrations/skill-sync/index.ts";
+import { readStudioSyncState } from "../studio-sync/studio-sync-state-migration.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT_MANIFEST = "pragma-skill-sync.yaml";
 const SKILLS_DIRECTORY = "skills";
 const MAX_MANIFEST_BYTES = 1_000_000;
 const MAX_FILE_BYTES = 128 * 1024;
-const MAX_CONFLICT_SUMMARY_FILES = 1_000;
 const MAX_REPOSITORY_SKILLS = 500;
 const MAX_REPOSITORY_BYTES = 25 * 1024 * 1024;
 const MAX_GIT_INDEX_RECORD_BYTES = 16 * 1024;
@@ -70,96 +76,6 @@ type LocalSkill = RemoteSkill & {
   readonly legacyBundleLogicalId?: string | undefined;
 };
 
-const StoredSummarySchema = z
-  .object({
-    fingerprint: z.string().min(1).max(128),
-    exists: z.boolean(),
-    name: z.string().trim().min(1).max(120).optional(),
-    files: z.array(z.string().min(1).max(2_000)).max(MAX_CONFLICT_SUMMARY_FILES),
-  })
-  .strict();
-
-const StoredPortableFilesSchema = z
-  .object({
-    capabilityId: CapabilityIdSchema,
-    capabilityRevision: z.number().int().positive(),
-    capabilityContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    files: z
-      .array(
-        z
-          .object({
-            path: z.string().min(1).max(2_000),
-            executable: z.boolean(),
-            sha256: z
-              .string()
-              .regex(/^[a-f0-9]{64}$/u)
-              .optional(),
-          })
-          .strict(),
-      )
-      .max(MAX_CONFLICT_SUMMARY_FILES),
-  })
-  .strict();
-
-const PendingRemoteActivationSchema = z
-  .object({
-    files: z
-      .array(
-        z
-          .object({
-            path: z.string().min(1).max(2_000),
-            executable: z.boolean(),
-            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-          })
-          .strict(),
-      )
-      .max(MAX_CONFLICT_SUMMARY_FILES),
-  })
-  .strict();
-
-const SkillSyncStateSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.skill-sync-state/v2"),
-    sourceKey: z.string().min(1).max(4_000).optional(),
-    revision: z.string().optional(),
-    resolvedBranch: z.string().optional(),
-    syncedAt: z.string().datetime().optional(),
-    bases: z.record(z.string(), z.string()),
-    portableFiles: z.record(z.string(), StoredPortableFilesSchema).default({}),
-    pendingRemoteActivations: z.record(z.string(), PendingRemoteActivationSchema).default({}),
-    ignoredRemote: z.array(z.object({ syncKey: z.string(), name: z.string() }).strict()),
-    conflicts: z.record(
-      z.string(),
-      z
-        .object({
-          remoteRevision: z.string().min(1),
-          local: StoredSummarySchema,
-          remote: StoredSummarySchema,
-        })
-        .strict(),
-    ),
-    errors: z.record(
-      z.string(),
-      z
-        .object({
-          source: z.enum(["local", "remote"]),
-          code: z.string().min(1),
-          message: z.string().min(1).max(2_000),
-          name: z.string().trim().min(1).max(120).optional(),
-          capabilityId: CapabilityIdSchema.optional(),
-        })
-        .strict(),
-    ),
-    errorCode: z.string().optional(),
-    errorMessage: z.string().optional(),
-  })
-  .strict();
-
-const SkillSyncStateV1Schema = SkillSyncStateSchema.extend({
-  schemaVersion: z.literal("pragma.skill-sync-state/v1"),
-});
-
-type SkillSyncState = z.infer<typeof SkillSyncStateSchema>;
 type LocalSkillSnapshot = {
   readonly skills: Map<string, LocalSkill>;
   readonly errors: SkillSyncState["errors"];
@@ -223,25 +139,19 @@ export function createSkillSyncService(options: {
     }
   };
   const readState = async (): Promise<SkillSyncState> => {
-    try {
-      const raw: unknown = JSON.parse(await readFile(options.statePath, "utf8"));
-      if (
-        typeof raw === "object" &&
-        raw !== null &&
-        "schemaVersion" in raw &&
-        raw.schemaVersion === "pragma.skill-sync-state/v1"
-      ) {
-        const legacy = SkillSyncStateV1Schema.parse(raw);
-        return SkillSyncStateSchema.parse({
-          ...legacy,
-          schemaVersion: "pragma.skill-sync-state/v2",
-        });
-      }
-      return SkillSyncStateSchema.parse(raw);
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) return emptyState();
-      throw error;
-    }
+    const configuration = await readConfiguration();
+    return await readStudioSyncState({
+      statePath: options.statePath,
+      chain: skillSyncStateMigrationChain,
+      onMissing: emptyState,
+      finalizeMigrated: (state) =>
+        state.sourceKey !== undefined || configuration === undefined
+          ? state
+          : SkillSyncStateSchema.parse({
+              ...state,
+              sourceKey: backupSourceKey(configuration),
+            }),
+    });
   };
   const writeState = async (state: SkillSyncState): Promise<void> =>
     await writeJsonAtomic(options.statePath, SkillSyncStateSchema.parse(state));
@@ -705,13 +615,15 @@ export function createSkillSyncService(options: {
     async getOverview() {
       const configuration = await readConfiguration();
       if (configuration === undefined) return unconfiguredOverview();
-      const state = await readState();
-      return await buildOverview(
-        configuration,
-        state,
-        await localSkillsForOverview(state),
-        transientStatus === "syncing" ? "syncing" : settledStatus(state),
-      );
+      return await withFileLock(lockPath, async () => {
+        const state = await readState();
+        return await buildOverview(
+          configuration,
+          state,
+          await localSkillsForOverview(state),
+          transientStatus === "syncing" ? "syncing" : settledStatus(state),
+        );
+      });
     },
     async configure(input) {
       const { initializationMode = "publish_local", ...settings } = input;

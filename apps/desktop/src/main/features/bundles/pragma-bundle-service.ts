@@ -75,6 +75,7 @@ import {
   parseDesktopContextBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
 import { CapabilityStoreError, type CapabilityStore } from "../capabilities/capability-store.ts";
+import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -1414,6 +1415,7 @@ export function createPragmaBundleService(options: {
                 : resource,
             );
             const sourceToTarget = localized.resourceMappings;
+            const installationRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const keptLocalTargets = new Set(
               input.conflicts
                 .filter((resolution) => resolution.action === "keep_local")
@@ -1426,15 +1428,15 @@ export function createPragmaBundleService(options: {
             resources = resources.filter(
               (resource) => !keptLocalTargets.has(canonicalPragmaResourceRef(resource)),
             );
-            const importedRefs = new Set(resources.map(canonicalPragmaResourceRef));
+            const replacementRefs = new Set(resources.map(canonicalPragmaResourceRef));
             const currentRefs = new Set(current.resources.map(canonicalPragmaResourceRef));
-            const createdResourceRefs = [...importedRefs].filter((ref) => !currentRefs.has(ref));
+            const createdResourceRefs = [...replacementRefs].filter((ref) => !currentRefs.has(ref));
             const rootRef =
               sourceToTarget.get(archive.manifest.root.ref) ?? archive.manifest.root.ref;
             await updateInstallation(initial.id, (record) => ({
               ...record,
               rootRef,
-              resourceRefs: [...importedRefs],
+              resourceRefs: [...installationRefs],
               createdResourceRefs,
               conflictResolutions: input.conflicts,
               resourceMappings: [...sourceToTarget].map(([sourceRef, targetRef]) => ({
@@ -1464,7 +1466,10 @@ export function createPragmaBundleService(options: {
             }
             const importedBundleCapabilities = new Map<
               string,
-              Awaited<ReturnType<CapabilityStore["get"]>>
+              {
+                readonly capability: Awaited<ReturnType<CapabilityStore["get"]>>;
+                readonly bindingRevision?: number;
+              }
             >();
             for (const [logicalId, group] of bundleCapabilityGroups) {
               const temporaryPayloads: string[] = [];
@@ -1491,7 +1496,10 @@ export function createPragmaBundleService(options: {
                   if (targetCapability === undefined) {
                     throw new Error(`The selected local capability is unavailable: ${targetRef}.`);
                   }
-                  importedBundleCapabilities.set(logicalId, targetCapability);
+                  importedBundleCapabilities.set(logicalId, {
+                    capability: targetCapability,
+                    bindingRevision: targetCapability.manifest.latestRevision,
+                  });
                   continue;
                 }
                 const revisions: {
@@ -1565,26 +1573,36 @@ export function createPragmaBundleService(options: {
                   (await options.capabilities.list()).map((capability) => capability.manifest.id),
                 );
                 const latest = revisions.at(-1)!;
-                const imported =
+                let imported: Awaited<ReturnType<CapabilityStore["get"]>>;
+                let bindingRevision: number | undefined;
+                if (
                   resolution?.action === "update" &&
                   targetCapability?.definition.kind === "skill" &&
                   latest.definition.kind === "skill" &&
                   latest.payloadPath !== undefined
-                    ? await options.capabilities.publishSkillRevisionCandidate({
-                        id: targetCapability.manifest.id,
-                        baseRevision: targetCapability.manifest.latestRevision,
-                        baseContentHash: targetCapability.definition.contentHash,
-                        sourcePath: latest.payloadPath,
-                        candidateContentHash: latest.definition.contentHash,
-                      })
-                    : await options.capabilities.importBundleRevisions({
-                        logicalId:
-                          resolution?.action === "copy"
-                            ? CapabilityIdSchema.parse(targetRef.slice("capability:".length))
-                            : logicalId,
-                        revisions,
-                      });
-                importedBundleCapabilities.set(logicalId, imported);
+                ) {
+                  const candidateSnapshot = await scanSkillWorkingTree(latest.payloadPath);
+                  imported = await options.capabilities.publishSkillRevisionCandidate({
+                    id: targetCapability.manifest.id,
+                    baseRevision: targetCapability.manifest.latestRevision,
+                    baseContentHash: targetCapability.definition.contentHash,
+                    sourcePath: latest.payloadPath,
+                    candidateContentHash: candidateSnapshot.hash,
+                  });
+                  bindingRevision = imported.manifest.latestRevision;
+                } else {
+                  imported = await options.capabilities.importBundleRevisions({
+                    logicalId:
+                      resolution?.action === "copy"
+                        ? CapabilityIdSchema.parse(targetRef.slice("capability:".length))
+                        : logicalId,
+                    revisions,
+                  });
+                }
+                importedBundleCapabilities.set(logicalId, {
+                  capability: imported,
+                  ...(bindingRevision === undefined ? {} : { bindingRevision }),
+                });
                 if (!before.has(imported.manifest.id)) {
                   await updateInstallation(initial.id, (record) => ({
                     ...record,
@@ -1612,10 +1630,11 @@ export function createPragmaBundleService(options: {
               );
               if (resource?.kind !== "Capability") continue;
               if (dependency.resourceRef === PRAGMA_MANAGEMENT_CAPABILITY_REF) continue;
-              let capability =
+              const importedBundleCapability =
                 dependency.logicalId === undefined
                   ? undefined
                   : importedBundleCapabilities.get(dependency.logicalId);
+              let capability = importedBundleCapability?.capability;
               capability ??=
                 dependency.definitionFingerprint === undefined
                   ? undefined
@@ -1694,7 +1713,9 @@ export function createPragmaBundleService(options: {
                 });
               } else {
                 const bindingRevision =
-                  dependency.sourceRevision ?? capability.manifest.latestRevision;
+                  importedBundleCapability?.bindingRevision ??
+                  dependency.sourceRevision ??
+                  capability.manifest.latestRevision;
                 const capabilityAtBinding = await options.capabilities.get(
                   capability.manifest.id,
                   bindingRevision,
@@ -2087,7 +2108,7 @@ export function createPragmaBundleService(options: {
             ];
             const combined = [
               ...current.resources.filter(
-                (resource) => !importedRefs.has(canonicalPragmaResourceRef(resource)),
+                (resource) => !replacementRefs.has(canonicalPragmaResourceRef(resource)),
               ),
               ...resources,
             ];
@@ -2104,7 +2125,7 @@ export function createPragmaBundleService(options: {
             await updateInstallation(initial.id, (record) => ({
               ...record,
               projectRevision: published.revision,
-              resourceRefs: [...importedRefs],
+              resourceRefs: [...installationRefs],
               createdResourceRefs,
               updatedAt: new Date().toISOString(),
             }));
@@ -2132,7 +2153,7 @@ export function createPragmaBundleService(options: {
 
             const verifiedReadiness = await inspectBundleReadiness(
               published.resources.filter((resource) =>
-                importedRefs.has(canonicalPragmaResourceRef(resource)),
+                installationRefs.has(canonicalPragmaResourceRef(resource)),
               ),
               {
                 capabilities: options.capabilities,
@@ -2151,9 +2172,10 @@ export function createPragmaBundleService(options: {
               projectRevision: published.revision,
               rootRef,
               rootName:
-                resources.find((resource) => canonicalPragmaResourceRef(resource) === rootRef)
-                  ?.metadata.name ?? record.rootName,
-              resourceRefs: [...importedRefs],
+                published.resources.find(
+                  (resource) => canonicalPragmaResourceRef(resource) === rootRef,
+                )?.metadata.name ?? record.rootName,
+              resourceRefs: [...installationRefs],
               createdResourceRefs,
               status: allPending.length === 0 ? "ready" : "needs_setup",
               pending: allPending,

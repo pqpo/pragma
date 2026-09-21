@@ -248,6 +248,31 @@ describe("knowledge sync service", () => {
     expect((await stores.getContent(localStoreId, "guides/readme.md")).content).toBe("# Local\n");
   });
 
+  it("preserves v1 reconciliation bases while adding the configured source identity", async () => {
+    const memory = memoryProvider([]);
+    const { root, stores, service } = await fixture(memory.provider);
+    await stores.createFromSnapshot({
+      id: localStoreId,
+      name: "Migrated",
+      description: "Migrated description",
+      files: remoteStore(localStoreId, "Migrated", "# Migrated\n").files,
+      author: "user",
+      summary: "Create migration fixture.",
+    });
+    await configure(service);
+    const statePath = join(root, "state", "knowledge-sync-state.json");
+    const legacy = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    legacy.schemaVersion = "pragma.knowledge-sync-state/v1";
+    delete legacy.sourceKey;
+    await writeFile(statePath, `${JSON.stringify(legacy)}\n`);
+
+    memory.replaceRemote([]);
+    const overview = await service.refresh();
+
+    expect(await stores.list()).toEqual([]);
+    expect(overview).toMatchObject({ status: "ready", stores: [] });
+  });
+
   it("uses the configured provider head without fetching it twice", async () => {
     const memory = memoryProvider([]);
     const { service } = await fixture(memory.provider);

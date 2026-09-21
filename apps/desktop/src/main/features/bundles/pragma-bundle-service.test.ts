@@ -20,6 +20,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import type {
   Capability,
   DesktopRuntimeAvailability,
@@ -964,6 +965,121 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
   });
 
+  it("updates an existing Bundle Skill with its working-tree hash and binds the appended revision", async () => {
+    const sourceCapabilityId = "0123456789abcdef";
+    const targetCapabilityId = "fedcba9876543210";
+    const sourcePayloads = new Map<number, string>();
+    const sourceCapabilities = {
+      list: async () => [skillCapability(sourceCapabilityId, 3, "3".repeat(64))],
+      get: async (_id: string, revision?: number) =>
+        skillCapability(sourceCapabilityId, 3, String(revision ?? 3).repeat(64)),
+      skillFilesPath: async (_id: string, revision: number) => sourcePayloads.get(revision)!,
+    } as unknown as CapabilityStore;
+    const source = await createFixture("skill-update-source", {
+      capabilities: sourceCapabilities,
+    });
+    for (const revision of [1, 2, 3]) {
+      const payload = join(source.root, `skill-r${revision}`);
+      await mkdir(payload, { recursive: true });
+      await writeFile(
+        join(payload, "SKILL.md"),
+        `---\nname: Bundle Skill\ndescription: Bundle revision ${revision}\n---\n\nRevision ${revision}.\n`,
+      );
+      sourcePayloads.set(revision, payload);
+    }
+    const sourceSnapshot = await source.project.get();
+    const sourceResource = portableCapability();
+    sourceResource.spec.binding = desktopCapabilityBindingRef(sourceCapabilityId, 3);
+    const sourceExpert = sourceSnapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )!;
+    const sourcePublished = await source.project.publish({
+      expectedRevision: sourceSnapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [
+              { ref: canonicalPragmaResourceRef(sourceResource), kind: "tools" as const },
+            ],
+          },
+        },
+        ...sourceSnapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        sourceResource,
+      ],
+    });
+    const path = join(source.root, "skill-update.pragma");
+    await source.service.exportTo(exportInput(sourcePublished.revision), path);
+
+    let publishedCandidateHash: string | undefined;
+    let targetCapability = skillCapability(targetCapabilityId, 7, "f".repeat(64));
+    const targetCapabilities = {
+      list: async () => [targetCapability],
+      publishSkillRevisionCandidate: async (input: { candidateContentHash: string }) => {
+        publishedCandidateHash = input.candidateContentHash;
+        targetCapability = skillCapability(targetCapabilityId, 8, "e".repeat(64));
+        return targetCapability;
+      },
+      get: async (_id: string, revision?: number) => {
+        if (revision !== 8) throw new Error(`Expected binding revision 8, received ${revision}.`);
+        return targetCapability;
+      },
+    } as unknown as CapabilityStore;
+    const target = await createFixture("skill-update-target", {
+      capabilities: targetCapabilities,
+    });
+    const targetSnapshot = await target.project.get();
+    const targetResource = portableCapability();
+    targetResource.spec.binding = desktopCapabilityBindingRef(targetCapabilityId, 7);
+    const targetExpert = targetSnapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )!;
+    const targetPublished = await target.project.publish({
+      expectedRevision: targetSnapshot.revision,
+      resources: [
+        {
+          ...targetExpert,
+          spec: {
+            ...targetExpert.spec,
+            capabilities: [
+              { ref: canonicalPragmaResourceRef(targetResource), kind: "tools" as const },
+            ],
+          },
+        },
+        ...targetSnapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        targetResource,
+      ],
+    });
+    const inspection = await target.service.inspect(path);
+    await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: inspection.bundleFingerprint,
+      expectedProjectFingerprint: inspection.projectFingerprint,
+      expectedProjectRevision: targetPublished.revision,
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action:
+          conflict.ref === canonicalPragmaResourceRef(targetResource)
+            ? ("update" as const)
+            : ("keep_local" as const),
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+
+    expect(publishedCandidateHash).toBe((await scanSkillWorkingTree(sourcePayloads.get(3)!)).hash);
+    const installed = await target.project.get();
+    const bound = installed.resources.find(
+      (resource): resource is PragmaCapabilityResource =>
+        canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(targetResource),
+    );
+    expect(bound?.spec.binding).toBe(desktopCapabilityBindingRef(targetCapabilityId, 8));
+  });
+
   it("accepts only the .pragma transfer format", async () => {
     const fixture = await createFixture("extension");
 
@@ -1048,7 +1164,10 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const snapshot = await target.project.get();
 
-    expect(installation.status).toBe("ready");
+    expect(installation.status).toBe("needs_setup");
+    expect(installation.pending).toContainEqual(
+      expect.objectContaining({ kind: "runtime", action: "choose_runtime" }),
+    );
     expect(installation.createdResourceRefs).toEqual([]);
     expect(snapshot.resources).toHaveLength(2);
     expect(
@@ -1521,6 +1640,7 @@ async function createFixture(
     readonly runtimes?: DesktopRuntimeAvailability[];
     readonly contextStores?: ContextStoreStore;
     readonly realContextStores?: boolean;
+    readonly capabilities?: CapabilityStore;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), `pragma-bundle-${name}-`));
@@ -1552,9 +1672,11 @@ async function createFixture(
   const serviceOptions = {
     paths,
     project,
-    capabilities: {
-      list: async () => [],
-    } as unknown as CapabilityStore,
+    capabilities:
+      overrides.capabilities ??
+      ({
+        list: async () => [],
+      } as unknown as CapabilityStore),
     contextStores,
     plugins: {
       list: async () => [],
@@ -1744,6 +1866,30 @@ function portableCapability(): PragmaCapabilityResource {
       binding: "binding:portable",
       config: { key: "portable" },
     },
+  };
+}
+
+function skillCapability(id: string, latestRevision: number, contentHash: string): Capability {
+  const timestamp = "2026-09-21T00:00:00.000Z";
+  return {
+    manifest: {
+      schemaVersion: "pragma.capability/v2",
+      id,
+      runtimeKey: `skill-${id}`,
+      name: "Bundle Skill",
+      kind: "skill",
+      latestRevision,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    },
+    definition: {
+      kind: "skill",
+      name: "Bundle Skill",
+      description: "Bundle Skill description",
+      entryPath: "SKILL.md",
+      contentHash,
+    },
+    health: { revision: latestRevision, status: "ready", checkedAt: timestamp },
   };
 }
 

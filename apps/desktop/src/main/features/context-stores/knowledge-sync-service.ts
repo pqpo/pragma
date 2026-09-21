@@ -40,6 +40,13 @@ import {
   sourceChanged,
   type StudioBackupProvider,
 } from "../studio-sync/studio-backup-sync.ts";
+import {
+  KnowledgeSyncStateV2Schema as KnowledgeSyncStateSchema,
+  StoredKnowledgeSyncSummarySchema as StoredStoreSummarySchema,
+  knowledgeSyncStateMigrationChain,
+  type KnowledgeSyncStateV2 as SyncState,
+} from "../studio-sync/migrations/knowledge-sync/index.ts";
+import { readStudioSyncState } from "../studio-sync/studio-sync-state-migration.ts";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 60_000;
@@ -79,47 +86,6 @@ type LocalStore = RemoteStore & {
   readonly revision: number;
   readonly snapshotHash: string;
 };
-
-const StoredStoreSummarySchema = z
-  .object({
-    fingerprint: z.string().min(1).max(128),
-    exists: z.boolean(),
-    name: z.string().trim().min(1).max(50).optional(),
-    files: z.array(z.string().min(1).max(2_000)).max(MAX_STORE_FILES),
-  })
-  .strict();
-
-const KnowledgeSyncStateSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.knowledge-sync-state/v2"),
-    sourceKey: z.string().min(1).max(4_000).optional(),
-    revision: z.string().optional(),
-    resolvedBranch: z.string().optional(),
-    syncedAt: z.string().datetime().optional(),
-    bases: z.record(z.string(), z.string()),
-    ignoredRemote: z.array(
-      z.object({ storeId: z.string().uuid(), name: z.string().trim().min(1).max(50) }).strict(),
-    ),
-    conflicts: z.record(
-      z.string(),
-      z
-        .object({
-          remoteRevision: z.string().min(1).max(128),
-          local: StoredStoreSummarySchema,
-          remote: StoredStoreSummarySchema,
-        })
-        .strict(),
-    ),
-    errorCode: z.string().trim().min(1).max(100).optional(),
-    errorMessage: z.string().trim().min(1).max(MAX_ERROR_MESSAGE_LENGTH).optional(),
-  })
-  .strict();
-
-const KnowledgeSyncStateV1Schema = KnowledgeSyncStateSchema.omit({ sourceKey: true }).extend({
-  schemaVersion: z.literal("pragma.knowledge-sync-state/v1"),
-});
-
-type SyncState = z.infer<typeof KnowledgeSyncStateSchema>;
 
 const emptyState = (sourceKey?: string): SyncState => ({
   schemaVersion: "pragma.knowledge-sync-state/v2",
@@ -176,25 +142,19 @@ export function createKnowledgeSyncService(options: {
     }
   };
   const readState = async (): Promise<SyncState> => {
-    try {
-      const raw: unknown = JSON.parse(await readFile(options.statePath, "utf8"));
-      if (
-        typeof raw === "object" &&
-        raw !== null &&
-        "schemaVersion" in raw &&
-        raw.schemaVersion === "pragma.knowledge-sync-state/v1"
-      ) {
-        const legacy = KnowledgeSyncStateV1Schema.parse(raw);
-        return KnowledgeSyncStateSchema.parse({
-          ...legacy,
-          schemaVersion: "pragma.knowledge-sync-state/v2",
-        });
-      }
-      return KnowledgeSyncStateSchema.parse(raw);
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) return emptyState();
-      throw error;
-    }
+    const configuration = await readConfiguration();
+    return await readStudioSyncState({
+      statePath: options.statePath,
+      chain: knowledgeSyncStateMigrationChain,
+      onMissing: emptyState,
+      finalizeMigrated: (state) =>
+        configuration === undefined
+          ? state
+          : KnowledgeSyncStateSchema.parse({
+              ...state,
+              sourceKey: backupSourceKey(configuration),
+            }),
+    });
   };
   const writeState = async (state: SyncState) =>
     writeJsonAtomic(options.statePath, KnowledgeSyncStateSchema.parse(state));
@@ -457,16 +417,18 @@ export function createKnowledgeSyncService(options: {
     async getOverview() {
       const configuration = await readConfiguration();
       if (configuration === undefined) return unconfiguredOverview();
-      const state = await readState();
-      const status =
-        transientStatus === "syncing"
-          ? "syncing"
-          : state.errorMessage !== undefined
-            ? "error"
-            : Object.keys(state.conflicts).length > 0
-              ? "conflict"
-              : transientStatus;
-      return await buildOverview(configuration, state, await localStores(), status);
+      return await withFileLock(lockPath, async () => {
+        const state = await readState();
+        const status =
+          transientStatus === "syncing"
+            ? "syncing"
+            : state.errorMessage !== undefined
+              ? "error"
+              : Object.keys(state.conflicts).length > 0
+                ? "conflict"
+                : transientStatus;
+        return await buildOverview(configuration, state, await localStores(), status);
+      });
     },
     async configure(input) {
       const { initializationMode = "publish_local", ...settings } = input;

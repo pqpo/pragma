@@ -252,6 +252,25 @@ describe("Skill sync service", () => {
     expect(overview.status).toBe("ready");
   });
 
+  it("preserves v1 reconciliation bases while adding the configured source identity", async () => {
+    const fixture = await createFixture();
+    const id = "abababab-abab-4bab-8bab-abababababab";
+    await fixture.addLocalSkill(id, "Migrated Skill");
+    await fixture.service.configure(configuration());
+    const statePath = join(fixture.root, "state", "skill-sync-state.json");
+    const legacy = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    legacy.schemaVersion = "pragma.skill-sync-state/v1";
+    delete legacy.sourceKey;
+    await writeFile(statePath, `${JSON.stringify(legacy)}\n`);
+
+    fixture.provider.repository.skills.delete(`capability/${id}`);
+    fixture.provider.advance();
+    const overview = await fixture.service.refresh();
+
+    expect(fixture.capabilities.has(id)).toBe(false);
+    expect(overview.status).toBe("ready");
+  });
+
   it("turns a raced remote deletion into a conflict instead of deleting a newer revision", async () => {
     const fixture = await createFixture();
     const id = "ffffffff-ffff-4fff-8fff-ffffffffffff";
