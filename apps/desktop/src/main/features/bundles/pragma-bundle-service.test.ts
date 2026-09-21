@@ -25,6 +25,7 @@ import type {
   DesktopRuntimeAvailability,
   PragmaBundleInstallation,
 } from "../../../shared/contracts/index.ts";
+import { PragmaBundleInstallationSchema } from "../../../shared/contracts/index.ts";
 import {
   createContextStoreStore,
   type ContextStoreStore,
@@ -56,6 +57,36 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it("accepts canonical Capability ids in the current installation journal", () => {
+    const timestamp = new Date().toISOString();
+    expect(
+      PragmaBundleInstallationSchema.parse({
+        schemaVersion: "pragma.bundle-installation/v5",
+        bundleVersion: "pragma.bundle/v2",
+        id: "00000000-0000-4000-8000-000000000001",
+        bundleFingerprint: "a".repeat(64),
+        projectId: "project",
+        projectRevision: 1,
+        sourceRootRef: "expert:1xddvess309a6gme",
+        rootRef: "expert:1xddvess309a6gme",
+        rootName: "Expert",
+        rootKind: "Expert",
+        resourceRefs: ["expert:1xddvess309a6gme"],
+        createdResourceRefs: [],
+        createdCapabilityIds: ["0123456789abcdef"],
+        createdContextStoreIds: [],
+        createdPluginRefs: [],
+        conflictResolutions: [],
+        resourceMappings: [],
+        status: "ready",
+        pending: [],
+        readiness: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }).createdCapabilityIds,
+    ).toEqual(["0123456789abcdef"]);
+  });
+
   it("round-trips only the current knowledge-base snapshot as revision 1", async () => {
     const source = await createFixture("knowledge-source", { realContextStores: true });
     const sourceStore = await source.contextStores.createFromSnapshot({
@@ -864,6 +895,73 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     await expect(fixture.service.inspect(path)).rejects.toThrow(
       /Capability descriptor req-.+ is not valid JSON/,
     );
+  });
+
+  it("inspects a v2 Capability payload with a canonical logical id", async () => {
+    const fixture = await createFixture("canonical-capability-descriptor");
+    const snapshot = await fixture.project.get();
+    const sourceExpert = snapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    );
+    if (sourceExpert === undefined) throw new Error("Expected an Expert.");
+    const capability = portableCapability();
+    const published = await fixture.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(capability), kind: "tools" }],
+          },
+        },
+        ...snapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        capability,
+      ],
+    });
+    const project = await fixture.project.openRevision(published.revision);
+    const path = join(fixture.root, "canonical-capability.pragma");
+    try {
+      const exported = await project.exportBundle({
+        roots: ["expert:1xddvess309a6gme"],
+        host: {
+          exportPayload: async ({ requirement }) =>
+            requirement.kind === "binding"
+              ? {
+                  codec: "pragma.desktop.capability@v2",
+                  files: new Map([
+                    [
+                      "descriptor.json",
+                      strToU8(
+                        JSON.stringify({
+                          schemaVersion: "pragma.desktop.capability-descriptor/v2",
+                          logicalId: "0123456789abcdef",
+                          revision: 1,
+                          definition: {
+                            kind: "skill",
+                            name: "Synced Skill",
+                            description: "Imported from Skill sync.",
+                            entryPath: "SKILL.md",
+                            contentHash: "a".repeat(64),
+                          },
+                        }),
+                      ),
+                    ],
+                  ]),
+                }
+              : undefined,
+        },
+      });
+      await writeFile(path, exported.bytes);
+    } finally {
+      await project.dispose();
+    }
+
+    await expect(fixture.service.inspect(path)).resolves.toMatchObject({
+      dependencies: expect.arrayContaining([
+        expect.objectContaining({ kind: "capability", included: true }),
+      ]),
+    });
   });
 
   it("accepts only the .pragma transfer format", async () => {

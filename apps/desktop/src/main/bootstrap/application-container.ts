@@ -52,6 +52,11 @@ import { createCapabilityCredentialStore } from "../features/capabilities/capabi
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
+import { installSkillSyncHandlers } from "../features/capabilities/skill-sync-ipc.ts";
+import {
+  createSkillSyncService,
+  type SkillSyncService,
+} from "../features/capabilities/skill-sync-service.ts";
 import { createDesktopSkillRevisionSubmissionPort } from "../features/capabilities/skill-revision-capability.ts";
 import {
   createDesktopSkillAgents,
@@ -553,13 +558,19 @@ export async function createDesktopApplicationContainer(
   // during construction, which closes the coordinator/store composition cycle without a setter.
   // eslint-disable-next-line prefer-const
   let capabilityRevisionCoordinator: ReturnType<typeof createCapabilityRevisionCoordinator>;
+  const skillSyncRef: { current?: SkillSyncService } = {};
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
     credentials: capabilityCredentials,
     mcpToolRegistryPool,
     verify: createCapabilityVerifier(capabilityCredentials, mcpToolRegistryPool),
     mutations: {
-      publish: async (input) => await capabilityRevisionCoordinator.publish(input),
+      publish: async (input) => {
+        const published = await capabilityRevisionCoordinator.publish(input);
+        if (published.definition.kind === "skill")
+          skillSyncRef.current?.schedule("skill-published");
+        return published;
+      },
       publishHealth: async (input) => await capabilityRevisionCoordinator.publishHealth(input),
       mutate: async (input) => await capabilityRevisionCoordinator.mutate(input),
     },
@@ -573,7 +584,9 @@ export async function createDesktopApplicationContainer(
     },
     onRemoved: async (capabilityId) => {
       await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
+      skillSyncRef.current?.schedule("skill-removed");
     },
+    onSkillCreated: () => skillSyncRef.current?.schedule("skill-published"),
   });
   capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
     journalRoot: join(pragmaPaths.stateRoot(), "capability-revision-propagation"),
@@ -584,6 +597,14 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
   });
+  const skillSync = createSkillSyncService({
+    configurationPath: join(pragmaPaths.stateRoot(), "skill-sync-settings.json"),
+    statePath: join(pragmaPaths.stateRoot(), "skill-sync-state.json"),
+    cacheRoot: join(pragmaPaths.cacheRoot(), "skill-sync", "git"),
+    capabilities: capabilityStore,
+    warn: (message, error) => mainLogger.warn("desktop.skill_sync_failed", message, { error }),
+  });
+  skillSyncRef.current = skillSync;
   const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
   const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
@@ -865,6 +886,7 @@ export async function createDesktopApplicationContainer(
     contextStoreEditorDrafts,
   );
   installKnowledgeSyncHandlers(knowledgeSync);
+  installSkillSyncHandlers(skillSync);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
@@ -1619,6 +1641,7 @@ export async function createDesktopApplicationContainer(
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
       knowledgeSync.schedule("startup");
+      skillSync.schedule("startup");
       runtimeProcessEnvironment.warmUp();
       // This starts only after the first window is available.  The three fixed
       // credential aggregates are targeted explicitly; it never scans Projects,

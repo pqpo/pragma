@@ -20,6 +20,7 @@ import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import { z } from "zod";
 
 import {
+  CapabilityIdSchema,
   SkillRevisionReviewFileSchema,
   SkillRevisionReviewSchema,
   type SkillRevisionReview,
@@ -79,7 +80,7 @@ export interface SkillRevisionGenerator {
 const SkillRevisionSubmissionRequestSchema = z
   .object({
     schemaVersion: z.literal("pragma.skill-revision-submission/v1"),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
     prompt: z.string().trim().min(1).max(50_000),
     source: z.enum(["user", "memory-learning"]),
     sourceDigest: z

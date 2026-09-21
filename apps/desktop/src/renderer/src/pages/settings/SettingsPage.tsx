@@ -13,6 +13,7 @@ import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 import { BundleRegistrySourcesFragment } from "./BundleRegistrySourcesFragment.tsx";
 import { KnowledgeSyncSettingsFragment } from "./KnowledgeSyncSettingsFragment.tsx";
+import { SkillSyncSettingsFragment } from "./SkillSyncSettingsFragment.tsx";
 
 export type SettingsView =
   | "general"
@@ -20,6 +21,7 @@ export type SettingsView =
   | "evaluations"
   | "bundle-sources"
   | "knowledge-sync"
+  | "skill-sync"
   | "models"
   | "runtimes";
 
@@ -112,6 +114,17 @@ export function SettingsPage(
         >
           {t("knowledgeSync.navigation")}
         </button>
+        <button
+          className={
+            activeView === "skill-sync" ? "settings-nav-item is-active" : "settings-nav-item"
+          }
+          type="button"
+          aria-selected={activeView === "skill-sync"}
+          aria-controls="skill-sync-panel"
+          onClick={() => setActiveView("skill-sync")}
+        >
+          {t("skillSync.navigation")}
+        </button>
       </nav>
       <SidebarResizeHandle
         label={t("navigation.resize", { ns: "common" })}
@@ -129,6 +142,8 @@ export function SettingsPage(
           <EvaluationSettingsFragment />
         ) : activeView === "knowledge-sync" ? (
           <KnowledgeSyncSettingsFragment />
+        ) : activeView === "skill-sync" ? (
+          <SkillSyncSettingsFragment />
         ) : activeView === "bundle-sources" ? (
           <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (

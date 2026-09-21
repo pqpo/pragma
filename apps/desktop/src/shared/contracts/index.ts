@@ -11,6 +11,7 @@ export * from "./experts.ts";
 export * from "./evaluations.ts";
 export * from "./logging.ts";
 export * from "./knowledge-sync.ts";
+export * from "./skill-sync.ts";
 export * from "./memory.ts";
 export * from "./mission-base.ts";
 export * from "./missions.ts";

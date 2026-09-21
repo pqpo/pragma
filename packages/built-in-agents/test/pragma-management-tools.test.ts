@@ -9,11 +9,27 @@ import {
 
 import {
   PRAGMA_MANAGEMENT_TOOL_DEFINITIONS,
+  ReadySkillRevisionTargetSchema,
   KnowledgeRevisionToolError,
   createPragmaManagementTools,
 } from "../src/pragma-management-tools.ts";
 
 describe("Pragma management tools", () => {
+  it("accepts canonical Capability ids in Skill revision targets", () => {
+    expect(
+      ReadySkillRevisionTargetSchema.parse({
+        availability: "ready",
+        targetRef: "capability:0123456789abcdef",
+        capabilityId: "0123456789abcdef",
+        name: "Synced Skill",
+        description: "Imported from a configured remote.",
+        revision: 1,
+        contentHash: "a".repeat(64),
+        mounted: false,
+      }).capabilityId,
+    ).toBe("0123456789abcdef");
+  });
+
   it("combines Host and knowledge tools through one factory", () => {
     const tools = createPragmaManagementTools({
       project: definitionOnlyPort(),

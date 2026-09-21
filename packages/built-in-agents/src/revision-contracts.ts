@@ -1,10 +1,13 @@
 import {
   ContextTriggerSchema,
+  SemanticResourceIdSchema,
   SkillPackageFileSchema,
   SkillSourceRevisionRefSchema,
   pragmaKnowledgeBaseEntryNameIssue,
 } from "@pragma/shared";
 import { z } from "zod";
+
+const CapabilityResourceIdSchema = z.union([SemanticResourceIdSchema, z.string().uuid()]);
 
 export const BuiltInAgentModelConfigSchema = z.object({
   runtimeId: z.string().trim().min(1).max(200),
@@ -541,7 +544,7 @@ export const SkillRevisionChangeSetSchema = z
   .object({
     schemaVersion: z.literal("pragma.skill-revision-change-set/v2"),
     operation: z.enum(["revise", "create"]),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityResourceIdSchema,
     baseRevision: z.number().int().nonnegative(),
     baseContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
     name: z.string().trim().min(1).max(120),
@@ -578,7 +581,7 @@ export const SkillRevisionRequestV4Schema = z
   .object({
     schemaVersion: z.literal("pragma.skill-revision-request/v4"),
     operation: z.enum(["revise", "create"]),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityResourceIdSchema,
     resourceName: z.string().trim().min(1).max(120).optional(),
     resourceDescription: z.string().trim().min(1).max(500).optional(),
     prompt: z.string().trim().min(1).max(50_000),
@@ -627,7 +630,7 @@ export const SkillRevisionDraftSchema = z
     operation: z.enum(["revise", "create"]),
     id: z.string().uuid(),
     revision: z.number().int().positive(),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityResourceIdSchema,
     name: z.string().trim().min(1).max(120),
     resourceDescription: z.string().trim().min(1).max(500).optional(),
     baseRevision: z.number().int().nonnegative(),

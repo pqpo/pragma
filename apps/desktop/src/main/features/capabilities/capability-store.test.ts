@@ -420,7 +420,8 @@ describe("capability store", () => {
     await writeFile(join(source, "scripts", "verify.mjs"), "process.exit(0);\n");
     await chmod(join(source, "scripts", "verify.mjs"), 0o755);
     const snapshot = await scanSkillWorkingTree(source);
-    const id = randomUUID();
+    const id = "0123456789abcdef";
+    const logicalId = randomUUID();
 
     const published = await store.publishNewSkillRevisionCandidate({
       id,
@@ -428,6 +429,7 @@ describe("capability store", () => {
       description: "Reviewed Skill.",
       sourcePath: source,
       candidateContentHash: snapshot.hash,
+      origin: { kind: "pragma-bundle", logicalId },
     });
     const replayed = await store.publishNewSkillRevisionCandidate({
       id,
@@ -435,9 +437,11 @@ describe("capability store", () => {
       description: "Reviewed Skill.",
       sourcePath: source,
       candidateContentHash: snapshot.hash,
+      origin: { kind: "pragma-bundle", logicalId },
     });
 
     expect(published.manifest.latestRevision).toBe(1);
+    expect(published.manifest.origin).toEqual({ kind: "pragma-bundle", logicalId });
     expect(replayed.manifest.latestRevision).toBe(1);
     const formalHash = createHash("sha256");
     for (const path of ["SKILL.md", "scripts/verify.mjs"]) {
@@ -462,6 +466,42 @@ describe("capability store", () => {
         ),
       ),
     ).resolves.toMatchObject({ mode: expect.any(Number) });
+    await store.remove(id, 1);
+    expect((await store.list()).some((capability) => capability.manifest.id === id)).toBe(false);
+  });
+
+  it("atomically prevents two Capabilities from claiming one Bundle identity", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "raced-bundle-skill");
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: raced-bundle-skill\ndescription: Raced Bundle Skill.\n---\n",
+    );
+    const snapshot = await scanSkillWorkingTree(source);
+    const logicalId = randomUUID();
+
+    const results = await Promise.allSettled([
+      store.importBundleRevisions({
+        logicalId,
+        revisions: [{ revision: 1, definition: httpDefinition }],
+      }),
+      store.publishNewSkillRevisionCandidate({
+        id: randomUUID(),
+        name: "raced-bundle-skill",
+        description: "Raced Bundle Skill.",
+        sourcePath: source,
+        candidateContentHash: snapshot.hash,
+        origin: { kind: "pragma-bundle", logicalId },
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(
+      (await store.list()).filter(
+        (capability) => capability.manifest.origin?.logicalId === logicalId,
+      ),
+    ).toHaveLength(1);
   });
 
   it("reports corrupted or missing Skill package files with capability errors", async () => {

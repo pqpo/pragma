@@ -12,6 +12,12 @@ import type {
   UpdateKnowledgeSyncConfiguration,
 } from "./knowledge-sync.ts";
 import type {
+  ResolveSkillSyncConflict,
+  RestoreIgnoredRemoteSkill,
+  SkillSyncOverview,
+  UpdateSkillSyncConfiguration,
+} from "./skill-sync.ts";
+import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeProcessEnvironmentStatus,
   DesktopBridgeSnapshot,
@@ -278,6 +284,13 @@ export interface PragmaDesktopAPI {
   restoreIgnoredRemoteKnowledgeBase: (
     input: RestoreIgnoredRemoteKnowledgeBase,
   ) => Promise<KnowledgeSyncOverview>;
+  getSkillSyncOverview: () => Promise<SkillSyncOverview>;
+  updateSkillSyncConfiguration: (input: UpdateSkillSyncConfiguration) => Promise<SkillSyncOverview>;
+  removeSkillSyncConfiguration: () => Promise<void>;
+  syncSkills: () => Promise<SkillSyncOverview>;
+  refreshSkills: () => Promise<SkillSyncOverview>;
+  resolveSkillSyncConflict: (input: ResolveSkillSyncConflict) => Promise<SkillSyncOverview>;
+  restoreIgnoredRemoteSkill: (input: RestoreIgnoredRemoteSkill) => Promise<SkillSyncOverview>;
   getGlobalMemoryPolicy: () => Promise<DesktopGlobalMemoryPolicySnapshot>;
   updateGlobalMemoryPolicy: (
     input: UpdateDesktopGlobalMemoryPolicy,

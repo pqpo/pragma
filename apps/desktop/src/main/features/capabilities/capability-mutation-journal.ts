@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { SecretRefSchema } from "@pragma/shared/integration";
 
-import { CapabilityHealthSchema } from "../../../shared/contracts/index.ts";
+import { CapabilityHealthSchema, CapabilityIdSchema } from "../../../shared/contracts/index.ts";
 
 const CapabilityMutationJournalStageSchema = z.enum([
   "revision-pending",
@@ -30,7 +30,7 @@ export const CapabilityMutationJournalSchema = z
     schemaVersion: z.literal("pragma.capability-mutation/v2"),
     mutationId: z.string().uuid(),
     mutationType: z.enum(["update", "skill-update", "retry", "bundle-append", "delete"]),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
     baseRevision: z.number().int().nonnegative(),
     targetRevision: z.number().int().positive(),
     targetRevisionRange: z
@@ -49,7 +49,7 @@ export const CapabilityMutationJournalSchema = z
     credentialMutation: z
       .object({
         mutationId: z.string().uuid(),
-        capabilityId: z.string().uuid(),
+        capabilityId: CapabilityIdSchema,
         previousRefs: z.array(SecretRefSchema),
         nextRefs: z.array(SecretRefSchema),
       })

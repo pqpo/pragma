@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MemoryExtractionFailureDiagnosticSchema } from "./extraction-failure.schema.ts";
+import { SemanticResourceIdSchema } from "../integration/primitives.schema.ts";
 
 import {
   MemorySensitivitySchema,
@@ -10,6 +11,31 @@ import {
 export const SKILL_LEARNING_JOB_SCHEMA_VERSION = "pragma.memory-skill-job/v2" as const;
 export const SKILL_EXTRACTION_INPUT_SCHEMA_VERSION =
   "pragma.memory-skill-extraction-input/v1" as const;
+export const MAX_SKILL_PACKAGE_BYTES = 25 * 1_024 * 1_024;
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x7f) {
+      bytes += 1;
+    } else if (codeUnit <= 0x7ff) {
+      bytes += 2;
+    } else if (
+      codeUnit >= 0xd800 &&
+      codeUnit <= 0xdbff &&
+      index + 1 < value.length &&
+      value.charCodeAt(index + 1) >= 0xdc00 &&
+      value.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
 
 export const SkillSourceRevisionRefSchema = z
   .object({
@@ -41,7 +67,7 @@ export const SkillSourceSnapshotSchema = z
 export const ExistingMemorySkillTargetSchema = z
   .object({
     bindingId: z.string().uuid(),
-    capabilityId: z.string().uuid(),
+    capabilityId: z.union([SemanticResourceIdSchema, z.string().uuid()]),
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),
     normalizedKeys: z.array(z.string().trim().min(1).max(300)).min(1).max(100),
@@ -60,7 +86,13 @@ export const SkillPackageFileSchema = z
           !path.includes("\\") &&
           path
             .split("/")
-            .every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+            .every(
+              (segment) =>
+                segment.length > 0 &&
+                segment !== "." &&
+                segment !== ".." &&
+                segment.toLowerCase() !== ".git",
+            ),
         "Skill package paths must be safe relative paths.",
       ),
     content: z.string().max(128 * 1_024),
@@ -71,7 +103,7 @@ export const SkillPackageSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),
-    files: z.array(SkillPackageFileSchema).min(1).max(64),
+    files: z.array(SkillPackageFileSchema).min(1).max(1_000),
   })
   .strict()
   .superRefine((value, context) => {
@@ -85,6 +117,14 @@ export const SkillPackageSchema = z
     }
     if (!paths.has("SKILL.md")) {
       context.addIssue({ code: "custom", path: ["files"], message: "SKILL.md is required." });
+    }
+    const totalBytes = value.files.reduce((sum, file) => sum + utf8ByteLength(file.content), 0);
+    if (totalBytes > MAX_SKILL_PACKAGE_BYTES) {
+      context.addIssue({
+        code: "custom",
+        path: ["files"],
+        message: `Skill packages may contain at most ${MAX_SKILL_PACKAGE_BYTES} bytes.`,
+      });
     }
     for (const file of value.files) {
       if (

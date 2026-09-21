@@ -7,7 +7,7 @@ import {
   PragmaObjectJsonSchemaSchema,
   type PragmaJsonSchema,
 } from "@pragma/interpreter/ast";
-import { PRAGMA_TEXT_LIMITS, pragmaUnicodeLength } from "@pragma/shared";
+import { PRAGMA_TEXT_LIMITS, SemanticResourceIdSchema, pragmaUnicodeLength } from "@pragma/shared";
 import { z } from "zod";
 
 import { ModelIdSchema } from "./model-provider.ts";
@@ -64,7 +64,7 @@ const CapabilityEnvironmentSchema = z
     }
   });
 
-export const CapabilityIdSchema = z.string().uuid();
+export const CapabilityIdSchema = z.union([SemanticResourceIdSchema, z.string().uuid()]);
 export const CapabilityRuntimeKeySchema = z
   .string()
   .trim()

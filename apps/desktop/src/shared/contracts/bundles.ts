@@ -6,6 +6,8 @@ import {
 import { PRAGMA_TEXT_LIMITS, PragmaAvatarIdSchema } from "@pragma/shared";
 import { z } from "zod";
 
+import { CapabilityIdSchema } from "./capabilities.ts";
+
 export const PragmaBundleModuleOptionsSchema = z
   .object({
     capabilities: z.boolean().default(true),
@@ -290,7 +292,7 @@ export const BundleCapabilityResolutionSchema = z
   .object({
     requirementId: z.string().trim().min(1).max(160),
     resourceRef: PragmaResourceRefSchema,
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
     revision: z.number().int().positive(),
   })
   .strict();
@@ -351,7 +353,7 @@ export const PragmaBundleInstallationSchema = z
     rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
     resourceRefs: z.array(PragmaResourceRefSchema),
     createdResourceRefs: z.array(PragmaResourceRefSchema),
-    createdCapabilityIds: z.array(z.string().uuid()).default([]),
+    createdCapabilityIds: z.array(CapabilityIdSchema).default([]),
     createdContextStoreIds: z.array(z.string().uuid()).default([]),
     createdPluginRefs: z.array(z.string().trim().min(1).max(500)).default([]),
     conflictResolutions: z.array(PragmaBundleConflictResolutionSchema).default([]),
