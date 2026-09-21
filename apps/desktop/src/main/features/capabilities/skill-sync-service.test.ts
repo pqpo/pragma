@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -364,6 +364,50 @@ describe("Skill sync service", () => {
     );
   });
 
+  it("treats remotes that differ only by a .git suffix as distinct sources", async () => {
+    const fixture = await createFixture();
+    const id = "24242424-2424-4424-8424-242424242424";
+    await fixture.addLocalSkill(id, "Distinct Remote Skill");
+    await fixture.service.configure(configuration());
+    await writeFile(
+      join(fixture.root, "state", "skill-sync-settings.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.skill-sync-settings/v1",
+        remote: "https://example.com/skills",
+        autoPush: true,
+        pushDeletions: false,
+      })}\n`,
+    );
+    fixture.provider.repository.skills.clear();
+    fixture.provider.advance();
+
+    const overview = await fixture.service.refresh();
+
+    expect(fixture.capabilities.has(id)).toBe(true);
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, status: "pending" }),
+    );
+  });
+
+  it("rejects a local Skill file that exceeds the UTF-8 byte limit", async () => {
+    const fixture = await createFixture();
+    const id = "25252525-2525-4525-8525-252525252525";
+    await fixture.addLocalSkill(id, "Byte Limited Skill");
+    await fixture.reviseLocalSkillFile(id, "references/large.md", "界".repeat(70_000));
+
+    const overview = await fixture.service.configure(configuration());
+
+    expect(overview.status).toBe("error");
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({
+        syncKey: `capability/${id}`,
+        status: "error",
+        errorCode: "skill_sync_size_limit",
+      }),
+    );
+    expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(false);
+  });
+
   it("persists conflict summaries for Skills with more than 64 files", async () => {
     const fixture = await createFixture();
     await fixture.service.configure(configuration());
@@ -629,6 +673,38 @@ describe("Git Skill sync provider", () => {
     });
   });
 
+  it("rejects an oversized generated Skill manifest before publishing", async () => {
+    const root = await temporaryRoot();
+    const remote = join(root, "remote.git");
+    await git(undefined, ["init", "--bare", remote]);
+    const globalConfig = join(root, "gitconfig");
+    await writeFile(globalConfig, "[user]\n\tname = Test\n\temail = test@example.com\n");
+    const provider = createGitSkillSyncProvider(join(root, "cache"), gitConfiguration(remote), {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig },
+    });
+    const id = "26262626-2626-4626-8626-262626262626";
+    const skill = remoteSkill({ kind: "capability", id }, "Large Manifest Skill");
+    const segment = "a".repeat(180);
+    const files = [
+      ...skill.files,
+      ...Array.from({ length: 999 }, (_, index) => ({
+        path: `references/${segment}/${segment}/${segment}/${segment}/${segment}/file-${index}.md`,
+        content: "x",
+        executable: false,
+      })),
+    ];
+
+    await expect(
+      provider.publish({
+        repository: { skills: new Map([[`capability/${id}`, { ...skill, files }]]) },
+        message: "must reject oversized manifest",
+      }),
+    ).rejects.toMatchObject({ code: "skill_sync_size_limit" });
+    await expect(
+      readFile(join(root, "cache", "repository", "pragma-skill-sync.yaml")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("uses the Git index executable bit when the working filesystem drops it", async () => {
     const root = await temporaryRoot();
     const remote = join(root, "remote.git");
@@ -871,6 +947,7 @@ async function createFixture(
     const currentPath = paths.get(`${id}:${current.manifest.latestRevision}`)!;
     const source = join(root, "sources", `${id}-${Date.now()}-revision`);
     await cp(currentPath, source, { recursive: true });
+    await mkdir(dirname(join(source, path)), { recursive: true });
     await writeFile(join(source, path), content);
     return await install(
       id,

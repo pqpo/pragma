@@ -406,6 +406,42 @@ describe("CapabilityRevisionCoordinator", () => {
     expect(await journalFiles(root)).toEqual([]);
   });
 
+  it("persists and recovers a mutation journal for a canonical Capability ID", async () => {
+    const root = await temporaryRoot();
+    const canonicalId = "0123456789abcdef";
+    const current = {
+      ...capability(1, ["search"]),
+      manifest: { ...capability(1, ["search"]).manifest, id: canonicalId },
+    };
+    const completeRemoval = vi.fn(async () => undefined);
+    const store = {
+      get: async () => current,
+      completeRemoval,
+    } as unknown as CapabilityStore;
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: store,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+
+    await expect(
+      coordinator.mutate({
+        id: canonicalId,
+        expectedRevision: 1,
+        mutationType: "delete",
+        commit: async () => {
+          throw new Error("simulated canonical deletion crash");
+        },
+      }),
+    ).rejects.toThrow("simulated canonical deletion crash");
+
+    await coordinator.recover();
+
+    expect(completeRemoval).toHaveBeenCalledWith(canonicalId, 1);
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
   it("upgrades and replays a historical v1 journal fixture", async () => {
     const root = await temporaryRoot();
     const directory = join(root, encodePragmaPathSegment(CAPABILITY_ID));

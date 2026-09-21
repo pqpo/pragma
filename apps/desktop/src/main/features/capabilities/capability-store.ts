@@ -77,7 +77,7 @@ const CapabilityManifestMigrationJournalSchema = z.object({
 const CapabilityDeletionJournalSchema = z
   .object({
     schemaVersion: z.literal("pragma.capability-deletion/v1"),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
     expectedRevision: z.number().int().positive(),
   })
   .strict();
@@ -85,7 +85,7 @@ const CapabilityDeletionJournalSchema = z
 const CapabilityCreationJournalSchema = z
   .object({
     schemaVersion: z.literal("pragma.capability-creation/v1"),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
   })
   .strict();
 

@@ -420,7 +420,7 @@ describe("capability store", () => {
     await writeFile(join(source, "scripts", "verify.mjs"), "process.exit(0);\n");
     await chmod(join(source, "scripts", "verify.mjs"), 0o755);
     const snapshot = await scanSkillWorkingTree(source);
-    const id = randomUUID();
+    const id = "0123456789abcdef";
     const logicalId = randomUUID();
 
     const published = await store.publishNewSkillRevisionCandidate({
@@ -466,6 +466,8 @@ describe("capability store", () => {
         ),
       ),
     ).resolves.toMatchObject({ mode: expect.any(Number) });
+    await store.remove(id, 1);
+    expect((await store.list()).some((capability) => capability.manifest.id === id)).toBe(false);
   });
 
   it("atomically prevents two Capabilities from claiming one Bundle identity", async () => {

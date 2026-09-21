@@ -1015,6 +1015,11 @@ function summary(skill: RemoteSkill | undefined) {
 }
 
 function validateRemoteSkill(skill: RemoteSkill): void {
+  for (const file of skill.files) {
+    if (Buffer.byteLength(file.content, "utf8") > MAX_FILE_BYTES) {
+      throw coded("skill_sync_size_limit", `Skill file is too large: ${file.path}`);
+    }
+  }
   const validation = validateSkillPackage({
     name: skill.name,
     description: skill.description,
@@ -1222,13 +1227,7 @@ async function writeWorkingRepository(
       sha256: createHash("sha256").update(file.content).digest("hex"),
       executable: file.executable,
     }));
-    const manifest: SkillSyncSkillManifest = SkillSyncSkillManifestSchema.parse({
-      schemaVersion: "pragma.skill-sync-skill/v1",
-      identity: skill.identity,
-      name: skill.name,
-      description: skill.description,
-      files,
-    });
+    const manifest = createSkillSyncManifest(skill, files);
     await mkdir(join(base, "files"), { recursive: true, mode: 0o700 });
     await writeFile(join(base, "skill.yaml"), stringify(manifest));
     await writeSkillTree(join(base, "files"), skill);
@@ -1348,10 +1347,7 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 }
 
 function canonicalRemote(value: string): string {
-  return value
-    .trim()
-    .replace(/\/$/u, "")
-    .replace(/\.git$/u, "");
+  return value.trim().replace(/\/$/u, "");
 }
 function configurationSourceKey(configuration: SkillSyncConfiguration): string {
   return JSON.stringify([canonicalRemote(configuration.remote), configuration.branch ?? null]);
@@ -1367,6 +1363,18 @@ function assertRepositoryBounds(repository: RemoteSkillRepository): void {
         `Skill map key does not match its identity: ${key}`,
       );
     validateRemoteSkill(skill);
+    const manifest = createSkillSyncManifest(
+      skill,
+      skill.files.map((file) => ({
+        path: file.path,
+        sizeBytes: Buffer.byteLength(file.content, "utf8"),
+        sha256: createHash("sha256").update(file.content).digest("hex"),
+        executable: file.executable,
+      })),
+    );
+    if (Buffer.byteLength(stringify(manifest), "utf8") > MAX_MANIFEST_BYTES) {
+      throw coded("skill_sync_size_limit", `Skill manifest is too large: ${key}`);
+    }
     for (const file of skill.files) {
       const size = Buffer.byteLength(file.content, "utf8");
       if (size > MAX_FILE_BYTES)
@@ -1376,6 +1384,19 @@ function assertRepositoryBounds(repository: RemoteSkillRepository): void {
         throw coded("skill_sync_size_limit", "The Skill repository is too large.");
     }
   }
+}
+
+function createSkillSyncManifest(
+  skill: RemoteSkill,
+  files: SkillSyncSkillManifest["files"],
+): SkillSyncSkillManifest {
+  return SkillSyncSkillManifestSchema.parse({
+    schemaVersion: "pragma.skill-sync-skill/v1",
+    identity: skill.identity,
+    name: skill.name,
+    description: skill.description,
+    files,
+  });
 }
 function settledStatus(state: SkillSyncState): "ready" | "conflict" | "error" {
   if (Object.keys(state.conflicts).length > 0) return "conflict";
