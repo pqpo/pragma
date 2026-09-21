@@ -1,7 +1,7 @@
 import { missionContextMountsFingerprint } from "./mission-context-mounts.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import {
   STORE_REVISION_EXPERT_REF,
@@ -2838,62 +2838,74 @@ export function createMissionRunner(options: {
         ? [{ draftId: mount.draftId, jobId: mount.revisionJobId }]
         : [],
     );
-    await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
-    const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
-    const sources = [
-      ...[...executionIds].map((executionId) => ({
-        label: `executions/${executionId}`,
-        path: paths.executionRoot(executionId),
-      })),
-      ...[...executionIds].map((executionId) => ({
-        label: `execution-archives/${executionId}.jsonl.gz`,
-        path: paths.executionArchive(executionId),
-      })),
-      ...[...executionIds].map((executionId) => ({
-        label: `memory-execution-activity/${executionId}`,
-        path: paths.memoryExecutionActivityRoot(executionId),
-      })),
-      ...(sessionId === undefined
-        ? []
-        : [
-            { label: `expert-sessions/${sessionId}`, path: paths.expertSessionRoot(sessionId) },
-            ...(await runtimeSessionDeletionSources(paths, sessionId)),
-          ]),
-      ...(
-        await Promise.all(
-          [...executionIds].map(
-            async (executionId) => await runtimeSessionDeletionSources(paths, executionId),
-          ),
-        )
-      ).flat(),
-      ...(options.missions.storagePath === undefined
-        ? []
-        : [{ label: "mission", path: options.missions.storagePath(id) }]),
-    ];
-    const uniqueSources = [
-      ...new Map(sources.map((source) => [source.path, source] as const)).values(),
-    ];
-    await moveOwnedStorageToTrash({
-      paths,
-      owner: { type: "mission", id },
-      sources: uniqueSources,
-      runtimeSessionOwnerIds: [...(sessionId === undefined ? [] : [sessionId]), ...executionIds],
-    });
-    if (options.missions.storagePath === undefined) await options.missions.remove(id);
-    else options.missions.forget?.(id);
-    if (options.contextStoreRevisions !== undefined) {
-      for (const claim of revisionClaims) {
-        await options.contextStoreRevisions.releaseMissionClaim({
-          ...claim,
-          missionId: mission.id,
-          reason: "mission_deleted",
-        });
+    const deleteOwnedStorage = async (canonicalHandoffFiles: readonly string[]): Promise<void> => {
+      await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
+      const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
+      const sources = [
+        ...[...executionIds].map((executionId) => ({
+          label: `executions/${executionId}`,
+          path: paths.executionRoot(executionId),
+        })),
+        ...[...executionIds].map((executionId) => ({
+          label: `execution-archives/${executionId}.jsonl.gz`,
+          path: paths.executionArchive(executionId),
+        })),
+        ...[...executionIds].map((executionId) => ({
+          label: `memory-execution-activity/${executionId}`,
+          path: paths.memoryExecutionActivityRoot(executionId),
+        })),
+        ...canonicalHandoffFiles.map((path) => ({
+          label: `canonical-event-handoffs/${basename(path)}`,
+          path,
+        })),
+        ...(sessionId === undefined
+          ? []
+          : [
+              { label: `expert-sessions/${sessionId}`, path: paths.expertSessionRoot(sessionId) },
+              ...(await runtimeSessionDeletionSources(paths, sessionId)),
+            ]),
+        ...(
+          await Promise.all(
+            [...executionIds].map(
+              async (executionId) => await runtimeSessionDeletionSources(paths, executionId),
+            ),
+          )
+        ).flat(),
+        ...(options.missions.storagePath === undefined
+          ? []
+          : [{ label: "mission", path: options.missions.storagePath(id) }]),
+      ];
+      const uniqueSources = [
+        ...new Map(sources.map((source) => [source.path, source] as const)).values(),
+      ];
+      await moveOwnedStorageToTrash({
+        paths,
+        owner: { type: "mission", id },
+        sources: uniqueSources,
+        runtimeSessionOwnerIds: [...(sessionId === undefined ? [] : [sessionId]), ...executionIds],
+      });
+      if (options.missions.storagePath === undefined) await options.missions.remove(id);
+      else options.missions.forget?.(id);
+      if (options.contextStoreRevisions !== undefined) {
+        for (const claim of revisionClaims) {
+          await options.contextStoreRevisions.releaseMissionClaim({
+            ...claim,
+            missionId: mission.id,
+            reason: "mission_deleted",
+          });
+        }
       }
-    }
-    options.usage?.markSubjectDeleted("mission", id);
-    sessionService.deleteExecutionContext(id);
-    lifecycleService.clearControlIssue(id);
-    options.onStorageTrashed?.();
+      options.usage?.markSubjectDeleted("mission", id);
+      sessionService.deleteExecutionContext(id);
+      lifecycleService.clearControlIssue(id);
+      options.onStorageTrashed?.();
+    };
+    if (options.executionStore === undefined) await deleteOwnedStorage([]);
+    else
+      await options.executionStore.withCanonicalEventDeletion(
+        [...executionIds],
+        deleteOwnedStorage,
+      );
   };
 
   const getContextWindowState = async (

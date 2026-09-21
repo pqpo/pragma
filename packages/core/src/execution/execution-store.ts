@@ -149,6 +149,10 @@ export interface FileExecutionStore extends ExecutionStore {
     readonly limit?: number | undefined;
   }): Promise<CanonicalEventRecoveryResult>;
   inspectCanonicalEventDelivery(): Promise<CanonicalEventDeliveryStatus>;
+  withCanonicalEventDeletion<TValue>(
+    executionIds: readonly string[],
+    action: (handoffFiles: readonly string[]) => Promise<TValue>,
+  ): Promise<TValue>;
 }
 
 export interface CanonicalEventRecoveryResult {
@@ -189,14 +193,23 @@ export function createFileExecutionStore(
   } = {},
 ): FileExecutionStore {
   const paths = new PragmaPaths(options);
+  const deletingExecutionIds = new Set<string>();
   const withExecutionLock = async <TValue>(
     executionId: string,
     operation: string,
     action: () => Promise<TValue>,
-  ): Promise<TValue> =>
-    await withFileLock(paths.executionLock(executionId), action, {
-      operation: `execution.${operation}`,
-    });
+  ): Promise<TValue> => {
+    return await withFileLock(
+      paths.executionLock(executionId),
+      async () => {
+        if (deletingExecutionIds.has(executionId) && operation !== "deletion-barrier") {
+          throw new Error(`Execution deletion is in progress: ${executionId}`);
+        }
+        return await action();
+      },
+      { operation: `execution.${operation}` },
+    );
+  };
   const canonicalDeliveryRequests = new Map<
     string,
     Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>>
@@ -204,23 +217,26 @@ export function createFileExecutionStore(
   const deliverCanonicalEvents = (
     executionId: string,
   ): Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>> => {
-    const existing = canonicalDeliveryRequests.get(executionId);
-    if (existing !== undefined) {
-      return existing.then(async () => await deliverCanonicalEvents(executionId));
+    if (options.canonicalEventFeed === undefined || deletingExecutionIds.has(executionId)) {
+      return Promise.resolve({ recovered: 0 });
     }
-    if (options.canonicalEventFeed === undefined) return Promise.resolve({ recovered: 0 });
-    const request = (async () => {
-      const handoffs = await withExecutionLock(
-        executionId,
-        "prepare-canonical-events",
-        async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
-      );
-      return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
-    })().finally(() => {
-      if (canonicalDeliveryRequests.get(executionId) === request) {
-        canonicalDeliveryRequests.delete(executionId);
-      }
-    });
+    const previous = canonicalDeliveryRequests.get(executionId);
+    const request = (previous ?? Promise.resolve({ recovered: 0 }))
+      .catch(() => ({ recovered: 0 }))
+      .then(async () => {
+        if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
+        const handoffs = await withExecutionLock(
+          executionId,
+          "prepare-canonical-events",
+          async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
+        );
+        return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
+      })
+      .finally(() => {
+        if (canonicalDeliveryRequests.get(executionId) === request) {
+          canonicalDeliveryRequests.delete(executionId);
+        }
+      });
     canonicalDeliveryRequests.set(executionId, request);
     return request;
   };
@@ -285,6 +301,34 @@ export function createFileExecutionStore(
         pending: (await listCanonicalHandoffFiles(paths)).length,
         quarantined: (await listQuarantinedCanonicalHandoffFiles(paths)).length,
       };
+    },
+    async withCanonicalEventDeletion(executionIds, action) {
+      const ids = [...new Set(executionIds)].toSorted();
+      for (const executionId of ids) deletingExecutionIds.add(executionId);
+      try {
+        await Promise.all(
+          ids.map(
+            async (executionId) =>
+              await withExecutionLock(executionId, "deletion-barrier", async () => undefined),
+          ),
+        );
+        await Promise.all(
+          ids.map(async (id) => {
+            await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
+          }),
+        );
+        const handoffFiles = (
+          await Promise.all(
+            ids.map(async (id) => [
+              ...(await listCanonicalHandoffFilesForExecution(paths, id)),
+              ...(await listQuarantinedCanonicalHandoffFilesForExecution(paths, id)),
+            ]),
+          )
+        ).flat();
+        return await action(handoffFiles);
+      } finally {
+        for (const executionId of ids) deletingExecutionIds.delete(executionId);
+      }
     },
     async delete(executionId) {
       await withExecutionLock(executionId, "delete", async () => {

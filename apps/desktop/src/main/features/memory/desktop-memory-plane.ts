@@ -419,18 +419,6 @@ export async function createDesktopMemoryPlane(options: {
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
       const adapted = await adapter.runOnce();
       await scheduler.runOnce();
-      if (!learningEnabled) {
-        if (
-          Date.now() - lastMaintenanceAtMs >=
-          DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs
-        ) {
-          await maintainStorage();
-        }
-        if (recovery.quarantined > 0) markDegraded("canonical_event_handoff_quarantined");
-        else if (recovery.failed > 0) markDegraded("canonical_event_delivery_failed");
-        else lastError = undefined;
-        return;
-      }
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
       }
@@ -666,7 +654,7 @@ export async function createDesktopMemoryPlane(options: {
         semantic.store.wakeNeedsAttention(new Date(), "configuration"),
         skill.store.wakeNeedsAttention(new Date(), "configuration"),
       ]);
-      scheduler.wake();
+      wakePipeline();
     },
     wakePipeline,
     async manageMemoryJob(input) {

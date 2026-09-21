@@ -201,6 +201,15 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
       now: due,
       retry: "configuration",
     });
+    await plane.policies.updateGlobal({
+      expectedRevision: 1,
+      policy: {
+        enabled: "disabled",
+        capture: "disabled",
+        recall: "disabled",
+        learning: "disabled",
+      },
+    });
 
     plane.start();
     await vi.waitFor(

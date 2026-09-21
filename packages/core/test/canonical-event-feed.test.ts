@@ -124,6 +124,63 @@ describe("Canonical Event Feed", () => {
     await durable.close();
   });
 
+  it("drains queued canonical deliveries before an Execution deletion barrier", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-delete-barrier-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let releaseDelivery!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    let appendCalls = 0;
+    const feed: CanonicalEventFeed = {
+      ...durable,
+      async append(events) {
+        appendCalls += 1;
+        if (appendCalls === 1) {
+          markDeliveryStarted();
+          await deliveryReleased;
+        }
+        await durable.append(events);
+      },
+    };
+    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    await createExecution(store);
+
+    const firstCommit = appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "delete-event-one",
+    );
+    await deliveryStarted;
+    const secondCommit = appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 2 },
+      "delete-event-two",
+    );
+    await waitForExecutionVersion(store, 2);
+    const deletion = store.withCanonicalEventDeletion(["execution"], async (handoffFiles) => {
+      await expect(store.get("execution")).rejects.toThrow("deletion is in progress");
+      return handoffFiles;
+    });
+    releaseDelivery();
+
+    const [, , handoffFiles] = await Promise.all([firstCommit, secondCommit, deletion]);
+    expect(appendCalls).toBe(1);
+    expect(handoffFiles).toHaveLength(1);
+    await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 1 });
+    await durable.close();
+  });
+
   it("keeps a durable handoff when delivery fails and recovers it without blocking source state", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-recovery-"));
     const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
