@@ -3,7 +3,9 @@ import { constants } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-const MAX_SKILL_BYTES = 25 * 1024 * 1024;
+import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
+
+const MAX_SKILL_BYTES = MAX_SKILL_PACKAGE_BYTES;
 const MAX_SKILL_FILES = 1_000;
 
 export interface SkillWorkingTreeEntry {

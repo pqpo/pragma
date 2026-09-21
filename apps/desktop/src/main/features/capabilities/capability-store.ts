@@ -4,7 +4,7 @@ import { dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
 import { z } from "zod";
-import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+import { MAX_SKILL_PACKAGE_BYTES, SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
@@ -53,7 +53,7 @@ import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
 import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
 
-const MAX_SKILL_BYTES = 25 * 1024 * 1024;
+const MAX_SKILL_BYTES = MAX_SKILL_PACKAGE_BYTES;
 const MAX_SKILL_FILES = 1000;
 
 const LegacyCapabilityManifestV1Schema = z.object({

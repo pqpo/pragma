@@ -13,6 +13,7 @@ import type {
 import { z } from "zod";
 
 import {
+  CapabilityIdSchema,
   MemorySkillCandidateRefSchema,
   MemorySkillCandidateSchema,
   ResolveMemorySkillTargetSchema,
@@ -30,7 +31,7 @@ const BindingSchema = z
   .object({
     bindingId: z.string().uuid(),
     expertRef: z.string().regex(/^expert:[0-9a-hjkmnp-tv-z]{16}$/u),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
     normalizedKeys: z.array(z.string().min(1).max(300)).min(1).max(100),
     lastSourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
     updatedAt: z.string().datetime(),
@@ -47,7 +48,7 @@ const PromotionJournalSchema = z
     schemaVersion: z.literal("pragma.memory-skill-promotion-journal/v1"),
     candidateId: z.string().uuid(),
     expertRef: z.string(),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
   })
   .strict();
 

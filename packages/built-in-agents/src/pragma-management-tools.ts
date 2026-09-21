@@ -6,6 +6,7 @@ import {
   type ExpertAgentManagedToolCallContext,
   type ExpertAgentToolCallResult,
 } from "@pragma/core";
+import { SemanticResourceIdSchema } from "@pragma/shared";
 import { z } from "zod";
 
 import type {
@@ -432,7 +433,7 @@ export const ReadySkillRevisionTargetSchema = z
   .object({
     availability: z.literal("ready"),
     targetRef: SkillTargetRefSchema,
-    capabilityId: z.string().uuid(),
+    capabilityId: z.union([SemanticResourceIdSchema, z.string().uuid()]),
     name: z.string().min(1).max(120),
     description: z.string().max(2_000),
     revision: z.number().int().positive(),
