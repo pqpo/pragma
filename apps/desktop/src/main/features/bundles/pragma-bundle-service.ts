@@ -50,6 +50,7 @@ import { z } from "zod";
 import {
   CreateCapabilitySchema,
   CapabilityDefinitionSchema,
+  CapabilityIdSchema,
   ContextStoreSnapshotSchema,
   PragmaBundleExportPreviewSchema,
   PragmaBundleExportResultSchema,
@@ -125,7 +126,7 @@ const DesktopContextPayloadDescriptorSchema = z
 const DesktopCapabilityPayloadDescriptorV2Schema = z
   .object({
     schemaVersion: z.literal("pragma.desktop.capability-descriptor/v2"),
-    logicalId: z.string().uuid(),
+    logicalId: CapabilityIdSchema,
     revision: z.number().int().positive(),
     definition: CapabilityDefinitionSchema,
     revisions: z

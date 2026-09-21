@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, lstat, mkdir, opendir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -32,6 +32,7 @@ const MAX_FILE_BYTES = 128 * 1024;
 const MAX_CONFLICT_SUMMARY_FILES = 1_000;
 const MAX_REPOSITORY_SKILLS = 500;
 const MAX_REPOSITORY_BYTES = 25 * 1024 * 1024;
+const MAX_GIT_INDEX_RECORD_BYTES = 16 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
 type SyncIntent = "full" | "pull_only";
 
@@ -829,7 +830,7 @@ export function createGitSkillSyncProvider(
   return {
     async readHead() {
       const prepared = await prepare();
-      const fileModes = await readGitFileModes(repositoryPath, git);
+      const fileModes = await readGitFileModes(repositoryPath, environment);
       return { ...prepared, repository: await readWorkingRepository(repositoryPath, fileModes) };
     },
     async publish(input) {
@@ -1156,22 +1157,89 @@ async function readWorkingRepository(
 
 async function readGitFileModes(
   root: string,
-  git: GitRunner,
+  environment: NodeJS.ProcessEnv,
 ): Promise<ReadonlyMap<string, string>> {
-  const output = await git(root, ["ls-files", "--stage", "-z", "--", SKILLS_DIRECTORY]);
   const modes = new Map<string, string>();
-  for (const record of output.split("\0")) {
-    if (record === "") continue;
-    const separator = record.indexOf("\t");
-    const header =
-      separator < 0 ? undefined : /^(\d+) [a-f0-9]+ \d+$/u.exec(record.slice(0, separator));
-    const path = separator < 0 ? "" : record.slice(separator + 1);
-    if (header === undefined || header === null || path === "") {
-      throw coded("skill_sync_git_index_invalid", "Invalid Git index entry.");
-    }
-    modes.set(path, header[1]!);
-  }
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const child = spawn("git", ["-C", root, "ls-files", "--stage", "-z", "--", SKILLS_DIRECTORY], {
+      env: gitEnvironment(environment),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let stderr = "";
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error === undefined) resolvePromise();
+      else rejectPromise(error);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(coded("skill_sync_git_timeout", "Git index inspection timed out."));
+    }, GIT_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+      while (true) {
+        const terminator = pending.indexOf(0);
+        if (terminator < 0) break;
+        const recordBytes = pending.subarray(0, terminator);
+        pending = pending.subarray(terminator + 1);
+        try {
+          addGitIndexMode(modes, recordBytes);
+        } catch (error) {
+          child.kill("SIGKILL");
+          finish(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+      }
+      if (pending.length > MAX_GIT_INDEX_RECORD_BYTES) {
+        child.kill("SIGKILL");
+        finish(coded("skill_sync_git_index_invalid", "Git index entry is too large."));
+      }
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < 4_000) stderr += chunk.slice(0, 4_000 - stderr.length);
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      if (code !== 0) {
+        finish(
+          new Error(
+            `Git index inspection failed (${code ?? signal ?? "unknown"}): ${stderr.trim()}`,
+          ),
+        );
+        return;
+      }
+      if (pending.length !== 0) {
+        finish(coded("skill_sync_git_index_invalid", "Invalid Git index entry."));
+        return;
+      }
+      finish();
+    });
+  });
   return modes;
+}
+
+function addGitIndexMode(modes: Map<string, string>, recordBytes: Buffer): void {
+  if (recordBytes.length === 0 || recordBytes.length > MAX_GIT_INDEX_RECORD_BYTES) {
+    throw coded("skill_sync_git_index_invalid", "Invalid Git index entry.");
+  }
+  const record = recordBytes.toString("utf8");
+  if (!Buffer.from(record, "utf8").equals(recordBytes)) {
+    throw coded("skill_sync_git_index_invalid", "Git index path is not UTF-8 text.");
+  }
+  const separator = record.indexOf("\t");
+  const header =
+    separator < 0 ? undefined : /^(\d+) [a-f0-9]+ \d+$/u.exec(record.slice(0, separator));
+  const path = separator < 0 ? "" : record.slice(separator + 1);
+  if (header === undefined || header === null || path === "") {
+    throw coded("skill_sync_git_index_invalid", "Invalid Git index entry.");
+  }
+  modes.set(path, header[1]!);
 }
 
 async function stageGitFileModes(
@@ -1289,15 +1357,19 @@ async function runGit(
   const { stdout } = await execFileAsync("git", command, {
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
-    env: {
-      ...environment,
-      GIT_TERMINAL_PROMPT: "0",
-      ...(environment.GIT_SSH_COMMAND === undefined
-        ? { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" }
-        : {}),
-    },
+    env: gitEnvironment(environment),
   });
   return stdout;
+}
+
+function gitEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    GIT_TERMINAL_PROMPT: "0",
+    ...(environment.GIT_SSH_COMMAND === undefined
+      ? { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" }
+      : {}),
+  };
 }
 
 async function readDirectory(path: string) {

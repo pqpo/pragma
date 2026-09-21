@@ -353,7 +353,7 @@ export const PragmaBundleInstallationSchema = z
     rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
     resourceRefs: z.array(PragmaResourceRefSchema),
     createdResourceRefs: z.array(PragmaResourceRefSchema),
-    createdCapabilityIds: z.array(z.string().uuid()).default([]),
+    createdCapabilityIds: z.array(CapabilityIdSchema).default([]),
     createdContextStoreIds: z.array(z.string().uuid()).default([]),
     createdPluginRefs: z.array(z.string().trim().min(1).max(500)).default([]),
     conflictResolutions: z.array(PragmaBundleConflictResolutionSchema).default([]),
