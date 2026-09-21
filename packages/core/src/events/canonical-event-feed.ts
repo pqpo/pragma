@@ -94,7 +94,7 @@ export async function createFileCanonicalEventFeed(
         return;
       }
       if (message.type === "fatal") {
-        reject(new Error(message.message));
+        reject(deserializeWorkerError(message.error));
         void worker.terminate();
         return;
       }
@@ -102,7 +102,7 @@ export async function createFileCanonicalEventFeed(
       if (request === undefined) return;
       pending.delete(message.requestId);
       if (message.ok) request.resolve(message.value);
-      else request.reject(new Error(message.message));
+      else request.reject(deserializeWorkerError(message.error));
     });
     worker.on("error", (error) => {
       const workerError = error instanceof Error ? error : new Error(String(error));
@@ -405,7 +405,7 @@ function canonicalEventFeedWorkerUrl(): URL {
 
 type CanonicalEventFeedWorkerResponse =
   | { readonly type: "ready" }
-  | { readonly type: "fatal"; readonly message: string }
+  | { readonly type: "fatal"; readonly error: SerializedWorkerError }
   | {
       readonly type: "response";
       readonly requestId: number;
@@ -416,8 +416,23 @@ type CanonicalEventFeedWorkerResponse =
       readonly type: "response";
       readonly requestId: number;
       readonly ok: false;
-      readonly message: string;
+      readonly error: SerializedWorkerError;
     };
+
+interface SerializedWorkerError {
+  readonly name: string;
+  readonly message: string;
+  readonly code?: string | number | undefined;
+  readonly stack?: string | undefined;
+}
+
+function deserializeWorkerError(serialized: SerializedWorkerError): Error {
+  const error = new Error(serialized.message);
+  error.name = serialized.name;
+  if (serialized.stack !== undefined) error.stack = serialized.stack;
+  if (serialized.code !== undefined) Object.assign(error, { code: serialized.code });
+  return error;
+}
 
 function isWorkerResponse(value: unknown): value is CanonicalEventFeedWorkerResponse {
   if (typeof value !== "object" || value === null || !("type" in value)) return false;

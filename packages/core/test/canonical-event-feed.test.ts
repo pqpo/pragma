@@ -20,6 +20,18 @@ import { CANONICAL_EVENT_FEED_V1_SCHEMA_SQL } from "../src/storage/migrations/ca
 import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
 describe("Canonical Event Feed", () => {
+  it("preserves worker error diagnostics across the RPC boundary", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-error-"));
+    const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
+
+    await expect(feed.read({ limit: 0 })).rejects.toMatchObject({
+      name: "RangeError",
+      message: "Canonical event page limit must be between 1 and 1000.",
+      stack: expect.stringContaining("canonical-event-feed"),
+    });
+    await feed.close();
+  });
+
   it("relays committed Execution events with stable idempotency", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-"));
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });

@@ -14,6 +14,13 @@ interface WorkerRequest {
   readonly input?: unknown;
 }
 
+interface SerializedWorkerError {
+  readonly name: string;
+  readonly message: string;
+  readonly code?: string | number | undefined;
+  readonly stack?: string | undefined;
+}
+
 const port = parentPort;
 if (port === null) throw new Error("Canonical event feed worker requires a parent port.");
 
@@ -35,7 +42,7 @@ void createSynchronousFileCanonicalEventFeed(workerOptions(workerData))
             type: "response",
             requestId: message.requestId,
             ok: false,
-            message: error instanceof Error ? error.message : String(error),
+            error: serializeError(error),
           });
         }
       });
@@ -44,9 +51,20 @@ void createSynchronousFileCanonicalEventFeed(workerOptions(workerData))
   .catch((error: unknown) => {
     port.postMessage({
       type: "fatal",
-      message: error instanceof Error ? error.message : String(error),
+      error: serializeError(error),
     });
   });
+
+function serializeError(error: unknown): SerializedWorkerError {
+  if (!(error instanceof Error)) return { name: "Error", message: String(error) };
+  const code = (error as Error & { readonly code?: unknown }).code;
+  return {
+    name: error.name,
+    message: error.message,
+    ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+    ...(error.stack === undefined ? {} : { stack: error.stack }),
+  };
+}
 
 async function execute(feed: CanonicalEventFeed, request: WorkerRequest): Promise<unknown> {
   switch (request.operation) {
