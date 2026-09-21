@@ -201,6 +201,28 @@ describe("Skill sync service", () => {
     expect(fixture.capabilities.has(id)).toBe(false);
     expect(overview.status).toBe("ready");
   });
+
+  it("starts with fresh bases when the remote default branch changes", async () => {
+    const fixture = await createFixture();
+    const id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    await fixture.addLocalSkill(id, "Branch-safe Skill");
+    await fixture.service.configure(configuration());
+
+    fixture.provider.reference = "replacement";
+    fixture.provider.repository.skills.clear();
+    fixture.provider.advance();
+    const refreshed = await fixture.service.refresh();
+
+    expect(fixture.capabilities.has(id)).toBe(true);
+    expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(false);
+    expect(refreshed).toMatchObject({ resolvedBranch: "replacement", status: "ready" });
+    expect(refreshed.skills).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, status: "pending" }),
+    );
+
+    await fixture.service.sync();
+    expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(true);
+  });
 });
 
 describe("Git Skill sync provider", () => {
@@ -402,6 +424,7 @@ async function createFixture() {
 
 class FakeProvider implements SkillSyncProvider {
   repository: { skills: Map<string, RemoteSkill> } = { skills: new Map() };
+  reference = "main";
   private revision = 0;
 
   advance() {
@@ -411,7 +434,7 @@ class FakeProvider implements SkillSyncProvider {
   async readHead() {
     return {
       revision: String(this.revision),
-      reference: "main",
+      reference: this.reference,
       repository: cloneRepository(this.repository),
     };
   }

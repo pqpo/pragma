@@ -406,6 +406,13 @@ export function createSkillSyncService(options: {
     try {
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const head = await provider.readHead();
+        if (
+          state.resolvedBranch !== undefined &&
+          head.reference !== undefined &&
+          state.resolvedBranch !== head.reference
+        ) {
+          state = emptyState();
+        }
         const result = await reconcile(configuration, state, head, intent);
         state = result.state;
         if (result.publishedKeys.length > 0 && intent === "full") {
