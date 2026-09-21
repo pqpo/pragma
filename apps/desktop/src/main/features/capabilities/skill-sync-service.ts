@@ -823,7 +823,7 @@ export function createGitSkillSyncProvider(
       await git(repositoryPath, ["checkout", "--detach", "--force", "FETCH_HEAD"]);
       await git(repositoryPath, ["reset", "--hard", "FETCH_HEAD"]);
     }
-    await git(repositoryPath, ["clean", "-fd", "--", ROOT_MANIFEST, SKILLS_DIRECTORY]);
+    await git(repositoryPath, ["clean", "-fdx", "--", ROOT_MANIFEST, SKILLS_DIRECTORY]);
     return { reference, ...(revision === undefined ? {} : { revision }) };
   };
   return {

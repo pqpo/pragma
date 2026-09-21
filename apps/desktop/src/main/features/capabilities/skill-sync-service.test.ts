@@ -755,6 +755,16 @@ describe("Git Skill sync provider", () => {
       join(repositoryPath, "skills", "capability", id, "files", "scripts", "run.mjs"),
       0o644,
     );
+    const ignoredResidue = join(
+      repositoryPath,
+      "skills",
+      "capability",
+      id,
+      "files",
+      "scripts",
+      "residue.mjs",
+    );
+    await writeFile(ignoredResidue, "export const residue = true;\n");
 
     const head = await provider.readHead();
 
@@ -764,6 +774,7 @@ describe("Git Skill sync provider", () => {
     expect(head.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
       expect.objectContaining({ path: "references/line\nbreak.md" }),
     );
+    await expect(readFile(ignoredResidue)).rejects.toMatchObject({ code: "ENOENT" });
 
     const nonExecutable = {
       ...skill,

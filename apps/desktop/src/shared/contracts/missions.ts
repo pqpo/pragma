@@ -23,6 +23,7 @@ import {
   MissionWorkspaceSchema,
 } from "./mission-base.ts";
 import { ContextStoreIdSchema } from "./context-stores.ts";
+import { CapabilityIdSchema } from "./capabilities.ts";
 import { DesktopRuntimeIdSchema, DesktopRuntimeModelSchema } from "./runtime.ts";
 import { DesktopToolPermissionModeSchema } from "./settings.ts";
 
@@ -175,7 +176,7 @@ export const MissionOriginSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("system-skill-revision"),
     jobId: z.string().uuid(),
-    capabilityId: z.string().uuid(),
+    capabilityId: CapabilityIdSchema,
   }),
   z.object({
     type: z.literal("system-skill-evaluation"),
@@ -213,7 +214,7 @@ export const MissionContextMountSchema = z.discriminatedUnion("kind", [
       kind: z.literal("skill-revision-draft"),
       draftId: z.string().uuid(),
       revisionJobId: z.string().uuid(),
-      capabilityId: z.string().uuid(),
+      capabilityId: CapabilityIdSchema,
     })
     .strict(),
 ]);
@@ -305,7 +306,7 @@ export const MissionSummarySchema = z.object({
       kind: z.enum(["knowledge-revision", "skill-revision"]),
       jobId: z.string().uuid(),
       storeId: z.string().uuid().optional(),
-      capabilityId: z.string().uuid().optional(),
+      capabilityId: CapabilityIdSchema.optional(),
     }),
   ]),
   lifecycleStatus: MissionLifecycleStatusSchema,
