@@ -7,6 +7,7 @@ import { PRAGMA_TEXT_LIMITS, PragmaAvatarIdSchema } from "@pragma/shared";
 import { z } from "zod";
 
 import { CapabilityIdSchema } from "./capabilities.ts";
+import { ContextStoreIdSchema } from "./context-stores.ts";
 
 export const PragmaBundleModuleOptionsSchema = z
   .object({
@@ -124,6 +125,26 @@ export const PragmaBundleConflictSchema = z
     }
   });
 
+export const PragmaBundleAssetConflictCandidateSchema = z
+  .object({
+    assetId: z.union([CapabilityIdSchema, ContextStoreIdSchema]),
+    name: z.string().trim().min(1).max(200),
+    revision: z.number().int().positive(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    boundResourceRef: PragmaResourceRefSchema.optional(),
+  })
+  .strict();
+
+export const PragmaBundleAssetConflictSchema = z
+  .object({
+    resourceRef: PragmaResourceRefSchema,
+    assetKind: z.enum(["skill", "knowledge_base"]),
+    importedName: z.string().trim().min(1).max(200),
+    importedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    candidates: z.array(PragmaBundleAssetConflictCandidateSchema).min(1),
+  })
+  .strict();
+
 export const PragmaBundleDependencySummarySchema = z
   .object({
     kind: z.enum(["runtime", "capability", "context-store", "plugin", "secret"]),
@@ -199,6 +220,7 @@ export const PragmaBundleImportInspectionSchema = z
     resources: z.number().int().positive(),
     dependencies: z.array(PragmaBundleDependencySummarySchema),
     conflicts: z.array(PragmaBundleConflictSchema),
+    assetConflicts: z.array(PragmaBundleAssetConflictSchema).default([]),
     requirements: z.array(
       z
         .object({
@@ -253,6 +275,49 @@ export const PragmaBundleConflictResolutionSchema = z
     }
   });
 
+export const PragmaBundleAssetConflictResolutionSchema = z
+  .object({
+    resourceRef: PragmaResourceRefSchema,
+    assetKind: z.enum(["skill", "knowledge_base"]),
+    action: z.enum(["update", "copy", "keep_local"]),
+    targetAssetId: z.union([CapabilityIdSchema, ContextStoreIdSchema]).optional(),
+    expectedTarget: z
+      .object({
+        revision: z.number().int().positive(),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((resolution, context) => {
+    const targetsExisting = resolution.action === "update" || resolution.action === "keep_local";
+    if (targetsExisting && resolution.targetAssetId === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetAssetId"],
+        message: "An existing local asset must be selected.",
+      });
+    }
+    if (targetsExisting && resolution.expectedTarget === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedTarget"],
+        message: "The selected local asset version is required.",
+      });
+    }
+    if (
+      !targetsExisting &&
+      (resolution.targetAssetId !== undefined || resolution.expectedTarget !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targetAssetId"],
+        message: "Copy imports cannot target an existing local asset.",
+      });
+    }
+  });
+
 const PragmaBundleKnowledgeBaseUpdateSchema = z
   .object({
     sourceRef: PragmaContextStoreRefSchema,
@@ -264,6 +329,8 @@ const PragmaBundleKnowledgeBaseUpdateSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
     importedSnapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    importedName: z.string().trim().min(1).max(200).optional(),
+    importedDescription: z.string().trim().max(2_000).optional(),
     phase: z.enum(["prepared", "applied"]),
   })
   .strict()
@@ -313,6 +380,7 @@ export const StartPragmaBundleImportSchema = z
     expectedProjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     expectedProjectRevision: z.number().int().nonnegative(),
     conflicts: z.array(PragmaBundleConflictResolutionSchema).default([]),
+    assetConflicts: z.array(PragmaBundleAssetConflictResolutionSchema).optional(),
     runtimes: z.array(BundleRuntimeResolutionSchema).default([]),
     capabilities: z.array(BundleCapabilityResolutionSchema).default([]),
     contextStores: z.array(BundleContextStoreResolutionSchema).default([]),
@@ -337,7 +405,7 @@ export const PragmaBundlePendingDependencySchema = z
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v6"),
+    schemaVersion: z.literal("pragma.bundle-installation/v7"),
     bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1", "pragma.bundle/v2"]),
     sourceProjectFingerprint: z
       .string()
@@ -357,6 +425,7 @@ export const PragmaBundleInstallationSchema = z
     createdContextStoreIds: z.array(z.string().uuid()).default([]),
     createdPluginRefs: z.array(z.string().trim().min(1).max(500)).default([]),
     conflictResolutions: z.array(PragmaBundleConflictResolutionSchema).default([]),
+    assetConflictResolutions: z.array(PragmaBundleAssetConflictResolutionSchema).default([]),
     resourceMappings: z
       .array(
         z

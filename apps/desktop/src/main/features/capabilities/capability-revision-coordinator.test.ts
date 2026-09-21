@@ -493,7 +493,7 @@ describe("CapabilityRevisionCoordinator", () => {
 function capability(revision: number, tools: string[]): Capability {
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v2",
+      schemaVersion: "pragma.capability/v3",
       id: CAPABILITY_ID,
       runtimeKey: "search",
       name: `Search ${revision}`,

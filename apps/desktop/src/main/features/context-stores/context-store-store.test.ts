@@ -559,6 +559,33 @@ describe("managed context store", () => {
     });
   });
 
+  it("records metadata-only snapshot imports as a new revision", async () => {
+    const { store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Before", description: "Old" });
+    const prepared = await store.getSnapshot(created.id);
+
+    const committed = await store.appendSnapshot(
+      {
+        storeId: created.id,
+        baseRevision: prepared.revision,
+        baseSnapshotHash: prepared.snapshotHash,
+        snapshotHash: prepared.snapshotHash,
+        directories: prepared.directories,
+        files: prepared.files,
+        summary: "Import knowledge-base metadata.",
+        name: "After",
+        description: "New",
+      },
+      "import",
+    );
+
+    expect(committed).toMatchObject({ name: "After", description: "New", contentRevision: 2 });
+    await expect(store.getSnapshot(created.id, 2)).resolves.toMatchObject({
+      snapshotHash: prepared.snapshotHash,
+      revision: 2,
+    });
+  });
+
   it("rejects traversal and non-Markdown entries", async () => {
     const { storesPath, store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Safe", description: "" });

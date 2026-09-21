@@ -136,6 +136,7 @@ describe("SquareDirectoryFragment", () => {
       resources: 3,
       dependencies: [],
       conflicts: [],
+      assetConflicts: [],
       requirements: [],
       readiness: [],
       sameContentInstallationIds: [],

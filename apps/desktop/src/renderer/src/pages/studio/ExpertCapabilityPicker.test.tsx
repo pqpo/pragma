@@ -16,7 +16,7 @@ import type { ExpertRecord } from "./studio-model.ts";
 
 const toolCapability = {
   manifest: {
-    schemaVersion: "pragma.capability/v2",
+    schemaVersion: "pragma.capability/v3",
     id: "codewiki",
     runtimeKey: "codewiki",
     name: "CodeWiki",

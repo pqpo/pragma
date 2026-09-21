@@ -234,6 +234,7 @@ describe("Bundle import inspection", () => {
           updateAllowed: true,
         },
       ],
+      assetConflicts: [],
       requirements: [],
       readiness: [
         {

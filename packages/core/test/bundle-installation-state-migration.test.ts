@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyAtomicStateMigration,
   BundleInstallationsCatalogV6Schema,
+  BundleInstallationsCatalogV7Schema,
   bundleInstallationsMigrationChain,
   recoverAtomicStateMigration,
   StateVersionTooNewError,
@@ -29,13 +30,13 @@ describe("Bundle installation state migration", () => {
 
     expect(upgraded).toMatchObject({
       fromVersion: 1,
-      toVersion: 6,
+      toVersion: 7,
       migrated: true,
       value: {
-        schemaVersion: "pragma.bundle-installations/v6",
+        schemaVersion: "pragma.bundle-installations/v7",
         installations: [
           {
-            schemaVersion: "pragma.bundle-installation/v6",
+            schemaVersion: "pragma.bundle-installation/v7",
             bundleVersion: "pragma.desktop-bundle/v1",
             id: "00000000-0000-4000-8000-000000000001",
             rootName: "Writer",
@@ -60,14 +61,14 @@ describe("Bundle installation state migration", () => {
     });
   });
 
-  it("applies the adjacent v2 to v6 migration without inventing a portable fingerprint", () => {
+  it("applies the adjacent v2 to v7 migration without inventing a portable fingerprint", () => {
     const upgraded = bundleInstallationsMigrationChain.upgrade(v2Catalog());
 
     expect(upgraded.fromVersion).toBe(2);
-    expect(upgraded.toVersion).toBe(6);
+    expect(upgraded.toVersion).toBe(7);
     expect(upgraded.migrated).toBe(true);
     expect(upgraded.value.installations[0]).toMatchObject({
-      schemaVersion: "pragma.bundle-installation/v6",
+      schemaVersion: "pragma.bundle-installation/v7",
       bundleVersion: "pragma.desktop-bundle/v1",
       readiness: [
         {
@@ -87,22 +88,22 @@ describe("Bundle installation state migration", () => {
     );
     const upgraded = bundleInstallationsMigrationChain.upgrade(fixture);
 
-    expect(upgraded).toMatchObject({ fromVersion: 4, toVersion: 6, migrated: true });
+    expect(upgraded).toMatchObject({ fromVersion: 4, toVersion: 7, migrated: true });
     expect(upgraded.value.installations[0]).toMatchObject({
-      schemaVersion: "pragma.bundle-installation/v6",
+      schemaVersion: "pragma.bundle-installation/v7",
       bundleVersion: "pragma.desktop-bundle/v1",
       rootKind: "Expert",
     });
   });
 
   it("treats current state as a no-op and rejects future state", () => {
-    const current = bundleInstallationsMigrationChain.upgrade(v6Catalog());
+    const current = bundleInstallationsMigrationChain.upgrade(v7Catalog());
 
     expect(current.migrated).toBe(false);
-    expect(current.value).toEqual(v6Catalog());
+    expect(current.value).toEqual(v7Catalog());
     expect(() =>
       bundleInstallationsMigrationChain.upgrade({
-        schemaVersion: "pragma.bundle-installations/v7",
+        schemaVersion: "pragma.bundle-installations/v8",
         installations: [],
       }),
     ).toThrow(StateVersionTooNewError);
@@ -138,9 +139,9 @@ describe("Bundle installation state migration", () => {
     temporaryRoots.push(root);
     const journalFile = join(root, "state-migration.json");
     const catalogFile = join(root, "installations.json");
-    const documents = { "installations.json": v6Catalog() };
+    const documents = { "installations.json": v7Catalog() };
     const validateDocuments = (value: Readonly<Record<string, unknown>>) => {
-      BundleInstallationsCatalogV6Schema.parse(value["installations.json"]);
+      BundleInstallationsCatalogV7Schema.parse(value["installations.json"]);
     };
 
     await writeFile(catalogFile, `${JSON.stringify(v1Catalog(), null, 2)}\n`);
@@ -149,7 +150,7 @@ describe("Bundle installation state migration", () => {
       journalFile,
       resource: { family: "pragma.bundle-installations", id: "desktop" },
       fromVersion: 1,
-      toVersion: 6,
+      toVersion: 7,
       documents,
       validateDocuments,
     });
@@ -160,7 +161,7 @@ describe("Bundle installation state migration", () => {
         schemaVersion: "pragma.state-migration/v1",
         resource: { family: "pragma.bundle-installations", id: "desktop" },
         fromVersion: 1,
-        toVersion: 6,
+        toVersion: 7,
         documents,
       })}\n`,
     );
@@ -173,7 +174,7 @@ describe("Bundle installation state migration", () => {
         validateDocuments,
       }),
     ).resolves.toBe(true);
-    await expect(readJson(catalogFile)).resolves.toEqual(v6Catalog());
+    await expect(readJson(catalogFile)).resolves.toEqual(v7Catalog());
     await expect(readFile(journalFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
@@ -284,6 +285,18 @@ function v6Catalog() {
     installations: previous.installations.map((installation) => ({
       ...installation,
       schemaVersion: "pragma.bundle-installation/v6",
+    })),
+  };
+}
+
+function v7Catalog() {
+  const previous = v6Catalog();
+  return {
+    schemaVersion: "pragma.bundle-installations/v7",
+    installations: previous.installations.map((installation) => ({
+      ...installation,
+      schemaVersion: "pragma.bundle-installation/v7",
+      assetConflictResolutions: [],
     })),
   };
 }

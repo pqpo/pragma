@@ -66,10 +66,35 @@ const LegacyCapabilityManifestV1Schema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-const CapabilityManifestMigrationJournalSchema = z.object({
+const LegacyCapabilityManifestV2Schema = z.object({
+  schemaVersion: z.literal("pragma.capability/v2"),
+  id: CapabilityIdSchema,
+  runtimeKey: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(120),
+  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
+  latestRevision: z.number().int().positive(),
+  origin: z
+    .object({
+      kind: z.literal("pragma-bundle"),
+      logicalId: CapabilityIdSchema,
+    })
+    .strict()
+    .optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+const LegacyCapabilityManifestMigrationJournalSchema = z.object({
   schemaVersion: z.literal("pragma.capability-manifest-migration/v1"),
   sourceSchema: z.literal("pragma.capability/v1"),
   targetSchema: z.literal("pragma.capability/v2"),
+  targetManifest: LegacyCapabilityManifestV2Schema,
+});
+
+const CapabilityManifestMigrationJournalSchema = z.object({
+  schemaVersion: z.literal("pragma.capability-manifest-migration/v2"),
+  sourceSchema: z.enum(["pragma.capability/v1", "pragma.capability/v2"]),
+  targetSchema: z.literal("pragma.capability/v3"),
   targetManifest: CapabilityManifestSchema,
 });
 
@@ -191,7 +216,8 @@ export function createCapabilityStore(options: {
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
   const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
   const healthPath = (id: string) => join(capabilityPath(id), "health.json");
-  const migrationJournalPath = (id: string) => join(capabilityPath(id), "v1-to-v2.json");
+  const legacyMigrationJournalPath = (id: string) => join(capabilityPath(id), "v1-to-v2.json");
+  const migrationJournalPath = (id: string) => join(capabilityPath(id), "manifest-to-v3.json");
   const deletionJournalPath = (id: string) => join(capabilityPath(id), "deletion.json");
   const creationJournalPath = (id: string) => join(capabilityPath(id), "creation.json");
   const revisionPath = (id: string, revision: number) =>
@@ -301,18 +327,10 @@ export function createCapabilityStore(options: {
   };
 
   const migrateManifest = async (id: string): Promise<CapabilityManifest> =>
-    await withFileLock(join(capabilityPath(id), ".v2-migration.lock"), async () => {
-      const raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
+    await withFileLock(join(capabilityPath(id), ".v3-migration.lock"), async () => {
+      let raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
       const current = CapabilityManifestSchema.safeParse(raw);
       if (current.success) return current.data;
-      const legacy = LegacyCapabilityManifestV1Schema.safeParse(raw);
-      if (!legacy.success || legacy.data.id !== id) {
-        throw new CapabilityStoreError(
-          "config_invalid",
-          `Capability ${id} has an invalid manifest.`,
-        );
-      }
-
       const pending = await readCapabilityMigrationJournal(migrationJournalPath(id));
       if (pending !== undefined) {
         if (pending.targetManifest.id !== id) {
@@ -326,7 +344,36 @@ export function createCapabilityStore(options: {
         return pending.targetManifest;
       }
 
-      for (let revision = 1; revision <= legacy.data.latestRevision; revision += 1) {
+      const legacyPending = await readLegacyCapabilityMigrationJournal(
+        legacyMigrationJournalPath(id),
+      );
+      if (legacyPending !== undefined) {
+        if (legacyPending.targetManifest.id !== id) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            `Capability ${id} has a migration journal for another capability.`,
+          );
+        }
+        await writeJson(manifestPath(id), legacyPending.targetManifest);
+        await rm(legacyMigrationJournalPath(id), { force: true });
+        raw = legacyPending.targetManifest;
+      }
+
+      const legacyV2 = LegacyCapabilityManifestV2Schema.safeParse(raw);
+      const legacyV1 = LegacyCapabilityManifestV1Schema.safeParse(raw);
+      const legacy = legacyV2.success
+        ? legacyV2.data
+        : legacyV1.success
+          ? legacyV1.data
+          : undefined;
+      if (legacy === undefined || legacy.id !== id) {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          `Capability ${id} has an invalid manifest.`,
+        );
+      }
+
+      for (let revision = 1; revision <= legacy.latestRevision; revision += 1) {
         try {
           CapabilityDefinitionSchema.parse(
             JSON.parse(
@@ -342,17 +389,23 @@ export function createCapabilityStore(options: {
       }
 
       const targetManifest = CapabilityManifestSchema.parse({
-        ...legacy.data,
-        schemaVersion: "pragma.capability/v2",
+        ...legacy,
+        schemaVersion: "pragma.capability/v3",
+        origin: undefined,
       });
-      const backupPath = join(capabilityPath(id), "migration-backups", "capability.v1.json");
+      const sourceVersion = legacy.schemaVersion === "pragma.capability/v1" ? "v1" : "v2";
+      const backupPath = join(
+        capabilityPath(id),
+        "migration-backups",
+        `capability.${sourceVersion}.json`,
+      );
       const journal = CapabilityManifestMigrationJournalSchema.parse({
-        schemaVersion: "pragma.capability-manifest-migration/v1",
-        sourceSchema: "pragma.capability/v1",
-        targetSchema: "pragma.capability/v2",
+        schemaVersion: "pragma.capability-manifest-migration/v2",
+        sourceSchema: legacy.schemaVersion,
+        targetSchema: "pragma.capability/v3",
         targetManifest,
       });
-      await writeJson(backupPath, legacy.data);
+      await writeJson(backupPath, legacy);
       await writeJson(migrationJournalPath(id), journal);
       await writeJson(manifestPath(id), targetManifest);
       await rm(migrationJournalPath(id), { force: true });
@@ -369,7 +422,11 @@ export function createCapabilityStore(options: {
         await rm(migrationJournalPath(id), { force: true });
         return current.data;
       }
-      if (LegacyCapabilityManifestV1Schema.safeParse(raw).success) return await migrateManifest(id);
+      if (
+        LegacyCapabilityManifestV1Schema.safeParse(raw).success ||
+        LegacyCapabilityManifestV2Schema.safeParse(raw).success
+      )
+        return await migrateManifest(id);
       throw new CapabilityStoreError("config_invalid", `Capability ${id} has an invalid manifest.`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -635,7 +692,7 @@ export function createCapabilityStore(options: {
           contentHash: await hashDirectory(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v2",
+          schemaVersion: "pragma.capability/v3",
           id,
           runtimeKey: createRuntimeKey(name, id),
           name,
@@ -679,7 +736,7 @@ export function createCapabilityStore(options: {
           contentHash: await hashDirectory(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v2",
+          schemaVersion: "pragma.capability/v3",
           id,
           runtimeKey: createRuntimeKey(input.name, id),
           name: input.name,
@@ -856,7 +913,7 @@ export function createCapabilityStore(options: {
             contentHash,
           });
           const manifest = CapabilityManifestSchema.parse({
-            schemaVersion: "pragma.capability/v2",
+            schemaVersion: "pragma.capability/v3",
             id: input.id,
             runtimeKey: createRuntimeKey(input.name, input.id),
             name: input.name,
@@ -906,7 +963,7 @@ export function createCapabilityStore(options: {
       );
       assertCodeServiceReady(input.definition, verified.health);
       const manifest = CapabilityManifestSchema.parse({
-        schemaVersion: "pragma.capability/v2",
+        schemaVersion: "pragma.capability/v3",
         id,
         runtimeKey: createRuntimeKey(input.definition.name, id),
         name: input.definition.name,
@@ -1391,6 +1448,25 @@ async function readCapabilityMigrationJournal(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     if (error instanceof z.ZodError) {
       throw new CapabilityStoreError("config_invalid", "Capability migration journal is invalid.");
+    }
+    throw error;
+  }
+}
+
+async function readLegacyCapabilityMigrationJournal(
+  path: string,
+): Promise<z.infer<typeof LegacyCapabilityManifestMigrationJournalSchema> | undefined> {
+  try {
+    return LegacyCapabilityManifestMigrationJournalSchema.parse(
+      JSON.parse(await readFile(path, "utf8")) as unknown,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof z.ZodError) {
+      throw new CapabilityStoreError(
+        "config_invalid",
+        "Legacy Capability migration journal is invalid.",
+      );
     }
     throw error;
   }

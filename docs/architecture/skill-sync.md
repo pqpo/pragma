@@ -25,8 +25,9 @@ Symlinks, hard links, undeclared files, invalid paths, binary content, oversized
 integrity mismatches fail closed. Files outside the managed root are preserved.
 
 Repository protocol v2 enforces this Capability-only identity. The v1 reader accepts only
-`capability/<id>` entries. Legacy `bundle/<logicalId>` repository entries and persisted sync keys fail
-closed with an instruction to reinitialize Skill sync; current reconciliation and conflict handling
+`capability/<id>` entries. Because the legacy Bundle identity protocol was never released to users,
+`bundle/<logicalId>` repository entries and persisted sync keys intentionally fail closed with an
+instruction to reinitialize Skill sync; current reconciliation and conflict handling
 never branch on Bundle provenance.
 
 ## Reconciliation and activation

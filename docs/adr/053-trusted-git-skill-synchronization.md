@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded in part by ADR 054 for Bundle-origin identity and legacy repository cutover.
 
 ## Context
 
@@ -20,8 +20,8 @@ scripts. Bundle-origin Skills also use device-local Capability IDs.
   the synchronization exception to ADR 052; authoring flows still require review.
 - Remote updates append through the Capability revision coordinator. Invalid content never changes
   the formal Skill, synchronization base, current Project, or System Expert customization.
-- Ordinary Skills use their Capability UUID as portable identity. Bundle Skills use
-  `origin.logicalId`, preserving an existing local Capability UUID.
+- Every Skill uses its local Capability ID as synchronization identity, regardless of how it was
+  created. Bundle logical IDs never participate in reconciliation.
 - Concurrent changes are resolved as complete local or remote snapshots. Local deletion upload is
   opt-in, and remote deletion still uses normal reference and deletion protections.
 

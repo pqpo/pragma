@@ -56,7 +56,7 @@ const contextStore: ContextStore = {
 
 const skillCapability: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v2",
+    schemaVersion: "pragma.capability/v3",
     id: "00000000-0000-4000-8000-000000000002",
     runtimeKey: "writing_skill",
     name: "Writing Skill",
@@ -81,7 +81,7 @@ const skillCapability: Capability = {
 
 const toolCapability: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v2",
+    schemaVersion: "pragma.capability/v3",
     id: "00000000-0000-4000-8000-000000000003",
     runtimeKey: "research_tools",
     name: "Tools Service",
