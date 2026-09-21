@@ -1481,7 +1481,6 @@ export const studio = {
   bundleRecheck: "重新检查",
   bundleConfigureCapability: "配置 {{name}}",
   bundleGenericError: "Bundle 操作未完成，请检查文件后重试。",
-  bundleIdentityConflict: "能力版本与现有 Bundle 身份冲突，请选择其他能力或导入完整历史。",
   bundleStatus: {
     ready: "已就绪",
     missing: "缺失",

@@ -1555,8 +1555,6 @@ export const studio = {
   bundleRecheck: "Check again",
   bundleConfigureCapability: "Configure {{name}}",
   bundleGenericError: "The Bundle operation could not be completed. Check the file and try again.",
-  bundleIdentityConflict:
-    "A capability revision conflicts with an existing Bundle identity. Choose another capability or import a complete history.",
   bundleStatus: {
     ready: "Ready",
     missing: "Missing",

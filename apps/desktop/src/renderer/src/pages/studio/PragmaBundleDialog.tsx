@@ -1749,9 +1749,6 @@ function bundleErrorMessage(
   const parsed = DesktopMutationErrorSchema.safeParse(error);
   if (!parsed.success) return translate("bundleGenericError");
   if (parsed.data.code === "bundle_setup_required") return translate("bundleSetupDescription");
-  if (parsed.data.code === "bundle_identity_conflict") {
-    return translate("bundleIdentityConflict");
-  }
   return translate("bundleGenericError");
 }
 

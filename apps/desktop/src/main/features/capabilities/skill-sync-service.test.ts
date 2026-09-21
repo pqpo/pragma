@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("Skill sync service", () => {
-  it("publishes a local Skill and imports a remote Bundle Skill by logical identity", async () => {
+  it("publishes a local Skill and imports a remote Skill by local Capability identity", async () => {
     const fixture = await createFixture();
     const local = await fixture.addLocalSkill(
       "11111111-1111-4111-8111-111111111111",
@@ -38,20 +38,15 @@ describe("Skill sync service", () => {
       "Local Skill",
     );
 
-    const bundleLogicalId = "22222222-2222-4222-8222-222222222222";
-    const bundle = remoteSkill(
-      { kind: "pragma-bundle", logicalId: bundleLogicalId },
-      "Bundle Skill",
-    );
-    fixture.provider.repository.skills.set("bundle/22222222-2222-4222-8222-222222222222", bundle);
+    const remoteId = "22222222-2222-4222-8222-222222222222";
+    const remote = remoteSkill({ kind: "capability", id: remoteId }, "Remote Skill");
+    fixture.provider.repository.skills.set(`capability/${remoteId}`, remote);
     fixture.provider.advance();
 
     const overview = await fixture.service.refresh();
-    const imported = [...fixture.capabilities.values()].find(
-      (capability) => capability.manifest.origin?.logicalId === bundleLogicalId,
-    );
-    expect(imported?.definition.name).toBe("Bundle Skill");
-    expect(imported?.manifest.id).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/u);
+    const imported = fixture.capabilities.get(remoteId);
+    expect(imported?.definition.name).toBe("Remote Skill");
+    expect(imported?.manifest.origin).toBeUndefined();
     expect(overview.status).toBe("ready");
   });
 
@@ -692,6 +687,62 @@ describe("Skill sync service", () => {
 });
 
 describe("Git Skill sync provider", () => {
+  it("upgrades a v1 Bundle identity to the capability-only repository model", async () => {
+    const root = await temporaryRoot();
+    const source = join(root, "legacy-source");
+    await git(undefined, ["init", "--initial-branch=main", source]);
+    const id = "0123456789abcdef";
+    const content =
+      "---\nname: Legacy Skill\ndescription: Legacy Skill description\n---\n\nLegacy.\n";
+    const payloadRoot = join(source, "skills", "bundle", id, "files");
+    await mkdir(payloadRoot, { recursive: true });
+    await writeFile(
+      join(source, "pragma-skill-sync.yaml"),
+      "schemaVersion: pragma.skill-sync/v1\n",
+    );
+    await writeFile(join(payloadRoot, "SKILL.md"), content);
+    await writeFile(
+      join(source, "skills", "bundle", id, "skill.yaml"),
+      [
+        "schemaVersion: pragma.skill-sync-skill/v1",
+        "identity:",
+        "  kind: pragma-bundle",
+        `  logicalId: ${id}`,
+        "name: Legacy Skill",
+        "description: Legacy Skill description",
+        "files:",
+        "  - path: SKILL.md",
+        `    sizeBytes: ${Buffer.byteLength(content, "utf8")}`,
+        `    sha256: ${createHash("sha256").update(content).digest("hex")}`,
+        "    executable: false",
+        "",
+      ].join("\n"),
+    );
+    await git(source, ["add", "."]);
+    await git(source, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "-m",
+      "legacy",
+    ]);
+
+    const provider = createGitSkillSyncProvider(
+      join(root, "legacy-cache"),
+      gitConfiguration(source),
+    );
+    const head = await provider.readHead();
+
+    expect([...head.repository.skills]).toEqual([
+      [
+        `capability/${id}`,
+        expect.objectContaining({ identity: { kind: "capability", id }, name: "Legacy Skill" }),
+      ],
+    ]);
+  });
+
   it("publishes through Git and rejects a stale compare-and-swap", async () => {
     const root = await temporaryRoot();
     const remote = join(root, "remote.git");
@@ -949,7 +1000,6 @@ async function createFixture(
     name: string,
     description: string,
     source: string,
-    origin?: { kind: "pragma-bundle"; logicalId: string },
   ): Promise<Capability> => {
     const previous = capabilities.get(id);
     const nextRevision = (previous?.manifest.latestRevision ?? 0) + 1;
@@ -966,7 +1016,6 @@ async function createFixture(
         name,
         kind: "skill",
         latestRevision: nextRevision,
-        ...(origin === undefined ? {} : { origin }),
         createdAt: previous?.manifest.createdAt ?? timestamp,
         updatedAt: timestamp,
       },
@@ -993,16 +1042,13 @@ async function createFixture(
       name: string;
       description: string;
       sourcePath: string;
-      origin?: { kind: "pragma-bundle"; logicalId: string };
-    }) => await install(input.id, input.name, input.description, input.sourcePath, input.origin),
+    }) => await install(input.id, input.name, input.description, input.sourcePath),
     publishSkillRevisionCandidate: async (input: { id: string; sourcePath: string }) => {
-      const current = capabilities.get(input.id)!;
       return await install(
         input.id,
         frontmatter(await readFile(join(input.sourcePath, "SKILL.md"), "utf8"), "name"),
         frontmatter(await readFile(join(input.sourcePath, "SKILL.md"), "utf8"), "description"),
         input.sourcePath,
-        current.manifest.origin,
       );
     },
     remove: async (id: string, expectedRevision?: number) => {
@@ -1063,7 +1109,6 @@ async function createFixture(
       frontmatter(await readFile(join(source, "SKILL.md"), "utf8"), "name"),
       frontmatter(await readFile(join(source, "SKILL.md"), "utf8"), "description"),
       source,
-      current.manifest.origin,
     );
   };
   const reviseLocalSkillMode = async (id: string, path: string, mode: number) => {
@@ -1072,13 +1117,7 @@ async function createFixture(
     const source = join(root, "sources", `${id}-${Date.now()}-mode-revision`);
     await cp(currentPath, source, { recursive: true });
     await chmod(join(source, path), mode);
-    return await install(
-      id,
-      current.definition.name,
-      current.definition.description,
-      source,
-      current.manifest.origin,
-    );
+    return await install(id, current.definition.name, current.definition.description, source);
   };
   return {
     root,

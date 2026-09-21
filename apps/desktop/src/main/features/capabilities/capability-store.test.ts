@@ -421,7 +421,6 @@ describe("capability store", () => {
     await chmod(join(source, "scripts", "verify.mjs"), 0o755);
     const snapshot = await scanSkillWorkingTree(source);
     const id = "0123456789abcdef";
-    const logicalId = randomUUID();
 
     const published = await store.publishNewSkillRevisionCandidate({
       id,
@@ -429,7 +428,6 @@ describe("capability store", () => {
       description: "Reviewed Skill.",
       sourcePath: source,
       candidateContentHash: snapshot.hash,
-      origin: { kind: "pragma-bundle", logicalId },
     });
     const replayed = await store.publishNewSkillRevisionCandidate({
       id,
@@ -437,11 +435,10 @@ describe("capability store", () => {
       description: "Reviewed Skill.",
       sourcePath: source,
       candidateContentHash: snapshot.hash,
-      origin: { kind: "pragma-bundle", logicalId },
     });
 
     expect(published.manifest.latestRevision).toBe(1);
-    expect(published.manifest.origin).toEqual({ kind: "pragma-bundle", logicalId });
+    expect(published.manifest.origin).toBeUndefined();
     expect(replayed.manifest.latestRevision).toBe(1);
     const formalHash = createHash("sha256");
     for (const path of ["SKILL.md", "scripts/verify.mjs"]) {
@@ -468,40 +465,6 @@ describe("capability store", () => {
     ).resolves.toMatchObject({ mode: expect.any(Number) });
     await store.remove(id, 1);
     expect((await store.list()).some((capability) => capability.manifest.id === id)).toBe(false);
-  });
-
-  it("atomically prevents two Capabilities from claiming one Bundle identity", async () => {
-    const { directory, store } = await createStore();
-    const source = join(directory, "raced-bundle-skill");
-    await mkdir(source, { recursive: true });
-    await writeFile(
-      join(source, "SKILL.md"),
-      "---\nname: raced-bundle-skill\ndescription: Raced Bundle Skill.\n---\n",
-    );
-    const snapshot = await scanSkillWorkingTree(source);
-    const logicalId = randomUUID();
-
-    const results = await Promise.allSettled([
-      store.importBundleRevisions({
-        logicalId,
-        revisions: [{ revision: 1, definition: httpDefinition }],
-      }),
-      store.publishNewSkillRevisionCandidate({
-        id: randomUUID(),
-        name: "raced-bundle-skill",
-        description: "Raced Bundle Skill.",
-        sourcePath: source,
-        candidateContentHash: snapshot.hash,
-        origin: { kind: "pragma-bundle", logicalId },
-      }),
-    ]);
-
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(
-      (await store.list()).filter(
-        (capability) => capability.manifest.origin?.logicalId === logicalId,
-      ),
-    ).toHaveLength(1);
   });
 
   it("reports corrupted or missing Skill package files with capability errors", async () => {
@@ -728,103 +691,6 @@ describe("capability store", () => {
     });
     await expect(store.get(created.manifest.id)).resolves.toMatchObject({
       manifest: { latestRevision: 1 },
-    });
-  });
-
-  it("imports one Bundle capability identity with exact historical revisions idempotently", async () => {
-    const { store } = await createStore();
-    const logicalId = "00000000-0000-4000-8000-000000000190";
-    const revisionOne = { ...httpDefinition, description: "Revision one." };
-    const revisionTwo = { ...httpDefinition, description: "Revision two." };
-
-    const imported = await store.importBundleRevisions({
-      logicalId,
-      revisions: [
-        { revision: 2, definition: revisionTwo },
-        { revision: 1, definition: revisionOne },
-      ],
-    });
-    const reorderedRevisionTwo = {
-      tools: revisionTwo.tools,
-      timeoutMs: revisionTwo.timeoutMs,
-      auth: revisionTwo.auth,
-      baseUrl: revisionTwo.baseUrl,
-      description: revisionTwo.description,
-      name: revisionTwo.name,
-      kind: revisionTwo.kind,
-    };
-    const repeated = await store.importBundleRevisions({
-      logicalId,
-      revisions: [
-        { revision: 1, definition: revisionOne },
-        { revision: 2, definition: reorderedRevisionTwo },
-      ],
-    });
-
-    expect(repeated.manifest.id).toBe(imported.manifest.id);
-    expect(repeated.manifest.origin).toEqual({ kind: "pragma-bundle", logicalId });
-    expect((await store.get(imported.manifest.id, 1)).definition.description).toBe("Revision one.");
-    expect((await store.get(imported.manifest.id, 2)).definition.description).toBe("Revision two.");
-    await expect(store.list()).resolves.toHaveLength(1);
-    await expect(
-      store.importBundleRevisions({
-        logicalId,
-        revisions: [{ revision: 2, definition: { ...revisionTwo, description: "Conflict." } }],
-      }),
-    ).rejects.toMatchObject({ code: "bundle_identity_conflict" });
-  });
-
-  it("serializes concurrent first imports of the same Bundle identity", async () => {
-    const { store } = await createStore();
-    const input = {
-      logicalId: "00000000-0000-4000-8000-000000000192",
-      revisions: [{ revision: 1, definition: httpDefinition }],
-    };
-
-    const [first, second] = await Promise.all([
-      store.importBundleRevisions(input),
-      store.importBundleRevisions(input),
-    ]);
-
-    expect(second.manifest.id).toBe(first.manifest.id);
-    await expect(store.list()).resolves.toHaveLength(1);
-  });
-
-  it("appends a contiguous Bundle range through one revision publication", async () => {
-    const publish = vi.fn(async (input: CapabilityRevisionPublishInput) => await input.commit());
-    const { store } = await createStore({
-      mutations: {
-        publish,
-        publishHealth: async (input) => await input.commit(),
-        mutate: async (input) => await input.commit(),
-      },
-    });
-    const logicalId = "00000000-0000-4000-8000-000000000191";
-    const revisionOne = { ...httpDefinition, description: "Revision one." };
-    const revisionTwo = { ...httpDefinition, description: "Revision two." };
-    const revisionThree = { ...httpDefinition, description: "Revision three." };
-    const created = await store.importBundleRevisions({
-      logicalId,
-      revisions: [{ revision: 1, definition: revisionOne }],
-    });
-
-    const appended = await store.importBundleRevisions({
-      logicalId,
-      revisions: [
-        { revision: 1, definition: revisionOne },
-        { revision: 2, definition: revisionTwo },
-        { revision: 3, definition: revisionThree },
-      ],
-    });
-
-    expect(appended.manifest.latestRevision).toBe(3);
-    expect(publish).toHaveBeenCalledOnce();
-    expect(publish.mock.calls[0]![0]).toMatchObject({
-      current: { manifest: { latestRevision: 1 } },
-      candidate: { manifest: { latestRevision: 3 } },
-    });
-    await expect(store.get(created.manifest.id, 2)).resolves.toMatchObject({
-      definition: { description: "Revision two." },
     });
   });
 

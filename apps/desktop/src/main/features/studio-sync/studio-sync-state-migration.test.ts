@@ -30,7 +30,7 @@ describe("Studio sync state migrations", () => {
     expect(upgraded.value).toMatchObject({
       schemaVersion: "pragma.skill-sync-state/v2",
       sourceKey: source.sourceKey,
-      bases: source.bases,
+      bases: { "capability/0123456789abcdef": "skill-fingerprint" },
     });
     expect(skillSyncStateMigrationChain.upgrade(upgraded.value)).toMatchObject({
       migrated: false,

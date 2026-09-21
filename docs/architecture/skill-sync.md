@@ -14,16 +14,19 @@ skills/
   capability/<capability UUID>/
     skill.yaml
     files/**
-  bundle/<Bundle logical UUID>/
-    skill.yaml
-    files/**
 ```
 
-Ordinary Skills retain their Capability UUID across devices. Bundle Skills use the portable Bundle
-logical ID as their synchronization identity and retain each device's existing local Capability ID.
-The manifest records names, descriptions, paths, sizes, SHA-256 digests, and executable bits.
+Every Skill is identified only by its local Capability UUID. Bundle import resolves conflicts before
+the Skill enters the Studio: replacing a local Skill appends a local revision, keeping local makes no
+change, and importing a copy creates a new Capability at revision 1. Bundle logical IDs and source
+revision numbers remain transfer metadata and never become synchronization identity. The manifest
+records names, descriptions, paths, sizes, SHA-256 digests, and executable bits.
 Symlinks, hard links, undeclared files, invalid paths, binary content, oversized packages, and
 integrity mismatches fail closed. Files outside the managed root are preserved.
+
+Repository protocol v2 enforces this Capability-only identity. The v1 reader is an upgrade boundary:
+it accepts the former `bundle/<logicalId>` layout, converts it once to a Capability key, and the next
+write emits only v2. Current reconciliation and conflict handling never branch on Bundle provenance.
 
 ## Reconciliation and activation
 

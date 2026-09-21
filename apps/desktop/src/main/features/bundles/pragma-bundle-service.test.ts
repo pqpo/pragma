@@ -965,7 +965,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
   });
 
-  it("updates an existing Bundle Skill with its working-tree hash and binds the appended revision", async () => {
+  it("localizes Bundle Skill updates and copies to ordinary Capability revisions", async () => {
     const sourceCapabilityId = "0123456789abcdef";
     const targetCapabilityId = "fedcba9876543210";
     const sourcePayloads = new Map<number, string>();
@@ -1078,6 +1078,55 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
         canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(targetResource),
     );
     expect(bound?.spec.binding).toBe(desktopCapabilityBindingRef(targetCapabilityId, 8));
+
+    let copiedCapability: Capability | undefined;
+    const copyCapabilities = {
+      list: async () => (copiedCapability === undefined ? [] : [copiedCapability]),
+      publishNewSkillRevisionCandidate: async (input: { id: string }) => {
+        copiedCapability = skillCapability(input.id, 1, "d".repeat(64));
+        return copiedCapability;
+      },
+      get: async (id: string, revision?: number) => {
+        if (
+          copiedCapability === undefined ||
+          id !== copiedCapability.manifest.id ||
+          revision !== 1
+        ) {
+          throw new Error(`Expected copied Capability revision 1, received ${id}@${revision}.`);
+        }
+        return copiedCapability;
+      },
+    } as unknown as CapabilityStore;
+    const copyTarget = await createFixture("skill-copy-target", {
+      capabilities: copyCapabilities,
+    });
+    const copyInspection = await copyTarget.service.inspect(path);
+    await copyTarget.service.startImport({
+      sourcePath: path,
+      rootRef: copyInspection.root.ref,
+      expectedFingerprint: copyInspection.bundleFingerprint,
+      expectedProjectFingerprint: copyInspection.projectFingerprint,
+      expectedProjectRevision: copyTarget.projectRevision,
+      conflicts: copyInspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+
+    expect(copiedCapability?.manifest.id).not.toBe(sourceCapabilityId);
+    expect(copiedCapability?.manifest.latestRevision).toBe(1);
+    const copiedProject = await copyTarget.project.get();
+    const copiedResource = copiedProject.resources.find(
+      (resource): resource is PragmaCapabilityResource =>
+        canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(sourceResource),
+    );
+    expect(copiedResource?.spec.binding).toBe(
+      desktopCapabilityBindingRef(copiedCapability!.manifest.id, 1),
+    );
   });
 
   it("accepts only the .pragma transfer format", async () => {

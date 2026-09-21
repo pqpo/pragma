@@ -22,14 +22,22 @@ export const UpdateSkillSyncConfigurationSchema = SkillSyncConfigurationSchema.o
   initializationMode: z.enum(["publish_local", "restore_remote"]).default("publish_local"),
 });
 
-export const SkillSyncRepositoryManifestSchema = z
+export const SkillSyncRepositoryManifestV1Schema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v1") })
   .strict();
 
-export const SkillSyncIdentitySchema = z.discriminatedUnion("kind", [
+export const SkillSyncRepositoryManifestSchema = z
+  .object({ schemaVersion: z.literal("pragma.skill-sync/v2") })
+  .strict();
+
+export const SkillSyncIdentityV1Schema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("capability"), id: CapabilityIdSchema }).strict(),
   z.object({ kind: z.literal("pragma-bundle"), logicalId: CapabilityIdSchema }).strict(),
 ]);
+
+export const SkillSyncIdentitySchema = z
+  .object({ kind: z.literal("capability"), id: CapabilityIdSchema })
+  .strict();
 
 export const SkillSyncFileMetadataSchema = z
   .object({
@@ -40,9 +48,19 @@ export const SkillSyncFileMetadataSchema = z
   })
   .strict();
 
-export const SkillSyncSkillManifestSchema = z
+export const SkillSyncSkillManifestV1Schema = z
   .object({
     schemaVersion: z.literal("pragma.skill-sync-skill/v1"),
+    identity: SkillSyncIdentityV1Schema,
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().min(1).max(500),
+    files: z.array(SkillSyncFileMetadataSchema).min(1).max(1_000),
+  })
+  .strict();
+
+export const SkillSyncSkillManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.skill-sync-skill/v2"),
     identity: SkillSyncIdentitySchema,
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
 import { z } from "zod";
@@ -45,7 +45,6 @@ import {
   type UpdateCapability,
 } from "../../../shared/contracts/index.ts";
 import type {
-  CapabilityCredentialReader,
   CapabilityCredentialStore,
   PreparedCapabilityCredentials,
 } from "./capability-credential-store.ts";
@@ -106,7 +105,6 @@ export interface CapabilityStore extends CapabilityRepository {
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
   skillFilesPath(id: string, revision: number): Promise<string>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
-  importBundleRevisions(input: ImportBundleCapabilityRevisions): Promise<Capability>;
   publishSkillRevisionCandidate(input: {
     readonly id: string;
     readonly baseRevision: number;
@@ -120,7 +118,6 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly description: string;
     readonly sourcePath: string;
     readonly candidateContentHash: string;
-    readonly origin?: { readonly kind: "pragma-bundle"; readonly logicalId: string } | undefined;
   }): Promise<Capability>;
   createGeneratedSkill(input: {
     readonly package: SkillPackage;
@@ -137,24 +134,12 @@ export interface CapabilityStore extends CapabilityRepository {
 export interface CapabilityRevisionPublishInput {
   readonly current: Capability;
   readonly candidate: Capability;
-  readonly mutationType?: "update" | "skill-update" | "retry" | "bundle-append" | undefined;
+  readonly mutationType?: "update" | "skill-update" | "retry" | undefined;
   readonly targetRevisionFrom?: number | undefined;
   readonly validateCurrent?: (() => Promise<void>) | undefined;
   readonly prepareCredentials?:
     (() => Promise<PreparedCapabilityCredentials | undefined>) | undefined;
   readonly commit: () => Promise<Capability>;
-}
-
-export interface ImportBundleCapabilityRevision {
-  readonly revision: number;
-  readonly definition: CapabilityDefinition;
-  readonly payloadPath?: string | undefined;
-}
-
-export interface ImportBundleCapabilityRevisions {
-  readonly logicalId: string;
-  readonly revisions: readonly ImportBundleCapabilityRevision[];
-  readonly credentials?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface CapabilityMutationService {
@@ -185,8 +170,7 @@ export class CapabilityStoreError extends Error {
       | "import_invalid"
       | "capability_referenced"
       | "capability_incompatible"
-      | "revision_conflict"
-      | "bundle_identity_conflict",
+      | "revision_conflict",
     message: string,
   ) {
     super(message);
@@ -494,33 +478,6 @@ export function createCapabilityStore(options: {
     });
   };
 
-  const bundleHealth = async (
-    definition: CapabilityDefinition,
-    id: string,
-    revision: number,
-    credentials: CapabilityCredentialReader = options.credentials,
-  ): Promise<CapabilityHealth> => {
-    const checkedAt = new Date().toISOString();
-    if (definition.kind === "skill") {
-      return CapabilityHealthSchema.parse({ revision, status: "ready", checkedAt });
-    }
-    try {
-      const verified = await options.verify(validateDefinition(definition), id, credentials);
-      return CapabilityHealthSchema.parse({ ...verified.health, revision });
-    } catch {
-      return CapabilityHealthSchema.parse({
-        revision,
-        status: "needs_attention",
-        checkedAt,
-        diagnostic: {
-          code: "bundle_setup_required",
-          message: "Configure this capability before using the imported Bundle.",
-          retryable: true,
-        },
-      });
-    }
-  };
-
   return {
     async list() {
       try {
@@ -704,245 +661,6 @@ export function createCapabilityStore(options: {
         throw error;
       }
     },
-    async importBundleRevisions(rawInput) {
-      const logicalId = CapabilityIdSchema.parse(rawInput.logicalId);
-      const revisions = [...rawInput.revisions].toSorted(
-        (left, right) => left.revision - right.revision,
-      );
-      if (revisions.length === 0) {
-        throw new CapabilityStoreError(
-          "bundle_identity_conflict",
-          "The Bundle does not contain a capability revision.",
-        );
-      }
-      const seen = new Set<number>();
-      for (const revision of revisions) {
-        if (seen.has(revision.revision) || revision.revision < 1) {
-          throw new CapabilityStoreError(
-            "bundle_identity_conflict",
-            "The Bundle contains duplicate or invalid capability revisions.",
-          );
-        }
-        seen.add(revision.revision);
-        try {
-          CapabilityDefinitionSchema.parse(revision.definition);
-        } catch {
-          throw new CapabilityStoreError(
-            "bundle_identity_conflict",
-            "The Bundle contains an invalid capability revision.",
-          );
-        }
-      }
-      const kinds = new Set(revisions.map((revision) => revision.definition.kind));
-      if (kinds.size !== 1) {
-        throw new CapabilityStoreError(
-          "bundle_identity_conflict",
-          "One Bundle capability cannot change kind between revisions.",
-        );
-      }
-      const identityLocksPath = join(options.capabilitiesPath, ".bundle-identities");
-      await mkdir(identityLocksPath, { recursive: true, mode: 0o700 });
-      return await withFileLock(
-        join(identityLocksPath, `${logicalId}.lock`),
-        async () => {
-          const candidates = (await this.list()).filter(
-            (capability) => capability.manifest.origin?.logicalId === logicalId,
-          );
-          const existing = candidates[0];
-          if (candidates.length > 1) {
-            throw new CapabilityStoreError(
-              "bundle_identity_conflict",
-              "Multiple local capabilities claim the same Bundle identity.",
-            );
-          }
-          const credentials = rawInput.credentials ?? {};
-          if (existing !== undefined) {
-            if (existing.manifest.kind !== revisions[0]!.definition.kind) {
-              throw new CapabilityStoreError(
-                "bundle_identity_conflict",
-                "The imported capability conflicts with the existing Bundle identity.",
-              );
-            }
-            return await withFileLock(
-              join(capabilityPath(existing.manifest.id), ".bundle-import.lock"),
-              async () => {
-                const current = await readCapability(existing.manifest.id);
-                const validateCredentialSnapshot = await credentialSnapshot(existing.manifest.id);
-                for (const revision of revisions) {
-                  if (revision.revision > current.manifest.latestRevision) continue;
-                  const local = await readCapability(existing.manifest.id, revision.revision);
-                  if (stableStringify(local.definition) !== stableStringify(revision.definition)) {
-                    throw new CapabilityStoreError(
-                      "bundle_identity_conflict",
-                      `Capability revision ${revision.revision} conflicts with the existing Bundle identity.`,
-                    );
-                  }
-                }
-                const additions = revisions.filter(
-                  (revision) => revision.revision > current.manifest.latestRevision,
-                );
-                if (additions.length === 0) {
-                  if (!(await credentialsDiffer(existing.manifest.id, credentials))) return current;
-                  const verified = await bundleHealth(
-                    current.definition,
-                    existing.manifest.id,
-                    current.manifest.latestRevision,
-                    options.credentials.overlay(existing.manifest.id, credentials),
-                  );
-                  return await publishHealth(
-                    existing.manifest.id,
-                    current.manifest.latestRevision,
-                    verified,
-                    undefined,
-                    validateCredentialSnapshot,
-                    async () =>
-                      await options.credentials.prepareMany(existing.manifest.id, credentials),
-                  );
-                }
-                if (additions[0]!.revision !== current.manifest.latestRevision + 1) {
-                  throw new CapabilityStoreError(
-                    "bundle_identity_conflict",
-                    "The Bundle skipped a capability revision; import the complete revision history.",
-                  );
-                }
-                for (let index = 1; index < additions.length; index += 1) {
-                  if (additions[index]!.revision !== additions[index - 1]!.revision + 1) {
-                    throw new CapabilityStoreError(
-                      "bundle_identity_conflict",
-                      "The Bundle contains a non-contiguous capability revision history.",
-                    );
-                  }
-                }
-                const latest = additions.at(-1)!;
-                const timestamp = new Date().toISOString();
-                const manifest = CapabilityManifestSchema.parse({
-                  ...existing.manifest,
-                  name: latest.definition.name,
-                  kind: latest.definition.kind,
-                  latestRevision: latest.revision,
-                  updatedAt: timestamp,
-                });
-                const health = await bundleHealth(
-                  latest.definition,
-                  existing.manifest.id,
-                  latest.revision,
-                  options.credentials.overlay(existing.manifest.id, credentials),
-                );
-                const candidate = CapabilitySchema.parse({
-                  manifest,
-                  definition: latest.definition,
-                  health,
-                });
-                return await publishRevision({
-                  current,
-                  candidate,
-                  mutationType: "bundle-append",
-                  targetRevisionFrom: additions[0]!.revision,
-                  validateCurrent: validateCredentialSnapshot,
-                  prepareCredentials: async () =>
-                    await options.credentials.prepareMany(existing.manifest.id, credentials),
-                  commit: async () => {
-                    const createdPaths: string[] = [];
-                    try {
-                      for (const revision of additions) {
-                        const path = await stageBundleCapabilityRevision(
-                          revisionPath(existing.manifest.id, revision.revision),
-                          revision,
-                        );
-                        createdPaths.push(path);
-                      }
-                      await writeJson(healthPath(existing.manifest.id), health);
-                      await writeJson(manifestPath(existing.manifest.id), manifest);
-                      return await readCapability(existing.manifest.id);
-                    } catch (error) {
-                      await Promise.all(
-                        createdPaths.map(
-                          async (path) => await rm(path, { recursive: true, force: true }),
-                        ),
-                      );
-                      throw error;
-                    }
-                  },
-                });
-              },
-            );
-          }
-
-          if (revisions[0]!.revision !== 1) {
-            throw new CapabilityStoreError(
-              "bundle_identity_conflict",
-              "The Bundle does not contain the first capability revision.",
-            );
-          }
-          for (let index = 1; index < revisions.length; index += 1) {
-            if (revisions[index]!.revision !== revisions[index - 1]!.revision + 1) {
-              throw new CapabilityStoreError(
-                "bundle_identity_conflict",
-                "The Bundle contains a non-contiguous capability revision history.",
-              );
-            }
-          }
-          const id = randomUUID();
-          const timestamp = new Date().toISOString();
-          const targetPath = capabilityPath(id);
-          let prepared: PreparedCapabilityCredentials | undefined;
-          try {
-            await mkdir(join(targetPath, "revisions"), { recursive: true, mode: 0o700 });
-            await writeJson(
-              creationJournalPath(id),
-              CapabilityCreationJournalSchema.parse({
-                schemaVersion: "pragma.capability-creation/v1",
-                capabilityId: id,
-              }),
-            );
-            for (const revision of revisions) {
-              await stageBundleCapabilityRevision(
-                join(targetPath, "revisions", revisionDirectory(revision.revision)),
-                revision,
-              );
-            }
-            const latest = revisions.at(-1)!;
-            const manifest = CapabilityManifestSchema.parse({
-              schemaVersion: "pragma.capability/v2",
-              id,
-              runtimeKey: createRuntimeKey(latest.definition.name, id),
-              name: latest.definition.name,
-              kind: latest.definition.kind,
-              latestRevision: latest.revision,
-              origin: { kind: "pragma-bundle", logicalId },
-              createdAt: timestamp,
-              updatedAt: timestamp,
-            });
-            const health = await bundleHealth(
-              latest.definition,
-              id,
-              latest.revision,
-              options.credentials.overlay(id, credentials),
-            );
-            prepared = await options.credentials.prepareMany(id, credentials);
-            await writeJson(healthPath(id), health);
-            await writeJson(manifestPath(id), manifest);
-            if (prepared !== undefined) {
-              await options.credentials.activate(prepared);
-              await options.credentials.finalize(prepared);
-            }
-            await rm(creationJournalPath(id), { force: true }).catch(() => undefined);
-            const created = await readCapability(id);
-            if (created.definition.kind === "skill") options.onSkillCreated?.(created);
-            return created;
-          } catch (error) {
-            if (prepared !== undefined)
-              await options.credentials.rollback(prepared).catch(() => undefined);
-            await rm(targetPath, { recursive: true, force: true });
-            if (Object.keys(credentials).length > 0) {
-              await options.credentials.removeCapability(id).catch(() => undefined);
-            }
-            throw error;
-          }
-        },
-        { operation: "capability-bundle-identity.mutate" },
-      );
-    },
     async createGeneratedSkill(rawInput) {
       const input = SkillPackageSchema.parse(rawInput.package);
       const id = rawInput.id === undefined ? randomUUID() : CapabilityIdSchema.parse(rawInput.id);
@@ -1094,25 +812,11 @@ export function createCapabilityStore(options: {
           .string()
           .regex(/^[a-f0-9]{64}$/u)
           .parse(rawInput.candidateContentHash),
-        origin:
-          rawInput.origin === undefined
-            ? undefined
-            : z
-                .object({
-                  kind: z.literal("pragma-bundle"),
-                  logicalId: CapabilityIdSchema,
-                })
-                .strict()
-                .parse(rawInput.origin),
       };
       const publish = async (): Promise<Capability> => {
         const existing = await readCapability(input.id).catch(() => undefined);
         if (existing !== undefined) {
-          if (
-            existing.definition.kind === "skill" &&
-            existing.manifest.latestRevision === 1 &&
-            JSON.stringify(existing.manifest.origin) === JSON.stringify(input.origin)
-          ) {
+          if (existing.definition.kind === "skill" && existing.manifest.latestRevision === 1) {
             const publishedSnapshot = await scanSkillWorkingTree(
               join(revisionPath(input.id, 1), "payload"),
             ).catch(() => undefined);
@@ -1158,7 +862,6 @@ export function createCapabilityStore(options: {
             name: input.name,
             kind: "skill",
             latestRevision: 1,
-            ...(input.origin === undefined ? {} : { origin: input.origin }),
             createdAt: timestamp,
             updatedAt: timestamp,
           });
@@ -1181,11 +884,7 @@ export function createCapabilityStore(options: {
         } catch (error) {
           await rm(temporaryPath, { recursive: true, force: true });
           const replay = await readCapability(input.id).catch(() => undefined);
-          if (
-            replay?.definition.kind === "skill" &&
-            replay.manifest.latestRevision === 1 &&
-            JSON.stringify(replay.manifest.origin) === JSON.stringify(input.origin)
-          ) {
+          if (replay?.definition.kind === "skill" && replay.manifest.latestRevision === 1) {
             const publishedSnapshot = await scanSkillWorkingTree(
               join(revisionPath(input.id, 1), "payload"),
             ).catch(() => undefined);
@@ -1194,27 +893,7 @@ export function createCapabilityStore(options: {
           throw error;
         }
       };
-      if (input.origin === undefined) return await publish();
-      const identityLocksPath = join(options.capabilitiesPath, ".bundle-identities");
-      await mkdir(identityLocksPath, { recursive: true, mode: 0o700 });
-      return await withFileLock(
-        join(identityLocksPath, `${input.origin.logicalId}.lock`),
-        async () => {
-          const candidates = (await this.list()).filter(
-            (capability) => capability.manifest.origin?.logicalId === input.origin?.logicalId,
-          );
-          if (
-            candidates.length > 1 ||
-            (candidates.length === 1 && candidates[0]!.manifest.id !== input.id)
-          ) {
-            throw new CapabilityStoreError(
-              "revision_conflict",
-              "The Bundle identity was claimed by another Capability.",
-            );
-          }
-          return await publish();
-        },
-      );
+      return await publish();
     },
     async create(rawInput) {
       const input = CreateCapabilitySchema.parse(rawInput);
@@ -1679,38 +1358,6 @@ function assertCodeServiceReady(
     "config_invalid",
     health.diagnostic?.message ?? "The code service could not be compiled.",
   );
-}
-
-async function stageBundleCapabilityRevision(
-  targetPath: string,
-  input: ImportBundleCapabilityRevision,
-): Promise<string> {
-  const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
-  try {
-    await mkdir(temporaryPath, { recursive: true, mode: 0o700 });
-    await writeJson(join(temporaryPath, "definition.json"), input.definition);
-    if (input.definition.kind === "skill") {
-      if (input.payloadPath === undefined) {
-        throw new CapabilityStoreError(
-          "bundle_identity_conflict",
-          "The Bundle is missing the files for a Skill revision.",
-        );
-      }
-      await copySkillSource(input.payloadPath, join(temporaryPath, "payload"));
-      if ((await hashDirectory(join(temporaryPath, "payload"))) !== input.definition.contentHash) {
-        throw new CapabilityStoreError(
-          "bundle_identity_conflict",
-          "The Bundle Skill payload does not match its capability revision.",
-        );
-      }
-    }
-    await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
-    await rename(temporaryPath, targetPath);
-    return targetPath;
-  } catch (error) {
-    await rm(temporaryPath, { recursive: true, force: true });
-    throw error;
-  }
 }
 
 function toCoreCodeService(

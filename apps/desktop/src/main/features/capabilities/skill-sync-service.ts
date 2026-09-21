@@ -5,14 +5,16 @@ import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { validateSkillPackage } from "@pragma/built-in-agents";
-import { generatePragmaResourceId, withFileLock } from "@pragma/core";
+import { withFileLock } from "@pragma/core";
 import { parse, stringify } from "yaml";
 
 import {
   CapabilityIdSchema,
   SkillSyncConfigurationSchema,
   SkillSyncOverviewSchema,
+  SkillSyncRepositoryManifestV1Schema,
   SkillSyncRepositoryManifestSchema,
+  SkillSyncSkillManifestV1Schema,
   SkillSyncSkillManifestSchema,
   type Capability,
   type SkillSyncConfiguration,
@@ -73,7 +75,6 @@ type LocalSkill = RemoteSkill & {
   readonly capabilityId: string;
   readonly capabilityRevision: number;
   readonly capabilityContentHash: string;
-  readonly legacyBundleLogicalId?: string | undefined;
 };
 
 type LocalSkillSnapshot = {
@@ -230,9 +231,6 @@ export function createSkillSyncService(options: {
           name: capability.definition.name,
           description: capability.definition.description,
           files,
-          ...(capability.manifest.origin?.kind === "pragma-bundle"
-            ? { legacyBundleLogicalId: capability.manifest.origin.logicalId }
-            : {}),
         };
         validateRemoteSkill(skill);
         skills.set(syncKey, skill);
@@ -275,19 +273,12 @@ export function createSkillSyncService(options: {
       await writeSkillTree(incoming, remote);
       const snapshot = await scanSkillWorkingTree(incoming);
       if (local === undefined) {
-        const id =
-          remote.identity.kind === "capability"
-            ? remote.identity.id
-            : CapabilityIdSchema.parse(generatePragmaResourceId());
         return await options.capabilities.publishNewSkillRevisionCandidate({
-          id,
+          id: remote.identity.id,
           name: remote.name,
           description: remote.description,
           sourcePath: incoming,
           candidateContentHash: snapshot.hash,
-          ...(remote.identity.kind === "pragma-bundle"
-            ? { origin: { kind: "pragma-bundle" as const, logicalId: remote.identity.logicalId } }
-            : {}),
         });
       } else {
         return await options.capabilities.publishSkillRevisionCandidate({
@@ -316,7 +307,7 @@ export function createSkillSyncService(options: {
   }> => {
     const localSnapshot = await localSkills(state);
     const local = localSnapshot.skills;
-    const remote = canonicalRemoteSkills(head.repository.skills, local);
+    const remote = new Map(head.repository.skills);
     const desired = new Map(remote);
     const bases = { ...state.bases };
     const portableFiles = { ...state.portableFiles };
@@ -963,34 +954,8 @@ function syncIdentity(capability: Capability): SkillSyncIdentity {
   return { kind: "capability", id: capability.manifest.id };
 }
 
-function canonicalRemoteSkills(
-  stored: ReadonlyMap<string, RemoteSkill>,
-  local: ReadonlyMap<string, LocalSkill>,
-): Map<string, RemoteSkill> {
-  const result = new Map<string, RemoteSkill>();
-  for (const [storedKey, skill] of stored) {
-    if (skill.identity.kind !== "pragma-bundle") {
-      result.set(storedKey, skill);
-      continue;
-    }
-    const logicalId = skill.identity.logicalId;
-    const localSkill = [...local.values()].find(
-      (candidate) => candidate.legacyBundleLogicalId === logicalId,
-    );
-    if (localSkill === undefined) {
-      result.set(storedKey, skill);
-      continue;
-    }
-    const identity = { kind: "capability" as const, id: localSkill.capabilityId };
-    result.set(identityKey(identity), { ...skill, identity });
-  }
-  return result;
-}
-
 function identityKey(identity: SkillSyncIdentity): string {
-  return identity.kind === "capability"
-    ? `capability/${identity.id}`
-    : `bundle/${identity.logicalId}`;
+  return `capability/${identity.id}`;
 }
 
 function portableFilesFor(capability: Capability, skill: RemoteSkill) {
@@ -1099,10 +1064,14 @@ async function readWorkingRepository(
   root: string,
   fileModes: ReadonlyMap<string, string>,
 ): Promise<RemoteSkillRepository> {
+  let repositoryVersion: 1 | 2;
   try {
-    SkillSyncRepositoryManifestSchema.parse(
-      parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES)),
-    );
+    const manifest = parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES));
+    if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 2;
+    else {
+      SkillSyncRepositoryManifestV1Schema.parse(manifest);
+      repositoryVersion = 1;
+    }
   } catch (error) {
     if (isNodeError(error, "ENOENT")) {
       try {
@@ -1124,12 +1093,14 @@ async function readWorkingRepository(
     if (
       !entry.isDirectory() ||
       entry.isSymbolicLink() ||
-      (entry.name !== "capability" && entry.name !== "bundle")
+      (entry.name !== "capability" && (repositoryVersion === 2 || entry.name !== "bundle"))
     ) {
       throw coded("skill_sync_entry_invalid", `Invalid managed entry: ${entry.name}`);
     }
   }
-  for (const kind of ["capability", "bundle"] as const) {
+  const identityKinds =
+    repositoryVersion === 1 ? (["capability", "bundle"] as const) : ["capability"];
+  for (const kind of identityKinds) {
     const kindRoot = join(root, SKILLS_DIRECTORY, kind);
     for (const entry of await readDirectory(kindRoot)) {
       if (!entry.isDirectory() || entry.isSymbolicLink())
@@ -1148,15 +1119,27 @@ async function readWorkingRepository(
       ) {
         throw coded("skill_sync_entry_invalid", `Invalid Skill layout: ${kind}/${entry.name}`);
       }
-      const manifest = SkillSyncSkillManifestSchema.parse(
-        parse(await readUtf8Bounded(join(base, "skill.yaml"), MAX_MANIFEST_BYTES)),
+      const rawManifest = parse(
+        await readUtf8Bounded(join(base, "skill.yaml"), MAX_MANIFEST_BYTES),
       );
-      const key = identityKey(manifest.identity);
-      if (key !== `${kind}/${entry.name}`)
+      const manifest =
+        repositoryVersion === 1
+          ? SkillSyncSkillManifestV1Schema.parse(rawManifest)
+          : SkillSyncSkillManifestSchema.parse(rawManifest);
+      const storedKey =
+        manifest.identity.kind === "capability"
+          ? `capability/${manifest.identity.id}`
+          : `bundle/${manifest.identity.logicalId}`;
+      if (storedKey !== `${kind}/${entry.name}`)
         throw coded(
           "skill_sync_identity_mismatch",
-          `Skill path does not match its identity: ${key}`,
+          `Skill path does not match its identity: ${storedKey}`,
         );
+      const identity =
+        manifest.identity.kind === "capability"
+          ? manifest.identity
+          : { kind: "capability" as const, id: manifest.identity.logicalId };
+      const key = identityKey(identity);
       const payloadRoot = join(base, "files");
       const snapshot = await scanSkillWorkingTree(payloadRoot);
       const declared = new Map(manifest.files.map((file) => [file.path, file]));
@@ -1197,11 +1180,13 @@ async function readWorkingRepository(
         files.push({ path: metadata.path, content, executable: metadata.executable });
       }
       const remote = {
-        identity: manifest.identity,
+        identity,
         name: manifest.name,
         description: manifest.description,
         files,
       };
+      if (skills.has(key))
+        throw coded("skill_sync_identity_mismatch", `Multiple Skills resolve to ${key}.`);
       skills.set(key, remote);
       if (skills.size > MAX_REPOSITORY_SKILLS)
         throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
@@ -1339,7 +1324,7 @@ async function writeWorkingRepository(
   assertRepositoryBounds(repository);
   await rm(join(root, SKILLS_DIRECTORY), { recursive: true, force: true });
   await mkdir(join(root, SKILLS_DIRECTORY), { recursive: true, mode: 0o700 });
-  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: "pragma.skill-sync/v1" }));
+  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: "pragma.skill-sync/v2" }));
   for (const [key, skill] of [...repository.skills.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
@@ -1512,7 +1497,7 @@ function createSkillSyncManifest(
   files: SkillSyncSkillManifest["files"],
 ): SkillSyncSkillManifest {
   return SkillSyncSkillManifestSchema.parse({
-    schemaVersion: "pragma.skill-sync-skill/v1",
+    schemaVersion: "pragma.skill-sync-skill/v2",
     identity: skill.identity,
     name: skill.name,
     description: skill.description,

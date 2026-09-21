@@ -21,6 +21,7 @@ import {
   PragmaPaths,
   applyAtomicStateMigration,
   bundleInstallationsMigrationChain,
+  generatePragmaResourceId,
   recoverAtomicStateMigration,
   withFileLock,
 } from "@pragma/core";
@@ -916,8 +917,7 @@ export function createPragmaBundleService(options: {
                   );
                   const sourceRevision =
                     binding?.revision ?? entry.capability.manifest.latestRevision;
-                  const logicalId =
-                    entry.capability.manifest.origin?.logicalId ?? entry.capability.manifest.id;
+                  const logicalId = entry.capability.manifest.id;
                   const revisionHistory = await Promise.all(
                     Array.from({ length: sourceRevision }, async (_, index) => {
                       const revision = index + 1;
@@ -1502,12 +1502,17 @@ export function createPragmaBundleService(options: {
                   });
                   continue;
                 }
-                const revisions: {
-                  readonly revision: number;
-                  readonly definition: z.infer<typeof CapabilityDefinitionSchema>;
-                  readonly payloadPath?: string;
-                }[] = [];
-                const revisionsByNumber = new Map<number, (typeof revisions)[number]>();
+                const revisionsByNumber = new Map<
+                  number,
+                  z.infer<typeof CapabilityDefinitionSchema>
+                >();
+                let latest:
+                  | {
+                      readonly revision: number;
+                      readonly definition: z.infer<typeof CapabilityDefinitionSchema>;
+                      readonly dependency: (typeof group)[number];
+                    }
+                  | undefined;
                 for (const dependency of group) {
                   const history =
                     dependency.history ??
@@ -1522,86 +1527,107 @@ export function createPragmaBundleService(options: {
                   for (const historical of history) {
                     const existing = revisionsByNumber.get(historical.revision);
                     if (existing !== undefined) {
-                      if (
-                        stableStringify(existing.definition) !==
-                        stableStringify(historical.definition)
-                      ) {
+                      if (stableStringify(existing) !== stableStringify(historical.definition)) {
                         throw new CapabilityStoreError(
-                          "bundle_identity_conflict",
+                          "capability_incompatible",
                           `Capability revision ${historical.revision} conflicts inside the Bundle.`,
                         );
                       }
                       continue;
                     }
-                    let payloadPath: string | undefined;
-                    if (historical.definition.kind === "skill") {
-                      if (dependency.payloadRoot === undefined) {
-                        throw new Error(`Capability payload is incomplete: ${dependency.name}.`);
-                      }
-                      const historyPrefix = `${dependency.payloadRoot}/history/${formatRevisionDirectory(historical.revision)}`;
-                      const currentPrefix = `${dependency.payloadRoot}/files`;
-                      const prefix =
-                        filesBelowPrefix(archive.files, historyPrefix).size > 0
-                          ? historyPrefix
-                          : historical.revision === dependency.sourceRevision &&
-                              filesBelowPrefix(archive.files, currentPrefix).size > 0
-                            ? currentPrefix
-                            : undefined;
-                      if (prefix === undefined) {
-                        throw new Error(
-                          `Capability payload is incomplete: ${dependency.name} revision ${historical.revision}.`,
-                        );
-                      }
-                      payloadPath = await materializePrefix(
-                        archive.files,
-                        prefix,
-                        "pragma-bundle-skill-revision-",
-                      );
-                      temporaryPayloads.push(payloadPath);
+                    revisionsByNumber.set(historical.revision, historical.definition);
+                    if (latest === undefined || historical.revision > latest.revision) {
+                      latest = { ...historical, dependency };
                     }
-                    const revision = {
-                      revision: historical.revision,
-                      definition: historical.definition,
-                      ...(payloadPath === undefined ? {} : { payloadPath }),
-                    };
-                    revisionsByNumber.set(historical.revision, revision);
-                    revisions.push(revision);
                   }
                 }
-                revisions.sort((left, right) => left.revision - right.revision);
+                if (latest === undefined) {
+                  throw new Error(`Capability history is empty: ${group[0]!.name}.`);
+                }
+                let payloadPath: string | undefined;
+                if (latest.definition.kind === "skill") {
+                  if (latest.dependency.payloadRoot === undefined) {
+                    throw new Error(`Capability payload is incomplete: ${latest.dependency.name}.`);
+                  }
+                  const historyPrefix = `${latest.dependency.payloadRoot}/history/${formatRevisionDirectory(latest.revision)}`;
+                  const currentPrefix = `${latest.dependency.payloadRoot}/files`;
+                  const prefix =
+                    filesBelowPrefix(archive.files, historyPrefix).size > 0
+                      ? historyPrefix
+                      : latest.revision === latest.dependency.sourceRevision &&
+                          filesBelowPrefix(archive.files, currentPrefix).size > 0
+                        ? currentPrefix
+                        : undefined;
+                  if (prefix === undefined) {
+                    throw new Error(
+                      `Capability payload is incomplete: ${latest.dependency.name} revision ${latest.revision}.`,
+                    );
+                  }
+                  payloadPath = await materializePrefix(
+                    archive.files,
+                    prefix,
+                    "pragma-bundle-skill-revision-",
+                  );
+                  temporaryPayloads.push(payloadPath);
+                }
                 const before = new Set(
                   (await options.capabilities.list()).map((capability) => capability.manifest.id),
                 );
-                const latest = revisions.at(-1)!;
                 let imported: Awaited<ReturnType<CapabilityStore["get"]>>;
-                let bindingRevision: number | undefined;
-                if (
-                  resolution?.action === "update" &&
-                  targetCapability?.definition.kind === "skill" &&
-                  latest.definition.kind === "skill" &&
-                  latest.payloadPath !== undefined
-                ) {
-                  const candidateSnapshot = await scanSkillWorkingTree(latest.payloadPath);
-                  imported = await options.capabilities.publishSkillRevisionCandidate({
-                    id: targetCapability.manifest.id,
-                    baseRevision: targetCapability.manifest.latestRevision,
-                    baseContentHash: targetCapability.definition.contentHash,
-                    sourcePath: latest.payloadPath,
+                if (resolution?.action === "update") {
+                  if (targetCapability === undefined) {
+                    throw new Error(`The selected local capability is unavailable: ${targetRef}.`);
+                  }
+                  if (
+                    targetCapability.definition.kind === "skill" &&
+                    latest.definition.kind === "skill" &&
+                    payloadPath !== undefined
+                  ) {
+                    const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
+                    imported = await options.capabilities.publishSkillRevisionCandidate({
+                      id: targetCapability.manifest.id,
+                      baseRevision: targetCapability.manifest.latestRevision,
+                      baseContentHash: targetCapability.definition.contentHash,
+                      sourcePath: payloadPath,
+                      candidateContentHash: candidateSnapshot.hash,
+                    });
+                  } else if (
+                    targetCapability.definition.kind !== "skill" &&
+                    latest.definition.kind !== "skill"
+                  ) {
+                    imported = await options.capabilities.update({
+                      id: targetCapability.manifest.id,
+                      baseRevision: targetCapability.manifest.latestRevision,
+                      definition: latest.definition,
+                      credentials: {},
+                    });
+                  } else {
+                    throw new CapabilityStoreError(
+                      "capability_incompatible",
+                      "The imported capability kind does not match the selected local capability.",
+                    );
+                  }
+                } else if (latest.definition.kind === "skill") {
+                  if (payloadPath === undefined) {
+                    throw new Error("The imported Skill payload is unavailable.");
+                  }
+                  const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
+                  imported = await options.capabilities.publishNewSkillRevisionCandidate({
+                    id: generatePragmaResourceId(),
+                    name: latest.definition.name,
+                    description: latest.definition.description,
+                    sourcePath: payloadPath,
                     candidateContentHash: candidateSnapshot.hash,
                   });
-                  bindingRevision = imported.manifest.latestRevision;
                 } else {
-                  imported = await options.capabilities.importBundleRevisions({
-                    logicalId:
-                      resolution?.action === "copy"
-                        ? CapabilityIdSchema.parse(targetRef.slice("capability:".length))
-                        : logicalId,
-                    revisions,
+                  imported = await options.capabilities.create({
+                    definition: latest.definition,
+                    credentials: {},
                   });
                 }
                 importedBundleCapabilities.set(logicalId, {
                   capability: imported,
-                  ...(bindingRevision === undefined ? {} : { bindingRevision }),
+                  bindingRevision: imported.manifest.latestRevision,
                 });
                 if (!before.has(imported.manifest.id)) {
                   await updateInstallation(initial.id, (record) => ({
