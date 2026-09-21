@@ -282,18 +282,18 @@ export function CapabilityDetailFragment(props: {
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
             <div className="capability-detail-actions">
-              <button
-                className="secondary-button"
-                type="button"
+              <StudioActionButton
+                label={t("updateSkillFromPackage")}
+                icon={<Archive size={18} aria-hidden="true" />}
                 disabled={busy || deleting}
                 onClick={() => void importSkillRevision()}
-              >
-                <Archive size={17} aria-hidden="true" /> {t("updateSkillFromPackage")}
-              </button>
+              />
               {props.onOpenRevisions !== undefined ? (
-                <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
-                  <ClockCounterClockwise size={17} aria-hidden="true" /> {t("revisionTasks")}
-                </button>
+                <StudioActionButton
+                  label={t("revisionTasks")}
+                  icon={<ClockCounterClockwise size={18} aria-hidden="true" />}
+                  onClick={props.onOpenRevisions}
+                />
               ) : null}
               <StudioActionButton
                 label={t("submitSkillRevision")}
@@ -303,14 +303,13 @@ export function CapabilityDetailFragment(props: {
                   setRevisionDialogOpen(true);
                 }}
               />
-              <button
-                className="danger-button"
-                type="button"
+              <StudioActionButton
+                label={t("deleteCapabilityAction")}
+                icon={<Trash size={18} aria-hidden="true" />}
+                tone="danger"
                 disabled={busy || deleting}
                 onClick={() => setDeleteDialogOpen(true)}
-              >
-                <Trash size={17} aria-hidden="true" /> {t("deleteCapabilityAction")}
-              </button>
+              />
             </div>
           ) : definition.kind === "mcp_server" ? (
             <button

@@ -121,12 +121,16 @@ describe("CapabilityDetailFragment", () => {
         }}
         onBack={() => undefined}
         onChanged={() => undefined}
+        onOpenRevisions={() => undefined}
       />,
     );
 
     expect(html).toContain("SKILL.md");
     expect(html).toContain('aria-label="Submit revision"');
     expect(html).toContain('role="tooltip">Submit revision</span>');
+    expect(html).toContain('aria-label="Update from package"');
+    expect(html).toContain('role="tooltip">Revision tasks</span>');
+    expect(html).toContain('aria-label="Delete capability"');
     expect(html).not.toContain("Update Skill");
     expect(html).not.toContain("Prepare revision");
     expect(html).not.toContain("skill-revisions-heading");

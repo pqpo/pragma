@@ -608,6 +608,15 @@
   padding-bottom: 16px;
 }
 
+.capability-detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .capability-detail-title {
   display: grid;
   min-width: 0;
