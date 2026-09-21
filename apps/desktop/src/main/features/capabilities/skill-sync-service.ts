@@ -29,7 +29,7 @@ const ROOT_MANIFEST = "pragma-skill-sync.yaml";
 const SKILLS_DIRECTORY = "skills";
 const MAX_MANIFEST_BYTES = 1_000_000;
 const MAX_FILE_BYTES = 128 * 1024;
-const MAX_SKILL_FILES = 64;
+const MAX_CONFLICT_SUMMARY_FILES = 1_000;
 const MAX_REPOSITORY_SKILLS = 500;
 const MAX_REPOSITORY_BYTES = 25 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
@@ -78,7 +78,7 @@ const StoredSummarySchema = z
     fingerprint: z.string().min(1).max(128),
     exists: z.boolean(),
     name: z.string().trim().min(1).max(120).optional(),
-    files: z.array(z.string().min(1).max(2_000)).max(MAX_SKILL_FILES),
+    files: z.array(z.string().min(1).max(2_000)).max(MAX_CONFLICT_SUMMARY_FILES),
   })
   .strict();
 
@@ -679,7 +679,8 @@ export function createGitSkillSyncProvider(
   return {
     async readHead() {
       const prepared = await prepare();
-      return { ...prepared, repository: await readWorkingRepository(repositoryPath) };
+      const fileModes = await readGitFileModes(repositoryPath, git);
+      return { ...prepared, repository: await readWorkingRepository(repositoryPath, fileModes) };
     },
     async publish(input) {
       const prepared = await prepare();
@@ -833,7 +834,10 @@ async function writeSkillTree(root: string, skill: RemoteSkill): Promise<void> {
   }
 }
 
-async function readWorkingRepository(root: string): Promise<RemoteSkillRepository> {
+async function readWorkingRepository(
+  root: string,
+  fileModes: ReadonlyMap<string, string>,
+): Promise<RemoteSkillRepository> {
   try {
     SkillSyncRepositoryManifestSchema.parse(
       parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES)),
@@ -903,7 +907,11 @@ async function readWorkingRepository(root: string): Promise<RemoteSkillRepositor
             expected === undefined ||
             expected.sizeBytes !== file.sizeBytes ||
             expected.sha256 !== file.sha256 ||
-            expected.executable !== file.executable
+            expected.executable !==
+              gitExecutable(
+                fileModes,
+                `${SKILLS_DIRECTORY}/${kind}/${entry.name}/files/${file.path}`,
+              )
           );
         })
       ) {
@@ -939,6 +947,28 @@ async function readWorkingRepository(root: string): Promise<RemoteSkillRepositor
     }
   }
   return { skills };
+}
+
+async function readGitFileModes(
+  root: string,
+  git: GitRunner,
+): Promise<ReadonlyMap<string, string>> {
+  const output = await git(root, ["ls-files", "--stage", "-z", "--", SKILLS_DIRECTORY]);
+  const modes = new Map<string, string>();
+  for (const record of output.split("\0")) {
+    if (record === "") continue;
+    const match = /^(\d+) [a-f0-9]+ \d+\t(.+)$/u.exec(record);
+    if (match === null) throw coded("skill_sync_git_index_invalid", "Invalid Git index entry.");
+    modes.set(match[2]!, match[1]!);
+  }
+  return modes;
+}
+
+function gitExecutable(fileModes: ReadonlyMap<string, string>, path: string): boolean {
+  const mode = fileModes.get(path);
+  if (mode !== "100644" && mode !== "100755")
+    throw coded("skill_sync_git_index_invalid", `Invalid Git mode for managed file: ${path}`);
+  return mode === "100755";
 }
 
 async function writeWorkingRepository(

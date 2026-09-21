@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -289,6 +289,27 @@ describe("Skill sync service", () => {
       expect.objectContaining({ syncKey: `capability/${id}`, status: "pending" }),
     );
   });
+
+  it("persists conflict summaries for Skills with more than 64 files", async () => {
+    const fixture = await createFixture();
+    await fixture.service.configure(configuration());
+    const statePath = join(fixture.root, "state", "skill-sync-state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    const files = Array.from({ length: 65 }, (_, index) => `references/file-${index}.md`);
+    state.conflicts = {
+      "capability/13131313-1313-4313-8313-131313131313": {
+        remoteRevision: "1",
+        local: { fingerprint: "local", exists: true, name: "Large Skill", files },
+        remote: { fingerprint: "remote", exists: true, name: "Large Skill", files },
+      },
+    };
+    await writeFile(statePath, `${JSON.stringify(state)}\n`);
+
+    const overview = await fixture.restartService().getOverview();
+
+    expect(overview.status).toBe("conflict");
+    expect(overview.conflicts[0]?.localFiles).toHaveLength(65);
+  });
 });
 
 describe("Git Skill sync provider", () => {
@@ -369,6 +390,57 @@ describe("Git Skill sync provider", () => {
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("uses the Git index executable bit when the working filesystem drops it", async () => {
+    const root = await temporaryRoot();
+    const remote = join(root, "remote.git");
+    await git(undefined, ["init", "--bare", remote]);
+    const globalConfig = join(root, "gitconfig");
+    await writeFile(globalConfig, "[user]\n\tname = Test\n\temail = test@example.com\n");
+    const cacheRoot = join(root, "cache");
+    const provider = createGitSkillSyncProvider(cacheRoot, gitConfiguration(remote), {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig },
+    });
+    const id = "14141414-1414-4414-8414-141414141414";
+    const skill: RemoteSkill = {
+      identity: { kind: "capability", id },
+      name: "Executable Skill",
+      description: "Executable Skill description",
+      files: [
+        {
+          path: "SKILL.md",
+          content: "---\nname: Executable Skill\ndescription: Executable Skill description\n---\n",
+          executable: false,
+        },
+        {
+          path: "scripts/run.mjs",
+          content: "export const run = () => 'ok';\n",
+          executable: true,
+        },
+        {
+          path: "tests/run.test.mjs",
+          content: "import '../scripts/run.mjs';\n",
+          executable: false,
+        },
+      ],
+    };
+    await provider.publish({
+      repository: { skills: new Map([[`capability/${id}`, skill]]) },
+      message: "publish executable",
+    });
+    const repositoryPath = join(cacheRoot, "repository");
+    await git(repositoryPath, ["config", "core.fileMode", "false"]);
+    await chmod(
+      join(repositoryPath, "skills", "capability", id, "files", "scripts", "run.mjs"),
+      0o644,
+    );
+
+    const head = await provider.readHead();
+
+    expect(head.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
+      expect.objectContaining({ path: "scripts/run.mjs", executable: true }),
+    );
   });
 });
 

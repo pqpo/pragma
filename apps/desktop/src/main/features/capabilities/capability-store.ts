@@ -1105,90 +1105,116 @@ export function createCapabilityStore(options: {
                 .strict()
                 .parse(rawInput.origin),
       };
-      const existing = await readCapability(input.id).catch(() => undefined);
-      if (existing !== undefined) {
-        if (
-          existing.definition.kind === "skill" &&
-          existing.manifest.latestRevision === 1 &&
-          JSON.stringify(existing.manifest.origin) === JSON.stringify(input.origin)
-        ) {
-          const publishedSnapshot = await scanSkillWorkingTree(
-            join(revisionPath(input.id, 1), "payload"),
-          ).catch(() => undefined);
-          if (publishedSnapshot?.hash === input.candidateContentHash) return existing;
-        }
-        throw new CapabilityStoreError(
-          "revision_conflict",
-          "The reserved Skill id is already occupied by different content.",
-        );
-      }
-      const timestamp = new Date().toISOString();
-      const temporaryPath = join(options.capabilitiesPath, `.${input.id}.${randomUUID()}.tmp`);
-      const payloadPath = join(temporaryPath, "revisions", "000001", "payload");
-      try {
-        await copySkillTree(input.sourcePath, payloadPath);
-        const snapshot = await scanSkillWorkingTree(payloadPath);
-        if (snapshot.hash !== input.candidateContentHash) {
+      const publish = async (): Promise<Capability> => {
+        const existing = await readCapability(input.id).catch(() => undefined);
+        if (existing !== undefined) {
+          if (
+            existing.definition.kind === "skill" &&
+            existing.manifest.latestRevision === 1 &&
+            JSON.stringify(existing.manifest.origin) === JSON.stringify(input.origin)
+          ) {
+            const publishedSnapshot = await scanSkillWorkingTree(
+              join(revisionPath(input.id, 1), "payload"),
+            ).catch(() => undefined);
+            if (publishedSnapshot?.hash === input.candidateContentHash) return existing;
+          }
           throw new CapabilityStoreError(
             "revision_conflict",
-            "The immutable Skill candidate no longer matches its submitted content hash.",
+            "The reserved Skill id is already occupied by different content.",
           );
         }
-        const contentHash = await hashDirectory(payloadPath);
-        const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
-        const metadata = readSkillMetadata(skillDocument);
-        if (metadata.name !== input.name || metadata.description !== input.description) {
-          throw new CapabilityStoreError(
-            "config_invalid",
-            "SKILL.md name and description must match the creation draft metadata.",
+        const timestamp = new Date().toISOString();
+        const temporaryPath = join(options.capabilitiesPath, `.${input.id}.${randomUUID()}.tmp`);
+        const payloadPath = join(temporaryPath, "revisions", "000001", "payload");
+        try {
+          await copySkillTree(input.sourcePath, payloadPath);
+          const snapshot = await scanSkillWorkingTree(payloadPath);
+          if (snapshot.hash !== input.candidateContentHash) {
+            throw new CapabilityStoreError(
+              "revision_conflict",
+              "The immutable Skill candidate no longer matches its submitted content hash.",
+            );
+          }
+          const contentHash = await hashDirectory(payloadPath);
+          const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
+          const metadata = readSkillMetadata(skillDocument);
+          if (metadata.name !== input.name || metadata.description !== input.description) {
+            throw new CapabilityStoreError(
+              "config_invalid",
+              "SKILL.md name and description must match the creation draft metadata.",
+            );
+          }
+          const definition = CapabilityDefinitionSchema.parse({
+            kind: "skill",
+            name: input.name,
+            description: input.description,
+            entryPath: "SKILL.md",
+            contentHash,
+          });
+          const manifest = CapabilityManifestSchema.parse({
+            schemaVersion: "pragma.capability/v2",
+            id: input.id,
+            runtimeKey: createRuntimeKey(input.name, input.id),
+            name: input.name,
+            kind: "skill",
+            latestRevision: 1,
+            ...(input.origin === undefined ? {} : { origin: input.origin }),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          });
+          const health = CapabilityHealthSchema.parse({
+            revision: 1,
+            status: "ready",
+            checkedAt: timestamp,
+          });
+          await writeJson(
+            join(temporaryPath, "revisions", "000001", "definition.json"),
+            definition,
           );
+          await writeJson(join(temporaryPath, "capability.json"), manifest);
+          await writeJson(join(temporaryPath, "health.json"), health);
+          await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
+          await rename(temporaryPath, capabilityPath(input.id));
+          const created = await readCapability(input.id);
+          options.onSkillCreated?.(created);
+          return created;
+        } catch (error) {
+          await rm(temporaryPath, { recursive: true, force: true });
+          const replay = await readCapability(input.id).catch(() => undefined);
+          if (
+            replay?.definition.kind === "skill" &&
+            replay.manifest.latestRevision === 1 &&
+            JSON.stringify(replay.manifest.origin) === JSON.stringify(input.origin)
+          ) {
+            const publishedSnapshot = await scanSkillWorkingTree(
+              join(revisionPath(input.id, 1), "payload"),
+            ).catch(() => undefined);
+            if (publishedSnapshot?.hash === input.candidateContentHash) return replay;
+          }
+          throw error;
         }
-        const definition = CapabilityDefinitionSchema.parse({
-          kind: "skill",
-          name: input.name,
-          description: input.description,
-          entryPath: "SKILL.md",
-          contentHash,
-        });
-        const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v2",
-          id: input.id,
-          runtimeKey: createRuntimeKey(input.name, input.id),
-          name: input.name,
-          kind: "skill",
-          latestRevision: 1,
-          ...(input.origin === undefined ? {} : { origin: input.origin }),
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        const health = CapabilityHealthSchema.parse({
-          revision: 1,
-          status: "ready",
-          checkedAt: timestamp,
-        });
-        await writeJson(join(temporaryPath, "revisions", "000001", "definition.json"), definition);
-        await writeJson(join(temporaryPath, "capability.json"), manifest);
-        await writeJson(join(temporaryPath, "health.json"), health);
-        await mkdir(options.capabilitiesPath, { recursive: true, mode: 0o700 });
-        await rename(temporaryPath, capabilityPath(input.id));
-        const created = await readCapability(input.id);
-        options.onSkillCreated?.(created);
-        return created;
-      } catch (error) {
-        await rm(temporaryPath, { recursive: true, force: true });
-        const replay = await readCapability(input.id).catch(() => undefined);
-        if (
-          replay?.definition.kind === "skill" &&
-          replay.manifest.latestRevision === 1 &&
-          JSON.stringify(replay.manifest.origin) === JSON.stringify(input.origin)
-        ) {
-          const publishedSnapshot = await scanSkillWorkingTree(
-            join(revisionPath(input.id, 1), "payload"),
-          ).catch(() => undefined);
-          if (publishedSnapshot?.hash === input.candidateContentHash) return replay;
-        }
-        throw error;
-      }
+      };
+      if (input.origin === undefined) return await publish();
+      const identityLocksPath = join(options.capabilitiesPath, ".bundle-identities");
+      await mkdir(identityLocksPath, { recursive: true, mode: 0o700 });
+      return await withFileLock(
+        join(identityLocksPath, `${input.origin.logicalId}.lock`),
+        async () => {
+          const candidates = (await this.list()).filter(
+            (capability) => capability.manifest.origin?.logicalId === input.origin?.logicalId,
+          );
+          if (
+            candidates.length > 1 ||
+            (candidates.length === 1 && candidates[0]!.manifest.id !== input.id)
+          ) {
+            throw new CapabilityStoreError(
+              "revision_conflict",
+              "The Bundle identity was claimed by another Capability.",
+            );
+          }
+          return await publish();
+        },
+      );
     },
     async create(rawInput) {
       const input = CreateCapabilitySchema.parse(rawInput);

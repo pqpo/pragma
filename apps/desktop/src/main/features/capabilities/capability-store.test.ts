@@ -468,6 +468,40 @@ describe("capability store", () => {
     ).resolves.toMatchObject({ mode: expect.any(Number) });
   });
 
+  it("atomically prevents two Capabilities from claiming one Bundle identity", async () => {
+    const { directory, store } = await createStore();
+    const source = join(directory, "raced-bundle-skill");
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      join(source, "SKILL.md"),
+      "---\nname: raced-bundle-skill\ndescription: Raced Bundle Skill.\n---\n",
+    );
+    const snapshot = await scanSkillWorkingTree(source);
+    const logicalId = randomUUID();
+
+    const results = await Promise.allSettled([
+      store.importBundleRevisions({
+        logicalId,
+        revisions: [{ revision: 1, definition: httpDefinition }],
+      }),
+      store.publishNewSkillRevisionCandidate({
+        id: randomUUID(),
+        name: "raced-bundle-skill",
+        description: "Raced Bundle Skill.",
+        sourcePath: source,
+        candidateContentHash: snapshot.hash,
+        origin: { kind: "pragma-bundle", logicalId },
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(
+      (await store.list()).filter(
+        (capability) => capability.manifest.origin?.logicalId === logicalId,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("reports corrupted or missing Skill package files with capability errors", async () => {
     const { directory, store } = await createStore();
     const source = join(directory, "source-skill");
