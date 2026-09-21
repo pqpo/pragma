@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { SkillSyncOverview } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -13,6 +14,9 @@ export function SkillSyncSettingsFragment() {
   const [branch, setBranch] = useState("");
   const [autoPush, setAutoPush] = useState(true);
   const [pushDeletions, setPushDeletions] = useState(false);
+  const [initializationMode, setInitializationMode] = useState<
+    "merge_and_publish" | "restore_remote"
+  >("merge_and_publish");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeError = error ?? overview?.errorMessage;
@@ -80,6 +84,7 @@ export function SkillSyncSettingsFragment() {
               ...(branch.trim() === "" ? {} : { branch }),
               autoPush,
               pushDeletions,
+              initializationMode,
             }),
           );
         }}
@@ -101,6 +106,20 @@ export function SkillSyncSettingsFragment() {
             disabled={busy}
             onChange={(event) => setBranch(event.target.value)}
             placeholder={t("skillSync.defaultBranch")}
+          />
+        </label>
+        <label>
+          <span>{t("skillSync.initializationMode")}</span>
+          <SelectMenu<"merge_and_publish" | "restore_remote">
+            ariaLabel={t("skillSync.initializationMode")}
+            className="form-select"
+            value={initializationMode}
+            disabled={busy}
+            options={[
+              { value: "merge_and_publish", label: t("skillSync.mergeAndPublish") },
+              { value: "restore_remote", label: t("skillSync.initializeFromRemote") },
+            ]}
+            onChange={setInitializationMode}
           />
         </label>
         <label className="knowledge-sync-toggle">

@@ -21,6 +21,8 @@ export const KnowledgeSyncConfigurationSchema = z
 
 export const UpdateKnowledgeSyncConfigurationSchema = KnowledgeSyncConfigurationSchema.omit({
   schemaVersion: true,
+}).extend({
+  initializationMode: z.enum(["merge_and_publish", "restore_remote"]).default("merge_and_publish"),
 });
 
 export const KnowledgeSyncRepositoryManifestSchema = z

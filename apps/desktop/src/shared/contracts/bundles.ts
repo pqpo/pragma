@@ -232,7 +232,7 @@ export const PragmaBundleImportInspectionSchema = z
 export const PragmaBundleConflictResolutionSchema = z
   .object({
     resourceRef: PragmaResourceRefSchema,
-    action: z.enum(["update", "copy"]),
+    action: z.enum(["update", "copy", "keep_local"]),
     expectedTargetRevision: z.number().int().positive().optional(),
     expectedTargetSnapshotHash: z
       .string()
@@ -337,7 +337,7 @@ export const PragmaBundlePendingDependencySchema = z
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v5"),
+    schemaVersion: z.literal("pragma.bundle-installation/v6"),
     bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1", "pragma.bundle/v2"]),
     sourceProjectFingerprint: z
       .string()

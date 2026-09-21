@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { KnowledgeSyncOverview } from "../../../../shared/contracts/index.ts";
+import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -13,6 +14,9 @@ export function KnowledgeSyncSettingsFragment() {
   const [branch, setBranch] = useState("");
   const [autoPush, setAutoPush] = useState(true);
   const [pushDeletions, setPushDeletions] = useState(false);
+  const [initializationMode, setInitializationMode] = useState<
+    "merge_and_publish" | "restore_remote"
+  >("merge_and_publish");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeError = error ?? overview?.errorMessage;
@@ -80,6 +84,7 @@ export function KnowledgeSyncSettingsFragment() {
               ...(branch.trim() === "" ? {} : { branch }),
               autoPush,
               pushDeletions,
+              initializationMode,
             }),
           );
         }}
@@ -103,6 +108,20 @@ export function KnowledgeSyncSettingsFragment() {
             disabled={busy}
             onChange={(event) => setBranch(event.target.value)}
             placeholder={t("knowledgeSync.defaultBranch")}
+          />
+        </label>
+        <label>
+          <span>{t("knowledgeSync.initializationMode")}</span>
+          <SelectMenu<"merge_and_publish" | "restore_remote">
+            ariaLabel={t("knowledgeSync.initializationMode")}
+            className="form-select"
+            value={initializationMode}
+            disabled={busy}
+            options={[
+              { value: "merge_and_publish", label: t("knowledgeSync.mergeAndPublish") },
+              { value: "restore_remote", label: t("knowledgeSync.initializeFromRemote") },
+            ]}
+            onChange={setInitializationMode}
           />
         </label>
         <label className="knowledge-sync-toggle">
@@ -147,12 +166,12 @@ export function KnowledgeSyncSettingsFragment() {
             </button>
           ) : null}
           {overview?.configured ? (
-          <p>
-            <GitBranchIcon size={16} />{" "}
-            {(overview.resolvedBranch ?? branch) || t("knowledgeSync.defaultBranch")}
-            {overview.revision ? ` · ${overview.revision.slice(0, 8)}` : ""}
-          </p>
-        ) : null}
+            <p>
+              <GitBranchIcon size={16} />{" "}
+              {(overview.resolvedBranch ?? branch) || t("knowledgeSync.defaultBranch")}
+              {overview.revision ? ` · ${overview.revision.slice(0, 8)}` : ""}
+            </p>
+          ) : null}
         </div>
       </form>
       {(overview?.stores.filter((store) => store.status === "ignored_remote") ?? []).map(

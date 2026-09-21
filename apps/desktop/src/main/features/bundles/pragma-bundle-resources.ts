@@ -66,7 +66,7 @@ export function resolveBundleIdentities(
   local: readonly PragmaResource[],
   resolutions: readonly {
     readonly resourceRef: string;
-    readonly action: "update" | "copy";
+    readonly action: "update" | "copy" | "keep_local";
   }[],
 ): {
   readonly identities: readonly {
@@ -95,7 +95,7 @@ export function resolveBundleIdentities(
     const conflict = conflictByRef.get(ref);
     if (conflict === undefined) continue;
     const action = resolutionByRef.get(ref);
-    if (action === "update") {
+    if (action === "update" || action === "keep_local") {
       if (!conflict.updateAllowed) {
         throw new Error(conflict.updateBlockedReason ?? `Cannot update ${ref}.`);
       }

@@ -5,36 +5,53 @@ import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { validateSkillPackage } from "@pragma/built-in-agents";
-import { generatePragmaResourceId, withFileLock } from "@pragma/core";
+import { withFileLock } from "@pragma/core";
 import { parse, stringify } from "yaml";
-import { z } from "zod";
 
 import {
   CapabilityIdSchema,
   SkillSyncConfigurationSchema,
   SkillSyncOverviewSchema,
+  SkillSyncRepositoryManifestV1Schema,
   SkillSyncRepositoryManifestSchema,
+  SkillSyncSkillManifestV1Schema,
   SkillSyncSkillManifestSchema,
   type Capability,
   type SkillSyncConfiguration,
   type SkillSyncIdentity,
   type SkillSyncOverview,
   type SkillSyncSkillManifest,
+  type UpdateSkillSyncConfiguration,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
+import {
+  backupSourceKey,
+  type BackupProviderHead,
+  canonicalBackupRemote,
+  resolvedReferenceChanged,
+  sourceChanged,
+  type StudioBackupProvider,
+} from "../studio-sync/studio-backup-sync.ts";
+import {
+  PendingSkillRemoteActivationSchema as PendingRemoteActivationSchema,
+  SkillSyncStateV2Schema as SkillSyncStateSchema,
+  StoredPortableSkillFilesSchema as StoredPortableFilesSchema,
+  skillSyncStateMigrationChain,
+  type SkillSyncStateV2 as SkillSyncState,
+} from "../studio-sync/migrations/skill-sync/index.ts";
+import { readStudioSyncState } from "../studio-sync/studio-sync-state-migration.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT_MANIFEST = "pragma-skill-sync.yaml";
 const SKILLS_DIRECTORY = "skills";
 const MAX_MANIFEST_BYTES = 1_000_000;
 const MAX_FILE_BYTES = 128 * 1024;
-const MAX_CONFLICT_SUMMARY_FILES = 1_000;
 const MAX_REPOSITORY_SKILLS = 500;
 const MAX_REPOSITORY_BYTES = 25 * 1024 * 1024;
 const MAX_GIT_INDEX_RECORD_BYTES = 16 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
-type SyncIntent = "full" | "pull_only";
+type SyncIntent = "full" | "pull_only" | "restore";
 
 export type RemoteSkillFile = {
   readonly path: string;
@@ -50,23 +67,9 @@ export type RemoteSkill = {
 };
 
 export type RemoteSkillRepository = { readonly skills: ReadonlyMap<string, RemoteSkill> };
-export type SkillSyncProviderHead = {
-  readonly revision?: string | undefined;
-  readonly reference?: string | undefined;
-  readonly repository: RemoteSkillRepository;
-};
+export type SkillSyncProviderHead = BackupProviderHead<RemoteSkillRepository>;
 
-export interface SkillSyncProvider {
-  readHead(): Promise<SkillSyncProviderHead>;
-  publish(input: {
-    readonly expectedRevision?: string | undefined;
-    readonly repository: RemoteSkillRepository;
-    readonly message: string;
-  }): Promise<
-    | { readonly status: "published"; readonly revision: string }
-    | { readonly status: "head_changed" }
-  >;
-}
+export type SkillSyncProvider = StudioBackupProvider<RemoteSkillRepository>;
 
 type LocalSkill = RemoteSkill & {
   readonly capabilityId: string;
@@ -74,98 +77,12 @@ type LocalSkill = RemoteSkill & {
   readonly capabilityContentHash: string;
 };
 
-const StoredSummarySchema = z
-  .object({
-    fingerprint: z.string().min(1).max(128),
-    exists: z.boolean(),
-    name: z.string().trim().min(1).max(120).optional(),
-    files: z.array(z.string().min(1).max(2_000)).max(MAX_CONFLICT_SUMMARY_FILES),
-  })
-  .strict();
-
-const StoredPortableFilesSchema = z
-  .object({
-    capabilityId: CapabilityIdSchema,
-    capabilityRevision: z.number().int().positive(),
-    capabilityContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
-    files: z
-      .array(
-        z
-          .object({
-            path: z.string().min(1).max(2_000),
-            executable: z.boolean(),
-            sha256: z
-              .string()
-              .regex(/^[a-f0-9]{64}$/u)
-              .optional(),
-          })
-          .strict(),
-      )
-      .max(MAX_CONFLICT_SUMMARY_FILES),
-  })
-  .strict();
-
-const PendingRemoteActivationSchema = z
-  .object({
-    files: z
-      .array(
-        z
-          .object({
-            path: z.string().min(1).max(2_000),
-            executable: z.boolean(),
-            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-          })
-          .strict(),
-      )
-      .max(MAX_CONFLICT_SUMMARY_FILES),
-  })
-  .strict();
-
-const SkillSyncStateSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.skill-sync-state/v1"),
-    sourceKey: z.string().min(1).max(4_000).optional(),
-    revision: z.string().optional(),
-    resolvedBranch: z.string().optional(),
-    syncedAt: z.string().datetime().optional(),
-    bases: z.record(z.string(), z.string()),
-    portableFiles: z.record(z.string(), StoredPortableFilesSchema).default({}),
-    pendingRemoteActivations: z.record(z.string(), PendingRemoteActivationSchema).default({}),
-    ignoredRemote: z.array(z.object({ syncKey: z.string(), name: z.string() }).strict()),
-    conflicts: z.record(
-      z.string(),
-      z
-        .object({
-          remoteRevision: z.string().min(1),
-          local: StoredSummarySchema,
-          remote: StoredSummarySchema,
-        })
-        .strict(),
-    ),
-    errors: z.record(
-      z.string(),
-      z
-        .object({
-          source: z.enum(["local", "remote"]),
-          code: z.string().min(1),
-          message: z.string().min(1).max(2_000),
-          name: z.string().trim().min(1).max(120).optional(),
-          capabilityId: CapabilityIdSchema.optional(),
-        })
-        .strict(),
-    ),
-    errorCode: z.string().optional(),
-    errorMessage: z.string().optional(),
-  })
-  .strict();
-
-type SkillSyncState = z.infer<typeof SkillSyncStateSchema>;
 type LocalSkillSnapshot = {
   readonly skills: Map<string, LocalSkill>;
   readonly errors: SkillSyncState["errors"];
 };
 const emptyState = (sourceKey?: string): SkillSyncState => ({
-  schemaVersion: "pragma.skill-sync-state/v1",
+  schemaVersion: "pragma.skill-sync-state/v2",
   ...(sourceKey === undefined ? {} : { sourceKey }),
   bases: {},
   portableFiles: {},
@@ -177,7 +94,10 @@ const emptyState = (sourceKey?: string): SkillSyncState => ({
 
 export interface SkillSyncService {
   getOverview(): Promise<SkillSyncOverview>;
-  configure(input: Omit<SkillSyncConfiguration, "schemaVersion">): Promise<SkillSyncOverview>;
+  configure(
+    input: Omit<UpdateSkillSyncConfiguration, "initializationMode"> &
+      Partial<Pick<UpdateSkillSyncConfiguration, "initializationMode">>,
+  ): Promise<SkillSyncOverview>;
   removeConfiguration(): Promise<void>;
   sync(): Promise<SkillSyncOverview>;
   refresh(): Promise<SkillSyncOverview>;
@@ -220,12 +140,19 @@ export function createSkillSyncService(options: {
     }
   };
   const readState = async (): Promise<SkillSyncState> => {
-    try {
-      return SkillSyncStateSchema.parse(JSON.parse(await readFile(options.statePath, "utf8")));
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) return emptyState();
-      throw error;
-    }
+    const configuration = await readConfiguration();
+    return await readStudioSyncState({
+      statePath: options.statePath,
+      chain: skillSyncStateMigrationChain,
+      onMissing: emptyState,
+      finalizeMigrated: (state) =>
+        state.sourceKey !== undefined || configuration === undefined
+          ? state
+          : SkillSyncStateSchema.parse({
+              ...state,
+              sourceKey: backupSourceKey(configuration),
+            }),
+    });
   };
   const writeState = async (state: SkillSyncState): Promise<void> =>
     await writeJsonAtomic(options.statePath, SkillSyncStateSchema.parse(state));
@@ -346,19 +273,12 @@ export function createSkillSyncService(options: {
       await writeSkillTree(incoming, remote);
       const snapshot = await scanSkillWorkingTree(incoming);
       if (local === undefined) {
-        const id =
-          remote.identity.kind === "capability"
-            ? remote.identity.id
-            : CapabilityIdSchema.parse(generatePragmaResourceId());
         return await options.capabilities.publishNewSkillRevisionCandidate({
-          id,
+          id: remote.identity.id,
           name: remote.name,
           description: remote.description,
           sourcePath: incoming,
           candidateContentHash: snapshot.hash,
-          ...(remote.identity.kind === "pragma-bundle"
-            ? { origin: { kind: "pragma-bundle" as const, logicalId: remote.identity.logicalId } }
-            : {}),
         });
       } else {
         return await options.capabilities.publishSkillRevisionCandidate({
@@ -439,6 +359,37 @@ export function createSkillSyncService(options: {
         delete conflicts[key];
         delete errors[key];
         ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
+        continue;
+      }
+      if (intent === "restore") {
+        if (remoteSkill !== undefined) {
+          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
+          await writeState(checkpointState());
+        }
+        try {
+          const applied = await applyRemote(key, remoteSkill, localSkill);
+          if (remoteSkill === undefined || applied === undefined) {
+            delete bases[key];
+            delete portableFiles[key];
+          } else {
+            bases[key] = remoteFingerprint;
+            portableFiles[key] = portableFilesFor(applied, remoteSkill);
+          }
+          delete pendingRemoteActivations[key];
+          delete conflicts[key];
+          delete errors[key];
+          await writeState(checkpointState());
+        } catch (error) {
+          delete pendingRemoteActivations[key];
+          errors[key] = {
+            source: "remote",
+            code: errorCode(error),
+            message: errorMessage(error),
+            name: remoteSkill?.name ?? localSkill?.name,
+            capabilityId: localSkill?.capabilityId,
+          };
+          await writeState(checkpointState());
+        }
         continue;
       }
       const localChanged =
@@ -539,16 +490,12 @@ export function createSkillSyncService(options: {
     transientStatus = "syncing";
     const provider = providerFor(configuration);
     let state = await readState();
-    const sourceKey = configurationSourceKey(configuration);
-    if (state.sourceKey !== sourceKey) state = emptyState(sourceKey);
+    const sourceKey = backupSourceKey(configuration);
+    if (sourceChanged(state.sourceKey, configuration)) state = emptyState(sourceKey);
     try {
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const head = await provider.readHead();
-        if (
-          state.resolvedBranch !== undefined &&
-          head.reference !== undefined &&
-          state.resolvedBranch !== head.reference
-        ) {
+        if (resolvedReferenceChanged(state.resolvedBranch, head.reference)) {
           state = emptyState(sourceKey);
         }
         let result: Awaited<ReturnType<typeof reconcile>>;
@@ -628,7 +575,10 @@ export function createSkillSyncService(options: {
   };
 
   const runSync = (intent: SyncIntent): Promise<SkillSyncOverview> => {
-    if (intent === "full") requestedIntent = "full";
+    if (running === undefined) requestedIntent = intent;
+    else if (intent === "restore" || (intent === "full" && requestedIntent === "pull_only")) {
+      requestedIntent = intent;
+    }
     if (running !== undefined) {
       rerun = true;
       return running;
@@ -656,18 +606,21 @@ export function createSkillSyncService(options: {
     async getOverview() {
       const configuration = await readConfiguration();
       if (configuration === undefined) return unconfiguredOverview();
-      const state = await readState();
-      return await buildOverview(
-        configuration,
-        state,
-        await localSkillsForOverview(state),
-        transientStatus === "syncing" ? "syncing" : settledStatus(state),
-      );
+      return await withFileLock(lockPath, async () => {
+        const state = await readState();
+        return await buildOverview(
+          configuration,
+          state,
+          await localSkillsForOverview(state),
+          transientStatus === "syncing" ? "syncing" : settledStatus(state),
+        );
+      });
     },
     async configure(input) {
+      const { initializationMode = "merge_and_publish", ...settings } = input;
       const configuration = SkillSyncConfigurationSchema.parse({
         schemaVersion: "pragma.skill-sync-settings/v1",
-        ...input,
+        ...settings,
       });
       await withFileLock(lockPath, async () => {
         const head = await providerFor(configuration).readHead();
@@ -675,14 +628,14 @@ export function createSkillSyncService(options: {
         await writeJsonAtomic(options.configurationPath, configuration);
         if (
           previous === undefined ||
-          canonicalRemote(previous.remote) !== canonicalRemote(configuration.remote) ||
+          canonicalBackupRemote(previous.remote) !== canonicalBackupRemote(configuration.remote) ||
           previous.branch !== configuration.branch
         ) {
-          await writeState(emptyState(configurationSourceKey(configuration)));
+          await writeState(emptyState(backupSourceKey(configuration)));
         }
         void head;
       });
-      return await runSync("full");
+      return await runSync(initializationMode === "restore_remote" ? "restore" : "full");
     },
     async removeConfiguration() {
       if (scheduled !== undefined) clearTimeout(scheduled);
@@ -728,7 +681,7 @@ export function createSkillSyncService(options: {
         const provider = providerFor(configuration);
         const head = await provider.readHead();
         if (
-          state.sourceKey !== configurationSourceKey(configuration) ||
+          sourceChanged(state.sourceKey, configuration) ||
           state.resolvedBranch !== head.reference ||
           (head.revision ?? "unborn") !== conflict.remoteRevision
         ) {
@@ -998,15 +951,11 @@ function unconfiguredOverview(): SkillSyncOverview {
 }
 
 function syncIdentity(capability: Capability): SkillSyncIdentity {
-  return capability.manifest.origin === undefined
-    ? { kind: "capability", id: capability.manifest.id }
-    : { kind: "pragma-bundle", logicalId: capability.manifest.origin.logicalId };
+  return { kind: "capability", id: capability.manifest.id };
 }
 
 function identityKey(identity: SkillSyncIdentity): string {
-  return identity.kind === "capability"
-    ? `capability/${identity.id}`
-    : `bundle/${identity.logicalId}`;
+  return `capability/${identity.id}`;
 }
 
 function portableFilesFor(capability: Capability, skill: RemoteSkill) {
@@ -1115,10 +1064,14 @@ async function readWorkingRepository(
   root: string,
   fileModes: ReadonlyMap<string, string>,
 ): Promise<RemoteSkillRepository> {
+  let repositoryVersion: 1 | 2;
   try {
-    SkillSyncRepositoryManifestSchema.parse(
-      parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES)),
-    );
+    const manifest = parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES));
+    if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 2;
+    else {
+      SkillSyncRepositoryManifestV1Schema.parse(manifest);
+      repositoryVersion = 1;
+    }
   } catch (error) {
     if (isNodeError(error, "ENOENT")) {
       try {
@@ -1137,15 +1090,17 @@ async function readWorkingRepository(
   const skills = new Map<string, RemoteSkill>();
   let totalBytes = 0;
   for (const entry of await readDirectory(join(root, SKILLS_DIRECTORY))) {
-    if (
-      !entry.isDirectory() ||
-      entry.isSymbolicLink() ||
-      (entry.name !== "capability" && entry.name !== "bundle")
-    ) {
+    if (entry.name === "bundle") {
+      throw coded(
+        "skill_sync_protocol_unsupported",
+        "Legacy Bundle Skill identities are unsupported. Reinitialize Skill sync.",
+      );
+    }
+    if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name !== "capability") {
       throw coded("skill_sync_entry_invalid", `Invalid managed entry: ${entry.name}`);
     }
   }
-  for (const kind of ["capability", "bundle"] as const) {
+  for (const kind of ["capability"] as const) {
     const kindRoot = join(root, SKILLS_DIRECTORY, kind);
     for (const entry of await readDirectory(kindRoot)) {
       if (!entry.isDirectory() || entry.isSymbolicLink())
@@ -1164,15 +1119,27 @@ async function readWorkingRepository(
       ) {
         throw coded("skill_sync_entry_invalid", `Invalid Skill layout: ${kind}/${entry.name}`);
       }
-      const manifest = SkillSyncSkillManifestSchema.parse(
-        parse(await readUtf8Bounded(join(base, "skill.yaml"), MAX_MANIFEST_BYTES)),
+      const rawManifest = parse(
+        await readUtf8Bounded(join(base, "skill.yaml"), MAX_MANIFEST_BYTES),
       );
-      const key = identityKey(manifest.identity);
-      if (key !== `${kind}/${entry.name}`)
+      const manifest =
+        repositoryVersion === 1
+          ? SkillSyncSkillManifestV1Schema.parse(rawManifest)
+          : SkillSyncSkillManifestSchema.parse(rawManifest);
+      if (manifest.identity.kind !== "capability") {
+        throw coded(
+          "skill_sync_protocol_unsupported",
+          "Legacy Bundle Skill identities are unsupported. Reinitialize Skill sync.",
+        );
+      }
+      const storedKey = `capability/${manifest.identity.id}`;
+      if (storedKey !== `${kind}/${entry.name}`)
         throw coded(
           "skill_sync_identity_mismatch",
-          `Skill path does not match its identity: ${key}`,
+          `Skill path does not match its identity: ${storedKey}`,
         );
+      const identity = manifest.identity;
+      const key = identityKey(identity);
       const payloadRoot = join(base, "files");
       const snapshot = await scanSkillWorkingTree(payloadRoot);
       const declared = new Map(manifest.files.map((file) => [file.path, file]));
@@ -1213,11 +1180,13 @@ async function readWorkingRepository(
         files.push({ path: metadata.path, content, executable: metadata.executable });
       }
       const remote = {
-        identity: manifest.identity,
+        identity,
         name: manifest.name,
         description: manifest.description,
         files,
       };
+      if (skills.has(key))
+        throw coded("skill_sync_identity_mismatch", `Multiple Skills resolve to ${key}.`);
       skills.set(key, remote);
       if (skills.size > MAX_REPOSITORY_SKILLS)
         throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
@@ -1355,7 +1324,7 @@ async function writeWorkingRepository(
   assertRepositoryBounds(repository);
   await rm(join(root, SKILLS_DIRECTORY), { recursive: true, force: true });
   await mkdir(join(root, SKILLS_DIRECTORY), { recursive: true, mode: 0o700 });
-  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: "pragma.skill-sync/v1" }));
+  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: "pragma.skill-sync/v2" }));
   for (const [key, skill] of [...repository.skills.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
@@ -1382,8 +1351,8 @@ async function ensureGitRepository(path: string, remote: string, git: GitRunner)
   try {
     await access(join(path, ".git"));
     if (
-      canonicalRemote((await git(path, ["config", "--get", "remote.origin.url"])).trim()) ===
-      canonicalRemote(remote)
+      canonicalBackupRemote((await git(path, ["config", "--get", "remote.origin.url"])).trim()) ===
+      canonicalBackupRemote(remote)
     )
       return;
   } catch {
@@ -1489,12 +1458,6 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await rename(temporary, path);
 }
 
-function canonicalRemote(value: string): string {
-  return value.trim().replace(/\/$/u, "");
-}
-function configurationSourceKey(configuration: SkillSyncConfiguration): string {
-  return JSON.stringify([canonicalRemote(configuration.remote), configuration.branch ?? null]);
-}
 function assertRepositoryBounds(repository: RemoteSkillRepository): void {
   if (repository.skills.size > MAX_REPOSITORY_SKILLS)
     throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
@@ -1534,7 +1497,7 @@ function createSkillSyncManifest(
   files: SkillSyncSkillManifest["files"],
 ): SkillSyncSkillManifest {
   return SkillSyncSkillManifestSchema.parse({
-    schemaVersion: "pragma.skill-sync-skill/v1",
+    schemaVersion: "pragma.skill-sync-skill/v2",
     identity: skill.identity,
     name: skill.name,
     description: skill.description,

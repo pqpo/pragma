@@ -1555,8 +1555,6 @@ export const studio = {
   bundleRecheck: "Check again",
   bundleConfigureCapability: "Configure {{name}}",
   bundleGenericError: "The Bundle operation could not be completed. Check the file and try again.",
-  bundleIdentityConflict:
-    "A capability revision conflicts with an existing Bundle identity. Choose another capability or import a complete history.",
   bundleStatus: {
     ready: "Ready",
     missing: "Missing",
@@ -1613,8 +1611,11 @@ export const studio = {
     "Choose independently for each resource. Copies are selected by default to protect local work.",
   bundleAllCopies: "All as copies",
   bundleAllUpdates: "Update all possible",
+  bundleAllKeepLocal: "Keep all local",
   bundleImportCopyShortHint: "Create a new local identity.",
   bundleUpdateExistingShortHint: "Replace the matching local resource.",
+  bundleKeepLocal: "Use local version",
+  bundleKeepLocalHint: "Ignore this imported content and bind Bundle references to the local resource.",
   bundleUpdateBlocked: "Identity and name match different local resources.",
   bundleBindingProgress: "Resource {{current}} of {{total}}",
   bundleRefresh: "Refresh",
@@ -1637,6 +1638,7 @@ export const studio = {
   bundleReviewResources: "Resources",
   bundleReviewCopies: "Copies",
   bundleReviewUpdates: "Updates",
+  bundleReviewKeptLocal: "Kept local",
   bundleReviewBindings: "Local bindings",
   bundleReviewDeferredDependencies:
     "Local dependencies still needing setup after import: {{count}}.",
