@@ -42,6 +42,10 @@ provider when the user resolves a conflict. Different store UUIDs merge independ
 - A change on only one side is applied to the other side.
 - Changes on both sides, including delete-versus-edit, create a store-level conflict.
 
+When configuring a target, `merge_and_publish` runs this same bidirectional reconciliation and
+publishes local-only changes; it is not a local-authoritative overwrite. `restore_remote` applies the
+selected target without publishing local candidates.
+
 Conflict resolution deliberately chooses one complete store rather than merging individual files.
 Choosing the remote version writes a Git merge commit whose selected remote state is the merge tree
 and whose alternate local candidate remains reachable through the second parent. Choosing the local
@@ -64,4 +68,6 @@ Git runs non-interactively and relies on the user's system Git credential helper
 Credentials are never accepted in the configured remote URL or persisted by the synchronization
 service. Published commits use the user's global Git `user.name` and `user.email`; synchronization
 fails with an actionable configuration error when either value is missing. The managed checkout
-never substitutes a Pragma service identity for the local user's commit identity.
+never substitutes a Pragma service identity for the local user's commit identity. Source identity
+normalization trims whitespace and trailing slashes only; remotes that differ by a `.git` suffix are
+distinct because generic Git servers need not resolve them to the same repository.

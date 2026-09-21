@@ -617,7 +617,7 @@ export function createSkillSyncService(options: {
       });
     },
     async configure(input) {
-      const { initializationMode = "publish_local", ...settings } = input;
+      const { initializationMode = "merge_and_publish", ...settings } = input;
       const configuration = SkillSyncConfigurationSchema.parse({
         schemaVersion: "pragma.skill-sync-settings/v1",
         ...settings,
@@ -1090,17 +1090,17 @@ async function readWorkingRepository(
   const skills = new Map<string, RemoteSkill>();
   let totalBytes = 0;
   for (const entry of await readDirectory(join(root, SKILLS_DIRECTORY))) {
-    if (
-      !entry.isDirectory() ||
-      entry.isSymbolicLink() ||
-      (entry.name !== "capability" && (repositoryVersion === 2 || entry.name !== "bundle"))
-    ) {
+    if (entry.name === "bundle") {
+      throw coded(
+        "skill_sync_protocol_unsupported",
+        "Legacy Bundle Skill identities are unsupported. Reinitialize Skill sync.",
+      );
+    }
+    if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name !== "capability") {
       throw coded("skill_sync_entry_invalid", `Invalid managed entry: ${entry.name}`);
     }
   }
-  const identityKinds =
-    repositoryVersion === 1 ? (["capability", "bundle"] as const) : ["capability"];
-  for (const kind of identityKinds) {
+  for (const kind of ["capability"] as const) {
     const kindRoot = join(root, SKILLS_DIRECTORY, kind);
     for (const entry of await readDirectory(kindRoot)) {
       if (!entry.isDirectory() || entry.isSymbolicLink())
@@ -1126,19 +1126,19 @@ async function readWorkingRepository(
         repositoryVersion === 1
           ? SkillSyncSkillManifestV1Schema.parse(rawManifest)
           : SkillSyncSkillManifestSchema.parse(rawManifest);
-      const storedKey =
-        manifest.identity.kind === "capability"
-          ? `capability/${manifest.identity.id}`
-          : `bundle/${manifest.identity.logicalId}`;
+      if (manifest.identity.kind !== "capability") {
+        throw coded(
+          "skill_sync_protocol_unsupported",
+          "Legacy Bundle Skill identities are unsupported. Reinitialize Skill sync.",
+        );
+      }
+      const storedKey = `capability/${manifest.identity.id}`;
       if (storedKey !== `${kind}/${entry.name}`)
         throw coded(
           "skill_sync_identity_mismatch",
           `Skill path does not match its identity: ${storedKey}`,
         );
-      const identity =
-        manifest.identity.kind === "capability"
-          ? manifest.identity
-          : { kind: "capability" as const, id: manifest.identity.logicalId };
+      const identity = manifest.identity;
       const key = identityKey(identity);
       const payloadRoot = join(base, "files");
       const snapshot = await scanSkillWorkingTree(payloadRoot);

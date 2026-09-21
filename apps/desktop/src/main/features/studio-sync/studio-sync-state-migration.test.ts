@@ -43,6 +43,24 @@ describe("Studio sync state migrations", () => {
     ).toThrow(StateVersionTooNewError);
   });
 
+  it("rejects legacy Bundle identities instead of mapping them into Capability ids", async () => {
+    const source = await fixture("skill-sync");
+
+    try {
+      skillSyncStateMigrationChain.upgrade({
+        ...source,
+        bases: { "bundle/0123456789abcdef": "skill-fingerprint" },
+      });
+      throw new Error("Expected the legacy Bundle identity to be rejected.");
+    } catch (error) {
+      expect(error).toMatchObject({
+        cause: expect.objectContaining({
+          message: expect.stringContaining("Legacy Bundle Skill sync identities are unsupported"),
+        }),
+      });
+    }
+  });
+
   it("atomically upgrades and backs up the historical knowledge fixture", async () => {
     const root = await temporaryRoot();
     const statePath = join(root, "knowledge-sync-state.json");

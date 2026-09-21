@@ -431,7 +431,7 @@ export function createKnowledgeSyncService(options: {
       });
     },
     async configure(input) {
-      const { initializationMode = "publish_local", ...settings } = input;
+      const { initializationMode = "merge_and_publish", ...settings } = input;
       const configuration = KnowledgeSyncConfigurationSchema.parse({
         schemaVersion: "pragma.knowledge-sync-settings/v1",
         ...settings,

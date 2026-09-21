@@ -14,9 +14,9 @@ export function KnowledgeSyncSettingsFragment() {
   const [branch, setBranch] = useState("");
   const [autoPush, setAutoPush] = useState(true);
   const [pushDeletions, setPushDeletions] = useState(false);
-  const [initializationMode, setInitializationMode] = useState<"publish_local" | "restore_remote">(
-    "publish_local",
-  );
+  const [initializationMode, setInitializationMode] = useState<
+    "merge_and_publish" | "restore_remote"
+  >("merge_and_publish");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeError = error ?? overview?.errorMessage;
@@ -112,13 +112,13 @@ export function KnowledgeSyncSettingsFragment() {
         </label>
         <label>
           <span>{t("knowledgeSync.initializationMode")}</span>
-          <SelectMenu<"publish_local" | "restore_remote">
+          <SelectMenu<"merge_and_publish" | "restore_remote">
             ariaLabel={t("knowledgeSync.initializationMode")}
             className="form-select"
             value={initializationMode}
             disabled={busy}
             options={[
-              { value: "publish_local", label: t("knowledgeSync.initializeFromLocal") },
+              { value: "merge_and_publish", label: t("knowledgeSync.mergeAndPublish") },
               { value: "restore_remote", label: t("knowledgeSync.initializeFromRemote") },
             ]}
             onChange={setInitializationMode}

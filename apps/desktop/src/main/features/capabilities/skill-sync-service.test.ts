@@ -25,6 +25,29 @@ afterEach(async () => {
 });
 
 describe("Skill sync service", () => {
+  it("merges the target and publishes local Skills during configuration", async () => {
+    const fixture = await createFixture();
+    const localId = "10101010-1010-4010-8010-101010101010";
+    const remoteId = "20202020-2020-4020-8020-202020202020";
+    await fixture.addLocalSkill(localId, "Local Skill");
+    fixture.provider.repository.skills.set(
+      `capability/${remoteId}`,
+      remoteSkill({ kind: "capability", id: remoteId }, "Remote Skill"),
+    );
+
+    const overview = await fixture.service.configure({
+      ...configuration(),
+      initializationMode: "merge_and_publish",
+    });
+
+    expect(overview.status).toBe("ready");
+    expect(fixture.capabilities.has(remoteId)).toBe(true);
+    expect([...fixture.provider.repository.skills.keys()].toSorted()).toEqual([
+      `capability/${localId}`,
+      `capability/${remoteId}`,
+    ]);
+  });
+
   it("publishes a local Skill and imports a remote Skill by local Capability identity", async () => {
     const fixture = await createFixture();
     const local = await fixture.addLocalSkill(
@@ -48,6 +71,12 @@ describe("Skill sync service", () => {
     expect(imported?.definition.name).toBe("Remote Skill");
     expect(imported?.manifest.origin).toBeUndefined();
     expect(overview.status).toBe("ready");
+
+    await fixture.restartService().sync();
+    expect([...fixture.provider.repository.skills.keys()].toSorted()).toEqual([
+      `capability/${local.manifest.id}`,
+      `capability/${remoteId}`,
+    ]);
   });
 
   it("creates a whole-Skill conflict when local and remote both change", async () => {
@@ -400,7 +429,7 @@ describe("Skill sync service", () => {
     );
   });
 
-  it("treats remotes that differ only by a .git suffix as the same source", async () => {
+  it("treats remotes that differ by a .git suffix as distinct sources", async () => {
     const fixture = await createFixture();
     const id = "24242424-2424-4424-8424-242424242424";
     await fixture.addLocalSkill(id, "Distinct Remote Skill");
@@ -419,8 +448,10 @@ describe("Skill sync service", () => {
 
     const overview = await fixture.service.refresh();
 
-    expect(fixture.capabilities.has(id)).toBe(false);
-    expect(overview.status).toBe("ready");
+    expect(fixture.capabilities.has(id)).toBe(true);
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, status: "pending" }),
+    );
   });
 
   it("rejects a local Skill file that exceeds the UTF-8 byte limit", async () => {
@@ -687,7 +718,7 @@ describe("Skill sync service", () => {
 });
 
 describe("Git Skill sync provider", () => {
-  it("upgrades a v1 Bundle identity to the capability-only repository model", async () => {
+  it("rejects a v1 repository that uses a legacy Bundle identity", async () => {
     const root = await temporaryRoot();
     const source = join(root, "legacy-source");
     await git(undefined, ["init", "--initial-branch=main", source]);
@@ -733,14 +764,10 @@ describe("Git Skill sync provider", () => {
       join(root, "legacy-cache"),
       gitConfiguration(source),
     );
-    const head = await provider.readHead();
-
-    expect([...head.repository.skills]).toEqual([
-      [
-        `capability/${id}`,
-        expect.objectContaining({ identity: { kind: "capability", id }, name: "Legacy Skill" }),
-      ],
-    ]);
+    await expect(provider.readHead()).rejects.toMatchObject({
+      code: "skill_sync_protocol_unsupported",
+      message: expect.stringContaining("Reinitialize Skill sync"),
+    });
   });
 
   it("publishes through Git and rejects a stale compare-and-swap", async () => {

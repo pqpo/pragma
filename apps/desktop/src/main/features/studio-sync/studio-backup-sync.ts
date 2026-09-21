@@ -32,10 +32,7 @@ export function backupSourceKey(configuration: BackupSourceConfiguration): strin
 }
 
 export function canonicalBackupRemote(value: string): string {
-  return value
-    .trim()
-    .replace(/\.git$/u, "")
-    .replace(/\/+$/u, "");
+  return value.trim().replace(/\/+$/u, "");
 }
 
 export function sourceChanged(

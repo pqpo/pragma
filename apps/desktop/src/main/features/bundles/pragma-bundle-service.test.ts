@@ -1119,6 +1119,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     expect(copiedCapability?.manifest.id).not.toBe(sourceCapabilityId);
     expect(copiedCapability?.manifest.latestRevision).toBe(1);
+    expect(copiedCapability?.manifest.origin).toBeUndefined();
     const copiedProject = await copyTarget.project.get();
     const copiedResource = copiedProject.resources.find(
       (resource): resource is PragmaCapabilityResource =>
