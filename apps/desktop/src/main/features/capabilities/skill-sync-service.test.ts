@@ -420,6 +420,69 @@ describe("Skill sync service", () => {
         ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
     ).toBe(true);
   });
+
+  it("carries executable metadata to a local revision when the executable file is unchanged", async () => {
+    const fixture = await createFixture();
+    const id = "19191919-1919-4919-8919-191919191919";
+    const skill: RemoteSkill = {
+      identity: { kind: "capability", id },
+      name: "Revised Executable Skill",
+      description: "Revised Executable Skill description",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: Revised Executable Skill\ndescription: Revised Executable Skill description\n---\nInitial.\n",
+          executable: false,
+        },
+        {
+          path: "scripts/run.mjs",
+          content: "export const run = () => 'ok';\n",
+          executable: true,
+        },
+        {
+          path: "tests/run.test.mjs",
+          content: "import '../scripts/run.mjs';\n",
+          executable: false,
+        },
+      ],
+    };
+    fixture.provider.repository.skills.set(`capability/${id}`, skill);
+    fixture.provider.advance();
+    await fixture.service.configure(configuration());
+    await chmod(join(fixture.root, "capabilities", id, "1", "scripts", "run.mjs"), 0o644);
+    await fixture.reviseLocalSkillFile(
+      id,
+      "SKILL.md",
+      "---\nname: Revised Executable Skill\ndescription: Revised Executable Skill description\n---\nLocally revised.\n",
+    );
+
+    await fixture.service.sync();
+
+    const published = fixture.provider.repository.skills.get(`capability/${id}`);
+    expect(published?.files.find((file) => file.path === "SKILL.md")?.content).toContain(
+      "Locally revised.",
+    );
+    expect(published?.files.find((file) => file.path === "scripts/run.mjs")?.executable).toBe(true);
+  });
+
+  it("retries when a local Skill changes after reconciliation but before publication", async () => {
+    const fixture = await createFixture();
+    const id = "20202020-2020-4020-8020-202020202020";
+    await fixture.addLocalSkill(id, "Racing Publication Skill");
+    await fixture.service.configure(configuration());
+    await fixture.replaceLocalSkill(id, "Racing Publication Skill", "First local revision");
+    fixture.provider.beforePublish = async () => {
+      fixture.provider.beforePublish = undefined;
+      await fixture.replaceLocalSkill(id, "Racing Publication Skill", "Latest local revision");
+    };
+
+    await fixture.service.sync();
+
+    expect(fixture.provider.repository.skills.get(`capability/${id}`)?.files[0]?.content).toContain(
+      "Latest local revision",
+    );
+  });
 });
 
 describe("Git Skill sync provider", () => {
@@ -538,6 +601,7 @@ describe("Git Skill sync provider", () => {
     await provider.readHead();
     const repositoryPath = join(cacheRoot, "repository");
     await git(repositoryPath, ["config", "core.fileMode", "false"]);
+    await writeFile(join(repositoryPath, ".git", "info", "exclude"), "skills/**/files/**/*.mjs\n");
     await provider.publish({
       repository: { skills: new Map([[`capability/${id}`, skill]]) },
       message: "publish executable",
@@ -570,6 +634,44 @@ describe("Git Skill sync provider", () => {
         .get(`capability/${id}`)
         ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
     ).toBe(false);
+  });
+
+  it("returns head_changed when the remote branch is deleted immediately before push", async () => {
+    const root = await temporaryRoot();
+    const remote = join(root, "remote.git");
+    await git(undefined, ["init", "--bare", remote]);
+    const globalConfig = join(root, "gitconfig");
+    await writeFile(globalConfig, "[user]\n\tname = Test\n\temail = test@example.com\n");
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: globalConfig };
+    const configuration = gitConfiguration(remote);
+    const seed = createGitSkillSyncProvider(join(root, "seed-cache"), configuration, { env });
+    const id = "21212121-2121-4121-8121-212121212121";
+    const repository = {
+      skills: new Map([
+        [`capability/${id}`, remoteSkill({ kind: "capability", id }, "Lease Skill")],
+      ]),
+    };
+    await seed.publish({ repository, message: "seed" });
+    const racing = createGitSkillSyncProvider(join(root, "racing-cache"), configuration, {
+      env,
+      beforePush: async () => {
+        await git(remote, ["update-ref", "-d", "refs/heads/main"]);
+      },
+    });
+    const head = await racing.readHead();
+
+    await expect(
+      racing.publish({
+        expectedRevision: head.revision,
+        repository,
+        message: "must not recreate deleted branch",
+      }),
+    ).resolves.toEqual({ status: "head_changed" });
+    expect(
+      await git(remote, ["show-ref", "--verify", "--quiet", "refs/heads/main"]).catch(
+        () => "missing",
+      ),
+    ).toBe("missing");
   });
 });
 
@@ -689,6 +791,20 @@ async function createFixture() {
     const path = paths.get(`${id}:${capability.manifest.latestRevision}`)!;
     await writeFile(join(path, "binary.dat"), Buffer.from([0xff, 0xfe, 0xfd]));
   };
+  const reviseLocalSkillFile = async (id: string, path: string, content: string) => {
+    const current = capabilities.get(id)!;
+    const currentPath = paths.get(`${id}:${current.manifest.latestRevision}`)!;
+    const source = join(root, "sources", `${id}-${Date.now()}-revision`);
+    await cp(currentPath, source, { recursive: true });
+    await writeFile(join(source, path), content);
+    return await install(
+      id,
+      frontmatter(await readFile(join(source, "SKILL.md"), "utf8"), "name"),
+      frontmatter(await readFile(join(source, "SKILL.md"), "utf8"), "description"),
+      source,
+      current.manifest.origin,
+    );
+  };
   return {
     root,
     capabilities,
@@ -697,6 +813,7 @@ async function createFixture() {
     addLocalSkill,
     replaceLocalSkill,
     corruptLocalSkill,
+    reviseLocalSkillFile,
     restartService,
     hooks,
   };
@@ -705,6 +822,7 @@ async function createFixture() {
 class FakeProvider implements SkillSyncProvider {
   repository: { skills: Map<string, RemoteSkill> } = { skills: new Map() };
   reference = "main";
+  beforePublish?: (() => Promise<void>) | undefined;
   private revision = 0;
 
   advance() {
@@ -726,6 +844,7 @@ class FakeProvider implements SkillSyncProvider {
   }) {
     if (input.expectedRevision !== String(this.revision))
       return { status: "head_changed" as const };
+    await this.beforePublish?.();
     this.repository = cloneRepository(input.repository);
     this.advance();
     return { status: "published" as const, revision: String(this.revision) };
