@@ -660,6 +660,9 @@ export function createSkillSyncService(options: {
         else state.bases[syncKey] = fingerprint(remote);
         delete state.conflicts[syncKey];
         delete state.errors[syncKey];
+        state.ignoredRemote = state.ignoredRemote.filter((item) => item.syncKey !== syncKey);
+        state.errorCode = undefined;
+        state.errorMessage = undefined;
         state.syncedAt = new Date().toISOString();
         await writeState(state);
         transientStatus = settledStatus(state);
@@ -737,6 +740,7 @@ export function createGitSkillSyncProvider(
       const identity = await readGlobalGitIdentity(git);
       await writeWorkingRepository(repositoryPath, input.repository);
       await git(repositoryPath, ["add", "--", ROOT_MANIFEST, SKILLS_DIRECTORY]);
+      await stageGitFileModes(repositoryPath, input.repository, git);
       const tree = (await git(repositoryPath, ["write-tree"])).trim();
       const args = ["commit-tree", tree];
       if (prepared.revision !== undefined) args.push("-p", prepared.revision);
@@ -1023,6 +1027,34 @@ async function readGitFileModes(
     modes.set(match[2]!, match[1]!);
   }
   return modes;
+}
+
+async function stageGitFileModes(
+  root: string,
+  repository: RemoteSkillRepository,
+  git: GitRunner,
+): Promise<void> {
+  const executable: string[] = [];
+  const nonExecutable: string[] = [];
+  for (const [key, skill] of repository.skills) {
+    for (const file of skill.files) {
+      const path = `${SKILLS_DIRECTORY}/${key}/files/${file.path}`;
+      (file.executable ? executable : nonExecutable).push(path);
+    }
+  }
+  for (const [mode, paths] of [
+    ["+x", executable],
+    ["-x", nonExecutable],
+  ] as const) {
+    for (let offset = 0; offset < paths.length; offset += 100) {
+      await git(root, [
+        "update-index",
+        `--chmod=${mode}`,
+        "--",
+        ...paths.slice(offset, offset + 100),
+      ]);
+    }
+  }
 }
 
 function gitExecutable(fileModes: ReadonlyMap<string, string>, path: string): boolean {

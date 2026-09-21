@@ -154,6 +154,33 @@ describe("Skill sync service", () => {
     );
   });
 
+  it("clears obsolete global errors and ignored markers after resolving a conflict", async () => {
+    const fixture = await createFixture();
+    const id = "18181818-1818-4818-8818-181818181818";
+    const syncKey = `capability/${id}`;
+    await fixture.addLocalSkill(id, "Recovered Skill");
+    await fixture.service.configure(configuration());
+    await fixture.replaceLocalSkill(id, "Recovered Skill", "Local conflict");
+    fixture.provider.repository.skills.set(
+      syncKey,
+      remoteSkill({ kind: "capability", id }, "Recovered Skill", "Remote conflict"),
+    );
+    fixture.provider.advance();
+    expect((await fixture.service.sync()).status).toBe("conflict");
+    const statePath = join(fixture.root, "state", "skill-sync-state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    state.errorCode = "skill_sync_failed";
+    state.errorMessage = "Temporary network failure.";
+    state.ignoredRemote = [{ syncKey, name: "Recovered Skill" }];
+    await writeFile(statePath, `${JSON.stringify(state)}\n`);
+
+    const overview = await fixture.restartService().resolveConflict(syncKey, "remote");
+
+    expect(overview.status).toBe("ready");
+    expect(overview.errorCode).toBeUndefined();
+    expect(overview.skills).toContainEqual(expect.objectContaining({ syncKey, status: "synced" }));
+  });
+
   it("rejects an unsafe remote Skill without advancing its synchronization base", async () => {
     const fixture = await createFixture();
     const id = "44444444-4444-4444-8444-444444444444";
@@ -508,12 +535,13 @@ describe("Git Skill sync provider", () => {
         },
       ],
     };
+    await provider.readHead();
+    const repositoryPath = join(cacheRoot, "repository");
+    await git(repositoryPath, ["config", "core.fileMode", "false"]);
     await provider.publish({
       repository: { skills: new Map([[`capability/${id}`, skill]]) },
       message: "publish executable",
     });
-    const repositoryPath = join(cacheRoot, "repository");
-    await git(repositoryPath, ["config", "core.fileMode", "false"]);
     await chmod(
       join(repositoryPath, "skills", "capability", id, "files", "scripts", "run.mjs"),
       0o644,
@@ -524,6 +552,24 @@ describe("Git Skill sync provider", () => {
     expect(head.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
       expect.objectContaining({ path: "scripts/run.mjs", executable: true }),
     );
+
+    const nonExecutable = {
+      ...skill,
+      files: skill.files.map((file) =>
+        file.path === "scripts/run.mjs" ? { ...file, executable: false } : file,
+      ),
+    };
+    await provider.publish({
+      expectedRevision: head.revision,
+      repository: { skills: new Map([[`capability/${id}`, nonExecutable]]) },
+      message: "remove executable bit",
+    });
+
+    expect(
+      (await provider.readHead()).repository.skills
+        .get(`capability/${id}`)
+        ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
+    ).toBe(false);
   });
 });
 
