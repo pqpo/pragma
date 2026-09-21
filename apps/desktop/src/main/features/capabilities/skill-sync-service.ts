@@ -175,6 +175,7 @@ export function createSkillSyncService(options: {
   readonly provider?: SkillSyncProvider | undefined;
   readonly providerFactory?:
     ((configuration: SkillSyncConfiguration) => SkillSyncProvider) | undefined;
+  readonly supportsExecutableBits?: boolean | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): SkillSyncService {
   const lockPath = `${options.statePath}.lock`;
@@ -245,6 +246,8 @@ export function createSkillSyncService(options: {
         const exactPortableSnapshot =
           portable?.capabilityRevision === capability.manifest.latestRevision &&
           portable.capabilityContentHash === capability.definition.contentHash;
+        const supportsExecutableBits =
+          options.supportsExecutableBits ?? process.platform !== "win32";
         const files: RemoteSkillFile[] = [];
         for (const entry of snapshot.entries) {
           const bytes = await readFile(safeChild(root, entry.path));
@@ -256,7 +259,7 @@ export function createSkillSyncService(options: {
             path: entry.path,
             content,
             executable:
-              exactPortableSnapshot || portableFiles?.get(entry.path)?.sha256 === entry.sha256
+              exactPortableSnapshot || !supportsExecutableBits
                 ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
                 : entry.executable,
           });
@@ -676,7 +679,7 @@ export function createSkillSyncService(options: {
           );
         }
         const local = await localSkills(state);
-        const localSkill = local.skills.get(syncKey);
+        let localSkill = local.skills.get(syncKey);
         if (fingerprint(localSkill) !== conflict.local.fingerprint) {
           throw coded("skill_sync_conflict_stale", "The local Skill changed. Synchronize again.");
         }
@@ -687,21 +690,62 @@ export function createSkillSyncService(options: {
             delete state.portableFiles[syncKey];
           else state.portableFiles[syncKey] = portableFilesFor(applied, remoteSkill);
         } else {
-          const desired = new Map(head.repository.skills);
-          if (localSkill === undefined) desired.delete(syncKey);
-          else desired.set(syncKey, localSkill);
-          const published = await provider.publish({
-            expectedRevision: head.revision,
-            repository: { skills: desired },
-            message: `Resolve Skill sync conflict for ${syncKey}`,
-          });
-          if (published.status === "head_changed") {
+          let publishHead = head;
+          let selectedLocal = localSkill;
+          let resolved = false;
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            const latestBeforePublish = await localSkills(state);
+            if (latestBeforePublish.errors[syncKey] !== undefined) {
+              throw coded(
+                "skill_sync_conflict_stale",
+                "The local Skill changed. Synchronize again.",
+              );
+            }
+            selectedLocal = latestBeforePublish.skills.get(syncKey);
+            const desired = new Map(publishHead.repository.skills);
+            if (selectedLocal === undefined) desired.delete(syncKey);
+            else desired.set(syncKey, selectedLocal);
+            const published = await provider.publish({
+              expectedRevision: publishHead.revision,
+              repository: { skills: desired },
+              message: `Resolve Skill sync conflict for ${syncKey}`,
+            });
+            if (published.status === "head_changed") {
+              throw coded(
+                "skill_sync_conflict_stale",
+                "The remote repository changed. Synchronize again.",
+              );
+            }
+            state.revision = published.revision;
+            const latestAfterPublish = await localSkills(state);
+            if (latestAfterPublish.errors[syncKey] !== undefined) {
+              throw coded(
+                "skill_sync_conflict_stale",
+                "The local Skill changed. Synchronize again.",
+              );
+            }
+            const afterPublish = latestAfterPublish.skills.get(syncKey);
+            if (sameLocalSnapshot(selectedLocal, afterPublish)) {
+              selectedLocal = afterPublish;
+              resolved = true;
+              break;
+            }
+            selectedLocal = afterPublish;
+            publishHead = {
+              revision: published.revision,
+              reference: publishHead.reference,
+              repository: { skills: desired },
+            };
+          }
+          if (!resolved) {
             throw coded(
-              "skill_sync_conflict_stale",
-              "The remote repository changed. Synchronize again.",
+              "skill_sync_local_changed",
+              `The local Skill changed repeatedly while resolving ${syncKey}.`,
             );
           }
-          state.revision = published.revision;
+          if (selectedLocal === undefined) delete state.portableFiles[syncKey];
+          else state.portableFiles[syncKey] = portableFilesForLocal(selectedLocal);
+          localSkill = selectedLocal;
         }
         const remote = choice === "local" ? localSkill : head.repository.skills.get(syncKey);
         if (remote === undefined) delete state.bases[syncKey];

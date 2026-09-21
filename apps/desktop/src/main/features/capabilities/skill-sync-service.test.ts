@@ -250,6 +250,32 @@ describe("Skill sync service", () => {
     );
   });
 
+  it("publishes the latest local revision when it changes while resolving a conflict", async () => {
+    const fixture = await createFixture();
+    const id = "22222222-2222-4222-8222-222222222223";
+    const syncKey = `capability/${id}`;
+    await fixture.addLocalSkill(id, "Resolution Race Skill");
+    await fixture.service.configure(configuration());
+    await fixture.replaceLocalSkill(id, "Resolution Race Skill", "Selected local revision");
+    fixture.provider.repository.skills.set(
+      syncKey,
+      remoteSkill({ kind: "capability", id }, "Resolution Race Skill", "Remote conflict"),
+    );
+    fixture.provider.advance();
+    expect((await fixture.service.sync()).status).toBe("conflict");
+    fixture.provider.beforePublish = async () => {
+      fixture.provider.beforePublish = undefined;
+      await fixture.replaceLocalSkill(id, "Resolution Race Skill", "Latest local revision");
+    };
+
+    const overview = await fixture.service.resolveConflict(syncKey, "local");
+
+    expect(overview.status).toBe("ready");
+    expect(fixture.provider.repository.skills.get(syncKey)?.files[0]?.content).toContain(
+      "Latest local revision",
+    );
+  });
+
   it("clears a base-less conflict after both copies are deleted", async () => {
     const fixture = await createFixture();
     const id = "12121212-1212-4212-8212-121212121212";
@@ -421,8 +447,8 @@ describe("Skill sync service", () => {
     ).toBe(true);
   });
 
-  it("carries executable metadata to a local revision when the executable file is unchanged", async () => {
-    const fixture = await createFixture();
+  it("carries executable metadata when an executable file changes without portable mode support", async () => {
+    const fixture = await createFixture({ supportsExecutableBits: false });
     const id = "19191919-1919-4919-8919-191919191919";
     const skill: RemoteSkill = {
       identity: { kind: "capability", id },
@@ -451,19 +477,56 @@ describe("Skill sync service", () => {
     fixture.provider.advance();
     await fixture.service.configure(configuration());
     await chmod(join(fixture.root, "capabilities", id, "1", "scripts", "run.mjs"), 0o644);
-    await fixture.reviseLocalSkillFile(
-      id,
-      "SKILL.md",
-      "---\nname: Revised Executable Skill\ndescription: Revised Executable Skill description\n---\nLocally revised.\n",
-    );
+    await fixture.reviseLocalSkillFile(id, "scripts/run.mjs", "export const run = () => 'new';\n");
 
     await fixture.service.sync();
 
     const published = fixture.provider.repository.skills.get(`capability/${id}`);
-    expect(published?.files.find((file) => file.path === "SKILL.md")?.content).toContain(
-      "Locally revised.",
+    expect(published?.files.find((file) => file.path === "scripts/run.mjs")?.content).toContain(
+      "'new'",
     );
     expect(published?.files.find((file) => file.path === "scripts/run.mjs")?.executable).toBe(true);
+  });
+
+  it("honors an intentional chmod-only local revision when executable bits are supported", async () => {
+    const fixture = await createFixture({ supportsExecutableBits: true });
+    const id = "23232323-2323-4323-8323-232323232323";
+    const syncKey = `capability/${id}`;
+    const skill: RemoteSkill = {
+      identity: { kind: "capability", id },
+      name: "Mode Revision Skill",
+      description: "Mode Revision Skill description",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: Mode Revision Skill\ndescription: Mode Revision Skill description\n---\n",
+          executable: false,
+        },
+        {
+          path: "scripts/run.mjs",
+          content: "export const run = () => 'ok';\n",
+          executable: true,
+        },
+        {
+          path: "tests/run.test.mjs",
+          content: "import '../scripts/run.mjs';\n",
+          executable: false,
+        },
+      ],
+    };
+    fixture.provider.repository.skills.set(syncKey, skill);
+    fixture.provider.advance();
+    await fixture.service.configure(configuration());
+    await fixture.reviseLocalSkillMode(id, "scripts/run.mjs", 0o644);
+
+    await fixture.service.sync();
+
+    expect(
+      fixture.provider.repository.skills
+        .get(syncKey)
+        ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
+    ).toBe(false);
   });
 
   it("retries when a local Skill changes after reconciliation but before publication", async () => {
@@ -679,7 +742,9 @@ function configuration(): Omit<SkillSyncConfiguration, "schemaVersion"> {
   return { remote: "https://example.com/skills.git", autoPush: true, pushDeletions: false };
 }
 
-async function createFixture() {
+async function createFixture(
+  options: { readonly supportsExecutableBits?: boolean | undefined } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "pragma-skill-sync-"));
   roots.push(root);
   const capabilities = new Map<string, Capability>();
@@ -773,6 +838,7 @@ async function createFixture() {
       cacheRoot,
       capabilities: store,
       provider,
+      supportsExecutableBits: options.supportsExecutableBits,
     });
   const service = restartService();
 
@@ -805,6 +871,20 @@ async function createFixture() {
       current.manifest.origin,
     );
   };
+  const reviseLocalSkillMode = async (id: string, path: string, mode: number) => {
+    const current = capabilities.get(id)!;
+    const currentPath = paths.get(`${id}:${current.manifest.latestRevision}`)!;
+    const source = join(root, "sources", `${id}-${Date.now()}-mode-revision`);
+    await cp(currentPath, source, { recursive: true });
+    await chmod(join(source, path), mode);
+    return await install(
+      id,
+      current.definition.name,
+      current.definition.description,
+      source,
+      current.manifest.origin,
+    );
+  };
   return {
     root,
     capabilities,
@@ -814,6 +894,7 @@ async function createFixture() {
     replaceLocalSkill,
     corruptLocalSkill,
     reviseLocalSkillFile,
+    reviseLocalSkillMode,
     restartService,
     hooks,
   };
