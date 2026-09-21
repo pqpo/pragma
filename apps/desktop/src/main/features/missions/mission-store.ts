@@ -1003,6 +1003,10 @@ export function createMissionStore(options: {
     storagePath: missionPath,
     forget(id) {
       timelineCache.delete(id);
+      for (const [executionId, entry] of executionTitleIndex) {
+        if (entry.missionId === id) executionTitleIndex.delete(executionId);
+      }
+      markMissionMutation();
     },
     async readExecutionProjection(id, executionId) {
       const parsedId = MissionIdSchema.parse(id);

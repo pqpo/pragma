@@ -191,6 +191,57 @@ describe("mission store", { timeout: 30_000 }, () => {
     );
   });
 
+  it("invalidates an in-flight list snapshot when an external deletion is forgotten", async () => {
+    const root = await temporaryRoot();
+    const missionsPath = join(root, "missions");
+    const store = createMissionStore({ missionsPath });
+    const first = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Delete this mission externally",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const blocked = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Block external deletion list completion",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    let releaseLock!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let markLockHeld!: () => void;
+    const lockHeld = new Promise<void>((resolve) => {
+      markLockHeld = resolve;
+    });
+    const heldLock = withFileLock(
+      join(missionsPath, ".locks", `${encodePragmaPathSegment(blocked.id)}.lock`),
+      async () => {
+        markLockHeld();
+        await lockReleased;
+      },
+      { operation: "mission.test-external-deletion-list-snapshot" },
+    );
+    await lockHeld;
+
+    const staleList = store.list();
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await rm(store.storagePath!(first.id), { recursive: true, force: true });
+    store.forget?.(first.id);
+    const freshList = store.list();
+    expect(freshList).not.toBe(staleList);
+
+    releaseLock();
+    await heldLock;
+    await expect(staleList).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+    await expect(freshList).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.id })]),
+    );
+  });
+
   it("tracks Knowledge Store references without owning the Store lifecycle", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

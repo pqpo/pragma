@@ -2,13 +2,14 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 
 import {
   CanonicalEventEnvelopeSchema,
   type ExecutionRecord,
   type Invocation,
 } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFileCanonicalEventFeed,
@@ -30,6 +31,27 @@ describe("Canonical Event Feed", () => {
       stack: expect.stringContaining("canonical-event-feed"),
     });
     await feed.close();
+  });
+
+  it("fails current and future requests when the persistent worker exits", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-exit-"));
+    const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
+    const postMessage = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+      this: Worker,
+    ) {
+      void this.terminate();
+    });
+
+    try {
+      await expect(feed.inspect()).rejects.toThrow(
+        "Canonical event feed worker exited unexpectedly",
+      );
+    } finally {
+      postMessage.mockRestore();
+    }
+
+    await expect(feed.inspect()).rejects.toThrow("Canonical event feed worker exited unexpectedly");
+    await expect(feed.close()).rejects.toThrow("Canonical event feed worker exited unexpectedly");
   });
 
   it("relays committed Execution events with stable idempotency", async () => {
@@ -178,6 +200,56 @@ describe("Canonical Event Feed", () => {
     expect(appendCalls).toBe(1);
     expect(handoffFiles).toHaveLength(1);
     await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 1 });
+    await durable.close();
+  });
+
+  it("holds the cross-process deletion barrier until an active delivery finishes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-cross-process-delete-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let releaseDelivery!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    const delayedFeed: CanonicalEventFeed = {
+      ...durable,
+      async append(events) {
+        markDeliveryStarted();
+        await deliveryReleased;
+        await durable.append(events);
+      },
+    };
+    const writer = createFileExecutionStore({
+      pragmaHome: home,
+      canonicalEventFeed: delayedFeed,
+    });
+    const deleter = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
+    await createExecution(writer);
+
+    const commit = appendExecutionEvent(
+      writer,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "cross-process-delete-event",
+    );
+    await deliveryStarted;
+    let deletionStarted = false;
+    const deletion = deleter.withCanonicalEventDeletion(["execution"], async () => {
+      deletionStarted = true;
+      await durable.forgetCorrelation("execution");
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(deletionStarted).toBe(false);
+
+    releaseDelivery();
+    await Promise.all([commit, deletion]);
+    expect(deletionStarted).toBe(true);
+    await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 0 });
     await durable.close();
   });
 

@@ -81,12 +81,19 @@ export async function createFileCanonicalEventFeed(
   });
   let nextRequestId = 0;
   let closed = false;
+  let terminalError: Error | undefined;
   let closeRequest: Promise<void> | undefined;
   const pending = new Map<
     number,
     { readonly resolve: (value: unknown) => void; readonly reject: (error: Error) => void }
   >();
   const ready = new Promise<void>((resolve, reject) => {
+    const failWorker = (error: Error): void => {
+      terminalError ??= error;
+      reject(terminalError);
+      for (const request of pending.values()) request.reject(terminalError);
+      pending.clear();
+    };
     worker.on("message", (message: unknown) => {
       if (!isWorkerResponse(message)) return;
       if (message.type === "ready") {
@@ -94,7 +101,7 @@ export async function createFileCanonicalEventFeed(
         return;
       }
       if (message.type === "fatal") {
-        reject(deserializeWorkerError(message.error));
+        failWorker(deserializeWorkerError(message.error));
         void worker.terminate();
         return;
       }
@@ -106,22 +113,23 @@ export async function createFileCanonicalEventFeed(
     });
     worker.on("error", (error) => {
       const workerError = error instanceof Error ? error : new Error(String(error));
-      reject(workerError);
-      for (const request of pending.values()) request.reject(workerError);
-      pending.clear();
+      failWorker(workerError);
     });
     worker.once("exit", (code) => {
-      if (!closed && code !== 0) reject(new Error(`Canonical event feed worker exited: ${code}`));
-      for (const request of pending.values()) {
-        request.reject(new Error("Canonical event feed worker exited before replying."));
+      if (!closed) {
+        failWorker(new Error(`Canonical event feed worker exited unexpectedly: ${code}`));
+      } else {
+        const error = new Error("Canonical event feed worker exited before replying.");
+        for (const request of pending.values()) request.reject(error);
+        pending.clear();
       }
-      pending.clear();
     });
   });
   await ready;
 
   const request = async <T>(operation: string, input?: unknown): Promise<T> => {
     if (closed) throw new Error("Canonical event feed is closed.");
+    if (terminalError !== undefined) throw terminalError;
     const requestId = nextRequestId;
     nextRequestId += 1;
     return await new Promise<T>((resolve, reject) => {

@@ -140,6 +140,15 @@ export class PragmaPaths {
     );
   }
 
+  canonicalEventDeliveryLock(executionId: string): string {
+    return join(
+      this.stateRoot(),
+      "event-bus",
+      "delivery-locks",
+      `${encodePragmaPathSegment(executionId)}.lock`,
+    );
+  }
+
   memoryDataRoot(): string {
     return join(this.dataRoot(), "memory");
   }
