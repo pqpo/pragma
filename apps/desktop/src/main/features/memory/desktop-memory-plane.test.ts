@@ -84,6 +84,27 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
     await plane.stop();
   });
 
+  it("wakes the outer poll loop immediately after a policy change", async () => {
+    const pragmaHome = await temporaryRoot("pragma-desktop-memory-wake-");
+    const plane = await createDesktopMemoryPlane({
+      pragmaHome,
+      logger: createPragmaLogger(undefined, { component: "desktop.memory-test" }),
+      pollIntervalMs: 60_000,
+    });
+    const getGlobal = vi.spyOn(plane.policies, "getGlobal");
+    plane.start();
+    await vi.waitFor(() => expect(getGlobal).toHaveBeenCalled(), {
+      timeout: backgroundSettlementTimeoutMs,
+    });
+    const callsBeforeWake = getGlobal.mock.calls.length;
+
+    plane.wakePipeline();
+    await vi.waitFor(() => expect(getGlobal.mock.calls.length).toBeGreaterThan(callsBeforeWake), {
+      timeout: backgroundSettlementTimeoutMs,
+    });
+    await plane.stop();
+  });
+
   it("reports a quarantined handoff as degraded without exposing its payload", async () => {
     const pragmaHome = await temporaryRoot("pragma-desktop-memory-degraded-");
     const paths = new PragmaPaths({ pragmaHome });
@@ -180,6 +201,15 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
       now: due,
       retry: "configuration",
     });
+    await plane.policies.updateGlobal({
+      expectedRevision: 1,
+      policy: {
+        enabled: "disabled",
+        capture: "disabled",
+        recall: "disabled",
+        learning: "disabled",
+      },
+    });
 
     plane.start();
     await vi.waitFor(
@@ -218,7 +248,12 @@ describe("DesktopMemoryPlane", { timeout: 30_000 }, () => {
       }),
     );
 
-    await plane.wakeMemoryJobs();
+    await plane.manageMemoryJob({
+      module: "episodic",
+      action: "retry",
+      id: job.id,
+      expectedRevision: job.revision + 1,
+    });
     await vi.waitFor(
       async () => {
         await expect(plane.getStatus()).resolves.toMatchObject({

@@ -99,6 +99,7 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-policy:global:update", async (_event, input: unknown) => {
     const parsed = UpdateDesktopGlobalMemoryPolicySchema.parse(input);
     await plane.policies.updateGlobal(parsed);
+    plane.wakePipeline();
     await options.onGlobalPolicyUpdated?.();
     return await globalSnapshot();
   });

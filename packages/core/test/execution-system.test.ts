@@ -1344,8 +1344,22 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await expect(session.close()).rejects.toThrow("close failed");
     expect((await session.getState()).status).toBe("open");
 
+    const recoveryExecutions = createFileExecutionStore({ pragmaHome: home });
+    const durableRecoverySessions = createFileExpertSessionStore({
+      executions: recoveryExecutions,
+      pragmaHome: home,
+    });
+    let recoveryLeaseClaims = 0;
     const recoveryApp = createPragma({
       pragmaHome: home,
+      executionStore: recoveryExecutions,
+      expertSessionStore: {
+        ...durableRecoverySessions,
+        async claimLease(sessionId, claimId, leaseMs) {
+          recoveryLeaseClaims += 1;
+          return await durableRecoverySessions.claimLease(sessionId, claimId, leaseMs);
+        },
+      },
       runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime()],
         defaultRuntimeId: "fake",
@@ -1354,6 +1368,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     const recovered = await recoveryApp.experts.resumeSession(expert, {
       sessionId: session.sessionId,
     });
+    expect(recoveryLeaseClaims).toBe(2);
     await recovered.close();
   });
 

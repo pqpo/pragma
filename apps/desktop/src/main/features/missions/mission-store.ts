@@ -335,12 +335,22 @@ export function createMissionStore(options: {
     { readonly missionId: string; readonly title: string }
   >();
   let executionTitleIndexInitialized = false;
+  let missionMutationVersion = 0;
+  let listRequest:
+    { readonly version: number; readonly promise: Promise<MissionSummary[]> } | undefined;
+  const markMissionMutation = (): void => {
+    missionMutationVersion += 1;
+  };
 
   const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
-    await withFileLock(lockPath(id), async () => {
-      await migrateLegacyMissionPath(id);
-      return await operation();
-    });
+    await withFileLock(
+      lockPath(id),
+      async () => {
+        await migrateLegacyMissionPath(id);
+        return await operation();
+      },
+      { operation: "mission.aggregate" },
+    );
 
   const migrateLegacyMissionPath = async (id: string): Promise<void> => {
     const legacy = legacyMissionPath(id);
@@ -872,6 +882,7 @@ export function createMissionStore(options: {
       force: true,
     });
     await rm(userMessageAttachmentsTransactionPath(id), { force: true });
+    markMissionMutation();
   };
 
   const recoverUserMessageAttachmentsTransaction = async (id: string): Promise<void> => {
@@ -903,6 +914,7 @@ export function createMissionStore(options: {
       const timestamp = new Date().toISOString();
       const updated = MissionSchema.parse(update(current, timestamp));
       await writeYamlAtomically(manifestPath(id), updated);
+      markMissionMutation();
       return updated;
     });
 
@@ -951,12 +963,50 @@ export function createMissionStore(options: {
     timelineCache.delete(id);
     await writeYamlAtomically(manifestPath(id), { ...mission, updatedAt: transaction.updatedAt });
     await rm(transactionPath(id), { force: true });
+    markMissionMutation();
+  };
+
+  const listMissions = async (): Promise<MissionSummary[]> => {
+    try {
+      const missionIds = await listMissionIds();
+      const results = await mapWithConcurrency(missionIds, 4, async (missionId) => {
+        try {
+          const mission = await readMission(missionId);
+          if (!isUserFacingMissionOrigin(mission.origin)) return { missionId } as const;
+          const summary = toMissionSummary(mission, await getListSource(mission));
+          return { missionId, summary } as const;
+        } catch (error) {
+          return { missionId, error: normalizeReadError(error, missionId) } as const;
+        }
+      });
+      const summaries: MissionSummary[] = [];
+      const failures: MissionStoreReadIssue[] = [];
+      for (const result of results) {
+        if ("error" in result) {
+          const issue = { missionId: result.missionId, error: result.error };
+          failures.push(issue);
+          options.onReadIssue?.(issue);
+        } else if (result.summary !== undefined && result.summary.source.type !== "internal") {
+          summaries.push(result.summary);
+        }
+      }
+      summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
+      return summaries;
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    }
   };
 
   return {
     storagePath: missionPath,
     forget(id) {
       timelineCache.delete(id);
+      for (const [executionId, entry] of executionTitleIndex) {
+        if (entry.missionId === id) executionTitleIndex.delete(executionId);
+      }
+      markMissionMutation();
     },
     async readExecutionProjection(id, executionId) {
       const parsedId = MissionIdSchema.parse(id);
@@ -1012,42 +1062,14 @@ export function createMissionStore(options: {
       });
     },
     getListSource,
-    async list() {
-      try {
-        const missionIds = await listMissionIds();
-        const results = await Promise.allSettled(
-          missionIds.map(async (missionId) => ({
-            missionId,
-            mission: await readMission(missionId),
-          })),
-        );
-        const missions: Mission[] = [];
-        const failures: MissionStoreReadIssue[] = [];
-        for (const [index, result] of results.entries()) {
-          if (result?.status === "fulfilled") {
-            missions.push(result.value.mission);
-            continue;
-          }
-          const missionId = missionIds[index] ?? "unknown";
-          const issue = { missionId, error: normalizeReadError(result?.reason, missionId) };
-          failures.push(issue);
-          options.onReadIssue?.(issue);
-        }
-        const summaries = (
-          await Promise.all(
-            missions
-              .filter((mission) => isUserFacingMissionOrigin(mission.origin))
-              .map(async (mission) => toMissionSummary(mission, await getListSource(mission))),
-          )
-        )
-          .filter((mission) => mission.source.type !== "internal")
-          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-        if (summaries.length === 0 && failures.length > 0) throw failures[0]?.error;
-        return summaries;
-      } catch (error) {
-        if (isNodeError(error, "ENOENT")) return [];
-        throw error;
-      }
+    list() {
+      const version = missionMutationVersion;
+      if (listRequest?.version === version) return listRequest.promise;
+      const request = listMissions().finally(() => {
+        if (listRequest?.promise === request) listRequest = undefined;
+      });
+      listRequest = { version, promise: request };
+      return request;
     },
     async resolveExecutionTitles(executionIds) {
       const unresolved = new Set(executionIds);
@@ -1114,6 +1136,7 @@ export function createMissionStore(options: {
         }
         const updated = MissionSchema.parse({ ...current, origin: parsedOrigin });
         await writeYamlAtomically(manifestPath(parsedId), updated);
+        markMissionMutation();
         return updated;
       });
     },
@@ -1290,6 +1313,7 @@ export function createMissionStore(options: {
           );
           await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
           await rename(temporaryPath, targetPath);
+          markMissionMutation();
         } catch (error) {
           await rm(temporaryPath, { recursive: true, force: true });
           throw error;
@@ -1373,6 +1397,7 @@ export function createMissionStore(options: {
         );
         await mkdir(options.missionsPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
+        markMissionMutation();
       } catch (error) {
         await rm(temporaryPath, { recursive: true, force: true });
         throw error;
@@ -1775,6 +1800,7 @@ export function createMissionStore(options: {
         for (const [executionId, entry] of executionTitleIndex) {
           if (entry.missionId === parsedId) executionTitleIndex.delete(executionId);
         }
+        markMissionMutation();
       });
     },
   };
@@ -2306,4 +2332,26 @@ async function directoryContainsFiles(root: string): Promise<boolean> {
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const value = values[index];
+        if (value !== undefined) results[index] = await operation(value);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }

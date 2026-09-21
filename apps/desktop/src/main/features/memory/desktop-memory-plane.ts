@@ -130,6 +130,7 @@ export interface DesktopMemoryPlane {
     readonly reason: string;
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
+  wakePipeline(): void;
   manageMemoryJob(input: {
     readonly module: "episodic" | "semantic" | "knowledge" | "skill";
     readonly action: "expedite" | "retry" | "interrupt" | "delete";
@@ -288,14 +289,6 @@ export async function createDesktopMemoryPlane(options: {
     checkpoints: state,
     deadLetters: state,
     outbox: state,
-    isEnabled: async () => (await policies.getGlobal()).policy.enabled === "enabled",
-    onDisabledSkip: ({ consumerId, from, through }) => {
-      options.logger.info(
-        "desktop.memory_policy_disabled_skip",
-        "Memory learning is disabled; the Module checkpoint advanced without consuming events.",
-        { consumerId, from, through, reason: "policy-disabled-skip" },
-      );
-    },
   });
   let stopped = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -306,6 +299,8 @@ export async function createDesktopMemoryPlane(options: {
   let lastMaintenanceAtMs = 0;
   let safeThroughSequence = 0;
   let blockedBytes = 0;
+  let nextPollDelayMs = options.pollIntervalMs ?? 1_000;
+  let wakeRequested = false;
   let maintenanceDiagnostic: {
     readonly lastRunAt?: string | undefined;
     readonly deletedEvents: number;
@@ -382,9 +377,12 @@ export async function createDesktopMemoryPlane(options: {
       timer = undefined;
       running = tick().finally(() => {
         running = undefined;
-        schedule();
+        if (wakeRequested) {
+          wakeRequested = false;
+          wakePipeline();
+        } else schedule();
       });
-    }, options.pollIntervalMs ?? 1_000);
+    }, nextPollDelayMs);
   };
 
   const reportExtractionIssues = (
@@ -417,6 +415,8 @@ export async function createDesktopMemoryPlane(options: {
   const tick = async (): Promise<void> => {
     try {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
+      const learningEnabled = (await policies.getGlobal()).policy.enabled === "enabled";
+      nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
       const adapted = await adapter.runOnce();
       await scheduler.runOnce();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
@@ -463,6 +463,24 @@ export async function createDesktopMemoryPlane(options: {
     } catch (error) {
       markDegraded("memory_pipeline_iteration_failed", error);
     }
+  };
+
+  const wakePipeline = (): void => {
+    nextPollDelayMs = options.pollIntervalMs ?? 1_000;
+    if (stopped) return;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (running !== undefined) {
+      wakeRequested = true;
+      return;
+    }
+    running = tick().finally(() => {
+      running = undefined;
+      if (wakeRequested) {
+        wakeRequested = false;
+        wakePipeline();
+      } else schedule();
+    });
   };
 
   const resolveContextStoreViewScope = async (
@@ -519,19 +537,19 @@ export async function createDesktopMemoryPlane(options: {
     },
     async setEpisodicExtractor(extractor) {
       await episodic.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async setSemanticExtractor(extractor) {
       await semantic.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async setKnowledgeExtractor(extractor) {
       await knowledge.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async setSkillExtractor(extractor) {
       await skill.setExtractor(extractor);
-      scheduler.wake();
+      wakePipeline();
     },
     async registerMemoryExecutionContext(input) {
       const localUser = await subjectIdentities.getLocalUserRef();
@@ -563,7 +581,7 @@ export async function createDesktopMemoryPlane(options: {
         episodic.setConversationState({ conversationRef, state: "running", now }),
         semantic.setConversationState({ conversationRef, state: "running", now }),
       ]);
-      scheduler.wake();
+      wakePipeline();
     },
     async setMemoryConversationState(input) {
       const conversationRef = { type: "pragma.mission" as const, id: input.missionId };
@@ -572,7 +590,7 @@ export async function createDesktopMemoryPlane(options: {
         episodic.setConversationState({ conversationRef, state: input.state, now }),
         semantic.setConversationState({ conversationRef, state: input.state, now }),
       ]);
-      scheduler.wake();
+      wakePipeline();
     },
     async reviseSemanticFact(input) {
       return await semantic.store.revise({
@@ -635,8 +653,9 @@ export async function createDesktopMemoryPlane(options: {
         semantic.store.wakeNeedsAttention(new Date(), "configuration"),
         skill.store.wakeNeedsAttention(new Date(), "configuration"),
       ]);
-      scheduler.wake();
+      wakePipeline();
     },
+    wakePipeline,
     async manageMemoryJob(input) {
       const command = {
         id: input.id,
@@ -664,7 +683,7 @@ export async function createDesktopMemoryPlane(options: {
         const unsupported: never = input.action;
         throw new Error(`memory_extraction_job_action_unsupported:${String(unsupported)}`);
       }
-      scheduler.wake();
+      wakePipeline();
     },
     async deleteExecutionState(executionIds) {
       await cleanup.cleanup(executionIds);
@@ -777,10 +796,7 @@ export async function createDesktopMemoryPlane(options: {
     start() {
       if (!stopped) return;
       stopped = false;
-      running = tick().finally(() => {
-        running = undefined;
-        schedule();
-      });
+      wakePipeline();
     },
     async stop() {
       stopped = true;
@@ -793,7 +809,7 @@ export async function createDesktopMemoryPlane(options: {
       knowledge.close();
       skill.close();
       semantic.close();
-      canonical.close();
+      await canonical.close();
     },
   };
 }

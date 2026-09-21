@@ -38,7 +38,11 @@ import {
   migrateExecutionInvocationsV10ToV11,
   migrateInvocationUsageV7ToV8,
 } from "../storage/migrations/execution/index.ts";
-import { encodePragmaPathSegment, PragmaPaths } from "../storage/pragma-paths.ts";
+import {
+  decodePragmaPathSegment,
+  encodePragmaPathSegment,
+  PragmaPaths,
+} from "../storage/pragma-paths.ts";
 import {
   applyAtomicStateMigration,
   recoverAtomicStateMigration,
@@ -145,6 +149,10 @@ export interface FileExecutionStore extends ExecutionStore {
     readonly limit?: number | undefined;
   }): Promise<CanonicalEventRecoveryResult>;
   inspectCanonicalEventDelivery(): Promise<CanonicalEventDeliveryStatus>;
+  withCanonicalEventDeletion<TValue>(
+    executionIds: readonly string[],
+    action: (handoffFiles: readonly string[]) => Promise<TValue>,
+  ): Promise<TValue>;
 }
 
 export interface CanonicalEventRecoveryResult {
@@ -185,14 +193,60 @@ export function createFileExecutionStore(
   } = {},
 ): FileExecutionStore {
   const paths = new PragmaPaths(options);
+  const deletingExecutionIds = new Set<string>();
   const withExecutionLock = async <TValue>(
     executionId: string,
     operation: string,
     action: () => Promise<TValue>,
-  ): Promise<TValue> =>
-    await withFileLock(paths.executionLock(executionId), action, {
-      operation: `execution.${operation}`,
-    });
+  ): Promise<TValue> => {
+    return await withFileLock(
+      paths.executionLock(executionId),
+      async () => {
+        if (deletingExecutionIds.has(executionId) && operation !== "deletion-barrier") {
+          throw new Error(`Execution deletion is in progress: ${executionId}`);
+        }
+        return await action();
+      },
+      { operation: `execution.${operation}` },
+    );
+  };
+  const canonicalDeliveryRequests = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>>
+  >();
+  const deliverCanonicalEvents = (
+    executionId: string,
+  ): Promise<Awaited<ReturnType<typeof deliverCanonicalHandoffs>>> => {
+    if (options.canonicalEventFeed === undefined || deletingExecutionIds.has(executionId)) {
+      return Promise.resolve({ recovered: 0 });
+    }
+    const previous = canonicalDeliveryRequests.get(executionId);
+    const request = (previous ?? Promise.resolve({ recovered: 0 }))
+      .catch(() => ({ recovered: 0 }))
+      .then(async () => {
+        if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
+        return await withFileLock(
+          paths.canonicalEventDeliveryLock(executionId),
+          async () => {
+            if (deletingExecutionIds.has(executionId)) return { recovered: 0 };
+            const handoffs = await withExecutionLock(
+              executionId,
+              "prepare-canonical-events",
+              async () => await recoverCanonicalHandoffStateForExecution(paths, executionId),
+            );
+            return await deliverCanonicalHandoffs(handoffs, options.canonicalEventFeed!);
+          },
+          { operation: "execution.canonical-event-delivery" },
+        );
+      })
+      .finally(() => {
+        if (canonicalDeliveryRequests.get(executionId) === request) {
+          canonicalDeliveryRequests.delete(executionId);
+        }
+      });
+    canonicalDeliveryRequests.set(executionId, request);
+    return request;
+  };
 
   const store: FileExecutionStore = {
     async recoverPendingCanonicalEvents(input = {}) {
@@ -206,9 +260,7 @@ export function createFileExecutionStore(
       let failed = 0;
       for (const file of selected) {
         try {
-          const handoff = await readCanonicalHandoff(file);
-          assertCanonicalHandoffFileOwner(file, handoff.executionId);
-          executionIds.add(handoff.executionId);
+          executionIds.add(executionIdFromCanonicalHandoffFile(file));
         } catch (error) {
           failed += 1;
           const quarantinedPath = await quarantineCanonicalHandoff(paths, file);
@@ -226,12 +278,7 @@ export function createFileExecutionStore(
           continue;
         }
         try {
-          const result = await withExecutionLock(
-            executionId,
-            "recover-canonical-events",
-            async () =>
-              recoverCanonicalHandoffsForExecution(paths, executionId, options.canonicalEventFeed!),
-          );
+          const result = await deliverCanonicalEvents(executionId);
           recovered += result.recovered;
           if (result.deliveryFailure !== undefined) {
             failed += 1;
@@ -261,6 +308,56 @@ export function createFileExecutionStore(
         pending: (await listCanonicalHandoffFiles(paths)).length,
         quarantined: (await listQuarantinedCanonicalHandoffFiles(paths)).length,
       };
+    },
+    async withCanonicalEventDeletion<TValue>(
+      executionIds: readonly string[],
+      action: (handoffFiles: readonly string[]) => Promise<TValue>,
+    ): Promise<TValue> {
+      const ids = [...new Set(executionIds)].toSorted();
+      for (const executionId of ids) deletingExecutionIds.add(executionId);
+      try {
+        await Promise.all(
+          ids.map(async (id) => {
+            await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
+          }),
+        );
+        const runWithExecutionLocks = async (index: number): Promise<TValue> => {
+          const executionId = ids[index];
+          if (executionId !== undefined) {
+            return await withFileLock(
+              paths.executionLock(executionId),
+              async () => await runWithExecutionLocks(index + 1),
+              { operation: "execution.deletion-barrier" },
+            );
+          }
+          await Promise.all(
+            ids.map(async (id) => {
+              await canonicalDeliveryRequests.get(id)?.catch(() => undefined);
+            }),
+          );
+          const handoffFiles = (
+            await Promise.all(
+              ids.map(async (id) => [
+                ...(await listCanonicalHandoffFilesForExecution(paths, id)),
+                ...(await listQuarantinedCanonicalHandoffFilesForExecution(paths, id)),
+              ]),
+            )
+          ).flat();
+          return await action(handoffFiles);
+        };
+        const runWithDeliveryLocks = async (index: number): Promise<TValue> => {
+          const executionId = ids[index];
+          if (executionId === undefined) return await runWithExecutionLocks(0);
+          return await withFileLock(
+            paths.canonicalEventDeliveryLock(executionId),
+            async () => await runWithDeliveryLocks(index + 1),
+            { operation: "execution.canonical-event-deletion" },
+          );
+        };
+        return await runWithDeliveryLocks(0);
+      } finally {
+        for (const executionId of ids) deletingExecutionIds.delete(executionId);
+      }
     },
     async delete(executionId) {
       await withExecutionLock(executionId, "delete", async () => {
@@ -326,7 +423,7 @@ export function createFileExecutionStore(
     async commit(request) {
       if (request.commitId.trim() === "") throw new Error("Execution commitId must not be empty.");
       const signature = commitSignature(request);
-      return await withExecutionLock(request.executionId, "commit", async () => {
+      const result = await withExecutionLock(request.executionId, "commit", async () => {
         await prepareExecution(paths, request.executionId, options.canonicalEventFeed);
         const commits = await readCommitRecords(paths, request.executionId);
         const duplicate = commits.find((commit) => commit.commitId === request.commitId);
@@ -416,14 +513,6 @@ export function createFileExecutionStore(
           const handoffPath = paths.canonicalEventHandoff(request.executionId, request.commitId);
           await writeJsonAtomic(handoffPath, handoff);
           await applyTransaction(paths, request.executionId, journal);
-          try {
-            await publishCanonicalHandoff(handoffPath, handoff, options.canonicalEventFeed);
-          } catch (error) {
-            options.onCanonicalEventDeliveryError?.(error, {
-              executionId: request.executionId,
-              commitId: request.commitId,
-            });
-          }
         } else {
           await writeJsonAtomic(paths.executionTransaction(request.executionId), journal);
           await applyTransaction(paths, request.executionId, journal);
@@ -439,6 +528,24 @@ export function createFileExecutionStore(
           events: materialized.requestedEvents,
         };
       });
+      if (options.canonicalEventFeed !== undefined) {
+        try {
+          const delivery = await deliverCanonicalEvents(request.executionId);
+          if (delivery.deliveryFailure !== undefined) {
+            options.onCanonicalEventDeliveryError?.(delivery.deliveryFailure.error, {
+              executionId: request.executionId,
+              commitId: delivery.deliveryFailure.handoff.commitId,
+              handoffPath: delivery.deliveryFailure.file,
+            });
+          }
+        } catch (error) {
+          options.onCanonicalEventDeliveryError?.(error, {
+            executionId: request.executionId,
+            commitId: request.commitId,
+          });
+        }
+      }
+      return result;
     },
 
     async claimRecovery(executionId, claimId, leaseMs) {
@@ -900,7 +1007,7 @@ async function prepareExecution(
     await recoverTransaction(paths, executionId);
     if (canonicalEventFeed !== undefined) {
       await assertNoQuarantinedCanonicalHandoffs(paths, executionId);
-      await recoverCanonicalHandoffsForExecution(paths, executionId, canonicalEventFeed);
+      await recoverCanonicalHandoffStateForExecution(paths, executionId);
     }
     await migrateExecutionState(paths, executionId);
   } catch (error) {
@@ -990,9 +1097,8 @@ function canonicalDefinitionType(kind: string): string {
   }
 }
 
-async function recoverCanonicalHandoffsForExecution(
-  paths: PragmaPaths,
-  executionId: string,
+async function deliverCanonicalHandoffs(
+  handoffs: readonly { readonly file: string; readonly handoff: CanonicalEventHandoff }[],
   feed: CanonicalEventFeed,
 ): Promise<{
   readonly recovered: number;
@@ -1002,6 +1108,25 @@ async function recoverCanonicalHandoffsForExecution(
     readonly handoff: CanonicalEventHandoff;
   };
 }> {
+  let recovered = 0;
+  for (const entry of handoffs) {
+    try {
+      await publishCanonicalHandoff(entry.file, entry.handoff, feed);
+    } catch (error) {
+      return {
+        recovered,
+        deliveryFailure: { error, file: entry.file, handoff: entry.handoff },
+      };
+    }
+    recovered += 1;
+  }
+  return { recovered };
+}
+
+async function recoverCanonicalHandoffStateForExecution(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<readonly { readonly file: string; readonly handoff: CanonicalEventHandoff }[]> {
   await assertNoQuarantinedCanonicalHandoffs(paths, executionId);
   const files = await listCanonicalHandoffFilesForExecution(paths, executionId);
   const handoffs: { readonly file: string; readonly handoff: CanonicalEventHandoff }[] = [];
@@ -1011,9 +1136,10 @@ async function recoverCanonicalHandoffsForExecution(
       if (handoff.executionId !== executionId) {
         throw new Error(`Canonical event handoff owner mismatch: ${handoff.executionId}`);
       }
-      assertCanonicalHandoffFileOwner(file, handoff.executionId);
+      assertCanonicalHandoffFileOwner(file, executionId);
       handoffs.push({ file, handoff });
     } catch (error) {
+      if (isNotFound(error)) continue;
       const quarantinedPath = await quarantineCanonicalHandoff(paths, file);
       throw new Error(
         `unsupported-state-version:pragma.canonical-event-handoff-quarantined:${executionId}:${quarantinedPath}`,
@@ -1021,21 +1147,20 @@ async function recoverCanonicalHandoffsForExecution(
       );
     }
   }
-  let recovered = 0;
-  for (const entry of handoffs.toSorted(
+  const ordered = handoffs.toSorted(
     (left, right) =>
       left.handoff.transaction.execution.version - right.handoff.transaction.execution.version,
-  )) {
-    const result = await recoverCanonicalHandoffFile(paths, entry.file, entry.handoff, feed);
-    if (!result.delivered) {
-      return {
-        recovered,
-        deliveryFailure: { error: result.error, file: entry.file, handoff: entry.handoff },
-      };
+  );
+  for (const { handoff } of ordered) {
+    const commits = await readCommitRecords(paths, executionId);
+    const committed = commits.find((candidate) => candidate.commitId === handoff.commitId);
+    if (committed === undefined) {
+      await applyTransaction(paths, executionId, handoff.transaction);
+    } else if (committed.signature !== handoff.signature) {
+      throw new Error(`Canonical event handoff signature conflict: ${handoff.commitId}`);
     }
-    recovered += 1;
   }
-  return { recovered };
+  return ordered;
 }
 
 async function listCanonicalHandoffFilesForExecution(
@@ -1053,6 +1178,14 @@ function assertCanonicalHandoffFileOwner(file: string, executionId: string): voi
   if (!basename(file).startsWith(prefix)) {
     throw new Error(`Canonical event handoff filename owner mismatch: ${executionId}`);
   }
+}
+
+function executionIdFromCanonicalHandoffFile(file: string): string {
+  const [encodedExecutionId] = basename(file).split(".", 1);
+  if (encodedExecutionId === undefined) {
+    throw new Error(`Invalid Canonical event handoff filename: ${basename(file)}`);
+  }
+  return decodePragmaPathSegment(encodedExecutionId);
 }
 
 async function listQuarantinedCanonicalHandoffFilesForExecution(
@@ -1074,28 +1207,6 @@ async function assertNoQuarantinedCanonicalHandoffs(
   throw new Error(
     `unsupported-state-version:pragma.canonical-event-handoff-quarantined:${executionId}:${files[0]}`,
   );
-}
-
-async function recoverCanonicalHandoffFile(
-  paths: PragmaPaths,
-  file: string,
-  handoff: CanonicalEventHandoff,
-  feed: CanonicalEventFeed,
-): Promise<{ readonly delivered: true } | { readonly delivered: false; readonly error: unknown }> {
-  const commits = await readCommitRecords(paths, handoff.executionId);
-  const committed = commits.find((candidate) => candidate.commitId === handoff.commitId);
-  if (committed === undefined) {
-    await applyTransaction(paths, handoff.executionId, handoff.transaction);
-  } else if (committed.signature !== handoff.signature) {
-    throw new Error(`Canonical event handoff signature conflict: ${handoff.commitId}`);
-  }
-  try {
-    await publishCanonicalHandoff(file, handoff, feed);
-    return { delivered: true };
-  } catch (error) {
-    // Source durability must not depend on transient delivery availability.
-    return { delivered: false, error };
-  }
 }
 
 async function publishCanonicalHandoff(

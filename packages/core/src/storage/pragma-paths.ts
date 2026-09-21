@@ -140,6 +140,15 @@ export class PragmaPaths {
     );
   }
 
+  canonicalEventDeliveryLock(executionId: string): string {
+    return join(
+      this.stateRoot(),
+      "event-bus",
+      "delivery-locks",
+      `${encodePragmaPathSegment(executionId)}.lock`,
+    );
+  }
+
   memoryDataRoot(): string {
     return join(this.dataRoot(), "memory");
   }
@@ -369,6 +378,10 @@ export class PragmaPaths {
     return join(this.archivesRoot(), "executions");
   }
 
+  executionLocksRoot(): string {
+    return join(this.stateRoot(), "execution-locks");
+  }
+
   executionArchive(executionId: string): string {
     return join(this.executionArchivesRoot(), `${encodePragmaPathSegment(executionId)}.jsonl.gz`);
   }
@@ -386,7 +399,7 @@ export class PragmaPaths {
   }
 
   executionLock(executionId: string): string {
-    return join(this.executionRoot(executionId), ".lock");
+    return join(this.executionLocksRoot(), `${encodePragmaPathSegment(executionId)}.lock`);
   }
 
   runtimeSessionOwnersRoot(): string {

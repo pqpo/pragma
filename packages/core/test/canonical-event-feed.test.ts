@@ -2,13 +2,14 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 
 import {
   CanonicalEventEnvelopeSchema,
   type ExecutionRecord,
   type Invocation,
 } from "@pragma/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createFileCanonicalEventFeed,
@@ -20,6 +21,39 @@ import { CANONICAL_EVENT_FEED_V1_SCHEMA_SQL } from "../src/storage/migrations/ca
 import { appendExecutionEvent } from "./execution-store-test-helpers.ts";
 
 describe("Canonical Event Feed", () => {
+  it("preserves worker error diagnostics across the RPC boundary", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-error-"));
+    const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
+
+    await expect(feed.read({ limit: 0 })).rejects.toMatchObject({
+      name: "RangeError",
+      message: "Canonical event page limit must be between 1 and 1000.",
+      stack: expect.stringContaining("canonical-event-feed"),
+    });
+    await feed.close();
+  });
+
+  it("fails current and future requests when the persistent worker exits", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-exit-"));
+    const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
+    const postMessage = vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
+      this: Worker,
+    ) {
+      void this.terminate();
+    });
+
+    try {
+      await expect(feed.inspect()).rejects.toThrow(
+        "Canonical event feed worker exited unexpectedly",
+      );
+    } finally {
+      postMessage.mockRestore();
+    }
+
+    await expect(feed.inspect()).rejects.toThrow("Canonical event feed worker exited unexpectedly");
+    await expect(feed.close()).rejects.toThrow("Canonical event feed worker exited unexpectedly");
+  });
+
   it("relays committed Execution events with stable idempotency", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-canonical-feed-"));
     const feed = await createFileCanonicalEventFeed({ pragmaHome: home });
@@ -53,7 +87,170 @@ describe("Canonical Event Feed", () => {
         payload: { eventId: "message-one" },
       },
     });
-    feed.close();
+    await feed.close();
+  });
+
+  it("releases the Execution lock and drains commits queued behind one keyed delivery", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-concurrent-delivery-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let releaseDelivery!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    let appendCalls = 0;
+    const feed: CanonicalEventFeed = {
+      ...durable,
+      async append(events) {
+        appendCalls += 1;
+        markDeliveryStarted();
+        await deliveryReleased;
+        await durable.append(events);
+      },
+    };
+    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    await createExecution(store);
+
+    const commit = appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "event-one",
+    );
+    await deliveryStarted;
+    await expect(store.get("execution")).resolves.toMatchObject({ version: 1 });
+    const secondCommit = appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 2 },
+      "event-two",
+    );
+    await waitForExecutionVersion(store, 2);
+    const recovery = store.recoverPendingCanonicalEvents();
+    releaseDelivery();
+
+    await expect(Promise.all([commit, secondCommit, recovery])).resolves.toBeDefined();
+    expect(appendCalls).toBe(2);
+    await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 2, eventCount: 2 });
+    await expect(store.inspectCanonicalEventDelivery()).resolves.toEqual({
+      pending: 0,
+      quarantined: 0,
+    });
+    await durable.close();
+  });
+
+  it("drains queued canonical deliveries before an Execution deletion barrier", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-delete-barrier-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let releaseDelivery!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    let appendCalls = 0;
+    const feed: CanonicalEventFeed = {
+      ...durable,
+      async append(events) {
+        appendCalls += 1;
+        if (appendCalls === 1) {
+          markDeliveryStarted();
+          await deliveryReleased;
+        }
+        await durable.append(events);
+      },
+    };
+    const store = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: feed });
+    await createExecution(store);
+
+    const firstCommit = appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "delete-event-one",
+    );
+    await deliveryStarted;
+    const secondCommit = appendExecutionEvent(
+      store,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 2 },
+      "delete-event-two",
+    );
+    await waitForExecutionVersion(store, 2);
+    const deletion = store.withCanonicalEventDeletion(
+      ["execution"],
+      async (handoffFiles) => handoffFiles,
+    );
+    releaseDelivery();
+
+    const [, , handoffFiles] = await Promise.all([firstCommit, secondCommit, deletion]);
+    expect(appendCalls).toBe(1);
+    expect(handoffFiles).toHaveLength(1);
+    await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 1 });
+    await durable.close();
+  });
+
+  it("holds the cross-process deletion barrier until an active delivery finishes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-canonical-cross-process-delete-"));
+    const durable = await createFileCanonicalEventFeed({ pragmaHome: home });
+    let releaseDelivery!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    const delayedFeed: CanonicalEventFeed = {
+      ...durable,
+      async append(events) {
+        markDeliveryStarted();
+        await deliveryReleased;
+        await durable.append(events);
+      },
+    };
+    const writer = createFileExecutionStore({
+      pragmaHome: home,
+      canonicalEventFeed: delayedFeed,
+    });
+    const deleter = createFileExecutionStore({ pragmaHome: home, canonicalEventFeed: durable });
+    await createExecution(writer);
+
+    const commit = appendExecutionEvent(
+      writer,
+      "execution",
+      "root",
+      "invocation.progress",
+      { value: 1 },
+      "cross-process-delete-event",
+    );
+    await deliveryStarted;
+    let deletionStarted = false;
+    const deletion = deleter.withCanonicalEventDeletion(["execution"], async () => {
+      deletionStarted = true;
+      await durable.forgetCorrelation("execution");
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(deletionStarted).toBe(false);
+
+    releaseDelivery();
+    await Promise.all([commit, deletion]);
+    expect(deletionStarted).toBe(true);
+    await expect(durable.inspect()).resolves.toMatchObject({ eventCount: 0 });
+    await durable.close();
   });
 
   it("keeps a durable handoff when delivery fails and recovers it without blocking source state", async () => {
@@ -103,7 +300,7 @@ describe("Canonical Event Feed", () => {
     ).toEqual([1, 2]);
     await store.recoverPendingCanonicalEvents();
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 2, eventCount: 2 });
-    durable.close();
+    await durable.close();
   });
 
   it("stops at the first delivery failure so one Execution is published in source order", async () => {
@@ -164,7 +361,7 @@ describe("Canonical Event Feed", () => {
           : [],
       ),
     ).toEqual([1, 2]);
-    durable.close();
+    await durable.close();
   });
 
   it("fails closed on future Feed and handoff versions without deleting their data", async () => {
@@ -203,7 +400,7 @@ describe("Canonical Event Feed", () => {
     await expect(store.get("execution")).rejects.toThrow(
       "unsupported-state-version:pragma.canonical-event-handoff-quarantined:execution",
     );
-    feed.close();
+    await feed.close();
   });
 
   it("deduplicates recovery after Feed append succeeds but handoff acknowledgement is interrupted", async () => {
@@ -225,7 +422,7 @@ describe("Canonical Event Feed", () => {
     interruptAcknowledgement = false;
     await store.recoverPendingCanonicalEvents();
     await expect(durable.inspect()).resolves.toMatchObject({ lastSequence: 1, eventCount: 1 });
-    durable.close();
+    await durable.close();
   });
 
   it("prunes only acknowledged payloads and keeps replay receipts", async () => {
@@ -268,7 +465,7 @@ describe("Canonical Event Feed", () => {
 
     if (first?.kind === "event") await feed.append([first.event]);
     await expect(feed.inspect()).resolves.toMatchObject({ eventCount: 1, receiptCount: 2 });
-    feed.close();
+    await feed.close();
   });
 
   it("reports payload pinned above the target instead of deleting unacknowledged events", async () => {
@@ -284,7 +481,7 @@ describe("Canonical Event Feed", () => {
     });
     expect(result.deletedEvents).toBe(0);
     expect(result.blockedBytes).toBeGreaterThan(0);
-    feed.close();
+    await feed.close();
   });
 
   it("upgrades a v1 Feed lazily and preserves replay idempotency after pruning", async () => {
@@ -326,7 +523,7 @@ describe("Canonical Event Feed", () => {
       receiptCount: 1,
     });
     await expect(readFile(`${path}.v1.backup`)).rejects.toMatchObject({ code: "ENOENT" });
-    feed.close();
+    await feed.close();
   });
 });
 
@@ -359,4 +556,15 @@ async function createExecution(store: ReturnType<typeof createFileExecutionStore
     updatedAt: timestamp,
   };
   await store.create(execution, root);
+}
+
+async function waitForExecutionVersion(
+  store: ReturnType<typeof createFileExecutionStore>,
+  version: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if ((await store.get("execution"))?.version === version) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Execution did not reach version ${version}.`);
 }

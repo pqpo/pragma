@@ -60,6 +60,18 @@ describe("PragmaPaths", () => {
     expect(root.startsWith(paths.workspaceRoot())).toBe(false);
   });
 
+  it("keeps Execution locks outside owner roots that deletion moves", () => {
+    const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
+    const executionId = "execution/with spaces";
+
+    expect(paths.executionLock(executionId)).toBe(
+      join(paths.executionLocksRoot(), "ZXhlY3V0aW9uL3dpdGggc3BhY2Vz.lock"),
+    );
+    expect(
+      paths.executionLock(executionId).startsWith(`${paths.executionRoot(executionId)}/`),
+    ).toBe(false);
+  });
+
   it("keeps Memory extraction settings in the authoritative Memory data root", () => {
     const paths = new PragmaPaths({ pragmaHome: join("", "pragma-home") });
 
