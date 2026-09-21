@@ -82,6 +82,17 @@ const StoredSummarySchema = z
   })
   .strict();
 
+const StoredPortableFilesSchema = z
+  .object({
+    capabilityId: CapabilityIdSchema,
+    capabilityRevision: z.number().int().positive(),
+    capabilityContentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    files: z
+      .array(z.object({ path: z.string().min(1).max(2_000), executable: z.boolean() }).strict())
+      .max(MAX_CONFLICT_SUMMARY_FILES),
+  })
+  .strict();
+
 const SkillSyncStateSchema = z
   .object({
     schemaVersion: z.literal("pragma.skill-sync-state/v1"),
@@ -90,6 +101,7 @@ const SkillSyncStateSchema = z
     resolvedBranch: z.string().optional(),
     syncedAt: z.string().datetime().optional(),
     bases: z.record(z.string(), z.string()),
+    portableFiles: z.record(z.string(), StoredPortableFilesSchema).default({}),
     ignoredRemote: z.array(z.object({ syncKey: z.string(), name: z.string() }).strict()),
     conflicts: z.record(
       z.string(),
@@ -127,6 +139,7 @@ const emptyState = (sourceKey?: string): SkillSyncState => ({
   schemaVersion: "pragma.skill-sync-state/v1",
   ...(sourceKey === undefined ? {} : { sourceKey }),
   bases: {},
+  portableFiles: {},
   ignoredRemote: [],
   conflicts: {},
   errors: {},
@@ -186,7 +199,8 @@ export function createSkillSyncService(options: {
   const writeState = async (state: SkillSyncState): Promise<void> =>
     await writeJsonAtomic(options.statePath, SkillSyncStateSchema.parse(state));
 
-  const localSkills = async (): Promise<LocalSkillSnapshot> => {
+  const localSkills = async (knownState?: SkillSyncState): Promise<LocalSkillSnapshot> => {
+    const state = knownState ?? (await readState());
     const skills = new Map<string, LocalSkill>();
     const errors: SkillSyncState["errors"] = {};
     const seenKeys = new Set<string>();
@@ -212,6 +226,13 @@ export function createSkillSyncService(options: {
           capability.manifest.latestRevision,
         );
         const snapshot = await scanSkillWorkingTree(root);
+        const portable = state.portableFiles[syncKey];
+        const portableModes =
+          portable?.capabilityId === capability.manifest.id &&
+          portable.capabilityRevision === capability.manifest.latestRevision &&
+          portable.capabilityContentHash === capability.definition.contentHash
+            ? new Map(portable.files.map((file) => [file.path, file.executable]))
+            : undefined;
         const files: RemoteSkillFile[] = [];
         for (const entry of snapshot.entries) {
           const bytes = await readFile(safeChild(root, entry.path));
@@ -219,7 +240,11 @@ export function createSkillSyncService(options: {
           if (!Buffer.from(content, "utf8").equals(bytes)) {
             throw coded("skill_sync_binary_file", `Skill file is not UTF-8 text: ${entry.path}`);
           }
-          files.push({ path: entry.path, content, executable: entry.executable });
+          files.push({
+            path: entry.path,
+            content,
+            executable: portableModes?.get(entry.path) ?? entry.executable,
+          });
         }
         const skill = {
           identity,
@@ -245,9 +270,11 @@ export function createSkillSyncService(options: {
     return { skills, errors };
   };
 
-  const localSkillsForOverview = async (): Promise<Map<string, LocalSkill>> => {
+  const localSkillsForOverview = async (
+    state?: SkillSyncState,
+  ): Promise<Map<string, LocalSkill>> => {
     try {
-      return (await localSkills()).skills;
+      return (await localSkills(state)).skills;
     } catch {
       return new Map();
     }
@@ -257,11 +284,11 @@ export function createSkillSyncService(options: {
     syncKey: string,
     remote: RemoteSkill | undefined,
     local: LocalSkill | undefined,
-  ): Promise<void> => {
+  ): Promise<Capability | undefined> => {
     if (remote === undefined) {
       if (local !== undefined)
         await options.capabilities.remove(local.capabilityId, local.capabilityRevision);
-      return;
+      return undefined;
     }
     validateRemoteSkill(remote);
     const incoming = join(options.cacheRoot, "incoming", randomUUID());
@@ -270,7 +297,7 @@ export function createSkillSyncService(options: {
       const snapshot = await scanSkillWorkingTree(incoming);
       if (local === undefined) {
         const id = remote.identity.kind === "capability" ? remote.identity.id : randomUUID();
-        await options.capabilities.publishNewSkillRevisionCandidate({
+        return await options.capabilities.publishNewSkillRevisionCandidate({
           id,
           name: remote.name,
           description: remote.description,
@@ -281,7 +308,7 @@ export function createSkillSyncService(options: {
             : {}),
         });
       } else {
-        await options.capabilities.publishSkillRevisionCandidate({
+        return await options.capabilities.publishSkillRevisionCandidate({
           id: local.capabilityId,
           baseRevision: local.capabilityRevision,
           baseContentHash: local.capabilityContentHash,
@@ -304,11 +331,12 @@ export function createSkillSyncService(options: {
     repository: RemoteSkillRepository;
     publishedKeys: readonly string[];
   }> => {
-    const localSnapshot = await localSkills();
+    const localSnapshot = await localSkills(state);
     const local = localSnapshot.skills;
     const remote = new Map(head.repository.skills);
     const desired = new Map(remote);
     const bases = { ...state.bases };
+    const portableFiles = { ...state.portableFiles };
     const conflicts = { ...state.conflicts };
     const errors = Object.fromEntries(
       Object.entries(state.errors).filter(([, error]) => error.source === "remote"),
@@ -332,8 +360,10 @@ export function createSkillSyncService(options: {
       const remoteFingerprint = fingerprint(remoteSkill);
       const base = bases[key];
       if (localFingerprint === remoteFingerprint) {
-        if (localFingerprint === "absent") delete bases[key];
-        else bases[key] = localFingerprint;
+        if (localFingerprint === "absent") {
+          delete bases[key];
+          delete portableFiles[key];
+        } else bases[key] = localFingerprint;
         delete conflicts[key];
         delete errors[key];
         ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
@@ -354,9 +384,14 @@ export function createSkillSyncService(options: {
       }
       if (remoteChanged) {
         try {
-          await applyRemote(key, remoteSkill, localSkill);
-          if (remoteSkill === undefined) delete bases[key];
-          else bases[key] = remoteFingerprint;
+          const applied = await applyRemote(key, remoteSkill, localSkill);
+          if (remoteSkill === undefined || applied === undefined) {
+            delete bases[key];
+            delete portableFiles[key];
+          } else {
+            bases[key] = remoteFingerprint;
+            portableFiles[key] = portableFilesFor(applied, remoteSkill);
+          }
           delete errors[key];
           delete conflicts[key];
           ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
@@ -398,6 +433,7 @@ export function createSkillSyncService(options: {
       state: SkillSyncStateSchema.parse({
         ...state,
         bases,
+        portableFiles,
         conflicts,
         errors,
         ignoredRemote,
@@ -456,7 +492,7 @@ export function createSkillSyncService(options: {
         return await buildOverview(
           configuration,
           state,
-          await localSkillsForOverview(),
+          await localSkillsForOverview(state),
           transientStatus,
         );
       }
@@ -472,7 +508,12 @@ export function createSkillSyncService(options: {
       });
       await writeState(state);
       transientStatus = "error";
-      return await buildOverview(configuration, state, await localSkillsForOverview(), "error");
+      return await buildOverview(
+        configuration,
+        state,
+        await localSkillsForOverview(state),
+        "error",
+      );
     }
   };
 
@@ -509,7 +550,7 @@ export function createSkillSyncService(options: {
       return await buildOverview(
         configuration,
         state,
-        await localSkillsForOverview(),
+        await localSkillsForOverview(state),
         transientStatus === "syncing" ? "syncing" : settledStatus(state),
       );
     },
@@ -571,24 +612,32 @@ export function createSkillSyncService(options: {
           return await buildOverview(
             configuration,
             state,
-            await localSkillsForOverview(),
+            await localSkillsForOverview(state),
             transientStatus === "syncing" ? "syncing" : settledStatus(state),
           );
         const provider = providerFor(configuration);
         const head = await provider.readHead();
-        if ((head.revision ?? "unborn") !== conflict.remoteRevision) {
+        if (
+          state.sourceKey !== configurationSourceKey(configuration) ||
+          state.resolvedBranch !== head.reference ||
+          (head.revision ?? "unborn") !== conflict.remoteRevision
+        ) {
           throw coded(
             "skill_sync_conflict_stale",
             "The remote repository changed. Synchronize again.",
           );
         }
-        const local = await localSkills();
+        const local = await localSkills(state);
         const localSkill = local.skills.get(syncKey);
         if (fingerprint(localSkill) !== conflict.local.fingerprint) {
           throw coded("skill_sync_conflict_stale", "The local Skill changed. Synchronize again.");
         }
         if (choice === "remote") {
-          await applyRemote(syncKey, head.repository.skills.get(syncKey), localSkill);
+          const remoteSkill = head.repository.skills.get(syncKey);
+          const applied = await applyRemote(syncKey, remoteSkill, localSkill);
+          if (remoteSkill === undefined || applied === undefined)
+            delete state.portableFiles[syncKey];
+          else state.portableFiles[syncKey] = portableFilesFor(applied, remoteSkill);
         } else {
           const desired = new Map(head.repository.skills);
           if (localSkill === undefined) desired.delete(syncKey);
@@ -617,7 +666,7 @@ export function createSkillSyncService(options: {
         return await buildOverview(
           configuration,
           state,
-          await localSkillsForOverview(),
+          await localSkillsForOverview(state),
           transientStatus,
         );
       });
@@ -781,6 +830,18 @@ function identityKey(identity: SkillSyncIdentity): string {
   return identity.kind === "capability"
     ? `capability/${identity.id}`
     : `bundle/${identity.logicalId}`;
+}
+
+function portableFilesFor(capability: Capability, skill: RemoteSkill) {
+  if (capability.definition.kind !== "skill") {
+    throw coded("skill_sync_capability_invalid", "The synchronized capability is not a Skill.");
+  }
+  return StoredPortableFilesSchema.parse({
+    capabilityId: capability.manifest.id,
+    capabilityRevision: capability.manifest.latestRevision,
+    capabilityContentHash: capability.definition.contentHash,
+    files: skill.files.map(({ path, executable }) => ({ path, executable })),
+  });
 }
 
 function fingerprint(skill: RemoteSkill | undefined): string {

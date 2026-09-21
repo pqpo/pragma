@@ -71,7 +71,7 @@ export const SkillPackageSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().min(1).max(500),
-    files: z.array(SkillPackageFileSchema).min(1).max(64),
+    files: z.array(SkillPackageFileSchema).min(1).max(1_000),
   })
   .strict()
   .superRefine((value, context) => {

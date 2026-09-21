@@ -265,6 +265,26 @@ describe("Skill sync service", () => {
     expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(true);
   });
 
+  it("rejects conflict resolution after the resolved default branch changes", async () => {
+    const fixture = await createFixture();
+    const id = "15151515-1515-4515-8515-151515151515";
+    await fixture.addLocalSkill(id, "Branch Conflict Skill");
+    await fixture.service.configure(configuration());
+    await fixture.replaceLocalSkill(id, "Branch Conflict Skill", "Local conflict");
+    fixture.provider.repository.skills.set(
+      `capability/${id}`,
+      remoteSkill({ kind: "capability", id }, "Branch Conflict Skill", "Remote conflict"),
+    );
+    fixture.provider.advance();
+    expect((await fixture.service.sync()).status).toBe("conflict");
+
+    fixture.provider.reference = "replacement";
+
+    await expect(
+      fixture.service.resolveConflict(`capability/${id}`, "remote"),
+    ).rejects.toMatchObject({ code: "skill_sync_conflict_stale" });
+  });
+
   it("discards bases when configuration changes before state can be reset", async () => {
     const fixture = await createFixture();
     const id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
@@ -309,6 +329,69 @@ describe("Skill sync service", () => {
 
     expect(overview.status).toBe("conflict");
     expect(overview.conflicts[0]?.localFiles).toHaveLength(65);
+  });
+
+  it("synchronizes a valid Skill with more than 64 files", async () => {
+    const fixture = await createFixture();
+    const id = "16161616-1616-4616-8616-161616161616";
+    const skill = remoteSkill({ kind: "capability", id }, "Large Skill");
+    fixture.provider.repository.skills.set(`capability/${id}`, {
+      ...skill,
+      files: [
+        ...skill.files,
+        ...Array.from({ length: 64 }, (_, index) => ({
+          path: `references/file-${index}.md`,
+          content: `Reference ${index}\n`,
+          executable: false,
+        })),
+      ],
+    });
+    fixture.provider.advance();
+
+    const overview = await fixture.service.configure(configuration());
+
+    expect(overview.status).toBe("ready");
+    expect(fixture.capabilities.has(id)).toBe(true);
+  });
+
+  it("preserves imported executable metadata when the local filesystem drops the mode", async () => {
+    const fixture = await createFixture();
+    const id = "17171717-1717-4717-8717-171717171717";
+    const skill: RemoteSkill = {
+      identity: { kind: "capability", id },
+      name: "Portable Executable Skill",
+      description: "Portable Executable Skill description",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: Portable Executable Skill\ndescription: Portable Executable Skill description\n---\n",
+          executable: false,
+        },
+        {
+          path: "scripts/run.mjs",
+          content: "export const run = () => 'ok';\n",
+          executable: true,
+        },
+        {
+          path: "tests/run.test.mjs",
+          content: "import '../scripts/run.mjs';\n",
+          executable: false,
+        },
+      ],
+    };
+    fixture.provider.repository.skills.set(`capability/${id}`, skill);
+    fixture.provider.advance();
+    await fixture.service.configure(configuration());
+    await chmod(join(fixture.root, "capabilities", id, "1", "scripts", "run.mjs"), 0o644);
+
+    await fixture.restartService().sync();
+
+    expect(
+      fixture.provider.repository.skills
+        .get(`capability/${id}`)
+        ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
+    ).toBe(true);
   });
 });
 
