@@ -86,7 +86,13 @@ export const SkillPackageFileSchema = z
           !path.includes("\\") &&
           path
             .split("/")
-            .every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+            .every(
+              (segment) =>
+                segment.length > 0 &&
+                segment !== "." &&
+                segment !== ".." &&
+                segment.toLowerCase() !== ".git",
+            ),
         "Skill package paths must be safe relative paths.",
       ),
     content: z.string().max(128 * 1_024),

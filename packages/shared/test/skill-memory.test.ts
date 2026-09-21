@@ -41,4 +41,17 @@ describe("Skill memory contracts", () => {
       );
     }
   });
+
+  it("rejects Git metadata directories anywhere in a Skill path", () => {
+    expect(
+      SkillPackageSchema.safeParse({
+        name: "Unsafe Skill",
+        description: "Attempts to write repository metadata.",
+        files: [
+          { path: "SKILL.md", content: "# Unsafe" },
+          { path: "references/.GiT/config", content: "[core]" },
+        ],
+      }).success,
+    ).toBe(false);
+  });
 });

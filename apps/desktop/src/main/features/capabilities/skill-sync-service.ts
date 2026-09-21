@@ -105,6 +105,22 @@ const StoredPortableFilesSchema = z
   })
   .strict();
 
+const PendingRemoteActivationSchema = z
+  .object({
+    files: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1).max(2_000),
+            executable: z.boolean(),
+            sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          })
+          .strict(),
+      )
+      .max(MAX_CONFLICT_SUMMARY_FILES),
+  })
+  .strict();
+
 const SkillSyncStateSchema = z
   .object({
     schemaVersion: z.literal("pragma.skill-sync-state/v1"),
@@ -114,6 +130,7 @@ const SkillSyncStateSchema = z
     syncedAt: z.string().datetime().optional(),
     bases: z.record(z.string(), z.string()),
     portableFiles: z.record(z.string(), StoredPortableFilesSchema).default({}),
+    pendingRemoteActivations: z.record(z.string(), PendingRemoteActivationSchema).default({}),
     ignoredRemote: z.array(z.object({ syncKey: z.string(), name: z.string() }).strict()),
     conflicts: z.record(
       z.string(),
@@ -152,6 +169,7 @@ const emptyState = (sourceKey?: string): SkillSyncState => ({
   ...(sourceKey === undefined ? {} : { sourceKey }),
   bases: {},
   portableFiles: {},
+  pendingRemoteActivations: {},
   ignoredRemote: [],
   conflicts: {},
   errors: {},
@@ -240,13 +258,26 @@ export function createSkillSyncService(options: {
         );
         const snapshot = await scanSkillWorkingTree(root);
         const portable = state.portableFiles[syncKey];
-        const portableFiles =
-          portable?.capabilityId === capability.manifest.id
-            ? new Map(portable.files.map((file) => [file.path, file]))
-            : undefined;
-        const exactPortableSnapshot =
+        const exactStoredPortableSnapshot =
           portable?.capabilityRevision === capability.manifest.latestRevision &&
           portable.capabilityContentHash === capability.definition.contentHash;
+        const pendingActivation = state.pendingRemoteActivations[syncKey];
+        const exactPendingActivation =
+          pendingActivation !== undefined &&
+          pendingActivation.files.length === snapshot.entries.length &&
+          pendingActivation.files.every(
+            (file) =>
+              snapshot.entries.find((entry) => entry.path === file.path)?.sha256 === file.sha256,
+          );
+        const storedPortableFiles =
+          portable?.capabilityId === capability.manifest.id ? portable.files : [];
+        const portableFiles = new Map(
+          (exactPendingActivation ? pendingActivation.files : storedPortableFiles).map((file) => [
+            file.path,
+            file,
+          ]),
+        );
+        const exactPortableSnapshot = exactStoredPortableSnapshot || exactPendingActivation;
         const supportsExecutableBits =
           options.supportsExecutableBits ?? process.platform !== "win32";
         const files: RemoteSkillFile[] = [];
@@ -360,6 +391,7 @@ export function createSkillSyncService(options: {
     const desired = new Map(remote);
     const bases = { ...state.bases };
     const portableFiles = { ...state.portableFiles };
+    const pendingRemoteActivations = { ...state.pendingRemoteActivations };
     const conflicts = { ...state.conflicts };
     const errors = Object.fromEntries(
       Object.entries(state.errors).filter(([, error]) => error.source === "remote"),
@@ -368,6 +400,18 @@ export function createSkillSyncService(options: {
     const publishedKeys: string[] = [];
     const publishedSnapshots = new Map<string, LocalSkill | undefined>();
     Object.assign(errors, localSnapshot.errors);
+    const checkpointState = (): SkillSyncState =>
+      SkillSyncStateSchema.parse({
+        ...state,
+        bases,
+        portableFiles,
+        pendingRemoteActivations,
+        conflicts,
+        errors,
+        ignoredRemote,
+        revision: head.revision,
+        resolvedBranch: head.reference,
+      });
     const keys = new Set([
       ...local.keys(),
       ...remote.keys(),
@@ -384,6 +428,7 @@ export function createSkillSyncService(options: {
       const remoteFingerprint = fingerprint(remoteSkill);
       const base = bases[key];
       if (localFingerprint === remoteFingerprint) {
+        delete pendingRemoteActivations[key];
         if (localFingerprint === "absent") {
           delete bases[key];
           delete portableFiles[key];
@@ -410,6 +455,10 @@ export function createSkillSyncService(options: {
         continue;
       }
       if (remoteChanged) {
+        if (remoteSkill !== undefined) {
+          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
+          await writeState(checkpointState());
+        }
         try {
           const applied = await applyRemote(key, remoteSkill, localSkill);
           if (remoteSkill === undefined || applied === undefined) {
@@ -419,11 +468,15 @@ export function createSkillSyncService(options: {
             bases[key] = remoteFingerprint;
             portableFiles[key] = portableFilesFor(applied, remoteSkill);
           }
+          delete pendingRemoteActivations[key];
           delete errors[key];
           delete conflicts[key];
           ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
+          await writeState(checkpointState());
         } catch (error) {
+          delete pendingRemoteActivations[key];
           if (errorCode(error) === "revision_conflict") {
+            await writeState(checkpointState());
             throw coded(
               "skill_sync_local_changed",
               `The local Skill changed during synchronization: ${key}`,
@@ -436,6 +489,7 @@ export function createSkillSyncService(options: {
             name: remoteSkill?.name ?? localSkill?.name,
             capabilityId: localSkill?.capabilityId,
           };
+          await writeState(checkpointState());
         }
         continue;
       }
@@ -466,6 +520,7 @@ export function createSkillSyncService(options: {
         ...state,
         bases,
         portableFiles,
+        pendingRemoteActivations,
         conflicts,
         errors,
         ignoredRemote,
@@ -689,10 +744,22 @@ export function createSkillSyncService(options: {
         }
         if (choice === "remote") {
           const remoteSkill = head.repository.skills.get(syncKey);
-          const applied = await applyRemote(syncKey, remoteSkill, localSkill);
-          if (remoteSkill === undefined || applied === undefined)
-            delete state.portableFiles[syncKey];
-          else state.portableFiles[syncKey] = portableFilesFor(applied, remoteSkill);
+          if (remoteSkill !== undefined) {
+            state.pendingRemoteActivations[syncKey] = pendingRemoteActivationFor(remoteSkill);
+            await writeState(state);
+          }
+          try {
+            const applied = await applyRemote(syncKey, remoteSkill, localSkill);
+            if (remoteSkill === undefined || applied === undefined)
+              delete state.portableFiles[syncKey];
+            else state.portableFiles[syncKey] = portableFilesFor(applied, remoteSkill);
+            delete state.pendingRemoteActivations[syncKey];
+            await writeState(state);
+          } catch (error) {
+            delete state.pendingRemoteActivations[syncKey];
+            await writeState(state);
+            throw error;
+          }
         } else {
           let publishHead = head;
           let selectedLocal = localSkill;
@@ -969,6 +1036,10 @@ function portableFileEntries(skill: RemoteSkill) {
     executable,
     sha256: createHash("sha256").update(content).digest("hex"),
   }));
+}
+
+function pendingRemoteActivationFor(skill: RemoteSkill) {
+  return PendingRemoteActivationSchema.parse({ files: portableFileEntries(skill) });
 }
 
 function sameLocalSnapshot(

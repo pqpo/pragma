@@ -533,6 +533,65 @@ describe("Skill sync service", () => {
     expect(published?.files.find((file) => file.path === "scripts/run.mjs")?.executable).toBe(true);
   });
 
+  it("recovers executable metadata after remote activation commits before sync state", async () => {
+    const fixture = await createFixture({ supportsExecutableBits: false });
+    const id = "29292929-2929-4929-8929-292929292929";
+    const syncKey = `capability/${id}`;
+    const skill: RemoteSkill = {
+      identity: { kind: "capability", id },
+      name: "Interrupted Activation Skill",
+      description: "Interrupted Activation Skill description",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: Interrupted Activation Skill\ndescription: Interrupted Activation Skill description\n---\n",
+          executable: false,
+        },
+        {
+          path: "scripts/run.mjs",
+          content: "export const run = () => 'ok';\n",
+          executable: true,
+        },
+        {
+          path: "tests/run.test.mjs",
+          content: "import '../scripts/run.mjs';\n",
+          executable: false,
+        },
+      ],
+    };
+    fixture.provider.repository.skills.set(syncKey, skill);
+    fixture.provider.advance();
+    await fixture.service.configure(configuration());
+    await chmod(join(fixture.root, "capabilities", id, "1", "scripts", "run.mjs"), 0o644);
+    const statePath = join(fixture.root, "state", "skill-sync-state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    state.portableFiles = {};
+    state.pendingRemoteActivations = {
+      [syncKey]: {
+        files: skill.files.map((file) => ({
+          path: file.path,
+          executable: file.executable,
+          sha256: createHash("sha256").update(file.content).digest("hex"),
+        })),
+      },
+    };
+    await writeFile(statePath, `${JSON.stringify(state)}\n`);
+
+    const overview = await fixture.restartService().sync();
+    const recoveredState = JSON.parse(await readFile(statePath, "utf8")) as {
+      portableFiles: Record<string, { files: { path: string; executable: boolean }[] }>;
+      pendingRemoteActivations: Record<string, unknown>;
+    };
+
+    expect(overview.status).toBe("ready");
+    expect(recoveredState.pendingRemoteActivations).toEqual({});
+    expect(
+      recoveredState.portableFiles[syncKey]?.files.find((file) => file.path === "scripts/run.mjs")
+        ?.executable,
+    ).toBe(true);
+  });
+
   it("honors an intentional chmod-only local revision when executable bits are supported", async () => {
     const fixture = await createFixture({ supportsExecutableBits: true });
     const id = "23232323-2323-4323-8323-232323232323";
