@@ -69,7 +69,7 @@ describe("Skill sync service", () => {
     const overview = await fixture.service.refresh();
     const imported = fixture.capabilities.get(remoteId);
     expect(imported?.definition.name).toBe("Remote Skill");
-    expect(imported?.manifest.origin).toBeUndefined();
+    expect("origin" in imported!.manifest).toBe(false);
     expect(overview.status).toBe("ready");
 
     await fixture.restartService().sync();
@@ -1037,7 +1037,7 @@ async function createFixture(
     const timestamp = new Date().toISOString();
     const capability: Capability = {
       manifest: {
-        schemaVersion: "pragma.capability/v2",
+        schemaVersion: "pragma.capability/v3",
         id,
         runtimeKey: `skill_${id.replaceAll("-", "").slice(0, 8)}`,
         name,

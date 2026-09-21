@@ -192,19 +192,12 @@ export const CapabilityDefinitionSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const CapabilityManifestSchema = z.object({
-  schemaVersion: z.literal("pragma.capability/v2"),
+  schemaVersion: z.literal("pragma.capability/v3"),
   id: CapabilityIdSchema,
   runtimeKey: CapabilityRuntimeKeySchema,
   name: capabilityNameSchema(),
   kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
   latestRevision: z.number().int().positive(),
-  origin: z
-    .object({
-      kind: z.literal("pragma-bundle"),
-      logicalId: CapabilityIdSchema,
-    })
-    .strict()
-    .optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

@@ -70,6 +70,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Raw Skill revision drafts](./051-raw-skill-revision-drafts.md)
 - [Synchronous Skill validation and manual review](./052-synchronous-skill-validation.md)
 - [Trusted Git Skill synchronization](./053-trusted-git-skill-synchronization.md)
+- [Localized Bundle asset identity](./054-localized-bundle-asset-identity.md)
 
 ## 维护规则
 

@@ -25,6 +25,7 @@ import type {
   Capability,
   DesktopRuntimeAvailability,
   PragmaBundleInstallation,
+  StartPragmaBundleImport,
 } from "../../../shared/contracts/index.ts";
 import { PragmaBundleInstallationSchema } from "../../../shared/contracts/index.ts";
 import {
@@ -62,7 +63,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const timestamp = new Date().toISOString();
     expect(
       PragmaBundleInstallationSchema.parse({
-        schemaVersion: "pragma.bundle-installation/v6",
+        schemaVersion: "pragma.bundle-installation/v7",
         bundleVersion: "pragma.bundle/v2",
         id: "00000000-0000-4000-8000-000000000001",
         bundleFingerprint: "a".repeat(64),
@@ -316,6 +317,16 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
           expectedTargetSnapshotHash: repeatedConflict.targetSnapshotHash,
         },
       ],
+      assetConflicts: repeated.assetConflicts.map((assetConflict) => ({
+        resourceRef: assetConflict.resourceRef,
+        assetKind: assetConflict.assetKind,
+        action: "update" as const,
+        targetAssetId: assetConflict.candidates[0]!.assetId,
+        expectedTarget: {
+          revision: assetConflict.candidates[0]!.revision,
+          fingerprint: assetConflict.candidates[0]!.fingerprint,
+        },
+      })),
       runtimes: [],
       capabilities: [],
       contextStores: [],
@@ -332,6 +343,11 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       expectedProjectRevision: copiedInspection.projectRevision,
       conflicts: copiedInspection.conflicts.map((candidate) => ({
         resourceRef: candidate.ref,
+        action: "copy" as const,
+      })),
+      assetConflicts: copiedInspection.assetConflicts.map((assetConflict) => ({
+        resourceRef: assetConflict.resourceRef,
+        assetKind: assetConflict.assetKind,
         action: "copy" as const,
       })),
       runtimes: [],
@@ -362,15 +378,22 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
             expectedTargetSnapshotHash: stale.conflicts[0]!.targetSnapshotHash,
           },
         ],
+        assetConflicts: stale.assetConflicts.map((assetConflict) => ({
+          resourceRef: assetConflict.resourceRef,
+          assetKind: assetConflict.assetKind,
+          action: "update" as const,
+          targetAssetId: assetConflict.candidates[0]!.assetId,
+          expectedTarget: {
+            revision: assetConflict.candidates[0]!.revision,
+            fingerprint: assetConflict.candidates[0]!.fingerprint,
+          },
+        })),
         runtimes: [],
         capabilities: [],
         contextStores: [],
         secrets: {},
       }),
-    ).resolves.toMatchObject({
-      status: "failed",
-      error: expect.stringContaining("target knowledge base changed"),
-    });
+    ).rejects.toThrow("target knowledge base changed");
   });
 
   it("recognizes the built-in Pragma management Capability without an installed payload", async () => {
@@ -469,7 +492,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v6",
+      "pragma.bundle-installations/v7",
     );
   });
 
@@ -481,7 +504,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v7",
+      schemaVersion: "pragma.bundle-installations/v8",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
@@ -965,6 +988,107 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
   });
 
+  it("applies asset conflict decisions to legacy v1 Skill payloads", async () => {
+    const source = await createFixture("legacy-skill-payload-source");
+    const snapshot = await source.project.get();
+    const sourceExpert = snapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )!;
+    const sourceResource = portableCapability();
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(sourceResource), kind: "tools" }],
+          },
+        },
+        ...snapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        sourceResource,
+      ],
+    });
+    const project = await source.project.openRevision(published.revision);
+    const path = join(source.root, "legacy-skill-payload.pragma");
+    const definition = skillCapability("0123456789abcdef", 1, "a".repeat(64)).definition;
+    if (definition.kind !== "skill") throw new Error("Expected a Skill definition.");
+    try {
+      const exported = await project.exportBundle({
+        roots: ["expert:1xddvess309a6gme"],
+        host: {
+          exportPayload: async ({ requirement }) =>
+            requirement.kind === "binding"
+              ? {
+                  codec: "pragma.desktop.capability@v1",
+                  files: new Map([
+                    ["descriptor.json", strToU8(JSON.stringify(definition))],
+                    [
+                      "files/SKILL.md",
+                      strToU8(
+                        "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nLegacy payload.\n",
+                      ),
+                    ],
+                  ]),
+                }
+              : undefined,
+        },
+      });
+      await writeFile(path, exported.bytes);
+    } finally {
+      await project.dispose();
+    }
+
+    const existing = skillCapability("fedcba9876543210", 4, "a".repeat(64));
+    let copied: Capability | undefined;
+    let copiedName: string | undefined;
+    const capabilities = {
+      list: async () => [existing, ...(copied === undefined ? [] : [copied])],
+      publishNewSkillRevisionCandidate: async (input: { id: string; name: string }) => {
+        copiedName = input.name;
+        copied = {
+          ...skillCapability(input.id, 1, "b".repeat(64)),
+          manifest: { ...skillCapability(input.id, 1, "b".repeat(64)).manifest, name: input.name },
+          definition: { ...definition, name: input.name, contentHash: "b".repeat(64) },
+        };
+        return copied;
+      },
+      get: async (id: string) => {
+        if (copied?.manifest.id !== id) throw new Error(`Unexpected Capability ${id}.`);
+        return copied;
+      },
+    } as unknown as CapabilityStore;
+    const target = await createFixture("legacy-skill-payload-target", { capabilities });
+    const inspection = await target.service.inspect(path);
+    expect(inspection.assetConflicts).toHaveLength(1);
+
+    const result = await target.service.startImport({
+      sourcePath: path,
+      rootRef: inspection.root.ref,
+      expectedFingerprint: inspection.bundleFingerprint,
+      expectedProjectFingerprint: inspection.projectFingerprint,
+      expectedProjectRevision: target.projectRevision,
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+      assetConflicts: inspection.assetConflicts.map((conflict) => ({
+        resourceRef: conflict.resourceRef,
+        assetKind: conflict.assetKind,
+        action: "copy" as const,
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+
+    if (result.status === "failed") throw new Error(result.error);
+    expect(result.status).toBe("ready");
+    expect(copiedName).toBe("Bundle Skill (copy)");
+    expect(copied?.manifest.id).not.toBe(existing.manifest.id);
+  });
+
   it("localizes Bundle Skill updates and copies to ordinary Capability revisions", async () => {
     const sourceCapabilityId = "0123456789abcdef";
     const targetCapabilityId = "fedcba9876543210";
@@ -1018,7 +1142,10 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       list: async () => [targetCapability],
       publishSkillRevisionCandidate: async (input: { candidateContentHash: string }) => {
         publishedCandidateHash = input.candidateContentHash;
-        targetCapability = skillCapability(targetCapabilityId, 8, "e".repeat(64));
+        targetCapability = {
+          ...skillCapability(targetCapabilityId, 8, "e".repeat(64)),
+          definition: skillCapability(sourceCapabilityId, 3, "3".repeat(64)).definition,
+        };
         return targetCapability;
       },
       get: async (_id: string, revision?: number) => {
@@ -1028,6 +1155,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     } as unknown as CapabilityStore;
     const target = await createFixture("skill-update-target", {
       capabilities: targetCapabilities,
+      failImportPublishOnce: true,
     });
     const targetSnapshot = await target.project.get();
     const targetResource = portableCapability();
@@ -1052,7 +1180,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       ],
     });
     const inspection = await target.service.inspect(path);
-    await target.service.startImport({
+    const importInput: StartPragmaBundleImport = {
       sourcePath: path,
       rootRef: inspection.root.ref,
       expectedFingerprint: inspection.bundleFingerprint,
@@ -1065,10 +1193,26 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
             ? ("update" as const)
             : ("keep_local" as const),
       })),
+      assetConflicts: inspection.assetConflicts.map((assetConflict) => ({
+        resourceRef: assetConflict.resourceRef,
+        assetKind: assetConflict.assetKind,
+        action: "update" as const,
+        targetAssetId: assetConflict.candidates[0]!.assetId,
+        expectedTarget: {
+          revision: assetConflict.candidates[0]!.revision,
+          fingerprint: assetConflict.candidates[0]!.fingerprint,
+        },
+      })),
       runtimes: [],
       capabilities: [],
       contextStores: [],
       secrets: {},
+    };
+    await expect(target.service.startImport(importInput)).resolves.toMatchObject({
+      status: "failed",
+    });
+    await expect(target.service.startImport(importInput)).resolves.toMatchObject({
+      status: "ready",
     });
 
     expect(publishedCandidateHash).toBe((await scanSkillWorkingTree(sourcePayloads.get(3)!)).hash);
@@ -1119,7 +1263,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     expect(copiedCapability?.manifest.id).not.toBe(sourceCapabilityId);
     expect(copiedCapability?.manifest.latestRevision).toBe(1);
-    expect(copiedCapability?.manifest.origin).toBeUndefined();
+    expect("origin" in copiedCapability!.manifest).toBe(false);
     const copiedProject = await copyTarget.project.get();
     const copiedResource = copiedProject.resources.find(
       (resource): resource is PragmaCapabilityResource =>
@@ -1691,6 +1835,7 @@ async function createFixture(
     readonly contextStores?: ContextStoreStore;
     readonly realContextStores?: boolean;
     readonly capabilities?: CapabilityStore;
+    readonly failImportPublishOnce?: boolean;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), `pragma-bundle-${name}-`));
@@ -1719,9 +1864,22 @@ async function createFixture(
     (overrides.realContextStores
       ? createContextStoreStore({ storesPath: join(root, "context-stores") })
       : ({ list: async () => [] } as unknown as ContextStoreStore));
+  let remainingPublishFailures = overrides.failImportPublishOnce ? 1 : 0;
+  const serviceProject = new Proxy(project, {
+    get(target, property, receiver) {
+      if (property !== "publish") return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<typeof project.publish>) => {
+        if (remainingPublishFailures > 0) {
+          remainingPublishFailures -= 1;
+          throw new Error("Injected Project publish failure.");
+        }
+        return await project.publish(...args);
+      };
+    },
+  });
   const serviceOptions = {
     paths,
-    project,
+    project: serviceProject,
     capabilities:
       overrides.capabilities ??
       ({
@@ -1923,7 +2081,7 @@ function skillCapability(id: string, latestRevision: number, contentHash: string
   const timestamp = "2026-09-21T00:00:00.000Z";
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v2",
+      schemaVersion: "pragma.capability/v3",
       id,
       runtimeKey: `skill-${id}`,
       name: "Bundle Skill",

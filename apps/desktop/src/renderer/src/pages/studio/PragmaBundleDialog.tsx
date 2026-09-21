@@ -38,6 +38,10 @@ type BundleExportRoot = Extract<
   { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" }
 >;
 type ImportStep = "select" | "conflicts" | "bindings" | "review" | "result";
+type AssetConflictSelection = {
+  readonly action: "copy" | "update" | "keep_local";
+  readonly targetAssetId?: string | undefined;
+};
 type BindingRequirement = PragmaBundleImportInspection["requirements"][number];
 type RuntimeBindingDraft = {
   readonly runtimeId: string;
@@ -399,9 +403,8 @@ function BundleImportDialog(props: {
   const { t } = useTranslation("studio");
   const [step, setStep] = useState<ImportStep>("select");
   const [inspection, setInspection] = useState<PragmaBundleImportInspection | null>(null);
-  const [conflicts, setConflicts] = useState<
-    Record<string, "copy" | "update" | "keep_local">
-  >({});
+  const [conflicts, setConflicts] = useState<Record<string, "copy" | "update" | "keep_local">>({});
+  const [assetConflicts, setAssetConflicts] = useState<Record<string, AssetConflictSelection>>({});
   const [bindingIndex, setBindingIndex] = useState(0);
   const [runtimeBindings, setRuntimeBindings] = useState<Record<string, RuntimeBindingDraft>>({});
   const [capabilityBindings, setCapabilityBindings] = useState<Record<string, string>>({});
@@ -487,6 +490,14 @@ function BundleImportDialog(props: {
     setRecovery(recoverable);
     setConflicts(
       Object.fromEntries(next.conflicts.map((conflict) => [conflict.ref, "copy" as const])),
+    );
+    setAssetConflicts(
+      Object.fromEntries(
+        next.assetConflicts.map((conflict) => [
+          conflict.resourceRef,
+          { action: "copy" as const, targetAssetId: conflict.candidates[0]?.assetId },
+        ]),
+      ),
     );
     setBindingIndex(0);
     setRuntimeBindings({});
@@ -627,7 +638,8 @@ function BundleImportDialog(props: {
 
   const nextFromSelect = () => {
     if (inspection === null) return;
-    if (recovery === null && inspection.conflicts.length > 0) setStep("conflicts");
+    if (recovery === null && inspection.conflicts.length + inspection.assetConflicts.length > 0)
+      setStep("conflicts");
     else if (requirements.length > 0) setStep("bindings");
     else setStep("review");
   };
@@ -642,7 +654,13 @@ function BundleImportDialog(props: {
       setBindingIndex((current) => current - 1);
       return;
     }
-    setStep(recovery === null && inspection?.conflicts.length ? "conflicts" : "select");
+    setStep(
+      recovery === null &&
+        inspection !== null &&
+        inspection.conflicts.length + inspection.assetConflicts.length > 0
+        ? "conflicts"
+        : "select",
+    );
   };
 
   const nextFromBindings = () => {
@@ -721,6 +739,28 @@ function BundleImportDialog(props: {
                   ? {}
                   : { expectedTargetSnapshotHash: conflict.targetSnapshotHash }),
               })),
+              assetConflicts: inspection.assetConflicts.map((conflict) => {
+                const selection = assetConflicts[conflict.resourceRef] ?? {
+                  action: "copy" as const,
+                };
+                const candidate = conflict.candidates.find(
+                  (item) => item.assetId === selection.targetAssetId,
+                );
+                return {
+                  resourceRef: conflict.resourceRef,
+                  assetKind: conflict.assetKind,
+                  action: selection.action,
+                  ...(selection.action === "copy" || candidate === undefined
+                    ? {}
+                    : {
+                        targetAssetId: candidate.assetId,
+                        expectedTarget: {
+                          revision: candidate.revision,
+                          fingerprint: candidate.fingerprint,
+                        },
+                      }),
+                };
+              }),
               runtimes,
               capabilities,
               contextStores,
@@ -829,7 +869,13 @@ function BundleImportDialog(props: {
               setBindingIndex(Math.max(0, requirements.length - 1));
               setStep("bindings");
             } else {
-              setStep(recovery === null && inspection?.conflicts.length ? "conflicts" : "select");
+              setStep(
+                recovery === null &&
+                  inspection !== null &&
+                  inspection.conflicts.length + inspection.assetConflicts.length > 0
+                  ? "conflicts"
+                  : "select",
+              );
             }
           }}
         >
@@ -862,7 +908,11 @@ function BundleImportDialog(props: {
           <BundleImportSteps
             step={step}
             inspection={inspection}
-            conflictCount={recovery === null ? (inspection?.conflicts.length ?? 0) : 0}
+            conflictCount={
+              recovery === null
+                ? (inspection?.conflicts.length ?? 0) + (inspection?.assetConflicts.length ?? 0)
+                : 0
+            }
             requirementCount={requirements.length}
           />
         }
@@ -882,16 +932,34 @@ function BundleImportDialog(props: {
           <BundleConflictStep
             inspection={inspection}
             selections={conflicts}
+            assetSelections={assetConflicts}
             onChange={(ref, action) => setConflicts((current) => ({ ...current, [ref]: action }))}
+            onAssetChange={(ref, selection) =>
+              setAssetConflicts((current) => ({ ...current, [ref]: selection }))
+            }
             onSetAll={(action) =>
               setConflicts(
                 Object.fromEntries(
                   inspection.conflicts.map((conflict) => [
                     conflict.ref,
-                    (action === "update" || action === "keep_local") &&
-                    !conflict.updateAllowed
+                    (action === "update" || action === "keep_local") && !conflict.updateAllowed
                       ? "copy"
                       : action,
+                  ]),
+                ),
+              )
+            }
+            onSetAllAssets={(action) =>
+              setAssetConflicts(
+                Object.fromEntries(
+                  inspection.assetConflicts.map((conflict) => [
+                    conflict.resourceRef,
+                    {
+                      action,
+                      ...(action === "copy"
+                        ? {}
+                        : { targetAssetId: conflict.candidates[0]?.assetId }),
+                    },
                   ]),
                 ),
               )
@@ -939,6 +1007,7 @@ function BundleImportDialog(props: {
           <BundleReview
             inspection={inspection}
             conflicts={recovery === null ? conflicts : {}}
+            assetConflicts={recovery === null ? assetConflicts : {}}
             requirements={requirements}
           />
         ) : null}
@@ -1276,8 +1345,11 @@ export function BundleInspection(props: {
     <BundleConflictStep
       inspection={props.inspection}
       selections={props.selections}
+      assetSelections={{}}
       onChange={props.onChange}
+      onAssetChange={() => undefined}
       onSetAll={() => undefined}
+      onSetAllAssets={() => undefined}
     />
   );
 }
@@ -1285,30 +1357,124 @@ export function BundleInspection(props: {
 function BundleConflictStep(props: {
   readonly inspection: PragmaBundleImportInspection;
   readonly selections: Readonly<Record<string, "copy" | "update" | "keep_local">>;
+  readonly assetSelections: Readonly<Record<string, AssetConflictSelection>>;
   readonly onChange: (ref: string, action: "copy" | "update" | "keep_local") => void;
+  readonly onAssetChange: (ref: string, selection: AssetConflictSelection) => void;
   readonly onSetAll: (action: "copy" | "update" | "keep_local") => void;
+  readonly onSetAllAssets: (action: "copy" | "update" | "keep_local") => void;
 }) {
   const { t } = useTranslation("studio");
   return (
     <section className="pragma-bundle-conflict-step">
       <header>
         <div>
-          <h3>{t("bundleConflicts", { count: props.inspection.conflicts.length })}</h3>
+          <h3>
+            {t("bundleConflicts", {
+              count: props.inspection.conflicts.length + props.inspection.assetConflicts.length,
+            })}
+          </h3>
           <p>{t("bundleConflictPerResourceHint")}</p>
         </div>
         <div className="pragma-bundle-batch-actions">
-          <button type="button" onClick={() => props.onSetAll("copy")}>
+          <button
+            type="button"
+            onClick={() => {
+              props.onSetAll("copy");
+              props.onSetAllAssets("copy");
+            }}
+          >
             {t("bundleAllCopies")}
           </button>
-          <button type="button" onClick={() => props.onSetAll("update")}>
+          <button
+            type="button"
+            onClick={() => {
+              props.onSetAll("update");
+              props.onSetAllAssets("update");
+            }}
+          >
             {t("bundleAllUpdates")}
           </button>
-          <button type="button" onClick={() => props.onSetAll("keep_local")}>
+          <button
+            type="button"
+            onClick={() => {
+              props.onSetAll("keep_local");
+              props.onSetAllAssets("keep_local");
+            }}
+          >
             {t("bundleAllKeepLocal")}
           </button>
         </div>
       </header>
       <div className="pragma-bundle-conflict-cards">
+        {props.inspection.assetConflicts.map((conflict) => {
+          const selection = props.assetSelections[conflict.resourceRef] ?? {
+            action: "copy" as const,
+            targetAssetId: conflict.candidates[0]?.assetId,
+          };
+          return (
+            <article key={`asset:${conflict.assetKind}:${conflict.resourceRef}`}>
+              <header>
+                <div>
+                  <strong>{conflict.importedName}</strong>
+                  <small>
+                    {conflict.assetKind === "skill"
+                      ? t("bundleAssetSkill")
+                      : t("bundleAssetKnowledgeBase")}{" "}
+                    · {conflict.resourceRef}
+                  </small>
+                </div>
+              </header>
+              <label>
+                <span>{t("bundleSelectLocalAsset")}</span>
+                <SelectMenu
+                  ariaLabel={t("bundleSelectLocalAsset")}
+                  className="form-select"
+                  value={selection.targetAssetId ?? ""}
+                  disabled={selection.action === "copy"}
+                  options={conflict.candidates.map((candidate) => ({
+                    value: candidate.assetId,
+                    label: `${candidate.name} · r${candidate.revision} · ${candidate.assetId.slice(-8)}`,
+                  }))}
+                  onChange={(targetAssetId) =>
+                    props.onAssetChange(conflict.resourceRef, {
+                      ...selection,
+                      targetAssetId,
+                    })
+                  }
+                />
+              </label>
+              <div className="pragma-bundle-conflict-choice" role="group">
+                {(["copy", "keep_local", "update"] as const).map((action) => (
+                  <button
+                    type="button"
+                    key={action}
+                    aria-pressed={selection.action === action}
+                    className={selection.action === action ? "is-selected" : ""}
+                    onClick={() =>
+                      props.onAssetChange(conflict.resourceRef, {
+                        action,
+                        ...(action === "copy"
+                          ? {}
+                          : {
+                              targetAssetId:
+                                selection.targetAssetId ?? conflict.candidates[0]?.assetId,
+                            }),
+                      })
+                    }
+                  >
+                    <strong>
+                      {action === "copy"
+                        ? t("bundleImportCopy")
+                        : action === "keep_local"
+                          ? t("bundleKeepLocal")
+                          : t("bundleUpdateExisting")}
+                    </strong>
+                  </button>
+                ))}
+              </div>
+            </article>
+          );
+        })}
         {props.inspection.conflicts.map((conflict) => (
           <article key={conflict.ref}>
             <header>
@@ -1347,9 +1513,7 @@ function BundleConflictStep(props: {
               >
                 <strong>{t("bundleKeepLocal")}</strong>
                 <small>
-                  {conflict.updateAllowed
-                    ? t("bundleKeepLocalHint")
-                    : t("bundleUpdateBlocked")}
+                  {conflict.updateAllowed ? t("bundleKeepLocalHint") : t("bundleUpdateBlocked")}
                 </small>
               </button>
               <button
@@ -1607,12 +1771,17 @@ function BundleBindingStep(props: {
 function BundleReview(props: {
   readonly inspection: PragmaBundleImportInspection;
   readonly conflicts: Readonly<Record<string, "copy" | "update" | "keep_local">>;
+  readonly assetConflicts: Readonly<Record<string, AssetConflictSelection>>;
   readonly requirements: readonly BindingRequirement[];
 }) {
   const { t } = useTranslation("studio");
-  const copies = Object.values(props.conflicts).filter((value) => value === "copy").length;
-  const updates = Object.values(props.conflicts).filter((value) => value === "update").length;
-  const kept = Object.values(props.conflicts).filter((value) => value === "keep_local").length;
+  const actions = [
+    ...Object.values(props.conflicts),
+    ...Object.values(props.assetConflicts).map((selection) => selection.action),
+  ];
+  const copies = actions.filter((value) => value === "copy").length;
+  const updates = actions.filter((value) => value === "update").length;
+  const kept = actions.filter((value) => value === "keep_local").length;
   const deferred = props.requirements.filter((requirement) => !requirement.required).length;
   return (
     <section className="pragma-bundle-review">

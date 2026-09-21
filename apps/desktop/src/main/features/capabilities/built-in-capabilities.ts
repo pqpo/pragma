@@ -31,7 +31,7 @@ function schemaHash(inputSchema: unknown, outputSchema: unknown): string {
 export const BUILT_IN_PRAGMA_MANAGEMENT_CAPABILITY: Capability = CapabilitySchema.parse({
   managedBy: "system",
   manifest: {
-    schemaVersion: "pragma.capability/v2",
+    schemaVersion: "pragma.capability/v3",
     id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
     runtimeKey: "pragma_management",
     name: "Pragma management tools",

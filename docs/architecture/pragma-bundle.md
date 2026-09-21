@@ -93,6 +93,14 @@ Host-owned:
 The bundle never makes the Host's storage identifier authoritative. The portable requirement is the
 contract; each Host decides how it satisfies that contract.
 
+Desktop treats imported Skill and knowledge-base payloads as ordinary local assets. Before writing,
+it compares normalized names against the complete local Capability and ContextStore collections,
+not only resources referenced by the current Project. A same-name match requires an explicit
+replace, keep-local, or copy decision. Replace preserves the selected local ID and appends a local
+revision; copy starts at local revision 1. Fingerprints provide integrity and optimistic concurrency
+checks but never silently select an asset. Bundle logical IDs and source revision numbers stay
+archive-local and do not become local identity or revision numbering.
+
 Bundle roots are limited to `Expert`, `ExpertTeam`, `Flow`, and `ContextStore`. Version 2 adds the
 fourth root kind. The decoder preserves the historical v1 schema, verifies a v1 archive against its
 original fingerprint, and then upgrades the manifest in memory. Unknown future versions fail

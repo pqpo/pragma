@@ -791,7 +791,7 @@ describe("capability test contracts", () => {
       message: "Succeeded.",
       capability: {
         manifest: {
-          schemaVersion: "pragma.capability/v2",
+          schemaVersion: "pragma.capability/v3",
           id: "00000000-0000-4000-8000-000000000000",
           runtimeKey: "test_capability",
           name: "Test capability",

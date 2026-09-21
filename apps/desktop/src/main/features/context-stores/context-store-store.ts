@@ -1666,15 +1666,6 @@ export function createContextStoreStore(options: {
           ) {
             return current;
           }
-          const next = ContextStoreSchema.parse({
-            ...current,
-            ...(name === undefined ? {} : { name }),
-            ...(description === undefined ? {} : { description }),
-            updatedAt: new Date().toISOString(),
-          });
-          await writeJsonAtomic(manifestPath(storeId), next);
-          options.onPublished?.(storeId);
-          return next;
         }
         return await commitSnapshotRevision({
           current,
