@@ -21,6 +21,7 @@ import {
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
   startMissionContextOperation,
+  teamCoordinatorChatEntries,
   touchMissionConversationCache,
   visiblePatchExecutionIds,
 } from "./mission-conversation-model.ts";
@@ -52,6 +53,86 @@ describe("mission conversation model", () => {
     ],
     page: {},
     pendingInteractions: [],
+  });
+
+  it("keeps the coordinator stream and removes entries owned by teammates", () => {
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const entries: MissionChatEntry[] = [
+      { id: "user", kind: "user", content: "Plan this", executorId: "member", createdAt },
+      {
+        id: "coordinator-thinking",
+        kind: "thinking",
+        content: "Delegating",
+        streaming: false,
+        executorId: "coordinator",
+        createdAt,
+      },
+      {
+        id: "coordinator-tool",
+        kind: "tool",
+        toolCallId: "call-1",
+        toolName: "spawn_expert",
+        status: "succeeded",
+        executorId: "coordinator",
+        createdAt,
+      },
+      {
+        id: "coordinator-delegation",
+        kind: "agent_activity",
+        commandId: "command-1",
+        action: "spawn",
+        phase: "completed",
+        targetSessionIds: ["member-session"],
+        executorId: "coordinator",
+        createdAt,
+      },
+      {
+        id: "member-answer",
+        kind: "assistant",
+        content: "Member result",
+        streaming: false,
+        executorId: "member",
+        createdAt,
+      },
+      {
+        id: "unknown-history",
+        kind: "assistant",
+        content: "Historical result",
+        streaming: false,
+        createdAt,
+      },
+    ];
+
+    expect(teamCoordinatorChatEntries(entries, "coordinator").map((entry) => entry.id)).toEqual([
+      "user",
+      "coordinator-thinking",
+      "coordinator-tool",
+      "coordinator-delegation",
+      "unknown-history",
+    ]);
+    expect(teamCoordinatorChatEntries(entries, undefined).map((entry) => entry.id)).toEqual([
+      "user",
+      "unknown-history",
+    ]);
+  });
+
+  it("fails closed for attributed expert entries until the coordinator is known", () => {
+    const createdAt = "2026-07-11T00:00:00.000Z";
+    const entries: MissionChatEntry[] = [
+      { id: "user", kind: "user", content: "Plan this", createdAt },
+      {
+        id: "member-answer",
+        kind: "assistant",
+        content: "Member result",
+        streaming: false,
+        executorId: "member",
+        createdAt,
+      },
+    ];
+
+    expect(teamCoordinatorChatEntries(entries, undefined).map((entry) => entry.id)).toEqual([
+      "user",
+    ]);
   });
 
   it("applies one frame of contiguous deltas without replaying intermediate snapshots", () => {

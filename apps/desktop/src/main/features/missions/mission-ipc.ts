@@ -57,6 +57,7 @@ import { MissionStoreError, type MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {
+  expertTeamCoordinatorMentionCandidate,
   expertTeamMentionCandidates,
   type MissionExecutorCatalog,
 } from "./mission-executor-catalog.ts";
@@ -276,6 +277,9 @@ export function installMissionHandlers(options: {
     }
     return MissionMentionCandidatesSchema.parse({
       teamRef: mission.executor.ref,
+      coordinator: expertTeamCoordinatorMentionCandidate(team, project.resources, (ref) =>
+        options.systemExperts.getResource(ref),
+      ),
       members: expertTeamMentionCandidates(team, project.resources, (ref) =>
         options.systemExperts.getResource(ref),
       ),

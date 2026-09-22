@@ -33,6 +33,7 @@ import {
   MissionMemoryActivity,
   MissionRailRow,
   MissionThinkingEntry,
+  MissionTeamParticipantList,
   MissionToolCallBlock,
   MissionWorkGrid,
   MissionWorkDrawer,
@@ -56,6 +57,7 @@ import {
   upsertMissionSummary,
   withMissionUiWatchdog,
   teamMissionsForMentionCandidates,
+  teamParticipantWorkRecords,
   type MissionHumanQuestion,
 } from "./MissionsPage.tsx";
 import { LocalMissionUserMessageView } from "./mission-chat-presentation.tsx";
@@ -1801,6 +1803,81 @@ describe("Mission work record titles", () => {
 });
 
 describe("Mission work grid", () => {
+  it("projects participating member sessions with running work first", () => {
+    const base = {
+      kind: "agent" as const,
+      sessionId: "session",
+      parentRecordId: "root:coordinator",
+      title: "Researcher",
+      executorId: "member-id",
+      avatarId: "pragma.avatar.expert.08",
+      origin: "core" as const,
+      tasks: [],
+      summary: "Inspect the repository",
+      updatedAt: "2026-07-21T00:00:03.000Z",
+    };
+    const records: MissionWorkRecord[] = [
+      {
+        ...base,
+        recordId: "root:coordinator",
+        kind: "root",
+        parentRecordId: undefined,
+        executorId: "coordinator-id",
+        status: "running",
+        createdAt: "2026-07-21T00:00:00.000Z",
+      },
+      {
+        ...base,
+        recordId: "member:completed",
+        status: "succeeded",
+        createdAt: "2026-07-21T00:00:01.000Z",
+      },
+      {
+        ...base,
+        recordId: "member:running",
+        status: "running",
+        createdAt: "2026-07-21T00:00:02.000Z",
+      },
+      {
+        ...base,
+        recordId: "runtime:internal",
+        executorId: "internal-id",
+        status: "running",
+        createdAt: "2026-07-21T00:00:03.000Z",
+      },
+    ];
+    const participants = teamParticipantWorkRecords(records, [
+      {
+        ref: "expert:coordinator-id",
+        name: "Coordinator",
+        description: "Coordinates",
+        avatarId: "pragma.avatar.expert.01",
+      },
+      {
+        ref: "expert:member-id",
+        name: "Researcher",
+        description: "Researches",
+        avatarId: "pragma.avatar.expert.08",
+      },
+    ]);
+
+    expect(participants.map((record) => record.recordId)).toEqual([
+      "member:running",
+      "member:completed",
+    ]);
+    const html = renderToStaticMarkup(
+      <MissionTeamParticipantList
+        records={participants}
+        allRecords={records}
+        onSelect={() => undefined}
+      />,
+    );
+    expect(html).toContain("mission-team-participant-list");
+    expect(html).toContain("pragma-avatar-xs");
+    expect(html).toContain("mission-team-participant is-running");
+    expect(html.match(/role="listitem"/g)).toHaveLength(2);
+  });
+
   it("paginates long work maps and retains ancestors on later pages", () => {
     const createdAt = "2026-07-21T00:00:00.000Z";
     const root: MissionWorkRecord = {

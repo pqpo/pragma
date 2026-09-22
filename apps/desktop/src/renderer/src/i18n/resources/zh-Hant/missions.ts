@@ -359,6 +359,7 @@ export const missions = {
   resumeBeforeInterrupt: "請先繼續此執行再中斷",
   noExecutionRecords: "暫無執行記錄",
   runToCreateExecution: "執行此任務以建立執行記錄。",
+  participatingExperts: "參與專家",
   executionWork: "任務執行工作",
   executionMapDescription: "查看每位專家如何參與並推進目前任務。",
   workCallOrder: "第 {{number}} 個呼叫",

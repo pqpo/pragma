@@ -4485,6 +4485,84 @@ export function createMissionRunner(options: {
     return [...new Set(executionIds)].toSorted();
   };
 
+  const projectMissionWorkRecords = async (
+    mission: Mission,
+    historyRecords: readonly ExecutionWorkRecord[],
+  ): Promise<MissionWorkRecord[]> => {
+    const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
+    const runtimeAgentOrdinals = createRuntimeAgentOrdinals(historyRecords);
+    const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(historyRecords, avatarIds.values());
+    return historyRecords.map((record): MissionWorkRecord => {
+      const tasks = record.tasks.map((task) => {
+        const outputSummary = missionWorkOutputSummary(task.output, 1_000);
+        return {
+          taskId: task.taskId,
+          executionId: task.executionId,
+          invocationId: task.invocationId,
+          runId: task.runId,
+          ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
+          status: task.status,
+          ...(task.waitReason === undefined ? {} : { waitReason: task.waitReason }),
+          inputSummary: formatValue(task.input, 500),
+          ...(outputSummary === undefined ? {} : { outputSummary }),
+          ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        };
+      });
+      const latest = tasks.at(-1);
+      const resolvedName =
+        record.displayName ??
+        (record.executorId === undefined ? undefined : names.get(record.executorId)) ??
+        (record.kind === "root" ? mission.executor.name : undefined);
+      const fallbackOrdinal =
+        record.kind === "runtime-agent" && resolvedName === undefined
+          ? runtimeAgentOrdinals.get(record.recordId)
+          : undefined;
+      const title =
+        resolvedName ??
+        (fallbackOrdinal === undefined ? undefined : `Subagent ${fallbackOrdinal}`) ??
+        record.executorId ??
+        record.kind;
+      const avatarId =
+        (record.executorId === undefined ? undefined : avatarIds.get(record.executorId)) ??
+        runtimeAgentAvatarIds.get(record.recordId);
+      return {
+        recordId: record.recordId,
+        kind: record.kind,
+        sessionId: record.sessionId,
+        ...(record.parentRecordId === undefined ? {} : { parentRecordId: record.parentRecordId }),
+        title,
+        ...(fallbackOrdinal === undefined ? {} : { fallbackOrdinal }),
+        ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
+        ...(avatarId === undefined ? {} : { avatarId }),
+        origin: record.origin,
+        status: record.status,
+        ...(record.waitReason === undefined ? {} : { waitReason: record.waitReason }),
+        tasks,
+        summary: latest?.outputSummary ?? latest?.inputSummary ?? title,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      };
+    });
+  };
+
+  const loadWorkSnapshot = async (mission: Mission) => {
+    const revision = workService.revision(mission.id);
+    const executionIds = await readMissionExecutionIds(mission);
+    const historyRecords = await workHistory.listRecords({
+      executionIds,
+      ...(mission.execution?.sessionId === undefined
+        ? {}
+        : { rootSessionId: mission.execution.sessionId }),
+    });
+    const records = await projectMissionWorkRecords(mission, historyRecords);
+    return {
+      executionCount: executionIds.length,
+      snapshot: { missionId: mission.id, revision, records },
+    };
+  };
+
   const loadWorkProjection = async (mission: Mission) => {
     const revision = workService.revision(mission.id);
     const executionIds = await readMissionExecutionIds(mission);
@@ -4512,65 +4590,7 @@ export function createMissionRunner(options: {
           ? {}
           : { rootSessionId: mission.execution.sessionId }),
       });
-      const { avatarIds, names } = await getExecutorMetadataOrFallback(mission, "work");
-      const runtimeAgentOrdinals = createRuntimeAgentOrdinals(projection.records);
-      const runtimeAgentAvatarIds = createRuntimeAgentAvatarIds(
-        projection.records,
-        avatarIds.values(),
-      );
-      const records = projection.records.map((record): MissionWorkRecord => {
-        const tasks = record.tasks.map((task) => {
-          const outputSummary = missionWorkOutputSummary(task.output, 1_000);
-          return {
-            taskId: task.taskId,
-            executionId: task.executionId,
-            invocationId: task.invocationId,
-            runId: task.runId,
-            ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
-            status: task.status,
-            ...(task.waitReason === undefined ? {} : { waitReason: task.waitReason }),
-            inputSummary: formatValue(task.input, 500),
-            ...(outputSummary === undefined ? {} : { outputSummary }),
-            ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
-            createdAt: task.createdAt,
-            updatedAt: task.updatedAt,
-          };
-        });
-        const latest = tasks.at(-1);
-        const resolvedName =
-          record.displayName ??
-          (record.executorId === undefined ? undefined : names.get(record.executorId)) ??
-          (record.kind === "root" ? mission.executor.name : undefined);
-        const fallbackOrdinal =
-          record.kind === "runtime-agent" && resolvedName === undefined
-            ? runtimeAgentOrdinals.get(record.recordId)
-            : undefined;
-        const title =
-          resolvedName ??
-          (fallbackOrdinal === undefined ? undefined : `Subagent ${fallbackOrdinal}`) ??
-          record.executorId ??
-          record.kind;
-        const avatarId =
-          (record.executorId === undefined ? undefined : avatarIds.get(record.executorId)) ??
-          runtimeAgentAvatarIds.get(record.recordId);
-        return {
-          recordId: record.recordId,
-          kind: record.kind,
-          sessionId: record.sessionId,
-          ...(record.parentRecordId === undefined ? {} : { parentRecordId: record.parentRecordId }),
-          title,
-          ...(fallbackOrdinal === undefined ? {} : { fallbackOrdinal }),
-          ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
-          ...(avatarId === undefined ? {} : { avatarId }),
-          origin: record.origin,
-          status: record.status,
-          ...(record.waitReason === undefined ? {} : { waitReason: record.waitReason }),
-          tasks,
-          summary: latest?.outputSummary ?? latest?.inputSummary ?? title,
-          createdAt: record.createdAt,
-          updatedAt: record.updatedAt,
-        };
-      });
+      const records = await projectMissionWorkRecords(mission, projection.records);
       const entriesByRecordId = new Map<string, readonly MissionChatEntry[]>();
       for (const record of projection.records) {
         const supersededTaskIds =
@@ -4629,7 +4649,7 @@ export function createMissionRunner(options: {
     let mission = await options.missions.get(id);
     await awaitTerminalLifecycleSettlement(mission);
     mission = await options.missions.get(id);
-    const { projection, cacheHit } = await loadWorkProjection(mission);
+    const projection = await loadWorkSnapshot(mission);
     const t1 = performance.now();
     logger.info(
       "mission.get_work_snapshot",
@@ -4638,7 +4658,7 @@ export function createMissionRunner(options: {
         missionId: id,
         executionCount: projection.executionCount,
         recordCount: projection.snapshot.records.length,
-        cacheHit,
+        projection: "records",
         elapsedMs: t1 - t0,
       },
     );
@@ -6001,10 +6021,18 @@ async function readMissionChatHistory(
     let activityEntries;
     try {
       histories = await view.getMessageHistory({ scope: { kind: "all" } });
+      const executorIdsByInvocation = new Map(
+        histories.flatMap((history) =>
+          history.executorId === undefined
+            ? []
+            : ([[history.invocationId, history.executorId]] as const),
+        ),
+      );
       activityEntries = await readHistoricalRuntimeActivityEntries(
         view,
         turn.sequence,
         state.rootInvocationId,
+        (invocationId) => executorIdsByInvocation.get(invocationId),
       );
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
@@ -6068,6 +6096,7 @@ async function readHistoricalRuntimeActivityEntries(
   view: Pick<ExecutionView, "executionId" | "listEvents">,
   timelineSequence: number,
   rootInvocationId: string,
+  resolveExecutorId: (invocationId: string) => string | undefined,
 ): Promise<MissionChatEntry[]> {
   const events: Array<{
     readonly event: ExpertAgentStreamEvent;
@@ -6099,6 +6128,7 @@ async function readHistoricalRuntimeActivityEntries(
   const byId = new Map<string, MissionChatEntry>();
   for (const record of events) {
     const { event } = record;
+    const executorId = resolveExecutorId(record.invocationId);
     if (event.type === "progress") {
       if (record.invocationId !== rootInvocationId || !isRootMissionRuntimeSource(event.source)) {
         continue;
@@ -6113,6 +6143,7 @@ async function readHistoricalRuntimeActivityEntries(
         eventSequence: existing?.eventSequence ?? record.sequence,
         executionId: view.executionId,
         invocationId: record.invocationId,
+        ...(executorId === undefined ? {} : { executorId }),
         kind: "context_operation",
         operationId: data.operationId,
         operation: "compaction",
@@ -6148,6 +6179,8 @@ async function readHistoricalRuntimeActivityEntries(
       eventSequence:
         byId.get(`agent:${view.executionId}:${commandId}`)?.eventSequence ?? record.sequence,
       executionId: view.executionId,
+      invocationId: record.invocationId,
+      ...(executorId === undefined ? {} : { executorId }),
       kind: "agent_activity",
       commandId,
       action,

@@ -52,6 +52,7 @@ import {
 } from "@pragma/shared";
 
 import { ConfirmationDialog } from "../../components/Dialog.tsx";
+import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { ProfiledExpertAvatar } from "../../components/ProfiledExpertAvatar.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import {
@@ -91,6 +92,7 @@ import {
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
+  teamCoordinatorChatEntries,
   touchMissionConversationCache,
   type MissionConversationBlock,
 } from "./mission-conversation-model.ts";
@@ -2214,6 +2216,8 @@ export function MissionDetailFragment(props: {
   const [tab, setTab] = useState<"chat" | "work" | "board" | "memory">("chat");
   const memoryEnabled = props.memoryEnabled ?? true;
   const activeTab = !memoryEnabled && tab === "memory" ? "chat" : tab;
+  const isTeam = props.mission.executor.kind === "team";
+  const isFlow = props.mission.executor.kind === "flow";
   const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [memoryActivity, setMemoryActivity] = useState<DesktopMissionMemoryActivity>();
@@ -2230,7 +2234,18 @@ export function MissionDetailFragment(props: {
     ReadonlyMap<string, MissionQueuedMessageAction>
   >(() => new Map());
   const [optionsError, setOptionsError] = useState<string | null>(null);
-  const [mentionCandidates, setMentionCandidates] = useState<readonly ExpertMentionCandidate[]>([]);
+  const teamIdentityKey = `${props.mission.id}:${props.mission.project.revision}`;
+  const [loadedTeamIdentity, setLoadedTeamIdentity] = useState<{
+    readonly key: string;
+    readonly coordinator?: ExpertMentionCandidate | undefined;
+    readonly members: readonly ExpertMentionCandidate[];
+  }>();
+  const mentionCandidates =
+    isTeam && loadedTeamIdentity?.key === teamIdentityKey ? loadedTeamIdentity.members : [];
+  const teamCoordinator =
+    isTeam && loadedTeamIdentity?.key === teamIdentityKey
+      ? loadedTeamIdentity.coordinator
+      : undefined;
   const {
     records: workRecords,
     loading: workLoading,
@@ -2244,7 +2259,7 @@ export function MissionDetailFragment(props: {
   } = useMissionWork({
     missionId: props.mission.id,
     executionId: props.mission.execution?.id,
-    active: activeTab === "work",
+    active: activeTab === "work" || (isTeam && activeTab === "chat"),
     api: desktopApi(),
     formatError: missionError,
   });
@@ -2303,8 +2318,6 @@ export function MissionDetailFragment(props: {
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  const isTeam = props.mission.executor.kind === "team";
-  const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const chatFooterRef = useRef<HTMLDivElement | null>(null);
   const followLatestFrameRef = useRef<number | undefined>(undefined);
@@ -2322,6 +2335,8 @@ export function MissionDetailFragment(props: {
   const followLatestRef = useRef(true);
   const chatScrollTopRef = useRef(0);
   const chatScrollMissionIdRef = useRef(props.mission.id);
+  const selectedWorkTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const previousSelectedWorkRecordRef = useRef<MissionWorkRecord | undefined>(undefined);
   const bindComposerRef = useCallback((composer: MissionComposerHandle | null): void => {
     composerRef.current = composer;
     if (composer !== null) lastUnmountedComposerSnapshotRef.current = undefined;
@@ -2353,24 +2368,48 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     if (props.mission.executor.kind !== "team") {
-      setMentionCandidates([]);
+      setLoadedTeamIdentity(undefined);
       return;
     }
     const api = desktopApi();
-    if (api === undefined) return;
+    if (api === undefined) {
+      setLoadedTeamIdentity({ key: teamIdentityKey, members: [] });
+      return;
+    }
     let cancelled = false;
     void api
       .getMissionMentionCandidates(props.mission.id)
       .then((result) => {
-        if (!cancelled) setMentionCandidates(result.members);
+        if (!cancelled) {
+          setLoadedTeamIdentity({
+            key: teamIdentityKey,
+            coordinator: result.coordinator,
+            members: result.members,
+          });
+        }
       })
       .catch(() => {
-        if (!cancelled) setMentionCandidates([]);
+        if (!cancelled) {
+          setLoadedTeamIdentity({ key: teamIdentityKey, members: [] });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [props.mission.executor.kind, props.mission.id, props.mission.project.revision]);
+  }, [props.mission.executor.kind, props.mission.id, teamIdentityKey]);
+
+  useEffect(() => {
+    if (
+      previousSelectedWorkRecordRef.current !== undefined &&
+      selectedWorkRecord === undefined &&
+      selectedWorkTriggerRef.current !== null
+    ) {
+      const trigger = selectedWorkTriggerRef.current;
+      selectedWorkTriggerRef.current = null;
+      requestAnimationFrame(() => trigger.focus());
+    }
+    previousSelectedWorkRecordRef.current = selectedWorkRecord;
+  }, [selectedWorkRecord]);
 
   useEffect(() => {
     if (!contextStorePickerOpen) return;
@@ -2923,13 +2962,30 @@ export function MissionDetailFragment(props: {
     () => new Set(queuedMessages.map((message) => message.requestId)),
     [queuedMessages],
   );
-  const displayEntries = useMemo(
+  const unfilteredDisplayEntries = useMemo(
     () =>
       hideInterruptedExecutionFallbackEntries(
         hideQueuedChatEntries(chat?.entries ?? [], visibleQueuedRequestIds),
       ),
     [chat?.entries, visibleQueuedRequestIds],
   );
+  const coordinatorId =
+    (teamCoordinator === undefined ? undefined : expertIdFromRef(teamCoordinator.ref)) ??
+    workRecords.find((record) => record.kind === "root")?.executorId;
+  const displayEntries = useMemo(
+    () =>
+      isTeam
+        ? teamCoordinatorChatEntries(unfilteredDisplayEntries, coordinatorId)
+        : unfilteredDisplayEntries,
+    [coordinatorId, isTeam, unfilteredDisplayEntries],
+  );
+  const participantWorkRecords = useMemo(
+    () => (isTeam ? teamParticipantWorkRecords(workRecords, mentionCandidates) : []),
+    [isTeam, mentionCandidates, workRecords],
+  );
+  const participantWorkFingerprint = participantWorkRecords
+    .map((record) => `${record.recordId}:${record.status}:${record.updatedAt}`)
+    .join("|");
   const durableEntryIds = useMemo(
     () => new Set(displayEntries.map((entry) => entry.id)),
     [displayEntries],
@@ -3096,6 +3152,7 @@ export function MissionDetailFragment(props: {
     displayEntries.length,
     lastEntryFingerprint,
     lastContextOperationFingerprint,
+    participantWorkFingerprint,
     interactions.length,
     scheduleFollowLatest,
   ]);
@@ -3434,6 +3491,16 @@ export function MissionDetailFragment(props: {
                               executorName={props.mission.executor.name}
                             />
                           ) : null}
+                          {participantWorkRecords.length === 0 ? null : (
+                            <MissionTeamParticipantList
+                              records={participantWorkRecords}
+                              allRecords={workRecords}
+                              onSelect={(recordId, trigger) => {
+                                selectedWorkTriggerRef.current = trigger;
+                                selectWorkRecord(recordId);
+                              }}
+                            />
+                          )}
                           <span aria-hidden="true" className="mission-chat-bottom-anchor" />
                         </div>
                       ) : block?.type === "tools" ? (
@@ -3891,7 +3958,10 @@ export function MissionDetailFragment(props: {
           <MissionWorkGrid
             records={workRecords}
             mentionCandidates={mentionCandidates}
-            onSelect={selectWorkRecord}
+            onSelect={(recordId) => {
+              selectedWorkTriggerRef.current = null;
+              selectWorkRecord(recordId);
+            }}
           />
         )}
       </div>
@@ -4010,6 +4080,69 @@ export function missionWorkCallOrder(
       return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
     });
   return new Map(calledRecords.map((record, index) => [record.recordId, index + 1] as const));
+}
+
+function expertIdFromRef(ref: string): string {
+  return ref.startsWith("expert:") ? ref.slice("expert:".length) : ref;
+}
+
+export function teamParticipantWorkRecords(
+  records: readonly MissionWorkRecord[],
+  members: readonly ExpertMentionCandidate[],
+): MissionWorkRecord[] {
+  const memberIds = new Set(members.map((member) => expertIdFromRef(member.ref)));
+  return records
+    .filter(
+      (record) =>
+        record.kind !== "root" &&
+        record.executorId !== undefined &&
+        memberIds.has(record.executorId),
+    )
+    .toSorted((left, right) => {
+      const activity = Number(right.status === "running") - Number(left.status === "running");
+      if (activity !== 0) return activity;
+      const created = left.createdAt.localeCompare(right.createdAt);
+      return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
+    });
+}
+
+export function MissionTeamParticipantList(props: {
+  readonly records: readonly MissionWorkRecord[];
+  readonly allRecords: readonly MissionWorkRecord[];
+  readonly onSelect: (recordId: string, trigger: HTMLButtonElement) => void;
+}) {
+  const { t } = useTranslation("missions");
+  const callOrder = useMemo(() => missionWorkCallOrder(props.allRecords), [props.allRecords]);
+  return (
+    <section className="mission-team-participant-list" aria-label={t("participatingExperts")}>
+      <div role="list">
+        {props.records.map((record) => {
+          const title = missionWorkRecordTitle(record);
+          const status = workStatusLabel(record.status, record.waitReason);
+          const order = callOrder.get(record.recordId);
+          const callOrderLabel =
+            order === undefined ? undefined : t("workCallOrder", { number: order });
+          const accessibleLabel = [title, status, callOrderLabel, record.summary]
+            .filter(Boolean)
+            .join(", ");
+          return (
+            <span key={record.recordId} role="listitem">
+              <button
+                className={`mission-team-participant is-${record.status}`}
+                type="button"
+                aria-label={accessibleLabel}
+                title={accessibleLabel}
+                onClick={(event) => props.onSelect(record.recordId, event.currentTarget)}
+              >
+                <ExpertAvatar avatarId={record.avatarId} size="xs" />
+                <span className={`mission-work-status is-${record.status}`} aria-hidden="true" />
+              </button>
+            </span>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 export function missionWorkGridEdgePath(input: {

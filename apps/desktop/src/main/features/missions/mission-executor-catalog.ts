@@ -340,18 +340,37 @@ export function expertTeamMentionCandidates(
   resources: readonly PragmaResource[],
   resolveExternalExpert?: ((ref: string) => PragmaExpertResource | undefined) | undefined,
 ): readonly ExpertMentionCandidate[] {
-  return team.spec.members.map((member) => {
-    const expert = resolveExpertResource(member.ref, resources, resolveExternalExpert);
-    if (expert === undefined) {
-      throw new Error(`ExpertTeam member not found: ${member.ref}.`);
-    }
-    return {
-      ref: member.ref,
-      name: expert.metadata.name,
-      description: expert.metadata.description,
-      avatarId: expert.metadata.avatarId,
-    };
-  });
+  return team.spec.members
+    .filter((member) => member.ref !== team.spec.coordinator.ref)
+    .map((member) => {
+      const expert = resolveExpertResource(member.ref, resources, resolveExternalExpert);
+      if (expert === undefined) {
+        throw new Error(`ExpertTeam member not found: ${member.ref}.`);
+      }
+      return {
+        ref: member.ref,
+        name: expert.metadata.name,
+        description: expert.metadata.description,
+        avatarId: expert.metadata.avatarId,
+      };
+    });
+}
+
+export function expertTeamCoordinatorMentionCandidate(
+  team: PragmaExpertTeamResource,
+  resources: readonly PragmaResource[],
+  resolveExternalExpert?: ((ref: string) => PragmaExpertResource | undefined) | undefined,
+): ExpertMentionCandidate {
+  const expert = resolveExpertResource(team.spec.coordinator.ref, resources, resolveExternalExpert);
+  if (expert === undefined) {
+    throw new Error(`ExpertTeam coordinator not found: ${team.spec.coordinator.ref}.`);
+  }
+  return {
+    ref: team.spec.coordinator.ref,
+    name: expert.metadata.name,
+    description: expert.metadata.description,
+    avatarId: expert.metadata.avatarId,
+  };
 }
 
 function resolveExpertResource(
