@@ -12,6 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { type PragmaFlowRunDrySuiteResult } from "@pragma/evaluation/ast";
 import {
@@ -25,11 +26,13 @@ import {
   PRAGMA_DSL_WRITE_API_VERSION,
   PragmaFlowRunDryEvaluationResourceSchema,
   PragmaForwardCompatibleResourceSchema,
+  inspectPragmaUnknownFields,
   analyzePragmaFlowGraph,
   validatePragmaFlowDataContracts,
   PragmaFlowResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
+  type PragmaDiagnostic,
   type PragmaFlowResource,
   type PragmaFlowRunDryEvaluationResource,
   type PragmaResource,
@@ -37,6 +40,7 @@ import {
 import {
   PragmaAgentChangeSetSchema,
   PragmaAgentDslDraftInspectionSchema,
+  PragmaAgentDslDraftReviewSchema,
   PragmaAgentDslDraftSchema,
   PragmaAgentDslDraftSummarySchema,
   PragmaAgentEvaluationDraftRunResultSchema,
@@ -48,6 +52,7 @@ import {
   PragmaAgentProjectCommitSchema,
   type PragmaAgentDslProjectPort,
   type PragmaAgentDslDraft,
+  type PragmaAgentDslDraftReview,
   type PragmaAgentDslDraftTargetInput,
   type PragmaAgentEvaluationDraft,
   type PragmaAgentEvaluationDraftDiagnostic,
@@ -208,13 +213,67 @@ export function createDesktopPragmaAgentProjectPort(options: {
   const dslDraftMutationLockPath = (id: string) =>
     join(dslDraftsRoot, ".locks", `${encodePragmaPathSegment(id)}.lock`);
 
+  const planResources = async (input: {
+    readonly expectedProjectRevision: number;
+    readonly authoredResources: readonly PragmaResource[];
+  }): Promise<{
+    readonly snapshot: Awaited<ReturnType<PragmaProjectStore["get"]>>;
+    readonly resources: readonly PragmaResource[];
+    readonly dependencies: readonly PragmaResource[];
+    readonly diagnostics: readonly PragmaDiagnostic[];
+  }> => {
+    const snapshot = await options.project.get();
+    const authoredResources = [...input.authoredResources];
+    const catalog = await buildExpertCatalog(options);
+    const knownRefs = new Set([
+      ...snapshot.resources.map(canonicalPragmaResourceRef),
+      ...authoredResources.map(canonicalPragmaResourceRef),
+    ]);
+    const dependencies = authoredResources
+      .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
+      .flatMap(expertDependencyRefs)
+      .flatMap((ref) => {
+        if (knownRefs.has(ref)) return [];
+        const dependency = catalog.resources.get(ref);
+        if (dependency === undefined) return [];
+        knownRefs.add(ref);
+        return [dependency];
+      });
+    const requestedResources = [...authoredResources, ...dependencies];
+    const refs = requestedResources.map(canonicalPragmaResourceRef);
+    if (new Set(refs).size !== refs.length) {
+      throw new DslPreparationError("resource.duplicate", "A change-set cannot repeat a ref.");
+    }
+    assertExpertSelectionsAvailable(
+      authoredResources,
+      snapshot.resources,
+      requestedResources,
+      catalog,
+    );
+    const preview = await options.project.previewChanges({
+      baseRevision: input.expectedProjectRevision,
+      upserts: requestedResources,
+    });
+    return {
+      snapshot,
+      resources: preview.upserts,
+      dependencies,
+      diagnostics: preview.diagnostics,
+    };
+  };
+
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
     readonly authoredResources: readonly PragmaResource[];
     readonly dslDraftId?: string | undefined;
     readonly dslDraftMissionId?: string | undefined;
+    readonly draftReview?:
+      | {
+          readonly draft: StoredDslDraft;
+          readonly rawResources: readonly unknown[];
+        }
+      | undefined;
   }): Promise<PragmaAgentPrepareResult> => {
-    const snapshot = await options.project.get();
     const authoredResources = [...input.authoredResources];
     const actionDiagnostics = authoredResources.flatMap((resource) =>
       resource.kind !== "Flow"
@@ -239,35 +298,26 @@ export function createDesktopPragmaAgentProjectPort(options: {
       });
     }
     try {
-      const catalog = await buildExpertCatalog(options);
-      const knownRefs = new Set([
-        ...snapshot.resources.map(canonicalPragmaResourceRef),
-        ...authoredResources.map(canonicalPragmaResourceRef),
-      ]);
-      const dependencies = authoredResources
-        .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
-        .flatMap(expertDependencyRefs)
-        .flatMap((ref) => {
-          if (knownRefs.has(ref)) return [];
-          const dependency = catalog.resources.get(ref);
-          if (dependency === undefined) return [];
-          knownRefs.add(ref);
-          return [dependency];
-        });
-      const resources = [...authoredResources, ...dependencies];
-      const refs = resources.map(canonicalPragmaResourceRef);
-      if (new Set(refs).size !== refs.length) {
-        return invalidPrepare("resource.duplicate", "A change-set cannot repeat a ref.");
-      }
-      assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
-      const diagnostics = await options.project.validateChanges({
-        baseRevision: input.expectedProjectRevision,
-        upserts: resources,
-      });
+      const plan = await planResources(input);
+      const { dependencies, diagnostics, resources, snapshot } = plan;
       if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
         return PragmaAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
       }
       const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
+      const review =
+        input.draftReview === undefined
+          ? undefined
+          : createDslDraftReview({
+              draft: input.draftReview.draft,
+              baseResources: (
+                await options.project.getRevision(input.draftReview.draft.baseProjectRevision)
+              ).resources,
+              rawResources: input.draftReview.rawResources,
+              authoredResources,
+              effectiveResources: resources.slice(0, authoredResources.length),
+              diagnostics,
+              dependencies,
+            });
       const changeSet = PragmaAgentChangeSetSchema.parse({
         changeSetId: randomUUID(),
         projectRevision: input.expectedProjectRevision,
@@ -277,6 +327,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
           kind: existing.has(canonicalPragmaResourceRef(resource)) ? "updated" : "created",
           source: formatPragmaYaml(resource),
         })),
+        ...(review === undefined ? {} : { review }),
         createdAt: new Date().toISOString(),
       });
       await writeJson(candidatePath(changeSet.changeSetId), {
@@ -672,6 +723,74 @@ export function createDesktopPragmaAgentProjectPort(options: {
     });
   };
 
+  const reviewDslDraftSnapshot = async (
+    draft: StoredDslDraft,
+    snapshot: DslDraftFileSnapshot,
+    conflictingRefs: readonly string[],
+  ): Promise<PragmaAgentDslDraftReview> => {
+    const sources = draft.resources.map(
+      (target) => snapshot.files.get(target.relativePath)!.source,
+    );
+    const rawResources = sources.map((source) => {
+      try {
+        return parsePragmaYaml(source);
+      } catch {
+        return undefined;
+      }
+    });
+    const parsed = parsePragmaAgentSources(sources);
+    const diagnostics: PragmaDiagnostic[] = [...parsed.diagnostics];
+    if (conflictingRefs.length > 0) {
+      diagnostics.push({
+        severity: "error",
+        code: "project.resource_conflict",
+        message: `Draft targets changed after the draft started: ${conflictingRefs.join(", ")}.`,
+        path: [],
+      });
+    }
+    if (parsed.diagnostics.length === 0) {
+      for (const [index, resource] of parsed.resources.entries()) {
+        const target = draft.resources[index]!;
+        if (canonicalPragmaResourceRef(resource) !== target.ref || resource.kind !== target.kind) {
+          diagnostics.push({
+            severity: "error",
+            code: "resource.identity_changed",
+            message: `Draft file identity must remain ${target.kind} ${target.ref}: ${target.relativePath}.`,
+            resourceRef: target.ref,
+            source: `source:${index}`,
+            path: [],
+          });
+        }
+      }
+    }
+
+    let effectiveResources: readonly PragmaResource[] = [];
+    let dependencies: readonly PragmaResource[] = [];
+    if (diagnostics.every((diagnostic) => diagnostic.severity !== "error")) {
+      try {
+        const plan = await planResources({
+          expectedProjectRevision: draft.baseProjectRevision,
+          authoredResources: parsed.resources,
+        });
+        effectiveResources = plan.resources.slice(0, parsed.resources.length);
+        dependencies = plan.dependencies;
+        diagnostics.push(...plan.diagnostics);
+      } catch (error) {
+        diagnostics.push(...diagnosticsFromError(error));
+      }
+    }
+
+    return createDslDraftReview({
+      draft,
+      baseResources: (await options.project.getRevision(draft.baseProjectRevision)).resources,
+      rawResources,
+      authoredResources: parsed.diagnostics.length === 0 ? parsed.resources : [],
+      effectiveResources,
+      diagnostics,
+      dependencies,
+    });
+  };
+
   const inspectDslDraft = async (draft: StoredDslDraft) => {
     const snapshot =
       draft.submissionHash === undefined
@@ -683,6 +802,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
       workingTreeHash: snapshot.hash,
       stale: conflictingRefs.length > 0,
       conflictingRefs,
+      review: await reviewDslDraftSnapshot(draft, snapshot, conflictingRefs),
       changes: draft.resources.map((target) => {
         const file = snapshot.files.get(target.relativePath)!;
         return {
@@ -1208,6 +1328,10 @@ export function createDesktopPragmaAgentProjectPort(options: {
             authoredResources: parsed.resources,
             dslDraftId: draft.draftId,
             dslDraftMissionId: draft.missionId,
+            draftReview: {
+              draft,
+              rawResources: sources.map((source) => parsePragmaYaml(source)),
+            },
           });
           if (result.status !== "prepared") {
             return result;
@@ -1960,6 +2084,365 @@ function expertDependencyRefs(resource: PragmaExpertResource): string[] {
   ];
 }
 
+const DSL_DRAFT_REVIEW_MAX_BYTES = 8 * 1_024;
+const DSL_DRAFT_REVIEW_MAX_FIELD_CHANGES = 30;
+const DSL_DRAFT_REVIEW_MAX_FIELD_CHANGES_PER_RESOURCE = 8;
+const DSL_DRAFT_REVIEW_MAX_OMITTED_FIELDS = 30;
+const DSL_DRAFT_REVIEW_MAX_DIAGNOSTICS = 30;
+const DSL_DRAFT_REVIEW_MAX_HOST_DEPENDENCIES = 50;
+const DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS = 80;
+
+type DslReviewPath = readonly (string | number)[];
+type DslReviewFieldChange = PragmaAgentDslDraftReview["fieldChanges"][number];
+type DslReviewOmittedField = PragmaAgentDslDraftReview["omittedFields"][number];
+type DslReviewHostDependency = PragmaAgentDslDraftReview["hostDependencies"][number];
+type DslReviewValueSummary = NonNullable<DslReviewFieldChange["before"]>;
+
+function createDslDraftReview(input: {
+  readonly draft: StoredDslDraft;
+  readonly baseResources: readonly PragmaResource[];
+  readonly rawResources: readonly unknown[];
+  readonly authoredResources: readonly PragmaResource[];
+  readonly effectiveResources: readonly PragmaResource[];
+  readonly diagnostics: readonly PragmaDiagnostic[];
+  readonly dependencies: readonly PragmaResource[];
+}): PragmaAgentDslDraftReview {
+  const baseByRef = new Map(
+    input.baseResources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+  );
+  const effectiveByRef = new Map(
+    input.effectiveResources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+  );
+  const authoredByRef = new Map(
+    input.authoredResources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+  );
+  const rawByRef = new Map(
+    input.draft.resources.flatMap((target, index) => {
+      const raw = input.rawResources[index];
+      return raw === undefined ? [] : [[target.ref, raw] as const];
+    }),
+  );
+  const fieldChanges: DslReviewFieldChange[] = [];
+  const omittedFields: DslReviewOmittedField[] = [];
+
+  for (const target of input.draft.resources) {
+    if (target.mode === "create") continue;
+    const base = baseByRef.get(target.ref);
+    const authored = authoredByRef.get(target.ref);
+    const effective = effectiveByRef.get(target.ref);
+    if (base === undefined || authored === undefined || effective === undefined) continue;
+    collectDslFieldChanges(target.ref, base, effective, [], fieldChanges);
+    const unknownPaths = new Set(
+      inspectPragmaUnknownFields(base, "resource").map((issue) => dslReviewPathKey(issue.path)),
+    );
+    collectDslOmittedFields(
+      target.ref,
+      base,
+      rawByRef.get(target.ref),
+      effective,
+      [],
+      unknownPaths,
+      omittedFields,
+    );
+  }
+
+  fieldChanges.sort(compareDslReviewFieldChanges);
+  omittedFields.sort(
+    (left, right) =>
+      dslOmittedFieldPriority(left.effect) - dslOmittedFieldPriority(right.effect) ||
+      left.ref.localeCompare(right.ref) ||
+      dslReviewPathKey(left.path).localeCompare(dslReviewPathKey(right.path)),
+  );
+  const hostDependencies = input.dependencies
+    .filter(
+      (resource): resource is Extract<PragmaResource, { kind: "Capability" | "RuntimeProfile" }> =>
+        resource.kind === "Capability" || resource.kind === "RuntimeProfile",
+    )
+    .map((resource): DslReviewHostDependency => ({
+      ref: canonicalPragmaResourceRef(resource),
+      kind: resource.kind,
+      action: "create",
+    }))
+    .toSorted((left, right) => left.ref.localeCompare(right.ref));
+  const diagnostics = input.diagnostics
+    .map(compactDslReviewDiagnostic)
+    .toSorted(
+      (left, right) =>
+        dslDiagnosticPriority(left) - dslDiagnosticPriority(right) ||
+        left.code.localeCompare(right.code) ||
+        dslReviewPathKey(left.path).localeCompare(dslReviewPathKey(right.path)),
+    );
+  const changedRefs = new Set([
+    ...input.draft.resources
+      .filter((target) => target.mode === "create")
+      .map((target) => target.ref),
+    ...fieldChanges.map((change) => change.ref),
+  ]);
+  const summary: PragmaAgentDslDraftReview["summary"] = {
+    resourceCount: input.draft.resources.length,
+    changedResourceCount: changedRefs.size,
+    fieldsAdded: fieldChanges.filter((change) => change.change === "added").length,
+    fieldsChanged: fieldChanges.filter((change) => change.change === "changed").length,
+    fieldsRemoved: fieldChanges.filter((change) => change.change === "removed").length,
+    omittedFieldCount: omittedFields.length,
+    diagnosticCount: diagnostics.length,
+    errorCount: diagnostics.filter((diagnostic) => diagnostic.severity === "error").length,
+    warningCount: diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length,
+    hostDependencyCount: hostDependencies.length,
+  };
+
+  const selectedDiagnostics: PragmaDiagnostic[] = [];
+  const selectedFieldChanges: DslReviewFieldChange[] = [];
+  const selectedOmittedFields: DslReviewOmittedField[] = [];
+  const selectedHostDependencies: DslReviewHostDependency[] = [];
+  const build = (): PragmaAgentDslDraftReview =>
+    PragmaAgentDslDraftReviewSchema.parse({
+      unknownFieldPolicy: "preserve-additive",
+      summary,
+      diagnostics: selectedDiagnostics,
+      fieldChanges: selectedFieldChanges,
+      omittedFields: selectedOmittedFields,
+      hostDependencies: selectedHostDependencies,
+      truncation: {
+        diagnostics: dslReviewTruncation(diagnostics.length, selectedDiagnostics.length),
+        fieldChanges: dslReviewTruncation(fieldChanges.length, selectedFieldChanges.length),
+        omittedFields: dslReviewTruncation(omittedFields.length, selectedOmittedFields.length),
+        hostDependencies: dslReviewTruncation(
+          hostDependencies.length,
+          selectedHostDependencies.length,
+        ),
+      },
+    });
+  const tryAdd = <T>(items: T[], item: T, maximum: number): void => {
+    if (items.length >= maximum) return;
+    items.push(item);
+    if (Buffer.byteLength(JSON.stringify(build()), "utf8") > DSL_DRAFT_REVIEW_MAX_BYTES) {
+      items.pop();
+    }
+  };
+
+  for (const diagnostic of diagnostics.filter((item) => item.severity === "error")) {
+    tryAdd(selectedDiagnostics, diagnostic, DSL_DRAFT_REVIEW_MAX_DIAGNOSTICS);
+  }
+  for (const omitted of omittedFields) {
+    tryAdd(selectedOmittedFields, omitted, DSL_DRAFT_REVIEW_MAX_OMITTED_FIELDS);
+  }
+  const fieldChangesPerResource = new Map<string, number>();
+  const tryAddFieldChange = (change: DslReviewFieldChange): void => {
+    const count = fieldChangesPerResource.get(change.ref) ?? 0;
+    if (count >= DSL_DRAFT_REVIEW_MAX_FIELD_CHANGES_PER_RESOURCE) return;
+    const before = selectedFieldChanges.length;
+    tryAdd(selectedFieldChanges, change, DSL_DRAFT_REVIEW_MAX_FIELD_CHANGES);
+    if (selectedFieldChanges.length > before) {
+      fieldChangesPerResource.set(change.ref, count + 1);
+    }
+  };
+  for (const change of fieldChanges.filter((item) => item.change === "removed")) {
+    tryAddFieldChange(change);
+  }
+  for (const dependency of hostDependencies) {
+    tryAdd(selectedHostDependencies, dependency, DSL_DRAFT_REVIEW_MAX_HOST_DEPENDENCIES);
+  }
+  for (const change of fieldChanges.filter((item) => item.change !== "removed")) {
+    tryAddFieldChange(change);
+  }
+  for (const diagnostic of diagnostics.filter((item) => item.severity === "warning")) {
+    tryAdd(selectedDiagnostics, diagnostic, DSL_DRAFT_REVIEW_MAX_DIAGNOSTICS);
+  }
+  return build();
+}
+
+function collectDslFieldChanges(
+  ref: string,
+  before: unknown,
+  after: unknown,
+  path: DslReviewPath,
+  output: DslReviewFieldChange[],
+  beforeExists = true,
+  afterExists = true,
+): void {
+  if (beforeExists && afterExists && isDeepStrictEqual(before, after)) return;
+  if (beforeExists && afterExists && isDslReviewRecord(before) && isDslReviewRecord(after)) {
+    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].toSorted();
+    for (const key of keys) {
+      collectDslFieldChanges(
+        ref,
+        before[key],
+        after[key],
+        [...path, key],
+        output,
+        Object.hasOwn(before, key),
+        Object.hasOwn(after, key),
+      );
+    }
+    return;
+  }
+  output.push({
+    ref,
+    path: [...path],
+    change: !beforeExists ? "added" : !afterExists ? "removed" : "changed",
+    ...(beforeExists ? { before: summarizeDslReviewValue(before) } : {}),
+    ...(afterExists ? { after: summarizeDslReviewValue(after) } : {}),
+  });
+}
+
+function collectDslOmittedFields(
+  ref: string,
+  base: unknown,
+  raw: unknown,
+  effective: unknown,
+  path: DslReviewPath,
+  unknownPaths: ReadonlySet<string>,
+  output: DslReviewOmittedField[],
+): void {
+  if (!isDslReviewRecord(base)) return;
+  for (const key of Object.keys(base).toSorted()) {
+    const nextPath = [...path, key];
+    if (!isDslReviewRecord(raw) || !Object.hasOwn(raw, key)) {
+      output.push({
+        ref,
+        path: nextPath,
+        effect: unknownPaths.has(dslReviewPathKey(nextPath))
+          ? "preserved_unknown"
+          : dslReviewPathExists(effective, nextPath)
+            ? "defaulted"
+            : "removed",
+      });
+      continue;
+    }
+    if (isDslReviewRecord(base[key]) && isDslReviewRecord(raw[key])) {
+      collectDslOmittedFields(ref, base[key], raw[key], effective, nextPath, unknownPaths, output);
+    }
+  }
+}
+
+function summarizeDslReviewValue(value: unknown): DslReviewValueSummary {
+  if (value === null) return { type: "null", preview: "null" };
+  if (typeof value === "string") {
+    const characters = [...value];
+    return {
+      type: "string",
+      preview:
+        characters.length <= DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS
+          ? value
+          : `${characters.slice(0, 40).join("")}…${characters.slice(-39).join("")}`,
+      size: characters.length,
+    };
+  }
+  if (typeof value === "number") return { type: "number", preview: String(value) };
+  if (typeof value === "boolean") return { type: "boolean", preview: String(value) };
+  if (Array.isArray(value)) {
+    const identities = value.slice(0, 3).map(dslReviewValueIdentity);
+    return {
+      type: "array",
+      preview: truncateDslReviewPreview(
+        `[${identities.join(", ")}${value.length > 3 ? ", …" : ""}]`,
+      ),
+      size: value.length,
+    };
+  }
+  if (isDslReviewRecord(value)) {
+    const keys = Object.keys(value).toSorted();
+    return {
+      type: "object",
+      preview: truncateDslReviewPreview(
+        `{${keys.slice(0, 5).join(", ")}${keys.length > 5 ? ", …" : ""}}`,
+      ),
+      size: keys.length,
+    };
+  }
+  return { type: "string", preview: truncateDslReviewPreview(String(value)) };
+}
+
+function dslReviewValueIdentity(value: unknown): string {
+  if (isDslReviewRecord(value)) {
+    for (const key of ["ref", "id", "name", "key"] as const) {
+      if (typeof value[key] === "string" || typeof value[key] === "number") {
+        return `${key}:${String(value[key])}`;
+      }
+    }
+    return `{${Object.keys(value).slice(0, 2).join(",")}}`;
+  }
+  return String(value);
+}
+
+function truncateDslReviewPreview(value: string): string {
+  const characters = [...value];
+  return characters.length <= DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS
+    ? value
+    : `${characters.slice(0, DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS - 1).join("")}…`;
+}
+
+function isDslReviewRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function dslReviewPathExists(value: unknown, path: DslReviewPath): boolean {
+  let current = value;
+  for (const segment of path) {
+    if (typeof segment === "number") {
+      if (!Array.isArray(current) || segment >= current.length) return false;
+      current = current[segment];
+      continue;
+    }
+    if (!isDslReviewRecord(current) || !Object.hasOwn(current, segment)) return false;
+    current = current[segment];
+  }
+  return true;
+}
+
+function compareDslReviewFieldChanges(
+  left: DslReviewFieldChange,
+  right: DslReviewFieldChange,
+): number {
+  return (
+    dslFieldChangePriority(left) - dslFieldChangePriority(right) ||
+    left.ref.localeCompare(right.ref) ||
+    dslReviewPathKey(left.path).localeCompare(dslReviewPathKey(right.path))
+  );
+}
+
+function dslFieldChangePriority(change: DslReviewFieldChange): number {
+  if (change.change === "removed") return 0;
+  const first = change.path[0];
+  const second = change.path[1];
+  if (first === "apiVersion" || first === "kind" || first === "metadata") return 1;
+  if (
+    first === "spec" &&
+    (second === "runtime" || second === "capabilities" || second === "contextStores")
+  ) {
+    return 1;
+  }
+  return 2;
+}
+
+function dslOmittedFieldPriority(effect: DslReviewOmittedField["effect"]): number {
+  return effect === "removed" ? 0 : effect === "defaulted" ? 1 : 2;
+}
+
+function dslDiagnosticPriority(diagnostic: PragmaDiagnostic): number {
+  return diagnostic.severity === "error" ? 0 : 1;
+}
+
+function compactDslReviewDiagnostic(diagnostic: PragmaDiagnostic): PragmaDiagnostic {
+  if (diagnostic.source === undefined || !isAbsolute(diagnostic.source)) return diagnostic;
+  return {
+    severity: diagnostic.severity,
+    code: diagnostic.code,
+    message: diagnostic.message,
+    ...(diagnostic.resourceRef === undefined ? {} : { resourceRef: diagnostic.resourceRef }),
+    path: diagnostic.path,
+  };
+}
+
+function dslReviewPathKey(path: DslReviewPath): string {
+  return JSON.stringify(path);
+}
+
+function dslReviewTruncation(total: number, returned: number) {
+  return { total, returned, omitted: total - returned };
+}
+
 function assertExpertSelectionsAvailable(
   authored: readonly PragmaResource[],
   current: readonly PragmaResource[],
@@ -2462,6 +2945,17 @@ function isWithinPath(root: string, candidate: string): boolean {
 }
 
 function diagnosticsFromError(error: unknown, source?: string) {
+  if (error instanceof DslPreparationError) {
+    return [
+      {
+        severity: "error" as const,
+        code: error.code,
+        message: error.message,
+        ...(source === undefined ? {} : { source }),
+        path: [],
+      },
+    ];
+  }
   if (error instanceof z.ZodError) {
     return error.issues.map((issue) => ({
       severity: "error" as const,
@@ -2480,6 +2974,16 @@ function diagnosticsFromError(error: unknown, source?: string) {
       path: [],
     },
   ];
+}
+
+class DslPreparationError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DslPreparationError";
+  }
 }
 
 function materializeDraft(draft: PragmaAgentFlowDraft) {

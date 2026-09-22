@@ -125,6 +125,10 @@ export interface PragmaProjectStore {
     readonly resource: PragmaResource;
     readonly requiredUnchangedRefs?: readonly string[] | undefined;
   }): Promise<PragmaYamlValidationResult>;
+  previewChanges(input: PragmaProjectChangeSetInput): Promise<{
+    readonly upserts: readonly PragmaResource[];
+    readonly diagnostics: readonly PragmaDiagnostic[];
+  }>;
   validateChanges(input: PragmaProjectChangeSetInput): Promise<readonly PragmaDiagnostic[]>;
   compile<T extends InvocableResource>(
     input: Parameters<PragmaProjectService["compile"]>[0],
@@ -390,23 +394,46 @@ export function createPragmaProjectStore(options: {
     }
   };
 
-  const validateChanges = async (
+  const previewChanges = async (
     input: PragmaProjectChangeSetInput,
-  ): Promise<readonly PragmaDiagnostic[]> => {
+  ): Promise<{
+    readonly upserts: readonly PragmaResource[];
+    readonly diagnostics: readonly PragmaDiagnostic[];
+  }> => {
     try {
       await ensureMigrated();
       const candidate = await service.materializeChangeSet(projectId, input);
-      return [
-        ...desktopExpertAuthoringDiagnostics(candidate.resources),
-        ...(await service.validate({
-          resources: candidate.resources,
-          artifacts: candidate.artifacts,
-        })),
-      ];
+      const upsertRefs = (input.upserts ?? [])
+        .map((resource) => PragmaForwardCompatibleResourceSchema.parse(resource))
+        .map(canonicalPragmaResourceRef);
+      const candidateByRef = new Map(
+        candidate.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+      );
+      const upserts = upsertRefs.map((ref) => {
+        const resource = candidateByRef.get(ref);
+        if (resource === undefined) {
+          throw new Error(`Materialized Pragma resource not found: ${ref}`);
+        }
+        return resource;
+      });
+      return {
+        upserts,
+        diagnostics: [
+          ...desktopExpertAuthoringDiagnostics(candidate.resources),
+          ...(await service.validate({
+            resources: candidate.resources,
+            artifacts: candidate.artifacts,
+          })),
+        ],
+      };
     } catch (error) {
       return normalizeError(error);
     }
   };
+
+  const validateChanges = async (
+    input: PragmaProjectChangeSetInput,
+  ): Promise<readonly PragmaDiagnostic[]> => (await previewChanges(input)).diagnostics;
 
   const applyChangeSet = async (
     input: PragmaProjectChangeSetInput,
@@ -607,6 +634,7 @@ export function createPragmaProjectStore(options: {
         ],
       };
     },
+    previewChanges,
     validateChanges,
     async compile<T extends InvocableResource>(
       input: Parameters<PragmaProjectService["compile"]>[0],

@@ -433,7 +433,7 @@ function buildPragmaManagementHostTools(options: {
     ),
     tool(
       "inspect_dsl_draft",
-      "Inspect changed files, hashes, ownership, and target conflicts for one DSL file draft without returning complete YAML.",
+      "Preflight one DSL file draft and return bounded diagnostics, field summaries, omitted-field effects, Host dependencies, hashes, and target conflicts without returning full YAML or a full diff.",
       z.toJSONSchema(DslDraftIdInput),
       async (args) =>
         ok(
@@ -445,7 +445,7 @@ function buildPragmaManagementHostTools(options: {
     ),
     tool(
       "prepare_dsl_draft",
-      "Freeze and validate the current DSL draft files, then return a compact immutable change-set receipt. Pass only the draft ID.",
+      "Freeze and validate the current DSL draft files, then return a compact immutable change-set receipt with the same bounded review summary. Pass only the draft ID.",
       z.toJSONSchema(DslDraftIdInput),
       async (args) =>
         ok(
@@ -545,7 +545,7 @@ function buildPragmaManagementHostTools(options: {
     ),
     tool(
       "read_prepared_dsl_change",
-      "Read a bounded canonical YAML chunk for one exact ref in a prepared DSL change-set.",
+      "Read a bounded canonical YAML chunk for one exact ref only when the compact prepared review is insufficient.",
       z.toJSONSchema(ReadPreparedDslChangeInput),
       async (args) => {
         const input = ReadPreparedDslChangeInput.parse(args);
@@ -1126,13 +1126,14 @@ function summarizePrepareResult(input: PragmaAgentPrepareResult) {
     changeSet: {
       changeSetId: input.changeSet.changeSetId,
       projectRevision: input.changeSet.projectRevision,
-      diagnostics: input.changeSet.diagnostics,
+      diagnostics: input.changeSet.review?.diagnostics ?? input.changeSet.diagnostics,
       changes: input.changeSet.changes.map(({ ref, kind, source }) => ({
         ref,
         kind,
         sizeBytes: Buffer.byteLength(source, "utf8"),
         sha256: createHash("sha256").update(source).digest("hex"),
       })),
+      ...(input.changeSet.review === undefined ? {} : { review: input.changeSet.review }),
       createdAt: input.changeSet.createdAt,
     },
   });

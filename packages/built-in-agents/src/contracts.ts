@@ -253,10 +253,87 @@ export const PragmaAgentDslDraftSummarySchema = PragmaAgentDslDraftSchema.omit({
   refs: z.array(PragmaSemanticResourceRefSchema).max(50),
 });
 
+const PragmaAgentDslReviewPathSchema = z.array(z.union([z.string(), z.number()])).max(100);
+
+export const PragmaAgentDslValueSummarySchema = z
+  .object({
+    type: z.enum(["string", "number", "boolean", "null", "array", "object"]),
+    preview: z.string().max(80),
+    size: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const PragmaAgentDslFieldChangeSchema = z
+  .object({
+    ref: PragmaSemanticResourceRefSchema,
+    path: PragmaAgentDslReviewPathSchema,
+    change: z.enum(["added", "removed", "changed"]),
+    before: PragmaAgentDslValueSummarySchema.optional(),
+    after: PragmaAgentDslValueSummarySchema.optional(),
+  })
+  .strict();
+
+export const PragmaAgentDslOmittedFieldSchema = z
+  .object({
+    ref: PragmaSemanticResourceRefSchema,
+    path: PragmaAgentDslReviewPathSchema,
+    effect: z.enum(["removed", "defaulted", "preserved_unknown"]),
+  })
+  .strict();
+
+export const PragmaAgentDslHostDependencySchema = z
+  .object({
+    ref: PragmaSemanticResourceRefSchema,
+    kind: z.enum(["Capability", "RuntimeProfile"]),
+    action: z.literal("create"),
+  })
+  .strict();
+
+const PragmaAgentDslReviewTruncationItemSchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    returned: z.number().int().nonnegative(),
+    omitted: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const PragmaAgentDslDraftReviewSchema = z
+  .object({
+    unknownFieldPolicy: z.literal("preserve-additive"),
+    summary: z
+      .object({
+        resourceCount: z.number().int().nonnegative(),
+        changedResourceCount: z.number().int().nonnegative(),
+        fieldsAdded: z.number().int().nonnegative(),
+        fieldsChanged: z.number().int().nonnegative(),
+        fieldsRemoved: z.number().int().nonnegative(),
+        omittedFieldCount: z.number().int().nonnegative(),
+        diagnosticCount: z.number().int().nonnegative(),
+        errorCount: z.number().int().nonnegative(),
+        warningCount: z.number().int().nonnegative(),
+        hostDependencyCount: z.number().int().nonnegative(),
+      })
+      .strict(),
+    diagnostics: z.array(PragmaDiagnosticSchema).max(30),
+    fieldChanges: z.array(PragmaAgentDslFieldChangeSchema).max(30),
+    omittedFields: z.array(PragmaAgentDslOmittedFieldSchema).max(30),
+    hostDependencies: z.array(PragmaAgentDslHostDependencySchema).max(50),
+    truncation: z
+      .object({
+        diagnostics: PragmaAgentDslReviewTruncationItemSchema,
+        fieldChanges: PragmaAgentDslReviewTruncationItemSchema,
+        omittedFields: PragmaAgentDslReviewTruncationItemSchema,
+        hostDependencies: PragmaAgentDslReviewTruncationItemSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export const PragmaAgentDslDraftInspectionSchema = PragmaAgentDslDraftSchema.extend({
   workingTreeHash: z.string().regex(/^[a-f0-9]{64}$/u),
   stale: z.boolean(),
   conflictingRefs: z.array(PragmaSemanticResourceRefSchema),
+  review: PragmaAgentDslDraftReviewSchema,
   changes: z.array(
     z
       .object({
@@ -278,6 +355,7 @@ export type PragmaAgentDslDraftTargetInput = z.infer<typeof PragmaAgentDslDraftT
 export type PragmaAgentDslDraft = z.infer<typeof PragmaAgentDslDraftSchema>;
 export type PragmaAgentDslDraftSummary = z.infer<typeof PragmaAgentDslDraftSummarySchema>;
 export type PragmaAgentDslDraftInspection = z.infer<typeof PragmaAgentDslDraftInspectionSchema>;
+export type PragmaAgentDslDraftReview = z.infer<typeof PragmaAgentDslDraftReviewSchema>;
 
 export const PragmaAgentChangeSetSchema = z.object({
   changeSetId: z.string().uuid(),
@@ -290,6 +368,7 @@ export const PragmaAgentChangeSetSchema = z.object({
       source: z.string().min(1),
     }),
   ),
+  review: PragmaAgentDslDraftReviewSchema.optional(),
   createdAt: z.string().datetime(),
 });
 
@@ -305,6 +384,7 @@ export const PragmaAgentChangeSetSummarySchema = z.object({
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
   ),
+  review: PragmaAgentDslDraftReviewSchema.optional(),
   createdAt: z.string().datetime(),
 });
 
