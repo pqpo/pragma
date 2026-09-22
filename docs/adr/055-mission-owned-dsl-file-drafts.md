@@ -59,6 +59,18 @@ it does not expose the authoritative private submission path.
 A prepared draft can also restart after a later commit conflict when its candidate resources have
 been superseded by current resources that match neither the base nor the prepared candidate.
 
+Inspection performs a read-only preflight against the same materialized Project candidate used by
+prepare. It returns aggregate counts plus bounded diagnostics, field summaries, omitted-field
+effects and Host-created dependencies; it never returns a whole-file or textual diff. The detail
+payload has a Host-enforced byte budget and reports omitted counts when truncated. Unknown additive
+fields omitted by an older authoring client are reported as preserved, and prepared source hashes
+are calculated from the effective merged resources so the receipt matches the committed revision.
+When compact details are truncated, `read_dsl_draft_review` pages the same semantic analysis by
+section and optional resource ref under the same byte budget, without requiring prepare or exposing
+complete YAML. If a target conflict prevents safe Project materialization, inspection explicitly
+marks the effective preview unavailable and reports the authored base-to-draft delta instead of
+claiming that no resources changed.
+
 Draft records start at `pragma.dsl-draft/v1`; discard journals start at
 `pragma.dsl-draft-discard/v1`; draft commit journals start at `pragma.dsl-draft-commit/v1`. These are
 new persistent-state families and have no historical source version to migrate. Future incompatible
@@ -82,6 +94,8 @@ cleanup. Recognized corrupt draft records fail listing closed instead of disappe
   time, instead of embedding the full resource in a management-tool call.
 - Agents get ordinary file editing, diffing and validation while the Interpreter remains the sole DSL
   parser and schema authority.
+- Agents can review material changes and implicit dependencies without transferring full prompts or
+  unbounded diffs through management tool results.
 - Multi-resource ExpertTeam changes remain atomic without requiring full Project submission.
 - Conflict handling is deterministic and preserves the old candidate, but intentional reconciliation
   happens in a newly based draft.

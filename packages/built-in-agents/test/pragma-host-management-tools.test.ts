@@ -6,10 +6,37 @@ import type {
   PragmaAgentDslProjectPort,
   PragmaAgentMissionPort,
 } from "../src/ports.ts";
-import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
+import {
+  PragmaAgentDslDraftReviewSchema,
+  PragmaAgentDslValueSummarySchema,
+  PragmaAgentEvaluationDraftSchema,
+  PragmaAgentFlowDraftSchema,
+} from "../src/contracts.ts";
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
+  it("defaults effective preview availability for previously stored draft reviews", () => {
+    const legacy = { ...compactDraftReview(), effectivePreviewAvailable: undefined };
+    expect(PragmaAgentDslDraftReviewSchema.parse(legacy).effectivePreviewAvailable).toBe(true);
+  });
+
+  it("counts bounded DSL value previews by Unicode character", () => {
+    expect(
+      PragmaAgentDslValueSummarySchema.parse({
+        type: "string",
+        preview: "😀".repeat(80),
+        size: 80,
+      }),
+    ).toMatchObject({ preview: "😀".repeat(80) });
+    expect(
+      PragmaAgentDslValueSummarySchema.safeParse({
+        type: "string",
+        preview: "😀".repeat(81),
+        size: 81,
+      }).success,
+    ).toBe(false);
+  });
+
   it("injects Mission ownership into DSL file-draft tools without exposing paths in input", async () => {
     let received: Parameters<PragmaAgentDslProjectPort["startDslDraft"]>[0] | undefined;
     const project = projectPort({
@@ -37,6 +64,44 @@ describe("Pragma Host management tools", () => {
       missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
       workspacePath: "/workspace/project",
       targets: [{ mode: "edit", ref: "expert:1h2j3k4m5n6p7q8r" }],
+    });
+  });
+
+  it("reads bounded semantic DSL draft review pages in the current Mission", async () => {
+    let received: Parameters<PragmaAgentDslProjectPort["readDslDraftReview"]>[0] | undefined;
+    const project = projectPort({
+      async readDslDraftReview(input) {
+        received = input;
+        return {
+          draftId: input.draftId,
+          workingTreeHash: "a".repeat(64),
+          effectivePreviewAvailable: true,
+          section: input.section,
+          total: 0,
+          items: [],
+        };
+      },
+    });
+    const tool = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      { missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b", workspacePath: "/workspace" },
+    ).find((candidate) => candidate.name === "read_dsl_draft_review")!;
+
+    await tool.call(
+      {
+        draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+        section: "fieldChanges",
+        limit: 10,
+      },
+      undefined,
+      undefined,
+    );
+
+    expect(received).toEqual({
+      missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+      draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+      section: "fieldChanges",
+      limit: 10,
     });
   });
 
@@ -72,6 +137,67 @@ describe("Pragma Host management tools", () => {
       },
     });
     expect(prepareCalls).toBe(0);
+  });
+
+  it("returns the bounded draft review without returning prepared YAML", async () => {
+    const project = projectPort({
+      async prepareDslDraft() {
+        return {
+          status: "prepared",
+          changeSet: {
+            changeSetId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+            projectRevision: 3,
+            diagnostics: [
+              {
+                severity: "warning",
+                code: "full.warning",
+                message: "Only the compact review diagnostic should be returned.",
+                path: [],
+              },
+            ],
+            changes: [
+              {
+                ref: "expert:1h2j3k4m5n6p7q8r",
+                kind: "updated",
+                source: `kind: Expert\nspec:\n  instructions: ${"private-long-source".repeat(100)}\n`,
+              },
+            ],
+            review: compactDraftReview(),
+            createdAt: "2026-09-22T00:00:00.000Z",
+          },
+        };
+      },
+    });
+    const tool = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      {
+        missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+        workspacePath: "/workspace/project",
+      },
+    ).find((candidate) => candidate.name === "prepare_dsl_draft")!;
+
+    const result = await tool.call(
+      { draftId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" },
+      undefined,
+      undefined,
+    );
+
+    expect(result.details).toMatchObject({
+      status: "prepared",
+      changeSet: {
+        review: { unknownFieldPolicy: "preserve-additive" },
+        diagnostics: [{ code: "compact.warning" }],
+        changes: [
+          {
+            ref: "expert:1h2j3k4m5n6p7q8r",
+            kind: "updated",
+            sizeBytes: expect.any(Number),
+            sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          },
+        ],
+      },
+    });
+    expect(result.text).not.toContain("private-long-source");
   });
 
   it("injects the runtime toolCallId as the write operation id", async () => {
@@ -575,6 +701,9 @@ function projectPort(
     inspectDslDraft: async () => {
       throw new Error("unused");
     },
+    readDslDraftReview: async () => {
+      throw new Error("unused");
+    },
     prepareDslDraft: async () => {
       throw new Error("unused");
     },
@@ -633,6 +762,50 @@ function projectPort(
     },
     commit: async () => ({ projectId: "studio", projectRevision: 1, changedRefs: [] }),
     ...overrides,
+  };
+}
+
+function compactDraftReview() {
+  return {
+    unknownFieldPolicy: "preserve-additive" as const,
+    effectivePreviewAvailable: true,
+    summary: {
+      resourceCount: 1,
+      changedResourceCount: 1,
+      fieldsAdded: 0,
+      fieldsChanged: 1,
+      fieldsRemoved: 0,
+      omittedFieldCount: 0,
+      diagnosticCount: 1,
+      errorCount: 0,
+      warningCount: 1,
+      hostDependencyCount: 0,
+    },
+    diagnostics: [
+      {
+        severity: "warning" as const,
+        code: "compact.warning",
+        message: "Compact warning.",
+        path: [],
+      },
+    ],
+    fieldChanges: [
+      {
+        ref: "expert:1h2j3k4m5n6p7q8r",
+        path: ["spec", "instructions"],
+        change: "changed" as const,
+        before: { type: "string" as const, preview: "before", size: 6 },
+        after: { type: "string" as const, preview: "after", size: 5 },
+      },
+    ],
+    omittedFields: [],
+    hostDependencies: [],
+    truncation: {
+      diagnostics: { total: 1, returned: 1, omitted: 0 },
+      fieldChanges: { total: 1, returned: 1, omitted: 0 },
+      omittedFields: { total: 0, returned: 0, omitted: 0 },
+      hostDependencies: { total: 0, returned: 0, omitted: 0 },
+    },
   };
 }
 

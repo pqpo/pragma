@@ -8,6 +8,8 @@ import type {
   PragmaAgentDslDocument,
   PragmaAgentDslDraft,
   PragmaAgentDslDraftInspection,
+  PragmaAgentDslDraftReviewPage,
+  PragmaAgentDslDraftReviewSection,
   PragmaAgentDslDraftSummary,
   PragmaAgentDslDraftTargetInput,
   PragmaAgentProjectCommit,
@@ -38,6 +40,14 @@ export interface PragmaAgentDslProjectPort {
     readonly missionId: string;
     readonly draftId: string;
   }): Promise<PragmaAgentDslDraftInspection>;
+  readDslDraftReview(input: {
+    readonly missionId: string;
+    readonly draftId: string;
+    readonly section: PragmaAgentDslDraftReviewSection;
+    readonly ref?: string | undefined;
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+  }): Promise<PragmaAgentDslDraftReviewPage>;
   prepareDslDraft(input: {
     readonly missionId: string;
     readonly draftId: string;

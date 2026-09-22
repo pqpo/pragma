@@ -32,7 +32,10 @@ runtime-profile:7h8j9k0m1n2p3q4r
 - Expert and ExpertTeam authoring uses Mission-owned file drafts. Put every related resource in one
   `start_dsl_draft` call, edit only its returned files with native file tools, inspect the compact
   change summary, and prepare by draft ID. This preserves untouched long prompts without sending
-  them through tool arguments and keeps Team-plus-member changes atomic.
+  them through tool arguments and keeps Team-plus-member changes atomic. The inspection review is
+  intentionally bounded: use its aggregate counts, short field summaries, omitted-field effects,
+  and Host dependency list instead of requesting or reproducing a full diff. If details are
+  truncated, read only the specific prepared resource chunk needed to resolve the uncertainty.
 - `list_expert_options` returns one filtered, paged category per call: `runtime-models`,
   `capabilities`, `avatars`, or `builtin-experts`. A built-in Expert entry can be referenced directly as an ExpertTeam
   coordinator or member; read it through `read_dsl_resource` and never duplicate it as a project

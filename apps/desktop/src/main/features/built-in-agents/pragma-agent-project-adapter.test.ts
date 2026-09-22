@@ -22,7 +22,7 @@ import {
   PragmaFlowResourceSchema,
   PragmaRuntimeProfileResourceSchema,
 } from "@pragma/interpreter/ast";
-import { parsePragmaYaml } from "@pragma/interpreter";
+import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -123,11 +123,25 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     ).resolves.toEqual([]);
     await writeFile(file, before.replace("Write concise text.", "Write concise copy."));
 
-    await expect(
-      adapter.inspectDslDraft({ missionId, draftId: draft.draftId }),
-    ).resolves.toMatchObject({
+    const inspection = await adapter.inspectDslDraft({ missionId, draftId: draft.draftId });
+    expect(inspection).toMatchObject({
       stale: false,
       changes: [{ ref: "expert:1xddvess309a6gme", changed: true }],
+      review: {
+        unknownFieldPolicy: "preserve-additive",
+        summary: {
+          changedResourceCount: 1,
+          fieldsChanged: 1,
+          errorCount: 0,
+        },
+        fieldChanges: [
+          expect.objectContaining({
+            ref: "expert:1xddvess309a6gme",
+            path: ["spec", "instructions"],
+            change: "changed",
+          }),
+        ],
+      },
     });
     const concurrentPrepare = await Promise.allSettled([
       adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
@@ -141,6 +155,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
           result.status === "fulfilled",
       )!.value,
     );
+    expect(prepared.review).toEqual(inspection.review);
     expect(concurrentPrepare.filter((result) => result.status === "rejected")).toHaveLength(1);
     const otherMissionId = "4fc96ef9-1825-447d-a17f-d820f6fd4855";
     await expect(adapter.getChangeSet(prepared.changeSetId, otherMissionId)).rejects.toThrow(
@@ -178,6 +193,198 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     await expect(adapter.inspectDslDraft({ missionId, draftId: draft.draftId })).rejects.toThrow(
       "already committed",
     );
+  });
+
+  it("reports omitted fields and prepares the effective unknown-field-preserving resource", async () => {
+    const root = await temporaryRoot("pragma-dsl-file-draft-unknown-fields-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "unknown-base" });
+    const current = PragmaForwardCompatibleResourceSchema.parse({
+      ...(parsePragmaYaml((await adapter.read("expert:1xddvess309a6gme")).source) as object),
+      futureEnvelope: { enabled: true },
+      metadata: {
+        ...(
+          parsePragmaYaml((await adapter.read("expert:1xddvess309a6gme")).source) as {
+            metadata: Record<string, unknown>;
+          }
+        ).metadata,
+        futureLabel: "preserve-me",
+      },
+      spec: {
+        ...(
+          parsePragmaYaml((await adapter.read("expert:1xddvess309a6gme")).source) as {
+            spec: Record<string, unknown>;
+          }
+        ).spec,
+        plugins: [
+          {
+            ref: "plugin:example@1.0.0",
+            futurePresentation: { color: "blue" },
+          },
+        ],
+      },
+    });
+    await project.apply({ baseRevision: 1, upserts: [current] });
+
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const file = draft.resources[0]!.filePath!;
+    const before = await readFile(file, "utf8");
+    const authored = parsePragmaYaml(before) as Record<string, unknown>;
+    const authoredMetadata = authored["metadata"] as Record<string, unknown>;
+    const authoredSpec = authored["spec"] as Record<string, unknown>;
+    const authoredPlugin = (authoredSpec["plugins"] as Record<string, unknown>[])[0]!;
+    delete authored["futureEnvelope"];
+    delete authoredMetadata["futureLabel"];
+    delete authoredMetadata["tags"];
+    delete authoredPlugin["futurePresentation"];
+    delete authoredSpec["tools"];
+    authoredSpec["instructions"] = "Write concise copy.";
+    await writeFile(file, formatPragmaYaml(authored));
+
+    const inspection = await adapter.inspectDslDraft({ missionId, draftId: draft.draftId });
+    expect(inspection.review.omittedFields).toEqual(
+      expect.arrayContaining([
+        {
+          ref: "expert:1xddvess309a6gme",
+          path: ["futureEnvelope"],
+          effect: "preserved_unknown",
+        },
+        {
+          ref: "expert:1xddvess309a6gme",
+          path: ["metadata", "futureLabel"],
+          effect: "preserved_unknown",
+        },
+        {
+          ref: "expert:1xddvess309a6gme",
+          path: ["spec", "plugins", 0, "futurePresentation"],
+          effect: "preserved_unknown",
+        },
+        expect.objectContaining({
+          ref: "expert:1xddvess309a6gme",
+          path: ["metadata", "tags"],
+        }),
+        expect.objectContaining({
+          ref: "expert:1xddvess309a6gme",
+          path: ["spec", "tools"],
+        }),
+      ]),
+    );
+    const prepared = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    const preparedExpert = prepared.changes.find(
+      (change) => change.ref === "expert:1xddvess309a6gme",
+    )!;
+    expect(prepared.review).toEqual(inspection.review);
+    expect(preparedExpert.source).toContain("futureEnvelope:");
+    expect(preparedExpert.source).toContain("futureLabel: preserve-me");
+    expect(preparedExpert.source).toContain("futurePresentation:");
+    await adapter.commit({
+      changeSetId: prepared.changeSetId,
+      operationId: "unknown-preserved",
+      missionId,
+    });
+    expect((await adapter.read("expert:1xddvess309a6gme")).source).toBe(preparedExpert.source);
+  });
+
+  it("bounds large draft reviews without losing aggregate counts", async () => {
+    const root = await temporaryRoot("pragma-dsl-file-draft-review-budget-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "review-budget-base" });
+    const current = parsePragmaYaml(
+      (await adapter.read("expert:1xddvess309a6gme")).source,
+    ) as Record<string, unknown>;
+    const futureFields = Object.fromEntries(
+      Array.from({ length: 120 }, (_, index) => [
+        `futureField${String(index).padStart(3, "0")}`,
+        `before-${index}`,
+      ]),
+    );
+    await project.apply({
+      baseRevision: 1,
+      upserts: [PragmaForwardCompatibleResourceSchema.parse({ ...current, ...futureFields })],
+    });
+
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const file = draft.resources[0]!.filePath!;
+    const candidate = parsePragmaYaml(await readFile(file, "utf8")) as Record<string, unknown>;
+    await writeFile(
+      file,
+      formatPragmaYaml({
+        ...candidate,
+        ...Object.fromEntries(
+          Object.keys(futureFields).map((key) => [key, `after-${key}-${"x".repeat(200)}`]),
+        ),
+      }),
+    );
+
+    const inspection = await adapter.inspectDslDraft({ missionId, draftId: draft.draftId });
+    expect(Buffer.byteLength(JSON.stringify(inspection.review), "utf8")).toBeLessThanOrEqual(
+      8 * 1_024,
+    );
+    expect(inspection.review.summary.fieldsChanged).toBeGreaterThanOrEqual(120);
+    expect(inspection.review.summary.warningCount).toBeGreaterThanOrEqual(120);
+    expect(inspection.review.fieldChanges).toHaveLength(8);
+    expect(inspection.review.truncation.fieldChanges.omitted).toBeGreaterThan(0);
+    expect(inspection.review.truncation.diagnostics.omitted).toBeGreaterThan(0);
+    expect(JSON.stringify(inspection.review)).not.toContain("x".repeat(200));
+
+    const detailedChanges: unknown[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await adapter.readDslDraftReview({
+        missionId,
+        draftId: draft.draftId,
+        section: "fieldChanges",
+        ref: "expert:1xddvess309a6gme",
+        cursor,
+        limit: 30,
+      });
+      expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(8 * 1_024);
+      expect(page.total).toBeGreaterThanOrEqual(120);
+      expect(page.items.every((item) => "ref" in item && item.ref === page.ref)).toBe(true);
+      detailedChanges.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    expect(detailedChanges).toHaveLength(inspection.review.summary.fieldsChanged);
   });
 
   it("invalidates a prepared change-set before discard can leave the Project mutated", async () => {
@@ -675,7 +882,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       }),
     );
     await adapter.commit({ changeSetId: initial.changeSetId, operationId: "freeze-base" });
-    const originalValidate = project.validateChanges.bind(project);
+    const originalPreview = project.previewChanges.bind(project);
     let announceValidation!: () => void;
     let releaseValidation!: () => void;
     const validationStarted = new Promise<void>((resolve) => {
@@ -684,12 +891,12 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     const validationRelease = new Promise<void>((resolve) => {
       releaseValidation = resolve;
     });
-    Object.defineProperty(project, "validateChanges", {
+    Object.defineProperty(project, "previewChanges", {
       configurable: true,
-      value: async (input: Parameters<typeof project.validateChanges>[0]) => {
+      value: async (input: Parameters<typeof project.previewChanges>[0]) => {
         announceValidation();
         await validationRelease;
-        return await originalValidate(input);
+        return await originalPreview(input);
       },
     });
     const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
@@ -768,6 +975,13 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       workspacePath: root,
       targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
     });
+    await writeFile(
+      conflictingDraft.resources[0]!.filePath!,
+      (await readFile(conflictingDraft.resources[0]!.filePath!, "utf8")).replace(
+        "Write concise copy.",
+        "Write the conflicted draft copy.",
+      ),
+    );
     const changed = requirePrepared(
       await adapter.prepare({
         expectedProjectRevision: 3,
@@ -785,7 +999,20 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       missionId,
       draftId: conflictingDraft.draftId,
     });
-    expect(conflictedInspection).toMatchObject({ state: "conflicted", stale: true });
+    expect(conflictedInspection).toMatchObject({
+      state: "conflicted",
+      stale: true,
+      review: {
+        effectivePreviewAvailable: false,
+        summary: { changedResourceCount: 1, fieldsChanged: 1 },
+        fieldChanges: [
+          expect.objectContaining({
+            path: ["spec", "instructions"],
+            change: "changed",
+          }),
+        ],
+      },
+    });
     expect(conflictedInspection).not.toHaveProperty("referencePath");
     await expect(readFile(conflictingDraft.resources[0]!.filePath!, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -1059,6 +1286,16 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     const team = draft.resources.find((resource) => resource.key === "team")!;
     expect(writer.ref).toMatch(/^expert:[0-9a-hj-km-np-tv-z]{16}$/u);
     expect(team.ref).toMatch(/^team:[0-9a-hj-km-np-tv-z]{16}$/u);
+    const incompleteInspection = await adapter.inspectDslDraft({
+      missionId,
+      draftId: draft.draftId,
+    });
+    expect(incompleteInspection.state).toBe("editing");
+    expect(incompleteInspection.review.summary.errorCount).toBeGreaterThan(0);
+    expect(incompleteInspection.review.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ severity: "error" })]),
+    );
+    await expect(readFile(writer.filePath!, "utf8")).resolves.toContain("# REQUIRED");
     await expect(
       adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
     ).resolves.toMatchObject({
@@ -1070,12 +1307,20 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       expert("Writes concise text.", runtimeRef, writer.ref.slice("expert:".length)),
     );
     await writeFile(team.filePath!, expertTeam(team.ref.slice("team:".length), writer.ref));
+    const completeInspection = await adapter.inspectDslDraft({
+      missionId,
+      draftId: draft.draftId,
+    });
+    expect(completeInspection.review.hostDependencies).toEqual([
+      { ref: runtimeRef, kind: "RuntimeProfile", action: "create" },
+    ]);
     const prepared = requirePrepared(
       await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
     );
     expect(prepared.changes.map((change) => change.ref)).toEqual(
       expect.arrayContaining([writer.ref, team.ref, runtimeRef]),
     );
+    expect(prepared.review).toEqual(completeInspection.review);
   });
 
   it("allocates a fresh create ID when a conflicted draft ID was occupied", async () => {

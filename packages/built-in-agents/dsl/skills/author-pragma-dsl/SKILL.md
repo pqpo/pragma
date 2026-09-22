@@ -61,14 +61,23 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 10. Save the test set independently: call `prepare_evaluation_draft` with its exact draft revision,
     then pass the returned `changeSetId` to `commit_dsl_changes`. This commit changes only the
     Evaluation; it is never part of `prepare_flow_draft` or `additionalSources`.
-    For Expert and ExpertTeam drafts, call `inspect_dsl_draft` after editing, resolve any reported
-    target conflict, then call `prepare_dsl_draft` with only the draft ID. Fix every prepare
-    diagnostic by editing the same files and prepare that same draft ID again. Commit its returned
+    For Expert and ExpertTeam drafts, call `inspect_dsl_draft` after editing. Review its compact
+    summary, diagnostics, omitted-field effects, and Host dependencies; explain material removals
+    and automatically created dependencies before preparing. Treat `preserved_unknown` as retained
+    compatibility data, not a deletion. When truncation reports omitted details, use
+    `read_dsl_draft_review` with the relevant section and optional ref, following `nextCursor` while
+    preserving the same filters. An unavailable effective preview means field changes describe the
+    authored delta only; resolve the reported target conflict before relying on final effects. Then
+    call `prepare_dsl_draft` with only the draft ID.
+    Never ask for or reproduce a full textual diff. Read a prepared resource in bounded chunks only
+    when the compact review is insufficient. Fix every prepare diagnostic by editing the same files
+    and prepare that same draft ID again. Commit its returned
     change-set. If a target changed concurrently, including when commit reports a conflict, call
     `restart_dsl_draft`, compare the old read-only reference with the new files, and explicitly
     replay still-valid edits. Use `prepare_dsl_changes` directly only for
     complete non-Flow resource kinds without a dedicated draft workflow. Prepare calls return compact
-    receipts; use `read_prepared_dsl_change` only when normalized full source is genuinely needed.
+    receipts; use `read_prepared_dsl_change` only when a bounded part of the normalized source is
+    genuinely needed.
 11. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
     revision changed, reread affected resources and explicitly rebase the draft before retrying.
 12. After each commit tool returns, always report success or failure, the committed project

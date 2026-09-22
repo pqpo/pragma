@@ -31,6 +31,7 @@ spec:
         - start_dsl_draft
         - list_dsl_drafts
         - inspect_dsl_draft
+        - read_dsl_draft_review
         - prepare_dsl_draft
         - restart_dsl_draft
         - discard_dsl_draft
