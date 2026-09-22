@@ -136,6 +136,126 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     );
   });
 
+  it("invalidates a prepared change-set before discard can leave the Project mutated", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-stale-change-set-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "discard-base" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+
+    const prepareDraft = async () => {
+      const draft = await adapter.startDslDraft({
+        missionId,
+        workspacePath: root,
+        targets: [{ mode: "edit" as const, ref: "expert:1xddvess309a6gme" }],
+      });
+      const file = draft.resources[0]!.filePath!;
+      await writeFile(
+        file,
+        (await readFile(file, "utf8")).replace("Write concise text.", "Write safely."),
+      );
+      return {
+        draft,
+        changeSet: requirePrepared(
+          await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+        ),
+      };
+    };
+
+    const discarded = await prepareDraft();
+    const beforeDiscardedCommit = await project.get();
+    await adapter.discardDslDraft({ missionId, draftId: discarded.draft.draftId });
+    await expect(
+      adapter.commit({
+        changeSetId: discarded.changeSet.changeSetId,
+        operationId: "discarded-change-set",
+      }),
+    ).rejects.toThrow("no longer matches");
+    await expect(project.get()).resolves.toEqual(beforeDiscardedCommit);
+
+    const racing = await prepareDraft();
+    const outcomes = await Promise.allSettled([
+      adapter.commit({ changeSetId: racing.changeSet.changeSetId, operationId: "racing-commit" }),
+      adapter.discardDslDraft({ missionId, draftId: racing.draft.draftId }),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const finalProject = await project.get();
+    const finalDraft = (await adapter.listDslDrafts({ missionId, limit: 25 })).items.find(
+      (item) => item.draftId === racing.draft.draftId,
+    )!;
+    if (outcomes[0]!.status === "fulfilled") {
+      expect(finalProject.revision).toBe(2);
+      expect(finalDraft.state).toBe("committed");
+    } else {
+      expect(finalProject).toEqual(beforeDiscardedCommit);
+      expect(finalDraft.state).toBe("discarded");
+    }
+  });
+
+  it("atomically detaches the editable worktree before project validation", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-atomic-freeze-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "freeze-base" });
+    const originalValidate = project.validateChanges.bind(project);
+    let announceValidation!: () => void;
+    let releaseValidation!: () => void;
+    const validationStarted = new Promise<void>((resolve) => {
+      announceValidation = resolve;
+    });
+    const validationRelease = new Promise<void>((resolve) => {
+      releaseValidation = resolve;
+    });
+    Object.defineProperty(project, "validateChanges", {
+      configurable: true,
+      value: async (input: Parameters<typeof project.validateChanges>[0]) => {
+        announceValidation();
+        await validationRelease;
+        return await originalValidate(input);
+      },
+    });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const file = draft.resources[0]!.filePath!;
+    await writeFile(file, (await readFile(file, "utf8")).replace("Write concise text.", "Write."));
+
+    const preparing = adapter.prepareDslDraft({ missionId, draftId: draft.draftId });
+    await validationStarted;
+    await expect(writeFile(file, "late edit\n")).rejects.toMatchObject({ code: "ENOENT" });
+    releaseValidation();
+    await expect(preparing).resolves.toMatchObject({ status: "prepared" });
+  });
+
   it("rebases a draft across unrelated project revisions but rejects a changed target", async () => {
     const root = await temporaryRoot("pragma-dsl-draft-conflict-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -263,6 +383,14 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     await expect(
       adapter.restartDslDraft({ missionId, draftId: preparedDraft.draftId }),
     ).resolves.toMatchObject({ state: "editing", referencePath: expect.any(String) });
+    const afterRestart = await project.get();
+    await expect(
+      adapter.commit({
+        changeSetId: preparedBeforeRace.changeSetId,
+        operationId: "restarted-old-change-set",
+      }),
+    ).rejects.toThrow("no longer matches");
+    await expect(project.get()).resolves.toEqual(afterRestart);
   });
 
   it("replays an interrupted DSL draft discard journal", async () => {

@@ -57,6 +57,7 @@ import {
   type PragmaAgentFlowDraftDiagnostic,
   type PragmaAgentFlowDraftOperation,
   type PragmaAgentPrepareResult,
+  type PragmaAgentProjectCommit,
 } from "@pragma/built-in-agents";
 import { BUILT_IN_PRAGMA_EXPERT_AVATAR_PROFILES } from "@pragma/shared";
 import { z } from "zod";
@@ -696,108 +697,120 @@ export function createDesktopPragmaAgentProjectPort(options: {
         const draft = await readDslDraft(input.draftId);
         requireDslDraftOwner(draft, input.missionId);
         if (draft.state !== "editing") throw new Error("DSL draft is not editable.");
-        const conflictingRefs = await staleDslDraftRefs(draft);
-        if (conflictingRefs.length > 0) {
+        const frozenWorktree = await detachDslDraftWorktree(draft);
+        let finalized = false;
+        try {
+          const conflictingRefs = await staleDslDraftRefs(draft);
+          if (conflictingRefs.length > 0) {
+            const snapshot = await createStableDslDraftSubmission(
+              draft,
+              frozenWorktree,
+              dslDraftSubmissionsPath(draft.draftId),
+            );
+            const finalWorktree = await scanDslDraftFrozenWorktree(draft, frozenWorktree);
+            if (finalWorktree.hash !== snapshot.hash) {
+              await removeDslDraftSubmission(
+                draft,
+                dslDraftSubmissionsPath(draft.draftId),
+                snapshot.hash,
+              );
+              return invalidPrepare(
+                "dsl.draft_changed",
+                "DSL draft files changed while the candidate was being frozen. Review and prepare again.",
+              );
+            }
+            await writeDslDraft(
+              StoredDslDraftSchema.parse({
+                ...draft,
+                state: "conflicted",
+                submissionHash: snapshot.hash,
+                updatedAt: new Date().toISOString(),
+              }),
+            );
+            finalized = true;
+            return invalidPrepare(
+              "project.resource_conflict",
+              `Draft targets changed after the draft started: ${conflictingRefs.join(", ")}.`,
+            );
+          }
           const snapshot = await createStableDslDraftSubmission(
             draft,
+            frozenWorktree,
             dslDraftSubmissionsPath(draft.draftId),
           );
-          const finalWorktree = await scanDslDraftWorktree(draft);
-          if (finalWorktree.hash !== snapshot.hash) {
+          const sources = draft.resources.map(
+            (target) => snapshot.files.get(target.relativePath)!.source,
+          );
+          const parsed = parsePragmaAgentSources(sources);
+          if (parsed.diagnostics.length > 0) {
             await removeDslDraftSubmission(
               draft,
               dslDraftSubmissionsPath(draft.draftId),
               snapshot.hash,
             );
+            return PragmaAgentPrepareResultSchema.parse({
+              status: "invalid",
+              diagnostics: parsed.diagnostics,
+            });
+          }
+          for (const [index, resource] of parsed.resources.entries()) {
+            const target = draft.resources[index]!;
+            if (
+              canonicalPragmaResourceRef(resource) !== target.ref ||
+              resource.kind !== target.kind
+            ) {
+              await removeDslDraftSubmission(
+                draft,
+                dslDraftSubmissionsPath(draft.draftId),
+                snapshot.hash,
+              );
+              return invalidPrepare(
+                "resource.identity_changed",
+                `Draft file identity must remain ${target.kind} ${target.ref}: ${target.relativePath}.`,
+              );
+            }
+          }
+          const result = await prepareResources({
+            expectedProjectRevision: draft.baseProjectRevision,
+            authoredResources: parsed.resources,
+            dslDraftId: draft.draftId,
+          });
+          if (result.status !== "prepared") {
+            await removeDslDraftSubmission(
+              draft,
+              dslDraftSubmissionsPath(draft.draftId),
+              snapshot.hash,
+            );
+            return result;
+          }
+          const finalWorktree = await scanDslDraftFrozenWorktree(draft, frozenWorktree);
+          if (finalWorktree.hash !== snapshot.hash) {
+            await Promise.all([
+              rm(candidatePath(result.changeSet.changeSetId), { force: true }),
+              removeDslDraftSubmission(
+                draft,
+                dslDraftSubmissionsPath(draft.draftId),
+                snapshot.hash,
+              ),
+            ]);
             return invalidPrepare(
               "dsl.draft_changed",
-              "DSL draft files changed while the candidate was being frozen. Review and prepare again.",
+              "DSL draft files changed during validation. The newer edits were preserved; prepare again.",
             );
           }
-          await writeDslDraft(
-            StoredDslDraftSchema.parse({
-              ...draft,
-              state: "conflicted",
-              submissionHash: snapshot.hash,
-              updatedAt: new Date().toISOString(),
-            }),
-          );
-          await rm(dslDraftWorktreePath(draft), { recursive: true, force: true });
-          return invalidPrepare(
-            "project.resource_conflict",
-            `Draft targets changed after the draft started: ${conflictingRefs.join(", ")}.`,
-          );
-        }
-        const snapshot = await createStableDslDraftSubmission(
-          draft,
-          dslDraftSubmissionsPath(draft.draftId),
-        );
-        const sources = draft.resources.map(
-          (target) => snapshot.files.get(target.relativePath)!.source,
-        );
-        const parsed = parsePragmaAgentSources(sources);
-        if (parsed.diagnostics.length > 0) {
-          await removeDslDraftSubmission(
-            draft,
-            dslDraftSubmissionsPath(draft.draftId),
-            snapshot.hash,
-          );
-          return PragmaAgentPrepareResultSchema.parse({
-            status: "invalid",
-            diagnostics: parsed.diagnostics,
+          const next = StoredDslDraftSchema.parse({
+            ...draft,
+            state: "prepared",
+            submissionHash: snapshot.hash,
+            preparedChangeSetId: result.changeSet.changeSetId,
+            updatedAt: new Date().toISOString(),
           });
-        }
-        for (const [index, resource] of parsed.resources.entries()) {
-          const target = draft.resources[index]!;
-          if (
-            canonicalPragmaResourceRef(resource) !== target.ref ||
-            resource.kind !== target.kind
-          ) {
-            await removeDslDraftSubmission(
-              draft,
-              dslDraftSubmissionsPath(draft.draftId),
-              snapshot.hash,
-            );
-            return invalidPrepare(
-              "resource.identity_changed",
-              `Draft file identity must remain ${target.kind} ${target.ref}: ${target.relativePath}.`,
-            );
-          }
-        }
-        const result = await prepareResources({
-          expectedProjectRevision: draft.baseProjectRevision,
-          authoredResources: parsed.resources,
-          dslDraftId: draft.draftId,
-        });
-        if (result.status !== "prepared") {
-          await removeDslDraftSubmission(
-            draft,
-            dslDraftSubmissionsPath(draft.draftId),
-            snapshot.hash,
-          );
+          await writeDslDraft(next);
+          finalized = true;
           return result;
+        } finally {
+          if (!finalized) await restoreDslDraftWorktree(draft, frozenWorktree);
         }
-        const finalWorktree = await scanDslDraftWorktree(draft);
-        if (finalWorktree.hash !== snapshot.hash) {
-          await Promise.all([
-            rm(candidatePath(result.changeSet.changeSetId), { force: true }),
-            removeDslDraftSubmission(draft, dslDraftSubmissionsPath(draft.draftId), snapshot.hash),
-          ]);
-          return invalidPrepare(
-            "dsl.draft_changed",
-            "DSL draft files changed during validation. The newer edits were preserved; prepare again.",
-          );
-        }
-        const next = StoredDslDraftSchema.parse({
-          ...draft,
-          state: "prepared",
-          submissionHash: snapshot.hash,
-          preparedChangeSetId: result.changeSet.changeSetId,
-          updatedAt: new Date().toISOString(),
-        });
-        await writeDslDraft(next);
-        await rm(dslDraftWorktreePath(draft), { recursive: true, force: true });
-        return result;
       });
     },
     async restartDslDraft(input) {
@@ -861,7 +874,13 @@ export function createDesktopPragmaAgentProjectPort(options: {
             updatedAt: new Date().toISOString(),
           }),
         );
-        await rm(dslDraftSubmissionsPath(current.draftId), { recursive: true, force: true });
+        await Promise.all([
+          rm(dslDraftSubmissionsPath(current.draftId), { recursive: true, force: true }),
+          rm(join(current.workspacePath, ".pragma", "dsl-drafts", current.draftId), {
+            recursive: true,
+            force: true,
+          }),
+        ]);
         return PragmaAgentDslDraftSchema.parse({
           ...toPublicDslDraft(replacement),
           referencePath: oldCandidate,
@@ -1297,53 +1316,61 @@ export function createDesktopPragmaAgentProjectPort(options: {
         if (candidate.changeSet.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
           throw new Error("The prepared DSL change-set contains validation errors.");
         }
-        const snapshot = await options.project.get();
-        const catalog = await buildExpertCatalog(options);
-        assertExpertSelectionsAvailable(
-          candidate.resources,
-          snapshot.resources,
-          candidate.resources,
-          catalog,
-        );
-        const published = await options.project.apply({
-          baseRevision: candidate.changeSet.projectRevision,
-          upserts: candidate.resources,
-        });
-        const result = PragmaAgentProjectCommitSchema.parse({
-          projectId: published.projectId,
-          projectRevision: published.revision,
-          changedRefs: candidate.changeSet.changes.map((change) => change.ref),
-        });
-        if (candidate.dslDraftId !== undefined) {
-          await withFileLock(dslDraftMutationLockPath(candidate.dslDraftId), async () => {
-            const draft = await readDslDraft(candidate.dslDraftId!);
-            if (
-              draft.state === "prepared" &&
-              draft.preparedChangeSetId === candidate.changeSet.changeSetId
-            ) {
-              await writeDslDraft(
-                StoredDslDraftSchema.parse({
-                  ...draft,
-                  state: "committed",
-                  submissionHash: undefined,
-                  committedProjectRevision: published.revision,
-                  updatedAt: new Date().toISOString(),
-                }),
-              );
-            } else if (
-              draft.state !== "committed" ||
-              draft.preparedChangeSetId !== candidate.changeSet.changeSetId
-            ) {
-              throw new Error("Prepared DSL draft no longer matches its change-set.");
-            }
-            await rm(dslDraftSubmissionsPath(candidate.dslDraftId!), {
+        const applyCandidate = async (): Promise<PragmaAgentProjectCommit> => {
+          const snapshot = await options.project.get();
+          const catalog = await buildExpertCatalog(options);
+          assertExpertSelectionsAvailable(
+            candidate.resources,
+            snapshot.resources,
+            candidate.resources,
+            catalog,
+          );
+          const published = await options.project.apply({
+            baseRevision: candidate.changeSet.projectRevision,
+            upserts: candidate.resources,
+          });
+          return PragmaAgentProjectCommitSchema.parse({
+            projectId: published.projectId,
+            projectRevision: published.revision,
+            changedRefs: candidate.changeSet.changes.map((change) => change.ref),
+          });
+        };
+        if (candidate.dslDraftId === undefined) {
+          const result = await applyCandidate();
+          await writeJson(path, result);
+          return result;
+        }
+        return await withFileLock(dslDraftMutationLockPath(candidate.dslDraftId), async () => {
+          const draft = await readDslDraft(candidate.dslDraftId!);
+          if (
+            draft.state !== "prepared" ||
+            draft.preparedChangeSetId !== candidate.changeSet.changeSetId
+          ) {
+            throw new Error("Prepared DSL draft no longer matches its change-set.");
+          }
+          const result = await applyCandidate();
+          await writeDslDraft(
+            StoredDslDraftSchema.parse({
+              ...draft,
+              state: "committed",
+              submissionHash: undefined,
+              committedProjectRevision: result.projectRevision,
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+          await Promise.all([
+            rm(dslDraftSubmissionsPath(candidate.dslDraftId!), {
               recursive: true,
               force: true,
-            });
-          });
-        }
-        await writeJson(path, result);
-        return result;
+            }),
+            rm(join(draft.workspacePath, ".pragma", "dsl-drafts", draft.draftId), {
+              recursive: true,
+              force: true,
+            }),
+          ]);
+          await writeJson(path, result);
+          return result;
+        });
       });
     },
   };
@@ -1648,15 +1675,70 @@ interface DslDraftFileSnapshot {
 
 async function scanDslDraftWorktree(draft: StoredDslDraft): Promise<DslDraftFileSnapshot> {
   const worktree = dslDraftWorktreePath(draft);
-  const status = await lstat(worktree);
+  return await scanDslDraftWorkspaceTree(draft, worktree, "worktree");
+}
+
+async function scanDslDraftFrozenWorktree(
+  draft: StoredDslDraft,
+  frozenWorktree: string,
+): Promise<DslDraftFileSnapshot> {
+  return await scanDslDraftWorkspaceTree(draft, frozenWorktree, "frozen worktree");
+}
+
+async function scanDslDraftWorkspaceTree(
+  draft: StoredDslDraft,
+  root: string,
+  label: string,
+): Promise<DslDraftFileSnapshot> {
+  const status = await lstat(root);
   if (!status.isDirectory() || status.isSymbolicLink()) {
-    throw new Error("DSL draft worktree must be a real directory.");
+    throw new Error(`DSL draft ${label} must be a real directory.`);
   }
-  const canonical = await realpath(worktree);
+  const canonical = await realpath(root);
   if (!isWithinPath(draft.workspacePath, canonical)) {
-    throw new Error("DSL draft worktree escapes its Mission workspace.");
+    throw new Error(`DSL draft ${label} escapes its Mission workspace.`);
   }
-  return await scanDslDraftFiles(worktree, draft.resources);
+  return await scanDslDraftFiles(root, draft.resources);
+}
+
+async function detachDslDraftWorktree(draft: StoredDslDraft): Promise<string> {
+  const worktree = dslDraftWorktreePath(draft);
+  const frozenWorktree = join(dirname(worktree), "frozen-worktree");
+  try {
+    await lstat(frozenWorktree);
+    try {
+      await lstat(worktree);
+      throw new Error("DSL draft has both editable and frozen worktrees.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await scanDslDraftFrozenWorktree(draft, frozenWorktree);
+    return frozenWorktree;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await scanDslDraftWorktree(draft);
+  await rename(worktree, frozenWorktree);
+  try {
+    await scanDslDraftFrozenWorktree(draft, frozenWorktree);
+    return frozenWorktree;
+  } catch (error) {
+    await restoreDslDraftWorktree(draft, frozenWorktree);
+    throw error;
+  }
+}
+
+async function restoreDslDraftWorktree(
+  draft: StoredDslDraft,
+  frozenWorktree: string,
+): Promise<void> {
+  try {
+    await rename(frozenWorktree, dslDraftWorktreePath(draft));
+  } catch (error) {
+    throw new Error("DSL draft worktree could not be restored after an unsuccessful prepare.", {
+      cause: error,
+    });
+  }
 }
 
 async function scanDslDraftFiles(
@@ -1767,10 +1849,11 @@ async function makeTreeReadonly(root: string): Promise<void> {
 
 async function createStableDslDraftSubmission(
   draft: StoredDslDraft,
+  frozenWorktree: string,
   submissionsRoot: string,
 ): Promise<DslDraftFileSnapshot> {
-  const first = await scanDslDraftWorktree(draft);
-  const second = await scanDslDraftWorktree(draft);
+  const first = await scanDslDraftFrozenWorktree(draft, frozenWorktree);
+  const second = await scanDslDraftFrozenWorktree(draft, frozenWorktree);
   if (first.hash !== second.hash) throw new Error("DSL draft changed while it was being prepared.");
   const destination = join(submissionsRoot, first.hash);
   try {

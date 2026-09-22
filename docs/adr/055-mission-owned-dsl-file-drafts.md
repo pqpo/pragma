@@ -23,15 +23,19 @@ files with its Runtime-native file tools and submits only the opaque `draftId` t
 Authoritative draft records and content-addressed immutable submissions live in Host-private state
 under `dsl-resource-drafts/<draftId>/`. These paths are never returned to the Runtime. The Host
 accepts only the exact regular files declared by the draft, rejects links, special files, path
-escapes, additions, deletions, renames and oversized files, and creates a stable double-scanned
-snapshot before parsing or validation. It verifies an existing content-addressed submission against
-its directory hash before reuse and rechecks the editable tree after validation so edits arriving
-during prepare are preserved for the next attempt. Invalid prepare attempts remove their private
-snapshots. Resource kind and semantic
+escapes, additions, deletions, renames and oversized files. Prepare first atomically renames the
+editable `worktree/` to `frozen-worktree/`, so a later native write through the published edit path
+fails instead of succeeding immediately before Host cleanup. The Host then creates a stable
+double-scanned snapshot from that detached tree before parsing or validation. It verifies an existing
+content-addressed submission against its directory hash before reuse and rechecks the frozen tree
+after validation. An unsuccessful prepare restores the detached tree to the same editable path;
+invalid attempts also remove their private snapshots. Resource kind and semantic
 identity cannot be changed through a draft. A successful prepare feeds the existing Project change-set
-and commit pipeline; the editable Workspace tree is then removed. Prepare, restart and discard are
-serialized by a per-draft cross-process lock. Mission identity and Workspace path participate in the
-management binding fingerprint so a compiled binding cannot be reused across Mission scopes.
+and commit pipeline. The detached tree is retained until commit, restart or discard cleanup. Prepare,
+restart, discard and a draft-backed Project commit are serialized by the same per-draft cross-process
+lock. A commit must revalidate `prepared` state and the exact change-set while holding that lock before
+mutating the Project. Mission identity and Workspace path participate in the management binding
+fingerprint so a compiled binding cannot be reused across Mission scopes.
 
 The generic full-source `prepare_dsl_changes` entry and Flow `additionalSources` reject Expert and
 ExpertTeam resources. This makes the file-draft route mandatory for Agent-facing authoring while the
