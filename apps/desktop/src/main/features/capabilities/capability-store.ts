@@ -4,7 +4,12 @@ import { extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
 import { z } from "zod";
-import { MAX_SKILL_PACKAGE_BYTES, SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+import {
+  MAX_SKILL_PACKAGE_BYTES,
+  skillBundleContentHashChunks,
+  SkillPackageSchema,
+  type SkillPackage,
+} from "@pragma/shared";
 import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
@@ -801,7 +806,7 @@ export function createCapabilityStore(options: {
           name,
           description,
           entryPath: "SKILL.md",
-          contentHash: await hashDirectory(payloadPath),
+          contentHash: await hashSkillDirectoryContent(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
           schemaVersion: "pragma.capability/v4",
@@ -846,7 +851,7 @@ export function createCapabilityStore(options: {
           name: input.name,
           description: input.description,
           entryPath: "SKILL.md",
-          contentHash: await hashDirectory(payloadPath),
+          contentHash: await hashSkillDirectoryContent(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
           schemaVersion: "pragma.capability/v4",
@@ -904,7 +909,7 @@ export function createCapabilityStore(options: {
         await copySkillTree(input.sourcePath, payloadPath);
         const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
         const metadata = readSkillMetadata(skillDocument);
-        const contentHash = await hashDirectory(payloadPath);
+        const contentHash = await hashSkillDirectoryContent(payloadPath);
         const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
         if (candidateSnapshot.hash !== input.candidateContentHash) {
           throw new CapabilityStoreError(
@@ -1011,7 +1016,7 @@ export function createCapabilityStore(options: {
               "The immutable Skill candidate no longer matches its submitted content hash.",
             );
           }
-          const contentHash = await hashDirectory(payloadPath);
+          const contentHash = await hashSkillDirectoryContent(payloadPath);
           const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
           const metadata = readSkillMetadata(skillDocument);
           if (metadata.name !== input.name || metadata.description !== input.description) {
@@ -1820,13 +1825,18 @@ function unquote(value: string): string {
   return value;
 }
 
-async function hashDirectory(path: string): Promise<string> {
-  const hash = createHash("sha256");
+export async function hashSkillDirectoryContent(path: string): Promise<string> {
   const files = await listFiles(path);
-  for (const file of files.toSorted()) {
-    hash.update(relative(path, file).split(sep).join("/"));
-    hash.update(await readFile(file));
-  }
+  const chunks = skillBundleContentHashChunks(
+    await Promise.all(
+      files.map(async (file) => ({
+        path: relative(path, file).split(sep).join("/"),
+        contents: await readFile(file),
+      })),
+    ),
+  );
+  const hash = createHash("sha256");
+  for (const chunk of chunks) hash.update(chunk);
   return hash.digest("hex");
 }
 

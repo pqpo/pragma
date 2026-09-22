@@ -75,9 +75,21 @@ export const SkillBundlePayloadDescriptorSchema = z
 export type SkillBundlePayloadDescriptor = z.infer<typeof SkillBundlePayloadDescriptorSchema>;
 export type SkillBundleFile = z.infer<typeof SkillBundleFileSchema>;
 
+export interface SkillBundleContentFile {
+  readonly path: string;
+  readonly contents: Uint8Array;
+}
+
+function compareSkillBundlePaths(
+  left: { readonly path: string },
+  right: { readonly path: string },
+) {
+  return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
+}
+
 export function serializeSkillBundleFileManifest(files: readonly SkillBundleFile[]): string {
   return JSON.stringify(
-    files.map(({ path, sizeBytes, sha256, executable }) => ({
+    files.toSorted(compareSkillBundlePaths).map(({ path, sizeBytes, sha256, executable }) => ({
       path,
       sizeBytes,
       sha256,
@@ -88,8 +100,19 @@ export function serializeSkillBundleFileManifest(files: readonly SkillBundleFile
 
 export function serializeSkillBundleWorkingTree(files: readonly SkillBundleFile[]): string {
   return JSON.stringify(
-    files.map(({ path, sha256, sizeBytes, executable }) => [path, sha256, sizeBytes, executable]),
+    files
+      .toSorted(compareSkillBundlePaths)
+      .map(({ path, sha256, sizeBytes, executable }) => [path, sha256, sizeBytes, executable]),
   );
+}
+
+/** Matches the established CapabilityDefinition.contentHash input: sorted UTF-8 paths + bytes. */
+export function skillBundleContentHashChunks(
+  files: readonly SkillBundleContentFile[],
+): readonly (string | Uint8Array)[] {
+  return files
+    .toSorted(compareSkillBundlePaths)
+    .flatMap((file) => [file.path, file.contents] as const);
 }
 
 export function serializeSkillBundleDefinition(
@@ -110,7 +133,7 @@ export function serializeSkillBundleDefinition(
 export function assertValidSkillBundlePayload(input: {
   readonly descriptor: SkillBundlePayloadDescriptor;
   readonly files: ReadonlyMap<string, Uint8Array>;
-  readonly sha256: (value: string | Uint8Array) => string;
+  readonly sha256: (value: string | Uint8Array | readonly (string | Uint8Array)[]) => string;
   readonly label: string;
 }): void {
   const declaredPaths = new Set(input.descriptor.files.map((file) => file.path));
@@ -137,10 +160,15 @@ export function assertValidSkillBundlePayload(input: {
   ) {
     throw new Error(`Skill payload files fingerprint does not match: ${input.label}.`);
   }
-  if (
-    input.descriptor.contentHash !==
-    input.sha256(serializeSkillBundleWorkingTree(input.descriptor.files))
-  ) {
+  const contentHash = input.sha256(
+    skillBundleContentHashChunks(
+      input.descriptor.files.map((file) => ({
+        path: file.path,
+        contents: input.files.get(`files/${file.path}`)!,
+      })),
+    ),
+  );
+  if (input.descriptor.contentHash !== contentHash) {
     throw new Error(`Skill payload content hash does not match: ${input.label}.`);
   }
   if (

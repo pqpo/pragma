@@ -808,8 +808,11 @@ function inspectedRoot(resource: PragmaResource): InspectedBundleSourceRoot {
   };
 }
 
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
+function sha256(value: string | Uint8Array | readonly (string | Uint8Array)[]): string {
+  const hash = createHash("sha256");
+  if (typeof value === "string" || value instanceof Uint8Array) hash.update(value);
+  else for (const chunk of value) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 async function readOptionalItem(path: string): Promise<BundleSourceItem | undefined> {

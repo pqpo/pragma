@@ -85,7 +85,11 @@ import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
-import { CapabilityStoreError, type CapabilityStore } from "../capabilities/capability-store.ts";
+import {
+  CapabilityStoreError,
+  hashSkillDirectoryContent,
+  type CapabilityStore,
+} from "../capabilities/capability-store.ts";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
@@ -996,7 +1000,10 @@ export function createPragmaBundleService(options: {
                       sourceRevision,
                     );
                     const skillSnapshot = await scanSkillWorkingTree(skillFilesPath);
-                    if (skillSnapshot.hash !== sourceDefinition.contentHash) {
+                    if (
+                      (await hashSkillDirectoryContent(skillFilesPath)) !==
+                      sourceDefinition.contentHash
+                    ) {
                       throw new Error(
                         `Skill ${entry.capability.manifest.id} revision ${sourceRevision} content hash does not match its files.`,
                       );
@@ -1752,8 +1759,10 @@ export function createPragmaBundleService(options: {
                       : undefined,
                   );
                   if (prefix === currentPrefix && latest.dependency.skillFiles !== undefined) {
-                    const materializedSnapshot = await scanSkillWorkingTree(payloadPath);
-                    if (materializedSnapshot.hash !== latest.definition.contentHash) {
+                    if (
+                      (await hashSkillDirectoryContent(payloadPath)) !==
+                      latest.definition.contentHash
+                    ) {
                       throw new Error(
                         `Skill payload content hash does not match after extraction: ${latest.dependency.name}.`,
                       );
@@ -3373,8 +3382,11 @@ function capabilityNeedsCredentials(
   return definition.kind === "http_service" && definition.auth.type !== "none";
 }
 
-function sha256(value: string | Uint8Array): string {
-  return createHash("sha256").update(value).digest("hex");
+function sha256(value: string | Uint8Array | readonly (string | Uint8Array)[]): string {
+  const hash = createHash("sha256");
+  if (typeof value === "string" || value instanceof Uint8Array) hash.update(value);
+  else for (const chunk of value) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 function knowledgeBaseAssetFingerprint(input: {

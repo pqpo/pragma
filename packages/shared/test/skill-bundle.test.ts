@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidSkillBundlePayload,
   SkillBundlePayloadDescriptorSchema,
+  skillBundleContentHashChunks,
   serializeSkillBundleDefinition,
   serializeSkillBundleFileManifest,
   serializeSkillBundleWorkingTree,
@@ -17,7 +18,13 @@ describe("Skill Bundle payload codec", () => {
     executable: false,
   };
 
-  it("serializes file identity separately from the working-tree content hash", () => {
+  it("canonically serializes file identity separately from content and working-tree hashes", () => {
+    const earlierFile = {
+      ...file,
+      path: "README.md",
+      sizeBytes: 6,
+      sha256: "b".repeat(64),
+    };
     expect(JSON.parse(serializeSkillBundleFileManifest([file]))).toEqual([
       {
         path: "SKILL.md",
@@ -31,6 +38,23 @@ describe("Skill Bundle payload codec", () => {
     ]);
     expect(serializeSkillBundleFileManifest([file])).not.toBe(
       serializeSkillBundleWorkingTree([file]),
+    );
+    expect(serializeSkillBundleFileManifest([file, earlierFile])).toBe(
+      serializeSkillBundleFileManifest([earlierFile, file]),
+    );
+    expect(serializeSkillBundleWorkingTree([file, earlierFile])).toBe(
+      serializeSkillBundleWorkingTree([earlierFile, file]),
+    );
+    expect(
+      skillBundleContentHashChunks([
+        { path: file.path, contents: new TextEncoder().encode("Review code.") },
+        { path: earlierFile.path, contents: new TextEncoder().encode("Read.\n") },
+      ]),
+    ).toEqual(
+      skillBundleContentHashChunks([
+        { path: earlierFile.path, contents: new TextEncoder().encode("Read.\n") },
+        { path: file.path, contents: new TextEncoder().encode("Review code.") },
+      ]),
     );
   });
 
@@ -70,6 +94,7 @@ describe("Skill Bundle payload codec", () => {
   });
 
   it("validates every declared file and all payload fingerprints", () => {
+    const skillDocument = new TextEncoder().encode("Review code.");
     const descriptor = SkillBundlePayloadDescriptorSchema.parse({
       schemaVersion: "pragma.skill-bundle-payload/v1",
       assetKey: "0123456789abcdef",
@@ -81,11 +106,10 @@ describe("Skill Bundle payload codec", () => {
       fingerprint: "d".repeat(64),
       files: [file],
     });
-    const skillDocument = new TextEncoder().encode("Review code.");
-    const sha256 = (value: string | Uint8Array): string => {
+    const sha256 = (value: string | Uint8Array | readonly (string | Uint8Array)[]): string => {
+      if (Array.isArray(value)) return "c".repeat(64);
       if (value instanceof Uint8Array) return "a".repeat(64);
       if (value === serializeSkillBundleFileManifest(descriptor.files)) return "b".repeat(64);
-      if (value === serializeSkillBundleWorkingTree(descriptor.files)) return "c".repeat(64);
       if (value === serializeSkillBundleDefinition(descriptor)) return "d".repeat(64);
       throw new Error(`Unexpected digest input: ${value}`);
     };
