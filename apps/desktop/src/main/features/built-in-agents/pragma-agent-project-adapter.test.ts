@@ -1,5 +1,15 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +35,19 @@ import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-
 const temporaryRoots: string[] = [];
 
 const removeTemporaryRoot = async (root: string): Promise<void> => {
+  const makeWritable = async (path: string): Promise<void> => {
+    await chmod(path, 0o700).catch(() => undefined);
+    const entries = await readdir(path, { withFileTypes: true }).catch(() => []);
+    await Promise.all(
+      entries.map(async (entry) => {
+        const child = join(path, entry.name);
+        if (entry.isSymbolicLink()) return;
+        if (entry.isDirectory() && !entry.isSymbolicLink()) await makeWritable(child);
+        else await chmod(child, 0o600).catch(() => undefined);
+      }),
+    );
+  };
+  await makeWritable(root);
   await rm(root, {
     recursive: true,
     force: true,
@@ -278,12 +301,15 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         state: "initiated",
       };
       await writeFile(journalPath, JSON.stringify(initiatedJournal));
-      const published = await project.apply({
-        baseRevision: prepared.projectRevision,
-        upserts: prepared.changes.map((change) =>
-          PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(change.source)),
-        ),
-      });
+      const published = await project.applyTransactional(
+        {
+          baseRevision: prepared.projectRevision,
+          upserts: prepared.changes.map((change) =>
+            PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(change.source)),
+          ),
+        },
+        prepared.changeSetId,
+      );
       const expectedResult = {
         projectId: published.projectId,
         projectRevision: published.revision,
@@ -348,6 +374,191 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         ),
       ).resolves.toContain(`"projectRevision": ${published.revision}`);
     }
+  });
+
+  it("does not claim another writer's matching Project revision as its own publication", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-publication-identity-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "identity-base" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    await writeFile(
+      draft.resources[0]!.filePath!,
+      (await readFile(draft.resources[0]!.filePath!, "utf8")).replace(
+        "Write concise text.",
+        "Write matching text.",
+      ),
+    );
+    const prepared = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    await project.apply({
+      baseRevision: prepared.projectRevision,
+      upserts: prepared.changes.map((change) =>
+        PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(change.source)),
+      ),
+    });
+    const recordRoot = join(
+      stateRoot,
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(draft.draftId),
+    );
+    await writeFile(
+      join(recordRoot, "commit.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.dsl-draft-commit/v1",
+        draftId: draft.draftId,
+        changeSetId: prepared.changeSetId,
+        operationId: "identity-commit",
+        state: "initiated",
+      }),
+    );
+    const committed = await adapter.commit({
+      changeSetId: prepared.changeSetId,
+      operationId: "identity-commit",
+      missionId,
+    });
+    expect(committed.projectRevision).toBe(3);
+    await expect(project.findRevisionByPublicationId(prepared.changeSetId)).resolves.toMatchObject({
+      revision: 3,
+    });
+  });
+
+  it("returns a durable commit receipt while workspace cleanup is pending", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-cleanup-pending-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "cleanup-base" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    await writeFile(
+      draft.resources[0]!.filePath!,
+      (await readFile(draft.resources[0]!.filePath!, "utf8")).replace(
+        "Write concise text.",
+        "Write clean text.",
+      ),
+    );
+    const prepared = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    const workspaceDraftsRoot = join(root, ".pragma", "dsl-drafts");
+    await chmod(workspaceDraftsRoot, 0o500);
+    const committed = await adapter.commit({
+      changeSetId: prepared.changeSetId,
+      operationId: "cleanup-pending",
+      missionId,
+    });
+    const commitJournal = join(
+      stateRoot,
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(draft.draftId),
+      "commit.json",
+    );
+    await expect(readFile(commitJournal, "utf8")).resolves.toContain('"cleanup_pending"');
+    await chmod(workspaceDraftsRoot, 0o700);
+    await expect(
+      adapter.commit({
+        changeSetId: prepared.changeSetId,
+        operationId: "cleanup-pending-retry",
+        missionId,
+      }),
+    ).resolves.toEqual(committed);
+    await expect(readFile(commitJournal, "utf8")).resolves.toContain('"completed"');
+    await rm(
+      join(stateRoot, "change-sets", `${encodePragmaPathSegment(prepared.changeSetId)}.json`),
+    );
+    await expect(adapter.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ draftId: draft.draftId, state: "committed" })],
+    });
+  });
+
+  it("scopes draft recovery by Mission and short-circuits completed commit journals", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-owner-scope-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const missionA = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const missionB = "9c3db88a-8510-45bf-8c4a-6069d52dd135";
+    const draftA = await adapter.startDslDraft({
+      missionId: missionA,
+      workspacePath: root,
+      targets: [{ mode: "create", key: "a", kind: "Expert", name: "A", description: "A" }],
+    });
+    const draftB = await adapter.startDslDraft({
+      missionId: missionB,
+      workspacePath: root,
+      targets: [{ mode: "create", key: "b", kind: "Expert", name: "B", description: "B" }],
+    });
+    await writeFile(
+      join(stateRoot, "dsl-resource-drafts", encodePragmaPathSegment(draftB.draftId), "draft.json"),
+      "{",
+    );
+    await expect(adapter.listDslDrafts({ missionId: missionA, limit: 25 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ draftId: draftA.draftId })],
+    });
+  });
+
+  it("cleans a discoverable draft left between workspace creation and record publication", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-start-recovery-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draftId = "9c3db88a-8510-45bf-8c4a-6069d52dd135";
+    const recordRoot = join(stateRoot, "dsl-resource-drafts", encodePragmaPathSegment(draftId));
+    const workspaceDraft = join(root, ".pragma", "dsl-drafts", draftId);
+    await mkdir(workspaceDraft, { recursive: true });
+    await writeFile(join(workspaceDraft, "partial"), "partial");
+    await mkdir(recordRoot, { recursive: true });
+    await writeFile(
+      join(recordRoot, "owner.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.dsl-draft-owner/v1",
+        draftId,
+        missionId,
+        workspacePath: root,
+        state: "initializing",
+      }),
+    );
+    await expect(adapter.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+      items: [],
+    });
+    await expect(readFile(join(workspaceDraft, "partial"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("atomically detaches the editable worktree before project validation", async () => {
@@ -483,16 +694,52 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     await expect(readFile(conflictingDraft.resources[0]!.filePath!, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
-    const replacement = await adapter.restartDslDraft({
+    const conflictingRecordRoot = join(
+      root,
+      "state",
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(conflictingDraft.draftId),
+    );
+    const conflictingRecord = JSON.parse(
+      await readFile(join(conflictingRecordRoot, "draft.json"), "utf8"),
+    ) as { submissionHash: string };
+    const replacementDraftId = "c0648868-bf1b-4605-b07c-7e2d598b9d1f";
+    await writeFile(
+      join(conflictingRecordRoot, "restart.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.dsl-draft-restart/v1",
+        sourceDraftId: conflictingDraft.draftId,
+        replacementDraftId,
+        missionId,
+        sourceSubmissionHash: conflictingRecord.submissionHash,
+        state: "initiated",
+      }),
+    );
+    const recoveredRestart = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    await expect(recoveredRestart.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ draftId: conflictingDraft.draftId, state: "discarded" }),
+      ]),
+    });
+    const replacement = await recoveredRestart.restartDslDraft({
       missionId,
       draftId: conflictingDraft.draftId,
     });
-    expect(replacement).toMatchObject({ state: "editing", referencePath: expect.any(String) });
+    expect(replacement).toMatchObject({
+      draftId: replacementDraftId,
+      state: "editing",
+      referencePath: expect.any(String),
+    });
     expect(replacement.referencePath).toContain(join(root, ".pragma", "dsl-drafts"));
     expect(replacement.referencePath).not.toContain(join(root, "state"));
     await expect(
       readFile(join(replacement.referencePath!, replacement.resources[0]!.relativePath), "utf8"),
     ).resolves.toContain("kind: Expert");
+    await expect(
+      rm(join(replacement.referencePath!, replacement.resources[0]!.relativePath)),
+    ).rejects.toMatchObject({ code: "EACCES" });
     await expect(
       adapter.inspectDslDraft({ missionId, draftId: conflictingDraft.draftId }),
     ).rejects.toThrow("already discarded");
@@ -532,7 +779,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     ).rejects.toThrow();
     await expect(
       adapter.restartDslDraft({ missionId, draftId: conflictingDraft.draftId }),
-    ).rejects.toThrow("Only a conflicted or stale prepared DSL draft can be restarted");
+    ).resolves.toMatchObject({ draftId: replacement.draftId, state: "editing" });
     await expect(
       adapter.restartDslDraft({ missionId, draftId: preparedDraft.draftId }),
     ).resolves.toMatchObject({ state: "editing", referencePath: expect.any(String) });

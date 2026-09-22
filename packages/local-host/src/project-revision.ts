@@ -40,6 +40,7 @@ export const LocalHostProjectRevisionManifestSchema = z
     projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     compilerVersion: z.string().min(1),
     createdAt: z.string().datetime(),
+    publicationId: z.string().uuid().optional(),
   })
   .strict();
 
@@ -68,6 +69,10 @@ export interface LocalHostProjectRevisionReader {
   readonly getRevision: (
     projectId: string,
     revision: number,
+  ) => Promise<LocalHostProjectRevisionLocation | undefined>;
+  readonly getRevisionByPublicationId: (
+    projectId: string,
+    publicationId: string,
   ) => Promise<LocalHostProjectRevisionLocation | undefined>;
   readonly openRevision: (location: LocalHostProjectRevisionLocation) => Promise<PragmaProject>;
   readonly readFiles: (
@@ -183,6 +188,16 @@ export function createLocalHostProjectRevisionReader(options: {
         : await toLocation(projectId, manifest.headRevision);
     },
     getRevision: async (projectId, revision) => await toLocation(projectId, revision),
+    getRevisionByPublicationId: async (projectId, publicationId) => {
+      const manifest = await readProjectManifest(projectId);
+      if (manifest === undefined) return undefined;
+      for (let revision = manifest.headRevision; revision >= 1; revision -= 1) {
+        const candidate = await readRevisionManifest(projectId, revision);
+        if (candidate?.publicationId === publicationId)
+          return await toLocation(projectId, revision);
+      }
+      return undefined;
+    },
     readFiles: async (location) =>
       await readTextFiles(location.rootDir, isCompilerViewLocation(location)),
     commit: async () => {
@@ -207,6 +222,7 @@ export function createLocalHostProjectRevisionReader(options: {
       projectFingerprint: manifest.projectFingerprint,
       compilerVersion: manifest.compilerVersion,
       updatedAt: manifest.createdAt,
+      publicationId: manifest.publicationId,
       sourceProjectFingerprint: manifest.projectFingerprint,
       sourceCompilerVersion: manifest.compilerVersion,
     };
@@ -216,6 +232,8 @@ export function createLocalHostProjectRevisionReader(options: {
   return {
     getHead: sourceRepository.getHead,
     getRevision: sourceRepository.getRevision,
+    getRevisionByPublicationId: async (projectId, publicationId) =>
+      await sourceRepository.getRevisionByPublicationId!(projectId, publicationId),
     readFiles: sourceRepository.readFiles,
     openRevision: async (location) => {
       const project = await loadPragmaProject(location.entryFile, {

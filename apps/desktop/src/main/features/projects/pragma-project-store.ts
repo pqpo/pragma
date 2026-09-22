@@ -106,6 +106,11 @@ export interface PragmaProjectStore {
     readonly requiredUnchangedRefs?: readonly string[] | undefined;
   }): Promise<PragmaProjectSnapshot>;
   apply(input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot>;
+  applyTransactional(
+    input: PragmaProjectChangeSetInput,
+    publicationId: string,
+  ): Promise<PragmaProjectSnapshot>;
+  findRevisionByPublicationId(publicationId: string): Promise<PragmaProjectSnapshot | undefined>;
   remove(input: {
     readonly baseRevision: number;
     readonly ref: string;
@@ -378,7 +383,10 @@ export function createPragmaProjectStore(options: {
     }
   };
 
-  const apply = async (input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot> => {
+  const applyChangeSet = async (
+    input: PragmaProjectChangeSetInput,
+    publicationId?: string,
+  ): Promise<PragmaProjectSnapshot> => {
     try {
       await ensureMigrated();
       if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
@@ -420,12 +428,14 @@ export function createPragmaProjectStore(options: {
         effectiveChangeSet.removals ?? [],
       );
       return PragmaProjectSnapshotSchema.parse(
-        await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet }),
+        await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet, publicationId }),
       );
     } catch (error) {
       return normalizeError(error);
     }
   };
+  const apply = async (input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot> =>
+    await applyChangeSet(input);
 
   const publish = async (input: {
     readonly expectedRevision: number;
@@ -492,6 +502,19 @@ export function createPragmaProjectStore(options: {
       });
     },
     apply,
+    async applyTransactional(input, publicationId) {
+      return await applyChangeSet(input, z.string().uuid().parse(publicationId));
+    },
+    async findRevisionByPublicationId(publicationId) {
+      await ensureMigrated();
+      const location = await sourceRepository.getRevisionByPublicationId?.(
+        projectId,
+        z.string().uuid().parse(publicationId),
+      );
+      return location === undefined
+        ? undefined
+        : PragmaProjectSnapshotSchema.parse(await service.get(projectId, location.revision));
+    },
     async remove(input) {
       const snapshot = await get();
       const resource = snapshot.resources.find(
@@ -773,6 +796,10 @@ function createDesktopProjectSourceRepository(options: {
       projectFingerprint: manifest.projectFingerprint,
       compilerVersion: manifest.compilerVersion,
       updatedAt: manifest.createdAt,
+      publicationId:
+        manifest.schemaVersion === "pragma.project-revision/v5"
+          ? manifest.publicationId
+          : undefined,
     };
   };
 
@@ -788,6 +815,24 @@ function createDesktopProjectSourceRepository(options: {
       );
     }
     return committed;
+  };
+
+  const findRevisionByPublicationId = async (
+    projectId: string,
+    publicationId: string,
+  ): Promise<PragmaProjectRevisionLocation | undefined> => {
+    const manifest = await readManifest(projectId);
+    if (manifest === undefined) return undefined;
+    for (let revision = manifest.headRevision; revision >= 1; revision -= 1) {
+      const candidate = await readRevisionManifest(projectId, revision);
+      if (
+        candidate?.schemaVersion === "pragma.project-revision/v5" &&
+        candidate.publicationId === publicationId
+      ) {
+        return await requireLocation(projectId, revision);
+      }
+    }
+    return undefined;
   };
 
   return {
@@ -811,6 +856,9 @@ function createDesktopProjectSourceRepository(options: {
       if (!Number.isInteger(revision) || revision < 1) return undefined;
       return await location(projectId, revision);
     },
+    async getRevisionByPublicationId(projectId, publicationId) {
+      return await findRevisionByPublicationId(projectId, publicationId);
+    },
     async readFiles(project) {
       const files = await readTextFiles(project.rootDir);
       return new Map([...files].filter(([path]) => path !== ".pragma-snapshot"));
@@ -819,6 +867,13 @@ function createDesktopProjectSourceRepository(options: {
       return await withFileLock(
         commitLockPath(input.projectId),
         async () => {
+          if (input.publicationId !== undefined) {
+            const published = await findRevisionByPublicationId(
+              input.projectId,
+              input.publicationId,
+            );
+            if (published !== undefined) return published;
+          }
           const current = await readManifest(input.projectId);
           const actualRevision = current?.headRevision ?? 0;
           if (actualRevision !== input.expectedRevision) {
@@ -834,7 +889,11 @@ function createDesktopProjectSourceRepository(options: {
             actualRevision === 0
               ? undefined
               : await readRevisionManifest(input.projectId, actualRevision);
-          if (input.forceRevision !== true && previous?.snapshotHash === snapshot.root.hash) {
+          if (
+            input.publicationId === undefined &&
+            input.forceRevision !== true &&
+            previous?.snapshotHash === snapshot.root.hash
+          ) {
             return await requireLocation(input.projectId, actualRevision);
           }
           const lockSource = input.files.get("pragma.lock.yaml");
@@ -858,6 +917,7 @@ function createDesktopProjectSourceRepository(options: {
             projectFingerprint: lock.projectFingerprint,
             compilerVersion: lock.compilerVersion,
             createdAt,
+            ...(input.publicationId === undefined ? {} : { publicationId: input.publicationId }),
           });
           const storedRevisionManifest =
             writeStorageVersion === 4
@@ -1069,6 +1129,10 @@ function createCompilerMigratingProjectSourceRepository(options: {
           undefined,
         );
       }
+    },
+    async getRevisionByPublicationId(projectId, publicationId) {
+      const location = await options.source.getRevisionByPublicationId?.(projectId, publicationId);
+      return await resolveLocation(location);
     },
     async readFiles(location) {
       const files = await options.source.readFiles(location);
