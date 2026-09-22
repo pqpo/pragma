@@ -1022,7 +1022,7 @@ function adapterOptions(
 function capability(id: string, status: "ready" | "needs_attention"): Capability {
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v3",
+      schemaVersion: "pragma.capability/v4",
       id,
       runtimeKey: `repository_${id.at(-1)}`,
       name: "Repository access",
@@ -1052,7 +1052,7 @@ function capability(id: string, status: "ready" | "needs_attention"): Capability
 function emptyDescriptionMcpCapability(): Capability {
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v3",
+      schemaVersion: "pragma.capability/v4",
       id: "00000000-0000-4000-8000-000000000003",
       runtimeKey: "empty_description_mcp",
       name: "Empty description MCP",

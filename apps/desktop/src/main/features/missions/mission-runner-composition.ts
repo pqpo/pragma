@@ -82,6 +82,7 @@ import type {
   ExpertPromptAttachment,
   AgentMessageUsage,
   ExecutionEvent,
+  ExecutionEnvironmentSnapshot,
   RuntimeContextRecord,
 } from "@pragma/shared";
 import {
@@ -120,6 +121,10 @@ import {
   type UpdateMissionContextMounts,
 } from "../../../shared/contracts/index.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
+import {
+  parseDesktopCapabilityBindingRef,
+  parseLegacyDesktopCapabilityBindingRef,
+} from "../../platform/bindings/desktop-binding-ref.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
@@ -815,9 +820,7 @@ export function createMissionRunner(options: {
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) => {
           if (
-            ["system-store-revision", "system-skill-revision"].includes(
-              mission.origin.type,
-            ) &&
+            ["system-store-revision", "system-skill-revision"].includes(mission.origin.type) &&
             request.kind === "tool_approval"
           ) {
             return { kind: "tool_approval", approved: false, updatedInput: request.input };
@@ -1576,7 +1579,16 @@ export function createMissionRunner(options: {
     return (await compileRef(mission.executor.ref as PragmaResourceRef)).compiled;
   };
 
-  const compilationIdentity = async (mission: Mission): Promise<string> =>
+  type ResolvedCapabilityEnvironment = {
+    readonly capabilityId: string;
+    readonly resolvedRevision: number;
+    readonly fingerprint: string;
+  };
+
+  const compilationIdentity = async (
+    mission: Mission,
+    capabilities: readonly ResolvedCapabilityEnvironment[],
+  ): Promise<string> =>
     createHash("sha256")
       .update(
         JSON.stringify({
@@ -1591,9 +1603,123 @@ export function createMissionRunner(options: {
           }),
           toolPermissionMode: mission.toolPermissionMode,
           modelOverride: mission.modelOverride ?? null,
+          capabilities,
         }),
       )
       .digest("hex");
+
+  const missionCapabilityIds = async (mission: Mission): Promise<readonly string[]> => {
+    let resourcesPromise: Promise<ReadonlyMap<string, PragmaResource>> | undefined;
+    const projectResources = async (): Promise<ReadonlyMap<string, PragmaResource>> =>
+      await (resourcesPromise ??= options.project
+        .getRevision(mission.project.revision)
+        .then(
+          (snapshot) =>
+            new Map(
+              snapshot.resources.map((resource) => [
+                canonicalPragmaResourceRef(resource),
+                resource,
+              ]),
+            ),
+        ));
+    const visited = new Set<string>();
+    const capabilityIds = new Set<string>();
+    const visit = async (ref: string): Promise<void> => {
+      if (visited.has(ref)) return;
+      visited.add(ref);
+      const systemResource = options.getSystemExecutorResource?.(ref);
+      if (
+        systemResource === undefined &&
+        (await options.getSystemExecutorFingerprint?.(ref)) !== undefined
+      ) {
+        return;
+      }
+      const resource = systemResource ?? (await projectResources()).get(ref);
+      if (resource === undefined) return;
+      if (resource.kind === "Capability") {
+        const binding = resource.spec.binding;
+        const capabilityId =
+          binding === undefined
+            ? undefined
+            : (parseDesktopCapabilityBindingRef(binding) ??
+              parseLegacyDesktopCapabilityBindingRef(binding)?.id);
+        if (capabilityId !== undefined) capabilityIds.add(capabilityId);
+      }
+      await Promise.all(
+        [...referencedPragmaResourceRefs([resource])].map(async (dependencyRef) => {
+          await visit(dependencyRef);
+        }),
+      );
+    };
+    await visit(mission.executor.ref);
+    return [...capabilityIds].toSorted();
+  };
+
+  const capabilityEnvironmentIdentity = async (
+    mission: Mission,
+  ): Promise<ResolvedCapabilityEnvironment[]> => {
+    const active = await Promise.all(
+      (await missionCapabilityIds(mission)).map(async (capabilityId) => {
+        const capability = await options.capabilityStore.resolveActive(capabilityId);
+        const credentials = await options.capabilityCredentials.fingerprint(capability.manifest.id);
+        return {
+          capabilityId: capability.manifest.id,
+          resolvedRevision: capability.manifest.latestRevision,
+          fingerprint: createHash("sha256")
+            .update(JSON.stringify({ definition: capability.definition, credentials }))
+            .digest("hex"),
+        };
+      }),
+    );
+    return active.toSorted((left, right) => left.capabilityId.localeCompare(right.capabilityId));
+  };
+
+  const executionEnvironmentSnapshot = async (
+    compiled: CompiledResource<InvocableResource>,
+    capabilities: readonly ResolvedCapabilityEnvironment[],
+  ): Promise<ExecutionEnvironmentSnapshot> => {
+    return {
+      fingerprint: createHash("sha256")
+        .update(
+          JSON.stringify({
+            compiledEnvironment: compiled.environmentFingerprint.value,
+            capabilities,
+          }),
+        )
+        .digest("hex"),
+      resources: capabilities.map((capability) => ({
+        kind: "capability",
+        id: capability.capabilityId,
+        revision: capability.resolvedRevision,
+        fingerprint: capability.fingerprint,
+      })),
+    };
+  };
+
+  const compileMissionExecutorWithStableCapabilities = async (
+    mission: Mission,
+    runtimes: RuntimeResolver,
+  ): Promise<{
+    readonly compiled: CompiledResource<InvocableResource>;
+    readonly capabilities: ResolvedCapabilityEnvironment[];
+    readonly identity: string;
+  }> => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const before = await capabilityEnvironmentIdentity(mission);
+      const compiled = await compileMissionExecutor(mission, runtimes);
+      const after = await capabilityEnvironmentIdentity(mission);
+      if (JSON.stringify(before) === JSON.stringify(after)) {
+        return {
+          compiled,
+          capabilities: after,
+          identity: await compilationIdentity(mission, after),
+        };
+      }
+    }
+    throw new Error(
+      `Mission Capability environment changed repeatedly while compiling: ${mission.id}`,
+    );
+  };
 
   const rememberSessionCompilation = (
     missionId: string,
@@ -1618,7 +1744,9 @@ export function createMissionRunner(options: {
   };
 
   const createMissionExpertSession = async (
+    mission: Mission,
     compiled: CompiledResource<InvocableResource>,
+    capabilities: readonly ResolvedCapabilityEnvironment[],
     app: ReturnType<typeof createPragma>,
     input: {
       readonly modelSelection?: RuntimeModelSelection | undefined;
@@ -1629,6 +1757,7 @@ export function createMissionRunner(options: {
     }
     return await app.experts.createSession(compiled.value, {
       runtime: compiled.rootRuntimeId,
+      environment: await executionEnvironmentSnapshot(compiled, capabilities),
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
     });
   };
@@ -1636,6 +1765,7 @@ export function createMissionRunner(options: {
   const resumeMissionSession = async (
     mission: Mission,
     compiled: CompiledResource<InvocableResource>,
+    capabilities: readonly ResolvedCapabilityEnvironment[],
     app: ReturnType<typeof createPragma>,
     sessionId: string,
   ): Promise<ExpertSession> => {
@@ -1654,9 +1784,13 @@ export function createMissionRunner(options: {
       record,
       identityIndex,
     });
+    const requestWithEnvironment = {
+      ...request,
+      environment: await executionEnvironmentSnapshot(compiled, capabilities),
+    };
     if (record?.status === "closed") {
       const recovered = await app.experts.recoverClosedSession(compiled.value, {
-        ...request,
+        ...requestWithEnvironment,
         reason: `Active Desktop Mission ${mission.id} still references this closed ExpertSession.`,
       });
       logger.warn(
@@ -1666,7 +1800,7 @@ export function createMissionRunner(options: {
       );
       return recovered;
     }
-    return await app.experts.resumeSession(compiled.value, request);
+    return await app.experts.resumeSession(compiled.value, requestWithEnvironment);
   };
 
   const interruptSupersededMissionSession = async (mission: Mission): Promise<void> => {
@@ -1722,25 +1856,40 @@ export function createMissionRunner(options: {
   const openMissionExpertSession = async (input: {
     readonly mission: Mission;
     readonly compiled: CompiledResource<InvocableResource>;
+    readonly capabilities: readonly ResolvedCapabilityEnvironment[];
     readonly app: ReturnType<typeof createPragma>;
     readonly sessionId?: string | undefined;
     readonly modelSelection?: RuntimeModelSelection | undefined;
     readonly createSuccessorOnMismatch: boolean;
   }): Promise<ExpertSession> => {
     if (input.sessionId === undefined) {
-      return await createMissionExpertSession(input.compiled, input.app, {
-        modelSelection: input.modelSelection,
-      });
+      return await createMissionExpertSession(
+        input.mission,
+        input.compiled,
+        input.capabilities,
+        input.app,
+        { modelSelection: input.modelSelection },
+      );
     }
     try {
-      return await resumeMissionSession(input.mission, input.compiled, input.app, input.sessionId);
+      return await resumeMissionSession(
+        input.mission,
+        input.compiled,
+        input.capabilities,
+        input.app,
+        input.sessionId,
+      );
     } catch (error) {
       if (!input.createSuccessorOnMismatch || !shouldCreateSuccessorExpertSession(error)) {
         throw error;
       }
-      const successor = await createMissionExpertSession(input.compiled, input.app, {
-        modelSelection: input.modelSelection,
-      });
+      const successor = await createMissionExpertSession(
+        input.mission,
+        input.compiled,
+        input.capabilities,
+        input.app,
+        { modelSelection: input.modelSelection },
+      );
       await interruptSupersededMissionSession(input.mission);
       logger.warn(
         "mission.session_successor_created",
@@ -2098,8 +2247,12 @@ export function createMissionRunner(options: {
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     let phaseStartedAt = performance.now();
-    const compiled = await compileMissionExecutor(mission, runtimes);
-    const compiledIdentity = await compilationIdentity(mission);
+    const stableCompilation = await compileMissionExecutorWithStableCapabilities(mission, runtimes);
+    const {
+      compiled,
+      capabilities: resolvedCapabilities,
+      identity: compiledIdentity,
+    } = stableCompilation;
     assertRunGenerationCurrent(mission.id, runGeneration, "while compiling its executor");
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt);
     const executorMetadata = await getExecutorMetadataOrFallback(mission, "live");
@@ -2157,6 +2310,7 @@ export function createMissionRunner(options: {
         : await app.flows.start(compiled.value, {
             input: mission.flowInput!,
             runtime,
+            environment: await executionEnvironmentSnapshot(compiled, resolvedCapabilities),
           });
       if (!lifecycleService.isRunGenerationCurrent(mission.id, runGeneration)) {
         await settlementOutcomeWithin(
@@ -2185,6 +2339,8 @@ export function createMissionRunner(options: {
         inputMessageId,
         status: recoveredWaiting ? "waiting" : "running",
         contextMountsFingerprint,
+        environmentFingerprint: compiled.environmentFingerprint.value,
+        resolvedCapabilities,
         startedAt: executionStartedAt,
       });
       trackExecution({
@@ -2215,10 +2371,13 @@ export function createMissionRunner(options: {
     }
     if (session === undefined) {
       session = memoryBindingsChanged
-        ? await createMissionExpertSession(compiled, app, { modelSelection })
+        ? await createMissionExpertSession(mission, compiled, resolvedCapabilities, app, {
+            modelSelection,
+          })
         : await openMissionExpertSession({
             mission,
             compiled,
+            capabilities: resolvedCapabilities,
             app,
             sessionId: recoverable ? mission.execution!.sessionId : undefined,
             modelSelection,
@@ -2404,7 +2563,8 @@ export function createMissionRunner(options: {
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
-    const desiredCompilationIdentity = await compilationIdentity(mission);
+    let desiredCapabilities = await capabilityEnvironmentIdentity(mission);
+    let desiredCompilationIdentity = await compilationIdentity(mission, desiredCapabilities);
     let session = sessionService.session(mission.id);
     let compiled: CompiledResource<InvocableResource> | undefined;
     let phaseStartedAt = performance.now();
@@ -2412,8 +2572,19 @@ export function createMissionRunner(options: {
       session !== undefined &&
       sessionService.compilationIdentity(mission.id) === desiredCompilationIdentity;
     if (!compilationCacheHit) {
-      compiled = await compileMissionExecutor(mission, runtimes);
+      const stableCompilation = await compileMissionExecutorWithStableCapabilities(
+        mission,
+        runtimes,
+      );
+      compiled = stableCompilation.compiled;
+      desiredCapabilities = stableCompilation.capabilities;
+      desiredCompilationIdentity = stableCompilation.identity;
     }
+    const executionEnvironmentChanged =
+      session !== undefined &&
+      mission.execution?.resolvedCapabilities !== undefined &&
+      JSON.stringify(mission.execution.resolvedCapabilities) !==
+        JSON.stringify(desiredCapabilities);
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt, {
       cacheHit: compilationCacheHit,
     });
@@ -2469,10 +2640,11 @@ export function createMissionRunner(options: {
       const nextDefinitionFingerprint = fingerprintExpertExecutionDefinition(compiledExpert);
       const previousDefinitionFingerprint = sessionService.definitionFingerprint(mission.id);
       if (
-        previousDefinitionFingerprint !== undefined &&
-        previousDefinitionFingerprint !== nextDefinitionFingerprint
+        executionEnvironmentChanged ||
+        (previousDefinitionFingerprint !== undefined &&
+          previousDefinitionFingerprint !== nextDefinitionFingerprint)
       ) {
-        await session.close("Mission executor definition changed.");
+        await session.close("Mission executor environment changed.");
         sessionService.deleteSession(mission.id);
         sessionService.clearCompilation(mission.id);
         session = undefined;
@@ -2493,10 +2665,18 @@ export function createMissionRunner(options: {
         // (for example when Memory or Mission Knowledge bindings change). Compile
         // again before opening its successor instead of treating that valid cache
         // transition as an impossible state.
-        compiled = await compileMissionExecutor(mission, runtimes);
+        const stableCompilation = await compileMissionExecutorWithStableCapabilities(
+          mission,
+          runtimes,
+        );
+        compiled = stableCompilation.compiled;
+        desiredCapabilities = stableCompilation.capabilities;
+        desiredCompilationIdentity = stableCompilation.identity;
       }
       if (definitionChanged || contextStoresChanged) {
-        session = await createMissionExpertSession(compiled, app, { modelSelection });
+        session = await createMissionExpertSession(mission, compiled, desiredCapabilities, app, {
+          modelSelection,
+        });
         await interruptSupersededMissionSession(mission);
         logger.warn(
           "mission.session_successor_created",
@@ -2510,6 +2690,7 @@ export function createMissionRunner(options: {
         session = await openMissionExpertSession({
           mission,
           compiled,
+          capabilities: desiredCapabilities,
           app,
           sessionId: mission.execution?.sessionId,
           modelSelection,
@@ -2575,6 +2756,8 @@ export function createMissionRunner(options: {
             sessionId: session.sessionId,
             status: "running",
             contextMountsFingerprint,
+            environmentFingerprint: desiredCompilationIdentity,
+            resolvedCapabilities: desiredCapabilities,
             startedAt,
           });
     if (!hasCurrent && !queuePaused) {
@@ -2620,7 +2803,11 @@ export function createMissionRunner(options: {
     else prospective.modelOverride = input.modelOverride;
     const baseRuntimes = runtimeResolverForToolPermissionMode(input.toolPermissionMode);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
-    const compiled = await compileMissionExecutor(prospective, runtimes);
+    const stableCompilation = await compileMissionExecutorWithStableCapabilities(
+      prospective,
+      runtimes,
+    );
+    const { compiled } = stableCompilation;
     if (input.toolPermissionMode !== mission.toolPermissionMode) {
       await sessionService.session(mission.id)?.refreshRuntimeSessions();
     }
@@ -2634,7 +2821,7 @@ export function createMissionRunner(options: {
       input.toolPermissionMode,
     );
     if (sessionService.session(mission.id) !== undefined) {
-      rememberSessionCompilation(mission.id, await compilationIdentity(updated), compiled);
+      rememberSessionCompilation(mission.id, stableCompilation.identity, compiled);
     }
     return updated;
   };
@@ -3017,12 +3204,22 @@ export function createMissionRunner(options: {
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     let session = sessionService.session(id);
     if (session === undefined) {
-      const compiled = await compileMissionExecutor(mission, runtimes);
+      const stableCompilation = await compileMissionExecutorWithStableCapabilities(
+        mission,
+        runtimes,
+      );
+      const { compiled } = stableCompilation;
       if ("kind" in compiled.value && compiled.value.kind === "flow") {
         throw new Error("Flow missions do not expose a chat context to compact.");
       }
-      session = await resumeMissionSession(mission, compiled, app, sessionId);
-      rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
+      session = await resumeMissionSession(
+        mission,
+        compiled,
+        stableCompilation.capabilities,
+        app,
+        sessionId,
+      );
+      rememberSessionCompilation(id, stableCompilation.identity, compiled);
     }
     sessionService.setSession(id, session);
     const notNeededResult = async (): Promise<MissionContextCompactionResult> => {
@@ -3729,16 +3926,23 @@ export function createMissionRunner(options: {
       if (sessionId === undefined) throw new Error("This Mission has no prompt queue to resume.");
       const rootContext = await readMissionRootContext(mission);
       const { app, runtimes: baseRuntimes } = await executionContext(mission);
-      const compiled = await compileMissionExecutor(
+      const stableCompilation = await compileMissionExecutorWithStableCapabilities(
         mission,
         withMissionRuntimeBinding(baseRuntimes, rootContext),
       );
+      const { compiled } = stableCompilation;
       if ("kind" in compiled.value && compiled.value.kind === "flow") {
         throw new Error("Flow missions do not use a prompt queue.");
       }
-      session = await resumeMissionSession(mission, compiled, app, sessionId);
+      session = await resumeMissionSession(
+        mission,
+        compiled,
+        stableCompilation.capabilities,
+        app,
+        sessionId,
+      );
       sessionService.setSession(id, session);
-      rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
+      rememberSessionCompilation(id, stableCompilation.identity, compiled);
     }
     await session.resumePromptQueue();
     await attachNextSessionTurn(id, missionSurfaceAudience(mission));
@@ -3759,16 +3963,23 @@ export function createMissionRunner(options: {
     if (sessionId === undefined) throw new Error("This Mission has no prompt queue to change.");
     const rootContext = await readMissionRootContext(mission);
     const { app, runtimes: baseRuntimes } = await executionContext(mission);
-    const compiled = await compileMissionExecutor(
+    const stableCompilation = await compileMissionExecutorWithStableCapabilities(
       mission,
       withMissionRuntimeBinding(baseRuntimes, rootContext),
     );
+    const { compiled } = stableCompilation;
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
       throw new Error("Flow missions do not use a prompt queue.");
     }
-    session = await resumeMissionSession(mission, compiled, app, sessionId);
+    session = await resumeMissionSession(
+      mission,
+      compiled,
+      stableCompilation.capabilities,
+      app,
+      sessionId,
+    );
     sessionService.setSession(id, session);
-    rememberSessionCompilation(id, await compilationIdentity(mission), compiled);
+    rememberSessionCompilation(id, stableCompilation.identity, compiled);
     return { mission, session };
   };
 

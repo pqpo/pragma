@@ -10,6 +10,7 @@ import type {
   ExpertSessionEvent,
   ExpertSessionRecord,
   ExecutionEvent,
+  ExecutionEnvironmentSnapshot,
   Invocation,
   PromptMode,
   PromptRequest,
@@ -78,10 +79,12 @@ export interface CreateExpertSessionOptions {
   readonly sessionId?: string | undefined;
   readonly runtime?: string | undefined;
   readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly environment?: ExecutionEnvironmentSnapshot | undefined;
 }
 
 export interface ResumeExpertSessionOptions {
   readonly sessionId: string;
+  readonly environment?: ExecutionEnvironmentSnapshot | undefined;
   readonly definitionMigration?:
     | {
         readonly previousExpertId: string;
@@ -395,7 +398,16 @@ export class ExpertSessionManager {
     ) {
       throw new Error(`ExpertSession lease could not be acquired: ${sessionId}`);
     }
-    const session = this.createActiveSession(expert, sessionId, false, claimId, leaseExpiresAt);
+    const session = this.createActiveSession(
+      expert,
+      sessionId,
+      false,
+      claimId,
+      leaseExpiresAt,
+      undefined,
+      [],
+      options.environment,
+    );
     this.active.set(sessionId, session);
     return session;
   }
@@ -567,6 +579,7 @@ export class ExpertSessionManager {
         activationLeaseExpiresAt,
         recoveredExecutionId,
         recoveredHumanInteractionIds,
+        request.environment,
       );
       await session.recoverPendingQueueSteers();
       this.active.set(request.sessionId, session);
@@ -640,6 +653,9 @@ export class ExpertSessionManager {
         true,
         claimId,
         activationLeaseExpiresAt,
+        undefined,
+        [],
+        request.environment,
       );
       this.active.set(request.sessionId, session);
       return session;
@@ -711,6 +727,7 @@ export class ExpertSessionManager {
     leaseExpiresAt: number,
     recoveredExecutionId?: string,
     recoveredHumanInteractionIds: readonly string[] = [],
+    environment?: ExecutionEnvironmentSnapshot,
   ): ExpertSessionImpl {
     const session = new ExpertSessionImpl(
       expert,
@@ -721,6 +738,7 @@ export class ExpertSessionManager {
       leaseExpiresAt,
       recoveredExecutionId,
       recoveredHumanInteractionIds,
+      environment,
       () => {
         if (this.active.get(sessionId) === session) {
           this.active.delete(sessionId);
@@ -761,6 +779,7 @@ class ExpertSessionImpl implements ExpertSession {
     leaseExpiresAt: number,
     private readonly recoveredExecutionId: string | undefined,
     recoveredHumanInteractionIds: readonly string[],
+    private readonly environment: ExecutionEnvironmentSnapshot | undefined,
     private readonly onClosed: () => void,
   ) {
     this.leaseExpiresAt = leaseExpiresAt;
@@ -837,7 +856,7 @@ class ExpertSessionImpl implements ExpertSession {
     const storedInput = createExpertPromptInput(content, attachments);
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -845,6 +864,7 @@ class ExpertSessionImpl implements ExpertSession {
       rootInvocationId: id,
       status: "queued",
       input: storedInput,
+      ...(this.environment === undefined ? {} : { environment: this.environment }),
       state: {},
       lastAppliedSequence: 0,
       createdAt: now,

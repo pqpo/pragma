@@ -224,7 +224,7 @@ describe("capability store", () => {
     );
 
     await expect(store.get(created.manifest.id)).resolves.toMatchObject({
-      manifest: { schemaVersion: "pragma.capability/v3" },
+      manifest: { schemaVersion: "pragma.capability/v4" },
     });
     await expect(
       readFile(join(root, "migration-backups", "capability.v1.json"), "utf8"),
@@ -258,7 +258,7 @@ describe("capability store", () => {
 
     const migrated = await store.get(id);
     expect(migrated.manifest).toMatchObject({
-      schemaVersion: "pragma.capability/v3",
+      schemaVersion: "pragma.capability/v4",
       id,
       latestRevision: 1,
     });
@@ -304,10 +304,50 @@ describe("capability store", () => {
     );
 
     await expect(store.get(id)).resolves.toMatchObject({
-      manifest: { schemaVersion: "pragma.capability/v3", id },
+      manifest: { schemaVersion: "pragma.capability/v4", id },
     });
     await expect(readFile(join(root, "manifest-to-v3.json"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
+    });
+  });
+
+  it("does not guess an active revision when a legacy manifest ends in needs attention", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    const legacyManifest = {
+      ...created.manifest,
+      schemaVersion: "pragma.capability/v3",
+      latestRevision: 3,
+    } as Record<string, unknown>;
+    delete legacyManifest["activeRevision"];
+    for (const revision of [2, 3]) {
+      await mkdir(join(root, "revisions", String(revision).padStart(6, "0")), {
+        recursive: true,
+      });
+      await writeFile(
+        join(root, "revisions", String(revision).padStart(6, "0"), "definition.json"),
+        `${JSON.stringify({ ...httpDefinition, name: `Failed revision ${revision}` })}\n`,
+      );
+    }
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(legacyManifest)}\n`);
+    await writeFile(
+      join(root, "health.json"),
+      `${JSON.stringify({
+        revision: 3,
+        status: "needs_attention",
+        checkedAt: "2026-07-11T00:03:00.000Z",
+        diagnostic: { code: "offline", message: "Offline", retryable: true },
+      })}\n`,
+    );
+
+    await expect(store.get(created.manifest.id)).resolves.toMatchObject({
+      manifest: { schemaVersion: "pragma.capability/v4", latestRevision: 3 },
+      health: { status: "needs_attention" },
+    });
+    expect((await store.get(created.manifest.id)).manifest.activeRevision).toBeUndefined();
+    await expect(store.resolveActive(created.manifest.id)).rejects.toMatchObject({
+      code: "capability_not_found",
     });
   });
 
@@ -349,7 +389,7 @@ describe("capability store", () => {
     );
 
     await expect(store.get(created.manifest.id)).resolves.toMatchObject({
-      manifest: { schemaVersion: "pragma.capability/v3" },
+      manifest: { schemaVersion: "pragma.capability/v4" },
     });
     await expect(readFile(join(root, "v1-to-v2.json"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -813,6 +853,78 @@ describe("capability store", () => {
     expect(publish.mock.calls[0]![0]).toMatchObject({
       current: { health: { status: "needs_attention" } },
       candidate: { health: { status: "ready" } },
+    });
+  });
+
+  it("keeps resolving the previous active revision while the latest revision needs attention", async () => {
+    let verification = 0;
+    const { store } = await createStore({
+      verify: async (definition) => ({
+        definition,
+        health:
+          verification++ === 0
+            ? { status: "ready", checkedAt: "2026-07-11T00:00:00.000Z" }
+            : {
+                status: "needs_attention",
+                checkedAt: "2026-07-11T00:01:00.000Z",
+                diagnostic: { code: "offline", message: "Offline", retryable: true },
+              },
+      }),
+    });
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const updated = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, name: "Updated HTTP service" },
+      credentials: {},
+    });
+
+    expect(updated).toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 1 },
+      health: { status: "needs_attention" },
+    });
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 1, activeRevision: 1 },
+      definition: { name: httpDefinition.name },
+    });
+  });
+
+  it("activates the latest revision when retry recovers a needs-attention candidate", async () => {
+    const healthStates = ["ready", "needs_attention", "ready"] as const;
+    let verification = 0;
+    const { store } = await createStore({
+      verify: async (definition) => {
+        const status = healthStates[verification++] ?? "ready";
+        return {
+          definition,
+          health:
+            status === "ready"
+              ? { status, checkedAt: "2026-07-11T00:00:00.000Z" }
+              : {
+                  status,
+                  checkedAt: "2026-07-11T00:01:00.000Z",
+                  diagnostic: { code: "offline", message: "Offline", retryable: true },
+                },
+        };
+      },
+    });
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const failed = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, name: "Recovered HTTP service" },
+      credentials: {},
+    });
+
+    const recovered = await store.retry(created.manifest.id, failed.manifest.latestRevision);
+
+    expect(recovered).toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 2 },
+      health: { revision: 2, status: "ready" },
+    });
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 2 },
+      definition: { name: "Recovered HTTP service" },
     });
   });
 

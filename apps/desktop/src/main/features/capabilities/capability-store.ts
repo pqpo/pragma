@@ -84,6 +84,17 @@ const LegacyCapabilityManifestV2Schema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+const LegacyCapabilityManifestV3Schema = z.object({
+  schemaVersion: z.literal("pragma.capability/v3"),
+  id: CapabilityIdSchema,
+  runtimeKey: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(120),
+  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
+  latestRevision: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
 const LegacyCapabilityManifestMigrationJournalSchema = z.object({
   schemaVersion: z.literal("pragma.capability-manifest-migration/v1"),
   sourceSchema: z.literal("pragma.capability/v1"),
@@ -95,6 +106,13 @@ const CapabilityManifestMigrationJournalSchema = z.object({
   schemaVersion: z.literal("pragma.capability-manifest-migration/v2"),
   sourceSchema: z.enum(["pragma.capability/v1", "pragma.capability/v2"]),
   targetSchema: z.literal("pragma.capability/v3"),
+  targetManifest: LegacyCapabilityManifestV3Schema,
+});
+
+const CapabilityManifestV4MigrationJournalSchema = z.object({
+  schemaVersion: z.literal("pragma.capability-manifest-migration/v3"),
+  sourceSchema: z.enum(["pragma.capability/v1", "pragma.capability/v2", "pragma.capability/v3"]),
+  targetSchema: z.literal("pragma.capability/v4"),
   targetManifest: CapabilityManifestSchema,
 });
 
@@ -115,6 +133,8 @@ const CapabilityCreationJournalSchema = z
 
 export interface CapabilityRepository {
   get(id: string, revision?: number): Promise<Capability>;
+  resolveActive(id: string): Promise<Capability>;
+  ensureActiveRevision(id: string, revision: number): Promise<void>;
   discardUnpublishedRevision(
     id: string,
     revision: number,
@@ -217,7 +237,8 @@ export function createCapabilityStore(options: {
   const manifestPath = (id: string) => join(capabilityPath(id), "capability.json");
   const healthPath = (id: string) => join(capabilityPath(id), "health.json");
   const legacyMigrationJournalPath = (id: string) => join(capabilityPath(id), "v1-to-v2.json");
-  const migrationJournalPath = (id: string) => join(capabilityPath(id), "manifest-to-v3.json");
+  const migrationJournalPath = (id: string) => join(capabilityPath(id), "manifest-to-v4.json");
+  const v3MigrationJournalPath = (id: string) => join(capabilityPath(id), "manifest-to-v3.json");
   const deletionJournalPath = (id: string) => join(capabilityPath(id), "deletion.json");
   const creationJournalPath = (id: string) => join(capabilityPath(id), "creation.json");
   const revisionPath = (id: string, revision: number) =>
@@ -327,11 +348,11 @@ export function createCapabilityStore(options: {
   };
 
   const migrateManifest = async (id: string): Promise<CapabilityManifest> =>
-    await withFileLock(join(capabilityPath(id), ".v3-migration.lock"), async () => {
+    await withFileLock(join(capabilityPath(id), ".v4-migration.lock"), async () => {
       let raw = JSON.parse(await readFile(manifestPath(id), "utf8")) as unknown;
       const current = CapabilityManifestSchema.safeParse(raw);
       if (current.success) return current.data;
-      const pending = await readCapabilityMigrationJournal(migrationJournalPath(id));
+      const pending = await readCapabilityV4MigrationJournal(migrationJournalPath(id));
       if (pending !== undefined) {
         if (pending.targetManifest.id !== id) {
           throw new CapabilityStoreError(
@@ -342,6 +363,19 @@ export function createCapabilityStore(options: {
         await writeJson(manifestPath(id), pending.targetManifest);
         await rm(migrationJournalPath(id), { force: true });
         return pending.targetManifest;
+      }
+
+      const v3Pending = await readCapabilityMigrationJournal(v3MigrationJournalPath(id));
+      if (v3Pending !== undefined) {
+        if (v3Pending.targetManifest.id !== id) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            `Capability ${id} has a migration journal for another capability.`,
+          );
+        }
+        await writeJson(manifestPath(id), v3Pending.targetManifest);
+        await rm(v3MigrationJournalPath(id), { force: true });
+        raw = v3Pending.targetManifest;
       }
 
       const legacyPending = await readLegacyCapabilityMigrationJournal(
@@ -359,13 +393,16 @@ export function createCapabilityStore(options: {
         raw = legacyPending.targetManifest;
       }
 
+      const legacyV3 = LegacyCapabilityManifestV3Schema.safeParse(raw);
       const legacyV2 = LegacyCapabilityManifestV2Schema.safeParse(raw);
       const legacyV1 = LegacyCapabilityManifestV1Schema.safeParse(raw);
-      const legacy = legacyV2.success
-        ? legacyV2.data
-        : legacyV1.success
-          ? legacyV1.data
-          : undefined;
+      const legacy = legacyV3.success
+        ? legacyV3.data
+        : legacyV2.success
+          ? legacyV2.data
+          : legacyV1.success
+            ? legacyV1.data
+            : undefined;
       if (legacy === undefined || legacy.id !== id) {
         throw new CapabilityStoreError(
           "config_invalid",
@@ -388,21 +425,33 @@ export function createCapabilityStore(options: {
         }
       }
 
+      const latestHealth = await readFile(healthPath(id), "utf8")
+        .then((value) => CapabilityHealthSchema.safeParse(JSON.parse(value) as unknown))
+        .catch(() => undefined);
+      // Legacy manifests did not persist the last activated revision. When the latest revision
+      // needs attention, guessing `latest - 1` can activate another failed candidate after
+      // consecutive unsuccessful updates. Leave the Capability inactive until a successful retry
+      // establishes an explicit active revision.
+      const activeRevision =
+        latestHealth?.success === true && latestHealth.data.status === "ready"
+          ? legacy.latestRevision
+          : undefined;
       const targetManifest = CapabilityManifestSchema.parse({
         ...legacy,
-        schemaVersion: "pragma.capability/v3",
+        schemaVersion: "pragma.capability/v4",
+        ...(activeRevision === undefined ? {} : { activeRevision }),
         origin: undefined,
       });
-      const sourceVersion = legacy.schemaVersion === "pragma.capability/v1" ? "v1" : "v2";
+      const sourceVersion = legacy.schemaVersion.slice(-2);
       const backupPath = join(
         capabilityPath(id),
         "migration-backups",
         `capability.${sourceVersion}.json`,
       );
-      const journal = CapabilityManifestMigrationJournalSchema.parse({
-        schemaVersion: "pragma.capability-manifest-migration/v2",
+      const journal = CapabilityManifestV4MigrationJournalSchema.parse({
+        schemaVersion: "pragma.capability-manifest-migration/v3",
         sourceSchema: legacy.schemaVersion,
-        targetSchema: "pragma.capability/v3",
+        targetSchema: "pragma.capability/v4",
         targetManifest,
       });
       await writeJson(backupPath, legacy);
@@ -424,7 +473,8 @@ export function createCapabilityStore(options: {
       }
       if (
         LegacyCapabilityManifestV1Schema.safeParse(raw).success ||
-        LegacyCapabilityManifestV2Schema.safeParse(raw).success
+        LegacyCapabilityManifestV2Schema.safeParse(raw).success ||
+        LegacyCapabilityManifestV3Schema.safeParse(raw).success
       )
         return await migrateManifest(id);
       throw new CapabilityStoreError("config_invalid", `Capability ${id} has an invalid manifest.`);
@@ -523,6 +573,12 @@ export function createCapabilityStore(options: {
       }
       await beforeCommit?.();
       await writeJson(healthPath(id), health);
+      if (health.status === "ready" && latest.activeRevision !== expectedRevision) {
+        await writeJson(
+          manifestPath(id),
+          CapabilityManifestSchema.parse({ ...latest, activeRevision: expectedRevision }),
+        );
+      }
       return await readCapability(id);
     };
     return await options.mutations.publishHealth({
@@ -536,6 +592,37 @@ export function createCapabilityStore(options: {
   };
 
   return {
+    async ensureActiveRevision(id, revision) {
+      const manifest = await readManifest(id);
+      if (manifest.latestRevision !== revision) {
+        throw new CapabilityStoreError(
+          "revision_conflict",
+          `Capability revision changed from ${revision} to ${manifest.latestRevision}.`,
+        );
+      }
+      const capability = await readCapability(id, revision);
+      if (capability.health.status !== "ready") {
+        throw new CapabilityStoreError(
+          "capability_incompatible",
+          `Capability ${id} revision ${revision} is not ready for activation.`,
+        );
+      }
+      if (manifest.activeRevision === revision) return;
+      await writeJson(
+        manifestPath(id),
+        CapabilityManifestSchema.parse({ ...manifest, activeRevision: revision }),
+      );
+    },
+    async resolveActive(id) {
+      const manifest = await readManifest(id);
+      if (manifest.activeRevision === undefined) {
+        throw new CapabilityStoreError(
+          "capability_not_found",
+          `Capability ${id} has no active ready revision.`,
+        );
+      }
+      return await readCapability(id, manifest.activeRevision);
+    },
     async list() {
       try {
         const entries = await readdir(options.capabilitiesPath, { withFileTypes: true });
@@ -692,12 +779,13 @@ export function createCapabilityStore(options: {
           contentHash: await hashDirectory(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v3",
+          schemaVersion: "pragma.capability/v4",
           id,
           runtimeKey: createRuntimeKey(name, id),
           name,
           kind: "skill",
           latestRevision: 1,
+          activeRevision: 1,
           createdAt: timestamp,
           updatedAt: timestamp,
         });
@@ -736,12 +824,13 @@ export function createCapabilityStore(options: {
           contentHash: await hashDirectory(payloadPath),
         });
         const manifest = CapabilityManifestSchema.parse({
-          schemaVersion: "pragma.capability/v3",
+          schemaVersion: "pragma.capability/v4",
           id,
           runtimeKey: createRuntimeKey(input.name, id),
           name: input.name,
           kind: "skill",
           latestRevision: 1,
+          activeRevision: 1,
           createdAt: timestamp,
           updatedAt: timestamp,
         });
@@ -834,6 +923,7 @@ export function createCapabilityStore(options: {
           ...current.manifest,
           name,
           latestRevision: revision,
+          activeRevision: revision,
           updatedAt: timestamp,
         });
         const health = CapabilityHealthSchema.parse({
@@ -913,12 +1003,13 @@ export function createCapabilityStore(options: {
             contentHash,
           });
           const manifest = CapabilityManifestSchema.parse({
-            schemaVersion: "pragma.capability/v3",
+            schemaVersion: "pragma.capability/v4",
             id: input.id,
             runtimeKey: createRuntimeKey(input.name, input.id),
             name: input.name,
             kind: "skill",
             latestRevision: 1,
+            activeRevision: 1,
             createdAt: timestamp,
             updatedAt: timestamp,
           });
@@ -963,12 +1054,13 @@ export function createCapabilityStore(options: {
       );
       assertCodeServiceReady(input.definition, verified.health);
       const manifest = CapabilityManifestSchema.parse({
-        schemaVersion: "pragma.capability/v3",
+        schemaVersion: "pragma.capability/v4",
         id,
         runtimeKey: createRuntimeKey(input.definition.name, id),
         name: input.definition.name,
         kind: input.definition.kind,
         latestRevision: 1,
+        ...(verified.health.status === "ready" ? { activeRevision: 1 } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -1022,6 +1114,9 @@ export function createCapabilityStore(options: {
         ...current,
         name: input.definition.name,
         latestRevision: current.latestRevision + 1,
+        ...(verified.health.status === "ready"
+          ? { activeRevision: current.latestRevision + 1 }
+          : {}),
         updatedAt: timestamp,
       });
       const existing = await readCapability(input.id);
@@ -1076,6 +1171,9 @@ export function createCapabilityStore(options: {
           ...current.manifest,
           name: verified.definition.name,
           latestRevision: current.manifest.latestRevision + 1,
+          ...(verified.health.status === "ready"
+            ? { activeRevision: current.manifest.latestRevision + 1 }
+            : {}),
           updatedAt: new Date().toISOString(),
         });
         const candidate = CapabilitySchema.parse({
@@ -1107,6 +1205,15 @@ export function createCapabilityStore(options: {
         validateCurrent: validateCredentialSnapshot,
         commit: async () => {
           await writeJson(healthPath(id), health);
+          const latest = await readManifest(id);
+          await writeJson(
+            manifestPath(id),
+            CapabilityManifestSchema.parse({
+              ...latest,
+              activeRevision: expectedRevision,
+              updatedAt: new Date().toISOString(),
+            }),
+          );
           return await readCapability(id);
         },
       });
@@ -1442,6 +1549,22 @@ async function readCapabilityMigrationJournal(
 ): Promise<z.infer<typeof CapabilityManifestMigrationJournalSchema> | undefined> {
   try {
     return CapabilityManifestMigrationJournalSchema.parse(
+      JSON.parse(await readFile(path, "utf8")) as unknown,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof z.ZodError) {
+      throw new CapabilityStoreError("config_invalid", "Capability migration journal is invalid.");
+    }
+    throw error;
+  }
+}
+
+async function readCapabilityV4MigrationJournal(
+  path: string,
+): Promise<z.infer<typeof CapabilityManifestV4MigrationJournalSchema> | undefined> {
+  try {
+    return CapabilityManifestV4MigrationJournalSchema.parse(
       JSON.parse(await readFile(path, "utf8")) as unknown,
     );
   } catch (error) {

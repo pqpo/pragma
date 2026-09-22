@@ -927,7 +927,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const definition = { id: expert.metadata.id, kind: "expert" as const };
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -5739,7 +5739,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -6733,7 +6733,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",

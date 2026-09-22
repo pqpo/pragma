@@ -65,6 +65,10 @@ import {
 } from "../../../shared/contracts/index.ts";
 import { referencingPragmaResources } from "./pragma-resource-references.ts";
 import { findPragmaInvocableDependencyCycle } from "./pragma-invocable-dependency-graph.ts";
+import {
+  desktopCapabilityBindingRef,
+  parseLegacyDesktopCapabilityBindingRef,
+} from "../../platform/bindings/desktop-binding-ref.ts";
 
 const ProjectIdentityMigrationManifestSchema = z
   .object({
@@ -262,9 +266,30 @@ export function createPragmaProjectStore(options: {
     await migrationReady;
   };
 
+  let bindingMigration: Promise<PragmaProjectSnapshot> | undefined;
   const get = async (): Promise<PragmaProjectSnapshot> => {
     await ensureMigrated();
-    return PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+    const current = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+    const migratedResources = migrateCapabilityBindings(current.resources);
+    if (migratedResources === undefined) return current;
+    bindingMigration ??= (async () => {
+      if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
+      const artifacts =
+        current.revision === 0
+          ? new Map<string, string>()
+          : await readRevisionArtifacts(repository, projectId, current.revision, current);
+      return PragmaProjectSnapshotSchema.parse(
+        await service.publish({
+          projectId,
+          expectedRevision: current.revision,
+          resources: migratedResources,
+          artifacts,
+        }),
+      );
+    })().finally(() => {
+      bindingMigration = undefined;
+    });
+    return await bindingMigration;
   };
 
   const readIdentityMigrations = async (): Promise<readonly PragmaResourceIdentityMigration[]> => {
@@ -613,6 +638,23 @@ function assertDesktopExpertAuthoring(resources: readonly PragmaResource[]): voi
     "The Expert definition is incomplete or invalid.",
     diagnostics,
   );
+}
+
+function migrateCapabilityBindings(
+  resources: readonly PragmaResource[],
+): PragmaResource[] | undefined {
+  let changed = false;
+  const migrated = resources.map((resource) => {
+    if (resource.kind !== "Capability") return resource;
+    const legacy = parseLegacyDesktopCapabilityBindingRef(resource.spec.binding ?? "");
+    if (legacy === undefined) return resource;
+    changed = true;
+    return {
+      ...resource,
+      spec: { ...resource.spec, binding: desktopCapabilityBindingRef(legacy.id) },
+    };
+  });
+  return changed ? migrated : undefined;
 }
 
 function desktopExpertAuthoringDiagnostics(

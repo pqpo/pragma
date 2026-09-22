@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted; Capability revision pinning was superseded by ADR 030.
 
 ## Context
 
@@ -17,7 +17,10 @@ Desktop owns a device-local, versioned Capability Library under `~/.pragma/capab
 - a manually described JSON HTTP service exposed through an in-process MCP adapter.
 - a single-tool JavaScript Code Service exposed through an in-process MCP adapter.
 
-Capability definitions are immutable revisions. Health is mutable operational state, and credentials are encrypted separately. Expert resources store pinned capability revision references and explicit tool allowlists instead of embedding Skill and MCP definitions.
+Capability definitions are immutable revisions. Health is mutable operational state, and credentials
+are encrypted separately. As amended by ADR 030, Expert resources store Capability IDs and explicit
+tool allowlists instead of embedding definitions or pinning revisions; execution resolves the active
+ready revision and records the resolved revision and fingerprint.
 
 `@pragma/core` owns runtime-neutral MCP configuration, MCP discovery/calls, SSE transport support, and the HTTP-to-MCP adapter. Desktop owns file selection, persistence, encrypted credentials, health reporting, and resolving Expert references before `defineExpert()`.
 
@@ -41,7 +44,8 @@ or replace their source through the tool call itself.
 
 ## Consequences
 
-- Updating a capability does not silently change existing Experts; they must explicitly upgrade revisions.
+- Activating a ready Capability revision changes every referencing Expert on its next execution;
+  dependent Project and Expert resources are not rewritten.
 - MCP tools are discovered and schema snapshots are retained for inspection. Expert bindings pin tool
   names, not MCP input parameters: Runtime startup fails closed only when a selected tool no longer
   exists. Live parameter schemas are supplied by the MCP server so compatible server-side parameter

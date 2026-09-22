@@ -1,17 +1,23 @@
+import type { PragmaAdapterHost } from "@pragma/interpreter";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EVALUATION_JUDGE_EXPERT_REF } from "@pragma/built-in-agents";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentEvaluationRunSchema, type Mission } from "../../../shared/contracts/index.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { EvaluationStore } from "./evaluation-store.ts";
-import { createMissionAgentEvaluationExecutor } from "./evaluation-executor.ts";
+import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+import {
+  createEvaluationMockAdapterRegistry,
+  createMissionAgentEvaluationExecutor,
+} from "./evaluation-executor.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -29,6 +35,59 @@ afterEach(async () => {
 });
 
 describe("Mission agent evaluation executor", () => {
+  it("applies mocks to legacy revision-suffixed Capability bindings using the active revision", async () => {
+    const run = runFixture();
+    const evaluationCase = run.dataset.spec.method.cases[0]!;
+    const capabilityId = "14141414-1414-4414-8414-141414141414";
+    const resolveActive = vi.fn(async () => ({
+      manifest: {
+        schemaVersion: "pragma.capability/v4" as const,
+        id: capabilityId,
+        runtimeKey: "fixture_tools",
+        name: "Fixture tools",
+        kind: "mcp_server" as const,
+        latestRevision: 7,
+        activeRevision: 7,
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      },
+      definition: {
+        kind: "mcp_server" as const,
+        name: "Fixture tools",
+        description: "Fixture tools.",
+        transport: { type: "stdio" as const, command: "fixture", args: [] },
+        tools: [{ name: "lookup", description: "Lookup." }],
+      },
+      health: {
+        revision: 7,
+        status: "ready" as const,
+        checkedAt: "2026-07-11T00:00:00.000Z",
+      },
+    }));
+    const registry = createEvaluationMockAdapterRegistry({
+      resolveActive,
+    } as unknown as CapabilityStore);
+    registry.begin(run.id, evaluationCase);
+    const fallbackResolve = vi.fn(async () => undefined);
+    const host = registry.forMission(
+      {
+        origin: {
+          type: "system-evaluation",
+          phase: "subject",
+          runId: run.id,
+          caseId: evaluationCase.id,
+        },
+      } as Mission,
+      { resolveBinding: fallbackResolve } as unknown as PragmaAdapterHost,
+    );
+
+    const resolved = await host.resolveBinding(`${desktopCapabilityBindingRef(capabilityId)}.3`);
+
+    expect(resolveActive).toHaveBeenCalledWith(capabilityId);
+    expect(fallbackResolve).not.toHaveBeenCalled();
+    expect(resolved).toMatchObject({ revision: "7" });
+  });
+
   it("uses the canonical Judge Agent ref", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-evaluation-executor-"));
     roots.push(root);

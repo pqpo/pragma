@@ -21,8 +21,10 @@ payload indexes, and both archive and portable-project fingerprints. Turning a m
 Host payload, not the DSL dependency, so the destination can guide the user through binding it.
 
 Secrets, local sessions, Missions, usage data, workspace files, provider accounts, and absolute
-local paths are excluded. A knowledge-base export includes only its current snapshot and file
-metadata; revision history, drafts, revision jobs, and Memory Evidence are excluded.
+local paths are excluded. Capability and knowledge-base payloads include only their current active
+snapshot and file metadata; revision history, drafts, revision jobs, and Memory Evidence are
+excluded. The Desktop Capability payload descriptor is v3 and treats its asset key as archive-local
+metadata, not a local revision identity.
 
 ## Import
 

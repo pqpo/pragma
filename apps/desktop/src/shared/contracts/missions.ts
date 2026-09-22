@@ -147,6 +147,21 @@ export const MissionBaseSchema = z.object({
         .string()
         .regex(/^[a-f0-9]{64}$/)
         .optional(),
+      environmentFingerprint: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+      resolvedCapabilities: z
+        .array(
+          z
+            .object({
+              capabilityId: CapabilityIdSchema,
+              resolvedRevision: z.number().int().positive(),
+              fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+            })
+            .strict(),
+        )
+        .optional(),
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().optional(),
       error: z.string().max(10_000).optional(),

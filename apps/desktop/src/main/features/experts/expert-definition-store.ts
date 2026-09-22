@@ -298,7 +298,6 @@ function definitionToResources(
     capability,
     resource: resolveDesktopCapabilityResource({
       capabilityId: capability.capabilityId,
-      revision: capability.revision,
       resources: existingResources,
       currentRef: current?.spec.capabilities.find((reference) => {
         if (reference.kind !== capability.kind) return false;
@@ -434,14 +433,12 @@ export function pragmaExpertResourceToDesktopDefinition(
       capabilities.push({
         kind: "tools",
         capabilityId: desktopBinding.id,
-        revision: desktopBinding.revision,
         toolNames: capability.tools ?? [],
       });
     } else {
       capabilities.push({
         kind: "skill",
         capabilityId: desktopBinding.id,
-        revision: desktopBinding.revision,
       });
     }
   }

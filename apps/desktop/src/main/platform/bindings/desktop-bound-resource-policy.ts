@@ -1,7 +1,6 @@
 import { derivePragmaResourceId } from "@pragma/core";
 import {
   PRAGMA_MANAGEMENT_BINDING_REF,
-  PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
   PRAGMA_MANAGEMENT_CAPABILITY_REF,
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
   pragmaManagementCapabilityResource,
@@ -32,7 +31,6 @@ export type DesktopBoundResourceOwner =
 
 export interface DesktopCapabilityBindingIdentity {
   readonly id: string;
-  readonly revision: number;
 }
 
 export function desktopCapabilityResourceId(
@@ -78,10 +76,7 @@ export function classifyDesktopCapabilityResource(
     canonicalPragmaResourceRef(resource) === PRAGMA_MANAGEMENT_CAPABILITY_REF &&
     resource.spec.binding === PRAGMA_MANAGEMENT_BINDING_REF
   ) {
-    return {
-      id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-      revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
-    };
+    return { id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID };
   }
   if (
     resource?.kind !== "Capability" ||
@@ -90,7 +85,8 @@ export function classifyDesktopCapabilityResource(
   ) {
     return undefined;
   }
-  return parseDesktopCapabilityBindingRef(resource.spec.binding ?? "");
+  const id = parseDesktopCapabilityBindingRef(resource.spec.binding ?? "");
+  return id === undefined ? undefined : { id };
 }
 
 export function classifyDesktopContextResource(
@@ -109,16 +105,10 @@ export function classifyDesktopContextResource(
 export function createDesktopCapabilityResource(input: {
   readonly owner: Exclude<DesktopBoundResourceOwner, "imported-resource">;
   readonly capabilityId: string;
-  readonly revision: number;
   readonly name?: string | undefined;
   readonly description?: string | undefined;
 }): PragmaCapabilityResource {
   if (input.capabilityId === PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID) {
-    if (input.revision !== PRAGMA_MANAGEMENT_CAPABILITY_REVISION) {
-      throw new Error(
-        `Built-in Pragma management Capability is revision ${PRAGMA_MANAGEMENT_CAPABILITY_REVISION}.`,
-      );
-    }
     return PragmaCapabilityResourceSchema.parse(pragmaManagementCapabilityResource());
   }
   const option = input.owner === "default-agent-option";
@@ -142,7 +132,7 @@ export function createDesktopCapabilityResource(input: {
     },
     spec: {
       adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(input.capabilityId, input.revision),
+      binding: desktopCapabilityBindingRef(input.capabilityId),
       config: { key: input.capabilityId },
     },
   });
@@ -163,7 +153,7 @@ export function bindExistingDesktopCapabilityResource(
     spec: {
       ...resource.spec,
       adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(binding.id, binding.revision),
+      binding: desktopCapabilityBindingRef(binding.id),
       config: { ...(resource.spec.config ?? {}), key: binding.id },
     },
   });
@@ -171,13 +161,12 @@ export function bindExistingDesktopCapabilityResource(
 
 export function resolveDesktopCapabilityResource(input: {
   readonly capabilityId: string;
-  readonly revision: number;
   readonly resources: readonly PragmaResource[];
   readonly currentRef?: string | undefined;
 }): PragmaCapabilityResource {
   const matches = input.resources.filter((resource): resource is PragmaCapabilityResource => {
     const binding = classifyDesktopCapabilityResource(resource);
-    return binding?.id === input.capabilityId && binding.revision === input.revision;
+    return binding?.id === input.capabilityId;
   });
   const current = matches.find(
     (resource) => canonicalPragmaResourceRef(resource) === input.currentRef,

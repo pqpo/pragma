@@ -5,7 +5,7 @@ import { SecretRefSchema } from "@pragma/shared/integration";
 
 import { CapabilityHealthSchema, CapabilityIdSchema } from "../../../shared/contracts/index.ts";
 
-const CapabilityMutationJournalStageSchema = z.enum([
+const LegacyCapabilityMutationJournalStageSchema = z.enum([
   "revision-pending",
   "revision-written",
   "project-propagated",
@@ -17,7 +17,7 @@ export const CapabilityMutationJournalV1Schema = z
     schemaVersion: z.literal("pragma.capability-revision-propagation/v1"),
     capabilityId: z.string().uuid(),
     targetRevision: z.number().int().positive(),
-    stage: CapabilityMutationJournalStageSchema,
+    stage: LegacyCapabilityMutationJournalStageSchema,
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     projectRevision: z.number().int().positive().optional(),
@@ -25,7 +25,7 @@ export const CapabilityMutationJournalV1Schema = z
   })
   .strict();
 
-export const CapabilityMutationJournalSchema = z
+export const CapabilityMutationJournalV2Schema = z
   .object({
     schemaVersion: z.literal("pragma.capability-mutation/v2"),
     mutationId: z.string().uuid(),
@@ -38,7 +38,7 @@ export const CapabilityMutationJournalSchema = z
       .strict(),
     candidateContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
     stagingPath: z.string().min(1).optional(),
-    stage: CapabilityMutationJournalStageSchema,
+    stage: LegacyCapabilityMutationJournalStageSchema,
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     projectRevision: z.number().int().positive().optional(),
@@ -59,16 +59,28 @@ export const CapabilityMutationJournalSchema = z
   })
   .strict();
 
+export const CapabilityMutationJournalSchema = CapabilityMutationJournalV2Schema.omit({
+  projectRevision: true,
+  propagate: true,
+  schemaVersion: true,
+  stage: true,
+})
+  .extend({
+    schemaVersion: z.literal("pragma.capability-mutation/v3"),
+    stage: z.enum(["revision-pending", "revision-written"]),
+  })
+  .strict();
+
 export type CapabilityMutationJournal = z.infer<typeof CapabilityMutationJournalSchema>;
 
 export const capabilityMutationJournalV1ToV2Step = {
   fromVersion: "pragma.capability-revision-propagation/v1",
   toVersion: "pragma.capability-mutation/v2",
   inputSchema: CapabilityMutationJournalV1Schema,
-  outputSchema: CapabilityMutationJournalSchema,
-  migrate(input: unknown): CapabilityMutationJournal {
+  outputSchema: CapabilityMutationJournalV2Schema,
+  migrate(input: unknown): z.infer<typeof CapabilityMutationJournalV2Schema> {
     const legacy = CapabilityMutationJournalV1Schema.parse(input);
-    return CapabilityMutationJournalSchema.parse({
+    return CapabilityMutationJournalV2Schema.parse({
       schemaVersion: "pragma.capability-mutation/v2",
       mutationId: stableLegacyMutationId(legacy.capabilityId, legacy.targetRevision),
       mutationType: "update",
@@ -86,12 +98,37 @@ export const capabilityMutationJournalV1ToV2Step = {
   },
 } as const;
 
-export const capabilityMutationJournalMigrations = [capabilityMutationJournalV1ToV2Step] as const;
+export const capabilityMutationJournalV2ToV3Step = {
+  fromVersion: "pragma.capability-mutation/v2",
+  toVersion: "pragma.capability-mutation/v3",
+  inputSchema: CapabilityMutationJournalV2Schema,
+  outputSchema: CapabilityMutationJournalSchema,
+  migrate(input: unknown): CapabilityMutationJournal {
+    const legacy = CapabilityMutationJournalV2Schema.parse(input);
+    const rest: Record<string, unknown> = { ...legacy };
+    delete rest["projectRevision"];
+    delete rest["propagate"];
+    return CapabilityMutationJournalSchema.parse({
+      ...rest,
+      schemaVersion: "pragma.capability-mutation/v3",
+      stage: legacy.stage === "revision-pending" ? "revision-pending" : "revision-written",
+    });
+  },
+} as const;
+
+export const capabilityMutationJournalMigrations = [
+  capabilityMutationJournalV1ToV2Step,
+  capabilityMutationJournalV2ToV3Step,
+] as const;
 
 export function migrateCapabilityMutationJournal(input: unknown): CapabilityMutationJournal {
   const current = CapabilityMutationJournalSchema.safeParse(input);
   if (current.success) return current.data;
-  return capabilityMutationJournalMigrations[0].migrate(input);
+  const v2 = CapabilityMutationJournalV2Schema.safeParse(input);
+  if (v2.success) return capabilityMutationJournalV2ToV3Step.migrate(v2.data);
+  return capabilityMutationJournalV2ToV3Step.migrate(
+    capabilityMutationJournalV1ToV2Step.migrate(input),
+  );
 }
 
 function stableLegacyMutationId(capabilityId: string, revision: number): string {

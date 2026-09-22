@@ -56,7 +56,7 @@ const contextStore: ContextStore = {
 
 const skillCapability: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v3",
+    schemaVersion: "pragma.capability/v4",
     id: "00000000-0000-4000-8000-000000000002",
     runtimeKey: "writing_skill",
     name: "Writing Skill",
@@ -81,7 +81,7 @@ const skillCapability: Capability = {
 
 const toolCapability: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v3",
+    schemaVersion: "pragma.capability/v4",
     id: "00000000-0000-4000-8000-000000000003",
     runtimeKey: "research_tools",
     name: "Tools Service",
@@ -209,11 +209,10 @@ describe("ExpertDetailFragment", () => {
           ...expert,
           contextStoreMounts: [{ storeId: contextStore.id, enabled: true, priority: 0 }],
           capabilities: [
-            { kind: "skill", capabilityId: skillCapability.manifest.id, revision: 1 },
+            { kind: "skill", capabilityId: skillCapability.manifest.id },
             {
               kind: "tools",
               capabilityId: toolCapability.manifest.id,
-              revision: 1,
               toolNames: ["search_docs", "save_note"],
             },
           ],

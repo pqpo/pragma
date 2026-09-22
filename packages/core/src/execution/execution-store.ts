@@ -480,7 +480,7 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v11",
+          schemaVersion: "pragma.execution/v12",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
@@ -488,7 +488,7 @@ export function createFileExecutionStore(
         });
         assertExpertTurnRootPrompt(nextExecution, nextInvocations);
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v12",
+          schemaVersion: "pragma.execution-transaction/v13",
           commitId: request.commitId,
           signature,
           execution: nextExecution,

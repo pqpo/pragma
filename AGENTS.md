@@ -566,9 +566,12 @@ Pragma Worker Ready
   `apps/desktop/src/main/platform/bindings/desktop-bound-resource-policy.ts` 分类、创建和重绑定；Feature
   模块不得各自派生 ID、重建 metadata 或按资源数组顺序选择身份。该策略属于 Desktop Host，不下沉到
   Core、Shared 或 Interpreter。
-- ready Capability 新修订必须通过 Desktop Capability revision coordinator 激活：先验证当前 Expert 的
-  工具白名单，再以稳定 journal 更新当前 Project 的全部绑定和 System Expert customization。历史 Project
-  Revision、Mission、Execution 与旧 Capability revision 保持固定；`needs_attention` 修订不得自动激活。
+- ready Capability 新修订必须通过 Desktop Capability mutation coordinator 激活：先验证当前 Expert 的
+  工具白名单，再以稳定 journal 提交 Capability 与凭据状态。Project、System Expert 与普通 Expert 只保存
+  Capability ID，不传播修订号；运行时解析 active revision，并在 Execution 中记录实际修订与 fingerprint。
+  历史 Project Revision 与 Mission 中的旧 binding 只保留 Capability identity，不继续 pin revision；恢复或继续
+  执行时同样解析当前 active revision。已经落盘的 Execution 与旧 Capability revision 保持固定，
+  `needs_attention` 修订不得自动激活。
 
 ### `packages/shared`
 

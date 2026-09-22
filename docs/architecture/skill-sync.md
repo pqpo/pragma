@@ -41,9 +41,10 @@ publishes local-only changes; it is not a local-authoritative overwrite. `restor
 selected target without publishing local candidates.
 
 Every incoming package passes the deterministic structure and safety validation used by Skill
-revision approval. Updates append through the Capability revision coordinator so current Project and
-System Expert bindings advance consistently. Remote deletion uses the ordinary Capability deletion
-boundary and cannot remove a referenced Skill.
+revision approval. Updates append through the Capability mutation coordinator. A ready revision
+becomes the Capability's active revision after compatibility checks; ID-only Project and System
+Expert bindings need no rewrite. Remote deletion uses the ordinary Capability deletion boundary and
+cannot remove a referenced Skill.
 
 Desktop startup, window focus, and network-online events perform pull-only refreshes. A successful
 local Skill publication schedules a full sync when automatic upload is enabled. Manual sync is

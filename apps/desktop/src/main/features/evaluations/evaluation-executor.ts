@@ -17,7 +17,10 @@ import type {
   Mission,
   MissionModelOverride,
 } from "../../../shared/contracts/index.ts";
-import { parseDesktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
+import {
+  parseDesktopCapabilityBindingRef,
+  parseLegacyDesktopCapabilityBindingRef,
+} from "../../platform/bindings/desktop-binding-ref.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
@@ -60,14 +63,16 @@ export function createEvaluationMockAdapterRegistry(
       return {
         ...fallback,
         async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
-          const parsed = parseDesktopCapabilityBindingRef(ref);
-          if (parsed === undefined) return await fallback.resolveBinding(ref);
-          const capability = await capabilities.get(parsed.id, parsed.revision);
+          const capabilityId =
+            parseDesktopCapabilityBindingRef(ref) ??
+            parseLegacyDesktopCapabilityBindingRef(ref)?.id;
+          if (capabilityId === undefined) return await fallback.resolveBinding(ref);
+          const capability = await capabilities.resolveActive(capabilityId);
           if (capability.definition.kind === "skill") return await fallback.resolveBinding(ref);
           const names = capabilityToolNames(capability.definition);
           return {
             ref,
-            revision: String(parsed.revision),
+            revision: String(capability.manifest.latestRevision),
             fingerprint: createHash("sha256")
               .update(JSON.stringify({ ref, mocks: execution.testCase.mocks }))
               .digest("hex"),

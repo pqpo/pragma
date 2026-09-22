@@ -976,10 +976,10 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     ]);
   });
 
-  it("checks the health of the capability revision bound by the resource", async () => {
+  it("checks the health of the active Capability revision", async () => {
     const capabilityId = "00000000-0000-4000-8000-000000000190";
     const resource = portableCapability();
-    resource.spec.binding = desktopCapabilityBindingRef(capabilityId, 1);
+    resource.spec.binding = desktopCapabilityBindingRef(capabilityId);
     const boundRevision = {
       definition: { kind: "http_service" },
       health: { revision: 1, status: "ready" },
@@ -995,6 +995,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const capabilities = {
       get: async (_id: string, revision?: number) =>
         revision === 1 ? boundRevision : latestRevision,
+      resolveActive: async () => boundRevision,
     } as unknown as CapabilityStore;
 
     await expect(
@@ -1263,7 +1264,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     }
     const sourceSnapshot = await source.project.get();
     const sourceResource = portableCapability();
-    sourceResource.spec.binding = desktopCapabilityBindingRef(sourceCapabilityId, 3);
+    sourceResource.spec.binding = desktopCapabilityBindingRef(sourceCapabilityId);
     const sourceExpert = sourceSnapshot.resources.find(
       (resource): resource is PragmaExpertResource => resource.kind === "Expert",
     )!;
@@ -1309,7 +1310,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const targetSnapshot = await target.project.get();
     const targetResource = portableCapability();
-    targetResource.spec.binding = desktopCapabilityBindingRef(targetCapabilityId, 7);
+    targetResource.spec.binding = desktopCapabilityBindingRef(targetCapabilityId);
     const targetExpert = targetSnapshot.resources.find(
       (resource): resource is PragmaExpertResource => resource.kind === "Expert",
     )!;
@@ -1371,7 +1372,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       (resource): resource is PragmaCapabilityResource =>
         canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(targetResource),
     );
-    expect(bound?.spec.binding).toBe(desktopCapabilityBindingRef(targetCapabilityId, 8));
+    expect(bound?.spec.binding).toBe(desktopCapabilityBindingRef(targetCapabilityId));
 
     let copiedCapability: Capability | undefined;
     const copyCapabilities = {
@@ -1420,7 +1421,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
         canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(sourceResource),
     );
     expect(copiedResource?.spec.binding).toBe(
-      desktopCapabilityBindingRef(copiedCapability!.manifest.id, 1),
+      desktopCapabilityBindingRef(copiedCapability!.manifest.id),
     );
   });
 
@@ -1442,7 +1443,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const snapshot = await source.project.get();
     const first = portableCapability();
-    first.spec.binding = desktopCapabilityBindingRef(sourceCapabilityId, 1);
+    first.spec.binding = desktopCapabilityBindingRef(sourceCapabilityId);
     const second: PragmaCapabilityResource = {
       ...first,
       metadata: { ...first.metadata, id: "2222222222222222", name: "Second Skill Resource" },
@@ -1517,7 +1518,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
             resource.metadata.id === second.metadata.id),
       )
       .map((resource) => resource.spec.binding);
-    const expectedBinding = desktopCapabilityBindingRef(created!.manifest.id, 1);
+    const expectedBinding = desktopCapabilityBindingRef(created!.manifest.id);
     expect(bindings).toEqual([expectedBinding, expectedBinding]);
 
     const existingId = "fedcba9876543210";
@@ -1574,8 +1575,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       )
       .map((resource) => resource.spec.binding);
     expect(updatedBindings).toEqual([
-      desktopCapabilityBindingRef(existingId, 8),
-      desktopCapabilityBindingRef(existingId, 8),
+      desktopCapabilityBindingRef(existingId),
+      desktopCapabilityBindingRef(existingId),
     ]);
   });
 
@@ -2207,14 +2208,30 @@ async function createFixture(
       };
     },
   });
+  const baseCapabilities =
+    overrides.capabilities ??
+    ({
+      list: async () => [],
+    } as unknown as CapabilityStore);
+  const capabilities = new Proxy(baseCapabilities, {
+    get(target, property, receiver) {
+      if (property === "resolveActive" && target.resolveActive === undefined) {
+        return async (id: string) => {
+          const listed = await target.list();
+          const capability = listed.find((candidate) => candidate.manifest.id === id);
+          return await target.get(
+            id,
+            capability?.manifest.activeRevision ?? capability?.manifest.latestRevision,
+          );
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
   const serviceOptions = {
     paths,
     project: serviceProject,
-    capabilities:
-      overrides.capabilities ??
-      ({
-        list: async () => [],
-      } as unknown as CapabilityStore),
+    capabilities,
     contextStores,
     plugins: {
       list: async () => [],
@@ -2426,7 +2443,7 @@ function skillCapability(id: string, latestRevision: number, contentHash: string
   const timestamp = "2026-09-21T00:00:00.000Z";
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v3",
+      schemaVersion: "pragma.capability/v4",
       id,
       runtimeKey: `skill-${id}`,
       name: "Bundle Skill",

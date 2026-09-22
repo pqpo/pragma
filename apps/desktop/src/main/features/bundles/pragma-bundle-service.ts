@@ -168,6 +168,15 @@ const DesktopCapabilityPayloadDescriptorV2Schema = z
     }
   });
 
+const DesktopCapabilityPayloadDescriptorV3Schema = z
+  .object({
+    schemaVersion: z.literal("pragma.desktop.capability-descriptor/v3"),
+    assetKey: CapabilityIdSchema,
+    definition: CapabilityDefinitionSchema,
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
 const DesktopContextPayloadDescriptorV2Schema = z
   .object({
     schemaVersion: z.literal("pragma.desktop.context-store-descriptor/v2"),
@@ -933,40 +942,18 @@ export function createPragmaBundleService(options: {
                     return undefined;
                   }
                   if (!isPortableValue(entry.capability.definition)) return undefined;
-                  const binding = parseDesktopCapabilityBindingRef(
-                    entry.resource.spec.binding ?? "",
-                  );
-                  const sourceRevision =
-                    binding?.revision ?? entry.capability.manifest.latestRevision;
-                  const logicalId = entry.capability.manifest.id;
-                  const revisionHistory = await Promise.all(
-                    Array.from({ length: sourceRevision }, async (_, index) => {
-                      const revision = index + 1;
-                      const historical = await options.capabilities.get(
-                        entry.capability!.manifest.id,
-                        revision,
-                      );
-                      if (!isPortableValue(historical.definition)) {
-                        throw new Error(
-                          `Capability revision ${revision} is not portable: ${entry.capability!.manifest.name}.`,
-                        );
-                      }
-                      return { revision, definition: historical.definition };
-                    }),
-                  );
-                  const sourceDefinition = revisionHistory.at(-1)?.definition;
-                  if (sourceDefinition === undefined) return undefined;
+                  const sourceRevision = entry.capability.manifest.latestRevision;
+                  const sourceDefinition = entry.capability.definition;
                   const files = new Map<string, Uint8Array>([
                     [
                       "descriptor.json",
                       new TextEncoder().encode(
                         `${JSON.stringify(
                           {
-                            schemaVersion: "pragma.desktop.capability-descriptor/v2",
-                            logicalId,
-                            revision: sourceRevision,
+                            schemaVersion: "pragma.desktop.capability-descriptor/v3",
+                            assetKey: entry.capability.manifest.id,
                             definition: sourceDefinition,
-                            revisions: revisionHistory,
+                            fingerprint: sha256(stableStringify(sourceDefinition)),
                           },
                           null,
                           2,
@@ -983,18 +970,8 @@ export function createPragmaBundleService(options: {
                       ),
                       "files",
                     );
-                    for (const revision of revisionHistory) {
-                      await addDirectoryFiles(
-                        files,
-                        await options.capabilities.skillFilesPath(
-                          entry.capability.manifest.id,
-                          revision.revision,
-                        ),
-                        `history/${formatRevisionDirectory(revision.revision)}`,
-                      );
-                    }
                   }
-                  return { codec: "pragma.desktop.capability@v2", files };
+                  return { codec: "pragma.desktop.capability@v3", files };
                 }
                 if (resource?.kind === "ContextStore") {
                   const entry = contextByRef.get(requirement.ownerRef);
@@ -1101,8 +1078,8 @@ export function createPragmaBundleService(options: {
       for (const resource of current.resources) {
         if (resource.kind === "Capability") {
           const binding = parseDesktopCapabilityBindingRef(resource.spec.binding ?? "");
-          if (binding !== undefined && !boundCapabilityRefs.has(binding.id)) {
-            boundCapabilityRefs.set(binding.id, canonicalPragmaResourceRef(resource));
+          if (binding !== undefined && !boundCapabilityRefs.has(binding)) {
+            boundCapabilityRefs.set(binding, canonicalPragmaResourceRef(resource));
           }
         } else if (resource.kind === "ContextStore") {
           const storeId = parseDesktopContextBindingRef(resource.spec.binding ?? "");
@@ -1590,7 +1567,6 @@ export function createPragmaBundleService(options: {
               string,
               {
                 readonly capability: Awaited<ReturnType<CapabilityStore["get"]>>;
-                readonly bindingRevision?: number;
               }
             >();
             for (const group of bundleCapabilityGroups.values()) {
@@ -1608,7 +1584,7 @@ export function createPragmaBundleService(options: {
                 const targetCapabilityId =
                   assetResolution?.targetAssetId ??
                   (targetResource?.kind === "Capability"
-                    ? parseDesktopCapabilityBindingRef(targetResource.spec.binding ?? "")?.id
+                    ? parseDesktopCapabilityBindingRef(targetResource.spec.binding ?? "")
                     : undefined);
                 const targetCapability =
                   targetCapabilityId === undefined
@@ -1645,7 +1621,6 @@ export function createPragmaBundleService(options: {
                   for (const dependency of group) {
                     importedBundleCapabilities.set(dependency.resourceRef, {
                       capability: targetCapability,
-                      bindingRevision: targetCapability.manifest.latestRevision,
                     });
                   }
                   continue;
@@ -1793,7 +1768,6 @@ export function createPragmaBundleService(options: {
                 for (const dependency of group) {
                   importedBundleCapabilities.set(dependency.resourceRef, {
                     capability: imported,
-                    bindingRevision: imported.manifest.latestRevision,
                   });
                 }
                 if (!before.has(imported.manifest.id)) {
@@ -1879,10 +1853,7 @@ export function createPragmaBundleService(options: {
                   (candidate) => candidate.resourceRef === dependency.resourceRef,
                 );
                 if (resolution !== undefined) {
-                  capability = await options.capabilities.get(
-                    resolution.capabilityId,
-                    resolution.revision,
-                  );
+                  capability = await options.capabilities.get(resolution.capabilityId);
                   if (
                     dependency.kind !== undefined &&
                     capability.definition.kind !== dependency.kind
@@ -1904,19 +1875,13 @@ export function createPragmaBundleService(options: {
                   ...(dependency.kind === undefined ? {} : { capabilityKind: dependency.kind }),
                 });
               } else {
-                const bindingRevision =
-                  importedBundleCapability?.bindingRevision ??
-                  dependency.sourceRevision ??
-                  capability.manifest.latestRevision;
-                const capabilityAtBinding = await options.capabilities.get(
+                const capabilityAtBinding = await options.capabilities.resolveActive(
                   capability.manifest.id,
-                  bindingRevision,
                 );
                 Object.assign(
                   resource,
                   bindExistingDesktopCapabilityResource(resource, {
                     id: capability.manifest.id,
-                    revision: bindingRevision,
                   }),
                 );
                 if (capabilityAtBinding.health.status !== "ready") {
@@ -2514,10 +2479,7 @@ export function createPragmaBundleService(options: {
         if (resource.kind !== "Capability") {
           throw new Error(`${resolution.resourceRef} is not a capability resource.`);
         }
-        const capability = await options.capabilities.get(
-          resolution.capabilityId,
-          resolution.revision,
-        );
+        const capability = await options.capabilities.resolveActive(resolution.capabilityId);
         const requiredKind = pendingFor("capability", resolution.resourceRef)?.capabilityKind;
         if (requiredKind !== undefined && capability.definition.kind !== requiredKind) {
           throw new Error(`Choose a ${requiredKind} capability for ${resource.metadata.name}.`);
@@ -2526,7 +2488,6 @@ export function createPragmaBundleService(options: {
           resolution.resourceRef,
           bindExistingDesktopCapabilityResource(resource, {
             id: resolution.capabilityId,
-            revision: resolution.revision,
           }),
         );
       }
@@ -2914,6 +2875,14 @@ async function readDesktopBundle(
           ? new Map<string, Uint8Array>()
           : filesBelowPrefix(decoded.files, requirement.payload.root);
       if (requirement.kind === "binding" && owner?.kind === "Capability") {
+        const v3 =
+          requirement.payload?.codec === "pragma.desktop.capability@v3"
+            ? parseBundlePayloadJson(
+                requiredBundlePayloadFile(payloadFiles, "descriptor.json", requirement.id),
+                DesktopCapabilityPayloadDescriptorV3Schema,
+                `Capability descriptor ${requirement.id}`,
+              )
+            : undefined;
         const v2 =
           requirement.payload?.codec === "pragma.desktop.capability@v2"
             ? parseBundlePayloadJson(
@@ -2923,8 +2892,11 @@ async function readDesktopBundle(
               )
             : undefined;
         const included =
-          requirement.payload?.codec === "pragma.desktop.capability@v1" || v2 !== undefined;
+          requirement.payload?.codec === "pragma.desktop.capability@v1" ||
+          v2 !== undefined ||
+          v3 !== undefined;
         const definition =
+          v3?.definition ??
           v2?.definition ??
           (requirement.payload?.codec === "pragma.desktop.capability@v1"
             ? parseBundlePayloadJson(
@@ -2944,13 +2916,15 @@ async function readDesktopBundle(
                 definition,
                 definitionFingerprint: sha256(stableStringify(definition)),
               }),
-          ...(v2 === undefined
-            ? {}
-            : {
-                logicalId: v2.logicalId,
-                sourceRevision: v2.revision,
-                ...(v2.revisions === undefined ? {} : { history: v2.revisions }),
-              }),
+          ...(v3 !== undefined
+            ? { logicalId: v3.assetKey }
+            : v2 !== undefined
+              ? {
+                  logicalId: v2.logicalId,
+                  sourceRevision: v2.revision,
+                  ...(v2.revisions === undefined ? {} : { history: v2.revisions }),
+                }
+              : {}),
           included,
           ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
         });

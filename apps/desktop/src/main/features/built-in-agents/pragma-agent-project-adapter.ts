@@ -785,7 +785,6 @@ function capabilityResource(capability: Capability): PragmaResource {
   return createDesktopCapabilityResource({
     owner: "default-agent-option",
     capabilityId: capability.manifest.id,
-    revision: capability.manifest.latestRevision,
     name: capability.definition.name,
     description: capabilityDescription(capability),
   });
@@ -858,7 +857,7 @@ function assertExpertSelectionsAvailable(
       const capability = byRef.get(reference.ref);
       if (capability?.kind !== "Capability") continue;
       const binding = parseDesktopCapabilityBindingRef(capability.spec.binding ?? "");
-      if (binding !== undefined && !catalog.readyCapabilityIds.has(binding.id)) {
+      if (binding !== undefined && !catalog.readyCapabilityIds.has(binding)) {
         throw new Error(`Expert capability is unavailable: ${reference.ref}.`);
       }
     }

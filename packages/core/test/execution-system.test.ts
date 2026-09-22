@@ -2527,7 +2527,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v11",
+        schemaVersion: "pragma.expert-session-transaction/v12",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -2564,7 +2564,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v11",
+          schemaVersion: "pragma.execution/v12",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -2593,7 +2593,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     );
     expect((await session.getState()).executionIds).toContain(executionId);
     expect(await executions.get(executionId)).toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
     });
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
     expect((await session.listEvents()).items.map((event) => event.type)).toContain(
@@ -2637,7 +2637,7 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v11",
+        schemaVersion: "pragma.expert-session-transaction/v12",
         session: {
           ...current,
           status: "closed",
@@ -3849,7 +3849,7 @@ describe("Execution observation", { timeout: 30_000 }, () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId: "cross-process",
         version: 0,
         kind: "flow",

@@ -46,7 +46,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
       const definition = { id: "retry-expert", kind: "expert" as const };
       await executions.create(
         {
-          schemaVersion: "pragma.execution/v11",
+          schemaVersion: "pragma.execution/v12",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -311,7 +311,7 @@ describe("ExpertSession human interaction recovery", { timeout: 30_000 }, () => 
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",

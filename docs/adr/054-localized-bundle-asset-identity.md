@@ -23,7 +23,9 @@ the current Project instead of the complete Studio asset library.
 - Bundle source revisions and logical IDs remain archive-local metadata. The importer consumes the
   selected current snapshot and does not align source revision numbers with local history.
 - Capability manifest v3 removes the legacy Bundle origin identity through a lazy, journaled v2 to
-  v3 migration. Existing Capability IDs, revisions, bindings, and references remain unchanged.
+  v3 migration. Manifest v4 adds the active revision used by ID-only bindings; v1-v3 manifests are
+  upgraded lazily, and current Project heads with legacy pinned bindings receive one successor
+  revision.
 - Skill synchronization uses only `capability/<localId>`. Legacy `bundle/<logicalId>` repositories
   are an intentional compatibility cutover. No released installation contains this protocol, so the
   reader rejects it with an instruction to initialize a new empty branch or repository instead of

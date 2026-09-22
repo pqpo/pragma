@@ -46,19 +46,17 @@ afterEach(async () => {
 });
 
 describe("CapabilityRevisionCoordinator", () => {
-  it("publishes once and upgrades every current Project and System Expert binding", async () => {
+  it("publishes once without rewriting Project or System Expert bindings", async () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search", "read"]);
     const candidate = capability(2, ["search", "read", "write"]);
     const first = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: CAPABILITY_ID,
-      revision: 1,
     });
     const second = createDesktopCapabilityResource({
       owner: "default-agent-option",
       capabilityId: CAPABILITY_ID,
-      revision: 1,
       name: "Old name",
     });
     const resources: PragmaResource[] = [
@@ -81,25 +79,24 @@ describe("CapabilityRevisionCoordinator", () => {
     await coordinator.publish({ current, candidate, commit });
 
     expect(commit).toHaveBeenCalledOnce();
-    expect(project.publish).toHaveBeenCalledOnce();
-    expect(system.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2, ["search", "read", "write"]);
+    expect(project.publish).not.toHaveBeenCalled();
+    expect(system.upgrade).not.toHaveBeenCalled();
     expect(
       project.resources
         .filter((resource) => resource.kind === "Capability")
-        .every((resource) => resource.spec.binding?.endsWith(".2") === true),
+        .every((resource) => resource.spec.binding?.includes("desktop-capability") === true),
     ).toBe(true);
     expect(await journalFiles(root)).toEqual([]);
     expect(await readdir(root)).toEqual([]);
   });
 
-  it("recomputes the Project update after a real revision conflict", async () => {
+  it("does not enter Project publication even when the Project publisher would conflict", async () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search"]);
     const candidate = capability(2, ["search"]);
     const binding = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: CAPABILITY_ID,
-      revision: 1,
     });
     const project = fakeProject([binding]);
     project.publish.mockRejectedValueOnce(
@@ -114,18 +111,17 @@ describe("CapabilityRevisionCoordinator", () => {
 
     await coordinator.publish({ current, candidate, commit: async () => candidate });
 
-    expect(project.publish).toHaveBeenCalledTimes(2);
+    expect(project.publish).not.toHaveBeenCalled();
     expect(await readdir(root)).toEqual([]);
   });
 
-  it("rechecks compatibility after a concurrent Project revision", async () => {
+  it("does not couple Capability activation to concurrent Project publication", async () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search", "read"]);
     const candidate = capability(2, ["search"]);
     const binding = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: CAPABILITY_ID,
-      revision: 1,
     });
     const project = fakeProject([binding]);
     project.publish.mockImplementationOnce(async () => {
@@ -144,8 +140,8 @@ describe("CapabilityRevisionCoordinator", () => {
 
     await expect(
       coordinator.publish({ current, candidate, commit: async () => candidate }),
-    ).rejects.toMatchObject({ code: "capability_incompatible" });
-    expect(project.publish).toHaveBeenCalledOnce();
+    ).resolves.toEqual(candidate);
+    expect(project.publish).not.toHaveBeenCalled();
   });
 
   it("rejects a stale health result under the Capability lock", async () => {
@@ -169,7 +165,7 @@ describe("CapabilityRevisionCoordinator", () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search"]);
     const candidate = capability(2, ["search", "read"]);
-    let stored = current;
+    let stored: Capability = current;
     const coordinator = createCapabilityRevisionCoordinator({
       journalRoot: root,
       capabilities: {
@@ -205,7 +201,6 @@ describe("CapabilityRevisionCoordinator", () => {
     const binding = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: CAPABILITY_ID,
-      revision: 1,
     });
     const project = fakeProject([
       binding,
@@ -251,14 +246,13 @@ describe("CapabilityRevisionCoordinator", () => {
     expect(system.upgrade).not.toHaveBeenCalled();
   });
 
-  it("replays a journal after Project propagation without creating another Project revision", async () => {
+  it("finishes activation without a Project or System Expert propagation stage", async () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search"]);
     const candidate = capability(2, ["search"]);
     const binding = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: CAPABILITY_ID,
-      revision: 1,
     });
     const project = fakeProject([binding]);
     const failingSystem = fakeSystemExpert([]);
@@ -273,9 +267,9 @@ describe("CapabilityRevisionCoordinator", () => {
 
     await expect(
       first.publish({ current, candidate, commit: async () => candidate }),
-    ).rejects.toThrow("simulated crash");
-    expect(project.publish).toHaveBeenCalledOnce();
-    expect(await journalFiles(root)).toHaveLength(1);
+    ).resolves.toEqual(candidate);
+    expect(project.publish).not.toHaveBeenCalled();
+    expect(await journalFiles(root)).toHaveLength(0);
 
     const recoveredSystem = fakeSystemExpert([]);
     await createCapabilityRevisionCoordinator({
@@ -285,8 +279,8 @@ describe("CapabilityRevisionCoordinator", () => {
       systemExperts: recoveredSystem.registry,
     }).recover();
 
-    expect(project.publish).toHaveBeenCalledOnce();
-    expect(recoveredSystem.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2, ["search"]);
+    expect(project.publish).not.toHaveBeenCalled();
+    expect(recoveredSystem.upgrade).not.toHaveBeenCalled();
     expect(await journalFiles(root)).toEqual([]);
   });
 
@@ -320,6 +314,57 @@ describe("CapabilityRevisionCoordinator", () => {
     await coordinator.recover();
 
     expect(discard).toHaveBeenCalledWith(CAPABILITY_ID, 2, current.health);
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("finishes active revision recovery after retry health became durable", async () => {
+    const root = await temporaryRoot();
+    const current = {
+      ...capability(2, ["search"]),
+      manifest: { ...capability(2, ["search"]).manifest, activeRevision: 1 },
+      health: {
+        ...capability(2, ["search"]).health,
+        status: "needs_attention" as const,
+        diagnostic: { code: "offline", message: "Offline", retryable: true },
+      },
+    };
+    const candidate = {
+      ...capability(2, ["search"]),
+      manifest: { ...capability(2, ["search"]).manifest, activeRevision: 2 },
+    };
+    let stored: Capability = current;
+    const ensureActiveRevision = vi.fn(async (_id: string, revision: number) => {
+      stored = { ...stored, manifest: { ...stored.manifest, activeRevision: revision } };
+    });
+    const store = {
+      get: async () => stored,
+      ensureActiveRevision,
+      discardUnpublishedRevision: async () => false,
+    } as unknown as CapabilityStore;
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: store,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+
+    await expect(
+      coordinator.publish({
+        current,
+        candidate,
+        mutationType: "retry",
+        targetRevisionFrom: 2,
+        commit: async () => {
+          stored = { ...candidate, manifest: current.manifest };
+          throw new Error("simulated crash after health commit");
+        },
+      }),
+    ).rejects.toThrow("simulated crash after health commit");
+
+    await coordinator.recover();
+
+    expect(ensureActiveRevision).toHaveBeenCalledWith(CAPABILITY_ID, 2);
+    expect(stored.manifest.activeRevision).toBe(2);
     expect(await journalFiles(root)).toEqual([]);
   });
 
@@ -460,7 +505,7 @@ describe("CapabilityRevisionCoordinator", () => {
       systemExperts: system.registry,
     }).recover();
 
-    expect(system.upgrade).toHaveBeenCalledWith(CAPABILITY_ID, 2, ["search"]);
+    expect(system.upgrade).not.toHaveBeenCalled();
     expect(await journalFiles(root)).toEqual([]);
   });
 
@@ -493,7 +538,7 @@ describe("CapabilityRevisionCoordinator", () => {
 function capability(revision: number, tools: string[]): Capability {
   return {
     manifest: {
-      schemaVersion: "pragma.capability/v3",
+      schemaVersion: "pragma.capability/v4",
       id: CAPABILITY_ID,
       runtimeKey: "search",
       name: `Search ${revision}`,
@@ -579,7 +624,6 @@ function fakeSystemExpert(selectedTools: string[]) {
                 {
                   kind: "tools",
                   capabilityId: CAPABILITY_ID,
-                  revision: 1,
                   toolNames: selectedTools,
                 },
               ],
@@ -592,6 +636,7 @@ function fakeSystemExpert(selectedTools: string[]) {
 function fakeCapabilityStore(candidate: Capability): CapabilityStore {
   let firstRead = true;
   return {
+    ensureActiveRevision: async () => undefined,
     get: async () => {
       if (!firstRead) return candidate;
       firstRead = false;

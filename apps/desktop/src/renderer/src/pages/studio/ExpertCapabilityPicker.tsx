@@ -124,10 +124,6 @@ export function updateToolSelection(input: {
             {
               kind: "tools",
               capabilityId: input.capability.manifest.id,
-              revision:
-                existing?.kind === "tools"
-                  ? existing.revision
-                  : input.capability.manifest.latestRevision,
               toolNames: [...input.toolNames],
             },
           ],
@@ -620,7 +616,6 @@ function SkillResults(props: {
                         {
                           kind: "skill",
                           capabilityId: capability.manifest.id,
-                          revision: capability.manifest.latestRevision,
                         },
                       ]
                     : props.references.filter((reference) => reference !== selected),

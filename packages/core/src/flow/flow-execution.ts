@@ -5,6 +5,7 @@ import {
   InvocationOutputSchema,
   isFinalExecutionStatus as isFinal,
   type ExecutionRecord,
+  type ExecutionEnvironmentSnapshot,
   type HumanInteractionRequest,
   type HumanInteractionResponse,
   type Invocation,
@@ -78,6 +79,7 @@ export interface StartFlowRequest<TInput = unknown> {
   readonly input: TInput;
   readonly executionId?: string | undefined;
   readonly runtime?: string | undefined;
+  readonly environment?: ExecutionEnvironmentSnapshot | undefined;
 }
 
 export interface FlowExecution extends MutableExecution {
@@ -117,7 +119,7 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       executionId,
       version: 0,
       kind: "flow",
@@ -125,6 +127,7 @@ export class FlowExecutionManager {
       rootInvocationId: executionId,
       status: "queued",
       input,
+      ...(request.environment === undefined ? {} : { environment: request.environment }),
       state: {
         [FLOW_INTERNAL_STATE_KEY]: {
           definitionGraph: createFlowDefinitionGraph(flow),
