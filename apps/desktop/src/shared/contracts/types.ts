@@ -178,6 +178,8 @@ import {
   CreateMissionSchema,
   GetMissionChatPageSchema,
   GetMissionWorkConversationSchema,
+  OpenMissionWorkConversationStreamSchema,
+  CloseMissionWorkConversationStreamSchema,
   MissionChatEntrySchema,
   MissionChatPatchSchema,
   MissionChatPageSchema,
@@ -206,6 +208,8 @@ import {
   MissionUpdateSchema,
   MissionUserMessageSchema,
   MissionWorkConversationSnapshotSchema,
+  OpenMissionWorkConversationStreamResultSchema,
+  MissionWorkConversationStreamUpdateSchema,
   MissionWorkRecordSchema,
   MissionWorkSnapshotSchema,
   MissionWorkTaskSchema,
@@ -628,7 +632,19 @@ export type MissionWorkTask = z.infer<typeof MissionWorkTaskSchema>;
 export type MissionWorkRecord = z.infer<typeof MissionWorkRecordSchema>;
 export type MissionWorkSnapshot = z.infer<typeof MissionWorkSnapshotSchema>;
 export type GetMissionWorkConversation = z.infer<typeof GetMissionWorkConversationSchema>;
+export type OpenMissionWorkConversationStream = z.infer<
+  typeof OpenMissionWorkConversationStreamSchema
+>;
+export type CloseMissionWorkConversationStream = z.infer<
+  typeof CloseMissionWorkConversationStreamSchema
+>;
 export type MissionWorkConversationSnapshot = z.infer<typeof MissionWorkConversationSnapshotSchema>;
+export type OpenMissionWorkConversationStreamResult = z.infer<
+  typeof OpenMissionWorkConversationStreamResultSchema
+>;
+export type MissionWorkConversationStreamUpdate = z.infer<
+  typeof MissionWorkConversationStreamUpdateSchema
+>;
 export type MissionWorkUpdate = z.infer<typeof MissionWorkUpdateSchema>;
 export type GetMissionChatPage = z.input<typeof GetMissionChatPageSchema>;
 export type MissionChatPageQuery = z.output<typeof GetMissionChatPageSchema>;

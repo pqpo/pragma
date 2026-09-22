@@ -4,6 +4,7 @@ import type {
   Mission,
   MissionConversationSnapshot,
   MissionSummary,
+  MissionWorkConversationSnapshot,
   MissionWorkRecord,
 } from "../../../../shared/contracts/index.ts";
 import { i18n } from "../../i18n/index.ts";
@@ -28,12 +29,14 @@ import {
   MISSION_RECOVERY_WATCHDOG_MS,
   MISSION_WORK_CONVERSATION_PAGE_SIZE,
   MISSION_WORK_RECORD_PAGE_SIZE,
+  MISSION_TEAM_PARTICIPANT_PREVIEW_HOVER_DELAY_MS,
   MissionDetailFragment,
   MissionDetailSkeleton,
   MissionMemoryActivity,
   MissionRailRow,
   MissionThinkingEntry,
   MissionTeamParticipantList,
+  MissionTeamParticipantPreviewCard,
   MissionToolCallBlock,
   MissionWorkGrid,
   MissionWorkDrawer,
@@ -47,6 +50,7 @@ import {
   missionStatusLabel,
   MISSION_ROW_PREVIEW_HOVER_DELAY_MS,
   positionMissionRowPreview,
+  positionMissionTeamParticipantPreview,
   recordMissionRemoval,
   resolveMissionRowIndicator,
   workStatusLabel,
@@ -84,6 +88,10 @@ import {
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
 } from "./mission-conversation-model.ts";
+import {
+  mergeLatestMissionWorkConversation,
+  prependMissionWorkConversation,
+} from "./use-mission-work.ts";
 
 describe("MissionsPage", () => {
   it("records a successful Mission deletion before its Composer unmounts", () => {
@@ -1869,13 +1877,70 @@ describe("Mission work grid", () => {
       <MissionTeamParticipantList
         records={participants}
         allRecords={records}
+        onOpenWork={() => undefined}
         onSelect={() => undefined}
       />,
     );
     expect(html).toContain("mission-team-participant-list");
     expect(html).toContain("pragma-avatar-xs");
+    expect(html).toContain("mission-team-participant-avatar");
     expect(html).toContain("mission-team-participant is-running");
-    expect(html.match(/role="listitem"/g)).toHaveLength(2);
+    expect(html).toContain("mission-team-participant-work-link");
+    expect(html.match(/role="listitem"/g)).toHaveLength(3);
+  });
+
+  it("renders the participant summary card above the avatar after a 200ms hover delay", async () => {
+    await i18n.changeLanguage("en");
+    expect(MISSION_TEAM_PARTICIPANT_PREVIEW_HOVER_DELAY_MS).toBe(200);
+    expect(
+      positionMissionTeamParticipantPreview({
+        anchor: { top: 300, right: 138, bottom: 338, left: 100, width: 38, height: 38 },
+        card: { width: 292, height: 150 },
+        viewport: { width: 800, height: 600 },
+      }),
+    ).toEqual({ left: 12, top: 140 });
+    expect(
+      positionMissionTeamParticipantPreview({
+        anchor: { top: 300, right: 798, bottom: 338, left: 760, width: 38, height: 38 },
+        card: { width: 292, height: 150 },
+        viewport: { width: 800, height: 600 },
+      }),
+    ).toEqual({ left: 496, top: 140 });
+
+    const record: MissionWorkRecord = {
+      recordId: "member:running",
+      kind: "agent",
+      sessionId: "session",
+      parentRecordId: "root:coordinator",
+      title: "Researcher",
+      executorId: "member-id",
+      avatarId: "pragma.avatar.expert.08",
+      origin: "core",
+      status: "running",
+      tasks: [],
+      summary: "Inspect the repository and summarize the architecture",
+      createdAt: "2026-07-21T00:00:02.000Z",
+      updatedAt: "2026-07-21T00:00:03.000Z",
+    };
+    const html = renderToStaticMarkup(
+      <MissionTeamParticipantPreviewCard
+        anchorRef={{ current: null }}
+        callOrder={2}
+        id="expert-preview"
+        open
+        record={record}
+      />,
+    );
+
+    expect(html).toContain('class="mission-team-participant-preview"');
+    expect(html).toContain('id="expert-preview"');
+    expect(html).toContain('role="tooltip"');
+    expect(html).toContain("Researcher");
+    expect(html).toContain("Current status");
+    expect(html).toContain("Working");
+    expect(html).toContain("Call #2");
+    expect(html).toContain("Conversation topic");
+    expect(html).toContain("Inspect the repository and summarize the architecture");
   });
 
   it("paginates long work maps and retains ancestors on later pages", () => {
@@ -2194,6 +2259,121 @@ describe("Mission work conversation", () => {
     expect(html).not.toContain("Live output");
     expect(html).not.toContain("mission-work-tasks");
     expect(html).not.toContain("mission-chat-composer");
+  });
+
+  it("renders thinking and tool calls in the Expert drawer", () => {
+    const record: MissionWorkRecord = {
+      recordId: "agent-context:reviewer",
+      kind: "agent",
+      sessionId: "reviewer",
+      title: "Reviewer",
+      origin: "core",
+      status: "running",
+      tasks: [],
+      summary: "Review the implementation",
+      createdAt: "2026-09-23T00:00:00.000Z",
+      updatedAt: "2026-09-23T00:00:00.000Z",
+    };
+    const html = renderToStaticMarkup(
+      <MissionWorkDrawer
+        record={record}
+        inputSenderName="Coordinator"
+        entries={[
+          {
+            id: "thinking-1",
+            kind: "thinking",
+            content: "Checking the execution path",
+            streaming: true,
+            createdAt: "2026-09-23T00:00:01.000Z",
+          },
+          {
+            id: "tool-1",
+            kind: "tool",
+            toolCallId: "inspect-code",
+            toolName: "read_file",
+            status: "running",
+            inputPreview: "src/reviewer.ts",
+            createdAt: "2026-09-23T00:00:02.000Z",
+          },
+        ]}
+        loading={false}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Checking the execution path");
+    expect(html).toContain("read_file");
+    expect(html).toContain("src/reviewer.ts");
+  });
+
+  it("keeps loaded history across live patches and authoritative refreshes", () => {
+    const snapshot = (
+      revision: number,
+      entries: MissionWorkConversationSnapshot["entries"],
+      nextBeforeCursor?: string,
+    ): MissionWorkConversationSnapshot => ({
+      missionId: "00000000-0000-4000-8000-000000000000",
+      recordId: "agent-context:reviewer",
+      revision,
+      entries,
+      ...(nextBeforeCursor === undefined ? {} : { nextBeforeCursor }),
+    });
+    const latest = snapshot(
+      1,
+      [
+        {
+          id: "latest",
+          kind: "assistant",
+          content: "Latest answer",
+          streaming: true,
+          createdAt: "2026-09-23T00:00:02.000Z",
+        },
+      ],
+      "1",
+    );
+    const withHistory = prependMissionWorkConversation(
+      latest,
+      snapshot(1, [
+        {
+          id: "older",
+          kind: "thinking",
+          content: "Earlier reasoning",
+          streaming: false,
+          createdAt: "2026-09-23T00:00:01.000Z",
+        },
+      ]),
+    );
+    const patched = applyMissionChatPatches(
+      {
+        missionId: withHistory.missionId,
+        revision: 0,
+        entries: withHistory.entries,
+        page: {},
+        pendingInteractions: [],
+      },
+      [{ type: "entry.append", entryId: "latest", field: "content", delta: " streamed" }],
+      1,
+    );
+    expect(patched).not.toBeNull();
+    const current = { ...withHistory, entries: patched!.entries };
+    const refreshed = mergeLatestMissionWorkConversation(
+      current,
+      snapshot(2, [
+        {
+          id: "latest",
+          kind: "assistant",
+          content: "Latest answer streamed",
+          streaming: false,
+          createdAt: "2026-09-23T00:00:02.000Z",
+        },
+      ]),
+    );
+
+    expect(refreshed.entries).toMatchObject([
+      { id: "older", content: "Earlier reasoning" },
+      { id: "latest", content: "Latest answer streamed", streaming: false },
+    ]);
+    expect(refreshed.nextBeforeCursor).toBeUndefined();
   });
 });
 

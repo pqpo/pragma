@@ -12,23 +12,38 @@ export interface ExecutionEventSubscription extends AsyncIterable<ExecutionEvent
 }
 
 class ExecutionLiveBus {
-  private readonly subscribers = new Map<string, Set<AsyncPushQueue<ExecutionOutputItem>>>();
+  private readonly subscribers = new Map<
+    string,
+    Set<{
+      readonly queue: AsyncPushQueue<ExecutionOutputItem>;
+      readonly predicate: (item: ExecutionOutputItem) => boolean;
+    }>
+  >();
   private readonly eventSubscribers = new Map<string, Set<AsyncPushQueue<ExecutionEvent>>>();
   private readonly outputHistory = new Map<string, ExecutionOutputItem[]>();
 
-  subscribe(executionId: string): ExecutionOutputSubscription {
+  subscribe(
+    executionId: string,
+    predicate: (item: ExecutionOutputItem) => boolean = () => true,
+    replayHistory = true,
+  ): ExecutionOutputSubscription {
     const queue = new AsyncPushQueue<ExecutionOutputItem>();
     const subscribers = this.subscribers.get(executionId) ?? new Set();
-    subscribers.add(queue);
+    const subscriber = { queue, predicate };
+    subscribers.add(subscriber);
     this.subscribers.set(executionId, subscribers);
-    for (const item of this.outputHistory.get(executionId) ?? []) queue.push(item);
+    if (replayHistory) {
+      for (const item of this.outputHistory.get(executionId) ?? []) {
+        if (predicate(item)) queue.push(item);
+      }
+    }
     let closed = false;
     return {
       [Symbol.asyncIterator]: () => queue[Symbol.asyncIterator](),
       close: async () => {
         if (closed) return;
         closed = true;
-        subscribers.delete(queue);
+        subscribers.delete(subscriber);
         if (subscribers.size === 0) this.subscribers.delete(executionId);
         queue.close();
       },
@@ -58,7 +73,7 @@ class ExecutionLiveBus {
     history.push(output);
     this.outputHistory.set(executionId, history);
     for (const subscriber of this.subscribers.get(executionId) ?? []) {
-      subscriber.push(output);
+      if (subscriber.predicate(output)) subscriber.queue.push(output);
     }
   }
 
@@ -73,7 +88,7 @@ class ExecutionLiveBus {
     const subscribers = this.subscribers.get(executionId);
     if (subscribers !== undefined) {
       this.subscribers.delete(executionId);
-      for (const subscriber of subscribers) subscriber.close();
+      for (const subscriber of subscribers) subscriber.queue.close();
     }
     const eventSubscribers = this.eventSubscribers.get(executionId);
     if (eventSubscribers !== undefined) {

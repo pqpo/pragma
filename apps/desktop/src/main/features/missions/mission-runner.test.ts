@@ -588,6 +588,49 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(chat.entries[2]?.id).toContain(":assistant:1");
   });
 
+  it("routes interleaved tool deltas by tool call id", () => {
+    const chat: LiveMissionChat = {
+      executionId: "execution-1",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+    };
+    const base: Omit<ExecutionOutputItem, "sourceEventId" | "source" | "delta" | "value"> = {
+      executionId: chat.executionId,
+      invocationId: "invocation-a",
+      contextId: "context-a",
+      runId: "run-a",
+      channel: "tool",
+      occurredAt: "2026-09-23T00:00:00.000Z",
+    };
+    const start = (toolCallId: string): void => {
+      consumeLiveChatOutput(chat, {
+        ...base,
+        sourceEventId: `${toolCallId}:started`,
+        source: { kind: "tool", runId: "run-a", toolCallId, path: [] },
+        value: { toolCallId, toolName: `tool_${toolCallId}` },
+      });
+    };
+    const delta = (toolCallId: string, content: string): void => {
+      consumeLiveChatOutput(chat, {
+        ...base,
+        sourceEventId: `${toolCallId}:delta`,
+        source: { kind: "tool", runId: "run-a", toolCallId, path: [] },
+        delta: content,
+      });
+    };
+
+    start("a");
+    start("b");
+    delta("a", "output-a");
+    delta("b", "output-b");
+
+    expect(chat.entries).toMatchObject([
+      { kind: "tool", toolCallId: "a", outputPreview: "output-a" },
+      { kind: "tool", toolCallId: "b", outputPreview: "output-b" },
+    ]);
+  });
+
   it("ignores late thinking after a final answer but accepts a new run", () => {
     const chat: LiveMissionChat = {
       executionId: "execution-1",
@@ -3443,7 +3486,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const patchUpdates = updates.mock.calls
       .map(([notification]) => notification.update)
       .filter((update) => update.kind === "patch");
-    expect(patchUpdates.length).toBeGreaterThanOrEqual("Checking constraints.".length + 1);
+    expect(patchUpdates.length).toBeGreaterThanOrEqual(3);
+    expect(patchUpdates.length).toBeLessThan("Checking constraints.".length + 1);
     expect(patchUpdates.flatMap((update) => update.patches)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3948,6 +3992,249 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
   });
 
+  it("notifies work subscribers when a delegated Expert starts running", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-live-delegated-work-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const writer = expertFixture();
+    const reviewer = reviewerFixture();
+    const team = expertTeamFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), writer, reviewer, team],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Show delegated work while it is running",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(team),
+    });
+    let announceRootReady = (): void => undefined;
+    const rootReady = new Promise<void>((resolve) => {
+      announceRootReady = resolve;
+    });
+    let allowSpawn = (): void => undefined;
+    const spawnAllowed = new Promise<void>((resolve) => {
+      allowSpawn = resolve;
+    });
+    let announceSpawned = (): void => undefined;
+    const spawned = new Promise<void>((resolve) => {
+      announceSpawned = resolve;
+    });
+    let finishReviewer = (): void => undefined;
+    const reviewerCanFinish = new Promise<void>((resolve) => {
+      finishReviewer = resolve;
+    });
+    let emitReviewerPrelude = (): void => undefined;
+    const reviewerPreludeMayEmit = new Promise<void>((resolve) => {
+      emitReviewerPrelude = resolve;
+    });
+    let announceReviewerPrelude = (): void => undefined;
+    const reviewerPreludeSent = new Promise<void>((resolve) => {
+      announceReviewerPrelude = resolve;
+    });
+    let emitReviewerOutput = (): void => undefined;
+    const reviewerMayEmit = new Promise<void>((resolve) => {
+      emitReviewerOutput = resolve;
+    });
+    let announceReviewerOutput = (): void => undefined;
+    const reviewerOutputSent = new Promise<void>((resolve) => {
+      announceReviewerOutput = resolve;
+    });
+    let emitReviewerAfterClose = (): void => undefined;
+    const reviewerMayEmitAfterClose = new Promise<void>((resolve) => {
+      emitReviewerAfterClose = resolve;
+    });
+    let announceReviewerOutputAfterClose = (): void => undefined;
+    const reviewerOutputAfterCloseSent = new Promise<void>((resolve) => {
+      announceReviewerOutputAfterClose = resolve;
+    });
+    const runtime = defineRuntimeTestDriver<
+      never,
+      { context: RuntimeNativeSessionContext; id: string }
+    >({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context, id: `runtime:${context.systemSessionId}` }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(session, turn) {
+        if (session.context.agent.id === reviewer.metadata.id) {
+          await reviewerPreludeMayEmit;
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "thought.delta",
+            payload: { contentType: "text", delta: "Reviewing existing code" },
+          });
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "tool.started",
+            payload: {
+              toolCallId: "inspect-code",
+              toolName: "read_file",
+              kind: "tool",
+              inputPreview: "src/reviewer.ts",
+            },
+          });
+          announceReviewerPrelude();
+          await reviewerMayEmit;
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "message.delta",
+            payload: { role: "assistant", contentType: "text", delta: "Live reviewer output" },
+          });
+          announceReviewerOutput();
+          await reviewerMayEmitAfterClose;
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "message.delta",
+            payload: { role: "assistant", contentType: "text", delta: " after close" },
+          });
+          announceReviewerOutputAfterClose();
+          await reviewerCanFinish;
+          return { outputText: "Review complete", runtimeSessionId: session.id };
+        }
+        announceRootReady();
+        await spawnAllowed;
+        const spawn = session.context.agent.tools?.find((tool) => tool.name === "spawn_expert");
+        const wait = session.context.agent.tools?.find((tool) => tool.name === "wait_experts");
+        if (spawn === undefined || wait === undefined) {
+          throw new Error("Missing Expert delegation tools.");
+        }
+        const execution = { execution: session.context.request.executionContext };
+        const result = await spawn.call(
+          { expertId: reviewer.metadata.id, task: "Review the live work" },
+          turn.signal,
+          execution,
+        );
+        announceSpawned();
+        const invocationId = (result.details as { invocationId: string }).invocationId;
+        await wait.call({ invocationIds: [invocationId] }, turn.signal, execution);
+        return { outputText: "Delegation complete", runtimeSessionId: session.id };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const revisions: number[] = [];
+    const unsubscribe = runner.subscribeWork(({ update }) => revisions.push(update.revision));
+
+    await runner.run(mission.id);
+    await rootReady;
+    await vi.waitFor(async () => {
+      expect((await runner.getWork(mission.id)).records).toHaveLength(1);
+    });
+    const revisionBeforeSpawn = revisions.at(-1) ?? 0;
+
+    allowSpawn();
+    await spawned;
+    await vi.waitFor(
+      async () => {
+        expect(revisions.some((revision) => revision > revisionBeforeSpawn)).toBe(true);
+        expect(await runner.getWork(mission.id)).toMatchObject({
+          records: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "agent",
+              executorId: reviewer.metadata.id,
+              status: expect.stringMatching(/^(queued|running)$/u),
+            }),
+          ]),
+        });
+      },
+      { timeout: settlementTimeoutMs },
+    );
+
+    const reviewerRecord = (await runner.getWork(mission.id)).records.find(
+      (record) => record.kind === "agent" && record.executorId === reviewer.metadata.id,
+    );
+    expect(reviewerRecord).toBeDefined();
+    emitReviewerPrelude();
+    await reviewerPreludeSent;
+    const streamUpdates: unknown[] = [];
+    const unsubscribeStream = runner.subscribeWorkConversationStreams(({ update }) => {
+      streamUpdates.push(update);
+    });
+    const subscriptionId = crypto.randomUUID();
+    const secondSubscriptionId = crypto.randomUUID();
+    const opened = await runner.openWorkConversationStream({
+      subscriptionId,
+      missionId: mission.id,
+      recordId: reviewerRecord!.recordId,
+      limit: 100,
+    });
+    await runner.openWorkConversationStream({
+      subscriptionId: secondSubscriptionId,
+      missionId: mission.id,
+      recordId: reviewerRecord!.recordId,
+      limit: 100,
+    });
+    expect(opened.snapshot).toMatchObject({
+      missionId: mission.id,
+      recordId: reviewerRecord!.recordId,
+    });
+    await vi.waitFor(() => {
+      const restored = JSON.stringify([opened.snapshot, ...streamUpdates]);
+      expect(restored).toContain("Reviewing existing code");
+      expect(restored).toContain("inspect-code");
+    });
+    emitReviewerOutput();
+    await reviewerOutputSent;
+    await vi.waitFor(() => {
+      expect(JSON.stringify(streamUpdates)).toContain("Live reviewer output");
+      expect(
+        streamUpdates.filter(
+          (update) =>
+            (update as { subscriptionId?: string }).subscriptionId === secondSubscriptionId,
+        ),
+      ).not.toHaveLength(0);
+    });
+    const mainChat = await runner.getChatPage({ id: mission.id, limit: 50 });
+    expect(JSON.stringify(mainChat.entries)).not.toContain("Live reviewer output");
+
+    await runner.closeWorkConversationStream(subscriptionId);
+    const firstUpdateCountAfterClose = streamUpdates.filter(
+      (update) => (update as { subscriptionId?: string }).subscriptionId === subscriptionId,
+    ).length;
+    const secondUpdateCountBeforeMoreOutput = streamUpdates.filter(
+      (update) => (update as { subscriptionId?: string }).subscriptionId === secondSubscriptionId,
+    ).length;
+    emitReviewerAfterClose();
+    await reviewerOutputAfterCloseSent;
+    await vi.waitFor(() => {
+      expect(
+        streamUpdates.filter(
+          (update) =>
+            (update as { subscriptionId?: string }).subscriptionId === secondSubscriptionId,
+        ).length,
+      ).toBeGreaterThan(secondUpdateCountBeforeMoreOutput);
+    });
+    expect(
+      streamUpdates.filter(
+        (update) => (update as { subscriptionId?: string }).subscriptionId === subscriptionId,
+      ),
+    ).toHaveLength(firstUpdateCountAfterClose);
+    await runner.closeWorkConversationStream(secondSubscriptionId);
+    unsubscribeStream();
+
+    finishReviewer();
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    unsubscribe();
+  });
+
   it("identifies Team, delegated Expert, and Flow output in live and historical chat", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-executor-labels-"));
     temporaryPaths.push(root);
@@ -4034,13 +4321,15 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const updates: MissionChatUpdate[] = [];
     const unsubscribe = runner.subscribeChat(({ update }) => updates.push(update));
 
-    for (const mission of [expertMission, teamMission, flowMission]) {
-      await runner.run(mission.id);
-      await vi.waitFor(
-        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-        { timeout: settlementTimeoutMs },
-      );
-    }
+    await Promise.all(
+      [expertMission, teamMission, flowMission].map(async (mission) => {
+        await runner.run(mission.id);
+        await vi.waitFor(
+          async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+          { timeout: memoryBindingReopenTimeoutMs },
+        );
+      }),
+    );
 
     const expertChat = await runner.getChatPage({ id: expertMission.id, limit: 50 });
     const teamChat = await runner.getChatPage({ id: teamMission.id, limit: 50 });
@@ -4070,10 +4359,12 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           executorName: "Writer",
           executorAvatarId: writer.metadata.avatarId,
         }),
+      ]),
+    );
+    expect(teamOutputs).not.toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
           executorId: reviewer.metadata.id,
-          executorName: "Reviewer",
-          executorAvatarId: reviewer.metadata.avatarId,
         }),
       ]),
     );
@@ -5837,6 +6128,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       inputMessageId: mission.initialMessageId,
       sessionId,
       status: "waiting",
+      environmentFingerprint: "d".repeat(64),
+      resolvedCapabilities: [],
       startedAt,
     });
     const runner = createMissionRunner({

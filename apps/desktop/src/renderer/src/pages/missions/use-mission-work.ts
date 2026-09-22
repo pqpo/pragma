@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 
 import type {
+  MissionConversationSnapshot,
   MissionWorkConversationSnapshot,
+  MissionWorkConversationStreamUpdate,
   MissionWorkRecord,
   PragmaDesktopAPI,
 } from "../../../../shared/contracts/index.ts";
-import { uniqueChatEntries } from "./mission-conversation-model.ts";
+import { applyMissionChatPatches, uniqueChatEntries } from "./mission-conversation-model.ts";
 import { MISSION_WORK_CONVERSATION_PAGE_SIZE } from "./mission-view-constants.ts";
 
 export function useMissionWork(options: {
@@ -22,6 +24,15 @@ export function useMissionWork(options: {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshRevision, setRefreshRevision] = useState(0);
+  const conversationRef = useRef<MissionWorkConversationSnapshot | null>(null);
+  const updateConversation = useCallback(
+    (value: SetStateAction<MissionWorkConversationSnapshot | null>): void => {
+      const next = typeof value === "function" ? value(conversationRef.current) : value;
+      conversationRef.current = next;
+      setConversation(next);
+    },
+    [],
+  );
 
   const selectedRecord = useMemo(
     () => records.find((record) => record.recordId === selectedRecordId),
@@ -30,10 +41,10 @@ export function useMissionWork(options: {
 
   useEffect(() => {
     setRecords([]);
-    setConversation(null);
+    updateConversation(null);
     setSelectedRecordId(null);
     setError(null);
-  }, [options.missionId]);
+  }, [options.missionId, updateConversation]);
 
   useEffect(() => {
     if (selectedRecordId !== null && selectedRecord === undefined) setSelectedRecordId(null);
@@ -105,28 +116,88 @@ export function useMissionWork(options: {
       options.executionId === undefined ||
       selectedRecordId === null
     ) {
-      setConversation(null);
+      updateConversation(null);
       return;
     }
     let cancelled = false;
+    const subscriptionId = crypto.randomUUID();
+    let streamId: string | undefined;
+    let nextSequence = 1;
+    const pendingUpdates: MissionWorkConversationStreamUpdate[] = [];
     setConversationLoading(true);
-    options.api
-      .getMissionWorkConversation({
+    const refreshConversation = async (): Promise<void> => {
+      const next = await options.api!.getMissionWorkConversation({
         id: options.missionId,
+        recordId: selectedRecordId,
+        limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
+      });
+      if (cancelled) return;
+      updateConversation((current) => mergeLatestMissionWorkConversation(current, next));
+    };
+    function drainPendingUpdates(): void {
+      if (streamId === undefined) return;
+      while (true) {
+        const index = pendingUpdates.findIndex(
+          (update) => update.streamId === streamId && update.sequence === nextSequence,
+        );
+        if (index < 0) return;
+        applyUpdate(pendingUpdates.splice(index, 1)[0]!);
+      }
+    }
+    function applyUpdate(update: MissionWorkConversationStreamUpdate): void {
+      if (cancelled || update.subscriptionId !== subscriptionId) return;
+      if (streamId === undefined) {
+        pendingUpdates.push(update);
+        return;
+      }
+      if (update.streamId !== streamId || update.sequence < nextSequence) return;
+      if (update.sequence > nextSequence) {
+        pendingUpdates.push(update);
+        return;
+      }
+      nextSequence += 1;
+      if (update.kind === "invalidate") {
+        void refreshConversation().catch(() => undefined);
+        drainPendingUpdates();
+        return;
+      }
+      const current = conversationRef.current;
+      if (current === null) {
+        pendingUpdates.push(update);
+        return;
+      }
+      const projected: MissionConversationSnapshot = {
+        missionId: current.missionId,
+        revision: update.sequence - 1,
+        entries: current.entries,
+        page: {},
+        pendingInteractions: [],
+      };
+      const patched = applyMissionChatPatches(projected, update.patches, update.sequence);
+      if (patched === null) {
+        void refreshConversation().catch(() => undefined);
+        return;
+      }
+      updateConversation({ ...current, entries: patched.entries });
+      drainPendingUpdates();
+    }
+    const unsubscribe = options.api.subscribeMissionWorkConversationUpdates(applyUpdate);
+    options.api
+      .openMissionWorkConversationStream({
+        subscriptionId,
+        missionId: options.missionId,
         recordId: selectedRecordId,
         limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       })
       .then((next) => {
         if (cancelled) return;
-        setConversation((current) =>
-          current === null || current.recordId !== next.recordId
-            ? next
-            : {
-                ...next,
-                entries: uniqueChatEntries([...current.entries, ...next.entries]),
-                nextBeforeCursor: current.nextBeforeCursor,
-              },
-        );
+        streamId = next.streamId;
+        updateConversation(next.snapshot);
+        for (const update of pendingUpdates
+          .splice(0)
+          .toSorted((left, right) => left.sequence - right.sequence)) {
+          applyUpdate(update);
+        }
       })
       .catch((loadError) => {
         if (!cancelled) console.error("Failed to load Mission work conversation.", loadError);
@@ -136,6 +207,10 @@ export function useMissionWork(options: {
       });
     return () => {
       cancelled = true;
+      unsubscribe();
+      void options
+        .api!.closeMissionWorkConversationStream({ subscriptionId })
+        .catch(() => undefined);
     };
   }, [
     options.active,
@@ -144,6 +219,7 @@ export function useMissionWork(options: {
     options.missionId,
     refreshRevision,
     selectedRecordId,
+    updateConversation,
   ]);
 
   const loadEarlier = useCallback(async (): Promise<void> => {
@@ -163,24 +239,21 @@ export function useMissionWork(options: {
         beforeCursor: conversation.nextBeforeCursor,
         limit: MISSION_WORK_CONVERSATION_PAGE_SIZE,
       });
-      setConversation((current) =>
-        current === null || current.recordId !== earlier.recordId
-          ? earlier
-          : {
-              ...current,
-              revision: Math.max(current.revision, earlier.revision),
-              entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
-              ...(earlier.nextBeforeCursor === undefined
-                ? { nextBeforeCursor: undefined }
-                : { nextBeforeCursor: earlier.nextBeforeCursor }),
-            },
-      );
+      if (conversationRef.current?.recordId !== earlier.recordId) return;
+      updateConversation((current) => prependMissionWorkConversation(current, earlier));
     } catch (loadError) {
       console.error("Failed to load earlier Mission work conversation.", loadError);
     } finally {
       setConversationLoading(false);
     }
-  }, [conversation, conversationLoading, options.api, options.missionId, selectedRecord]);
+  }, [
+    conversation,
+    conversationLoading,
+    options.api,
+    options.missionId,
+    selectedRecord,
+    updateConversation,
+  ]);
 
   return {
     records,
@@ -189,11 +262,41 @@ export function useMissionWork(options: {
     retry: () => setRefreshRevision((current) => current + 1),
     selectedRecord,
     selectRecord: (recordId: string | null) => {
-      setConversation(null);
+      updateConversation(null);
       setSelectedRecordId(recordId);
     },
     conversation,
     conversationLoading,
     loadEarlier,
+  };
+}
+
+export function mergeLatestMissionWorkConversation(
+  current: MissionWorkConversationSnapshot | null,
+  latest: MissionWorkConversationSnapshot,
+): MissionWorkConversationSnapshot {
+  if (current === null || current.recordId !== latest.recordId) return latest;
+  return {
+    ...latest,
+    revision: Math.max(current.revision, latest.revision),
+    entries: uniqueChatEntries([...current.entries, ...latest.entries]),
+    ...(current.nextBeforeCursor === undefined
+      ? { nextBeforeCursor: undefined }
+      : { nextBeforeCursor: current.nextBeforeCursor }),
+  };
+}
+
+export function prependMissionWorkConversation(
+  current: MissionWorkConversationSnapshot | null,
+  earlier: MissionWorkConversationSnapshot,
+): MissionWorkConversationSnapshot {
+  if (current === null || current.recordId !== earlier.recordId) return earlier;
+  return {
+    ...current,
+    revision: Math.max(current.revision, earlier.revision),
+    entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
+    ...(earlier.nextBeforeCursor === undefined
+      ? { nextBeforeCursor: undefined }
+      : { nextBeforeCursor: earlier.nextBeforeCursor }),
   };
 }

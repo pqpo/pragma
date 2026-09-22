@@ -17,6 +17,10 @@ import {
   reconcileMissionChatRefresh,
 } from "./mission-conversation-model.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
+import {
+  enqueueMissionChatUpdate,
+  estimateMissionChatUpdatesBytes,
+} from "./mission-update-backlog.ts";
 import { MISSION_CHAT_PAGE_SIZE } from "./mission-view-constants.ts";
 
 export function useMissionConversation(input: {
@@ -112,6 +116,11 @@ export function useMissionConversation(input: {
     let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
     let lastPerformanceLogAt = 0;
     let pending: MissionChatUpdate[] = [];
+    let pendingBytes = 0;
+    let pendingHighWater = 0;
+    let overflowCount = 0;
+    let rawUpdateCount = 0;
+    let flushCount = 0;
     const firstTokenUpdates = new MissionFirstTokenUpdateBuffer(chatRef.current?.revision ?? 0);
     receivedFirstTokensRef.current.clear();
     paintedFirstTokensRef.current.clear();
@@ -165,6 +174,7 @@ export function useMissionConversation(input: {
         readEntry: (entryId) => liveEntryStore.get(entryId),
       });
       pending = [...drained.remaining];
+      pendingBytes = estimateMissionChatUpdatesBytes(pending);
       return drained;
     };
 
@@ -214,6 +224,7 @@ export function useMissionConversation(input: {
           resetFirstTokenUpdates(firstTokenBase ?? snapshot, pending);
           const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
+          pendingBytes = estimateMissionChatUpdatesBytes(pending);
           update(drained.snapshot);
           resetFirstTokenUpdates(drained.snapshot, pending);
           setSyncError(
@@ -309,6 +320,7 @@ export function useMissionConversation(input: {
       if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       hiddenTimer = undefined;
       if (cancelled || chatRef.current === null || pending.length === 0) return;
+      flushCount += 1;
       const startedAt = performance.now();
       const drained = drainPending(chatRef.current);
       if (drained.requiresRender) update(drained.snapshot);
@@ -325,7 +337,7 @@ export function useMissionConversation(input: {
         api.reportRendererLog({
           level: "info",
           event: "mission.stream_flush",
-          message: `Mission stream flush updated ${drained.changedEntryIds.size} entries (${drained.snapshot.entries.length} loaded, ${activeContentLength} active characters)`,
+          message: `Mission stream flush ${flushCount} processed ${rawUpdateCount} IPC updates, updated ${drained.changedEntryIds.size} entries (${drained.snapshot.entries.length} loaded, ${activeContentLength} active characters, backlog high-water ${pendingHighWater}, resyncs ${overflowCount})`,
           missionId: input.missionId,
           executionId: drained.snapshot.execution?.id,
           elapsedMs: Math.round((finishedAt - startedAt) * 100) / 100,
@@ -344,7 +356,27 @@ export function useMissionConversation(input: {
     };
 
     const unsubscribe = api.subscribeMissionChat(input.missionId, (updateValue) => {
-      pending.push(updateValue);
+      rawUpdateCount += 1;
+      const enqueued = enqueueMissionChatUpdate(pending, pendingBytes, updateValue);
+      if (enqueued.overflowed) {
+        overflowCount += 1;
+        pendingHighWater = Math.max(pendingHighWater, pending.length + 1);
+        pending = [...enqueued.pending];
+        pendingBytes = enqueued.pendingBytes;
+        if (chatRef.current !== null) resetFirstTokenUpdates(chatRef.current, pending);
+        api.reportRendererLog({
+          level: "warn",
+          event: "mission.stream_backpressure",
+          message: `Mission stream backlog exceeded its bound ${overflowCount} time(s); reloading the authoritative snapshot`,
+          missionId: input.missionId,
+          entryCount: pendingHighWater,
+        });
+        void refresh();
+      } else {
+        pending = [...enqueued.pending];
+        pendingBytes = enqueued.pendingBytes;
+        pendingHighWater = Math.max(pendingHighWater, pending.length);
+      }
       const executionIds = firstTokenUpdates.push(
         updateValue,
         (entryId) => liveEntryStore.get(entryId)?.executionId,
@@ -353,6 +385,13 @@ export function useMissionConversation(input: {
       recordFirstTokens(executionIds);
       scheduleFlush();
     });
+    const flushWhenVisible = (): void => {
+      if (document.visibilityState !== "visible") return;
+      if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
+      hiddenTimer = undefined;
+      scheduleFlush();
+    };
+    document.addEventListener("visibilitychange", flushWhenVisible);
     void refresh();
     return () => {
       cancelled = true;
@@ -373,6 +412,7 @@ export function useMissionConversation(input: {
         cacheMissionConversationSnapshot(input.cache, input.missionId, latest);
       }
       unsubscribe();
+      document.removeEventListener("visibilitychange", flushWhenVisible);
       longTaskObserver?.disconnect();
     };
   }, [

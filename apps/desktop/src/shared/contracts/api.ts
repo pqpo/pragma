@@ -131,7 +131,11 @@ import type {
   UpdateMissionContextMounts,
   MissionWorkSnapshot,
   GetMissionWorkConversation,
+  OpenMissionWorkConversationStream,
+  CloseMissionWorkConversationStream,
   MissionWorkConversationSnapshot,
+  OpenMissionWorkConversationStreamResult,
+  MissionWorkConversationStreamUpdate,
   MissionWorkUpdate,
   GetMissionChatPage,
   SendMissionMessage,
@@ -605,6 +609,13 @@ export interface PragmaDesktopAPI {
   getMissionWorkConversation: (
     input: GetMissionWorkConversation,
   ) => Promise<MissionWorkConversationSnapshot>;
+  openMissionWorkConversationStream: (
+    input: OpenMissionWorkConversationStream,
+  ) => Promise<OpenMissionWorkConversationStreamResult>;
+  closeMissionWorkConversationStream: (input: CloseMissionWorkConversationStream) => Promise<void>;
+  subscribeMissionWorkConversationUpdates: (
+    listener: (update: MissionWorkConversationStreamUpdate) => void,
+  ) => () => void;
   subscribeMissionWork: (id: string, listener: (update: MissionWorkUpdate) => void) => () => void;
   deleteMission: (id: string) => Promise<void>;
   listMissionHumanInteractions: (id: string) => Promise<MissionHumanInteraction[]>;

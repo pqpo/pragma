@@ -16,6 +16,9 @@ import type {
 
 import type {
   GetMissionWorkConversation,
+  OpenMissionWorkConversationStream,
+  OpenMissionWorkConversationStreamResult,
+  MissionWorkConversationStreamUpdate,
   Mission,
   MissionChatPage,
   MissionChatPageQuery,
@@ -52,6 +55,10 @@ export interface MissionMessageApplicationResult {
 export interface MissionWorkNotification {
   readonly audience: MissionSurfaceAudience;
   readonly update: MissionWorkUpdate;
+}
+
+export interface MissionWorkConversationStreamNotification {
+  readonly update: MissionWorkConversationStreamUpdate;
 }
 
 export interface MissionCommandOutcomeNotification {
@@ -147,6 +154,13 @@ export interface MissionRunner {
   resumeQueue(id: string): Promise<Mission>;
   getWork(id: string): Promise<MissionWorkSnapshot>;
   getWorkConversation(input: GetMissionWorkConversation): Promise<MissionWorkConversationSnapshot>;
+  openWorkConversationStream(
+    input: OpenMissionWorkConversationStream,
+  ): Promise<OpenMissionWorkConversationStreamResult>;
+  closeWorkConversationStream(subscriptionId: string): Promise<void>;
+  subscribeWorkConversationStreams(
+    listener: (notification: MissionWorkConversationStreamNotification) => void,
+  ): () => void;
   listPromptQueue?(id: string): Promise<PromptQueueProjection>;
   delete(id: string): Promise<void>;
   listHumanInteractions(id: string): Promise<readonly MissionHumanInteraction[]>;

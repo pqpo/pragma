@@ -1403,8 +1403,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mission-work-grid-connection,
-  .mission-work-status.is-running::after {
+  .mission-work-grid-connection {
     animation: none;
   }
 }
@@ -1412,28 +1411,6 @@
 .mission-work-status.is-running,
 .mission-work-status.is-waiting {
   background: #d49a45;
-}
-
-.mission-work-status.is-running::after {
-  position: absolute;
-  inset: -5px;
-  border: 1px solid rgb(212 154 69 / 64%);
-  border-radius: 50%;
-  animation: mission-work-status-breathe 1.6s ease-in-out infinite;
-  content: "";
-}
-
-@keyframes mission-work-status-breathe {
-  0%,
-  100% {
-    opacity: 0.18;
-    transform: scale(0.72);
-  }
-
-  50% {
-    opacity: 0.9;
-    transform: scale(1.12);
-  }
 }
 
 .mission-work-status.is-queued {

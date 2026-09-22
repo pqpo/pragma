@@ -170,6 +170,90 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
     await subscription.close();
   });
 
+  it("filters output by Invocation, source, and channel before replay and live delivery", async () => {
+    const { store } = await fixture();
+    const now = new Date().toISOString();
+    const bus = getExecutionLiveBus(store);
+    const output = (
+      sourceEventId: string,
+      invocationId: string,
+      channel: "message" | "thought",
+      source: { readonly sessionId?: string; readonly parentSessionId?: string } = {},
+    ) => ({
+      sourceEventId,
+      executionId: "execution",
+      invocationId,
+      contextId: `${invocationId}-context`,
+      runId: `${invocationId}-run`,
+      source: {
+        kind: "agent" as const,
+        runId: `${invocationId}-run`,
+        path: [],
+        ...source,
+      },
+      channel,
+      delta: sourceEventId,
+      occurredAt: now,
+    });
+    bus.publish("execution", output("root-message", "root", "message"));
+    bus.publish(
+      "execution",
+      output("nested-message", "root", "message", {
+        sessionId: "nested",
+        parentSessionId: "root-session",
+      }),
+    );
+    bus.publish("execution", output("root-thought", "root", "thought"));
+
+    const view = new StoredExecutionView("execution", store);
+    const subscription = await view.subscribeOutput({
+      scope: { kind: "root" },
+      sourceScope: { kind: "root" },
+      channels: ["message"],
+    });
+    const iterator = subscription[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { sourceEventId: "root-message" },
+    });
+    bus.publish("execution", output("live-root", "root", "message"));
+    bus.publish(
+      "execution",
+      output("live-nested", "root", "message", {
+        sessionId: "nested",
+        parentSessionId: "root-session",
+      }),
+    );
+    await expect(iterator.next()).resolves.toMatchObject({ value: { sourceEventId: "live-root" } });
+    await subscription.close();
+
+    const sessionSubscription = await view.subscribeOutput({
+      scope: { kind: "root" },
+      sourceScope: { kind: "session", sessionId: "nested" },
+      channels: ["message"],
+    });
+    await expect(sessionSubscription[Symbol.asyncIterator]().next()).resolves.toMatchObject({
+      value: { sourceEventId: "nested-message" },
+    });
+    await sessionSubscription.close();
+  });
+
+  it("closes an output subscription when execution completes during registration", async () => {
+    const { store } = await fixture();
+    const originalGet = store.get.bind(store);
+    let reads = 0;
+    vi.spyOn(store, "get").mockImplementation(async (executionId) => {
+      const state = await originalGet(executionId);
+      reads += 1;
+      return reads === 2 && state !== undefined ? { ...state, status: "succeeded" } : state;
+    });
+
+    const subscription = await new StoredExecutionView("execution", store).subscribeOutput();
+    await expect(subscription[Symbol.asyncIterator]().next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
   it("commits state, Invocation changes, and events atomically and idempotently", async () => {
     const { store } = await fixture();
     const request = {

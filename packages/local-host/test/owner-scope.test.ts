@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { FileLockTimeoutError } from "@pragma/core";
 
 import {
   createMissionOwnerScope,
@@ -237,6 +238,122 @@ describe("Mission owner scope", () => {
     } finally {
       await scope.stop("22222222-2222-4222-8222-222222222222");
     }
+  });
+
+  it("retries transient file-lock contention before the lease deadline", async () => {
+    const onLeaseLost = vi.fn(async () => undefined);
+    const poller = { stop: vi.fn(async () => undefined) };
+    const now = Date.now();
+    let renewCount = 0;
+    const controller = {
+      claim: vi.fn(async () => ({
+        claimId: "11111111-1111-4111-8111-111111111111",
+        fencingToken: "1",
+        acquiredAt: new Date(now).toISOString(),
+        renewedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 1_200).toISOString(),
+      })),
+      renew: vi.fn(async () => {
+        renewCount += 1;
+        if (renewCount === 1) {
+          throw new FileLockTimeoutError("busy", "/tmp/mission.lock", "active", 10, "renew");
+        }
+        const renewedAt = Date.now();
+        return {
+          claimId: "11111111-1111-4111-8111-111111111111",
+          fencingToken: "1",
+          acquiredAt: new Date(now).toISOString(),
+          renewedAt: new Date(renewedAt).toISOString(),
+          expiresAt: new Date(renewedAt + 1_200).toISOString(),
+        };
+      }),
+      startPolling: vi.fn(() => poller),
+      release: vi.fn(async () => undefined),
+    } as unknown as MissionControllerStore;
+    const scope = createMissionOwnerScope({ controller, leaseMs: 1_200, onLeaseLost });
+    const missionId = "55555555-5555-4555-8555-555555555555";
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+
+    try {
+      await scope.acquire(missionId);
+      await vi.waitFor(() => expect(controller.renew).toHaveBeenCalledTimes(2), {
+        timeout: 2_000,
+        interval: 20,
+      });
+      expect(scope.currentGuard(missionId)).toBeDefined();
+      expect(onLeaseLost).not.toHaveBeenCalled();
+    } finally {
+      await scope.release(missionId);
+    }
+  });
+
+  it("reports lease loss once when file-lock contention lasts through expiry", async () => {
+    const onLeaseLost = vi.fn(async () => undefined);
+    const poller = { stop: vi.fn(async () => undefined) };
+    const now = Date.now();
+    const controller = {
+      claim: vi.fn(async () => ({
+        claimId: "11111111-1111-4111-8111-111111111111",
+        fencingToken: "1",
+        acquiredAt: new Date(now).toISOString(),
+        renewedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 60).toISOString(),
+      })),
+      renew: vi.fn(async () => {
+        throw new FileLockTimeoutError("busy", "/tmp/mission.lock", "active", 10, "renew");
+      }),
+      startPolling: vi.fn(() => poller),
+    } as unknown as MissionControllerStore;
+    const scope = createMissionOwnerScope({ controller, leaseMs: 60, onLeaseLost });
+    const missionId = "66666666-6666-4666-8666-666666666666";
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+
+    try {
+      await scope.acquire(missionId);
+      await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), {
+        timeout: 500,
+        interval: 10,
+      });
+      expect(scope.currentGuard(missionId)).toBeUndefined();
+      expect(poller.stop).toHaveBeenCalledOnce();
+    } finally {
+      await scope.stop(missionId);
+    }
+  });
+
+  it("does not renew or report lease loss after release during a lock retry", async () => {
+    const onLeaseLost = vi.fn(async () => undefined);
+    const poller = { stop: vi.fn(async () => undefined) };
+    const now = Date.now();
+    const controller = {
+      claim: vi.fn(async () => ({
+        claimId: "11111111-1111-4111-8111-111111111111",
+        fencingToken: "1",
+        acquiredAt: new Date(now).toISOString(),
+        renewedAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + 200).toISOString(),
+      })),
+      renew: vi.fn(async () => {
+        throw new FileLockTimeoutError("busy", "/tmp/mission.lock", "active", 10, "renew");
+      }),
+      startPolling: vi.fn(() => poller),
+      release: vi.fn(async () => undefined),
+    } as unknown as MissionControllerStore;
+    const scope = createMissionOwnerScope({ controller, leaseMs: 200, onLeaseLost });
+    const missionId = "77777777-7777-4777-8777-777777777777";
+    scope.bindConsumer({ apply: async () => ({ result: {} }) });
+
+    await scope.acquire(missionId);
+    await vi.waitFor(() => expect(controller.renew).toHaveBeenCalledOnce(), {
+      timeout: 300,
+      interval: 5,
+    });
+    await scope.release(missionId);
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+
+    expect(controller.renew).toHaveBeenCalledOnce();
+    expect(onLeaseLost).not.toHaveBeenCalled();
+    expect(poller.stop).toHaveBeenCalledOnce();
   });
 
   it.each(["sync", "async"] as const)(

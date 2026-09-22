@@ -26,6 +26,8 @@ import {
   DiscardMissionAttachmentDraftsSchema,
   GetMissionChatPageSchema,
   GetMissionWorkConversationSchema,
+  OpenMissionWorkConversationStreamSchema,
+  CloseMissionWorkConversationStreamSchema,
   HomeExecutorPreferenceSchema,
   HomeMissionExecutorCatalogSchema,
   MissionActionSchema,
@@ -120,6 +122,7 @@ export function installMissionHandlers(options: {
   let legacyAutomationMissionSourcesRequest: Promise<ReadonlyMap<string, string>> | undefined;
   const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
   const submittedAttachmentDrafts = new Map<string, readonly string[]>();
+  const workConversationStreamOwners = new Map<string, number>();
   installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
     const workspace = await options.localHost.resolveWorkspace(await options.getDefaultWorkspace());
@@ -700,6 +703,33 @@ export function installMissionHandlers(options: {
     await assertManagedMission(parsed.id);
     return await options.runner.getWorkConversation(parsed);
   });
+  ipcMain.handle("missions:work:conversation:stream:open", async (event, input: unknown) => {
+    const parsed = OpenMissionWorkConversationStreamSchema.parse(input);
+    await assertManagedMission(parsed.missionId);
+    workConversationStreamOwners.set(parsed.subscriptionId, event.sender.id);
+    event.sender.once("destroyed", () => {
+      if (workConversationStreamOwners.get(parsed.subscriptionId) !== event.sender.id) return;
+      workConversationStreamOwners.delete(parsed.subscriptionId);
+      void options.runner.closeWorkConversationStream(parsed.subscriptionId);
+    });
+    try {
+      const opened = await options.runner.openWorkConversationStream(parsed);
+      if (workConversationStreamOwners.get(parsed.subscriptionId) !== event.sender.id) {
+        await options.runner.closeWorkConversationStream(parsed.subscriptionId);
+      }
+      return opened;
+    } catch (error) {
+      workConversationStreamOwners.delete(parsed.subscriptionId);
+      throw error;
+    }
+  });
+  ipcMain.handle("missions:work:conversation:stream:close", async (event, input: unknown) => {
+    const parsed = CloseMissionWorkConversationStreamSchema.parse(input);
+    if (workConversationStreamOwners.get(parsed.subscriptionId) === event.sender.id) {
+      workConversationStreamOwners.delete(parsed.subscriptionId);
+      await options.runner.closeWorkConversationStream(parsed.subscriptionId);
+    }
+  });
   ipcMain.handle(
     "missions:human:list",
     async (_event, input: unknown) =>
@@ -793,6 +823,12 @@ export function installMissionHandlers(options: {
       notification,
       getSender: () => options.getWindow()?.webContents ?? null,
     });
+  });
+  options.runner.subscribeWorkConversationStreams(({ update }) => {
+    const ownerId = workConversationStreamOwners.get(update.subscriptionId);
+    const target = options.getWindow()?.webContents;
+    if (target === undefined || ownerId !== target.id) return;
+    target.send("missions:work:conversation:stream:updated", update);
   });
 }
 

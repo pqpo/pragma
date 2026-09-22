@@ -3495,6 +3495,7 @@ export function MissionDetailFragment(props: {
                             <MissionTeamParticipantList
                               records={participantWorkRecords}
                               allRecords={workRecords}
+                              onOpenWork={() => changeTab("work")}
                               onSelect={(recordId, trigger) => {
                                 selectedWorkTriggerRef.current = trigger;
                                 selectWorkRecord(recordId);
@@ -4106,9 +4107,211 @@ export function teamParticipantWorkRecords(
     });
 }
 
+export const MISSION_TEAM_PARTICIPANT_PREVIEW_HOVER_DELAY_MS = 200;
+const MISSION_TEAM_PARTICIPANT_PREVIEW_GAP = 10;
+const MISSION_TEAM_PARTICIPANT_PREVIEW_MARGIN = 12;
+
+export function positionMissionTeamParticipantPreview(input: {
+  readonly anchor: MissionRowPreviewRect;
+  readonly card: Pick<MissionRowPreviewRect, "width" | "height">;
+  readonly viewport: { readonly width: number; readonly height: number };
+  readonly gap?: number | undefined;
+  readonly margin?: number | undefined;
+}): Pick<MissionRowPreviewPosition, "left" | "top"> {
+  const gap = input.gap ?? MISSION_TEAM_PARTICIPANT_PREVIEW_GAP;
+  const margin = input.margin ?? MISSION_TEAM_PARTICIPANT_PREVIEW_MARGIN;
+  return {
+    left: clampMissionRowPreview(
+      input.anchor.left + (input.anchor.width - input.card.width) / 2,
+      margin,
+      input.viewport.width - margin - input.card.width,
+    ),
+    top: clampMissionRowPreview(
+      input.anchor.top - gap - input.card.height,
+      margin,
+      input.viewport.height - margin - input.card.height,
+    ),
+  };
+}
+
+export function MissionTeamParticipantPreviewCard(props: {
+  readonly anchorRef: RefObject<HTMLButtonElement | null>;
+  readonly id: string;
+  readonly record: MissionWorkRecord;
+  readonly callOrder?: number | undefined;
+  readonly open: boolean;
+}) {
+  const { t } = useTranslation("missions");
+  const cardRef = useRef<HTMLElement>(null);
+  const [position, setPosition] = useState<Pick<MissionRowPreviewPosition, "left" | "top"> | null>(
+    null,
+  );
+  const title = missionWorkRecordTitle(props.record);
+  const status = workStatusLabel(props.record.status, props.record.waitReason);
+
+  const updatePosition = useCallback(() => {
+    const anchor = props.anchorRef.current?.getBoundingClientRect();
+    const card = cardRef.current?.getBoundingClientRect();
+    if (anchor === undefined || card === undefined) return;
+    setPosition(
+      positionMissionTeamParticipantPreview({
+        anchor,
+        card,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }),
+    );
+  }, [props.anchorRef]);
+
+  useMissionRowPreviewLayoutEffect(() => {
+    if (props.open) updatePosition();
+  }, [props.open, updatePosition]);
+
+  useEffect(() => {
+    if (!props.open) {
+      setPosition(null);
+      return;
+    }
+    const reposition = () => updatePosition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    const observer =
+      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(reposition);
+    if (props.anchorRef.current !== null) observer?.observe(props.anchorRef.current);
+    if (cardRef.current !== null) observer?.observe(cardRef.current);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      observer?.disconnect();
+    };
+  }, [props.anchorRef, props.open, updatePosition]);
+
+  if (!props.open) return null;
+  const content = (
+    <aside
+      className={
+        position === null
+          ? "mission-team-participant-preview"
+          : "mission-team-participant-preview is-positioned"
+      }
+      id={props.id}
+      ref={cardRef}
+      role="tooltip"
+      style={
+        position === null
+          ? undefined
+          : ({ left: position.left, top: position.top } satisfies CSSProperties)
+      }
+    >
+      <header>
+        <ExpertAvatar avatarId={props.record.avatarId} size="xs" />
+        <strong>{title}</strong>
+      </header>
+      <dl>
+        <div>
+          <dt>{t("expertPreviewStatus")}</dt>
+          <dd className="mission-team-participant-preview-status">
+            <span className={`mission-work-status is-${props.record.status}`} aria-hidden="true" />
+            {status}
+          </dd>
+        </div>
+        {props.callOrder === undefined ? null : (
+          <div>
+            <dt>{t("expertPreviewCallOrder")}</dt>
+            <dd>{t("workCallOrder", { number: props.callOrder })}</dd>
+          </div>
+        )}
+        <div>
+          <dt>{t("expertPreviewTopic")}</dt>
+          <dd className="mission-team-participant-preview-topic">{props.record.summary}</dd>
+        </div>
+      </dl>
+    </aside>
+  );
+  return typeof document === "undefined" ? content : createPortal(content, document.body);
+}
+
+function MissionTeamParticipantItem(props: {
+  readonly record: MissionWorkRecord;
+  readonly callOrder?: number | undefined;
+  readonly onSelect: (recordId: string, trigger: HTMLButtonElement) => void;
+}) {
+  const { t } = useTranslation("missions");
+  const previewId = useId();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const title = missionWorkRecordTitle(props.record);
+  const status = workStatusLabel(props.record.status, props.record.waitReason);
+  const callOrderLabel =
+    props.callOrder === undefined ? undefined : t("workCallOrder", { number: props.callOrder });
+  const accessibleLabel = [title, status, callOrderLabel, props.record.summary]
+    .filter(Boolean)
+    .join(", ");
+
+  const hidePreview = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = undefined;
+    setPreviewOpen(false);
+  }, []);
+  const showPreview = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = undefined;
+    setPreviewOpen(true);
+  }, []);
+  const schedulePreview = useCallback(() => {
+    if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    showTimerRef.current = setTimeout(showPreview, MISSION_TEAM_PARTICIPANT_PREVIEW_HOVER_DELAY_MS);
+  }, [showPreview]);
+
+  useEffect(
+    () => () => {
+      if (showTimerRef.current !== undefined) clearTimeout(showTimerRef.current);
+    },
+    [],
+  );
+
+  return (
+    <span role="listitem">
+      <button
+        ref={buttonRef}
+        className={`mission-team-participant is-${props.record.status}`}
+        type="button"
+        aria-describedby={previewOpen ? previewId : undefined}
+        aria-label={accessibleLabel}
+        onBlur={hidePreview}
+        onClick={(event) => props.onSelect(props.record.recordId, event.currentTarget)}
+        onFocus={(event) => {
+          if (event.currentTarget.matches(":focus-visible")) showPreview();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") hidePreview();
+        }}
+        onMouseDown={hidePreview}
+        onMouseEnter={schedulePreview}
+        onMouseLeave={hidePreview}
+      >
+        <ExpertAvatar
+          avatarId={props.record.avatarId}
+          className="mission-team-participant-avatar"
+          size="xs"
+        />
+        <span className={`mission-work-status is-${props.record.status}`} aria-hidden="true" />
+      </button>
+      <MissionTeamParticipantPreviewCard
+        anchorRef={buttonRef}
+        callOrder={props.callOrder}
+        id={previewId}
+        open={previewOpen}
+        record={props.record}
+      />
+    </span>
+  );
+}
+
 export function MissionTeamParticipantList(props: {
   readonly records: readonly MissionWorkRecord[];
   readonly allRecords: readonly MissionWorkRecord[];
+  readonly onOpenWork: () => void;
   readonly onSelect: (recordId: string, trigger: HTMLButtonElement) => void;
 }) {
   const { t } = useTranslation("missions");
@@ -4117,29 +4320,21 @@ export function MissionTeamParticipantList(props: {
     <section className="mission-team-participant-list" aria-label={t("participatingExperts")}>
       <div role="list">
         {props.records.map((record) => {
-          const title = missionWorkRecordTitle(record);
-          const status = workStatusLabel(record.status, record.waitReason);
           const order = callOrder.get(record.recordId);
-          const callOrderLabel =
-            order === undefined ? undefined : t("workCallOrder", { number: order });
-          const accessibleLabel = [title, status, callOrderLabel, record.summary]
-            .filter(Boolean)
-            .join(", ");
           return (
-            <span key={record.recordId} role="listitem">
-              <button
-                className={`mission-team-participant is-${record.status}`}
-                type="button"
-                aria-label={accessibleLabel}
-                title={accessibleLabel}
-                onClick={(event) => props.onSelect(record.recordId, event.currentTarget)}
-              >
-                <ExpertAvatar avatarId={record.avatarId} size="xs" />
-                <span className={`mission-work-status is-${record.status}`} aria-hidden="true" />
-              </button>
-            </span>
+            <MissionTeamParticipantItem
+              key={record.recordId}
+              callOrder={order}
+              record={record}
+              onSelect={props.onSelect}
+            />
           );
         })}
+        <span className="mission-team-participant-work-link" role="listitem">
+          <button type="button" aria-label={t("openExpertWork")} onClick={props.onOpenWork}>
+            <CaretRight size={13} weight="bold" aria-hidden="true" />
+          </button>
+        </span>
       </div>
     </section>
   );
