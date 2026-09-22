@@ -29,6 +29,10 @@ runtime-profile:7h8j9k0m1n2p3q4r
 
 - `list_dsl_resources` lists resources already in the current project. Read and reuse their exact
   refs instead of creating another resource with the same name or purpose.
+- Expert and ExpertTeam authoring uses Mission-owned file drafts. Put every related resource in one
+  `start_dsl_draft` call, edit only its returned files with native file tools, inspect the compact
+  change summary, and prepare by draft ID. This preserves untouched long prompts without sending
+  them through tool arguments and keeps Team-plus-member changes atomic.
 - `list_expert_options` returns one filtered, paged category per call: `runtime-models`,
   `capabilities`, `avatars`, or `builtin-experts`. A built-in Expert entry can be referenced directly as an ExpertTeam
   coordinator or member; read it through `read_dsl_resource` and never duplicate it as a project

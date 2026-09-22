@@ -189,6 +189,94 @@ export const PragmaAgentExpertOptionPageSchema = z
 
 export const PragmaAgentDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });
 
+export const PragmaAgentDslDraftTargetInputSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("edit"),
+      ref: PragmaSemanticResourceRefSchema,
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("create"),
+      key: z.string().trim().min(1).max(100),
+      kind: z.enum(["Expert", "ExpertTeam"]),
+      name: z.string().trim().min(1).max(50),
+      description: z.string().trim().min(1).max(500),
+    })
+    .strict(),
+]);
+
+export const PragmaAgentDslDraftResourceSchema = z
+  .object({
+    mode: z.enum(["edit", "create"]),
+    ref: PragmaSemanticResourceRefSchema,
+    kind: z.enum(["Expert", "ExpertTeam"]),
+    name: z.string().min(1).max(50),
+    relativePath: z.string().min(1).max(500),
+    filePath: z.string().min(1).max(4_000),
+    key: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+
+export const PragmaAgentDslDraftStateSchema = z.enum([
+  "editing",
+  "prepared",
+  "conflicted",
+  "discarded",
+]);
+
+export const PragmaAgentDslDraftSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.dsl-draft/v1"),
+    draftId: z.string().uuid(),
+    missionId: z.string().uuid(),
+    baseProjectRevision: z.number().int().nonnegative(),
+    state: PragmaAgentDslDraftStateSchema,
+    draftPath: z.string().min(1).max(4_000).optional(),
+    referencePath: z.string().min(1).max(4_000).optional(),
+    resources: z.array(PragmaAgentDslDraftResourceSchema).min(1).max(50),
+    preparedChangeSetId: z.string().uuid().optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const PragmaAgentDslDraftSummarySchema = PragmaAgentDslDraftSchema.omit({
+  draftPath: true,
+  referencePath: true,
+  resources: true,
+}).extend({
+  resourceCount: z.number().int().positive(),
+  refs: z.array(PragmaSemanticResourceRefSchema).max(50),
+});
+
+export const PragmaAgentDslDraftInspectionSchema = PragmaAgentDslDraftSchema.extend({
+  workingTreeHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  stale: z.boolean(),
+  conflictingRefs: z.array(PragmaSemanticResourceRefSchema),
+  changes: z.array(
+    z
+      .object({
+        ref: PragmaSemanticResourceRefSchema,
+        relativePath: z.string().min(1).max(500),
+        changed: z.boolean(),
+        sizeBytes: z.number().int().nonnegative(),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      })
+      .strict(),
+  ),
+});
+
+export const PragmaAgentDslDraftPageSchema = PragmaManagementPageSchema(
+  PragmaAgentDslDraftSummarySchema,
+);
+
+export type PragmaAgentDslDraftTargetInput = z.infer<typeof PragmaAgentDslDraftTargetInputSchema>;
+export type PragmaAgentDslDraft = z.infer<typeof PragmaAgentDslDraftSchema>;
+export type PragmaAgentDslDraftSummary = z.infer<typeof PragmaAgentDslDraftSummarySchema>;
+export type PragmaAgentDslDraftInspection = z.infer<typeof PragmaAgentDslDraftInspectionSchema>;
+
 export const PragmaAgentChangeSetSchema = z.object({
   changeSetId: z.string().uuid(),
   projectRevision: z.number().int().nonnegative(),

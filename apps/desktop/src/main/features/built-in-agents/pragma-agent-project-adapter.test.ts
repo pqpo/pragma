@@ -1,9 +1,10 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaFlowRunDryCaseSchema } from "@pragma/evaluation/ast";
+import { encodePragmaPathSegment } from "@pragma/core";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -41,6 +42,351 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
+  it("edits one prompt fragment through a Mission-owned file draft", async () => {
+    const root = await temporaryRoot("pragma-dsl-file-draft-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "initial" });
+
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const file = draft.resources[0]!.filePath;
+    const before = await readFile(file, "utf8");
+    await expect(adapter.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ draftId: draft.draftId, state: "editing" })],
+    });
+    await expect(
+      adapter.inspectDslDraft({
+        missionId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+        draftId: draft.draftId,
+      }),
+    ).rejects.toThrow("owned by another Mission");
+    await writeFile(file, before.replace("1xddvess309a6gme", "2h3j4k5m6n7p8q9r"));
+    await expect(
+      adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "resource.identity_changed" })],
+    });
+    await writeFile(file, before.replace("Write concise text.", "Write concise copy."));
+
+    await expect(
+      adapter.inspectDslDraft({ missionId, draftId: draft.draftId }),
+    ).resolves.toMatchObject({
+      stale: false,
+      changes: [{ ref: "expert:1xddvess309a6gme", changed: true }],
+    });
+    const concurrentPrepare = await Promise.allSettled([
+      adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+      adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    ]);
+    const prepared = requirePrepared(
+      concurrentPrepare.find(
+        (
+          result,
+        ): result is PromiseFulfilledResult<Awaited<ReturnType<typeof adapter.prepareDslDraft>>> =>
+          result.status === "fulfilled",
+      )!.value,
+    );
+    expect(concurrentPrepare.filter((result) => result.status === "rejected")).toHaveLength(1);
+    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "draft-edit" });
+    const saved = await adapter.read("expert:1xddvess309a6gme");
+    expect(saved.source).toContain("Write concise copy.");
+    expect(saved.source).toContain("description: Original");
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rebases a draft across unrelated project revisions but rejects a changed target", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-conflict-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({ expectedProjectRevision: 0, sources: [expert("First", runtimeRef)] }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "base" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const unrelatedDraft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const unrelatedDraftFile = unrelatedDraft.resources[0]!.filePath;
+    await writeFile(
+      unrelatedDraftFile,
+      (await readFile(unrelatedDraftFile, "utf8")).replace(
+        "Write concise text.",
+        "Write concise copy.",
+      ),
+    );
+    const unrelated = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [
+          expert("Other", runtimeRef, "2h3j4k5m6n7p8q9r").replace(
+            "name: Writer",
+            "name: Other Writer",
+          ),
+        ],
+      }),
+    );
+    await adapter.commit({ changeSetId: unrelated.changeSetId, operationId: "unrelated" });
+    const rebased = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: unrelatedDraft.draftId }),
+    );
+    await expect(
+      adapter.commit({ changeSetId: rebased.changeSetId, operationId: "draft-unrelated" }),
+    ).resolves.toMatchObject({ projectRevision: 3 });
+    await expect(
+      adapter.restartDslDraft({ missionId, draftId: unrelatedDraft.draftId }),
+    ).rejects.toThrow("Only a conflicted or stale prepared DSL draft can be restarted");
+
+    const conflictingDraft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const changed = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 3,
+        sources: [expert("Changed elsewhere", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: changed.changeSetId, operationId: "conflict" });
+    await expect(
+      adapter.prepareDslDraft({ missionId, draftId: conflictingDraft.draftId }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "project.resource_conflict" })],
+    });
+    await expect(
+      adapter.inspectDslDraft({ missionId, draftId: conflictingDraft.draftId }),
+    ).resolves.toMatchObject({
+      state: "conflicted",
+      stale: true,
+      referencePath: expect.any(String),
+    });
+    await expect(readFile(conflictingDraft.resources[0]!.filePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const replacement = await adapter.restartDslDraft({
+      missionId,
+      draftId: conflictingDraft.draftId,
+    });
+    expect(replacement).toMatchObject({ state: "editing", referencePath: expect.any(String) });
+    await expect(
+      adapter.inspectDslDraft({ missionId, draftId: conflictingDraft.draftId }),
+    ).resolves.toMatchObject({ state: "discarded", referencePath: expect.any(String) });
+
+    const preparedDraft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const preparedFile = preparedDraft.resources[0]!.filePath;
+    await writeFile(
+      preparedFile,
+      (await readFile(preparedFile, "utf8")).replace(
+        "Write concise text.",
+        "Write carefully reviewed text.",
+      ),
+    );
+    const preparedBeforeRace = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: preparedDraft.draftId }),
+    );
+    const changedAfterPrepare = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 4,
+        sources: [expert("Changed after prepare", runtimeRef)],
+      }),
+    );
+    await adapter.commit({
+      changeSetId: changedAfterPrepare.changeSetId,
+      operationId: "changed-after-prepare",
+    });
+    await expect(
+      adapter.commit({ changeSetId: preparedBeforeRace.changeSetId, operationId: "stale-draft" }),
+    ).rejects.toThrow();
+    await expect(
+      adapter.restartDslDraft({ missionId, draftId: conflictingDraft.draftId }),
+    ).rejects.toThrow("Only a conflicted or stale prepared DSL draft can be restarted");
+    await expect(
+      adapter.restartDslDraft({ missionId, draftId: preparedDraft.draftId }),
+    ).resolves.toMatchObject({ state: "editing", referencePath: expect.any(String) });
+  });
+
+  it("replays an interrupted DSL draft discard journal", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-discard-recovery-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [
+        {
+          mode: "create",
+          key: "writer",
+          kind: "Expert",
+          name: "Writer",
+          description: "Writes concise text.",
+        },
+      ],
+    });
+    const source = join(draft.draftPath!, "..");
+    const trash = join(stateRoot, "trash", "dsl-resource-drafts", `${draft.draftId}-recovery`);
+    const recordRoot = join(
+      stateRoot,
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(draft.draftId),
+    );
+    await mkdir(recordRoot, { recursive: true });
+    await writeFile(
+      join(recordRoot, "discard.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.dsl-draft-discard/v1",
+        draftId: draft.draftId,
+        source,
+        trash,
+        state: "prepared",
+      }),
+    );
+
+    const recovered = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    await expect(recovered.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ draftId: draft.draftId, state: "discarded" })],
+    });
+    await expect(readFile(draft.resources[0]!.filePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readFile(join(trash, "worktree", draft.resources[0]!.relativePath), "utf8"),
+    ).resolves.toContain("kind: Expert");
+  });
+
+  it("allocates IDs and prepares new Expert and ExpertTeam files atomically", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-create-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [
+        {
+          mode: "create",
+          key: "writer",
+          kind: "Expert",
+          name: "Writer",
+          description: "Writes concise text.",
+        },
+        {
+          mode: "create",
+          key: "team",
+          kind: "ExpertTeam",
+          name: "Writing Team",
+          description: "Coordinates writing.",
+        },
+      ],
+    });
+    const writer = draft.resources.find((resource) => resource.key === "writer")!;
+    const team = draft.resources.find((resource) => resource.key === "team")!;
+    expect(writer.ref).toMatch(/^expert:[0-9a-hj-km-np-tv-z]{16}$/u);
+    expect(team.ref).toMatch(/^team:[0-9a-hj-km-np-tv-z]{16}$/u);
+    await expect(
+      adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+    });
+
+    await writeFile(
+      writer.filePath,
+      expert("Writes concise text.", runtimeRef, writer.ref.slice("expert:".length)),
+    );
+    await writeFile(team.filePath, expertTeam(team.ref.slice("team:".length), writer.ref));
+    const prepared = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    expect(prepared.changes.map((change) => change.ref)).toEqual(
+      expect.arrayContaining([writer.ref, team.ref, runtimeRef]),
+    );
+  });
+
+  it("allocates a fresh create ID when a conflicted draft ID was occupied", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-create-conflict-");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [
+        {
+          mode: "create",
+          key: "writer",
+          kind: "Expert",
+          name: "Writer",
+          description: "Writes concise text.",
+        },
+      ],
+    });
+    const originalRef = draft.resources[0]!.ref;
+    const occupied = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Occupied", runtimeRef, originalRef.slice("expert:".length))],
+      }),
+    );
+    await adapter.commit({ changeSetId: occupied.changeSetId, operationId: "occupy-draft-id" });
+    await expect(
+      adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "project.resource_conflict" })],
+    });
+
+    const replacement = await adapter.restartDslDraft({ missionId, draftId: draft.draftId });
+    expect(replacement.resources[0]!.ref).not.toBe(originalRef);
+  });
+
   it("creates and updates the same exact ref through immutable project revisions", async () => {
     const root = await temporaryRoot("pragma-default-agent-project-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -795,6 +1141,32 @@ function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"
     "  contextStores: []",
     "  plugins: []",
     "  tools: []",
+    "",
+  ].join("\n");
+}
+
+function expertTeam(id: string, expertRef: string): string {
+  return [
+    "apiVersion: pragma/v5",
+    "kind: ExpertTeam",
+    "metadata:",
+    `  id: ${id}`,
+    "  name: Writing Team",
+    "  description: Coordinates writing.",
+    "  tags: []",
+    "spec:",
+    "  coordinator:",
+    `    ref: ${expertRef}`,
+    "  members:",
+    `    - ref: ${expertRef}`,
+    "  instructions: Collaborate on concise writing.",
+    "  contextStores: []",
+    "  delegation:",
+    "    permissions:",
+    "      interact: {}",
+    "    maxConcurrency: 2",
+    "    maxDepth: 2",
+    "    runtimes: {}",
     "",
   ].join("\n");
 }

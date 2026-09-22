@@ -70,7 +70,7 @@ export async function prepareSkillRevisionWorkspace(
   if (!isWithin(workspacePath, canonicalDraftRoot)) {
     throw coded("skill_revision_workspace_escape");
   }
-  await ensureLocalGitExclude(workspacePath).catch((error) => {
+  await ensurePragmaWorkspaceGitExclude(workspacePath).catch((error) => {
     warn?.("The Workspace .pragma directory could not be added to the local Git exclude.", error);
   });
   return paths;
@@ -100,7 +100,7 @@ async function assertManagedPathComponentsAreNotLinks(
   }
 }
 
-async function ensureLocalGitExclude(workspacePath: string): Promise<void> {
+export async function ensurePragmaWorkspaceGitExclude(workspacePath: string): Promise<void> {
   const [{ stdout: rootOutput }, { stdout: excludeOutput }] = await Promise.all([
     execFileAsync("git", ["-C", workspacePath, "rev-parse", "--show-toplevel"]),
     execFileAsync("git", ["-C", workspacePath, "rev-parse", "--git-path", "info/exclude"]),

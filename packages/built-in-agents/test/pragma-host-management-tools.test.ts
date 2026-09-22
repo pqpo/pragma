@@ -10,6 +10,36 @@ import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "..
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
+  it("injects Mission ownership into DSL file-draft tools without exposing paths in input", async () => {
+    let received: Parameters<PragmaAgentDslProjectPort["startDslDraft"]>[0] | undefined;
+    const project = projectPort({
+      async startDslDraft(input) {
+        received = input;
+        throw new Error("captured");
+      },
+    });
+    const tools = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      {
+        missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+        workspacePath: "/workspace/project",
+      },
+    );
+    const start = tools.find((tool) => tool.name === "start_dsl_draft")!;
+    expect(JSON.stringify(start.inputSchema)).not.toContain("missionId");
+    expect(JSON.stringify(start.inputSchema)).not.toContain("workspacePath");
+    await start.call(
+      { targets: [{ mode: "edit", ref: "expert:1h2j3k4m5n6p7q8r" }] },
+      undefined,
+      undefined,
+    );
+    expect(received).toEqual({
+      missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+      workspacePath: "/workspace/project",
+      targets: [{ mode: "edit", ref: "expert:1h2j3k4m5n6p7q8r" }],
+    });
+  });
+
   it("keeps read tools open and gates durable writes", async () => {
     const tools = createPragmaManagementTools({ project: projectPort(), missions: missionPort() });
     expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval?.mode).toBe("none");
@@ -468,6 +498,20 @@ function projectPort(
   overrides: Partial<PragmaAgentDslProjectPort> = {},
 ): PragmaAgentDslProjectPort {
   return {
+    startDslDraft: async () => {
+      throw new Error("unused");
+    },
+    listDslDrafts: async () => ({ items: [] }),
+    inspectDslDraft: async () => {
+      throw new Error("unused");
+    },
+    prepareDslDraft: async () => {
+      throw new Error("unused");
+    },
+    restartDslDraft: async () => {
+      throw new Error("unused");
+    },
+    discardDslDraft: async () => undefined,
     list: async () => ({ projectRevision: 0, items: [] }),
     listExpertOptions: async (input) => ({ category: input.category, items: [] }),
     allocateResourceIds: async (requests) =>

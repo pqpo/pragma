@@ -28,6 +28,12 @@ spec:
         - read_dsl_resource
         - list_expert_options
         - allocate_dsl_resource_ids
+        - start_dsl_draft
+        - list_dsl_drafts
+        - inspect_dsl_draft
+        - prepare_dsl_draft
+        - restart_dsl_draft
+        - discard_dsl_draft
         - prepare_dsl_changes
         - read_prepared_dsl_change
         - create_flow_draft

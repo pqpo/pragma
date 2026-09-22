@@ -1,9 +1,24 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { type PragmaFlowRunDrySuiteResult } from "@pragma/evaluation/ast";
-import { encodePragmaPathSegment, generatePragmaResourceId, withFileLock } from "@pragma/core";
+import {
+  decodePragmaPathSegment,
+  encodePragmaPathSegment,
+  generatePragmaResourceId,
+  withFileLock,
+} from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml, runPragmaEvaluation } from "@pragma/interpreter";
 import {
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -20,6 +35,9 @@ import {
 } from "@pragma/interpreter/ast";
 import {
   PragmaAgentChangeSetSchema,
+  PragmaAgentDslDraftInspectionSchema,
+  PragmaAgentDslDraftSchema,
+  PragmaAgentDslDraftSummarySchema,
   PragmaAgentEvaluationDraftRunResultSchema,
   PragmaAgentEvaluationDraftSchema,
   PragmaAgentEvaluationDraftSummarySchema,
@@ -28,6 +46,8 @@ import {
   PragmaAgentPrepareResultSchema,
   PragmaAgentProjectCommitSchema,
   type PragmaAgentDslProjectPort,
+  type PragmaAgentDslDraft,
+  type PragmaAgentDslDraftTargetInput,
   type PragmaAgentEvaluationDraft,
   type PragmaAgentEvaluationDraftDiagnostic,
   type PragmaAgentEvaluationDraftOperation,
@@ -53,15 +73,50 @@ import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { paginateManagementItems } from "./management-pagination.ts";
+import { ensurePragmaWorkspaceGitExclude } from "../capabilities/skill-revision-workspace.ts";
 
 const CandidateRecordSchema = z.object({
   changeSet: PragmaAgentChangeSetSchema,
   resources: z.array(PragmaForwardCompatibleResourceSchema),
 });
 
+const StoredDslDraftResourceSchema = PragmaAgentDslDraftSchema.shape.resources.element.extend({
+  baseSha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+  initialSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  creationDescription: z.string().min(1).max(500).optional(),
+});
+const StoredDslDraftSchema = z
+  .object({
+    ...PragmaAgentDslDraftSchema.shape,
+    workspacePath: z.string().min(1).max(4_000),
+    resources: z.array(StoredDslDraftResourceSchema).min(1).max(50),
+    submissionHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+  })
+  .strict();
+type StoredDslDraft = z.infer<typeof StoredDslDraftSchema>;
+
+const DslDraftDiscardJournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.dsl-draft-discard/v1"),
+    draftId: z.string().uuid(),
+    source: z.string().min(1).max(4_000),
+    trash: z.string().min(1).max(4_000),
+    state: z.enum(["prepared", "completed"]),
+  })
+  .strict();
+type DslDraftDiscardJournal = z.infer<typeof DslDraftDiscardJournalSchema>;
+
 export function createDesktopPragmaAgentProjectPort(options: {
   readonly project: PragmaProjectStore;
   readonly stateRoot: string;
+  readonly draftsRoot?: string | undefined;
+  readonly draftsTrashRoot?: string | undefined;
   readonly capabilities: CapabilityStore;
   readonly runtimes: RuntimeEnvironmentService;
   readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list" | "get" | "getResource">;
@@ -74,18 +129,23 @@ export function createDesktopPragmaAgentProjectPort(options: {
     join(options.stateRoot, "dsl-drafts", `${encodePragmaPathSegment(id)}.json`);
   const evaluationDraftPath = (id: string) =>
     join(options.stateRoot, "evaluation-drafts", `${encodePragmaPathSegment(id)}.json`);
+  const dslDraftsRoot = options.draftsRoot ?? join(options.stateRoot, "dsl-resource-drafts");
+  const dslDraftsTrashRoot =
+    options.draftsTrashRoot ?? join(options.stateRoot, "trash", "dsl-resource-drafts");
+  const dslDraftRecordPath = (id: string) =>
+    join(dslDraftsRoot, encodePragmaPathSegment(id), "draft.json");
+  const dslDraftSubmissionsPath = (id: string) =>
+    join(dslDraftsRoot, encodePragmaPathSegment(id), "submissions");
+  const dslDraftDiscardJournalPath = (id: string) =>
+    join(dslDraftsRoot, encodePragmaPathSegment(id), "discard.json");
+  const dslDraftMutationLockPath = (id: string) =>
+    join(dslDraftsRoot, encodePragmaPathSegment(id), "mutation.lock");
 
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
     readonly authoredResources: readonly PragmaResource[];
   }): Promise<PragmaAgentPrepareResult> => {
     const snapshot = await options.project.get();
-    if (snapshot.revision !== input.expectedProjectRevision) {
-      return invalidPrepare(
-        "project.revision_conflict",
-        `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
-      );
-    }
     const authoredResources = [...input.authoredResources];
     const actionDiagnostics = authoredResources.flatMap((resource) =>
       resource.kind !== "Flow"
@@ -132,7 +192,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
       }
       assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
       const diagnostics = await options.project.validateChanges({
-        baseRevision: snapshot.revision,
+        baseRevision: input.expectedProjectRevision,
         upserts: resources,
       });
       if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
@@ -141,7 +201,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
       const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
       const changeSet = PragmaAgentChangeSetSchema.parse({
         changeSetId: randomUUID(),
-        projectRevision: snapshot.revision,
+        projectRevision: input.expectedProjectRevision,
         diagnostics,
         changes: resources.map((resource) => ({
           ref: canonicalPragmaResourceRef(resource),
@@ -181,6 +241,295 @@ export function createDesktopPragmaAgentProjectPort(options: {
       expectedProjectRevision: input.expectedProjectRevision,
       authoredResources: parsed.resources,
     });
+  };
+
+  const readDslDraftRecord = async (draftId: string): Promise<StoredDslDraft> =>
+    StoredDslDraftSchema.parse(
+      JSON.parse(await readFile(dslDraftRecordPath(draftId), "utf8")) as unknown,
+    );
+
+  const writeDslDraft = async (draft: StoredDslDraft): Promise<void> =>
+    await writeJson(dslDraftRecordPath(draft.draftId), StoredDslDraftSchema.parse(draft));
+
+  const moveDslDraftToTrash = async (journal: DslDraftDiscardJournal): Promise<void> => {
+    await mkdir(dirname(journal.trash), { recursive: true, mode: 0o700 });
+    try {
+      await rename(journal.source, journal.trash);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EXDEV") {
+        await cp(journal.source, journal.trash, { recursive: true, errorOnExist: true });
+        await rm(journal.source, { recursive: true, force: true });
+      } else if (code !== "ENOENT") {
+        throw error;
+      }
+    }
+  };
+
+  const replayDslDraftDiscard = async (draftId: string): Promise<void> => {
+    const journalPath = dslDraftDiscardJournalPath(draftId);
+    let journal: DslDraftDiscardJournal;
+    try {
+      journal = DslDraftDiscardJournalSchema.parse(
+        JSON.parse(await readFile(journalPath, "utf8")) as unknown,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (journal.draftId !== draftId)
+      throw new Error("DSL draft discard journal identity mismatch.");
+    const draft = await readDslDraftRecord(draftId);
+    const expectedSource = join(draft.workspacePath, ".pragma", "dsl-drafts", draft.draftId);
+    const trashName = relative(resolve(dslDraftsTrashRoot), resolve(journal.trash));
+    if (
+      resolve(journal.source) !== resolve(expectedSource) ||
+      isAbsolute(trashName) ||
+      trashName.includes(sep) ||
+      !trashName.startsWith(`${draftId}-`)
+    ) {
+      throw new Error("DSL draft discard journal contains an invalid path.");
+    }
+    if (journal.state === "prepared") {
+      await moveDslDraftToTrash(journal);
+      journal = DslDraftDiscardJournalSchema.parse({ ...journal, state: "completed" });
+      await writeJson(journalPath, journal);
+    }
+    if (draft.state !== "discarded") {
+      if (draft.state === "prepared") {
+        throw new Error("A prepared DSL draft cannot be discarded.");
+      }
+      await writeDslDraft(
+        StoredDslDraftSchema.parse({
+          ...draft,
+          state: "discarded",
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+    }
+  };
+
+  const recoverDslDraftDiscard = async (draftId: string): Promise<void> => {
+    await withFileLock(`${dslDraftDiscardJournalPath(draftId)}.lock`, async () => {
+      await replayDslDraftDiscard(draftId);
+    });
+  };
+
+  const readDslDraft = async (draftId: string): Promise<StoredDslDraft> => {
+    await recoverDslDraftDiscard(draftId);
+    return await readDslDraftRecord(draftId);
+  };
+
+  const requireDslDraftOwner = (draft: StoredDslDraft, missionId: string): void => {
+    if (draft.missionId !== missionId) throw new Error("DSL draft is owned by another Mission.");
+  };
+
+  const toPublicDslDraft = (draft: StoredDslDraft): PragmaAgentDslDraft => {
+    const visibleRoot =
+      draft.submissionHash === undefined
+        ? dslDraftWorktreePath(draft)
+        : join(dslDraftSubmissionsPath(draft.draftId), draft.submissionHash);
+    return PragmaAgentDslDraftSchema.parse({
+      schemaVersion: draft.schemaVersion,
+      draftId: draft.draftId,
+      missionId: draft.missionId,
+      baseProjectRevision: draft.baseProjectRevision,
+      state: draft.state,
+      ...(draft.state === "editing" ? { draftPath: dslDraftWorktreePath(draft) } : {}),
+      ...(draft.submissionHash === undefined
+        ? {}
+        : {
+            referencePath: join(dslDraftSubmissionsPath(draft.draftId), draft.submissionHash),
+          }),
+      resources: draft.resources.map((resource) => ({
+        mode: resource.mode,
+        ref: resource.ref,
+        kind: resource.kind,
+        name: resource.name,
+        relativePath: resource.relativePath,
+        filePath: join(visibleRoot, resource.relativePath),
+        ...(resource.key === undefined ? {} : { key: resource.key }),
+      })),
+      ...(draft.preparedChangeSetId === undefined
+        ? {}
+        : { preparedChangeSetId: draft.preparedChangeSetId }),
+      createdAt: draft.createdAt,
+      updatedAt: draft.updatedAt,
+    });
+  };
+
+  const staleDslDraftRefs = async (draft: StoredDslDraft): Promise<string[]> => {
+    const snapshot = await options.project.get();
+    const current = new Map(
+      snapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
+    );
+    return draft.resources.flatMap((target) => {
+      const resource = current.get(target.ref);
+      if (target.mode === "create") return resource === undefined ? [] : [target.ref];
+      if (resource === undefined) return [target.ref];
+      return sha256(formatPragmaYaml(resource)) === target.baseSha256 ? [] : [target.ref];
+    });
+  };
+
+  const divergentPreparedDslDraftRefs = async (draft: StoredDslDraft): Promise<string[]> => {
+    if (draft.preparedChangeSetId === undefined) return [];
+    const [base, current, candidate] = await Promise.all([
+      options.project.getRevision(draft.baseProjectRevision),
+      options.project.get(),
+      readCandidate(candidatePath(draft.preparedChangeSetId)),
+    ]);
+    const baseHashes = new Map(
+      base.resources.map((resource) => [
+        canonicalPragmaResourceRef(resource),
+        sha256(formatPragmaYaml(resource)),
+      ]),
+    );
+    const currentHashes = new Map(
+      current.resources.map((resource) => [
+        canonicalPragmaResourceRef(resource),
+        sha256(formatPragmaYaml(resource)),
+      ]),
+    );
+    return candidate.resources.flatMap((resource) => {
+      const ref = canonicalPragmaResourceRef(resource);
+      const candidateHash = sha256(formatPragmaYaml(resource));
+      const currentHash = currentHashes.get(ref);
+      return currentHash === candidateHash || currentHash === baseHashes.get(ref) ? [] : [ref];
+    });
+  };
+
+  const inspectDslDraft = async (draft: StoredDslDraft) => {
+    const snapshot = await scanDslDraftFiles(
+      draft.submissionHash === undefined
+        ? dslDraftWorktreePath(draft)
+        : join(dslDraftSubmissionsPath(draft.draftId), draft.submissionHash),
+      draft.resources,
+    );
+    const conflictingRefs = await staleDslDraftRefs(draft);
+    return PragmaAgentDslDraftInspectionSchema.parse({
+      ...toPublicDslDraft(draft),
+      workingTreeHash: snapshot.hash,
+      stale: conflictingRefs.length > 0,
+      conflictingRefs,
+      changes: draft.resources.map((target) => {
+        const file = snapshot.files.get(target.relativePath)!;
+        return {
+          ref: target.ref,
+          relativePath: target.relativePath,
+          changed: file.sha256 !== target.initialSha256,
+          sizeBytes: Buffer.byteLength(file.source, "utf8"),
+          sha256: file.sha256,
+        };
+      }),
+    });
+  };
+
+  const startDslDraft = async (input: {
+    readonly missionId: string;
+    readonly workspacePath: string;
+    readonly targets: readonly PragmaAgentDslDraftTargetInput[];
+    readonly fixedCreates?: ReadonlyMap<
+      string,
+      { readonly ref: string; readonly id: string; readonly description: string }
+    >;
+  }): Promise<StoredDslDraft> => {
+    const workspacePath = await resolveDslDraftWorkspace(input.workspacePath);
+    const snapshot = await options.project.get();
+    const draftId = randomUUID();
+    const worktreePath = dslDraftWorktreePath({ draftId, workspacePath });
+    const usedIds = new Set(snapshot.resources.map((resource) => resource.metadata.id));
+    const usedRefs = new Set<string>();
+    const usedKeys = new Set<string>();
+    const prepared: Array<{
+      readonly target: StoredDslDraft["resources"][number];
+      readonly source: string;
+    }> = [];
+    try {
+      await prepareDslDraftWorkspace(workspacePath, draftId);
+      for (const target of input.targets) {
+        if (target.mode === "edit") {
+          if (usedRefs.has(target.ref))
+            throw new Error(`Duplicate DSL draft target: ${target.ref}`);
+          const resource = snapshot.resources.find(
+            (candidate) => canonicalPragmaResourceRef(candidate) === target.ref,
+          );
+          if (resource === undefined) throw new Error(`Pragma resource not found: ${target.ref}`);
+          if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam") {
+            throw new Error(`DSL file drafts support only Expert and ExpertTeam: ${target.ref}`);
+          }
+          const source = formatPragmaYaml(resource);
+          const relativePath = dslDraftRelativePath(resource.kind, resource.metadata.id);
+          usedRefs.add(target.ref);
+          prepared.push({
+            source,
+            target: {
+              mode: "edit",
+              ref: target.ref,
+              kind: resource.kind,
+              name: resource.metadata.name,
+              relativePath,
+              filePath: join(worktreePath, relativePath),
+              baseSha256: sha256(source),
+              initialSha256: sha256(source),
+            },
+          });
+          continue;
+        }
+        if (usedKeys.has(target.key)) throw new Error(`Duplicate DSL draft key: ${target.key}`);
+        usedKeys.add(target.key);
+        const fixed = input.fixedCreates?.get(target.key);
+        let id = fixed?.id ?? generatePragmaResourceId();
+        while (fixed === undefined && usedIds.has(id)) id = generatePragmaResourceId();
+        if (fixed !== undefined && usedIds.has(id)) {
+          throw new Error(`Allocated DSL resource ID is no longer available: ${id}`);
+        }
+        usedIds.add(id);
+        const ref = fixed?.ref ?? `${target.kind === "Expert" ? "expert" : "team"}:${id}`;
+        if (usedRefs.has(ref)) throw new Error(`Duplicate DSL draft target: ${ref}`);
+        usedRefs.add(ref);
+        const source = newDslDraftSkeleton({ ...target, id });
+        const relativePath = dslDraftRelativePath(target.kind, id);
+        prepared.push({
+          source,
+          target: {
+            mode: "create",
+            key: target.key,
+            ref,
+            kind: target.kind,
+            name: target.name,
+            relativePath,
+            filePath: join(worktreePath, relativePath),
+            initialSha256: sha256(source),
+            creationDescription: fixed?.description ?? target.description,
+          },
+        });
+      }
+      for (const item of prepared) {
+        await mkdir(dirname(item.target.filePath), { recursive: true, mode: 0o700 });
+        await writeFile(item.target.filePath, item.source, { encoding: "utf8", mode: 0o600 });
+      }
+      const now = new Date().toISOString();
+      const draft = StoredDslDraftSchema.parse({
+        schemaVersion: "pragma.dsl-draft/v1",
+        draftId,
+        missionId: input.missionId,
+        baseProjectRevision: snapshot.revision,
+        state: "editing",
+        workspacePath,
+        resources: prepared.map((item) => item.target),
+        createdAt: now,
+        updatedAt: now,
+      });
+      await writeDslDraft(draft);
+      return draft;
+    } catch (error) {
+      await rm(join(workspacePath, ".pragma", "dsl-drafts", draftId), {
+        recursive: true,
+        force: true,
+      });
+      await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
+      throw error;
+    }
   };
 
   const withCurrentEvaluationDraftDiagnostics = async (
@@ -242,6 +591,216 @@ export function createDesktopPragmaAgentProjectPort(options: {
   };
 
   return {
+    async startDslDraft(input) {
+      return toPublicDslDraft(await startDslDraft(input));
+    },
+    async listDslDrafts(input) {
+      let names: string[] = [];
+      try {
+        names = (await readdir(dslDraftsRoot, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const drafts = (
+        await Promise.all(
+          names.map(async (name) => {
+            try {
+              const draftId = decodePragmaPathSegment(name);
+              await recoverDslDraftDiscard(draftId);
+              return await readDslDraftRecord(draftId);
+            } catch {
+              return undefined;
+            }
+          }),
+        )
+      )
+        .filter((draft): draft is StoredDslDraft => draft?.missionId === input.missionId)
+        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .map((draft) =>
+          PragmaAgentDslDraftSummarySchema.parse({
+            schemaVersion: draft.schemaVersion,
+            draftId: draft.draftId,
+            missionId: draft.missionId,
+            baseProjectRevision: draft.baseProjectRevision,
+            state: draft.state,
+            ...(draft.preparedChangeSetId === undefined
+              ? {}
+              : { preparedChangeSetId: draft.preparedChangeSetId }),
+            createdAt: draft.createdAt,
+            updatedAt: draft.updatedAt,
+            resourceCount: draft.resources.length,
+            refs: draft.resources.map((resource) => resource.ref),
+          }),
+        );
+      return paginateManagementItems({
+        items: drafts,
+        scope: `list_dsl_drafts:${input.missionId}`,
+        fingerprintValue: drafts.map((draft) => [draft.draftId, draft.updatedAt]),
+        filters: {},
+        cursor: input.cursor,
+        limit: input.limit,
+      });
+    },
+    async inspectDslDraft(input) {
+      const draft = await readDslDraft(input.draftId);
+      requireDslDraftOwner(draft, input.missionId);
+      return await inspectDslDraft(draft);
+    },
+    async prepareDslDraft(input) {
+      return await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
+        const draft = await readDslDraft(input.draftId);
+        requireDslDraftOwner(draft, input.missionId);
+        if (draft.state !== "editing") throw new Error("DSL draft is not editable.");
+        const conflictingRefs = await staleDslDraftRefs(draft);
+        if (conflictingRefs.length > 0) {
+          const snapshot = await createStableDslDraftSubmission(
+            draft,
+            dslDraftSubmissionsPath(draft.draftId),
+          );
+          await writeDslDraft(
+            StoredDslDraftSchema.parse({
+              ...draft,
+              state: "conflicted",
+              submissionHash: snapshot.hash,
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+          await rm(dslDraftWorktreePath(draft), { recursive: true, force: true });
+          return invalidPrepare(
+            "project.resource_conflict",
+            `Draft targets changed after the draft started: ${conflictingRefs.join(", ")}.`,
+          );
+        }
+        const snapshot = await createStableDslDraftSubmission(
+          draft,
+          dslDraftSubmissionsPath(draft.draftId),
+        );
+        const sources = draft.resources.map(
+          (target) => snapshot.files.get(target.relativePath)!.source,
+        );
+        const parsed = parsePragmaAgentSources(sources);
+        if (parsed.diagnostics.length > 0) {
+          return PragmaAgentPrepareResultSchema.parse({
+            status: "invalid",
+            diagnostics: parsed.diagnostics,
+          });
+        }
+        for (const [index, resource] of parsed.resources.entries()) {
+          const target = draft.resources[index]!;
+          if (
+            canonicalPragmaResourceRef(resource) !== target.ref ||
+            resource.kind !== target.kind
+          ) {
+            return invalidPrepare(
+              "resource.identity_changed",
+              `Draft file identity must remain ${target.kind} ${target.ref}: ${target.relativePath}.`,
+            );
+          }
+        }
+        const result = await prepareResources({
+          expectedProjectRevision: draft.baseProjectRevision,
+          authoredResources: parsed.resources,
+        });
+        if (result.status !== "prepared") return result;
+        const next = StoredDslDraftSchema.parse({
+          ...draft,
+          state: "prepared",
+          submissionHash: snapshot.hash,
+          preparedChangeSetId: result.changeSet.changeSetId,
+          updatedAt: new Date().toISOString(),
+        });
+        await writeDslDraft(next);
+        await rm(dslDraftWorktreePath(draft), { recursive: true, force: true });
+        return result;
+      });
+    },
+    async restartDslDraft(input) {
+      return await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
+        const current = await readDslDraft(input.draftId);
+        requireDslDraftOwner(current, input.missionId);
+        const canRestartPrepared =
+          current.state === "prepared" && (await divergentPreparedDslDraftRefs(current)).length > 0;
+        if (current.state !== "conflicted" && !canRestartPrepared) {
+          throw new Error("Only a conflicted or stale prepared DSL draft can be restarted.");
+        }
+        if (current.submissionHash === undefined) {
+          throw new Error("Restartable DSL draft is missing its immutable reference snapshot.");
+        }
+        const targets: PragmaAgentDslDraftTargetInput[] = current.resources.map((target) =>
+          target.mode === "edit"
+            ? { mode: "edit", ref: target.ref }
+            : {
+                mode: "create",
+                key: target.key!,
+                kind: target.kind,
+                name: target.name,
+                description: target.creationDescription!,
+              },
+        );
+        const currentRefs = new Set(
+          (await options.project.get()).resources.map(canonicalPragmaResourceRef),
+        );
+        const fixedCreates = new Map(
+          current.resources.flatMap((target) =>
+            target.mode !== "create" || currentRefs.has(target.ref)
+              ? []
+              : [
+                  [
+                    target.key!,
+                    {
+                      ref: target.ref,
+                      id: target.ref.slice(target.ref.indexOf(":") + 1),
+                      description: target.creationDescription!,
+                    },
+                  ] as const,
+                ],
+          ),
+        );
+        const replacement = await startDslDraft({
+          missionId: current.missionId,
+          workspacePath: current.workspacePath,
+          targets,
+          fixedCreates,
+        });
+        const oldCandidate = join(dslDraftSubmissionsPath(current.draftId), current.submissionHash);
+        await writeDslDraft(
+          StoredDslDraftSchema.parse({
+            ...current,
+            state: "discarded",
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+        return PragmaAgentDslDraftSchema.parse({
+          ...toPublicDslDraft(replacement),
+          referencePath: oldCandidate,
+        });
+      });
+    },
+    async discardDslDraft(input) {
+      await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
+        const draft = await readDslDraft(input.draftId);
+        requireDslDraftOwner(draft, input.missionId);
+        if (draft.state === "discarded") return;
+        if (draft.state === "prepared")
+          throw new Error("A prepared DSL draft cannot be discarded.");
+        const source = join(draft.workspacePath, ".pragma", "dsl-drafts", draft.draftId);
+        const trash = join(dslDraftsTrashRoot, `${draft.draftId}-${Date.now()}`);
+        const journalPath = dslDraftDiscardJournalPath(draft.draftId);
+        const journal = DslDraftDiscardJournalSchema.parse({
+          schemaVersion: "pragma.dsl-draft-discard/v1",
+          draftId: draft.draftId,
+          source,
+          trash,
+          state: "prepared",
+        });
+        await withFileLock(`${journalPath}.lock`, async () => {
+          await writeJson(journalPath, journal);
+          await replayDslDraftDiscard(draft.draftId);
+        });
+      });
+    },
     async allocateResourceIds(requests) {
       const snapshot = await options.project.get();
       const used = new Set(snapshot.resources.map((resource) => resource.metadata.id));
@@ -911,6 +1470,189 @@ function invalidPrepare(code: string, message: string): PragmaAgentPrepareResult
   });
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function dslDraftWorktreePath(draft: Pick<StoredDslDraft, "draftId" | "workspacePath">): string {
+  return join(draft.workspacePath, ".pragma", "dsl-drafts", draft.draftId, "worktree");
+}
+
+function dslDraftRelativePath(kind: "Expert" | "ExpertTeam", id: string): string {
+  return `${kind === "Expert" ? "experts" : "teams"}/${id}.pragma.yaml`;
+}
+
+async function resolveDslDraftWorkspace(requested: string): Promise<string> {
+  if (!isAbsolute(requested)) throw new Error("DSL draft workspace must be absolute.");
+  return await realpath(requested).catch(() => {
+    throw new Error("DSL draft workspace is unavailable.");
+  });
+}
+
+async function prepareDslDraftWorkspace(workspacePath: string, draftId: string): Promise<void> {
+  let current = workspacePath;
+  for (const component of [".pragma", "dsl-drafts", draftId]) {
+    current = join(current, component);
+    try {
+      if ((await lstat(current)).isSymbolicLink())
+        throw new Error("DSL draft path escapes workspace.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  const worktree = join(current, "worktree");
+  await mkdir(worktree, { recursive: true, mode: 0o700 });
+  const canonical = await realpath(worktree);
+  if (!isWithinPath(workspacePath, canonical)) throw new Error("DSL draft path escapes workspace.");
+  await ensurePragmaWorkspaceGitExclude(workspacePath).catch(() => undefined);
+}
+
+interface DslDraftFileSnapshot {
+  readonly hash: string;
+  readonly files: ReadonlyMap<string, { readonly source: string; readonly sha256: string }>;
+}
+
+async function scanDslDraftWorktree(draft: StoredDslDraft): Promise<DslDraftFileSnapshot> {
+  return await scanDslDraftFiles(dslDraftWorktreePath(draft), draft.resources);
+}
+
+async function scanDslDraftFiles(
+  root: string,
+  resources: StoredDslDraft["resources"],
+): Promise<DslDraftFileSnapshot> {
+  const canonicalRoot = await realpath(root);
+  const expected = new Set(resources.map((resource) => resource.relativePath));
+  const allowedDirectories = new Set(
+    resources.map((resource) => resource.relativePath.split("/")[0]!),
+  );
+  const actual = new Set<string>();
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !allowedDirectories.has(entry.name)) {
+      throw new Error(`Unexpected DSL draft entry: ${entry.name}`);
+    }
+    const directory = join(root, entry.name);
+    for (const child of await readdir(directory, { withFileTypes: true })) {
+      const relativePath = `${entry.name}/${child.name}`;
+      if (!child.isFile() || child.isSymbolicLink() || !expected.has(relativePath)) {
+        throw new Error(`Unexpected DSL draft entry: ${relativePath}`);
+      }
+      const canonicalFile = await realpath(join(directory, child.name));
+      if (!isWithinPath(canonicalRoot, canonicalFile)) {
+        throw new Error(`DSL draft file escapes workspace: ${relativePath}`);
+      }
+      actual.add(relativePath);
+    }
+  }
+  if (actual.size !== expected.size || [...expected].some((path) => !actual.has(path))) {
+    throw new Error("DSL draft files were deleted or renamed.");
+  }
+  const files = new Map<string, { source: string; sha256: string }>();
+  for (const path of [...expected].toSorted()) {
+    const source = await readFile(join(root, path), "utf8");
+    if (Buffer.byteLength(source, "utf8") > 2_000_000) {
+      throw new Error(`DSL draft file exceeds 2000000 bytes: ${path}`);
+    }
+    files.set(path, { source, sha256: sha256(source) });
+  }
+  const hash = sha256(
+    [...files]
+      .map(([path, file]) => `${path}\0${file.sha256}\0${Buffer.byteLength(file.source, "utf8")}`)
+      .join("\n"),
+  );
+  return { hash, files };
+}
+
+async function createStableDslDraftSubmission(
+  draft: StoredDslDraft,
+  submissionsRoot: string,
+): Promise<DslDraftFileSnapshot> {
+  const first = await scanDslDraftWorktree(draft);
+  const second = await scanDslDraftWorktree(draft);
+  if (first.hash !== second.hash) throw new Error("DSL draft changed while it was being prepared.");
+  const destination = join(submissionsRoot, first.hash);
+  try {
+    return await scanDslDraftFiles(destination, draft.resources);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("ENOENT")) throw error;
+    }
+  }
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  try {
+    for (const [path, file] of first.files) {
+      const output = join(temporary, path);
+      await mkdir(dirname(output), { recursive: true, mode: 0o700 });
+      await writeFile(output, file.source, { encoding: "utf8", mode: 0o600 });
+    }
+    const copied = await scanDslDraftFiles(temporary, draft.resources);
+    if (copied.hash !== first.hash) throw new Error("DSL draft snapshot verification failed.");
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+    await rename(temporary, destination);
+    return copied;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return await scanDslDraftFiles(destination, draft.resources);
+    }
+    throw error;
+  } finally {
+    await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function newDslDraftSkeleton(input: {
+  readonly kind: "Expert" | "ExpertTeam";
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+}): string {
+  const metadata = [
+    `apiVersion: ${PRAGMA_DSL_WRITE_API_VERSION}`,
+    `kind: ${input.kind}`,
+    "metadata:",
+    `  id: ${input.id}`,
+    `  name: ${JSON.stringify(input.name)}`,
+    `  description: ${JSON.stringify(input.description)}`,
+    "  tags: []",
+  ];
+  if (input.kind === "Expert") {
+    return [
+      ...metadata,
+      "spec:",
+      '  scope: "" # REQUIRED: describe the Expert boundary.',
+      '  instructions: "" # REQUIRED: describe the Expert behavior.',
+      "  capabilities: []",
+      "  toolApprovals: {}",
+      "  contextStores: []",
+      "  plugins: []",
+      "  tools: []",
+      "",
+    ].join("\n");
+  }
+  return [
+    ...metadata,
+    "spec:",
+    "  coordinator:",
+    '    ref: "" # REQUIRED: use an exact Expert ref.',
+    "  members: [] # REQUIRED: add at least one Expert ref.",
+    "  instructions: |-",
+    "    # Optional shared collaboration instructions.",
+    "  contextStores: []",
+    "  delegation:",
+    "    permissions:",
+    "      interact: {}",
+    "    maxConcurrency: 4",
+    "    maxDepth: 3",
+    "    runtimes: {}",
+    "",
+  ].join("\n");
+}
+
+function isWithinPath(root: string, candidate: string): boolean {
+  const child = relative(resolve(root), resolve(candidate));
+  return child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+}
+
 function diagnosticsFromError(error: unknown, source?: string) {
   if (error instanceof z.ZodError) {
     return error.issues.map((issue) => ({
@@ -1203,7 +1945,11 @@ async function readJson(path: string): Promise<unknown | undefined> {
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, path);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }

@@ -815,9 +815,7 @@ export function createMissionRunner(options: {
         loggerProvider: options.loggerProvider?.withScope({ missionId: mission.id }),
         automaticHumanInteractionHandler: async (request) => {
           if (
-            ["system-store-revision", "system-skill-revision"].includes(
-              mission.origin.type,
-            ) &&
+            ["system-store-revision", "system-skill-revision"].includes(mission.origin.type) &&
             request.kind === "tool_approval"
           ) {
             return { kind: "tool_approval", approved: false, updatedInput: request.input };
@@ -1451,6 +1449,7 @@ export function createMissionRunner(options: {
     const desktopAdapterHost = createDesktopAdapterHost(
       {
         ...options,
+        pragmaManagementScope: { missionId: mission.id, workspacePath: mission.workspace.path },
         ...(Object.keys(pragmaManagement).length === 0 ? {} : { pragmaManagement }),
       },
       mission.workspace.path,

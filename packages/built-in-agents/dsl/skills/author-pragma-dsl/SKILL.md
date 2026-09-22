@@ -11,9 +11,11 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 ## Workflow
 
 1. Discuss missing intent before changing definitions.
-2. Call `list_dsl_resources`, then read every project resource that will be changed or referenced.
-   Before creating an ExpertTeam, read every existing coordinator or member and include any new
-   ones in the same change-set. Read reusable system Experts listed in
+2. Call `list_dsl_resources` to find exact refs. For every Expert or ExpertTeam creation or update,
+   call `start_dsl_draft` once with all related resources. Use the returned workspace files and
+   Runtime-native search, read, and edit tools to make precise changes; never copy a complete prompt
+   through a management-tool argument. A draft may contain a Team and all Experts changed with it.
+   Read reusable system Experts listed in
    the `builtin-experts` category of `list_expert_options` through `read_dsl_resource`; they are valid read-only Team
    coordinators or members and must not be recreated. A Host Runtime or Capability option that is
    not yet a project resource cannot be read and is the only exception.
@@ -31,9 +33,9 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    already provides the requested behavior. Do not ask for model, avatar, or capability choices for
    that read-only system Expert.
 4. Read the relevant reference file below before drafting YAML.
-5. Before authoring a new resource, allocate only the IDs needed for the user's current confirmed
-   request. Use the returned Host-generated IDs and exact references. Preserve IDs when editing;
-   never invent, copy, or change an ID.
+5. `start_dsl_draft` allocates IDs and creates intentionally incomplete skeleton files for new
+   Experts and ExpertTeams. Fill every required field in those files and use the returned refs for
+   links between new resources. Preserve IDs, kinds, and apiVersion values; never rename draft files.
 6. For a new or non-trivial Flow change, create a Flow draft and build it in small batches with
    `update_flow_draft`: contracts, steps, start, transitions, and loops. Read diagnostics after every
    batch. Pass `operations` as a native JSON array, never as a string containing serialized JSON;
@@ -59,16 +61,22 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 10. Save the test set independently: call `prepare_evaluation_draft` with its exact draft revision,
     then pass the returned `changeSetId` to `commit_dsl_changes`. This commit changes only the
     Evaluation; it is never part of `prepare_flow_draft` or `additionalSources`.
-    Use `prepare_dsl_changes` directly only for complete non-Flow resources. Its `sources` input is
-    always an array with one complete YAML document per item, even for one resource. Prepare calls
-    return compact receipts; use `read_prepared_dsl_change` for one changed source or diff when needed.
+    For Expert and ExpertTeam drafts, call `inspect_dsl_draft` after editing, resolve any reported
+    target conflict, then call `prepare_dsl_draft` with only the draft ID. Fix every prepare
+    diagnostic by editing the same files and prepare that same draft ID again. Commit its returned
+    change-set. If a target changed concurrently, including when commit reports a conflict, call
+    `restart_dsl_draft`, compare the old read-only reference with the new files, and explicitly
+    replay still-valid edits. Use `prepare_dsl_changes` directly only for
+    complete non-Flow resource kinds without a dedicated draft workflow. Prepare calls return compact
+    receipts; use `read_prepared_dsl_change` only when normalized full source is genuinely needed.
 11. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
     revision changed, reread affected resources and explicitly rebase the draft before retrying.
 12. After each commit tool returns, always report success or failure, the committed project
     revision, and
     the changed canonical refs.
 
-Before preparing, verify that every new ID came from `allocate_dsl_resource_ids`, every Evaluation
+Before preparing, verify that every new ID came from a Host draft or
+`allocate_dsl_resource_ids`, every Evaluation
 targets an exact Flow ref, every project ref
 was read, every ContextStore mount declares `ref`, `namespace`, and `required`, and no existing
 RuntimeProfile, Capability, or ContextStore is repeated in `sources`. Follow diagnostic `source` and

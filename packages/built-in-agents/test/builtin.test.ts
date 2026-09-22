@@ -81,6 +81,12 @@ describe("built-in Pragma Agent DSL", () => {
     let updatedOperationCount = 0;
     const tools = createPragmaManagementTools({
       project: {
+        startDslDraft: unavailable,
+        listDslDrafts: unavailable,
+        inspectDslDraft: unavailable,
+        prepareDslDraft: unavailable,
+        restartDslDraft: unavailable,
+        discardDslDraft: unavailable,
         list: unavailable,
         listExpertOptions: unavailable,
         allocateResourceIds: unavailable,
@@ -144,10 +150,12 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(33);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(39);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("start_dsl_draft");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("prepare_dsl_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).not.toContain("run_evaluation");
@@ -371,15 +379,15 @@ describe("built-in Pragma Agent DSL", () => {
     expect(reference).toContain("has no input schema");
   });
 
-  it("teaches the default Agent complete Expert mounts and Runtime reference selection", () => {
+  it("teaches the default Agent file drafts and Runtime reference selection", () => {
     const skill = BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/SKILL.md"] ?? "";
     const expertReference =
       BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/expert.md"] ?? "";
     const resourceReference =
       BUILT_IN_AGENT_FILES["skills/author-pragma-dsl/references/resources-and-references.md"] ?? "";
 
-    expect(skill).toContain("Its `sources` input is");
-    expect(skill).toContain("always an array with one complete YAML document per item");
+    expect(skill).toContain("call `start_dsl_draft` once with all related resources");
+    expect(skill).toContain("call `prepare_dsl_draft` with only the draft ID");
     expect(expertReference).toContain("namespace: project_docs");
     expect(expertReference).toContain(
       "It is not derived from the ContextStore ID, binding, or `config.key`.",

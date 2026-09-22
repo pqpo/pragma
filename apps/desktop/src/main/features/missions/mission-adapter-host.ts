@@ -27,6 +27,8 @@ export function createDesktopAdapterHost(
     readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
     readonly contextStores?: ContextStoreStore | undefined;
     readonly pragmaManagement?: PragmaManagementToolPorts | undefined;
+    readonly pragmaManagementScope?:
+      { readonly missionId: string; readonly workspacePath: string } | undefined;
   },
   projectRoot: string,
 ): PragmaAdapterHost {
@@ -36,18 +38,22 @@ export function createDesktopAdapterHost(
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
       if (ref === PRAGMA_MANAGEMENT_BINDING_REF) {
         if (options.pragmaManagement === undefined) return undefined;
-        const tools = createPragmaManagementTools(options.pragmaManagement);
+        const tools = createPragmaManagementTools(
+          options.pragmaManagement,
+          options.pragmaManagementScope,
+        );
         const fingerprint = createHash("sha256")
           .update(
-            JSON.stringify(
-              tools.map((tool) => ({
+            JSON.stringify({
+              scope: options.pragmaManagementScope ?? null,
+              tools: tools.map((tool) => ({
                 name: tool.name,
                 description: tool.description,
                 inputSchema: tool.inputSchema,
                 outputSchema: tool.outputSchema,
                 approval: tool.approval,
               })),
-            ),
+            }),
           )
           .digest("hex");
         return {
