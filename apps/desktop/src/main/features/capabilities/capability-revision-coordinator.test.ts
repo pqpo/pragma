@@ -246,6 +246,60 @@ describe("CapabilityRevisionCoordinator", () => {
     expect(system.upgrade).not.toHaveBeenCalled();
   });
 
+  it("finalizes recovery for an inactive needs-attention revision without compatibility checks", async () => {
+    const root = await temporaryRoot();
+    const current = capability(1, ["search", "read"]);
+    const candidate = {
+      ...capability(2, ["search"]),
+      health: {
+        ...capability(2, ["search"]).health,
+        status: "needs_attention" as const,
+        diagnostic: { code: "offline", message: "Offline", retryable: true },
+      },
+    };
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: CAPABILITY_ID,
+    });
+    const project = fakeProject([
+      binding,
+      expert("expert0000000001", canonicalPragmaResourceRef(binding), ["read"]),
+    ]);
+    let stored: Capability = current;
+    const ensureActiveRevision = vi.fn(async () => undefined);
+    const store = {
+      get: async (_id: string, revision?: number) => {
+        if (revision !== undefined && revision !== stored.manifest.latestRevision) {
+          throw new CapabilityStoreError("capability_not_found", "Capability revision missing.");
+        }
+        return stored;
+      },
+      ensureActiveRevision,
+      discardUnpublishedRevision: async () => false,
+    } as unknown as CapabilityStore;
+    const coordinator = createCapabilityRevisionCoordinator({
+      journalRoot: root,
+      capabilities: store,
+      project: project.store,
+      systemExperts: fakeSystemExpert([]).registry,
+    });
+
+    await expect(
+      coordinator.publish({
+        current,
+        candidate,
+        commit: async () => {
+          stored = candidate;
+          throw new Error("simulated crash after needs-attention commit");
+        },
+      }),
+    ).rejects.toThrow("simulated crash after needs-attention commit");
+
+    await expect(coordinator.recover()).resolves.toBeUndefined();
+    expect(ensureActiveRevision).not.toHaveBeenCalled();
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
   it("finishes activation without a Project or System Expert propagation stage", async () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search"]);

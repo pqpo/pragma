@@ -155,7 +155,10 @@ export function createCapabilityRevisionCoordinator(options: {
         }
         throw error;
       }
-      if (journal.stage === "revision-pending" || journal.stage === "revision-written") {
+      if (
+        candidate.health.status === "ready" &&
+        (journal.stage === "revision-pending" || journal.stage === "revision-written")
+      ) {
         await assertCompatible(candidate);
       }
       if (candidate.health.status === "ready") {

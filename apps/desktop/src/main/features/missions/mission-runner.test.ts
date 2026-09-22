@@ -4992,6 +4992,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(firstRun.execution?.status).toBe("running");
     expect(duplicateRun.execution?.id).toBe(firstRun.execution?.id);
     expect(firstRun.execution?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(firstRun.execution?.environmentFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(firstRun.execution?.resolvedCapabilities).toEqual([]);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },

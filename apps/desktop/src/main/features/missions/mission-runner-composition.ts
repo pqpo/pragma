@@ -2493,6 +2493,8 @@ export function createMissionRunner(options: {
       sessionId: session.sessionId,
       status: recoveredTurn === undefined ? "running" : "waiting",
       ...(recoverable ? {} : { contextMountsFingerprint }),
+      environmentFingerprint: compiledIdentity,
+      resolvedCapabilities,
       startedAt: executionStartedAt,
     });
     trackExecution({
