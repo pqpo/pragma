@@ -192,12 +192,13 @@ export const CapabilityDefinitionSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const CapabilityManifestSchema = z.object({
-  schemaVersion: z.literal("pragma.capability/v3"),
+  schemaVersion: z.literal("pragma.capability/v4"),
   id: CapabilityIdSchema,
   runtimeKey: CapabilityRuntimeKeySchema,
   name: capabilityNameSchema(),
   kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
   latestRevision: z.number().int().positive(),
+  activeRevision: z.number().int().positive().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -226,12 +227,10 @@ export const ExpertCapabilityReferenceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("skill"),
     capabilityId: CapabilityIdSchema,
-    revision: z.number().int().positive(),
   }),
   z.object({
     kind: z.literal("tools"),
     capabilityId: CapabilityIdSchema,
-    revision: z.number().int().positive(),
     toolNames: z.array(CapabilityToolNameSchema).min(1).max(500),
   }),
 ]);

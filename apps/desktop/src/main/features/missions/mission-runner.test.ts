@@ -927,7 +927,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     const definition = { id: expert.metadata.id, kind: "expert" as const };
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -4992,6 +4992,8 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(firstRun.execution?.status).toBe("running");
     expect(duplicateRun.execution?.id).toBe(firstRun.execution?.id);
     expect(firstRun.execution?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(firstRun.execution?.environmentFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(firstRun.execution?.resolvedCapabilities).toEqual([]);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
@@ -5739,7 +5741,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -6733,7 +6735,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId,
         version: 0,
         kind: "expert-turn",

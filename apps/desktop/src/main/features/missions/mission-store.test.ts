@@ -1289,6 +1289,55 @@ describe("mission store", { timeout: 30_000 }, () => {
     expect((await store.get(created.id)).execution?.status).toBe("succeeded");
   });
 
+  it("preserves an execution environment snapshot across status projections", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover the same environment",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000031";
+    const startedAt = "2026-09-22T00:00:00.000Z";
+    const fingerprint = "a".repeat(64);
+    await store.updateExecution(created.id, {
+      id: executionId,
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt,
+      contextMountsFingerprint: fingerprint,
+      environmentFingerprint: fingerprint,
+      resolvedCapabilities: [
+        {
+          capabilityId: "1h2j3k4m5n6p7q8r",
+          resolvedRevision: 2,
+          fingerprint,
+        },
+      ],
+    });
+
+    const waiting = await store.updateExecution(created.id, {
+      id: executionId,
+      inputMessageId: created.initialMessageId,
+      status: "waiting",
+      waitReason: "human_input",
+      startedAt,
+    });
+
+    expect(waiting.execution).toMatchObject({
+      contextMountsFingerprint: fingerprint,
+      environmentFingerprint: fingerprint,
+      resolvedCapabilities: [
+        {
+          capabilityId: "1h2j3k4m5n6p7q8r",
+          resolvedRevision: 2,
+          fingerprint,
+        },
+      ],
+    });
+  });
+
   it("reports a stable error for a missing mission", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

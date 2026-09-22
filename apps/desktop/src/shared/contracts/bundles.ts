@@ -360,7 +360,6 @@ export const BundleCapabilityResolutionSchema = z
     requirementId: z.string().trim().min(1).max(160),
     resourceRef: PragmaResourceRefSchema,
     capabilityId: CapabilityIdSchema,
-    revision: z.number().int().positive(),
   })
   .strict();
 

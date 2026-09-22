@@ -12,6 +12,7 @@ import {
 } from "@pragma/built-in-agents";
 
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
+import { desktopCapabilityBindingRef } from "../../platform/bindings/desktop-binding-ref.ts";
 
 const directories: string[] = [];
 
@@ -148,7 +149,7 @@ describe("DesktopSystemExpertRegistry", () => {
         modelId: "gpt-5.6",
         thinkingLevel: "high",
       },
-      capabilities: [{ kind: "tools", capabilityId, revision: 3, toolNames: ["search_docs"] }],
+      capabilities: [{ kind: "tools", capabilityId, toolNames: ["search_docs"] }],
       toolApprovals: { mcp_docs_search_docs: "required" },
       plugins: [],
       contextStoreMounts: [{ storeId: contextStoreId, enabled: true, priority: 0 }],
@@ -185,28 +186,26 @@ describe("DesktopSystemExpertRegistry", () => {
     expect(registry.getAdditionalResources(BUILT_IN_PRAGMA_REF)).toHaveLength(2);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).not.toBe(originalFingerprint);
 
-    await expect(
-      registry.validateAndUpgradeCapabilityRevision(capabilityId, 4, []),
-    ).rejects.toMatchObject({
+    await expect(registry.validateCapabilityCompatibility(capabilityId, [])).rejects.toMatchObject({
       code: "capability_incompatible",
     });
     expect(registry.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
       revision: 2,
-      capabilities: [{ capabilityId, revision: 3 }],
+      capabilities: [{ capabilityId }],
     });
 
     await expect(
-      registry.validateAndUpgradeCapabilityRevision(capabilityId, 4, ["search_docs"]),
-    ).resolves.toBe(true);
+      registry.validateCapabilityCompatibility(capabilityId, ["search_docs"]),
+    ).resolves.toBeUndefined();
     expect(registry.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
-      revision: 3,
-      capabilities: [{ capabilityId, revision: 4 }],
+      revision: 2,
+      capabilities: [{ capabilityId }],
     });
     expect(
       registry
         .getAdditionalResources(BUILT_IN_PRAGMA_REF)
         .find((resource) => resource.kind === "Capability"),
-    ).toMatchObject({ spec: { binding: expect.stringMatching(/\.4$/) } });
+    ).toMatchObject({ spec: { binding: desktopCapabilityBindingRef(capabilityId) } });
 
     const reloaded = createDesktopSystemExpertRegistry({ configPath });
     await reloaded.initialize();
@@ -284,7 +283,7 @@ describe("DesktopSystemExpertRegistry", () => {
       ],
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       customizations: [{ ref: BUILT_IN_PRAGMA_REF }],
     });
     await expect(readFile(`${configPath}.v3.backup.json`, "utf8")).resolves.toContain(
@@ -348,7 +347,7 @@ describe("DesktopSystemExpertRegistry", () => {
         { storeId: "26980318-cc35-4a16-95ae-fd8806492c4a", enabled: true, priority: 0 },
       ],
     });
-    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 7 });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 8 });
     await expect(readFile(`${configPath}.v5.backup.json`, "utf8")).resolves.toContain(
       "deepseek-v4-flash",
     );
@@ -385,7 +384,7 @@ describe("DesktopSystemExpertRegistry", () => {
         tool: expect.objectContaining({ name: "call_skill_revision_agent" }),
       }),
     ]);
-    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 7 });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({ schemaVersion: 8 });
     await expect(readFile(`${configPath}.v6.backup.json`, "utf8")).resolves.toContain(
       "Preserve this v6 customization.",
     );

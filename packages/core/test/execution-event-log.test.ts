@@ -408,7 +408,7 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       const rootDefinition = { id: "coordinator", kind: "expert" as const };
       await store.create(
         {
-          schemaVersion: "pragma.execution/v11",
+          schemaVersion: "pragma.execution/v12",
           executionId: input.executionId,
           version: 0,
           kind: "expert-turn",
@@ -932,7 +932,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v11",
+    schemaVersion: "pragma.execution/v12",
     executionId: "execution",
     version: 0,
     kind: "flow",

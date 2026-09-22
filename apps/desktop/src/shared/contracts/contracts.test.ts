@@ -791,12 +791,13 @@ describe("capability test contracts", () => {
       message: "Succeeded.",
       capability: {
         manifest: {
-          schemaVersion: "pragma.capability/v3",
+          schemaVersion: "pragma.capability/v4",
           id: "00000000-0000-4000-8000-000000000000",
           runtimeKey: "test_capability",
           name: "Test capability",
           kind: "code_service",
           latestRevision: 1,
+          activeRevision: 1,
           createdAt: "2026-07-11T00:00:00.000Z",
           updatedAt: "2026-07-11T00:00:00.000Z",
         },
@@ -1068,7 +1069,7 @@ describe("mission contracts", () => {
     ).toBe("request-approval");
   });
 
-  it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
+  it("persists the resolved Desktop environment fingerprint for execution audit", () => {
     const parsed = MissionSchema.parse({
       schemaVersion: "pragma.mission/v11",
       id: "00000000-0000-4000-8000-000000000000",
@@ -1096,7 +1097,7 @@ describe("mission contracts", () => {
       updatedAt: "2026-07-11T00:01:00.000Z",
     });
 
-    expect(parsed.execution).not.toHaveProperty("environmentFingerprint");
+    expect(parsed.execution).toMatchObject({ environmentFingerprint: "a".repeat(64) });
   });
 
   it("validates rich chat entries and interruptible execution state", () => {

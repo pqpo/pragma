@@ -89,16 +89,16 @@ describe("ExpertSession transaction migration", () => {
     ).toThrow("pragma.expert-session/v8 is newer than the supported pragma.expert-session/v7");
   });
 
-  it("upgrades a historical v8 transaction fixture through v11", async () => {
+  it("upgrades a historical v8 transaction fixture through v12", async () => {
     const fixture = await readFixture("expert-session-transaction-v8.json");
 
     const upgraded = expertSessionTransactionMigrationChain.upgrade(fixture);
 
-    expect(upgraded).toMatchObject({ fromVersion: 8, toVersion: 11, migrated: true });
+    expect(upgraded).toMatchObject({ fromVersion: 8, toVersion: 12, migrated: true });
     expect(upgraded.value).toMatchObject({
-      schemaVersion: "pragma.expert-session-transaction/v11",
+      schemaVersion: "pragma.expert-session-transaction/v12",
       session: { schemaVersion: "pragma.expert-session/v7" },
-      execution: { schemaVersion: "pragma.execution/v11" },
+      execution: { schemaVersion: "pragma.execution/v12" },
       rootInvocation: { pendingExpertMessages: [] },
     });
   });
@@ -108,9 +108,9 @@ describe("ExpertSession transaction migration", () => {
 
     expect(expertSessionTransactionMigrationChain.upgrade(fixture)).toMatchObject({
       fromVersion: 6,
-      toVersion: 11,
+      toVersion: 12,
       migrated: true,
-      value: { schemaVersion: "pragma.expert-session-transaction/v11" },
+      value: { schemaVersion: "pragma.expert-session-transaction/v12" },
     });
   });
 
@@ -118,7 +118,7 @@ describe("ExpertSession transaction migration", () => {
     const fixture = await readFixture("expert-session-transaction-v9-queue-marker-4ddb0eba.json");
     const upgraded = expertSessionTransactionMigrationChain.upgrade(fixture);
 
-    expect(upgraded).toMatchObject({ fromVersion: 9, toVersion: 11, migrated: true });
+    expect(upgraded).toMatchObject({ fromVersion: 9, toVersion: 12, migrated: true });
     expect(upgraded.value.prompts).toMatchObject([
       {
         requestId: "queued-request",
@@ -157,22 +157,22 @@ describe("ExpertSession transaction migration", () => {
     ).toThrow("Queue-steer marker is missing its source Execution");
   });
 
-  it("treats current v11 state as a no-op and rejects future state", async () => {
+  it("treats current v12 state as a no-op and rejects future state", async () => {
     const fixture = await readFixture("expert-session-transaction-v8.json");
     const current = expertSessionTransactionMigrationChain.upgrade(fixture).value;
 
     expect(expertSessionTransactionMigrationChain.upgrade(current)).toMatchObject({
-      fromVersion: 11,
-      toVersion: 11,
+      fromVersion: 12,
+      toVersion: 12,
       migrated: false,
     });
     expect(() =>
       expertSessionTransactionMigrationChain.upgrade({
         ...current,
-        schemaVersion: "pragma.expert-session-transaction/v12",
+        schemaVersion: "pragma.expert-session-transaction/v13",
       }),
     ).toThrow(
-      "pragma.expert-session-transaction/v12 is newer than the supported pragma.expert-session-transaction/v11",
+      "pragma.expert-session-transaction/v13 is newer than the supported pragma.expert-session-transaction/v12",
     );
   });
 
@@ -196,7 +196,7 @@ describe("ExpertSession transaction migration", () => {
       activeExecutionId: "historical-execution",
     });
     await expect(executions.get("historical-execution")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
     });
     await expect(
       executions.getInvocation("historical-execution", "historical-execution"),

@@ -13,18 +13,26 @@ function decode(value: string): string | undefined {
   }
 }
 
-export function desktopCapabilityBindingRef(id: string, revision: number): PragmaBindingRef {
-  return `binding:desktop-capability.${encode(id)}.${revision}` as PragmaBindingRef;
+export function desktopCapabilityBindingRef(id: string): PragmaBindingRef {
+  return `binding:desktop-capability.${encode(id)}` as PragmaBindingRef;
 }
 
-export function parseDesktopCapabilityBindingRef(
+export function parseDesktopCapabilityBindingRef(ref: string): string | undefined {
+  const encoded = /^binding:desktop-capability\.([A-Za-z0-9_-]+)$/.exec(ref)?.[1];
+  return encoded === undefined ? undefined : decode(encoded);
+}
+
+/** Migration-only reader for project revisions written before ID-only bindings. */
+export function parseLegacyDesktopCapabilityBindingRef(
   ref: string,
 ): { readonly id: string; readonly revision: number } | undefined {
   const match = /^binding:desktop-capability\.([A-Za-z0-9_-]+)\.(\d+)$/.exec(ref);
   if (match === null) return undefined;
   const id = decode(match[1]!);
   const revision = Number(match[2]);
-  return id === undefined || !Number.isSafeInteger(revision) ? undefined : { id, revision };
+  return id === undefined || !Number.isSafeInteger(revision) || revision < 1
+    ? undefined
+    : { id, revision };
 }
 
 export function desktopContextBindingRef(id: string): PragmaBindingRef {

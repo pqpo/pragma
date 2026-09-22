@@ -60,7 +60,7 @@ describe("Execution state migration", () => {
       },
     ]);
     await expect(readJson(paths.executionState("team-run"))).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       output: { type: "inline", value: { summary: "cancelled team" } },
     });
     await expect(readJson(paths.executionInvocations("team-run"))).resolves.toMatchObject([
@@ -79,7 +79,7 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
     await store.create(
       {
-        schemaVersion: "pragma.execution/v11",
+        schemaVersion: "pragma.execution/v12",
         executionId: "current",
         version: 0,
         kind: "expert-turn",
@@ -87,6 +87,17 @@ describe("Execution state migration", () => {
         rootInvocationId: "root",
         status: "running",
         input: { text: "hello", attachments: [] },
+        environment: {
+          fingerprint: "a".repeat(64),
+          resources: [
+            {
+              kind: "capability",
+              id: "capability-id",
+              revision: 3,
+              fingerprint: "b".repeat(64),
+            },
+          ],
+        },
         state: {},
         lastAppliedSequence: 0,
         createdAt: occurredAt,
@@ -108,7 +119,10 @@ describe("Execution state migration", () => {
     const before = await readFile(paths.executionState("current"), "utf8");
 
     await expect(store.get("current")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
+      environment: {
+        resources: [{ id: "capability-id", revision: 3 }],
+      },
     });
 
     expect(await readFile(paths.executionState("current"), "utf8")).toBe(before);
@@ -121,7 +135,7 @@ describe("Execution state migration", () => {
     await expect(
       store.create(
         {
-          schemaVersion: "pragma.execution/v11",
+          schemaVersion: "pragma.execution/v12",
           executionId: "mixed-prompt",
           version: 0,
           kind: "expert-turn",
@@ -167,7 +181,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("v9-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
     });
     await expect(store.listInvocations("v9-run")).resolves.toMatchObject([
       { invocationId: "root", pendingExpertMessages: [] },
@@ -181,7 +195,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("historical-v9-string-prompt")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       input: { text: "prompt written by aa977536^", attachments: [] },
     });
     await expect(
@@ -198,7 +212,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("historical-v10-string-prompt")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       input: { text: "prompt written by 66c98213", attachments: [] },
     });
     await expect(
@@ -230,7 +244,7 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
 
     await expect(store.get("v6-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       definition: { id: "team", kind: "expert-team" },
       output: { type: "inline", value: { summary: "v6 result" } },
     });
@@ -307,7 +321,7 @@ describe("Execution state migration", () => {
     await expect(
       createFileExecutionStore({ pragmaHome: home }).get("v7-usage"),
     ).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       usage: {
         measurement: "unknown",
         input: 100,
@@ -334,7 +348,7 @@ describe("Execution state migration", () => {
     const home = await temporaryRoot("pragma-execution-future-");
     const paths = new PragmaPaths({ pragmaHome: home });
     const file = paths.executionState("future");
-    const future = { schemaVersion: "pragma.execution/v12", executionId: "future" };
+    const future = { schemaVersion: "pragma.execution/v13", executionId: "future" };
     await writeJson(file, future);
     const before = await readFile(file, "utf8");
 
@@ -388,7 +402,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       version: 1,
       status: "succeeded",
       output: { type: "inline", value: "journal result" },
@@ -414,7 +428,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-v10-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v11",
+      schemaVersion: "pragma.execution/v12",
       version: 1,
       status: "succeeded",
       output: { type: "inline", value: "journal-v10-result" },
@@ -436,17 +450,17 @@ describe("Execution state migration", () => {
     const current = executionCommitJournalMigrationChain.upgrade(historical).value;
 
     expect(executionCommitJournalMigrationChain.upgrade(current)).toMatchObject({
-      fromVersion: 12,
-      toVersion: 12,
+      fromVersion: 13,
+      toVersion: 13,
       migrated: false,
     });
     expect(() =>
       executionCommitJournalMigrationChain.upgrade({
         ...current,
-        schemaVersion: "pragma.execution-transaction/v13",
+        schemaVersion: "pragma.execution-transaction/v14",
       }),
     ).toThrow(
-      "pragma.execution-transaction/v13 is newer than the supported pragma.execution-transaction/v12",
+      "pragma.execution-transaction/v14 is newer than the supported pragma.execution-transaction/v13",
     );
   });
 });

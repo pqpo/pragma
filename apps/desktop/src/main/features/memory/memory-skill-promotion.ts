@@ -105,7 +105,7 @@ export function createMemorySkillPromotionService(options: {
   readonly capabilities: CapabilityStore;
   readonly revisions: SkillRevisionService;
   readonly expertExists: (expertRef: string) => Promise<boolean>;
-  readonly bindSkill: (expertRef: string, capabilityId: string, revision: number) => Promise<void>;
+  readonly bindSkill: (expertRef: string, capabilityId: string) => Promise<void>;
 }): MemorySkillPromotionService {
   const candidatesPath = join(options.statePath, "candidates");
   const bindingsPath = join(options.statePath, "bindings.json");
@@ -262,20 +262,15 @@ export function createMemorySkillPromotionService(options: {
   ): Promise<MemorySkillCandidate> => {
     if (!(await options.expertExists(journal.expertRef))) throw new Error("skill_expert_not_found");
     let candidate = await readCandidate(journal.candidateId);
-    let capability;
     try {
-      capability = await options.capabilities.get(journal.capabilityId);
+      await options.capabilities.get(journal.capabilityId);
     } catch {
-      capability = await options.capabilities.createGeneratedSkill({
+      await options.capabilities.createGeneratedSkill({
         package: candidate.package,
         id: journal.capabilityId,
       });
     }
-    await options.bindSkill(
-      journal.expertRef,
-      journal.capabilityId,
-      capability.manifest.latestRevision,
-    );
+    await options.bindSkill(journal.expertRef, journal.capabilityId);
     const bindings = await readBindings();
     await writeBindings([
       ...bindings.bindings.filter(

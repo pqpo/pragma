@@ -12,6 +12,7 @@ import {
   filterBundleExportRoots,
   orderBundleExportRoots,
   PragmaBundleDialog,
+  resolveBundleCapabilityBindings,
   visibleBundleExportRoots,
 } from "./PragmaBundleDialog.tsx";
 
@@ -155,6 +156,33 @@ describe("Bundle export root search", () => {
 });
 
 describe("Bundle import inspection", () => {
+  it("submits manual Capability bindings by identity without pinning a revision", () => {
+    const capabilityId = "1h2j3k4m5n6p7q8r";
+    const resolutions = resolveBundleCapabilityBindings(
+      [
+        {
+          id: "capability-search",
+          kind: "capability",
+          resourceRef: `capability:${capabilityId}`,
+          name: "Search",
+          message: "Choose a search Capability.",
+          required: true,
+          capabilityKind: "mcp_server",
+        },
+      ],
+      { "capability-search": capabilityId },
+    );
+
+    expect(resolutions).toEqual([
+      {
+        requirementId: "capability-search",
+        resourceRef: `capability:${capabilityId}`,
+        capabilityId,
+      },
+    ]);
+    expect(resolutions[0]).not.toHaveProperty("revision");
+  });
+
   it("renders every dependency and conflict instead of showing only the conflict count", () => {
     const inspection: PragmaBundleImportInspection = {
       sourcePath: "/tmp/portable-workflow.pragma",

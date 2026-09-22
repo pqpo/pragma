@@ -42,6 +42,18 @@ export const DefinitionReferenceSchema = z.object({
   kind: InvocationKindSchema,
 });
 
+export const ExecutionEnvironmentResourceSchema = z.object({
+  kind: z.string().min(1),
+  id: z.string().min(1),
+  revision: z.number().int().positive(),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const ExecutionEnvironmentSnapshotSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  resources: ExecutionEnvironmentResourceSchema.array(),
+});
+
 export const RuntimeContextSnapshotSchema = z.object({
   systemSessionId: z.string().min(1),
   runtimeSession: RuntimeSessionRefSchema,
@@ -219,7 +231,7 @@ export const ExecutionOutputItemSchema = z.object({
 
 export const ExecutionRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.execution/v11"),
+    schemaVersion: z.literal("pragma.execution/v12"),
     executionId: z.string().min(1),
     version: z.number().int().nonnegative(),
     kind: ExecutionKindSchema,
@@ -227,6 +239,7 @@ export const ExecutionRecordSchema = z
     rootInvocationId: z.string().min(1),
     status: ExecutionStatusSchema,
     input: z.unknown(),
+    environment: ExecutionEnvironmentSnapshotSchema.optional(),
     state: z.record(z.string(), z.unknown()).default({}),
     output: InvocationOutputSchema.optional(),
     usage: AgentMessageUsageSchema.optional(),
@@ -258,6 +271,8 @@ export type RuntimeSessionRef = z.infer<typeof RuntimeSessionRefSchema>;
 export type ExecutionKind = z.infer<typeof ExecutionKindSchema>;
 export type InvocationKind = z.infer<typeof InvocationKindSchema>;
 export type DefinitionReference = z.infer<typeof DefinitionReferenceSchema>;
+export type ExecutionEnvironmentResource = z.infer<typeof ExecutionEnvironmentResourceSchema>;
+export type ExecutionEnvironmentSnapshot = z.infer<typeof ExecutionEnvironmentSnapshotSchema>;
 export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema>;
 export type RuntimeContextOwner = z.infer<typeof RuntimeContextOwnerSchema>;
 export type RuntimeContextOrigin = z.infer<typeof RuntimeContextOriginSchema>;

@@ -76,9 +76,10 @@ export async function resolveExpertCapabilities(options: {
   const mcpServers: Record<string, IExpertAgentMcpServer> = {};
 
   for (const reference of options.expert.capabilities) {
-    const capability = await options.store.get(reference.capabilityId, reference.revision);
+    const capability = await options.store.resolveActive(reference.capabilityId);
+    const resolvedRevision = capability.manifest.latestRevision;
     if (
-      capability.health.revision === reference.revision &&
+      capability.health.revision === resolvedRevision &&
       capability.health.status === "needs_attention"
     ) {
       throw new ExpertCapabilityResolutionError(
@@ -102,7 +103,7 @@ export async function resolveExpertCapabilities(options: {
           options.capabilitiesPath,
           capability.manifest.id,
           "revisions",
-          revisionDirectory(reference.revision),
+          revisionDirectory(resolvedRevision),
           "payload",
           capability.definition.entryPath,
         ),

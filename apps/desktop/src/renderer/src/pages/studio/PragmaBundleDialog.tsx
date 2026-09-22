@@ -118,6 +118,21 @@ export function visibleBundleExportRoots(
   return roots.slice(0, Math.max(1, page) * BUNDLE_EXPORT_LIST_PAGE_SIZE);
 }
 
+export function resolveBundleCapabilityBindings(
+  requirements: readonly BindingRequirement[],
+  bindings: Readonly<Record<string, string>>,
+) {
+  const requirementsById = new Map(
+    requirements.map((requirement) => [requirement.id, requirement]),
+  );
+  return Object.entries(bindings).flatMap(([requirementId, capabilityId]) => {
+    const requirement = requirementsById.get(requirementId);
+    return requirement === undefined || capabilityId === ""
+      ? []
+      : [{ requirementId, resourceRef: requirement.resourceRef, capabilityId }];
+  });
+}
+
 export function PragmaBundleDialog(props: {
   readonly mode: BundleMode;
   readonly project: PragmaProjectSnapshot;
@@ -701,20 +716,7 @@ function BundleImportDialog(props: {
           ? []
           : [{ requirementId, resourceRef: requirement.resourceRef, ...value }];
       });
-      const capabilities = Object.entries(capabilityBindings).flatMap(([requirementId, value]) => {
-        const requirement = requirementsById.get(requirementId);
-        const [capabilityId, revision] = value.split("@");
-        return requirement === undefined || capabilityId === undefined || revision === undefined
-          ? []
-          : [
-              {
-                requirementId,
-                resourceRef: requirement.resourceRef,
-                capabilityId,
-                revision: Number(revision),
-              },
-            ];
-      });
+      const capabilities = resolveBundleCapabilityBindings(requirements, capabilityBindings);
       const contextStores = Object.entries(contextBindings).flatMap(([requirementId, storeId]) => {
         const requirement = requirementsById.get(requirementId);
         return requirement === undefined || storeId === ""
@@ -1719,7 +1721,7 @@ function BundleBindingStep(props: {
                     capability.definition.kind === requirement.capabilityKind,
                 )
                 .map((capability) => ({
-                  value: `${capability.manifest.id}@${capability.manifest.latestRevision}`,
+                  value: capability.manifest.id,
                   label: capability.manifest.name,
                 })),
             ]}

@@ -6,21 +6,22 @@ import { expertSessionTransactionV7ToV8Step } from "./steps/v7-to-v8.ts";
 import { expertSessionTransactionV8ToV9Step } from "./steps/v8-to-v9.ts";
 import { expertSessionTransactionV9ToV10Step } from "./steps/v9-to-v10.ts";
 import { expertSessionTransactionV10ToV11Step } from "./steps/v10-to-v11.ts";
+import { expertSessionTransactionV11ToV12Step } from "./steps/v11-to-v12.ts";
 import {
-  ExpertSessionTransactionJournalV11Schema,
-  type ExpertSessionTransactionJournalV11,
-} from "./schemas/v11.ts";
+  ExpertSessionTransactionJournalV12Schema,
+  type ExpertSessionTransactionJournalV12,
+} from "./schemas/v12.ts";
 
 export {
-  ExpertSessionTransactionJournalV11Schema as ExpertSessionTransactionJournalSchema,
-  type ExpertSessionTransactionJournalV11 as ExpertSessionTransactionJournal,
-} from "./schemas/v11.ts";
+  ExpertSessionTransactionJournalV12Schema as ExpertSessionTransactionJournalSchema,
+  type ExpertSessionTransactionJournalV12 as ExpertSessionTransactionJournal,
+} from "./schemas/v12.ts";
 
 export const expertSessionTransactionMigrationChain =
-  defineStateMigrationChain<ExpertSessionTransactionJournalV11>({
+  defineStateMigrationChain<ExpertSessionTransactionJournalV12>({
     family: "pragma.expert-session-transaction",
-    currentVersion: 11,
-    currentSchema: ExpertSessionTransactionJournalV11Schema,
+    currentVersion: 12,
+    currentSchema: ExpertSessionTransactionJournalV12Schema,
     steps: [
       expertSessionTransactionV4ToV5Step,
       expertSessionTransactionV5ToV6Step,
@@ -29,5 +30,6 @@ export const expertSessionTransactionMigrationChain =
       expertSessionTransactionV8ToV9Step,
       expertSessionTransactionV9ToV10Step,
       expertSessionTransactionV10ToV11Step,
+      expertSessionTransactionV11ToV12Step,
     ],
   });

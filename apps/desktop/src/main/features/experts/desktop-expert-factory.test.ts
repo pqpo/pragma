@@ -14,7 +14,7 @@ const codeId = "887fb535-438b-427a-9e91-bc2f9f86292e";
 
 const skill: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v3",
+    schemaVersion: "pragma.capability/v4",
     id: skillId,
     runtimeKey: "repo_review_7abfdc9a",
     name: "Repo Review",
@@ -35,7 +35,7 @@ const skill: Capability = {
 
 const service: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v3",
+    schemaVersion: "pragma.capability/v4",
     id: serviceId,
     runtimeKey: "customer_api_77af9336",
     name: "Customer API",
@@ -66,7 +66,7 @@ const service: Capability = {
 
 const codeService: Capability = {
   manifest: {
-    schemaVersion: "pragma.capability/v3",
+    schemaVersion: "pragma.capability/v4",
     id: codeId,
     runtimeKey: "calculator_887fb535",
     name: "Calculator",
@@ -111,6 +111,7 @@ describe("resolveExpertCapabilities", () => {
     ]);
     const store = {
       get: async (id: string) => capabilities.get(id) as Capability,
+      resolveActive: async (id: string) => capabilities.get(id) as Capability,
     } as CapabilityStore;
     const credentials = {
       get: async (_id: string, name: string) => (name === "service-auth" ? "secret" : undefined),
@@ -135,9 +136,9 @@ describe("resolveExpertCapabilities", () => {
       },
       resourceRuntime: { ref: "runtime-profile:t1sp06tbv5846g6t" },
       capabilities: [
-        { kind: "skill", capabilityId: skillId, revision: 1 },
-        { kind: "tools", capabilityId: serviceId, revision: 1, toolNames: ["get_customer"] },
-        { kind: "tools", capabilityId: codeId, revision: 1, toolNames: ["add"] },
+        { kind: "skill", capabilityId: skillId },
+        { kind: "tools", capabilityId: serviceId, toolNames: ["get_customer"] },
+        { kind: "tools", capabilityId: codeId, toolNames: ["add"] },
       ],
       toolApprovals: {},
       plugins: [],

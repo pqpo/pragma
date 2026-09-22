@@ -16,6 +16,7 @@ import type { ContextStoreStore } from "../context-stores/context-store-store.ts
 import { resolveExpertCapabilities } from "../experts/desktop-expert-factory.ts";
 import {
   parseDesktopCapabilityBindingRef,
+  parseLegacyDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
 
@@ -57,11 +58,12 @@ export function createDesktopAdapterHost(
           value: { contribution: { tools } },
         };
       }
-      const capabilityRef = parseDesktopCapabilityBindingRef(ref);
+      const capabilityRef =
+        parseDesktopCapabilityBindingRef(ref) ?? parseLegacyDesktopCapabilityBindingRef(ref)?.id;
       if (capabilityRef !== undefined) {
-        const capabilityId = capabilityRef.id;
-        const revision = capabilityRef.revision;
-        const capability = await options.capabilityStore.get(capabilityId, revision);
+        const capabilityId = capabilityRef;
+        const capability = await options.capabilityStore.resolveActive(capabilityId);
+        const revision = capability.manifest.latestRevision;
         const toolNames =
           capability.definition.kind === "skill"
             ? []
@@ -72,8 +74,8 @@ export function createDesktopAdapterHost(
           expert: {
             capabilities: [
               capability.definition.kind === "skill"
-                ? { kind: "skill", capabilityId, revision }
-                : { kind: "tools", capabilityId, revision, toolNames },
+                ? { kind: "skill", capabilityId }
+                : { kind: "tools", capabilityId, toolNames },
             ],
             toolApprovals: {},
           },

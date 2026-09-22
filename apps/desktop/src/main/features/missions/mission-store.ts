@@ -1640,10 +1640,21 @@ export function createMissionStore(options: {
           ...current,
           execution: {
             ...execution,
-            ...(execution.contextMountsFingerprint === undefined &&
-            current.execution?.id === execution.id &&
-            current.execution.contextMountsFingerprint !== undefined
-              ? { contextMountsFingerprint: current.execution.contextMountsFingerprint }
+            ...(current.execution?.id === execution.id
+              ? {
+                  ...(execution.contextMountsFingerprint === undefined &&
+                  current.execution.contextMountsFingerprint !== undefined
+                    ? { contextMountsFingerprint: current.execution.contextMountsFingerprint }
+                    : {}),
+                  ...(execution.environmentFingerprint === undefined &&
+                  current.execution.environmentFingerprint !== undefined
+                    ? { environmentFingerprint: current.execution.environmentFingerprint }
+                    : {}),
+                  ...(execution.resolvedCapabilities === undefined &&
+                  current.execution.resolvedCapabilities !== undefined
+                    ? { resolvedCapabilities: current.execution.resolvedCapabilities }
+                    : {}),
+                }
               : {}),
           },
           updatedAt: timestamp,

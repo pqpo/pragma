@@ -132,8 +132,12 @@ async function createStore(
             try {
               const result = await input.commit();
               if (prepared !== undefined) {
-                await credentials.activate(prepared);
-                await credentials.finalize(prepared);
+                if (result.health.status === "ready") {
+                  await credentials.activate(prepared);
+                  await credentials.finalize(prepared);
+                } else {
+                  await credentials.rollback(prepared);
+                }
               }
               return result;
             } catch (error) {
@@ -148,8 +152,12 @@ async function createStore(
             try {
               const result = await input.commit();
               if (prepared !== undefined) {
-                await credentials.activate(prepared);
-                await credentials.finalize(prepared);
+                if (result.health.status === "ready") {
+                  await credentials.activate(prepared);
+                  await credentials.finalize(prepared);
+                } else {
+                  await credentials.rollback(prepared);
+                }
               }
               return result;
             } catch (error) {
@@ -224,7 +232,7 @@ describe("capability store", () => {
     );
 
     await expect(store.get(created.manifest.id)).resolves.toMatchObject({
-      manifest: { schemaVersion: "pragma.capability/v3" },
+      manifest: { schemaVersion: "pragma.capability/v4" },
     });
     await expect(
       readFile(join(root, "migration-backups", "capability.v1.json"), "utf8"),
@@ -258,7 +266,7 @@ describe("capability store", () => {
 
     const migrated = await store.get(id);
     expect(migrated.manifest).toMatchObject({
-      schemaVersion: "pragma.capability/v3",
+      schemaVersion: "pragma.capability/v4",
       id,
       latestRevision: 1,
     });
@@ -304,10 +312,50 @@ describe("capability store", () => {
     );
 
     await expect(store.get(id)).resolves.toMatchObject({
-      manifest: { schemaVersion: "pragma.capability/v3", id },
+      manifest: { schemaVersion: "pragma.capability/v4", id },
     });
     await expect(readFile(join(root, "manifest-to-v3.json"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
+    });
+  });
+
+  it("does not guess an active revision when a legacy manifest ends in needs attention", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    const legacyManifest = {
+      ...created.manifest,
+      schemaVersion: "pragma.capability/v3",
+      latestRevision: 3,
+    } as Record<string, unknown>;
+    delete legacyManifest["activeRevision"];
+    for (const revision of [2, 3]) {
+      await mkdir(join(root, "revisions", String(revision).padStart(6, "0")), {
+        recursive: true,
+      });
+      await writeFile(
+        join(root, "revisions", String(revision).padStart(6, "0"), "definition.json"),
+        `${JSON.stringify({ ...httpDefinition, name: `Failed revision ${revision}` })}\n`,
+      );
+    }
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(legacyManifest)}\n`);
+    await writeFile(
+      join(root, "health.json"),
+      `${JSON.stringify({
+        revision: 3,
+        status: "needs_attention",
+        checkedAt: "2026-07-11T00:03:00.000Z",
+        diagnostic: { code: "offline", message: "Offline", retryable: true },
+      })}\n`,
+    );
+
+    await expect(store.get(created.manifest.id)).resolves.toMatchObject({
+      manifest: { schemaVersion: "pragma.capability/v4", latestRevision: 3 },
+      health: { status: "needs_attention" },
+    });
+    expect((await store.get(created.manifest.id)).manifest.activeRevision).toBeUndefined();
+    await expect(store.resolveActive(created.manifest.id)).rejects.toMatchObject({
+      code: "capability_not_found",
     });
   });
 
@@ -349,7 +397,7 @@ describe("capability store", () => {
     );
 
     await expect(store.get(created.manifest.id)).resolves.toMatchObject({
-      manifest: { schemaVersion: "pragma.capability/v3" },
+      manifest: { schemaVersion: "pragma.capability/v4" },
     });
     await expect(readFile(join(root, "v1-to-v2.json"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -648,6 +696,115 @@ describe("capability store", () => {
     expect(firstDefinition).not.toContain("top-secret");
   });
 
+  it("blocks active reads while replacement credentials are being activated", async () => {
+    const { credentials, store } = await createStore();
+    const created = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "initial" },
+    });
+    const activate = credentials.activate.bind(credentials);
+    vi.spyOn(credentials, "activate").mockImplementation(async (prepared) => {
+      await expect(store.resolveActive(created.manifest.id)).rejects.toMatchObject({
+        code: "capability_incompatible",
+      });
+      await activate(prepared);
+    });
+
+    const updated = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, description: "Updated customer records." },
+      credentials: { "service-auth": "replacement" },
+    });
+
+    expect(updated.manifest.latestRevision).toBe(2);
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { activeRevision: 1 },
+      definition: { description: "Customer records." },
+    });
+  });
+
+  it("keeps active credentials when a definition and credential candidate needs attention", async () => {
+    let verification = 0;
+    const { credentials, store } = await createStore({
+      verify: async (definition) => ({
+        definition,
+        health:
+          verification++ === 0
+            ? { status: "ready", checkedAt: "2026-09-22T00:00:00.000Z" }
+            : {
+                status: "needs_attention",
+                checkedAt: "2026-09-22T00:01:00.000Z",
+                diagnostic: { code: "unauthorized", message: "Unauthorized", retryable: true },
+              },
+      }),
+    });
+    const created = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "active-secret" },
+    });
+
+    const candidate = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, description: "Candidate definition." },
+      credentials: { "service-auth": "rejected-secret" },
+    });
+
+    expect(candidate).toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 1 },
+      health: { status: "needs_attention" },
+    });
+    await expect(credentials.get(created.manifest.id, "service-auth")).resolves.toBe(
+      "active-secret",
+    );
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 1, activeRevision: 1 },
+      definition: { description: "Customer records." },
+      health: { status: "ready" },
+    });
+  });
+
+  it("keeps active credentials when a credential-only candidate needs attention", async () => {
+    let verification = 0;
+    const { credentials, store } = await createStore({
+      verify: async (definition) => ({
+        definition,
+        health:
+          verification++ === 0
+            ? { status: "ready", checkedAt: "2026-09-22T00:00:00.000Z" }
+            : {
+                status: "needs_attention",
+                checkedAt: "2026-09-22T00:01:00.000Z",
+                diagnostic: { code: "unauthorized", message: "Unauthorized", retryable: true },
+              },
+      }),
+    });
+    const created = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "active-secret" },
+    });
+
+    const candidate = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: httpDefinition,
+      credentials: { "service-auth": "rejected-secret" },
+    });
+
+    expect(candidate).toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 1 },
+      health: { status: "needs_attention" },
+    });
+    await expect(credentials.get(created.manifest.id, "service-auth")).resolves.toBe(
+      "active-secret",
+    );
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 1, activeRevision: 1 },
+      health: { status: "ready" },
+    });
+  });
+
   it("removes a new Capability and its staged credentials when activation fails", async () => {
     const { credentials, store } = await createStore();
     vi.spyOn(credentials, "activate").mockRejectedValueOnce(new Error("activation failed"));
@@ -660,6 +817,30 @@ describe("capability store", () => {
     ).rejects.toThrow("activation failed");
 
     await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("finishes activation when creation recovery finds a durable ready revision", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    const inactiveManifest = { ...created.manifest } as Record<string, unknown>;
+    delete inactiveManifest["activeRevision"];
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(inactiveManifest)}\n`);
+    await writeFile(
+      join(root, "creation.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.capability-creation/v1",
+        capabilityId: created.manifest.id,
+      })}\n`,
+    );
+
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { activeRevision: 1 },
+      health: { status: "ready" },
+    });
+    await expect(readFile(join(root, "creation.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("does not create a revision for a semantically unchanged definition", async () => {
@@ -770,7 +951,7 @@ describe("capability store", () => {
       reason: { code: "revision_conflict" },
     });
     await expect(store.get(created.manifest.id)).resolves.toMatchObject({
-      manifest: { latestRevision: 1 },
+      manifest: { latestRevision: 2 },
     });
   });
 
@@ -813,6 +994,78 @@ describe("capability store", () => {
     expect(publish.mock.calls[0]![0]).toMatchObject({
       current: { health: { status: "needs_attention" } },
       candidate: { health: { status: "ready" } },
+    });
+  });
+
+  it("keeps resolving the previous active revision while the latest revision needs attention", async () => {
+    let verification = 0;
+    const { store } = await createStore({
+      verify: async (definition) => ({
+        definition,
+        health:
+          verification++ === 0
+            ? { status: "ready", checkedAt: "2026-07-11T00:00:00.000Z" }
+            : {
+                status: "needs_attention",
+                checkedAt: "2026-07-11T00:01:00.000Z",
+                diagnostic: { code: "offline", message: "Offline", retryable: true },
+              },
+      }),
+    });
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const updated = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, name: "Updated HTTP service" },
+      credentials: {},
+    });
+
+    expect(updated).toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 1 },
+      health: { status: "needs_attention" },
+    });
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 1, activeRevision: 1 },
+      definition: { name: httpDefinition.name },
+    });
+  });
+
+  it("activates the latest revision when retry recovers a needs-attention candidate", async () => {
+    const healthStates = ["ready", "needs_attention", "ready"] as const;
+    let verification = 0;
+    const { store } = await createStore({
+      verify: async (definition) => {
+        const status = healthStates[verification++] ?? "ready";
+        return {
+          definition,
+          health:
+            status === "ready"
+              ? { status, checkedAt: "2026-07-11T00:00:00.000Z" }
+              : {
+                  status,
+                  checkedAt: "2026-07-11T00:01:00.000Z",
+                  diagnostic: { code: "offline", message: "Offline", retryable: true },
+                },
+        };
+      },
+    });
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const failed = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, name: "Recovered HTTP service" },
+      credentials: {},
+    });
+
+    const recovered = await store.retry(created.manifest.id, failed.manifest.latestRevision);
+
+    expect(recovered).toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 2 },
+      health: { revision: 2, status: "ready" },
+    });
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { latestRevision: 2, activeRevision: 2 },
+      definition: { name: "Recovered HTTP service" },
     });
   });
 

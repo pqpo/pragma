@@ -5,19 +5,12 @@ import { dirname, join } from "node:path";
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import {
   canonicalPragmaResourceRef,
-  type PragmaCapabilityResource,
   type PragmaExpertResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
-import {
-  bindExistingDesktopCapabilityResource,
-  classifyDesktopCapabilityResource,
-} from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import { classifyDesktopCapabilityResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import {
-  PragmaProjectStoreError,
-  type PragmaProjectStore,
-} from "../projects/pragma-project-store.ts";
+import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import {
   CapabilityStoreError,
   type CapabilityMutationService,
@@ -71,14 +64,9 @@ export function createCapabilityRevisionCoordinator(options: {
     return migrated;
   };
 
-  const advance = async (
-    journal: Journal,
-    stage: Journal["stage"],
-    extra: Partial<Pick<Journal, "projectRevision">> = {},
-  ): Promise<Journal> => {
+  const advance = async (journal: Journal, stage: Journal["stage"]): Promise<Journal> => {
     const next = JournalSchema.parse({
       ...journal,
-      ...extra,
       stage,
       updatedAt: new Date().toISOString(),
     });
@@ -86,68 +74,19 @@ export function createCapabilityRevisionCoordinator(options: {
     return next;
   };
 
-  const propagateProject = async (candidate: Capability): Promise<number | undefined> => {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const snapshot = await options.project.get();
-      assertProjectCompatible(candidate, snapshot.resources);
-      const upserts = snapshot.resources.flatMap((resource): PragmaCapabilityResource[] => {
-        const binding = classifyDesktopCapabilityResource(resource);
-        if (
-          resource.kind !== "Capability" ||
-          binding?.id !== candidate.manifest.id ||
-          binding.revision === candidate.manifest.latestRevision
-        ) {
-          return [];
-        }
-        return [
-          bindExistingDesktopCapabilityResource(
-            resource,
-            {
-              id: candidate.manifest.id,
-              revision: candidate.manifest.latestRevision,
-            },
-            resource.metadata.tags.includes("default-agent-option")
-              ? {
-                  name: candidate.definition.name,
-                  description: capabilityDescription(candidate),
-                }
-              : undefined,
-          ),
-        ];
-      });
-      if (upserts.length === 0) return undefined;
-      const byRef = new Map(
-        snapshot.resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
-      );
-      for (const resource of upserts) {
-        byRef.set(canonicalPragmaResourceRef(resource), resource);
-      }
-      try {
-        return (
-          await options.project.publish({
-            expectedRevision: snapshot.revision,
-            resources: [...byRef.values()],
-          })
-        ).revision;
-      } catch (error) {
-        if (
-          attempt < 4 &&
-          error instanceof PragmaProjectStoreError &&
-          error.code === "revision_conflict"
-        ) {
-          continue;
-        }
-        throw error;
-      }
-    }
-    return undefined;
-  };
-
   const finishJournal = async (journal: Journal, candidate: Capability): Promise<void> => {
     let current = journal;
+    const prepared =
+      current.credentialMutation ?? (await options.credentials.pending(current.capabilityId));
+    if (candidate.health.status !== "ready") {
+      if (prepared !== undefined) await options.credentials.rollback(prepared);
+      if (current.stage === "revision-pending") {
+        current = await advance(current, "revision-written");
+      }
+      await rm(journalPath(current.capabilityId, current.targetRevision), { force: true });
+      return;
+    }
     if (current.stage === "revision-pending") {
-      const prepared =
-        current.credentialMutation ?? (await options.credentials.pending(current.capabilityId));
       if (prepared !== undefined) {
         if (current.credentialMutation === undefined) {
           current = JournalSchema.parse({ ...current, credentialMutation: prepared });
@@ -157,38 +96,8 @@ export function createCapabilityRevisionCoordinator(options: {
       }
       current = await advance(current, "revision-written");
     }
-    if (current.stage === "revision-written" && current.propagate) {
-      const projectRevision = await propagateProject(candidate);
-      current = await advance(current, "project-propagated", {
-        ...(projectRevision === undefined ? {} : { projectRevision }),
-      });
-    }
-    if (current.stage === "revision-written" && !current.propagate) {
-      current = await advance(current, "system-experts-propagated");
-    }
-    if (current.stage === "project-propagated") {
-      try {
-        await options.systemExperts.validateAndUpgradeCapabilityRevision(
-          candidate.manifest.id,
-          candidate.manifest.latestRevision,
-          capabilityToolNames(candidate),
-        );
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "capability_incompatible") {
-          current = JournalSchema.parse({
-            ...current,
-            errorCode: "capability_incompatible",
-            retryable: false,
-            updatedAt: new Date().toISOString(),
-          });
-          await writeJournal(current);
-          throw new CapabilityStoreError("capability_incompatible", error.message);
-        }
-        throw error;
-      }
-      current = await advance(current, "system-experts-propagated");
-    }
-    if (current.stage === "system-experts-propagated") {
+    if (current.stage === "revision-written") {
+      await options.capabilities.ensureActiveRevision(current.capabilityId, current.targetRevision);
       if (current.credentialMutation !== undefined) {
         await options.credentials.finalize(current.credentialMutation);
       }
@@ -255,8 +164,10 @@ export function createCapabilityRevisionCoordinator(options: {
         }
         throw error;
       }
-      if (candidate.health.status !== "ready" && journal.propagate) continue;
-      if (journal.stage === "revision-pending" || journal.stage === "revision-written") {
+      if (
+        candidate.health.status === "ready" &&
+        (journal.stage === "revision-pending" || journal.stage === "revision-written")
+      ) {
         await assertCompatible(candidate);
       }
       await finishJournal(journal, candidate);
@@ -341,7 +252,7 @@ export function createCapabilityRevisionCoordinator(options: {
         if (input.mutationType === "delete") {
           const timestamp = new Date().toISOString();
           const journal = JournalSchema.parse({
-            schemaVersion: "pragma.capability-mutation/v2",
+            schemaVersion: "pragma.capability-mutation/v3",
             mutationId: randomUUID(),
             mutationType: "delete",
             capabilityId: input.id,
@@ -353,7 +264,6 @@ export function createCapabilityRevisionCoordinator(options: {
             createdAt: timestamp,
             updatedAt: timestamp,
             previousHealth: latest.health,
-            propagate: false,
           });
           await writeJournal(journal);
           await input.commit();
@@ -385,7 +295,7 @@ export function createCapabilityRevisionCoordinator(options: {
         }
         const timestamp = new Date().toISOString();
         let journal = JournalSchema.parse({
-          schemaVersion: "pragma.capability-mutation/v2",
+          schemaVersion: "pragma.capability-mutation/v3",
           mutationId: randomUUID(),
           mutationType: "update",
           capabilityId: input.id,
@@ -398,7 +308,6 @@ export function createCapabilityRevisionCoordinator(options: {
           updatedAt: timestamp,
           previousHealth: latest.health,
           targetHealth: input.targetHealth,
-          propagate: false,
         });
         await writeJournal(journal);
         const prepared = await input.prepareCredentials();
@@ -408,7 +317,7 @@ export function createCapabilityRevisionCoordinator(options: {
         }
         const committed = await input.commit();
         await finishJournal(journal, committed);
-        return committed;
+        return await options.capabilities.get(input.id, input.expectedRevision);
       });
     },
     async publish(input) {
@@ -431,7 +340,7 @@ export function createCapabilityRevisionCoordinator(options: {
           if (input.candidate.health.status === "ready") await assertCompatible(input.candidate);
           const timestamp = new Date().toISOString();
           let journal = JournalSchema.parse({
-            schemaVersion: "pragma.capability-mutation/v2",
+            schemaVersion: "pragma.capability-mutation/v3",
             mutationId: randomUUID(),
             mutationType: input.mutationType ?? "update",
             capabilityId: id,
@@ -451,7 +360,7 @@ export function createCapabilityRevisionCoordinator(options: {
             createdAt: timestamp,
             updatedAt: timestamp,
             previousHealth: input.current.health,
-            propagate: input.candidate.health.status === "ready",
+            targetHealth: input.candidate.health,
           });
           await writeJournal(journal);
           const prepared = await input.prepareCredentials?.();
@@ -459,9 +368,9 @@ export function createCapabilityRevisionCoordinator(options: {
             journal = JournalSchema.parse({ ...journal, credentialMutation: prepared });
             await writeJournal(journal);
           }
-          const committed = await input.commit();
-          await finishJournal(journal, committed);
-          return committed;
+          await input.commit();
+          await finishJournal(journal, input.candidate);
+          return await options.capabilities.get(id, input.candidate.manifest.latestRevision);
         });
       } finally {
         await cleanupCapabilityDirectory(id);
@@ -513,13 +422,6 @@ function capabilityToolNames(capability: Capability): string[] {
     case "http_service":
       return capability.definition.tools.map((tool) => tool.name);
   }
-}
-
-function capabilityDescription(capability: Capability): string {
-  const description = capability.definition.description.trim();
-  return description === ""
-    ? `Host-provided Desktop capability ${capability.definition.name}.`
-    : description;
 }
 
 function throwIncompatible(incompatible: readonly string[]): never {

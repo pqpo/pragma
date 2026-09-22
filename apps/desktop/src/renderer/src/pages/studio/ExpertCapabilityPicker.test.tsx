@@ -16,7 +16,7 @@ import type { ExpertRecord } from "./studio-model.ts";
 
 const toolCapability = {
   manifest: {
-    schemaVersion: "pragma.capability/v3",
+    schemaVersion: "pragma.capability/v4",
     id: "codewiki",
     runtimeKey: "codewiki",
     name: "CodeWiki",
@@ -217,7 +217,6 @@ describe("ExpertCapabilityPicker", () => {
           {
             kind: "tools",
             capabilityId: toolCapability.manifest.id,
-            revision: toolCapability.manifest.latestRevision,
             toolNames: ["searchCodeWiki"],
           },
         ]}
@@ -268,7 +267,6 @@ describe("ExpertCapabilityPicker", () => {
         {
           kind: "tools",
           capabilityId: toolCapability.manifest.id,
-          revision: 1,
           toolNames: ["searchCodeWiki", "getCodeWikiStructure"],
         },
       ],
@@ -283,7 +281,6 @@ describe("ExpertCapabilityPicker", () => {
       {
         kind: "tools",
         capabilityId: toolCapability.manifest.id,
-        revision: 1,
         toolNames: ["getCodeWikiStructure"],
       },
     ]);
@@ -297,7 +294,6 @@ describe("ExpertCapabilityPicker", () => {
         {
           kind: "tools",
           capabilityId: toolCapability.manifest.id,
-          revision: 1,
           toolNames: toolCapability.definition.tools.map((tool) => tool.name),
         },
       ],

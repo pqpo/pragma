@@ -826,7 +826,7 @@ export async function createDesktopApplicationContainer(
     revisions: skillRevisions,
     expertExists: async (expertRef) =>
       (await expertStore.list()).some((expert) => expert.ref === expertRef),
-    bindSkill: async (expertRef, capabilityId, revision) => {
+    bindSkill: async (expertRef, capabilityId) => {
       const expert = await expertStore.get(expertRef);
       if (
         expert.capabilities.some(
@@ -835,10 +835,7 @@ export async function createDesktopApplicationContainer(
       ) {
         return;
       }
-      const capabilities = [
-        ...expert.capabilities,
-        { kind: "skill" as const, capabilityId, revision },
-      ];
+      const capabilities = [...expert.capabilities, { kind: "skill" as const, capabilityId }];
       if (expert.origin === "built-in") {
         await expertStore.updateBuiltIn(expertRef, {
           name: expert.name,

@@ -7,6 +7,7 @@ import { executionV7ToV8Step } from "./steps/v7-to-v8.ts";
 import { executionV8ToV9Step } from "./steps/v8-to-v9.ts";
 import { executionV9ToV10Step } from "./steps/v9-to-v10.ts";
 import { executionV10ToV11Step } from "./steps/v10-to-v11.ts";
+import { executionV11ToV12Step } from "./steps/v11-to-v12.ts";
 
 export { ExecutionRecordV5Schema } from "./schemas/v5.ts";
 export { ExecutionRecordV6Schema } from "./schemas/v6.ts";
@@ -15,6 +16,7 @@ export { ExecutionRecordV8Schema } from "./schemas/v8.ts";
 export { ExecutionRecordV9Schema } from "./schemas/v9.ts";
 export { ExecutionRecordV10Schema } from "./schemas/v10.ts";
 export { ExecutionRecordV11Schema } from "./schemas/v11.ts";
+export { ExecutionRecordV12Schema } from "./schemas/v12.ts";
 export { migrateExecutionInvocationsV5ToV6 } from "./steps/v5-to-v6.ts";
 export { executionV5ToV6Step } from "./steps/v5-to-v6.ts";
 export { migrateInvocationUsageV7ToV8 } from "./steps/v7-to-v8.ts";
@@ -23,7 +25,7 @@ export { migrateExecutionInvocationsV10ToV11 } from "./steps/v10-to-v11.ts";
 
 export const executionRecordMigrationChain = defineStateMigrationChain<ExecutionRecord>({
   family: "pragma.execution",
-  currentVersion: 11,
+  currentVersion: 12,
   currentSchema: ExecutionRecordSchema,
   steps: [
     executionV5ToV6Step,
@@ -32,5 +34,6 @@ export const executionRecordMigrationChain = defineStateMigrationChain<Execution
     executionV8ToV9Step,
     executionV9ToV10Step,
     executionV10ToV11Step,
+    executionV11ToV12Step,
   ],
 });

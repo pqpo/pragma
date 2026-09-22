@@ -1,8 +1,5 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import {
-  PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
-  PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-} from "@pragma/built-in-agents";
+import { PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID } from "@pragma/built-in-agents";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -30,29 +27,25 @@ describe("desktop bound resource policy", () => {
     const resource = createDesktopCapabilityResource({
       owner: "project-expert",
       capabilityId: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-      revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
     });
 
     expect(canonicalPragmaResourceRef(resource)).toBe("capability:0000000000manage");
     expect(classifyDesktopCapabilityResource(resource)).toEqual({
       id: PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-      revision: PRAGMA_MANAGEMENT_CAPABILITY_REVISION,
     });
   });
 
   it("keeps the exact resource already referenced by an Expert", () => {
-    const migrated = capability("nv27faxmxpqnxwqr", ["desktop-managed"], 3);
+    const migrated = capability("nv27faxmxpqnxwqr", ["desktop-managed"]);
     const option = createDesktopCapabilityResource({
       owner: "default-agent-option",
       capabilityId: CAPABILITY_ID,
-      revision: 3,
       name: "Search",
     });
 
     expect(
       resolveDesktopCapabilityResource({
         capabilityId: CAPABILITY_ID,
-        revision: 3,
         resources: [option, migrated],
         currentRef: canonicalPragmaResourceRef(migrated),
       }),
@@ -60,11 +53,10 @@ describe("desktop bound resource policy", () => {
   });
 
   it("uses explicit owner precedence instead of source array order", () => {
-    const migrated = capability("nv27faxmxpqnxwqr", ["desktop-managed"], 3);
+    const migrated = capability("nv27faxmxpqnxwqr", ["desktop-managed"]);
     const option = createDesktopCapabilityResource({
       owner: "default-agent-option",
       capabilityId: CAPABILITY_ID,
-      revision: 3,
       name: "Search",
     });
     for (const resources of [
@@ -74,7 +66,6 @@ describe("desktop bound resource policy", () => {
       expect(
         resolveDesktopCapabilityResource({
           capabilityId: CAPABILITY_ID,
-          revision: 3,
           resources,
         }),
       ).toEqual(option);
@@ -85,20 +76,18 @@ describe("desktop bound resource policy", () => {
     expect(() =>
       resolveDesktopCapabilityResource({
         capabilityId: CAPABILITY_ID,
-        revision: 3,
         resources: [
-          capability("nv27faxmxpqnxwqr", ["desktop-managed"], 3),
-          capability("ceq0qxcgdv75wg6b", ["desktop-managed"], 3),
+          capability("nv27faxmxpqnxwqr", ["desktop-managed"]),
+          capability("ceq0qxcgdv75wg6b", ["desktop-managed"]),
         ],
       }),
     ).toThrow(/ambiguous/);
   });
 
   it("preserves imported metadata while adding host bindings", () => {
-    const importedCapability = capability("ceq0qxcgdv75wg6b", [], 1);
+    const importedCapability = capability("ceq0qxcgdv75wg6b", []);
     const rebound = bindExistingDesktopCapabilityResource(importedCapability, {
       id: CAPABILITY_ID,
-      revision: 7,
     });
     expect(rebound.metadata).toEqual({
       ...importedCapability.metadata,
@@ -172,7 +161,7 @@ describe("desktop bound resource policy", () => {
   });
 });
 
-function capability(id: string, tags: string[], revision: number) {
+function capability(id: string, tags: string[]) {
   return PragmaCapabilityResourceSchema.parse({
     apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "Capability",
@@ -184,7 +173,7 @@ function capability(id: string, tags: string[], revision: number) {
     },
     spec: {
       adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(CAPABILITY_ID, revision),
+      binding: desktopCapabilityBindingRef(CAPABILITY_ID),
       config: { key: CAPABILITY_ID },
     },
   });

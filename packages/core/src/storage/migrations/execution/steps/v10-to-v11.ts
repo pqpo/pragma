@@ -22,7 +22,7 @@ export const executionV10ToV11Step = {
 } satisfies StateMigrationStep;
 
 export function migrateExecutionInvocationsV10ToV11(
-  execution: ExecutionRecordV11,
+  execution: Pick<ExecutionRecordV11, "kind" | "rootInvocationId">,
   value: unknown,
 ): Invocation[] {
   return InvocationSchema.array()

@@ -62,11 +62,10 @@ export interface DesktopSystemExpertRegistry {
     validateResources?:
       ((resources: readonly PragmaExpertResource[]) => void | Promise<void>) | undefined,
   ): Promise<ExpertDefinition>;
-  validateAndUpgradeCapabilityRevision(
+  validateCapabilityCompatibility(
     capabilityId: string,
-    revision: number,
     availableTools?: readonly string[],
-  ): Promise<boolean>;
+  ): Promise<void>;
   reset(
     ref: string,
     validateResources?:
@@ -187,7 +186,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       if (current.success) {
         if (options.configPath !== undefined) {
           await Promise.all(
-            ([3, 4, 5, 6] as const).map(
+            ([3, 4, 5, 6, 7] as const).map(
               async (sourceVersion) =>
                 await rm(
                   `${options.configPath}.migration-v${sourceVersion}-to-v${SYSTEM_EXPERT_CONFIG_SCHEMA_VERSION}.json`,
@@ -234,7 +233,7 @@ export function createDesktopSystemExpertRegistry(options?: {
 
   const migrateConfig = async (
     source: unknown,
-    sourceVersion: 3 | 4 | 5 | 6,
+    sourceVersion: 3 | 4 | 5 | 6 | 7,
     migrated: ReadonlyMap<string, SystemExpertCustomization>,
   ): Promise<void> => {
     if (options?.configPath === undefined) return;
@@ -249,6 +248,7 @@ export function createDesktopSystemExpertRegistry(options?: {
     await writePrivateJson(backupPath, source);
     await writeConfig(migrated);
     await rm(journalPath, { force: true });
+    await rm(`${options.configPath}.migration-v${sourceVersion}-to-v7.json`, { force: true });
   };
 
   const mutate = async (operation: () => Promise<void>): Promise<void> => {
@@ -358,8 +358,7 @@ export function createDesktopSystemExpertRegistry(options?: {
       });
       return definition(ref);
     },
-    async validateAndUpgradeCapabilityRevision(capabilityId, revision, availableTools) {
-      let changed = false;
+    async validateCapabilityCompatibility(capabilityId, availableTools) {
       await mutate(async () => {
         const latest = await readConfig();
         if (availableTools !== undefined) {
@@ -382,32 +381,8 @@ export function createDesktopSystemExpertRegistry(options?: {
             );
           }
         }
-        for (const [ref, customization] of latest) {
-          if (
-            !customization.capabilities.some(
-              (capability) =>
-                capability.capabilityId === capabilityId && capability.revision !== revision,
-            )
-          ) {
-            continue;
-          }
-          latest.set(
-            ref,
-            SystemExpertCustomizationSchema.parse({
-              ...customization,
-              capabilities: customization.capabilities.map((capability) =>
-                capability.capabilityId === capabilityId ? { ...capability, revision } : capability,
-              ),
-              revision: customization.revision + 1,
-              updatedAt: new Date().toISOString(),
-            }),
-          );
-          changed = true;
-        }
-        if (changed) await writeConfig(latest);
         customizations = latest;
       });
-      return changed;
     },
     async reset(ref, validateResources) {
       requireBuiltInRef(ref);
@@ -455,7 +430,6 @@ function customizationResources(
     createDesktopCapabilityResource({
       owner: "system-expert-customization",
       capabilityId: capability.capabilityId,
-      revision: capability.revision,
     }),
   );
   const contexts = customization.contextStoreMounts.map((mount) =>

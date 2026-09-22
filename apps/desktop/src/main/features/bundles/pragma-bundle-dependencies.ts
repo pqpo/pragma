@@ -44,9 +44,7 @@ export async function collectCapabilities(
     if (resource.kind !== "Capability") continue;
     const binding = parseDesktopCapabilityBindingRef(resource.spec.binding ?? "");
     const capability =
-      binding === undefined
-        ? undefined
-        : await store.get(binding.id, binding.revision).catch(() => undefined);
+      binding === undefined ? undefined : await store.resolveActive(binding).catch(() => undefined);
     result.push({ resource, capability });
   }
   return result;
@@ -193,7 +191,13 @@ export async function inspectBundleReadiness(
         });
       } else {
         try {
-          const capability = await options.capabilities.get(binding.id, binding.revision);
+          const capability = await options.capabilities
+            .resolveActive(binding)
+            .catch(async (error) => {
+              const latest = await options.capabilities.get(binding);
+              if (latest.health.status === "ready") throw error;
+              return latest;
+            });
           const diagnosticCode = capability.health.diagnostic?.code;
           const needsSetup = capability.health.status !== "ready";
           const status = needsSetup ? capabilityStatus(diagnosticCode) : "ready";
@@ -209,7 +213,7 @@ export async function inspectBundleReadiness(
               ? "Complete capability setup before using this Bundle."
               : "Capability is ready.",
             capabilityKind: capability.definition.kind,
-            targetId: binding.id,
+            targetId: binding,
           });
         } catch (error) {
           const code = errorCode(error);

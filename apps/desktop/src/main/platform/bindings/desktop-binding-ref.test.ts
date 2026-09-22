@@ -12,10 +12,7 @@ import {
 describe("Desktop binding refs", () => {
   it("round-trips IDs containing dots and punctuation without ambiguous splitting", () => {
     const id = "enterprise.knowledge/base@east";
-    expect(parseDesktopCapabilityBindingRef(desktopCapabilityBindingRef(id, 12))).toEqual({
-      id,
-      revision: 12,
-    });
+    expect(parseDesktopCapabilityBindingRef(desktopCapabilityBindingRef(id))).toBe(id);
     expect(parseDesktopContextBindingRef(desktopContextBindingRef(id))).toBe(id);
     expect(parseDesktopModelProviderBindingRef(desktopModelProviderBindingRef(id))).toBe(id);
   });

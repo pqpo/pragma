@@ -144,6 +144,23 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     await expect(readdir(join(directory, ".cache", "project-view-leases"))).resolves.toEqual([]);
   });
 
+  it("publishes one successor revision when the current project contains a legacy pinned Capability binding", async () => {
+    const { project } = await stores();
+    const capabilityId = "capability-for-binding-migration";
+    const capability = desktopManagedCapability(capabilityId, "2xd8qcf4ap0tnv6m");
+    capability.spec.binding = `${desktopCapabilityBindingRef(capabilityId)}.7`;
+    const published = await project.publish({ expectedRevision: 0, resources: [capability] });
+
+    const migrated = await project.get();
+
+    expect(published.revision).toBe(1);
+    expect(migrated.revision).toBe(2);
+    expect(migrated.resources).toMatchObject([
+      { spec: { binding: desktopCapabilityBindingRef(capabilityId) } },
+    ]);
+    await expect(project.get()).resolves.toMatchObject({ revision: 2 });
+  });
+
   it("shares the first published revision across concurrent project stores", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-project-store-concurrent-"));
     directories.push(directory);
@@ -1451,16 +1468,16 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
         ...opened.capabilities.filter(
           (capability) => capability.capabilityId !== removedCapabilityId,
         ),
-        { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
+        { kind: "skill", capabilityId: addedCapabilityId },
       ],
     });
 
     expect(saved.capabilities).toEqual([
-      { kind: "skill", capabilityId: existingCapabilityId, revision: 1 },
-      { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
+      { kind: "skill", capabilityId: existingCapabilityId },
+      { kind: "skill", capabilityId: addedCapabilityId },
     ]);
     await expect(experts.get("expert:3sfd30h5017wd17d")).resolves.toMatchObject({
-      capabilities: [{ kind: "skill", capabilityId: existingCapabilityId, revision: 1 }],
+      capabilities: [{ kind: "skill", capabilityId: existingCapabilityId }],
     });
     const resources = (await project.get()).resources;
     expect(
@@ -1526,8 +1543,8 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
       instructions: "Review the requested changes.",
       model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
       capabilities: [
-        { kind: "skill", capabilityId: existingCapabilityId, revision: 2 },
-        { kind: "skill", capabilityId: addedCapabilityId, revision: 1 },
+        { kind: "skill", capabilityId: existingCapabilityId },
+        { kind: "skill", capabilityId: addedCapabilityId },
       ],
       contextStoreMounts: [],
       plugins: [],
@@ -1833,7 +1850,7 @@ function desktopManagedCapability(
     },
     spec: {
       adapter: "pragma.capability.host@v1",
-      binding: desktopCapabilityBindingRef(capabilityId, metadata.revision ?? 1),
+      binding: desktopCapabilityBindingRef(capabilityId),
       config: { key: capabilityId },
     },
   };

@@ -492,7 +492,7 @@ function createOrchestrator(
 
 function executionRecord(executionId: string) {
   return {
-    schemaVersion: "pragma.execution/v11" as const,
+    schemaVersion: "pragma.execution/v12" as const,
     executionId,
     version: 0,
     kind: "expert-turn" as const,

@@ -1,4 +1,4 @@
-# ADR 030: Desktop-bound resource identity and Capability revision propagation
+# ADR 030: Desktop-bound resource identity and Capability activation
 
 ## Status
 
@@ -14,8 +14,9 @@ newly derived resource to represent the same Host object. A later Project valida
 duplicate semantic names. Reconstructing a resource during an edit also discarded imported or
 migrated identity and metadata.
 
-Capability revisions were separately pinned by every current Expert. Updating one Capability could
-therefore leave current Experts on different revisions and required a manual per-Expert upgrade.
+Capability revisions were separately pinned by every current Expert and Project binding. Updating
+one Capability therefore required rewriting unrelated owners and made a logical dependency look
+like immutable historical data.
 
 ## Decision
 
@@ -31,42 +32,46 @@ therefore leave current Experts on different revisions and required a manual per
 - This policy remains in `apps/desktop`: its tags, binding adapters, and owner categories are Host
   policy, not portable DSL semantics. It may move to a reusable package only after a second Host has
   the same proven contract.
-- A ready Capability revision is activated through a Desktop coordinator. Before writing the new
-  revision it checks all current Project and System Expert tool selections. Removing a selected tool
-  blocks the update.
-- Activation uses one per-Capability mutation boundary and a stable v2 journal. It writes the
-  Capability revision, publishes one new current Project revision updating all bindings, then
-  updates System Expert customizations. Project publication uses an exact expected revision; a
-  conflict causes the latest snapshot to be read and compatibility to be checked again. Interrupted
-  work is replayed from the journal after the Desktop window and IPC are ready. Recovery scans only
-  the journal root. Historical v1 propagation journals are upgraded through the registered adjacent
-  migration when first recovered.
-- The mutation journal provides a replayable consistency transaction across the Capability,
-  Project, System Expert, and credential aggregates. It does not claim instantaneous physical
-  atomicity across multiple files or owners. A Project revision that has been published while the
-  System Expert update is pending is a safe recoverable intermediate state and is never rewritten or
-  rolled back.
+- Capability bindings contain only the local Capability ID. Project resources, System Expert
+  customizations, and ordinary Expert definitions never pin a Capability revision.
+- The Capability manifest owns `activeRevision`. Runtime consumers resolve that revision at the
+  start of an execution. A ready revision may advance it only after current Project and System
+  Expert tool selections pass compatibility checks. A `needs_attention` revision is retained as
+  `latestRevision` but does not become active until a successful retry.
+- Activation uses one per-Capability mutation boundary and a stable v3 journal. It writes the
+  Capability revision and commits staged credentials; it does not publish Project revisions or
+  rewrite System Expert customizations. Historical v1 and v2 journals are upgraded through adjacent
+  migrations when recovered after Desktop window and IPC initialization.
 - Capability credentials are runtime state rather than revision payload. Candidate credentials are
   verified through an overlay before activation. The credential aggregate maps logical names to
   immutable secret generations; its journal contains SecretRef metadata only, never plaintext, and
   either retains the old active mapping or finishes the new mapping after recovery. Capability
-  creation, Bundle identity creation, credential rotation, and deletion use staged generations; a
-  rejected or incomplete Capability write cannot switch the active credential mapping. Credential
+  creation, Bundle identity creation, credential rotation, and deletion use staged generations.
+  Every credential rotation creates a Capability candidate revision even when its definition is
+  unchanged, so candidate health and the active definition/credential generation cannot alias the
+  same revision. A rejected or incomplete Capability write cannot switch the active credential
+  mapping. Runtime resolution fails closed while an activation journal is pending. Credential
   aggregate v2 is upgraded to v3 through a source-bound migration journal and retained backup;
   future versions fail closed.
 - Capability deletion is also a coordinator mutation. The coordinator-root journal records the
   durable delete intent, while an owner-local deletion marker makes credential, customization, and
   Capability-directory cleanup idempotent. Recovery therefore does not depend on a full Capability
   scan and cannot leave a successfully deleted owner with active credential generations.
-- A `needs_attention` revision may be stored but is not activated. A successful retry activates it.
-- Existing Project revisions, Missions, Executions, and old Capability revision payloads remain
-  immutable and pinned. Propagation changes only the current Project head and current System Expert
-  customization.
+- Existing immutable Project revisions that contain revision-pinned bindings remain readable, but
+  the legacy suffix is migration metadata rather than an execution pin: resumed or continued
+  Missions resolve the Capability's current active revision. On first access to the current Project
+  head, Desktop atomically publishes one successor revision whose Capability bindings are ID-only.
+  Capability manifest v1-v3 data is lazily upgraded to v4. A ready latest revision becomes active;
+  when the latest revision needs attention, the old format cannot prove which earlier revision was
+  active, so migration leaves the Capability inactive until a successful retry establishes it.
+- Execution records persist the actual resolved Capability revision and fingerprint. Session and
+  compilation cache identity includes the resolved environment, so an activation cannot silently
+  reuse a session compiled against older Capability content.
 
 ## Consequences
 
-Current consumers converge automatically on one ready Capability revision without rewriting
-history. Identity rules become directly testable and lint-enforced. Capability update is a
-multi-owner Host transaction with replay rather than an eventually consistent collection of UI
-edits. The journal is intentionally narrow and does not introduce a global readiness or migration
-coordinator.
+Current consumers, including Missions created from historical Project revisions, converge
+automatically on the active ready revision without rewriting dependent owners. Historical Project
+data stays immutable, while each persisted Execution records the revision that actually ran.
+The mutation journal is narrowed to the Capability and credential aggregates and does not introduce
+a global readiness or migration coordinator.

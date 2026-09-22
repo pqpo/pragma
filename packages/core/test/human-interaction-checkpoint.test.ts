@@ -152,7 +152,7 @@ async function createFixture(store: ExecutionStore): Promise<{
   const timestamp = new Date().toISOString();
   const definition = { id: "checkpoint-expert", kind: "expert" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v11",
+    schemaVersion: "pragma.execution/v12",
     executionId,
     version: 0,
     kind: "expert-turn",
