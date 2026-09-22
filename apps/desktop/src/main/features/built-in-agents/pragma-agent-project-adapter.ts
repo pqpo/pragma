@@ -698,10 +698,20 @@ async function buildExpertCatalog(options: {
   readonly runtimes: RuntimeEnvironmentService;
   readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list" | "get">;
 }): Promise<DesktopExpertCatalog> {
-  const [availability, capabilities] = await Promise.all([
+  const [availability, latestCapabilities] = await Promise.all([
     getRuntimeAvailability(options.runtimes),
     listCapabilitiesWithBuiltIns(options.capabilities),
   ]);
+  const capabilities = (
+    await Promise.all(
+      latestCapabilities.map(async (capability) => {
+        if (capability.managedBy === "system") return capability;
+        return await options.capabilities
+          .resolveActive(capability.manifest.id)
+          .catch(() => undefined);
+      }),
+    )
+  ).filter((capability): capability is Capability => capability !== undefined);
   const resources = new Map<string, PragmaResource>();
   const runtimeModels = availability
     .filter((runtime) => runtime.status === "available")
@@ -726,10 +736,7 @@ async function buildExpertCatalog(options: {
         };
       }),
     );
-  const readyCapabilities = capabilities.filter(
-    (capability) => capability.health.status === "ready",
-  );
-  const capabilityOptions = readyCapabilities.map((capability) => {
+  const capabilityOptions = capabilities.map((capability) => {
     const resource = capabilityResource(capability);
     const ref = canonicalPragmaResourceRef(resource);
     resources.set(ref, resource);
@@ -777,7 +784,7 @@ async function buildExpertCatalog(options: {
           ),
         ),
     ),
-    readyCapabilityIds: new Set(readyCapabilities.map((capability) => capability.manifest.id)),
+    readyCapabilityIds: new Set(capabilities.map((capability) => capability.manifest.id)),
   };
 }
 

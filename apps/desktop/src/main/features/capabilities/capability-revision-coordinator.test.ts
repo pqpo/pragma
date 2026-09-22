@@ -489,6 +489,129 @@ describe("CapabilityRevisionCoordinator", () => {
     expect(result.manifest.activeRevision).toBe(2);
   });
 
+  it("rolls back prepared credentials when a revision candidate needs attention", async () => {
+    const root = await temporaryRoot();
+    const current = {
+      ...capability(1, ["search"]),
+      manifest: { ...capability(1, ["search"]).manifest, activeRevision: 1 },
+    };
+    const candidate = {
+      ...capability(2, ["search"]),
+      manifest: { ...capability(2, ["search"]).manifest, activeRevision: 1 },
+      health: {
+        revision: 2,
+        status: "needs_attention" as const,
+        checkedAt: "2026-09-22T00:01:00.000Z",
+        diagnostic: { code: "unauthorized", message: "Unauthorized", retryable: true },
+      },
+    };
+    const prepared = {
+      mutationId: "00000000-0000-4000-8000-000000000203",
+      capabilityId: CAPABILITY_ID,
+      previousRefs: [],
+      nextRefs: [],
+    };
+    const activate = vi.fn(async () => undefined);
+    const finalize = vi.fn(async () => undefined);
+    const rollback = vi.fn(async () => undefined);
+    const ensureActiveRevision = vi.fn(async () => undefined);
+    let stored: Capability = current;
+    const coordinator = createCapabilityRevisionCoordinatorImpl({
+      journalRoot: root,
+      capabilities: {
+        get: async (_id: string, revision?: number) =>
+          revision === undefined ? stored : revision === 1 ? current : candidate,
+        ensureActiveRevision,
+        discardUnpublishedRevision: async () => false,
+      } as unknown as CapabilityStore,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+      credentials: {
+        ...credentials,
+        prepareMany: async () => prepared,
+        activate,
+        finalize,
+        rollback,
+      },
+    });
+
+    await coordinator.publish({
+      current,
+      candidate,
+      prepareCredentials: async () => prepared,
+      commit: async () => {
+        stored = candidate;
+        return candidate;
+      },
+    });
+
+    expect(rollback).toHaveBeenCalledWith(prepared);
+    expect(activate).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+    expect(ensureActiveRevision).not.toHaveBeenCalled();
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("rolls back prepared credentials when credential-only verification needs attention", async () => {
+    const root = await temporaryRoot();
+    const current = {
+      ...capability(1, ["search"]),
+      manifest: { ...capability(1, ["search"]).manifest, activeRevision: 1 },
+    };
+    const failed = {
+      ...current,
+      health: {
+        revision: 1,
+        status: "needs_attention" as const,
+        checkedAt: "2026-09-22T00:01:00.000Z",
+        diagnostic: { code: "unauthorized", message: "Unauthorized", retryable: true },
+      },
+    };
+    const prepared = {
+      mutationId: "00000000-0000-4000-8000-000000000204",
+      capabilityId: CAPABILITY_ID,
+      previousRefs: [],
+      nextRefs: [],
+    };
+    let stored: Capability = current;
+    const activate = vi.fn(async () => undefined);
+    const finalize = vi.fn(async () => undefined);
+    const rollback = vi.fn(async () => undefined);
+    const coordinator = createCapabilityRevisionCoordinatorImpl({
+      journalRoot: root,
+      capabilities: {
+        get: async () => stored,
+        ensureActiveRevision: async () => undefined,
+        discardUnpublishedRevision: async () => false,
+      } as unknown as CapabilityStore,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+      credentials: {
+        ...credentials,
+        prepareMany: async () => prepared,
+        activate,
+        finalize,
+        rollback,
+      },
+    });
+
+    await coordinator.publishHealth({
+      id: CAPABILITY_ID,
+      expectedRevision: 1,
+      targetHealth: failed.health,
+      prepareCredentials: async () => prepared,
+      commit: async () => {
+        stored = failed;
+        return stored;
+      },
+    });
+
+    expect(rollback).toHaveBeenCalledWith(prepared);
+    expect(activate).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+    expect(await journalFiles(root)).toEqual([]);
+  });
+
   it("rolls back prepared credentials when Capability commit never becomes visible", async () => {
     const root = await temporaryRoot();
     const current = capability(1, ["search"]);

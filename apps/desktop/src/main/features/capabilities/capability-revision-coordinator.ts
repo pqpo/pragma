@@ -76,9 +76,17 @@ export function createCapabilityRevisionCoordinator(options: {
 
   const finishJournal = async (journal: Journal, candidate: Capability): Promise<void> => {
     let current = journal;
+    const prepared =
+      current.credentialMutation ?? (await options.credentials.pending(current.capabilityId));
+    if (candidate.health.status !== "ready") {
+      if (prepared !== undefined) await options.credentials.rollback(prepared);
+      if (current.stage === "revision-pending") {
+        current = await advance(current, "revision-written");
+      }
+      await rm(journalPath(current.capabilityId, current.targetRevision), { force: true });
+      return;
+    }
     if (current.stage === "revision-pending") {
-      const prepared =
-        current.credentialMutation ?? (await options.credentials.pending(current.capabilityId));
       if (prepared !== undefined) {
         if (current.credentialMutation === undefined) {
           current = JournalSchema.parse({ ...current, credentialMutation: prepared });
@@ -89,12 +97,7 @@ export function createCapabilityRevisionCoordinator(options: {
       current = await advance(current, "revision-written");
     }
     if (current.stage === "revision-written") {
-      if (candidate.health.status === "ready") {
-        await options.capabilities.ensureActiveRevision(
-          current.capabilityId,
-          current.targetRevision,
-        );
-      }
+      await options.capabilities.ensureActiveRevision(current.capabilityId, current.targetRevision);
       if (current.credentialMutation !== undefined) {
         await options.credentials.finalize(current.credentialMutation);
       }

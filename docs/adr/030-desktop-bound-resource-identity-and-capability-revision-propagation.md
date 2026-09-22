@@ -46,8 +46,11 @@ like immutable historical data.
   verified through an overlay before activation. The credential aggregate maps logical names to
   immutable secret generations; its journal contains SecretRef metadata only, never plaintext, and
   either retains the old active mapping or finishes the new mapping after recovery. Capability
-  creation, Bundle identity creation, credential rotation, and deletion use staged generations; a
-  rejected or incomplete Capability write cannot switch the active credential mapping. Credential
+  creation, Bundle identity creation, credential rotation, and deletion use staged generations.
+  Every credential rotation creates a Capability candidate revision even when its definition is
+  unchanged, so candidate health and the active definition/credential generation cannot alias the
+  same revision. A rejected or incomplete Capability write cannot switch the active credential
+  mapping. Runtime resolution fails closed while an activation journal is pending. Credential
   aggregate v2 is upgraded to v3 through a source-bound migration journal and retained backup;
   future versions fail closed.
 - Capability deletion is also a coordinator mutation. The coordinator-root journal records the

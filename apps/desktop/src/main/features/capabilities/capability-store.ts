@@ -634,6 +634,12 @@ export function createCapabilityStore(options: {
     },
     async resolveActive(id) {
       const manifest = await readManifest(id);
+      if ((await options.credentials.pending(id)) !== undefined) {
+        throw new CapabilityStoreError(
+          "capability_incompatible",
+          `Capability ${id} is completing an active environment change.`,
+        );
+      }
       if (manifest.activeRevision === undefined) {
         throw new CapabilityStoreError(
           "capability_not_found",
@@ -1148,15 +1154,28 @@ export function createCapabilityStore(options: {
         });
         const credentialChanged = await credentialsDiffer(input.id, input.credentials);
         if (!credentialChanged && sameHealthState(health, existing.health)) return existing;
+        if (credentialChanged) {
+          const candidate = CapabilitySchema.parse({
+            manifest,
+            definition: verified.definition,
+            health: { ...verified.health, revision: manifest.latestRevision },
+          });
+          return await publishRevision({
+            current: existing,
+            candidate,
+            validateCurrent: validateCredentialSnapshot,
+            prepareCredentials: async () =>
+              await options.credentials.prepareMany(input.id, input.credentials),
+            commit: async () =>
+              await writeNewRevision(manifest, verified.definition, verified.health),
+          });
+        }
         return await publishHealth(
           input.id,
           existing.manifest.latestRevision,
           health,
           undefined,
           validateCredentialSnapshot,
-          credentialChanged
-            ? async () => await options.credentials.prepareMany(input.id, input.credentials)
-            : undefined,
         );
       }
       const candidate = CapabilitySchema.parse({

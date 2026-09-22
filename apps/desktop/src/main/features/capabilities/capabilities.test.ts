@@ -182,6 +182,24 @@ describe("Capability Credential Store", () => {
     await expect(initial.get("capability-1", "token")).resolves.toBe("first-secret");
   });
 
+  it("restores the active generation when an activated Capability mutation is rejected", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-capability-secrets-active-rollback-"));
+    directories.push(directory);
+    const configPath = join(directory, "credentials.json");
+    const { secretStore } = createTestSecretStore(join(directory, "secret-store"));
+    const store = createCapabilityCredentialStore({ configPath, secretStore });
+    await store.setMany("capability-1", { token: "first-secret" });
+    const prepared = await store.prepareMany("capability-1", { token: "second-secret" });
+    expect(prepared).toBeDefined();
+
+    await store.activate(prepared!);
+    await expect(store.get("capability-1", "token")).resolves.toBe("second-secret");
+    await store.rollback(prepared!);
+
+    await expect(store.get("capability-1", "token")).resolves.toBe("first-secret");
+    await expect(store.pending("capability-1")).resolves.toBeUndefined();
+  });
+
   it("recovers a prepared credential journal by retaining the old generation", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-capability-secrets-prepared-"));
     directories.push(directory);

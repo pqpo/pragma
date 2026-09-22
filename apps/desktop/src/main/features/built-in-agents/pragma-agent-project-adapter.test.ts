@@ -110,13 +110,37 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     expect((await project.get()).revision).toBe(1);
   });
 
-  it("exposes only available models and ready capabilities through the portable port", async () => {
+  it("exposes available models and active capabilities through the portable port", async () => {
     const root = await temporaryRoot("pragma-default-agent-options-");
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopPragmaAgentProjectPort(
       adapterOptions(project, join(root, "state"), [
         capability("00000000-0000-4000-8000-000000000001", "ready"),
         capability("00000000-0000-4000-8000-000000000002", "needs_attention"),
+        {
+          ...capability(
+            "00000000-0000-4000-8000-000000000004",
+            "needs_attention",
+            "Active repository access",
+          ),
+          manifest: {
+            ...capability(
+              "00000000-0000-4000-8000-000000000004",
+              "needs_attention",
+              "Active repository access",
+            ).manifest,
+            latestRevision: 2,
+            activeRevision: 1,
+          },
+          health: {
+            ...capability(
+              "00000000-0000-4000-8000-000000000004",
+              "needs_attention",
+              "Active repository access",
+            ).health,
+            revision: 2,
+          },
+        },
       ]),
     );
 
@@ -139,27 +163,35 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         isDefault: true,
       }),
     ]);
-    expect(capabilities.items).toEqual([
-      expect.objectContaining({
-        name: "Pragma management tools",
-        kind: "tools",
-        toolNames: expect.arrayContaining([
-          "knowledge_revision_list_targets",
-          "knowledge_revision_list_drafts",
-          "knowledge_revision_start",
-          "knowledge_revision_get_draft",
-          "knowledge_revision_inspect_rebase",
-          "knowledge_revision_rebase",
-          "knowledge_revision_submit_draft",
-          "knowledge_revision_discard_draft",
-        ]),
-      }),
-      expect.objectContaining({
-        name: "Repository access",
-        kind: "skill",
-        toolNames: [],
-      }),
-    ]);
+    expect(capabilities.items).toHaveLength(3);
+    expect(capabilities.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "Pragma management tools",
+          kind: "tools",
+          toolNames: expect.arrayContaining([
+            "knowledge_revision_list_targets",
+            "knowledge_revision_list_drafts",
+            "knowledge_revision_start",
+            "knowledge_revision_get_draft",
+            "knowledge_revision_inspect_rebase",
+            "knowledge_revision_rebase",
+            "knowledge_revision_submit_draft",
+            "knowledge_revision_discard_draft",
+          ]),
+        }),
+        expect.objectContaining({
+          name: "Repository access",
+          kind: "skill",
+          toolNames: [],
+        }),
+        expect.objectContaining({
+          name: "Active repository access",
+          kind: "skill",
+          toolNames: [],
+        }),
+      ]),
+    );
     expect(avatars.items).toHaveLength(25);
     expect(avatars.items[0]).toEqual({
       avatarId: "pragma.avatar.expert.07",
@@ -975,7 +1007,24 @@ function adapterOptions(
   stateRoot: string,
   values: readonly Capability[] = [],
 ) {
-  const capabilities = { list: async () => values } as unknown as CapabilityStore;
+  const capabilities = {
+    list: async () => values,
+    resolveActive: async (id: string) => {
+      const latest = values.find((capability) => capability.manifest.id === id);
+      if (latest?.manifest.activeRevision === undefined) {
+        throw new Error(`Capability ${id} has no active revision.`);
+      }
+      return {
+        ...latest,
+        manifest: { ...latest.manifest, latestRevision: latest.manifest.activeRevision },
+        health: {
+          revision: latest.manifest.activeRevision,
+          status: "ready" as const,
+          checkedAt: latest.manifest.updatedAt,
+        },
+      };
+    },
+  } as unknown as CapabilityStore;
   const runtimes = {
     getMaterializationCacheKey: async () => "test-environment",
     getDefaultRuntimeId: async () => "test",
@@ -1019,20 +1068,25 @@ function adapterOptions(
   };
 }
 
-function capability(id: string, status: "ready" | "needs_attention"): Capability {
+function capability(
+  id: string,
+  status: "ready" | "needs_attention",
+  name = "Repository access",
+): Capability {
   return {
     manifest: {
       schemaVersion: "pragma.capability/v4",
       id,
       runtimeKey: `repository_${id.at(-1)}`,
-      name: "Repository access",
+      name,
       kind: "skill",
       latestRevision: 1,
+      ...(status === "ready" ? { activeRevision: 1 } : {}),
       createdAt: "2026-07-19T00:00:00.000Z",
       updatedAt: "2026-07-19T00:00:00.000Z",
     },
     definition: {
-      name: "Repository access",
+      name,
       description: "Reads repository context.",
       kind: "skill",
       entryPath: "SKILL.md",
