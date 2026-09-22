@@ -1812,8 +1812,10 @@ export function createContextStoreStore(options: {
           .update(
             JSON.stringify({
               id: current.id,
-              schemaVersion: current.schemaVersion,
+              contentRevision: current.contentRevision,
+              snapshotHash: current.snapshotHash,
               name: current.name,
+              description: current.description,
             }),
           )
           .digest("hex"),

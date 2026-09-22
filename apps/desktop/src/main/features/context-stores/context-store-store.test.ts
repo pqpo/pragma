@@ -25,6 +25,40 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("changes the resolved binding revision for content and metadata revisions", async () => {
+    const { store } = await createStore();
+    const created = await store.create({
+      mode: "blank",
+      name: "Product documentation",
+      description: "Initial guidance.",
+    });
+    const initial = await store.resolve(created.id);
+
+    await store.createFile(created.id, "guide.md", "# Initial guide\n");
+    const afterContent = await store.resolve(created.id);
+
+    const snapshot = await store.getSnapshot(created.id);
+    await store.appendSnapshot(
+      {
+        storeId: created.id,
+        baseRevision: snapshot.revision,
+        baseSnapshotHash: snapshot.snapshotHash,
+        snapshotHash: snapshot.snapshotHash,
+        directories: snapshot.directories,
+        files: snapshot.files,
+        summary: "Rename the knowledge base.",
+        name: "Renamed product documentation",
+        description: "Updated guidance.",
+      },
+      "user",
+    );
+    const afterMetadata = await store.resolve(created.id);
+
+    expect(afterContent.revision).not.toBe(initial.revision);
+    expect(afterMetadata.revision).not.toBe(afterContent.revision);
+    expect(afterMetadata.name).toBe("Renamed product documentation");
+  });
+
   it("rejects a new imported snapshot whose declared hash does not match its contents", async () => {
     const { storesPath, store } = await createStore();
     const id = "00000000-0000-4000-8000-000000000019";
@@ -639,7 +673,7 @@ describe("managed context store", () => {
     });
   });
 
-  it("keeps the binding stable while runtime reads observe the latest files", async () => {
+  it("updates the resolved revision while runtime reads observe the latest files", async () => {
     const { store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Live", description: "" });
     const before = await store.resolve(created.id);
@@ -648,8 +682,8 @@ describe("managed context store", () => {
     await store.updateFile(created.id, "live.md", "Latest", file.metadata, file.revision!);
     const afterUpdate = await store.resolve(created.id);
 
-    expect(afterCreate.revision).toBe(before.revision);
-    expect(afterUpdate.revision).toBe(before.revision);
+    expect(afterCreate.revision).not.toBe(before.revision);
+    expect(afterUpdate.revision).not.toBe(afterCreate.revision);
     await expect(afterUpdate.store.readContext({ id: "live.md" })).resolves.toMatchObject({
       ok: true,
       value: expect.objectContaining({ content: "Latest" }),
