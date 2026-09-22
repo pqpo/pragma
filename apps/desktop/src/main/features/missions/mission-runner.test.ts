@@ -5459,11 +5459,16 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     expect(projectedPage.syncIssues).toBeUndefined();
     expect(projectedPage.entries).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "agent_activity", action: "spawn" }),
+        expect.objectContaining({
+          kind: "agent_activity",
+          action: "spawn",
+          executorId: "1xddvess309a6gme",
+        }),
         expect.objectContaining({
           kind: "context_operation",
           operationId: "compact-1",
           status: "succeeded",
+          executorId: "1xddvess309a6gme",
         }),
       ]),
     );

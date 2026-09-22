@@ -5,7 +5,10 @@ import {
 } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
-import { expertTeamMentionCandidates } from "./mission-executor-catalog.ts";
+import {
+  expertTeamCoordinatorMentionCandidate,
+  expertTeamMentionCandidates,
+} from "./mission-executor-catalog.ts";
 
 describe("Mission mention candidates", () => {
   it("projects members with presentation metadata and excludes the coordinator", () => {
@@ -38,6 +41,14 @@ describe("Mission mention candidates", () => {
         avatarId: "pragma.avatar.expert.02",
       },
     ]);
+    expect(
+      expertTeamCoordinatorMentionCandidate(resources[2]! as PragmaExpertTeamResource, resources),
+    ).toEqual({
+      ref: "expert:1xddvess309a6gme",
+      name: "Coordinator",
+      description: "Coordinator description",
+      avatarId: "pragma.avatar.expert.01",
+    });
   });
 
   it("resolves built-in members outside the project resource snapshot", () => {
@@ -75,6 +86,18 @@ describe("Mission mention candidates", () => {
         avatarId: "pragma.avatar.expert.18",
       },
     ]);
+    expect(
+      expertTeamCoordinatorMentionCandidate(team, [team], (ref) =>
+        ref === "expert:0000000000st0rev"
+          ? (systemExpert as Extract<PragmaResource, { kind: "Expert" }>)
+          : undefined,
+      ),
+    ).toEqual({
+      ref: "expert:0000000000st0rev",
+      name: "Store Revision Agent",
+      description: "Store Revision Agent description",
+      avatarId: "pragma.avatar.expert.18",
+    });
   });
 });
 

@@ -99,6 +99,7 @@ export const HomeMissionExecutorCatalogSchema = z.object({
 
 export const MissionMentionCandidatesSchema = z.object({
   teamRef: MissionExecutorRefSchema,
+  coordinator: ExpertMentionCandidateSchema,
   members: z.array(ExpertMentionCandidateSchema),
 });
 

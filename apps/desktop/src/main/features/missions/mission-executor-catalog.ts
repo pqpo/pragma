@@ -354,6 +354,23 @@ export function expertTeamMentionCandidates(
   });
 }
 
+export function expertTeamCoordinatorMentionCandidate(
+  team: PragmaExpertTeamResource,
+  resources: readonly PragmaResource[],
+  resolveExternalExpert?: ((ref: string) => PragmaExpertResource | undefined) | undefined,
+): ExpertMentionCandidate {
+  const expert = resolveExpertResource(team.spec.coordinator.ref, resources, resolveExternalExpert);
+  if (expert === undefined) {
+    throw new Error(`ExpertTeam coordinator not found: ${team.spec.coordinator.ref}.`);
+  }
+  return {
+    ref: team.spec.coordinator.ref,
+    name: expert.metadata.name,
+    description: expert.metadata.description,
+    avatarId: expert.metadata.avatarId,
+  };
+}
+
 function resolveExpertResource(
   ref: string,
   resources: readonly PragmaResource[],

@@ -448,6 +448,76 @@
     max(24px, calc(var(--mission-chat-footer-height, 140px) + 4px));
 }
 
+.mission-team-participant-list {
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.mission-team-participant-list > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 2px 7px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.mission-team-participant-list [role="listitem"] {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.mission-team-participant {
+  position: relative;
+  display: inline-grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.mission-team-participant:hover,
+.mission-team-participant:focus-visible {
+  border-color: var(--border-strong);
+  outline: 0;
+  background: var(--surface-muted);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-team-participant.is-running {
+  border-color: rgb(212 154 69 / 28%);
+  background: rgb(212 154 69 / 8%);
+}
+
+.mission-team-participant > .mission-work-status {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 9px;
+  height: 9px;
+  margin: 0;
+  border: 2px solid var(--surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-team-participant {
+    transition: none;
+  }
+}
+
 .mission-chat-list > * + * {
   margin-top: 22px;
 }

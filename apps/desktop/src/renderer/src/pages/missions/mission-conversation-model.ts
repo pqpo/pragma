@@ -77,6 +77,16 @@ export function hideInterruptedExecutionFallbackEntries(
   );
 }
 
+export function teamCoordinatorChatEntries(
+  entries: readonly MissionChatEntry[],
+  coordinatorId: string | undefined,
+): MissionChatEntry[] {
+  return entries.filter(
+    (entry) =>
+      entry.kind === "user" || entry.executorId === undefined || entry.executorId === coordinatorId,
+  );
+}
+
 export function missionTurnFinalReplyIds(
   entries: readonly MissionChatEntry[],
 ): ReadonlySet<string> {

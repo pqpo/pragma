@@ -377,6 +377,7 @@ export const missions = {
   resumeBeforeInterrupt: "Resume this execution before interrupting it",
   noExecutionRecords: "No execution records",
   runToCreateExecution: "Run this mission to create an execution.",
+  participatingExperts: "Participating experts",
   executionWork: "Mission execution work",
   executionMapDescription: "Follow how each expert contributes to this mission.",
   workCallOrder: "Call #{{number}}",

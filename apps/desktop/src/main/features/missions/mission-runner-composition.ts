@@ -6001,10 +6001,18 @@ async function readMissionChatHistory(
     let activityEntries;
     try {
       histories = await view.getMessageHistory({ scope: { kind: "all" } });
+      const executorIdsByInvocation = new Map(
+        histories.flatMap((history) =>
+          history.executorId === undefined
+            ? []
+            : ([[history.invocationId, history.executorId]] as const),
+        ),
+      );
       activityEntries = await readHistoricalRuntimeActivityEntries(
         view,
         turn.sequence,
         state.rootInvocationId,
+        (invocationId) => executorIdsByInvocation.get(invocationId),
       );
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
@@ -6068,6 +6076,7 @@ async function readHistoricalRuntimeActivityEntries(
   view: Pick<ExecutionView, "executionId" | "listEvents">,
   timelineSequence: number,
   rootInvocationId: string,
+  resolveExecutorId: (invocationId: string) => string | undefined,
 ): Promise<MissionChatEntry[]> {
   const events: Array<{
     readonly event: ExpertAgentStreamEvent;
@@ -6099,6 +6108,7 @@ async function readHistoricalRuntimeActivityEntries(
   const byId = new Map<string, MissionChatEntry>();
   for (const record of events) {
     const { event } = record;
+    const executorId = resolveExecutorId(record.invocationId);
     if (event.type === "progress") {
       if (record.invocationId !== rootInvocationId || !isRootMissionRuntimeSource(event.source)) {
         continue;
@@ -6113,6 +6123,7 @@ async function readHistoricalRuntimeActivityEntries(
         eventSequence: existing?.eventSequence ?? record.sequence,
         executionId: view.executionId,
         invocationId: record.invocationId,
+        ...(executorId === undefined ? {} : { executorId }),
         kind: "context_operation",
         operationId: data.operationId,
         operation: "compaction",
@@ -6148,6 +6159,8 @@ async function readHistoricalRuntimeActivityEntries(
       eventSequence:
         byId.get(`agent:${view.executionId}:${commandId}`)?.eventSequence ?? record.sequence,
       executionId: view.executionId,
+      invocationId: record.invocationId,
+      ...(executorId === undefined ? {} : { executorId }),
       kind: "agent_activity",
       commandId,
       action,
