@@ -214,7 +214,7 @@ export const PragmaAgentDslDraftResourceSchema = z
     kind: z.enum(["Expert", "ExpertTeam"]),
     name: z.string().min(1).max(50),
     relativePath: z.string().min(1).max(500),
-    filePath: z.string().min(1).max(4_000),
+    filePath: z.string().min(1).max(4_000).optional(),
     key: z.string().min(1).max(100).optional(),
   })
   .strict();
@@ -222,6 +222,7 @@ export const PragmaAgentDslDraftResourceSchema = z
 export const PragmaAgentDslDraftStateSchema = z.enum([
   "editing",
   "prepared",
+  "committed",
   "conflicted",
   "discarded",
 ]);
@@ -237,6 +238,7 @@ export const PragmaAgentDslDraftSchema = z
     referencePath: z.string().min(1).max(4_000).optional(),
     resources: z.array(PragmaAgentDslDraftResourceSchema).min(1).max(50),
     preparedChangeSetId: z.string().uuid().optional(),
+    committedProjectRevision: z.number().int().nonnegative().optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
+  chmod,
   lstat,
   mkdir,
   readFile,
@@ -78,9 +79,11 @@ import { ensurePragmaWorkspaceGitExclude } from "../capabilities/skill-revision-
 const CandidateRecordSchema = z.object({
   changeSet: PragmaAgentChangeSetSchema,
   resources: z.array(PragmaForwardCompatibleResourceSchema),
+  dslDraftId: z.string().uuid().optional(),
 });
 
 const StoredDslDraftResourceSchema = PragmaAgentDslDraftSchema.shape.resources.element.extend({
+  filePath: z.string().min(1).max(4_000),
   baseSha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)
@@ -107,9 +110,15 @@ const DslDraftDiscardJournalSchema = z
     draftId: z.string().uuid(),
     source: z.string().min(1).max(4_000),
     trash: z.string().min(1).max(4_000),
+    submissionSource: z.string().min(1).max(4_000).optional(),
+    submissionTrash: z.string().min(1).max(4_000).optional(),
     state: z.enum(["prepared", "completed"]),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => (value.submissionSource === undefined) === (value.submissionTrash === undefined),
+    "DSL draft discard journal submission paths must be paired.",
+  );
 type DslDraftDiscardJournal = z.infer<typeof DslDraftDiscardJournalSchema>;
 
 export function createDesktopPragmaAgentProjectPort(options: {
@@ -144,6 +153,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
     readonly authoredResources: readonly PragmaResource[];
+    readonly dslDraftId?: string | undefined;
   }): Promise<PragmaAgentPrepareResult> => {
     const snapshot = await options.project.get();
     const authoredResources = [...input.authoredResources];
@@ -210,7 +220,11 @@ export function createDesktopPragmaAgentProjectPort(options: {
         })),
         createdAt: new Date().toISOString(),
       });
-      await writeJson(candidatePath(changeSet.changeSetId), { changeSet, resources });
+      await writeJson(candidatePath(changeSet.changeSetId), {
+        changeSet,
+        resources,
+        ...(input.dslDraftId === undefined ? {} : { dslDraftId: input.dslDraftId }),
+      });
       return PragmaAgentPrepareResultSchema.parse({ status: "prepared", changeSet });
     } catch (error) {
       return PragmaAgentPrepareResultSchema.parse({
@@ -251,15 +265,30 @@ export function createDesktopPragmaAgentProjectPort(options: {
   const writeDslDraft = async (draft: StoredDslDraft): Promise<void> =>
     await writeJson(dslDraftRecordPath(draft.draftId), StoredDslDraftSchema.parse(draft));
 
-  const moveDslDraftToTrash = async (journal: DslDraftDiscardJournal): Promise<void> => {
-    await mkdir(dirname(journal.trash), { recursive: true, mode: 0o700 });
+  const moveDslDraftPathToTrash = async (source: string, trash: string): Promise<void> => {
+    await mkdir(dirname(trash), { recursive: true, mode: 0o700 });
     try {
-      await rename(journal.source, journal.trash);
+      await rename(source, trash);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST" || code === "ENOTEMPTY") {
+        // A cross-device copy may have completed before the process crashed and
+        // removed the source. Treat that destination as an incomplete replay,
+        // rebuild it from the still-authoritative source, then continue.
+        await rm(trash, { recursive: true, force: true });
+        await moveDslDraftPathToTrash(source, trash);
+        return;
+      }
       if (code === "EXDEV") {
-        await cp(journal.source, journal.trash, { recursive: true, errorOnExist: true });
-        await rm(journal.source, { recursive: true, force: true });
+        try {
+          await cp(source, trash, { recursive: true, errorOnExist: true });
+        } catch (copyError) {
+          const copyCode = (copyError as NodeJS.ErrnoException).code;
+          if (copyCode !== "EEXIST" && copyCode !== "ENOTEMPTY") throw copyError;
+          await rm(trash, { recursive: true, force: true });
+          await cp(source, trash, { recursive: true, errorOnExist: true });
+        }
+        await rm(source, { recursive: true, force: true });
       } else if (code !== "ENOENT") {
         throw error;
       }
@@ -281,6 +310,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
       throw new Error("DSL draft discard journal identity mismatch.");
     const draft = await readDslDraftRecord(draftId);
     const expectedSource = join(draft.workspacePath, ".pragma", "dsl-drafts", draft.draftId);
+    const expectedSubmissionSource = dslDraftSubmissionsPath(draft.draftId);
     const trashName = relative(resolve(dslDraftsTrashRoot), resolve(journal.trash));
     if (
       resolve(journal.source) !== resolve(expectedSource) ||
@@ -290,19 +320,31 @@ export function createDesktopPragmaAgentProjectPort(options: {
     ) {
       throw new Error("DSL draft discard journal contains an invalid path.");
     }
+    if (
+      journal.submissionSource !== undefined &&
+      (resolve(journal.submissionSource) !== resolve(expectedSubmissionSource) ||
+        resolve(journal.submissionTrash!) !==
+          resolve(join(journal.trash, "authoritative-submissions")))
+    ) {
+      throw new Error("DSL draft discard journal contains an invalid submission path.");
+    }
     if (journal.state === "prepared") {
-      await moveDslDraftToTrash(journal);
+      await moveDslDraftPathToTrash(journal.source, journal.trash);
+      if (journal.submissionSource !== undefined) {
+        await moveDslDraftPathToTrash(journal.submissionSource, journal.submissionTrash!);
+      }
       journal = DslDraftDiscardJournalSchema.parse({ ...journal, state: "completed" });
       await writeJson(journalPath, journal);
     }
     if (draft.state !== "discarded") {
-      if (draft.state === "prepared") {
-        throw new Error("A prepared DSL draft cannot be discarded.");
+      if (draft.state === "committed") {
+        throw new Error("A committed DSL draft cannot be discarded.");
       }
       await writeDslDraft(
         StoredDslDraftSchema.parse({
           ...draft,
           state: "discarded",
+          submissionHash: undefined,
           updatedAt: new Date().toISOString(),
         }),
       );
@@ -325,34 +367,29 @@ export function createDesktopPragmaAgentProjectPort(options: {
   };
 
   const toPublicDslDraft = (draft: StoredDslDraft): PragmaAgentDslDraft => {
-    const visibleRoot =
-      draft.submissionHash === undefined
-        ? dslDraftWorktreePath(draft)
-        : join(dslDraftSubmissionsPath(draft.draftId), draft.submissionHash);
+    const worktree = draft.state === "editing" ? dslDraftWorktreePath(draft) : undefined;
     return PragmaAgentDslDraftSchema.parse({
       schemaVersion: draft.schemaVersion,
       draftId: draft.draftId,
       missionId: draft.missionId,
       baseProjectRevision: draft.baseProjectRevision,
       state: draft.state,
-      ...(draft.state === "editing" ? { draftPath: dslDraftWorktreePath(draft) } : {}),
-      ...(draft.submissionHash === undefined
-        ? {}
-        : {
-            referencePath: join(dslDraftSubmissionsPath(draft.draftId), draft.submissionHash),
-          }),
+      ...(worktree === undefined ? {} : { draftPath: worktree }),
       resources: draft.resources.map((resource) => ({
         mode: resource.mode,
         ref: resource.ref,
         kind: resource.kind,
         name: resource.name,
         relativePath: resource.relativePath,
-        filePath: join(visibleRoot, resource.relativePath),
+        ...(worktree === undefined ? {} : { filePath: join(worktree, resource.relativePath) }),
         ...(resource.key === undefined ? {} : { key: resource.key }),
       })),
       ...(draft.preparedChangeSetId === undefined
         ? {}
         : { preparedChangeSetId: draft.preparedChangeSetId }),
+      ...(draft.committedProjectRevision === undefined
+        ? {}
+        : { committedProjectRevision: draft.committedProjectRevision }),
       createdAt: draft.createdAt,
       updatedAt: draft.updatedAt,
     });
@@ -399,12 +436,10 @@ export function createDesktopPragmaAgentProjectPort(options: {
   };
 
   const inspectDslDraft = async (draft: StoredDslDraft) => {
-    const snapshot = await scanDslDraftFiles(
+    const snapshot =
       draft.submissionHash === undefined
-        ? dslDraftWorktreePath(draft)
-        : join(dslDraftSubmissionsPath(draft.draftId), draft.submissionHash),
-      draft.resources,
-    );
+        ? await scanDslDraftWorktree(draft)
+        : await scanDslDraftSubmission(draft, dslDraftSubmissionsPath(draft.draftId));
     const conflictingRefs = await staleDslDraftRefs(draft);
     return PragmaAgentDslDraftInspectionSchema.parse({
       ...toPublicDslDraft(draft),
@@ -603,20 +638,22 @@ export function createDesktopPragmaAgentProjectPort(options: {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      const draftIds = names.flatMap((name) => {
+        try {
+          return [decodePragmaPathSegment(name)];
+        } catch {
+          return [];
+        }
+      });
       const drafts = (
         await Promise.all(
-          names.map(async (name) => {
-            try {
-              const draftId = decodePragmaPathSegment(name);
-              await recoverDslDraftDiscard(draftId);
-              return await readDslDraftRecord(draftId);
-            } catch {
-              return undefined;
-            }
+          draftIds.map(async (draftId) => {
+            await recoverDslDraftDiscard(draftId);
+            return await readDslDraftRecord(draftId);
           }),
         )
       )
-        .filter((draft): draft is StoredDslDraft => draft?.missionId === input.missionId)
+        .filter((draft) => draft.missionId === input.missionId)
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .map((draft) =>
           PragmaAgentDslDraftSummarySchema.parse({
@@ -628,6 +665,9 @@ export function createDesktopPragmaAgentProjectPort(options: {
             ...(draft.preparedChangeSetId === undefined
               ? {}
               : { preparedChangeSetId: draft.preparedChangeSetId }),
+            ...(draft.committedProjectRevision === undefined
+              ? {}
+              : { committedProjectRevision: draft.committedProjectRevision }),
             createdAt: draft.createdAt,
             updatedAt: draft.updatedAt,
             resourceCount: draft.resources.length,
@@ -646,6 +686,9 @@ export function createDesktopPragmaAgentProjectPort(options: {
     async inspectDslDraft(input) {
       const draft = await readDslDraft(input.draftId);
       requireDslDraftOwner(draft, input.missionId);
+      if (draft.state === "committed" || draft.state === "discarded") {
+        throw new Error(`DSL draft is already ${draft.state}.`);
+      }
       return await inspectDslDraft(draft);
     },
     async prepareDslDraft(input) {
@@ -659,6 +702,18 @@ export function createDesktopPragmaAgentProjectPort(options: {
             draft,
             dslDraftSubmissionsPath(draft.draftId),
           );
+          const finalWorktree = await scanDslDraftWorktree(draft);
+          if (finalWorktree.hash !== snapshot.hash) {
+            await removeDslDraftSubmission(
+              draft,
+              dslDraftSubmissionsPath(draft.draftId),
+              snapshot.hash,
+            );
+            return invalidPrepare(
+              "dsl.draft_changed",
+              "DSL draft files changed while the candidate was being frozen. Review and prepare again.",
+            );
+          }
           await writeDslDraft(
             StoredDslDraftSchema.parse({
               ...draft,
@@ -682,6 +737,11 @@ export function createDesktopPragmaAgentProjectPort(options: {
         );
         const parsed = parsePragmaAgentSources(sources);
         if (parsed.diagnostics.length > 0) {
+          await removeDslDraftSubmission(
+            draft,
+            dslDraftSubmissionsPath(draft.draftId),
+            snapshot.hash,
+          );
           return PragmaAgentPrepareResultSchema.parse({
             status: "invalid",
             diagnostics: parsed.diagnostics,
@@ -693,6 +753,11 @@ export function createDesktopPragmaAgentProjectPort(options: {
             canonicalPragmaResourceRef(resource) !== target.ref ||
             resource.kind !== target.kind
           ) {
+            await removeDslDraftSubmission(
+              draft,
+              dslDraftSubmissionsPath(draft.draftId),
+              snapshot.hash,
+            );
             return invalidPrepare(
               "resource.identity_changed",
               `Draft file identity must remain ${target.kind} ${target.ref}: ${target.relativePath}.`,
@@ -702,8 +767,27 @@ export function createDesktopPragmaAgentProjectPort(options: {
         const result = await prepareResources({
           expectedProjectRevision: draft.baseProjectRevision,
           authoredResources: parsed.resources,
+          dslDraftId: draft.draftId,
         });
-        if (result.status !== "prepared") return result;
+        if (result.status !== "prepared") {
+          await removeDslDraftSubmission(
+            draft,
+            dslDraftSubmissionsPath(draft.draftId),
+            snapshot.hash,
+          );
+          return result;
+        }
+        const finalWorktree = await scanDslDraftWorktree(draft);
+        if (finalWorktree.hash !== snapshot.hash) {
+          await Promise.all([
+            rm(candidatePath(result.changeSet.changeSetId), { force: true }),
+            removeDslDraftSubmission(draft, dslDraftSubmissionsPath(draft.draftId), snapshot.hash),
+          ]);
+          return invalidPrepare(
+            "dsl.draft_changed",
+            "DSL draft files changed during validation. The newer edits were preserved; prepare again.",
+          );
+        }
         const next = StoredDslDraftSchema.parse({
           ...draft,
           state: "prepared",
@@ -728,6 +812,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
         if (current.submissionHash === undefined) {
           throw new Error("Restartable DSL draft is missing its immutable reference snapshot.");
         }
+        await scanDslDraftSubmission(current, dslDraftSubmissionsPath(current.draftId));
         const targets: PragmaAgentDslDraftTargetInput[] = current.resources.map((target) =>
           target.mode === "edit"
             ? { mode: "edit", ref: target.ref }
@@ -764,14 +849,19 @@ export function createDesktopPragmaAgentProjectPort(options: {
           targets,
           fixedCreates,
         });
-        const oldCandidate = join(dslDraftSubmissionsPath(current.draftId), current.submissionHash);
+        const oldCandidate = await materializeDslDraftReference({
+          draft: replacement,
+          source: join(dslDraftSubmissionsPath(current.draftId), current.submissionHash),
+        });
         await writeDslDraft(
           StoredDslDraftSchema.parse({
             ...current,
             state: "discarded",
+            submissionHash: undefined,
             updatedAt: new Date().toISOString(),
           }),
         );
+        await rm(dslDraftSubmissionsPath(current.draftId), { recursive: true, force: true });
         return PragmaAgentDslDraftSchema.parse({
           ...toPublicDslDraft(replacement),
           referencePath: oldCandidate,
@@ -783,8 +873,8 @@ export function createDesktopPragmaAgentProjectPort(options: {
         const draft = await readDslDraft(input.draftId);
         requireDslDraftOwner(draft, input.missionId);
         if (draft.state === "discarded") return;
-        if (draft.state === "prepared")
-          throw new Error("A prepared DSL draft cannot be discarded.");
+        if (draft.state === "committed")
+          throw new Error("A committed DSL draft cannot be discarded.");
         const source = join(draft.workspacePath, ".pragma", "dsl-drafts", draft.draftId);
         const trash = join(dslDraftsTrashRoot, `${draft.draftId}-${Date.now()}`);
         const journalPath = dslDraftDiscardJournalPath(draft.draftId);
@@ -793,6 +883,12 @@ export function createDesktopPragmaAgentProjectPort(options: {
           draftId: draft.draftId,
           source,
           trash,
+          ...(draft.submissionHash === undefined
+            ? {}
+            : {
+                submissionSource: dslDraftSubmissionsPath(draft.draftId),
+                submissionTrash: join(trash, "authoritative-submissions"),
+              }),
           state: "prepared",
         });
         await withFileLock(`${journalPath}.lock`, async () => {
@@ -1163,6 +1259,16 @@ export function createDesktopPragmaAgentProjectPort(options: {
           diagnostics: additional.diagnostics,
         });
       }
+      if (
+        additional.resources.some(
+          (resource) => resource.kind === "Expert" || resource.kind === "ExpertTeam",
+        )
+      ) {
+        return invalidPrepare(
+          "dsl.file_draft_required",
+          "Expert and ExpertTeam resources must use start_dsl_draft and prepare_dsl_draft.",
+        );
+      }
       if (additional.resources.some((resource) => resource.kind === "Evaluation")) {
         return invalidPrepare(
           "evaluation.independent_prepare_required",
@@ -1208,6 +1314,34 @@ export function createDesktopPragmaAgentProjectPort(options: {
           projectRevision: published.revision,
           changedRefs: candidate.changeSet.changes.map((change) => change.ref),
         });
+        if (candidate.dslDraftId !== undefined) {
+          await withFileLock(dslDraftMutationLockPath(candidate.dslDraftId), async () => {
+            const draft = await readDslDraft(candidate.dslDraftId!);
+            if (
+              draft.state === "prepared" &&
+              draft.preparedChangeSetId === candidate.changeSet.changeSetId
+            ) {
+              await writeDslDraft(
+                StoredDslDraftSchema.parse({
+                  ...draft,
+                  state: "committed",
+                  submissionHash: undefined,
+                  committedProjectRevision: published.revision,
+                  updatedAt: new Date().toISOString(),
+                }),
+              );
+            } else if (
+              draft.state !== "committed" ||
+              draft.preparedChangeSetId !== candidate.changeSet.changeSetId
+            ) {
+              throw new Error("Prepared DSL draft no longer matches its change-set.");
+            }
+            await rm(dslDraftSubmissionsPath(candidate.dslDraftId!), {
+              recursive: true,
+              force: true,
+            });
+          });
+        }
         await writeJson(path, result);
         return result;
       });
@@ -1513,13 +1647,26 @@ interface DslDraftFileSnapshot {
 }
 
 async function scanDslDraftWorktree(draft: StoredDslDraft): Promise<DslDraftFileSnapshot> {
-  return await scanDslDraftFiles(dslDraftWorktreePath(draft), draft.resources);
+  const worktree = dslDraftWorktreePath(draft);
+  const status = await lstat(worktree);
+  if (!status.isDirectory() || status.isSymbolicLink()) {
+    throw new Error("DSL draft worktree must be a real directory.");
+  }
+  const canonical = await realpath(worktree);
+  if (!isWithinPath(draft.workspacePath, canonical)) {
+    throw new Error("DSL draft worktree escapes its Mission workspace.");
+  }
+  return await scanDslDraftFiles(worktree, draft.resources);
 }
 
 async function scanDslDraftFiles(
   root: string,
   resources: StoredDslDraft["resources"],
 ): Promise<DslDraftFileSnapshot> {
+  const rootStatus = await lstat(root);
+  if (!rootStatus.isDirectory() || rootStatus.isSymbolicLink()) {
+    throw new Error("DSL draft snapshot root must be a real directory.");
+  }
   const canonicalRoot = await realpath(root);
   const expected = new Set(resources.map((resource) => resource.relativePath));
   const allowedDirectories = new Set(
@@ -1562,6 +1709,62 @@ async function scanDslDraftFiles(
   return { hash, files };
 }
 
+async function scanDslDraftSubmission(
+  draft: StoredDslDraft,
+  submissionsRoot: string,
+): Promise<DslDraftFileSnapshot> {
+  if (draft.submissionHash === undefined) {
+    throw new Error("DSL draft has no immutable submission.");
+  }
+  const snapshot = await scanDslDraftFiles(
+    join(submissionsRoot, draft.submissionHash),
+    draft.resources,
+  );
+  if (snapshot.hash !== draft.submissionHash) {
+    throw new Error("DSL draft submission content hash does not match its identity.");
+  }
+  return snapshot;
+}
+
+async function removeDslDraftSubmission(
+  draft: StoredDslDraft,
+  submissionsRoot: string,
+  hash: string,
+): Promise<void> {
+  if (draft.submissionHash === hash) return;
+  await rm(join(submissionsRoot, hash), { recursive: true, force: true });
+}
+
+async function materializeDslDraftReference(input: {
+  readonly draft: StoredDslDraft;
+  readonly source: string;
+}): Promise<string> {
+  const destination = join(
+    input.draft.workspacePath,
+    ".pragma",
+    "dsl-drafts",
+    input.draft.draftId,
+    "reference",
+  );
+  await cp(input.source, destination, { recursive: true, errorOnExist: true });
+  await makeTreeReadonly(destination);
+  return destination;
+}
+
+async function makeTreeReadonly(root: string): Promise<void> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      await makeTreeReadonly(path);
+      continue;
+    }
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error("DSL draft reference contains an unsupported filesystem entry.");
+    }
+    await chmod(path, 0o400);
+  }
+}
+
 async function createStableDslDraftSubmission(
   draft: StoredDslDraft,
   submissionsRoot: string,
@@ -1571,7 +1774,11 @@ async function createStableDslDraftSubmission(
   if (first.hash !== second.hash) throw new Error("DSL draft changed while it was being prepared.");
   const destination = join(submissionsRoot, first.hash);
   try {
-    return await scanDslDraftFiles(destination, draft.resources);
+    const existing = await scanDslDraftFiles(destination, draft.resources);
+    if (existing.hash !== first.hash) {
+      throw new Error("DSL draft submission content hash does not match its directory identity.");
+    }
+    return existing;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       const message = error instanceof Error ? error.message : String(error);
@@ -1592,7 +1799,16 @@ async function createStableDslDraftSubmission(
     return copied;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      return await scanDslDraftFiles(destination, draft.resources);
+      const existing = await scanDslDraftFiles(destination, draft.resources);
+      if (existing.hash !== first.hash) {
+        throw new Error(
+          "DSL draft submission content hash does not match its directory identity.",
+          {
+            cause: error,
+          },
+        );
+      }
+      return existing;
     }
     throw error;
   } finally {

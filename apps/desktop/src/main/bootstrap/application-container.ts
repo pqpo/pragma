@@ -1032,7 +1032,12 @@ export async function createDesktopApplicationContainer(
           ...(cursor === undefined ? {} : { cursor }),
         });
         for (const draft of page.items) {
-          if (draft.state !== "editing" && draft.state !== "conflicted") continue;
+          if (
+            draft.state !== "editing" &&
+            draft.state !== "conflicted" &&
+            draft.state !== "prepared"
+          )
+            continue;
           draftIds.push(draft.draftId);
         }
         cursor = page.nextCursor;

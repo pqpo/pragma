@@ -51,6 +51,29 @@ describe("Pragma Host management tools", () => {
     expect(tools.find((tool) => tool.name === "interrupt_mission")?.approval?.mode).toBe("none");
   });
 
+  it("requires Expert and ExpertTeam changes to use Mission-owned file drafts", async () => {
+    let prepareCalls = 0;
+    const project = projectPort({
+      async prepare() {
+        prepareCalls += 1;
+        throw new Error("must not be called");
+      },
+    });
+    const tool = createPragmaManagementTools({ project, missions: missionPort() }).find(
+      (candidate) => candidate.name === "prepare_dsl_changes",
+    )!;
+
+    await expect(
+      tool.call({ expectedProjectRevision: 0, sources: ["kind: Expert\n"] }, undefined, undefined),
+    ).resolves.toMatchObject({
+      details: {
+        status: "invalid",
+        diagnostics: [expect.objectContaining({ code: "dsl.file_draft_required" })],
+      },
+    });
+    expect(prepareCalls).toBe(0);
+  });
+
   it("injects the runtime toolCallId as the write operation id", async () => {
     let operationId = "";
     const project = projectPort({

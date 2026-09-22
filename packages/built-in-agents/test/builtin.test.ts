@@ -394,7 +394,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(resourceReference).toContain("Otherwise use the Host");
     expect(resourceReference).toContain(
-      "option's `runtimeProfileRef`; `prepare_dsl_changes` adds that dependency automatically.",
+      "option's `runtimeProfileRef`; `prepare_dsl_draft` adds that dependency automatically for Expert",
     );
   });
 

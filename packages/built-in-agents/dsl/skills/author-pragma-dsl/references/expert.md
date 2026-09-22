@@ -36,7 +36,7 @@ spec:
   instructions 5,000. Each tag is at most 20 characters and an Expert has at most 10 tags.
 - Reuse an existing project RuntimeProfile when its Runtime, provider, model, and thinking level
   match the selected `list_expert_options` model. Otherwise use that option's `runtimeProfileRef`;
-  `prepare_dsl_changes` materializes the Host dependency, so do not author a RuntimeProfile.
+  `prepare_dsl_draft` materializes the Host dependency, so do not author a RuntimeProfile.
 - For `kind: tools`, list the exact allowed tool names. For `kind: skill`, omit `tools`.
 - A ContextStore mount always declares `ref`, `namespace`, and `required`. Choose a stable,
   Expert-local namespace such as `project_docs`; it is the name used by context tools and must be

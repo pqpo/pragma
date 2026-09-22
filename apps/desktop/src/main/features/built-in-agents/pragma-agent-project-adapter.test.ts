@@ -1,5 +1,5 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -67,7 +67,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       workspacePath: root,
       targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
     });
-    const file = draft.resources[0]!.filePath;
+    const file = draft.resources[0]!.filePath!;
     const before = await readFile(file, "utf8");
     await expect(adapter.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
       items: [expect.objectContaining({ draftId: draft.draftId, state: "editing" })],
@@ -85,6 +85,17 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       status: "invalid",
       diagnostics: [expect.objectContaining({ code: "resource.identity_changed" })],
     });
+    await expect(
+      readdir(
+        join(
+          root,
+          "state",
+          "dsl-resource-drafts",
+          encodePragmaPathSegment(draft.draftId),
+          "submissions",
+        ),
+      ),
+    ).resolves.toEqual([]);
     await writeFile(file, before.replace("Write concise text.", "Write concise copy."));
 
     await expect(
@@ -111,6 +122,18 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     expect(saved.source).toContain("Write concise copy.");
     expect(saved.source).toContain("description: Original");
     await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(adapter.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          draftId: draft.draftId,
+          state: "committed",
+          committedProjectRevision: 2,
+        }),
+      ],
+    });
+    await expect(adapter.inspectDslDraft({ missionId, draftId: draft.draftId })).rejects.toThrow(
+      "already committed",
+    );
   });
 
   it("rebases a draft across unrelated project revisions but rejects a changed target", async () => {
@@ -134,7 +157,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       workspacePath: root,
       targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
     });
-    const unrelatedDraftFile = unrelatedDraft.resources[0]!.filePath;
+    const unrelatedDraftFile = unrelatedDraft.resources[0]!.filePath!;
     await writeFile(
       unrelatedDraftFile,
       (await readFile(unrelatedDraftFile, "utf8")).replace(
@@ -182,14 +205,13 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       status: "invalid",
       diagnostics: [expect.objectContaining({ code: "project.resource_conflict" })],
     });
-    await expect(
-      adapter.inspectDslDraft({ missionId, draftId: conflictingDraft.draftId }),
-    ).resolves.toMatchObject({
-      state: "conflicted",
-      stale: true,
-      referencePath: expect.any(String),
+    const conflictedInspection = await adapter.inspectDslDraft({
+      missionId,
+      draftId: conflictingDraft.draftId,
     });
-    await expect(readFile(conflictingDraft.resources[0]!.filePath, "utf8")).rejects.toMatchObject({
+    expect(conflictedInspection).toMatchObject({ state: "conflicted", stale: true });
+    expect(conflictedInspection).not.toHaveProperty("referencePath");
+    await expect(readFile(conflictingDraft.resources[0]!.filePath!, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
     const replacement = await adapter.restartDslDraft({
@@ -197,16 +219,21 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       draftId: conflictingDraft.draftId,
     });
     expect(replacement).toMatchObject({ state: "editing", referencePath: expect.any(String) });
+    expect(replacement.referencePath).toContain(join(root, ".pragma", "dsl-drafts"));
+    expect(replacement.referencePath).not.toContain(join(root, "state"));
+    await expect(
+      readFile(join(replacement.referencePath!, replacement.resources[0]!.relativePath), "utf8"),
+    ).resolves.toContain("kind: Expert");
     await expect(
       adapter.inspectDslDraft({ missionId, draftId: conflictingDraft.draftId }),
-    ).resolves.toMatchObject({ state: "discarded", referencePath: expect.any(String) });
+    ).rejects.toThrow("already discarded");
 
     const preparedDraft = await adapter.startDslDraft({
       missionId,
       workspacePath: root,
       targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
     });
-    const preparedFile = preparedDraft.resources[0]!.filePath;
+    const preparedFile = preparedDraft.resources[0]!.filePath!;
     await writeFile(
       preparedFile,
       (await readFile(preparedFile, "utf8")).replace(
@@ -264,6 +291,8 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       "dsl-resource-drafts",
       encodePragmaPathSegment(draft.draftId),
     );
+    await mkdir(join(stateRoot, "trash", "dsl-resource-drafts"), { recursive: true });
+    await cp(source, trash, { recursive: true });
     await mkdir(recordRoot, { recursive: true });
     await writeFile(
       join(recordRoot, "discard.json"),
@@ -280,12 +309,93 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     await expect(recovered.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
       items: [expect.objectContaining({ draftId: draft.draftId, state: "discarded" })],
     });
-    await expect(readFile(draft.resources[0]!.filePath, "utf8")).rejects.toMatchObject({
+    await expect(readFile(draft.resources[0]!.filePath!, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
     await expect(
       readFile(join(trash, "worktree", draft.resources[0]!.relativePath), "utf8"),
     ).resolves.toContain("kind: Expert");
+  });
+
+  it("rejects a symlinked draft root and fails closed on a corrupt known record", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-boundary-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [
+        {
+          mode: "create",
+          key: "writer",
+          kind: "Expert",
+          name: "Writer",
+          description: "Writes concise text.",
+        },
+      ],
+    });
+    const external = join(root, "external-draft");
+    await mkdir(join(external, "experts"), { recursive: true });
+    await writeFile(join(external, draft.resources[0]!.relativePath), "kind: Expert\n");
+    await rm(draft.draftPath!, { recursive: true });
+    await symlink(external, draft.draftPath!, "dir");
+
+    await expect(adapter.prepareDslDraft({ missionId, draftId: draft.draftId })).rejects.toThrow(
+      "real directory",
+    );
+
+    await writeFile(
+      join(stateRoot, "dsl-resource-drafts", encodePragmaPathSegment(draft.draftId), "draft.json"),
+      "{",
+    );
+    await expect(adapter.listDslDrafts({ missionId, limit: 25 })).rejects.toThrow();
+  });
+
+  it("verifies an immutable prepared submission against its content-addressed identity", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-submission-integrity-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "integrity-base" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    const file = draft.resources[0]!.filePath!;
+    await writeFile(file, (await readFile(file, "utf8")).replace("Write concise text.", "Write."));
+    const hash = (await adapter.inspectDslDraft({ missionId, draftId: draft.draftId }))
+      .workingTreeHash;
+    requirePrepared(await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }));
+    await writeFile(
+      join(
+        stateRoot,
+        "dsl-resource-drafts",
+        encodePragmaPathSegment(draft.draftId),
+        "submissions",
+        hash,
+        draft.resources[0]!.relativePath,
+      ),
+      "tampered\n",
+    );
+
+    await expect(adapter.inspectDslDraft({ missionId, draftId: draft.draftId })).rejects.toThrow(
+      "content hash",
+    );
   });
 
   it("allocates IDs and prepares new Expert and ExpertTeam files atomically", async () => {
@@ -331,10 +441,10 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     });
 
     await writeFile(
-      writer.filePath,
+      writer.filePath!,
       expert("Writes concise text.", runtimeRef, writer.ref.slice("expert:".length)),
     );
-    await writeFile(team.filePath, expertTeam(team.ref.slice("team:".length), writer.ref));
+    await writeFile(team.filePath!, expertTeam(team.ref.slice("team:".length), writer.ref));
     const prepared = requirePrepared(
       await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
     );
@@ -695,6 +805,21 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
       resource: { metadata: { description } },
       diagnostics: [],
+    });
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    await expect(
+      adapter.prepareFlowDraft({
+        draftId: created.draftId,
+        expectedDraftRevision: 2,
+        additionalSources: [expert("Must use a file draft", runtimeRef)],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "dsl.file_draft_required" })],
     });
     await expect(
       adapter.prepareFlowDraft({

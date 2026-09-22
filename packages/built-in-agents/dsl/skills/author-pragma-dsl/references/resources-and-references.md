@@ -42,6 +42,7 @@ runtime-profile:7h8j9k0m1n2p3q4r
   traits are selection metadata and are not copied into Expert DSL.
 - Prefer an existing project RuntimeProfile only when its `spec.config.runtimeId`, `providerId`,
   `model`, and optional `thinkingLevel` match the intended selection. Otherwise use the Host
-  option's `runtimeProfileRef`; `prepare_dsl_changes` adds that dependency automatically.
+  option's `runtimeProfileRef`; `prepare_dsl_draft` adds that dependency automatically for Expert
+  and ExpertTeam drafts.
 - A Host Runtime or Capability ref may not be readable through `read_dsl_resource` before it is
   materialized. This is expected. Project refs must be readable before use.

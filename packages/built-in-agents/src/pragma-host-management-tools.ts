@@ -11,6 +11,7 @@ import {
   isShortPageCursor,
   ShortPageCursorError,
 } from "@pragma/core";
+import { parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
 import type {
@@ -521,7 +522,26 @@ function buildPragmaManagementHostTools(options: {
         },
         ["expectedProjectRevision", "sources"],
       ),
-      async (args) => ok(summarizePrepareResult(await project().prepare(PrepareInput.parse(args)))),
+      async (args) => {
+        const input = PrepareInput.parse(args);
+        if (input.sources.some(requiresDslFileDraft)) {
+          return ok(
+            PragmaAgentCompactPrepareResultSchema.parse({
+              status: "invalid",
+              diagnostics: [
+                {
+                  severity: "error",
+                  code: "dsl.file_draft_required",
+                  message:
+                    "Expert and ExpertTeam resources must use start_dsl_draft and prepare_dsl_draft.",
+                  path: [],
+                },
+              ],
+            }),
+          );
+        }
+        return ok(summarizePrepareResult(await project().prepare(input)));
+      },
     ),
     tool(
       "read_prepared_dsl_change",
@@ -1115,6 +1135,16 @@ function summarizePrepareResult(input: PragmaAgentPrepareResult) {
       createdAt: input.changeSet.createdAt,
     },
   });
+}
+
+function requiresDslFileDraft(source: string): boolean {
+  try {
+    const value = parsePragmaYaml(source);
+    if (typeof value !== "object" || value === null || !("kind" in value)) return false;
+    return value.kind === "Expert" || value.kind === "ExpertTeam";
+  } catch {
+    return false;
+  }
 }
 
 function hostOutputSchema(name: string): z.ZodType {
