@@ -191,7 +191,13 @@ export async function inspectBundleReadiness(
         });
       } else {
         try {
-          const capability = await options.capabilities.resolveActive(binding);
+          const capability = await options.capabilities
+            .resolveActive(binding)
+            .catch(async (error) => {
+              const latest = await options.capabilities.get(binding);
+              if (latest.health.status === "ready") throw error;
+              return latest;
+            });
           const diagnosticCode = capability.health.diagnostic?.code;
           const needsSetup = capability.health.status !== "ready";
           const status = needsSetup ? capabilityStatus(diagnosticCode) : "ready";

@@ -170,6 +170,9 @@ describe("CapabilityRevisionCoordinator", () => {
       journalRoot: root,
       capabilities: {
         get: async () => stored,
+        ensureActiveRevision: async (_id: string, revision: number) => {
+          stored = { ...stored, manifest: { ...stored.manifest, activeRevision: revision } };
+        },
         discardUnpublishedRevision: async () => false,
       } as unknown as CapabilityStore,
       project: fakeProject([]).store,
@@ -420,6 +423,70 @@ describe("CapabilityRevisionCoordinator", () => {
     expect(ensureActiveRevision).toHaveBeenCalledWith(CAPABILITY_ID, 2);
     expect(stored.manifest.activeRevision).toBe(2);
     expect(await journalFiles(root)).toEqual([]);
+  });
+
+  it("activates prepared credentials before exposing a ready revision", async () => {
+    const root = await temporaryRoot();
+    const current = {
+      ...capability(1, ["search"]),
+      manifest: { ...capability(1, ["search"]).manifest, activeRevision: 1 },
+    };
+    const candidate = {
+      ...capability(2, ["search"]),
+      manifest: { ...capability(2, ["search"]).manifest, activeRevision: 1 },
+    };
+    const events: string[] = [];
+    let stored: Capability = current;
+    const prepared = {
+      mutationId: "00000000-0000-4000-8000-000000000202",
+      capabilityId: CAPABILITY_ID,
+      previousRefs: [],
+      nextRefs: [],
+    };
+    const credentialStore: CapabilityCredentialStore = {
+      ...credentials,
+      prepareMany: async () => prepared,
+      activate: async () => {
+        events.push("credentials-active");
+      },
+      finalize: async () => {
+        events.push("credentials-finalized");
+      },
+    };
+    const store = {
+      get: async () => stored,
+      ensureActiveRevision: async (_id: string, revision: number) => {
+        events.push("revision-active");
+        stored = { ...stored, manifest: { ...stored.manifest, activeRevision: revision } };
+      },
+      discardUnpublishedRevision: async () => false,
+    } as unknown as CapabilityStore;
+    const coordinator = createCapabilityRevisionCoordinatorImpl({
+      journalRoot: root,
+      capabilities: store,
+      project: fakeProject([]).store,
+      systemExperts: fakeSystemExpert([]).registry,
+      credentials: credentialStore,
+    });
+
+    const result = await coordinator.publish({
+      current,
+      candidate,
+      prepareCredentials: async () => await credentialStore.prepareMany(CAPABILITY_ID, {}),
+      commit: async () => {
+        events.push("revision-written");
+        stored = candidate;
+        return stored;
+      },
+    });
+
+    expect(events).toEqual([
+      "revision-written",
+      "credentials-active",
+      "revision-active",
+      "credentials-finalized",
+    ]);
+    expect(result.manifest.activeRevision).toBe(2);
   });
 
   it("rolls back prepared credentials when Capability commit never becomes visible", async () => {

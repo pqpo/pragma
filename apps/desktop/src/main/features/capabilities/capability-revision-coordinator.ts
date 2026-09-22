@@ -74,7 +74,7 @@ export function createCapabilityRevisionCoordinator(options: {
     return next;
   };
 
-  const finishJournal = async (journal: Journal): Promise<void> => {
+  const finishJournal = async (journal: Journal, candidate: Capability): Promise<void> => {
     let current = journal;
     if (current.stage === "revision-pending") {
       const prepared =
@@ -89,6 +89,12 @@ export function createCapabilityRevisionCoordinator(options: {
       current = await advance(current, "revision-written");
     }
     if (current.stage === "revision-written") {
+      if (candidate.health.status === "ready") {
+        await options.capabilities.ensureActiveRevision(
+          current.capabilityId,
+          current.targetRevision,
+        );
+      }
       if (current.credentialMutation !== undefined) {
         await options.credentials.finalize(current.credentialMutation);
       }
@@ -161,10 +167,7 @@ export function createCapabilityRevisionCoordinator(options: {
       ) {
         await assertCompatible(candidate);
       }
-      if (candidate.health.status === "ready") {
-        await options.capabilities.ensureActiveRevision(id, journal.targetRevision);
-      }
-      await finishJournal(journal);
+      await finishJournal(journal, candidate);
     }
   };
 
@@ -310,8 +313,8 @@ export function createCapabilityRevisionCoordinator(options: {
           await writeJournal(journal);
         }
         const committed = await input.commit();
-        await finishJournal(journal);
-        return committed;
+        await finishJournal(journal, committed);
+        return await options.capabilities.get(input.id, input.expectedRevision);
       });
     },
     async publish(input) {
@@ -362,9 +365,9 @@ export function createCapabilityRevisionCoordinator(options: {
             journal = JournalSchema.parse({ ...journal, credentialMutation: prepared });
             await writeJournal(journal);
           }
-          const committed = await input.commit();
-          await finishJournal(journal);
-          return committed;
+          await input.commit();
+          await finishJournal(journal, input.candidate);
+          return await options.capabilities.get(id, input.candidate.manifest.latestRevision);
         });
       } finally {
         await cleanupCapabilityDirectory(id);

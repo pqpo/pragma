@@ -1875,26 +1875,22 @@ export function createPragmaBundleService(options: {
                   ...(dependency.kind === undefined ? {} : { capabilityKind: dependency.kind }),
                 });
               } else {
-                const capabilityAtBinding = await options.capabilities.resolveActive(
-                  capability.manifest.id,
-                );
                 Object.assign(
                   resource,
                   bindExistingDesktopCapabilityResource(resource, {
                     id: capability.manifest.id,
                   }),
                 );
-                if (capabilityAtBinding.health.status !== "ready") {
+                if (capability.health.status !== "ready") {
                   pending.push({
                     id: dependency.requirementId,
                     kind: "capability",
                     resourceRef: targetRef,
                     name: dependency.name,
                     message: "Complete capability setup before using this Bundle.",
-                    capabilityKind: capabilityAtBinding.definition.kind,
+                    capabilityKind: capability.definition.kind,
                     status: "action_required",
-                    code:
-                      capabilityAtBinding.health.diagnostic?.code ?? "capability_needs_attention",
+                    code: capability.health.diagnostic?.code ?? "capability_needs_attention",
                     action: "configure_capability",
                     targetId: capability.manifest.id,
                   });
@@ -2479,7 +2475,7 @@ export function createPragmaBundleService(options: {
         if (resource.kind !== "Capability") {
           throw new Error(`${resolution.resourceRef} is not a capability resource.`);
         }
-        const capability = await options.capabilities.resolveActive(resolution.capabilityId);
+        const capability = await options.capabilities.get(resolution.capabilityId);
         const requiredKind = pendingFor("capability", resolution.resourceRef)?.capabilityKind;
         if (requiredKind !== undefined && capability.definition.kind !== requiredKind) {
           throw new Error(`Choose a ${requiredKind} capability for ${resource.metadata.name}.`);

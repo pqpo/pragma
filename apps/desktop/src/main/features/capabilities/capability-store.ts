@@ -340,6 +340,21 @@ export function createCapabilityStore(options: {
         await options.credentials.activate(prepared);
         await options.credentials.finalize(prepared);
       }
+      const health = CapabilityHealthSchema.parse(
+        JSON.parse(await readFile(healthPath(id), "utf8")) as unknown,
+      );
+      if (
+        health.status === "ready" &&
+        manifest.data.activeRevision !== manifest.data.latestRevision
+      ) {
+        await writeJson(
+          manifestPath(id),
+          CapabilityManifestSchema.parse({
+            ...manifest.data,
+            activeRevision: manifest.data.latestRevision,
+          }),
+        );
+      }
       await rm(creationJournalPath(id), { force: true });
       return;
     }
@@ -573,7 +588,11 @@ export function createCapabilityStore(options: {
       }
       await beforeCommit?.();
       await writeJson(healthPath(id), health);
-      if (health.status === "ready" && latest.activeRevision !== expectedRevision) {
+      if (
+        health.status === "ready" &&
+        latest.activeRevision !== expectedRevision &&
+        prepareCredentials === undefined
+      ) {
         await writeJson(
           manifestPath(id),
           CapabilityManifestSchema.parse({ ...latest, activeRevision: expectedRevision }),
@@ -1060,7 +1079,6 @@ export function createCapabilityStore(options: {
         name: input.definition.name,
         kind: input.definition.kind,
         latestRevision: 1,
-        ...(verified.health.status === "ready" ? { activeRevision: 1 } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
       });
@@ -1075,13 +1093,19 @@ export function createCapabilityStore(options: {
           }),
         );
         prepared = await options.credentials.prepareMany(id, input.credentials);
-        const capability = await writeNewRevision(manifest, verified.definition, verified.health);
+        await writeNewRevision(manifest, verified.definition, verified.health);
         if (prepared !== undefined) {
           await options.credentials.activate(prepared);
           await options.credentials.finalize(prepared);
         }
+        if (verified.health.status === "ready") {
+          await writeJson(
+            manifestPath(id),
+            CapabilityManifestSchema.parse({ ...manifest, activeRevision: 1 }),
+          );
+        }
         await rm(creationJournalPath(id), { force: true }).catch(() => undefined);
-        return capability;
+        return await readCapability(id);
       } catch (error) {
         if (prepared !== undefined)
           await options.credentials.rollback(prepared).catch(() => undefined);
@@ -1114,9 +1138,6 @@ export function createCapabilityStore(options: {
         ...current,
         name: input.definition.name,
         latestRevision: current.latestRevision + 1,
-        ...(verified.health.status === "ready"
-          ? { activeRevision: current.latestRevision + 1 }
-          : {}),
         updatedAt: timestamp,
       });
       const existing = await readCapability(input.id);
@@ -1171,9 +1192,6 @@ export function createCapabilityStore(options: {
           ...current.manifest,
           name: verified.definition.name,
           latestRevision: current.manifest.latestRevision + 1,
-          ...(verified.health.status === "ready"
-            ? { activeRevision: current.manifest.latestRevision + 1 }
-            : {}),
           updatedAt: new Date().toISOString(),
         });
         const candidate = CapabilitySchema.parse({

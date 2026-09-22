@@ -688,6 +688,35 @@ describe("capability store", () => {
     expect(firstDefinition).not.toContain("top-secret");
   });
 
+  it("keeps the previous revision active until replacement credentials are activated", async () => {
+    const { credentials, store } = await createStore();
+    const created = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "initial" },
+    });
+    const activate = credentials.activate.bind(credentials);
+    vi.spyOn(credentials, "activate").mockImplementation(async (prepared) => {
+      await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+        manifest: { activeRevision: 1 },
+        definition: { description: "Customer records." },
+      });
+      await activate(prepared);
+    });
+
+    const updated = await store.update({
+      id: created.manifest.id,
+      baseRevision: 1,
+      definition: { ...httpDefinition, description: "Updated customer records." },
+      credentials: { "service-auth": "replacement" },
+    });
+
+    expect(updated.manifest.latestRevision).toBe(2);
+    await expect(store.resolveActive(created.manifest.id)).resolves.toMatchObject({
+      manifest: { activeRevision: 1 },
+      definition: { description: "Customer records." },
+    });
+  });
+
   it("removes a new Capability and its staged credentials when activation fails", async () => {
     const { credentials, store } = await createStore();
     vi.spyOn(credentials, "activate").mockRejectedValueOnce(new Error("activation failed"));
@@ -700,6 +729,30 @@ describe("capability store", () => {
     ).rejects.toThrow("activation failed");
 
     await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("finishes activation when creation recovery finds a durable ready revision", async () => {
+    const { directory, store } = await createStore();
+    const created = await store.create({ definition: httpDefinition, credentials: {} });
+    const root = join(directory, "capabilities", created.manifest.id);
+    const inactiveManifest = { ...created.manifest } as Record<string, unknown>;
+    delete inactiveManifest["activeRevision"];
+    await writeFile(join(root, "capability.json"), `${JSON.stringify(inactiveManifest)}\n`);
+    await writeFile(
+      join(root, "creation.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.capability-creation/v1",
+        capabilityId: created.manifest.id,
+      })}\n`,
+    );
+
+    await expect(store.get(created.manifest.id)).resolves.toMatchObject({
+      manifest: { activeRevision: 1 },
+      health: { status: "ready" },
+    });
+    await expect(readFile(join(root, "creation.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("does not create a revision for a semantically unchanged definition", async () => {

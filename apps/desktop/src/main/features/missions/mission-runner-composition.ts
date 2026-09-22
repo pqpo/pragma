@@ -2292,6 +2292,15 @@ export function createMissionRunner(options: {
       }
       const executionStartedAt = recoverable ? mission.execution!.startedAt : startedAt;
       if (recoverable) {
+        if (
+          mission.execution!.resolvedCapabilities === undefined ||
+          JSON.stringify(mission.execution!.resolvedCapabilities) !==
+            JSON.stringify(resolvedCapabilities)
+        ) {
+          throw new Error(
+            `Mission ${mission.id} cannot recover its Flow because its persisted Capability environment is missing or no longer active. Start a successor Mission instead.`,
+          );
+        }
         // Verify the durable Mission link before recover() starts the Flow again. Recovery keeps the
         // same Execution id, so the original timestamp makes this append idempotent.
         await options.missions.appendExecutionReference({
@@ -2339,8 +2348,12 @@ export function createMissionRunner(options: {
         inputMessageId,
         status: recoveredWaiting ? "waiting" : "running",
         contextMountsFingerprint,
-        environmentFingerprint: compiled.environmentFingerprint.value,
-        resolvedCapabilities,
+        environmentFingerprint: recoverable
+          ? mission.execution!.environmentFingerprint
+          : compiled.environmentFingerprint.value,
+        resolvedCapabilities: recoverable
+          ? mission.execution!.resolvedCapabilities
+          : resolvedCapabilities,
         startedAt: executionStartedAt,
       });
       trackExecution({
@@ -2359,6 +2372,16 @@ export function createMissionRunner(options: {
       mission.execution !== undefined &&
       mission.execution.sessionId !== undefined &&
       ["queued", "running", "waiting"].includes(mission.execution.status);
+    if (
+      recoverable &&
+      (mission.execution!.resolvedCapabilities === undefined ||
+        JSON.stringify(mission.execution!.resolvedCapabilities) !==
+          JSON.stringify(resolvedCapabilities))
+    ) {
+      throw new Error(
+        `Mission ${mission.id} cannot recover its Expert execution because its persisted Capability environment is missing or no longer active. Interrupt it and start a successor execution instead.`,
+      );
+    }
     phaseStartedAt = performance.now();
     const memoryBindingsChanged = sessionService.consumeMemoryBindingsChanged(mission.id);
     let session = sessionService.session(mission.id);
@@ -2584,9 +2607,9 @@ export function createMissionRunner(options: {
     }
     const executionEnvironmentChanged =
       session !== undefined &&
-      mission.execution?.resolvedCapabilities !== undefined &&
-      JSON.stringify(mission.execution.resolvedCapabilities) !==
-        JSON.stringify(desiredCapabilities);
+      (mission.execution?.resolvedCapabilities === undefined ||
+        JSON.stringify(mission.execution.resolvedCapabilities) !==
+          JSON.stringify(desiredCapabilities));
     logMissionPhase(logger, mission.id, "default_agent_compile", phaseStartedAt, acceptedAt, {
       cacheHit: compilationCacheHit,
     });

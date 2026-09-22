@@ -17,7 +17,7 @@ import {
   type PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
@@ -1136,6 +1136,145 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       dependencies: expect.arrayContaining([
         expect.objectContaining({ kind: "capability", included: true }),
       ]),
+    });
+  });
+
+  it("imports an included needs-attention Capability without requiring an active revision", async () => {
+    const source = await createFixture("pending-capability-source");
+    const snapshot = await source.project.get();
+    const sourceExpert = snapshot.resources.find(
+      (resource): resource is PragmaExpertResource => resource.kind === "Expert",
+    )!;
+    const capabilityResource = portableCapability();
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(capabilityResource), kind: "tools" }],
+          },
+        },
+        ...snapshot.resources.filter((resource) => resource.kind !== "Expert"),
+        capabilityResource,
+      ],
+    });
+    const definition = {
+      kind: "http_service" as const,
+      name: "Pending HTTP service",
+      description: "Requires credentials after import.",
+      baseUrl: "https://api.example.test/v1",
+      auth: { type: "bearer" as const, credentialRef: "service-auth" },
+      timeoutMs: 30_000,
+      tools: [
+        {
+          name: "get_customer",
+          description: "Get a customer.",
+          method: "GET" as const,
+          path: "/customers/{id}",
+          parameters: [
+            {
+              name: "id",
+              location: "path" as const,
+              required: true,
+              type: "string" as const,
+            },
+          ],
+        },
+      ],
+    };
+    const project = await source.project.openRevision(published.revision);
+    const path = join(source.root, "pending-capability.pragma");
+    try {
+      const exported = await project.exportBundle({
+        roots: ["expert:1xddvess309a6gme"],
+        host: {
+          exportPayload: async ({ requirement }) =>
+            requirement.kind === "binding"
+              ? {
+                  codec: "pragma.desktop.capability@v2",
+                  files: new Map([
+                    [
+                      "descriptor.json",
+                      strToU8(
+                        JSON.stringify({
+                          schemaVersion: "pragma.desktop.capability-descriptor/v2",
+                          logicalId: "0123456789abcdef",
+                          revision: 1,
+                          definition,
+                        }),
+                      ),
+                    ],
+                  ]),
+                }
+              : undefined,
+        },
+      });
+      await writeFile(path, exported.bytes);
+    } finally {
+      await project.dispose();
+    }
+    const created: Capability = {
+      manifest: {
+        schemaVersion: "pragma.capability/v4",
+        id: "1h2j3k4m5n6p7q8r",
+        runtimeKey: "pending-http-service",
+        name: definition.name,
+        kind: definition.kind,
+        latestRevision: 1,
+        createdAt: "2026-09-22T00:00:00.000Z",
+        updatedAt: "2026-09-22T00:00:00.000Z",
+      },
+      definition,
+      health: {
+        revision: 1,
+        status: "needs_attention",
+        checkedAt: "2026-09-22T00:00:00.000Z",
+        diagnostic: {
+          code: "credential_missing",
+          message: "Credential missing.",
+          retryable: true,
+        },
+      },
+    };
+    const resolveActive = vi.fn(async () => {
+      throw new Error("A pending Capability has no active revision.");
+    });
+    const target = await createFixture("pending-capability-target", {
+      capabilities: {
+        list: async () => [],
+        create: async () => created,
+        get: async () => created,
+        resolveActive,
+        remove: async () => undefined,
+      } as unknown as CapabilityStore,
+    });
+    const inspection = await target.service.inspect(path);
+
+    const installation = await target.service.startImport({
+      ...importInput(
+        path,
+        inspection.bundleFingerprint,
+        inspection.projectFingerprint,
+        inspection.projectRevision,
+      ),
+      conflicts: inspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "copy" as const,
+      })),
+    });
+
+    expect(installation).toMatchObject({
+      status: "needs_setup",
+      createdCapabilityIds: [created.manifest.id],
+      pending: [
+        expect.objectContaining({
+          kind: "capability",
+          status: "action_required",
+          targetId: created.manifest.id,
+        }),
+      ],
     });
   });
 
