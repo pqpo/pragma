@@ -449,6 +449,21 @@ export function createDesktopPragmaAgentProjectPort(options: {
     });
   };
 
+  const findPublishedCandidate = async (
+    candidate: CandidateRecord,
+  ): Promise<PragmaAgentProjectCommit | undefined> => {
+    const snapshot = await options.project.findRevisionByPublicationId(
+      candidate.changeSet.changeSetId,
+    );
+    return snapshot === undefined
+      ? undefined
+      : PragmaAgentProjectCommitSchema.parse({
+          projectId: snapshot.projectId,
+          projectRevision: snapshot.revision,
+          changedRefs: candidate.changeSet.changes.map((change) => change.ref),
+        });
+  };
+
   const readDslDraftCommitJournal = async (
     draftId: string,
   ): Promise<DslDraftCommitJournal | undefined> => {
@@ -464,6 +479,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
 
   const replayDslDraftCommit = async (
     draftId: string,
+    publicationMode: "recover" | "publish" = "recover",
   ): Promise<DslDraftCommitJournal | undefined> => {
     let journal = await readDslDraftCommitJournal(draftId);
     if (journal === undefined) return undefined;
@@ -477,14 +493,17 @@ export function createDesktopPragmaAgentProjectPort(options: {
       throw new Error("DSL draft commit journal does not match its prepared change-set.");
     }
     if (journal.state === "initiated") {
-      let result: PragmaAgentProjectCommit;
-      try {
-        result = await publishCandidate(candidate);
-      } catch (error) {
-        if ((error as { readonly code?: string }).code === "revision_conflict") {
-          await rm(dslDraftCommitJournalPath(draftId), { force: true });
+      let result =
+        publicationMode === "recover" ? await findPublishedCandidate(candidate) : undefined;
+      if (result === undefined) {
+        try {
+          result = await publishCandidate(candidate);
+        } catch (error) {
+          if ((error as { readonly code?: string }).code === "revision_conflict") {
+            await rm(dslDraftCommitJournalPath(draftId), { force: true });
+          }
+          throw error;
         }
-        throw error;
       }
       journal = DslDraftCommitJournalSchema.parse({
         ...journal,
@@ -1762,7 +1781,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
               state: "initiated",
             }),
           );
-          const committed = await replayDslDraftCommit(candidate.dslDraftId!);
+          const committed = await replayDslDraftCommit(candidate.dslDraftId!, "publish");
           const result = committed?.result;
           if (result === undefined)
             throw new Error("DSL draft commit recovery produced no result.");

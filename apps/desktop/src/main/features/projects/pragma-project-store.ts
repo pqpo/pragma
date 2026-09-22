@@ -503,20 +503,7 @@ export function createPragmaProjectStore(options: {
     },
     apply,
     async applyTransactional(input, publicationId) {
-      const parsedPublicationId = z.string().uuid().parse(publicationId);
-      const head = await get();
-      if (head.revision !== input.baseRevision) {
-        const published = await sourceRepository.getRevisionByPublicationId?.(
-          projectId,
-          parsedPublicationId,
-        );
-        if (published !== undefined) {
-          return PragmaProjectSnapshotSchema.parse(
-            await service.get(projectId, published.revision),
-          );
-        }
-      }
-      return await applyChangeSet(input, parsedPublicationId);
+      return await applyChangeSet(input, z.string().uuid().parse(publicationId));
     },
     async findRevisionByPublicationId(publicationId) {
       await ensureMigrated();

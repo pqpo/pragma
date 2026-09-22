@@ -617,15 +617,6 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       }),
     );
     await adapter.commit({ changeSetId: initial.changeSetId, operationId: "lookup-base" });
-    const second = requirePrepared(
-      await adapter.prepare({
-        expectedProjectRevision: 1,
-        sources: [
-          expert("Second", runtimeRef, "2h3j4k5m6n7p8q9r").replace("name: Writer", "name: Second"),
-        ],
-      }),
-    );
-    await adapter.commit({ changeSetId: second.changeSetId, operationId: "lookup-second" });
     const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
     const draft = await adapter.startDslDraft({
       missionId,
@@ -642,7 +633,21 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     const prepared = requirePrepared(
       await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
     );
-    await writeFile(join(root, "projects", "studio", "revisions", "1.json"), "{");
+    const second = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [
+          expert("Second", runtimeRef, "2h3j4k5m6n7p8q9r").replace("name: Writer", "name: Second"),
+        ],
+      }),
+    );
+    await adapter.commit({ changeSetId: second.changeSetId, operationId: "lookup-second" });
+    Object.defineProperty(project, "findRevisionByPublicationId", {
+      configurable: true,
+      value: async () => {
+        throw new Error("A first unrelated-rebase publication must not scan publication history.");
+      },
+    });
     await expect(
       adapter.commit({
         changeSetId: prepared.changeSetId,
