@@ -206,7 +206,7 @@ export function createDesktopPragmaAgentProjectPort(options: {
   const dslDraftRestartJournalPath = (id: string) =>
     join(dslDraftsRoot, encodePragmaPathSegment(id), "restart.json");
   const dslDraftMutationLockPath = (id: string) =>
-    join(dslDraftsRoot, encodePragmaPathSegment(id), "mutation.lock");
+    join(dslDraftsRoot, ".locks", `${encodePragmaPathSegment(id)}.lock`);
 
   const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
@@ -449,21 +449,6 @@ export function createDesktopPragmaAgentProjectPort(options: {
     });
   };
 
-  const findPublishedCandidate = async (
-    candidate: CandidateRecord,
-  ): Promise<PragmaAgentProjectCommit | undefined> => {
-    const snapshot = await options.project.findRevisionByPublicationId(
-      candidate.changeSet.changeSetId,
-    );
-    return snapshot === undefined
-      ? undefined
-      : PragmaAgentProjectCommitSchema.parse({
-          projectId: snapshot.projectId,
-          projectRevision: snapshot.revision,
-          changedRefs: candidate.changeSet.changes.map((change) => change.ref),
-        });
-  };
-
   const readDslDraftCommitJournal = async (
     draftId: string,
   ): Promise<DslDraftCommitJournal | undefined> => {
@@ -492,16 +477,14 @@ export function createDesktopPragmaAgentProjectPort(options: {
       throw new Error("DSL draft commit journal does not match its prepared change-set.");
     }
     if (journal.state === "initiated") {
-      let result = await findPublishedCandidate(candidate);
-      if (result === undefined) {
-        try {
-          result = await publishCandidate(candidate);
-        } catch (error) {
-          if ((error as { readonly code?: string }).code === "revision_conflict") {
-            await rm(dslDraftCommitJournalPath(draftId), { force: true });
-          }
-          throw error;
+      let result: PragmaAgentProjectCommit;
+      try {
+        result = await publishCandidate(candidate);
+      } catch (error) {
+        if ((error as { readonly code?: string }).code === "revision_conflict") {
+          await rm(dslDraftCommitJournalPath(draftId), { force: true });
         }
+        throw error;
       }
       journal = DslDraftCommitJournalSchema.parse({
         ...journal,
@@ -707,142 +690,144 @@ export function createDesktopPragmaAgentProjectPort(options: {
     const workspacePath = await resolveDslDraftWorkspace(input.workspacePath);
     const snapshot = await options.project.get();
     const draftId = input.draftId ?? randomUUID();
-    const worktreePath = dslDraftWorktreePath({ draftId, workspacePath });
-    const usedIds = new Set(snapshot.resources.map((resource) => resource.metadata.id));
-    const usedRefs = new Set<string>();
-    const usedKeys = new Set<string>();
-    const prepared: Array<{
-      readonly target: StoredDslDraft["resources"][number];
-      readonly source: string;
-    }> = [];
-    try {
-      if (input.draftId !== undefined) {
-        try {
-          const existingOwner = DslDraftOwnerSchema.parse(
-            JSON.parse(await readFile(dslDraftOwnerPath(draftId), "utf8")) as unknown,
-          );
-          if (
-            existingOwner.draftId !== draftId ||
-            existingOwner.missionId !== input.missionId ||
-            existingOwner.workspacePath !== workspacePath
-          ) {
-            throw new Error("DSL draft restart replacement identity mismatch.");
+    return await withFileLock(dslDraftMutationLockPath(draftId), async () => {
+      const worktreePath = dslDraftWorktreePath({ draftId, workspacePath });
+      const usedIds = new Set(snapshot.resources.map((resource) => resource.metadata.id));
+      const usedRefs = new Set<string>();
+      const usedKeys = new Set<string>();
+      const prepared: Array<{
+        readonly target: StoredDslDraft["resources"][number];
+        readonly source: string;
+      }> = [];
+      try {
+        if (input.draftId !== undefined) {
+          try {
+            const existingOwner = DslDraftOwnerSchema.parse(
+              JSON.parse(await readFile(dslDraftOwnerPath(draftId), "utf8")) as unknown,
+            );
+            if (
+              existingOwner.draftId !== draftId ||
+              existingOwner.missionId !== input.missionId ||
+              existingOwner.workspacePath !== workspacePath
+            ) {
+              throw new Error("DSL draft restart replacement identity mismatch.");
+            }
+            if (existingOwner.state === "ready") return await readDslDraftRecord(draftId);
+            await rm(join(workspacePath, ".pragma", "dsl-drafts", draftId), {
+              recursive: true,
+              force: true,
+            });
+            await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
-          if (existingOwner.state === "ready") return await readDslDraftRecord(draftId);
-          await rm(join(workspacePath, ".pragma", "dsl-drafts", draftId), {
-            recursive: true,
-            force: true,
-          });
-          await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
-      }
-      await writeJson(
-        dslDraftOwnerPath(draftId),
-        DslDraftOwnerSchema.parse({
-          schemaVersion: "pragma.dsl-draft-owner/v1",
-          draftId,
-          missionId: input.missionId,
-          workspacePath,
-          state: "initializing",
-        }),
-      );
-      await prepareDslDraftWorkspace(workspacePath, draftId);
-      for (const target of input.targets) {
-        if (target.mode === "edit") {
-          if (usedRefs.has(target.ref))
-            throw new Error(`Duplicate DSL draft target: ${target.ref}`);
-          const resource = snapshot.resources.find(
-            (candidate) => canonicalPragmaResourceRef(candidate) === target.ref,
-          );
-          if (resource === undefined) throw new Error(`Pragma resource not found: ${target.ref}`);
-          if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam") {
-            throw new Error(`DSL file drafts support only Expert and ExpertTeam: ${target.ref}`);
+        await writeJson(
+          dslDraftOwnerPath(draftId),
+          DslDraftOwnerSchema.parse({
+            schemaVersion: "pragma.dsl-draft-owner/v1",
+            draftId,
+            missionId: input.missionId,
+            workspacePath,
+            state: "initializing",
+          }),
+        );
+        await prepareDslDraftWorkspace(workspacePath, draftId);
+        for (const target of input.targets) {
+          if (target.mode === "edit") {
+            if (usedRefs.has(target.ref))
+              throw new Error(`Duplicate DSL draft target: ${target.ref}`);
+            const resource = snapshot.resources.find(
+              (candidate) => canonicalPragmaResourceRef(candidate) === target.ref,
+            );
+            if (resource === undefined) throw new Error(`Pragma resource not found: ${target.ref}`);
+            if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam") {
+              throw new Error(`DSL file drafts support only Expert and ExpertTeam: ${target.ref}`);
+            }
+            const source = formatPragmaYaml(resource);
+            const relativePath = dslDraftRelativePath(resource.kind, resource.metadata.id);
+            usedRefs.add(target.ref);
+            prepared.push({
+              source,
+              target: {
+                mode: "edit",
+                ref: target.ref,
+                kind: resource.kind,
+                name: resource.metadata.name,
+                relativePath,
+                filePath: join(worktreePath, relativePath),
+                baseSha256: sha256(source),
+                initialSha256: sha256(source),
+              },
+            });
+            continue;
           }
-          const source = formatPragmaYaml(resource);
-          const relativePath = dslDraftRelativePath(resource.kind, resource.metadata.id);
-          usedRefs.add(target.ref);
+          if (usedKeys.has(target.key)) throw new Error(`Duplicate DSL draft key: ${target.key}`);
+          usedKeys.add(target.key);
+          const fixed = input.fixedCreates?.get(target.key);
+          let id = fixed?.id ?? generatePragmaResourceId();
+          while (fixed === undefined && usedIds.has(id)) id = generatePragmaResourceId();
+          if (fixed !== undefined && usedIds.has(id)) {
+            throw new Error(`Allocated DSL resource ID is no longer available: ${id}`);
+          }
+          usedIds.add(id);
+          const ref = fixed?.ref ?? `${target.kind === "Expert" ? "expert" : "team"}:${id}`;
+          if (usedRefs.has(ref)) throw new Error(`Duplicate DSL draft target: ${ref}`);
+          usedRefs.add(ref);
+          const source = newDslDraftSkeleton({ ...target, id });
+          const relativePath = dslDraftRelativePath(target.kind, id);
           prepared.push({
             source,
             target: {
-              mode: "edit",
-              ref: target.ref,
-              kind: resource.kind,
-              name: resource.metadata.name,
+              mode: "create",
+              key: target.key,
+              ref,
+              kind: target.kind,
+              name: target.name,
               relativePath,
               filePath: join(worktreePath, relativePath),
-              baseSha256: sha256(source),
               initialSha256: sha256(source),
+              creationDescription: fixed?.description ?? target.description,
             },
           });
-          continue;
         }
-        if (usedKeys.has(target.key)) throw new Error(`Duplicate DSL draft key: ${target.key}`);
-        usedKeys.add(target.key);
-        const fixed = input.fixedCreates?.get(target.key);
-        let id = fixed?.id ?? generatePragmaResourceId();
-        while (fixed === undefined && usedIds.has(id)) id = generatePragmaResourceId();
-        if (fixed !== undefined && usedIds.has(id)) {
-          throw new Error(`Allocated DSL resource ID is no longer available: ${id}`);
+        for (const item of prepared) {
+          await mkdir(dirname(item.target.filePath), { recursive: true, mode: 0o700 });
+          await writeFile(item.target.filePath, item.source, { encoding: "utf8", mode: 0o600 });
         }
-        usedIds.add(id);
-        const ref = fixed?.ref ?? `${target.kind === "Expert" ? "expert" : "team"}:${id}`;
-        if (usedRefs.has(ref)) throw new Error(`Duplicate DSL draft target: ${ref}`);
-        usedRefs.add(ref);
-        const source = newDslDraftSkeleton({ ...target, id });
-        const relativePath = dslDraftRelativePath(target.kind, id);
-        prepared.push({
-          source,
-          target: {
-            mode: "create",
-            key: target.key,
-            ref,
-            kind: target.kind,
-            name: target.name,
-            relativePath,
-            filePath: join(worktreePath, relativePath),
-            initialSha256: sha256(source),
-            creationDescription: fixed?.description ?? target.description,
-          },
-        });
-      }
-      for (const item of prepared) {
-        await mkdir(dirname(item.target.filePath), { recursive: true, mode: 0o700 });
-        await writeFile(item.target.filePath, item.source, { encoding: "utf8", mode: 0o600 });
-      }
-      const now = new Date().toISOString();
-      const draft = StoredDslDraftSchema.parse({
-        schemaVersion: "pragma.dsl-draft/v1",
-        draftId,
-        missionId: input.missionId,
-        baseProjectRevision: snapshot.revision,
-        state: "editing",
-        workspacePath,
-        resources: prepared.map((item) => item.target),
-        createdAt: now,
-        updatedAt: now,
-      });
-      await writeDslDraft(draft);
-      await writeJson(
-        dslDraftOwnerPath(draftId),
-        DslDraftOwnerSchema.parse({
-          schemaVersion: "pragma.dsl-draft-owner/v1",
+        const now = new Date().toISOString();
+        const draft = StoredDslDraftSchema.parse({
+          schemaVersion: "pragma.dsl-draft/v1",
           draftId,
           missionId: input.missionId,
+          baseProjectRevision: snapshot.revision,
+          state: "editing",
           workspacePath,
-          state: "ready",
-        }),
-      );
-      return draft;
-    } catch (error) {
-      await rm(join(workspacePath, ".pragma", "dsl-drafts", draftId), {
-        recursive: true,
-        force: true,
-      });
-      await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
-      throw error;
-    }
+          resources: prepared.map((item) => item.target),
+          createdAt: now,
+          updatedAt: now,
+        });
+        await writeDslDraft(draft);
+        await writeJson(
+          dslDraftOwnerPath(draftId),
+          DslDraftOwnerSchema.parse({
+            schemaVersion: "pragma.dsl-draft-owner/v1",
+            draftId,
+            missionId: input.missionId,
+            workspacePath,
+            state: "ready",
+          }),
+        );
+        return draft;
+      } catch (error) {
+        await rm(join(workspacePath, ".pragma", "dsl-drafts", draftId), {
+          recursive: true,
+          force: true,
+        });
+        await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
+        throw error;
+      }
+    });
   };
 
   async function recoverDslDraftRestart(draftId: string): Promise<void> {
@@ -1037,13 +1022,41 @@ export function createDesktopPragmaAgentProjectPort(options: {
         }
         if (owner.draftId !== draftId || owner.missionId !== input.missionId) continue;
         if (owner.state === "initializing") {
-          await withFileLock(dslDraftMutationLockPath(draftId), async () => {
-            await rm(join(owner.workspacePath, ".pragma", "dsl-drafts", draftId), {
-              recursive: true,
-              force: true,
-            });
-          });
-          await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
+          const initializationOutcome = await withFileLock(
+            dslDraftMutationLockPath(draftId),
+            async () => {
+              let currentOwner: DslDraftOwner;
+              try {
+                currentOwner = DslDraftOwnerSchema.parse(
+                  JSON.parse(await readFile(dslDraftOwnerPath(draftId), "utf8")) as unknown,
+                );
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing" as const;
+                throw error;
+              }
+              if (
+                currentOwner.draftId !== draftId ||
+                currentOwner.missionId !== input.missionId ||
+                currentOwner.state === "ready"
+              ) {
+                if (
+                  currentOwner.draftId === draftId &&
+                  currentOwner.missionId === input.missionId &&
+                  currentOwner.state === "ready"
+                ) {
+                  return "ready" as const;
+                }
+                return "missing" as const;
+              }
+              await rm(join(currentOwner.workspacePath, ".pragma", "dsl-drafts", draftId), {
+                recursive: true,
+                force: true,
+              });
+              await rm(dirname(dslDraftRecordPath(draftId)), { recursive: true, force: true });
+              return "recovered" as const;
+            },
+          );
+          if (initializationOutcome === "ready") ownedDraftIds.push(draftId);
           continue;
         }
         ownedDraftIds.push(draftId);

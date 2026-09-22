@@ -503,7 +503,20 @@ export function createPragmaProjectStore(options: {
     },
     apply,
     async applyTransactional(input, publicationId) {
-      return await applyChangeSet(input, z.string().uuid().parse(publicationId));
+      const parsedPublicationId = z.string().uuid().parse(publicationId);
+      const head = await get();
+      if (head.revision !== input.baseRevision) {
+        const published = await sourceRepository.getRevisionByPublicationId?.(
+          projectId,
+          parsedPublicationId,
+        );
+        if (published !== undefined) {
+          return PragmaProjectSnapshotSchema.parse(
+            await service.get(projectId, published.revision),
+          );
+        }
+      }
+      return await applyChangeSet(input, parsedPublicationId);
     },
     async findRevisionByPublicationId(publicationId) {
       await ensureMigrated();
@@ -867,16 +880,16 @@ function createDesktopProjectSourceRepository(options: {
       return await withFileLock(
         commitLockPath(input.projectId),
         async () => {
-          if (input.publicationId !== undefined) {
-            const published = await findRevisionByPublicationId(
-              input.projectId,
-              input.publicationId,
-            );
-            if (published !== undefined) return published;
-          }
           const current = await readManifest(input.projectId);
           const actualRevision = current?.headRevision ?? 0;
           if (actualRevision !== input.expectedRevision) {
+            if (input.publicationId !== undefined) {
+              const published = await findRevisionByPublicationId(
+                input.projectId,
+                input.publicationId,
+              );
+              if (published !== undefined) return published;
+            }
             throw new PragmaProjectRevisionConflictError(input.expectedRevision, actualRevision);
           }
           const snapshotFiles = new Map<string, Uint8Array>();

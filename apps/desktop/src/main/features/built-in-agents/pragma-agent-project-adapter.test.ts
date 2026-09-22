@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaFlowRunDryCaseSchema } from "@pragma/evaluation/ast";
-import { encodePragmaPathSegment } from "@pragma/core";
+import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -559,6 +559,97 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     await expect(readFile(join(workspaceDraft, "partial"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("rechecks an initializing owner under the stable creation lock before recovery", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-live-initialization-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "create", key: "live", kind: "Expert", name: "Live", description: "Live" }],
+    });
+    const recordRoot = join(
+      stateRoot,
+      "dsl-resource-drafts",
+      encodePragmaPathSegment(draft.draftId),
+    );
+    const ownerPath = join(recordRoot, "owner.json");
+    const readyOwner = JSON.parse(await readFile(ownerPath, "utf8")) as Record<string, unknown>;
+    const lockPath = join(
+      stateRoot,
+      "dsl-resource-drafts",
+      ".locks",
+      `${encodePragmaPathSegment(draft.draftId)}.lock`,
+    );
+    let listing!: ReturnType<typeof adapter.listDslDrafts>;
+    await withFileLock(lockPath, async () => {
+      await writeFile(ownerPath, JSON.stringify({ ...readyOwner, state: "initializing" }));
+      listing = adapter.listDslDrafts({ missionId, limit: 25 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await writeFile(ownerPath, JSON.stringify(readyOwner));
+    });
+    await expect(listing).resolves.toMatchObject({
+      items: [expect.objectContaining({ draftId: draft.draftId, state: "editing" })],
+    });
+    await expect(
+      adapter.inspectDslDraft({ missionId, draftId: draft.draftId }),
+    ).resolves.toMatchObject({ draftId: draft.draftId, state: "editing" });
+  });
+
+  it("does not scan historical revision manifests on a first transactional publication", async () => {
+    const root = await temporaryRoot("pragma-dsl-draft-first-publication-");
+    const stateRoot = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+    const runtimeRef = (
+      (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+        runtimeProfileRef: string;
+      }
+    ).runtimeProfileRef;
+    const initial = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Original", runtimeRef)],
+      }),
+    );
+    await adapter.commit({ changeSetId: initial.changeSetId, operationId: "lookup-base" });
+    const second = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [
+          expert("Second", runtimeRef, "2h3j4k5m6n7p8q9r").replace("name: Writer", "name: Second"),
+        ],
+      }),
+    );
+    await adapter.commit({ changeSetId: second.changeSetId, operationId: "lookup-second" });
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    const draft = await adapter.startDslDraft({
+      missionId,
+      workspacePath: root,
+      targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+    });
+    await writeFile(
+      draft.resources[0]!.filePath!,
+      (await readFile(draft.resources[0]!.filePath!, "utf8")).replace(
+        "Write concise text.",
+        "Write without history lookup.",
+      ),
+    );
+    const prepared = requirePrepared(
+      await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+    );
+    await writeFile(join(root, "projects", "studio", "revisions", "1.json"), "{");
+    await expect(
+      adapter.commit({
+        changeSetId: prepared.changeSetId,
+        operationId: "first-publication",
+        missionId,
+      }),
+    ).resolves.toMatchObject({ projectRevision: 3 });
   });
 
   it("atomically detaches the editable worktree before project validation", async () => {
