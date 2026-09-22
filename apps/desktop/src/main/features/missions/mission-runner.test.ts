@@ -4233,6 +4233,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         expect.objectContaining({ inputSummary: "Review the revised draft" }),
       ],
     });
+    expect(workProjection).not.toHaveBeenCalled();
     const conversation = await runner.getWorkConversation({
       id: mission.id,
       recordId: reviewerRecords[0]!.recordId,

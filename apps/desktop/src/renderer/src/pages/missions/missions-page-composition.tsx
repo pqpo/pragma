@@ -4092,7 +4092,12 @@ export function teamParticipantWorkRecords(
 ): MissionWorkRecord[] {
   const memberIds = new Set(members.map((member) => expertIdFromRef(member.ref)));
   return records
-    .filter((record) => record.executorId !== undefined && memberIds.has(record.executorId))
+    .filter(
+      (record) =>
+        record.kind !== "root" &&
+        record.executorId !== undefined &&
+        memberIds.has(record.executorId),
+    )
     .toSorted((left, right) => {
       const activity = Number(right.status === "running") - Number(left.status === "running");
       if (activity !== 0) return activity;

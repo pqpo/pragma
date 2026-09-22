@@ -1848,6 +1848,12 @@ describe("Mission work grid", () => {
     ];
     const participants = teamParticipantWorkRecords(records, [
       {
+        ref: "expert:coordinator-id",
+        name: "Coordinator",
+        description: "Coordinates",
+        avatarId: "pragma.avatar.expert.01",
+      },
+      {
         ref: "expert:member-id",
         name: "Researcher",
         description: "Researches",

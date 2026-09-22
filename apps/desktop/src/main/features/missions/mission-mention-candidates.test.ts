@@ -26,7 +26,7 @@ describe("Mission mention candidates", () => {
         },
         spec: {
           coordinator: { ref: "expert:1xddvess309a6gme" },
-          members: [{ ref: "expert:3sfd30h5017wd17d" }],
+          members: [{ ref: "expert:1xddvess309a6gme" }, { ref: "expert:3sfd30h5017wd17d" }],
         },
       },
     ] as PragmaResource[];
@@ -57,6 +57,11 @@ describe("Mission mention candidates", () => {
       "Store Revision Agent",
       "pragma.avatar.expert.18",
     );
+    const systemMember = expert(
+      "0000000000sk1rev",
+      "Skill Revision Agent",
+      "pragma.avatar.expert.19",
+    );
     const team = {
       apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
       kind: "ExpertTeam",
@@ -68,7 +73,7 @@ describe("Mission mention candidates", () => {
       },
       spec: {
         coordinator: { ref: "expert:0000000000st0rev" },
-        members: [{ ref: "expert:0000000000st0rev" }],
+        members: [{ ref: "expert:0000000000st0rev" }, { ref: "expert:0000000000sk1rev" }],
       },
     } as unknown as PragmaExpertTeamResource;
 
@@ -76,14 +81,16 @@ describe("Mission mention candidates", () => {
       expertTeamMentionCandidates(team, [team], (ref) =>
         ref === "expert:0000000000st0rev"
           ? (systemExpert as Extract<PragmaResource, { kind: "Expert" }>)
-          : undefined,
+          : ref === "expert:0000000000sk1rev"
+            ? (systemMember as Extract<PragmaResource, { kind: "Expert" }>)
+            : undefined,
       ),
     ).toEqual([
       {
-        ref: "expert:0000000000st0rev",
-        name: "Store Revision Agent",
-        description: "Store Revision Agent description",
-        avatarId: "pragma.avatar.expert.18",
+        ref: "expert:0000000000sk1rev",
+        name: "Skill Revision Agent",
+        description: "Skill Revision Agent description",
+        avatarId: "pragma.avatar.expert.19",
       },
     ]);
     expect(
