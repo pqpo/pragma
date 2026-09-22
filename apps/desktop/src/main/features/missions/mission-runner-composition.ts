@@ -1454,6 +1454,7 @@ export function createMissionRunner(options: {
     const desktopAdapterHost = createDesktopAdapterHost(
       {
         ...options,
+        pragmaManagementScope: { missionId: mission.id, workspacePath: mission.workspace.path },
         ...(Object.keys(pragmaManagement).length === 0 ? {} : { pragmaManagement }),
       },
       mission.workspace.path,

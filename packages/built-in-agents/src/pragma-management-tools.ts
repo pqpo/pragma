@@ -17,6 +17,7 @@ import type {
 import {
   PRAGMA_MANAGEMENT_HOST_TOOL_DEFINITIONS,
   createPragmaManagementHostTools,
+  type PragmaManagementHostScope,
 } from "./pragma-host-management-tools.ts";
 import {
   PRAGMA_MANAGEMENT_MAX_PAGE_LIMIT,
@@ -779,6 +780,7 @@ export const PRAGMA_MANAGEMENT_TOOL_DEFINITIONS = [
 
 export function createPragmaManagementTools(
   ports: PragmaManagementToolPorts,
+  scope?: PragmaManagementHostScope,
 ): readonly PragmaManagementTool[] {
   if (
     (ports.project === undefined) !== (ports.missions === undefined) ||
@@ -792,6 +794,7 @@ export function createPragmaManagementTools(
       : createPragmaManagementHostTools({
           project: ports.project,
           missions: ports.missions,
+          ...(scope === undefined ? {} : { scope }),
           ...(ports.automations === undefined ? {} : { automations: ports.automations }),
         });
   const port = ports.knowledgeRevisions;

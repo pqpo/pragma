@@ -11,6 +11,7 @@ import {
   isShortPageCursor,
   ShortPageCursorError,
 } from "@pragma/core";
+import { parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
 import type {
@@ -29,6 +30,10 @@ import {
   PragmaAgentFlowDraftUpdateSummarySchema,
   PragmaAgentResourcePageSchema,
   PragmaAgentDslDocumentSchema,
+  PragmaAgentDslDraftInspectionSchema,
+  PragmaAgentDslDraftPageSchema,
+  PragmaAgentDslDraftSchema,
+  PragmaAgentDslDraftTargetInputSchema,
   PragmaAgentExpertOptionPageSchema,
   PragmaAgentCompactPrepareResultSchema,
   PragmaAgentProjectCommitSchema,
@@ -96,6 +101,12 @@ const PrepareInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),
   sources: z.array(z.string().min(1).max(2_000_000)).min(1).max(50),
 });
+const StartDslDraftInput = z
+  .object({
+    targets: z.array(PragmaAgentDslDraftTargetInputSchema).min(1).max(50),
+  })
+  .strict();
+const DslDraftIdInput = z.object({ draftId: z.string().uuid() }).strict();
 const CommitInput = z.object({ changeSetId: z.string().uuid() });
 const ReadPreparedDslChangeInput = z
   .object({
@@ -285,17 +296,26 @@ interface PragmaManagementHostToolPorts {
   readonly automations?: PragmaAgentAutomationPort | undefined;
 }
 
+export interface PragmaManagementHostScope {
+  readonly missionId: string;
+  readonly workspacePath: string;
+}
+
 export function createPragmaManagementHostTools(
-  options: PragmaManagementHostToolPorts,
+  options: PragmaManagementHostToolPorts & {
+    readonly scope?: PragmaManagementHostScope | undefined;
+  },
 ): readonly PragmaManagementHostTool[] {
   return buildPragmaManagementHostTools({
     ports: options,
+    scope: options.scope,
     includeAutomationTools: options.automations !== undefined,
   });
 }
 
 function buildPragmaManagementHostTools(options: {
   readonly ports?: PragmaManagementHostToolPorts | undefined;
+  readonly scope?: PragmaManagementHostScope | undefined;
   readonly includeAutomationTools: boolean;
 }): readonly PragmaManagementHostTool[] {
   const project = (): PragmaAgentDslProjectPort => {
@@ -315,6 +335,12 @@ function buildPragmaManagementHostTools(options: {
     const id = context?.toolCallId;
     if (id === undefined) throw new Error("A Pragma management write tool requires a toolCallId.");
     return id;
+  };
+  const scope = (): PragmaManagementHostScope => {
+    if (options.scope === undefined) {
+      throw new Error("Pragma DSL drafts require an active Mission workspace.");
+    }
+    return options.scope;
   };
   const automationTools: readonly PragmaManagementHostTool[] = !options.includeAutomationTools
     ? []
@@ -382,6 +408,81 @@ function buildPragmaManagementHostTools(options: {
       ];
   return [
     tool(
+      "start_dsl_draft",
+      "Create one Mission-owned editable file draft for existing or new Expert and ExpertTeam resources. Returns workspace file paths; edit them with native file tools.",
+      z.toJSONSchema(StartDslDraftInput),
+      async (args) =>
+        ok(
+          await project().startDslDraft({
+            ...scope(),
+            targets: StartDslDraftInput.parse(args).targets,
+          }),
+        ),
+    ),
+    tool(
+      "list_dsl_drafts",
+      "List compact DSL file-draft summaries owned by the current Mission.",
+      z.toJSONSchema(PragmaManagementPageInputSchema),
+      async (args) =>
+        ok(
+          await project().listDslDrafts({
+            missionId: scope().missionId,
+            ...PragmaManagementPageInputSchema.parse(args),
+          }),
+        ),
+    ),
+    tool(
+      "inspect_dsl_draft",
+      "Inspect changed files, hashes, ownership, and target conflicts for one DSL file draft without returning complete YAML.",
+      z.toJSONSchema(DslDraftIdInput),
+      async (args) =>
+        ok(
+          await project().inspectDslDraft({
+            missionId: scope().missionId,
+            draftId: DslDraftIdInput.parse(args).draftId,
+          }),
+        ),
+    ),
+    tool(
+      "prepare_dsl_draft",
+      "Freeze and validate the current DSL draft files, then return a compact immutable change-set receipt. Pass only the draft ID.",
+      z.toJSONSchema(DslDraftIdInput),
+      async (args) =>
+        ok(
+          summarizePrepareResult(
+            await project().prepareDslDraft({
+              missionId: scope().missionId,
+              draftId: DslDraftIdInput.parse(args).draftId,
+            }),
+          ),
+        ),
+    ),
+    tool(
+      "restart_dsl_draft",
+      "Rebuild a conflicted or stale prepared DSL draft from the latest project resources and retain the previous candidate as a read-only reference.",
+      z.toJSONSchema(DslDraftIdInput),
+      async (args) =>
+        ok(
+          await project().restartDslDraft({
+            missionId: scope().missionId,
+            draftId: DslDraftIdInput.parse(args).draftId,
+          }),
+        ),
+    ),
+    {
+      ...tool(
+        "discard_dsl_draft",
+        "Discard an uncommitted DSL file draft owned by the current Mission.",
+        z.toJSONSchema(DslDraftIdInput),
+        async (args) => {
+          const draftId = DslDraftIdInput.parse(args).draftId;
+          await project().discardDslDraft({ missionId: scope().missionId, draftId });
+          return ok({ discarded: true });
+        },
+      ),
+      approval: { mode: "required", reason: "Discard this uncommitted DSL draft." },
+    },
+    tool(
       "list_dsl_resources",
       "List a filtered page of current Pragma DSL resources and the exact project revision.",
       z.toJSONSchema(ListDslResourcesInput),
@@ -413,7 +514,7 @@ function buildPragmaManagementHostTools(options: {
     ),
     tool(
       "prepare_dsl_changes",
-      "Parse and validate complete YAML documents against the full candidate project without saving.",
+      "Parse and validate complete YAML documents only for resource kinds without a dedicated draft workflow. Expert and ExpertTeam changes must use start_dsl_draft and prepare_dsl_draft.",
       objectSchema(
         {
           expectedProjectRevision: { type: "integer", minimum: 0 },
@@ -421,7 +522,26 @@ function buildPragmaManagementHostTools(options: {
         },
         ["expectedProjectRevision", "sources"],
       ),
-      async (args) => ok(summarizePrepareResult(await project().prepare(PrepareInput.parse(args)))),
+      async (args) => {
+        const input = PrepareInput.parse(args);
+        if (input.sources.some(requiresDslFileDraft)) {
+          return ok(
+            PragmaAgentCompactPrepareResultSchema.parse({
+              status: "invalid",
+              diagnostics: [
+                {
+                  severity: "error",
+                  code: "dsl.file_draft_required",
+                  message:
+                    "Expert and ExpertTeam resources must use start_dsl_draft and prepare_dsl_draft.",
+                  path: [],
+                },
+              ],
+            }),
+          );
+        }
+        return ok(summarizePrepareResult(await project().prepare(input)));
+      },
     ),
     tool(
       "read_prepared_dsl_change",
@@ -429,7 +549,7 @@ function buildPragmaManagementHostTools(options: {
       z.toJSONSchema(ReadPreparedDslChangeInput),
       async (args) => {
         const input = ReadPreparedDslChangeInput.parse(args);
-        const changeSet = await project().getChangeSet(input.changeSetId);
+        const changeSet = await project().getChangeSet(input.changeSetId, options.scope?.missionId);
         const change = changeSet.changes.find((candidate) => candidate.ref === input.ref);
         if (change === undefined) throw new Error(`Prepared DSL change not found: ${input.ref}`);
         return ok({
@@ -591,6 +711,7 @@ function buildPragmaManagementHostTools(options: {
             await project().commit({
               changeSetId: input.changeSetId,
               operationId: operationId(context),
+              ...(options.scope === undefined ? {} : { missionId: options.scope.missionId }),
             }),
           );
         },
@@ -1017,8 +1138,29 @@ function summarizePrepareResult(input: PragmaAgentPrepareResult) {
   });
 }
 
+function requiresDslFileDraft(source: string): boolean {
+  try {
+    const value = parsePragmaYaml(source);
+    if (typeof value !== "object" || value === null || !("kind" in value)) return false;
+    return value.kind === "Expert" || value.kind === "ExpertTeam";
+  } catch {
+    return false;
+  }
+}
+
 function hostOutputSchema(name: string): z.ZodType {
   switch (name) {
+    case "start_dsl_draft":
+    case "restart_dsl_draft":
+      return PragmaAgentDslDraftSchema;
+    case "list_dsl_drafts":
+      return PragmaAgentDslDraftPageSchema;
+    case "inspect_dsl_draft":
+      return PragmaAgentDslDraftInspectionSchema;
+    case "prepare_dsl_draft":
+      return PragmaAgentCompactPrepareResultSchema;
+    case "discard_dsl_draft":
+      return DiscardResultSchema;
     case "list_dsl_resources":
       return PragmaAgentResourcePageSchema;
     case "read_dsl_resource":

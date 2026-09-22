@@ -57,6 +57,8 @@ export interface PragmaProjectRevisionLocation {
   readonly projectFingerprint?: string | undefined;
   readonly compilerVersion?: string | undefined;
   readonly updatedAt?: string | undefined;
+  /** Host-assigned idempotency identity for the publication that created this revision. */
+  readonly publicationId?: string | undefined;
 }
 
 export interface PragmaProjectSourceRepository {
@@ -64,6 +66,10 @@ export interface PragmaProjectSourceRepository {
   readonly getRevision: (
     projectId: string,
     revision: number,
+  ) => Promise<PragmaProjectRevisionLocation | undefined>;
+  readonly getRevisionByPublicationId?: (
+    projectId: string,
+    publicationId: string,
   ) => Promise<PragmaProjectRevisionLocation | undefined>;
   readonly readFiles: (
     location: PragmaProjectRevisionLocation,
@@ -77,6 +83,7 @@ export interface PragmaProjectSourceRepository {
     readonly expectedRevision: number;
     readonly files: ReadonlyMap<string, string>;
     readonly forceRevision?: boolean | undefined;
+    readonly publicationId?: string | undefined;
   }) => Promise<PragmaProjectRevisionLocation>;
 }
 
@@ -212,10 +219,18 @@ export class PragmaProjectService {
     readonly resources: readonly PragmaResource[];
     readonly artifacts?: ReadonlyMap<string, string> | undefined;
     readonly forceRevision?: boolean | undefined;
+    readonly publicationId?: string | undefined;
   }): Promise<PragmaProjectSnapshot> {
     const head = await this.options.repository.getHead(input.projectId);
     const actualRevision = head?.revision ?? 0;
     if (actualRevision !== input.expectedRevision) {
+      if (input.publicationId !== undefined) {
+        const published = await this.options.repository.getRevisionByPublicationId?.(
+          input.projectId,
+          input.publicationId,
+        );
+        if (published !== undefined) return await this.get(input.projectId, published.revision);
+      }
       throw new PragmaProjectRevisionConflictError(
         input.expectedRevision,
         actualRevision,
@@ -233,13 +248,14 @@ export class PragmaProjectService {
     });
     assertUniqueCanonicalRefs(resources);
     const files = await this.renderProjectFiles({ resources, artifacts: input.artifacts });
-    await this.options.repository.commit({
+    const committed = await this.options.repository.commit({
       projectId: input.projectId,
       expectedRevision: input.expectedRevision,
       files,
       forceRevision: input.forceRevision,
+      publicationId: input.publicationId,
     });
-    return await this.get(input.projectId);
+    return await this.get(input.projectId, committed.revision);
   }
 
   /**
@@ -311,6 +327,7 @@ export class PragmaProjectService {
   async applyChangeSet(input: {
     readonly projectId: string;
     readonly changeSet: PragmaProjectChangeSetInput;
+    readonly publicationId?: string | undefined;
   }): Promise<PragmaProjectSnapshot> {
     for (let attempt = 0; attempt < PROJECT_CHANGE_SET_COMMIT_ATTEMPTS; attempt += 1) {
       const candidate = await this.materializeChangeSet(input.projectId, input.changeSet);
@@ -320,6 +337,7 @@ export class PragmaProjectService {
           expectedRevision: candidate.currentRevision,
           resources: candidate.resources,
           artifacts: candidate.artifacts,
+          publicationId: input.publicationId,
         });
       } catch (error) {
         if (

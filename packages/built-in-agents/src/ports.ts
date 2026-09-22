@@ -6,6 +6,10 @@ import type {
   PragmaAgentFlowDraft,
   PragmaAgentFlowDraftOperation,
   PragmaAgentDslDocument,
+  PragmaAgentDslDraft,
+  PragmaAgentDslDraftInspection,
+  PragmaAgentDslDraftSummary,
+  PragmaAgentDslDraftTargetInput,
   PragmaAgentProjectCommit,
   PragmaAgentPrepareResult,
   PragmaAgentResourceSummary,
@@ -17,6 +21,32 @@ import type {
 } from "./contracts.ts";
 
 export interface PragmaAgentDslProjectPort {
+  startDslDraft(input: {
+    readonly missionId: string;
+    readonly workspacePath: string;
+    readonly targets: readonly PragmaAgentDslDraftTargetInput[];
+  }): Promise<PragmaAgentDslDraft>;
+  listDslDrafts(input: {
+    readonly missionId: string;
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+  }): Promise<{
+    readonly items: readonly PragmaAgentDslDraftSummary[];
+    readonly nextCursor?: string | undefined;
+  }>;
+  inspectDslDraft(input: {
+    readonly missionId: string;
+    readonly draftId: string;
+  }): Promise<PragmaAgentDslDraftInspection>;
+  prepareDslDraft(input: {
+    readonly missionId: string;
+    readonly draftId: string;
+  }): Promise<PragmaAgentPrepareResult>;
+  restartDslDraft(input: {
+    readonly missionId: string;
+    readonly draftId: string;
+  }): Promise<PragmaAgentDslDraft>;
+  discardDslDraft(input: { readonly missionId: string; readonly draftId: string }): Promise<void>;
   allocateResourceIds(
     requests: readonly {
       readonly key: string;
@@ -106,10 +136,11 @@ export interface PragmaAgentDslProjectPort {
     readonly additionalSources?: readonly string[] | undefined;
   }): Promise<PragmaAgentPrepareResult>;
   discardFlowDraft(draftId: string): Promise<void>;
-  getChangeSet(changeSetId: string): Promise<PragmaAgentChangeSet>;
+  getChangeSet(changeSetId: string, missionId?: string): Promise<PragmaAgentChangeSet>;
   commit(input: {
     readonly changeSetId: string;
     readonly operationId: string;
+    readonly missionId?: string | undefined;
   }): Promise<PragmaAgentProjectCommit>;
 }
 

@@ -35,22 +35,29 @@ describe("Desktop Pragma adapter Host", () => {
 
   it("fingerprints the complete management tool contract including approvals", async () => {
     const pragmaManagement = { knowledgeRevisions: {} as never };
+    const pragmaManagementScope = {
+      missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+      workspacePath: "/workspace/one",
+    };
     const host = createDesktopAdapterHost(
-      { pragmaManagement } as unknown as Parameters<typeof createDesktopAdapterHost>[0],
+      { pragmaManagement, pragmaManagementScope } as unknown as Parameters<
+        typeof createDesktopAdapterHost
+      >[0],
       "/unused",
     );
-    const tools = createPragmaManagementTools(pragmaManagement);
+    const tools = createPragmaManagementTools(pragmaManagement, pragmaManagementScope);
     const expectedFingerprint = createHash("sha256")
       .update(
-        JSON.stringify(
-          tools.map((tool) => ({
+        JSON.stringify({
+          scope: pragmaManagementScope,
+          tools: tools.map((tool) => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
             outputSchema: tool.outputSchema,
             approval: tool.approval,
           })),
-        ),
+        }),
       )
       .digest("hex");
 
@@ -58,6 +65,22 @@ describe("Desktop Pragma adapter Host", () => {
       revision: String(PRAGMA_MANAGEMENT_CAPABILITY_REVISION),
       fingerprint: expectedFingerprint,
     });
+
+    const otherHost = createDesktopAdapterHost(
+      {
+        pragmaManagement,
+        pragmaManagementScope: {
+          ...pragmaManagementScope,
+          missionId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+        },
+      } as unknown as Parameters<typeof createDesktopAdapterHost>[0],
+      "/unused",
+    );
+    const [first, second] = await Promise.all([
+      host.resolveBinding(PRAGMA_MANAGEMENT_BINDING_REF),
+      otherHost.resolveBinding(PRAGMA_MANAGEMENT_BINDING_REF),
+    ]);
+    expect(first?.fingerprint).not.toBe(second?.fingerprint);
   });
 
   it("opens a real file Context store at the composition boundary", async () => {

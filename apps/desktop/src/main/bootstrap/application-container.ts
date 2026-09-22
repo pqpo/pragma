@@ -975,6 +975,8 @@ export async function createDesktopApplicationContainer(
   const pragmaAgentProject = createDesktopPragmaAgentProjectPort({
     project: pragmaProjectStore,
     stateRoot: defaultAgentStateRoot,
+    draftsRoot: join(pragmaPaths.dataRoot(), "dsl-resource-drafts"),
+    draftsTrashRoot: join(pragmaPaths.trashRoot(), "dsl-resource-drafts"),
     capabilities: capabilityStore,
     runtimes,
     systemExperts,
@@ -1017,7 +1019,29 @@ export async function createDesktopApplicationContainer(
       return pragmaManagementPortsRef.current;
     },
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
-    onOwnerDeleting: async ({ executionIds }) => {
+    onOwnerDeleting: async ({ mission, executionIds }) => {
+      let cursor: string | undefined;
+      const draftIds: string[] = [];
+      do {
+        const page = await pragmaAgentProject.listDslDrafts({
+          missionId: mission.id,
+          limit: 100,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
+        for (const draft of page.items) {
+          if (
+            draft.state !== "editing" &&
+            draft.state !== "conflicted" &&
+            draft.state !== "prepared"
+          )
+            continue;
+          draftIds.push(draft.draftId);
+        }
+        cursor = page.nextCursor;
+      } while (cursor !== undefined);
+      for (const draftId of draftIds) {
+        await pragmaAgentProject.discardDslDraft({ missionId: mission.id, draftId });
+      }
       await memoryPlane.deleteExecutionState(executionIds);
     },
     onExecutionLinked: async ({ mission, executionId, requestId }) => {
@@ -1315,6 +1339,10 @@ export async function createDesktopApplicationContainer(
             pragmaManagement: {
               ...pragmaManagementPortsRef.current,
               ...(knowledgeRevisions === undefined ? {} : { knowledgeRevisions }),
+            },
+            pragmaManagementScope: {
+              missionId: mission.id,
+              workspacePath: mission.workspace.path,
             },
           },
           mission.workspace.path,

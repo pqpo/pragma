@@ -10,6 +10,36 @@ import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "..
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
+  it("injects Mission ownership into DSL file-draft tools without exposing paths in input", async () => {
+    let received: Parameters<PragmaAgentDslProjectPort["startDslDraft"]>[0] | undefined;
+    const project = projectPort({
+      async startDslDraft(input) {
+        received = input;
+        throw new Error("captured");
+      },
+    });
+    const tools = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      {
+        missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+        workspacePath: "/workspace/project",
+      },
+    );
+    const start = tools.find((tool) => tool.name === "start_dsl_draft")!;
+    expect(JSON.stringify(start.inputSchema)).not.toContain("missionId");
+    expect(JSON.stringify(start.inputSchema)).not.toContain("workspacePath");
+    await start.call(
+      { targets: [{ mode: "edit", ref: "expert:1h2j3k4m5n6p7q8r" }] },
+      undefined,
+      undefined,
+    );
+    expect(received).toEqual({
+      missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+      workspacePath: "/workspace/project",
+      targets: [{ mode: "edit", ref: "expert:1h2j3k4m5n6p7q8r" }],
+    });
+  });
+
   it("keeps read tools open and gates durable writes", async () => {
     const tools = createPragmaManagementTools({ project: projectPort(), missions: missionPort() });
     expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval?.mode).toBe("none");
@@ -19,6 +49,29 @@ describe("Pragma Host management tools", () => {
     );
     expect(tools.find((tool) => tool.name === "create_mission")?.approval?.mode).toBe("required");
     expect(tools.find((tool) => tool.name === "interrupt_mission")?.approval?.mode).toBe("none");
+  });
+
+  it("requires Expert and ExpertTeam changes to use Mission-owned file drafts", async () => {
+    let prepareCalls = 0;
+    const project = projectPort({
+      async prepare() {
+        prepareCalls += 1;
+        throw new Error("must not be called");
+      },
+    });
+    const tool = createPragmaManagementTools({ project, missions: missionPort() }).find(
+      (candidate) => candidate.name === "prepare_dsl_changes",
+    )!;
+
+    await expect(
+      tool.call({ expectedProjectRevision: 0, sources: ["kind: Expert\n"] }, undefined, undefined),
+    ).resolves.toMatchObject({
+      details: {
+        status: "invalid",
+        diagnostics: [expect.objectContaining({ code: "dsl.file_draft_required" })],
+      },
+    });
+    expect(prepareCalls).toBe(0);
   });
 
   it("injects the runtime toolCallId as the write operation id", async () => {
@@ -36,6 +89,53 @@ describe("Pragma Host management tools", () => {
       toolCallId: "runtime-call-7",
     });
     expect(operationId).toBe("runtime-call-7");
+  });
+
+  it("carries the active Mission into prepared change reads and commits", async () => {
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    let readMissionId: string | undefined;
+    let commitMissionId: string | undefined;
+    const changeSetId = "4fc96ef9-1825-447d-a17f-d820f6fd4855";
+    const project = projectPort({
+      async getChangeSet(_changeSetId, receivedMissionId) {
+        readMissionId = receivedMissionId;
+        return {
+          changeSetId,
+          projectRevision: 1,
+          diagnostics: [],
+          changes: [
+            {
+              ref: "expert:1h2j3k4m5n6p7q8r",
+              kind: "updated",
+              source: "kind: Expert\n",
+            },
+          ],
+          createdAt: "2026-09-22T00:00:00.000Z",
+        };
+      },
+      async commit(input) {
+        commitMissionId = input.missionId;
+        return { projectId: "studio", projectRevision: 2, changedRefs: [] };
+      },
+    });
+    const tools = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      { missionId, workspacePath: "/workspace/project" },
+    );
+
+    await tools
+      .find((candidate) => candidate.name === "read_prepared_dsl_change")!
+      .call(
+        { changeSetId, ref: "expert:1h2j3k4m5n6p7q8r", offset: 0, limitChars: 100 },
+        undefined,
+        undefined,
+      );
+    await tools
+      .find((candidate) => candidate.name === "commit_dsl_changes")!
+      .call({ changeSetId }, undefined, { toolCallId: "scoped-commit" });
+
+    expect(readMissionId).toBe(missionId);
+    expect(commitMissionId).toBe(missionId);
   });
 
   it("replaces complete Evaluation YAML with bounded draft tools", async () => {
@@ -468,6 +568,20 @@ function projectPort(
   overrides: Partial<PragmaAgentDslProjectPort> = {},
 ): PragmaAgentDslProjectPort {
   return {
+    startDslDraft: async () => {
+      throw new Error("unused");
+    },
+    listDslDrafts: async () => ({ items: [] }),
+    inspectDslDraft: async () => {
+      throw new Error("unused");
+    },
+    prepareDslDraft: async () => {
+      throw new Error("unused");
+    },
+    restartDslDraft: async () => {
+      throw new Error("unused");
+    },
+    discardDslDraft: async () => undefined,
     list: async () => ({ projectRevision: 0, items: [] }),
     listExpertOptions: async (input) => ({ category: input.category, items: [] }),
     allocateResourceIds: async (requests) =>
