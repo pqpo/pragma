@@ -84,6 +84,7 @@ describe("built-in Pragma Agent DSL", () => {
         startDslDraft: unavailable,
         listDslDrafts: unavailable,
         inspectDslDraft: unavailable,
+        readDslDraftReview: unavailable,
         prepareDslDraft: unavailable,
         restartDslDraft: unavailable,
         discardDslDraft: unavailable,
@@ -150,11 +151,12 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(39);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(40);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_store_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("call_skill_revision_agent");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("start_dsl_draft");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("read_dsl_draft_review");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("prepare_dsl_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("run_evaluation_draft");
@@ -388,6 +390,7 @@ describe("built-in Pragma Agent DSL", () => {
 
     expect(skill).toContain("call `start_dsl_draft` once with all related resources");
     expect(skill).toContain("call `prepare_dsl_draft` with only the draft ID");
+    expect(skill).toContain("`read_dsl_draft_review` with the relevant section");
     expect(expertReference).toContain("namespace: project_docs");
     expect(expertReference).toContain(
       "It is not derived from the ContextStore ID, binding, or `config.key`.",

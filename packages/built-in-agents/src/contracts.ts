@@ -308,6 +308,7 @@ const PragmaAgentDslReviewTruncationItemSchema = z
 export const PragmaAgentDslDraftReviewSchema = z
   .object({
     unknownFieldPolicy: z.literal("preserve-additive"),
+    effectivePreviewAvailable: z.boolean().default(true),
     summary: z
       .object({
         resourceCount: z.number().int().nonnegative(),
@@ -334,6 +335,35 @@ export const PragmaAgentDslDraftReviewSchema = z
         hostDependencies: PragmaAgentDslReviewTruncationItemSchema,
       })
       .strict(),
+  })
+  .strict();
+
+export const PragmaAgentDslDraftReviewSectionSchema = z.enum([
+  "diagnostics",
+  "fieldChanges",
+  "omittedFields",
+  "hostDependencies",
+]);
+
+export const PragmaAgentDslDraftReviewPageSchema = z
+  .object({
+    draftId: z.string().uuid(),
+    workingTreeHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    effectivePreviewAvailable: z.boolean(),
+    section: PragmaAgentDslDraftReviewSectionSchema,
+    ref: PragmaSemanticResourceRefSchema.optional(),
+    total: z.number().int().nonnegative(),
+    items: z
+      .array(
+        z.union([
+          PragmaDiagnosticSchema,
+          PragmaAgentDslFieldChangeSchema,
+          PragmaAgentDslOmittedFieldSchema,
+          PragmaAgentDslHostDependencySchema,
+        ]),
+      )
+      .max(30),
+    nextCursor: PragmaShortPageCursorSchema.optional(),
   })
   .strict();
 
@@ -364,6 +394,10 @@ export type PragmaAgentDslDraft = z.infer<typeof PragmaAgentDslDraftSchema>;
 export type PragmaAgentDslDraftSummary = z.infer<typeof PragmaAgentDslDraftSummarySchema>;
 export type PragmaAgentDslDraftInspection = z.infer<typeof PragmaAgentDslDraftInspectionSchema>;
 export type PragmaAgentDslDraftReview = z.infer<typeof PragmaAgentDslDraftReviewSchema>;
+export type PragmaAgentDslDraftReviewPage = z.infer<typeof PragmaAgentDslDraftReviewPageSchema>;
+export type PragmaAgentDslDraftReviewSection = z.infer<
+  typeof PragmaAgentDslDraftReviewSectionSchema
+>;
 
 export const PragmaAgentChangeSetSchema = z.object({
   changeSetId: z.string().uuid(),

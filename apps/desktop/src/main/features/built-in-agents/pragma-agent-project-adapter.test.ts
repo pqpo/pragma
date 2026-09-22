@@ -366,6 +366,25 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     expect(inspection.review.truncation.fieldChanges.omitted).toBeGreaterThan(0);
     expect(inspection.review.truncation.diagnostics.omitted).toBeGreaterThan(0);
     expect(JSON.stringify(inspection.review)).not.toContain("x".repeat(200));
+
+    const detailedChanges: unknown[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await adapter.readDslDraftReview({
+        missionId,
+        draftId: draft.draftId,
+        section: "fieldChanges",
+        ref: "expert:1xddvess309a6gme",
+        cursor,
+        limit: 30,
+      });
+      expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(8 * 1_024);
+      expect(page.total).toBeGreaterThanOrEqual(120);
+      expect(page.items.every((item) => "ref" in item && item.ref === page.ref)).toBe(true);
+      detailedChanges.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    expect(detailedChanges).toHaveLength(inspection.review.summary.fieldsChanged);
   });
 
   it("invalidates a prepared change-set before discard can leave the Project mutated", async () => {
@@ -956,6 +975,13 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       workspacePath: root,
       targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
     });
+    await writeFile(
+      conflictingDraft.resources[0]!.filePath!,
+      (await readFile(conflictingDraft.resources[0]!.filePath!, "utf8")).replace(
+        "Write concise copy.",
+        "Write the conflicted draft copy.",
+      ),
+    );
     const changed = requirePrepared(
       await adapter.prepare({
         expectedProjectRevision: 3,
@@ -973,7 +999,20 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       missionId,
       draftId: conflictingDraft.draftId,
     });
-    expect(conflictedInspection).toMatchObject({ state: "conflicted", stale: true });
+    expect(conflictedInspection).toMatchObject({
+      state: "conflicted",
+      stale: true,
+      review: {
+        effectivePreviewAvailable: false,
+        summary: { changedResourceCount: 1, fieldsChanged: 1 },
+        fieldChanges: [
+          expect.objectContaining({
+            path: ["spec", "instructions"],
+            change: "changed",
+          }),
+        ],
+      },
+    });
     expect(conflictedInspection).not.toHaveProperty("referencePath");
     await expect(readFile(conflictingDraft.resources[0]!.filePath!, "utf8")).rejects.toMatchObject({
       code: "ENOENT",

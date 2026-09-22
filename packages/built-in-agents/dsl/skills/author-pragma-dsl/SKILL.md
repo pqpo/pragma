@@ -64,7 +64,11 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
     For Expert and ExpertTeam drafts, call `inspect_dsl_draft` after editing. Review its compact
     summary, diagnostics, omitted-field effects, and Host dependencies; explain material removals
     and automatically created dependencies before preparing. Treat `preserved_unknown` as retained
-    compatibility data, not a deletion. Resolve any reported target conflict, then call `prepare_dsl_draft` with only the draft ID.
+    compatibility data, not a deletion. When truncation reports omitted details, use
+    `read_dsl_draft_review` with the relevant section and optional ref, following `nextCursor` while
+    preserving the same filters. An unavailable effective preview means field changes describe the
+    authored delta only; resolve the reported target conflict before relying on final effects. Then
+    call `prepare_dsl_draft` with only the draft ID.
     Never ask for or reproduce a full textual diff. Read a prepared resource in bounded chunks only
     when the compact review is insufficient. Fix every prepare diagnostic by editing the same files
     and prepare that same draft ID again. Commit its returned

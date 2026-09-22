@@ -40,6 +40,7 @@ import {
 import {
   PragmaAgentChangeSetSchema,
   PragmaAgentDslDraftInspectionSchema,
+  PragmaAgentDslDraftReviewPageSchema,
   PragmaAgentDslDraftReviewSchema,
   PragmaAgentDslDraftSchema,
   PragmaAgentDslDraftSummarySchema,
@@ -53,6 +54,8 @@ import {
   type PragmaAgentDslProjectPort,
   type PragmaAgentDslDraft,
   type PragmaAgentDslDraftReview,
+  type PragmaAgentDslDraftReviewPage,
+  type PragmaAgentDslDraftReviewSection,
   type PragmaAgentDslDraftTargetInput,
   type PragmaAgentEvaluationDraft,
   type PragmaAgentEvaluationDraftDiagnostic,
@@ -307,17 +310,20 @@ export function createDesktopPragmaAgentProjectPort(options: {
       const review =
         input.draftReview === undefined
           ? undefined
-          : createDslDraftReview({
-              draft: input.draftReview.draft,
-              baseResources: (
-                await options.project.getRevision(input.draftReview.draft.baseProjectRevision)
-              ).resources,
-              rawResources: input.draftReview.rawResources,
-              authoredResources,
-              effectiveResources: resources.slice(0, authoredResources.length),
-              diagnostics,
-              dependencies,
-            });
+          : createDslDraftReview(
+              analyzeDslDraftReview({
+                draft: input.draftReview.draft,
+                baseResources: (
+                  await options.project.getRevision(input.draftReview.draft.baseProjectRevision)
+                ).resources,
+                rawResources: input.draftReview.rawResources,
+                authoredResources,
+                effectiveResources: resources.slice(0, authoredResources.length),
+                diagnostics,
+                dependencies,
+                effectivePreviewAvailable: true,
+              }),
+            );
       const changeSet = PragmaAgentChangeSetSchema.parse({
         changeSetId: randomUUID(),
         projectRevision: input.expectedProjectRevision,
@@ -723,11 +729,11 @@ export function createDesktopPragmaAgentProjectPort(options: {
     });
   };
 
-  const reviewDslDraftSnapshot = async (
+  const analyzeDslDraftSnapshot = async (
     draft: StoredDslDraft,
     snapshot: DslDraftFileSnapshot,
     conflictingRefs: readonly string[],
-  ): Promise<PragmaAgentDslDraftReview> => {
+  ): Promise<DslDraftReviewAnalysis> => {
     const sources = draft.resources.map(
       (target) => snapshot.files.get(target.relativePath)!.source,
     );
@@ -764,8 +770,10 @@ export function createDesktopPragmaAgentProjectPort(options: {
       }
     }
 
-    let effectiveResources: readonly PragmaResource[] = [];
+    let effectiveResources: readonly PragmaResource[] =
+      parsed.diagnostics.length === 0 ? parsed.resources : [];
     let dependencies: readonly PragmaResource[] = [];
+    let effectivePreviewAvailable = false;
     if (diagnostics.every((diagnostic) => diagnostic.severity !== "error")) {
       try {
         const plan = await planResources({
@@ -774,13 +782,14 @@ export function createDesktopPragmaAgentProjectPort(options: {
         });
         effectiveResources = plan.resources.slice(0, parsed.resources.length);
         dependencies = plan.dependencies;
+        effectivePreviewAvailable = true;
         diagnostics.push(...plan.diagnostics);
       } catch (error) {
         diagnostics.push(...diagnosticsFromError(error));
       }
     }
 
-    return createDslDraftReview({
+    return analyzeDslDraftReview({
       draft,
       baseResources: (await options.project.getRevision(draft.baseProjectRevision)).resources,
       rawResources,
@@ -788,21 +797,25 @@ export function createDesktopPragmaAgentProjectPort(options: {
       effectiveResources,
       diagnostics,
       dependencies,
+      effectivePreviewAvailable,
     });
   };
 
+  const readDslDraftFileSnapshot = async (draft: StoredDslDraft) =>
+    draft.submissionHash === undefined
+      ? await scanDslDraftWorktree(draft)
+      : await scanDslDraftSubmission(draft, dslDraftSubmissionsPath(draft.draftId));
+
   const inspectDslDraft = async (draft: StoredDslDraft) => {
-    const snapshot =
-      draft.submissionHash === undefined
-        ? await scanDslDraftWorktree(draft)
-        : await scanDslDraftSubmission(draft, dslDraftSubmissionsPath(draft.draftId));
+    const snapshot = await readDslDraftFileSnapshot(draft);
     const conflictingRefs = await staleDslDraftRefs(draft);
+    const analysis = await analyzeDslDraftSnapshot(draft, snapshot, conflictingRefs);
     return PragmaAgentDslDraftInspectionSchema.parse({
       ...toPublicDslDraft(draft),
       workingTreeHash: snapshot.hash,
       stale: conflictingRefs.length > 0,
       conflictingRefs,
-      review: await reviewDslDraftSnapshot(draft, snapshot, conflictingRefs),
+      review: createDslDraftReview(analysis),
       changes: draft.resources.map((target) => {
         const file = snapshot.files.get(target.relativePath)!;
         return {
@@ -813,6 +826,31 @@ export function createDesktopPragmaAgentProjectPort(options: {
           sha256: file.sha256,
         };
       }),
+    });
+  };
+
+  const readDslDraftReview = async (input: {
+    readonly draft: StoredDslDraft;
+    readonly section: PragmaAgentDslDraftReviewSection;
+    readonly ref?: string | undefined;
+    readonly cursor?: string | undefined;
+    readonly limit: number;
+  }): Promise<PragmaAgentDslDraftReviewPage> => {
+    const snapshot = await readDslDraftFileSnapshot(input.draft);
+    const conflictingRefs = await staleDslDraftRefs(input.draft);
+    const analysis = await analyzeDslDraftSnapshot(input.draft, snapshot, conflictingRefs);
+    const items = dslDraftReviewSectionItems(analysis, input.section).filter((item) =>
+      input.ref === undefined ? true : dslDraftReviewItemRef(item) === input.ref,
+    );
+    return paginateDslDraftReviewItems({
+      draftId: input.draft.draftId,
+      workingTreeHash: snapshot.hash,
+      effectivePreviewAvailable: analysis.effectivePreviewAvailable,
+      section: input.section,
+      ref: input.ref,
+      items,
+      cursor: input.cursor,
+      limit: input.limit,
     });
   };
 
@@ -1239,6 +1277,20 @@ export function createDesktopPragmaAgentProjectPort(options: {
         throw new Error(`DSL draft is already ${draft.state}.`);
       }
       return await inspectDslDraft(draft);
+    },
+    async readDslDraftReview(input) {
+      const draft = await readDslDraft(input.draftId);
+      requireDslDraftOwner(draft, input.missionId);
+      if (draft.state === "committed" || draft.state === "discarded") {
+        throw new Error(`DSL draft is already ${draft.state}.`);
+      }
+      return await readDslDraftReview({
+        draft,
+        section: input.section,
+        ref: input.ref,
+        cursor: input.cursor,
+        limit: input.limit,
+      });
     },
     async prepareDslDraft(input) {
       return await withFileLock(dslDraftMutationLockPath(input.draftId), async () => {
@@ -2097,8 +2149,18 @@ type DslReviewFieldChange = PragmaAgentDslDraftReview["fieldChanges"][number];
 type DslReviewOmittedField = PragmaAgentDslDraftReview["omittedFields"][number];
 type DslReviewHostDependency = PragmaAgentDslDraftReview["hostDependencies"][number];
 type DslReviewValueSummary = NonNullable<DslReviewFieldChange["before"]>;
+type DslReviewItem = PragmaAgentDslDraftReviewPage["items"][number];
 
-function createDslDraftReview(input: {
+interface DslDraftReviewAnalysis {
+  readonly effectivePreviewAvailable: boolean;
+  readonly summary: PragmaAgentDslDraftReview["summary"];
+  readonly diagnostics: readonly PragmaDiagnostic[];
+  readonly fieldChanges: readonly DslReviewFieldChange[];
+  readonly omittedFields: readonly DslReviewOmittedField[];
+  readonly hostDependencies: readonly DslReviewHostDependency[];
+}
+
+function analyzeDslDraftReview(input: {
   readonly draft: StoredDslDraft;
   readonly baseResources: readonly PragmaResource[];
   readonly rawResources: readonly unknown[];
@@ -2106,7 +2168,8 @@ function createDslDraftReview(input: {
   readonly effectiveResources: readonly PragmaResource[];
   readonly diagnostics: readonly PragmaDiagnostic[];
   readonly dependencies: readonly PragmaResource[];
-}): PragmaAgentDslDraftReview {
+  readonly effectivePreviewAvailable: boolean;
+}): DslDraftReviewAnalysis {
   const baseByRef = new Map(
     input.baseResources.map((resource) => [canonicalPragmaResourceRef(resource), resource]),
   );
@@ -2191,6 +2254,18 @@ function createDslDraftReview(input: {
     hostDependencyCount: hostDependencies.length,
   };
 
+  return {
+    effectivePreviewAvailable: input.effectivePreviewAvailable,
+    summary,
+    diagnostics,
+    fieldChanges,
+    omittedFields,
+    hostDependencies,
+  };
+}
+
+function createDslDraftReview(input: DslDraftReviewAnalysis): PragmaAgentDslDraftReview {
+  const { diagnostics, fieldChanges, hostDependencies, omittedFields, summary } = input;
   const selectedDiagnostics: PragmaDiagnostic[] = [];
   const selectedFieldChanges: DslReviewFieldChange[] = [];
   const selectedOmittedFields: DslReviewOmittedField[] = [];
@@ -2198,6 +2273,7 @@ function createDslDraftReview(input: {
   const build = (): PragmaAgentDslDraftReview =>
     PragmaAgentDslDraftReviewSchema.parse({
       unknownFieldPolicy: "preserve-additive",
+      effectivePreviewAvailable: input.effectivePreviewAvailable,
       summary,
       diagnostics: selectedDiagnostics,
       fieldChanges: selectedFieldChanges,
@@ -2252,6 +2328,67 @@ function createDslDraftReview(input: {
   return build();
 }
 
+function dslDraftReviewSectionItems(
+  analysis: DslDraftReviewAnalysis,
+  section: PragmaAgentDslDraftReviewSection,
+): readonly DslReviewItem[] {
+  switch (section) {
+    case "diagnostics":
+      return analysis.diagnostics;
+    case "fieldChanges":
+      return analysis.fieldChanges;
+    case "omittedFields":
+      return analysis.omittedFields;
+    case "hostDependencies":
+      return analysis.hostDependencies;
+  }
+}
+
+function dslDraftReviewItemRef(item: DslReviewItem): string | undefined {
+  if ("ref" in item) return item.ref;
+  return "resourceRef" in item ? item.resourceRef : undefined;
+}
+
+function paginateDslDraftReviewItems(input: {
+  readonly draftId: string;
+  readonly workingTreeHash: string;
+  readonly effectivePreviewAvailable: boolean;
+  readonly section: PragmaAgentDslDraftReviewSection;
+  readonly ref?: string | undefined;
+  readonly items: readonly DslReviewItem[];
+  readonly cursor?: string | undefined;
+  readonly limit: number;
+}): PragmaAgentDslDraftReviewPage {
+  for (let limit = Math.min(input.limit, 30); limit >= 1; limit -= 1) {
+    const page = paginateManagementItems({
+      items: input.items,
+      scope: `read_dsl_draft_review:${input.draftId}:${input.section}`,
+      fingerprintValue: {
+        workingTreeHash: input.workingTreeHash,
+        effectivePreviewAvailable: input.effectivePreviewAvailable,
+        items: input.items,
+      },
+      filters: { ref: input.ref ?? null },
+      cursor: input.cursor,
+      limit,
+    });
+    const candidate = PragmaAgentDslDraftReviewPageSchema.parse({
+      draftId: input.draftId,
+      workingTreeHash: input.workingTreeHash,
+      effectivePreviewAvailable: input.effectivePreviewAvailable,
+      section: input.section,
+      ...(input.ref === undefined ? {} : { ref: input.ref }),
+      total: input.items.length,
+      items: page.items,
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    });
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= DSL_DRAFT_REVIEW_MAX_BYTES) {
+      return candidate;
+    }
+  }
+  throw new Error("A DSL draft review detail exceeds the bounded response budget.");
+}
+
 function collectDslFieldChanges(
   ref: string,
   before: unknown,
@@ -2279,7 +2416,7 @@ function collectDslFieldChanges(
   }
   output.push({
     ref,
-    path: [...path],
+    path: compactDslReviewPath(path),
     change: !beforeExists ? "added" : !afterExists ? "removed" : "changed",
     ...(beforeExists ? { before: summarizeDslReviewValue(before) } : {}),
     ...(afterExists ? { after: summarizeDslReviewValue(after) } : {}),
@@ -2326,7 +2463,7 @@ function collectDslOmittedFields(
     if (!isDslReviewRecord(raw) || !Object.hasOwn(raw, key)) {
       output.push({
         ref,
-        path: nextPath,
+        path: compactDslReviewPath(nextPath),
         effect: unknownPaths.has(dslReviewPathKey(nextPath))
           ? "preserved_unknown"
           : isDslReviewRecord(effective) && Object.hasOwn(effective, key)
@@ -2417,10 +2554,19 @@ function dslReviewValueIdentity(value: unknown): string {
 }
 
 function truncateDslReviewPreview(value: string): string {
+  return truncateDslReviewText(value, DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS);
+}
+
+function truncateDslReviewText(value: string, maximum: number): string {
   const characters = [...value];
-  return characters.length <= DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS
-    ? value
-    : `${characters.slice(0, DSL_DRAFT_REVIEW_VALUE_PREVIEW_CHARS - 1).join("")}…`;
+  return characters.length <= maximum ? value : `${characters.slice(0, maximum - 1).join("")}…`;
+}
+
+function compactDslReviewPath(path: DslReviewPath): (string | number)[] {
+  const segments = path.length <= 20 ? [...path] : [...path.slice(0, 10), "…", ...path.slice(-9)];
+  return segments.map((segment) =>
+    typeof segment === "string" ? truncateDslReviewText(segment, 80) : segment,
+  );
 }
 
 function isDslReviewRecord(value: unknown): value is Record<string, unknown> {
@@ -2461,13 +2607,15 @@ function dslDiagnosticPriority(diagnostic: PragmaDiagnostic): number {
 }
 
 function compactDslReviewDiagnostic(diagnostic: PragmaDiagnostic): PragmaDiagnostic {
-  if (diagnostic.source === undefined || !isAbsolute(diagnostic.source)) return diagnostic;
   return {
     severity: diagnostic.severity,
     code: diagnostic.code,
-    message: diagnostic.message,
+    message: truncateDslReviewText(diagnostic.message, 500),
     ...(diagnostic.resourceRef === undefined ? {} : { resourceRef: diagnostic.resourceRef }),
-    path: diagnostic.path,
+    ...(diagnostic.source === undefined || isAbsolute(diagnostic.source)
+      ? {}
+      : { source: truncateDslReviewText(diagnostic.source, 200) }),
+    path: compactDslReviewPath(diagnostic.path),
   };
 }
 

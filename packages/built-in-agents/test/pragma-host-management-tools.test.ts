@@ -7,6 +7,7 @@ import type {
   PragmaAgentMissionPort,
 } from "../src/ports.ts";
 import {
+  PragmaAgentDslDraftReviewSchema,
   PragmaAgentDslValueSummarySchema,
   PragmaAgentEvaluationDraftSchema,
   PragmaAgentFlowDraftSchema,
@@ -14,6 +15,11 @@ import {
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
+  it("defaults effective preview availability for previously stored draft reviews", () => {
+    const legacy = { ...compactDraftReview(), effectivePreviewAvailable: undefined };
+    expect(PragmaAgentDslDraftReviewSchema.parse(legacy).effectivePreviewAvailable).toBe(true);
+  });
+
   it("counts bounded DSL value previews by Unicode character", () => {
     expect(
       PragmaAgentDslValueSummarySchema.parse({
@@ -58,6 +64,44 @@ describe("Pragma Host management tools", () => {
       missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
       workspacePath: "/workspace/project",
       targets: [{ mode: "edit", ref: "expert:1h2j3k4m5n6p7q8r" }],
+    });
+  });
+
+  it("reads bounded semantic DSL draft review pages in the current Mission", async () => {
+    let received: Parameters<PragmaAgentDslProjectPort["readDslDraftReview"]>[0] | undefined;
+    const project = projectPort({
+      async readDslDraftReview(input) {
+        received = input;
+        return {
+          draftId: input.draftId,
+          workingTreeHash: "a".repeat(64),
+          effectivePreviewAvailable: true,
+          section: input.section,
+          total: 0,
+          items: [],
+        };
+      },
+    });
+    const tool = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      { missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b", workspacePath: "/workspace" },
+    ).find((candidate) => candidate.name === "read_dsl_draft_review")!;
+
+    await tool.call(
+      {
+        draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+        section: "fieldChanges",
+        limit: 10,
+      },
+      undefined,
+      undefined,
+    );
+
+    expect(received).toEqual({
+      missionId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b",
+      draftId: "4fc96ef9-1825-447d-a17f-d820f6fd4855",
+      section: "fieldChanges",
+      limit: 10,
     });
   });
 
@@ -657,6 +701,9 @@ function projectPort(
     inspectDslDraft: async () => {
       throw new Error("unused");
     },
+    readDslDraftReview: async () => {
+      throw new Error("unused");
+    },
     prepareDslDraft: async () => {
       throw new Error("unused");
     },
@@ -721,6 +768,7 @@ function projectPort(
 function compactDraftReview() {
   return {
     unknownFieldPolicy: "preserve-additive" as const,
+    effectivePreviewAvailable: true,
     summary: {
       resourceCount: 1,
       changedResourceCount: 1,

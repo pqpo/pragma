@@ -12,6 +12,7 @@ import {
   ShortPageCursorError,
 } from "@pragma/core";
 import { parsePragmaYaml } from "@pragma/interpreter";
+import { PragmaSemanticResourceRefSchema } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 import type {
@@ -32,6 +33,8 @@ import {
   PragmaAgentDslDocumentSchema,
   PragmaAgentDslDraftInspectionSchema,
   PragmaAgentDslDraftPageSchema,
+  PragmaAgentDslDraftReviewPageSchema,
+  PragmaAgentDslDraftReviewSectionSchema,
   PragmaAgentDslDraftSchema,
   PragmaAgentDslDraftTargetInputSchema,
   PragmaAgentExpertOptionPageSchema,
@@ -107,6 +110,15 @@ const StartDslDraftInput = z
   })
   .strict();
 const DslDraftIdInput = z.object({ draftId: z.string().uuid() }).strict();
+const ReadDslDraftReviewInput = z
+  .object({
+    draftId: z.string().uuid(),
+    section: PragmaAgentDslDraftReviewSectionSchema,
+    ref: PragmaSemanticResourceRefSchema.optional(),
+    cursor: z.string().min(1).max(4_096).optional(),
+    limit: z.number().int().min(1).max(30).default(10),
+  })
+  .strict();
 const CommitInput = z.object({ changeSetId: z.string().uuid() });
 const ReadPreparedDslChangeInput = z
   .object({
@@ -442,6 +454,20 @@ function buildPragmaManagementHostTools(options: {
             draftId: DslDraftIdInput.parse(args).draftId,
           }),
         ),
+    ),
+    tool(
+      "read_dsl_draft_review",
+      "Read one bounded semantic detail page from a DSL draft review before prepare. Use only when inspect_dsl_draft reports omitted details; preserve section and ref filters while following nextCursor.",
+      z.toJSONSchema(ReadDslDraftReviewInput),
+      async (args) => {
+        const input = ReadDslDraftReviewInput.parse(args);
+        return ok(
+          await project().readDslDraftReview({
+            ...input,
+            missionId: scope().missionId,
+          }),
+        );
+      },
     ),
     tool(
       "prepare_dsl_draft",
@@ -1158,6 +1184,8 @@ function hostOutputSchema(name: string): z.ZodType {
       return PragmaAgentDslDraftPageSchema;
     case "inspect_dsl_draft":
       return PragmaAgentDslDraftInspectionSchema;
+    case "read_dsl_draft_review":
+      return PragmaAgentDslDraftReviewPageSchema;
     case "prepare_dsl_draft":
       return PragmaAgentCompactPrepareResultSchema;
     case "discard_dsl_draft":

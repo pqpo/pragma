@@ -65,6 +65,11 @@ effects and Host-created dependencies; it never returns a whole-file or textual 
 payload has a Host-enforced byte budget and reports omitted counts when truncated. Unknown additive
 fields omitted by an older authoring client are reported as preserved, and prepared source hashes
 are calculated from the effective merged resources so the receipt matches the committed revision.
+When compact details are truncated, `read_dsl_draft_review` pages the same semantic analysis by
+section and optional resource ref under the same byte budget, without requiring prepare or exposing
+complete YAML. If a target conflict prevents safe Project materialization, inspection explicitly
+marks the effective preview unavailable and reports the authored base-to-draft delta instead of
+claiming that no resources changed.
 
 Draft records start at `pragma.dsl-draft/v1`; discard journals start at
 `pragma.dsl-draft-discard/v1`; draft commit journals start at `pragma.dsl-draft-commit/v1`. These are
