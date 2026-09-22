@@ -1,13 +1,18 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
 import { pragmaManagementCapabilityResource } from "@pragma/built-in-agents";
 import { createPragmaBundleFingerprint } from "@pragma/interpreter";
-import { resolvePragmaAvatarId } from "@pragma/shared";
+import {
+  resolvePragmaAvatarId,
+  serializeSkillBundleFileManifest,
+  serializeSkillBundleWorkingTree,
+  type SkillBundleFile,
+} from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
@@ -67,11 +72,8 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const skillContents =
       "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nActive revision.\n";
     await writeFile(join(payload, "SKILL.md"), skillContents);
-    const activeContentHash = createHash("sha256")
-      .update("SKILL.md")
-      .update(skillContents)
-      .digest("hex");
-    const active = {
+    const activeContentHash = (await scanSkillWorkingTree(payload)).hash;
+    let active = {
       ...skillCapability(capabilityId, 2, activeContentHash),
       manifest: {
         ...skillCapability(capabilityId, 2, activeContentHash).manifest,
@@ -146,7 +148,129 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       root: { ref: rootRef, kind: "Capability", name: active.definition.name },
       dependencies: [expect.objectContaining({ kind: "capability", included: true })],
     });
-    expect(skillFilesPath).toHaveBeenCalledOnce();
+    if (active.definition.kind !== "skill") throw new Error("Expected an active Skill.");
+    active = {
+      ...active,
+      definition: { ...active.definition, contentHash: "f".repeat(64) },
+    };
+    await expect(
+      source.service.exportTo(
+        {
+          rootRef,
+          projectRevision: published.revision,
+          modules: {
+            capabilities: true,
+            plugins: false,
+            knowledgeBases: false,
+            flowLayouts: false,
+          },
+        },
+        join(source.root, "corrupt-skill.pragma"),
+      ),
+    ).rejects.toThrow("content hash does not match its files");
+    expect(skillFilesPath).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects malformed Skill dependency payloads during inspection", async () => {
+    const capabilityId = "0123456789abcdef";
+    const source = await createFixture("malformed-skill-dependency");
+    const snapshot = await source.project.get();
+    const resource = portableCapability();
+    resource.spec.binding = desktopCapabilityBindingRef(capabilityId);
+    const sourceExpert = snapshot.resources.find(
+      (candidate): candidate is PragmaExpertResource => candidate.kind === "Expert",
+    )!;
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(resource), kind: "tools" }],
+          },
+        },
+        ...snapshot.resources.filter((candidate) => candidate.kind !== "Expert"),
+        resource,
+      ],
+    });
+    const skillDocument = strToU8(
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nPortable.\n",
+    );
+    const skillFile: SkillBundleFile = {
+      path: "SKILL.md",
+      sizeBytes: skillDocument.byteLength,
+      sha256: testSha256(skillDocument),
+      executable: false,
+    };
+    const definition = skillCapability(
+      capabilityId,
+      1,
+      testSha256(serializeSkillBundleWorkingTree([skillFile])),
+    ).definition;
+    if (definition.kind !== "skill") throw new Error("Expected a Skill definition.");
+    const validFingerprint = testSha256(testStableStringify(definition));
+    const filesFingerprint = testSha256(serializeSkillBundleFileManifest([skillFile]));
+    const exportPayload = async (input: {
+      readonly descriptorFingerprint: string;
+      readonly includeEntry: boolean;
+      readonly output: string;
+    }) => {
+      const project = await source.project.openRevision(published.revision);
+      try {
+        const exported = await project.exportBundle({
+          roots: [canonicalPragmaResourceRef(sourceExpert)],
+          host: {
+            exportPayload: async ({ requirement }) =>
+              requirement.ownerRef === canonicalPragmaResourceRef(resource)
+                ? {
+                    codec: "pragma.skill@v1",
+                    files: new Map([
+                      [
+                        "descriptor.json",
+                        strToU8(
+                          JSON.stringify({
+                            schemaVersion: "pragma.skill-bundle-payload/v1",
+                            assetKey: capabilityId,
+                            name: definition.name,
+                            description: definition.description,
+                            entryPath: definition.entryPath,
+                            contentHash: definition.contentHash,
+                            filesFingerprint,
+                            fingerprint: input.descriptorFingerprint,
+                            files: [skillFile],
+                          }),
+                        ),
+                      ],
+                      ...(input.includeEntry ? ([["files/SKILL.md", skillDocument]] as const) : []),
+                    ]),
+                  }
+                : undefined,
+          },
+        });
+        await writeFile(input.output, exported.bytes);
+      } finally {
+        await project.dispose();
+      }
+    };
+
+    const mismatchedFingerprint = join(source.root, "skill-fingerprint-mismatch.pragma");
+    await exportPayload({
+      descriptorFingerprint: "f".repeat(64),
+      includeEntry: true,
+      output: mismatchedFingerprint,
+    });
+    await expect(source.service.inspect(mismatchedFingerprint)).rejects.toThrow(
+      "definition fingerprint does not match",
+    );
+
+    const missingEntry = join(source.root, "skill-entry-missing.pragma");
+    await exportPayload({
+      descriptorFingerprint: validFingerprint,
+      includeEntry: false,
+      output: missingEntry,
+    });
+    await expect(source.service.inspect(missingEntry)).rejects.toThrow("file is missing");
   });
 
   it("accepts canonical Capability ids in the current installation journal", () => {
@@ -1473,10 +1597,15 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const sourceCapabilityId = "0123456789abcdef";
     const targetCapabilityId = "fedcba9876543210";
     const sourcePayloads = new Map<number, string>();
+    const sourceCapability = async (revision: number) =>
+      skillCapability(
+        sourceCapabilityId,
+        revision,
+        (await scanSkillWorkingTree(sourcePayloads.get(revision)!)).hash,
+      );
     const sourceCapabilities = {
-      list: async () => [skillCapability(sourceCapabilityId, 3, "3".repeat(64))],
-      get: async (_id: string, revision?: number) =>
-        skillCapability(sourceCapabilityId, 3, String(revision ?? 3).repeat(64)),
+      list: async () => [await sourceCapability(3)],
+      get: async (_id: string, revision?: number) => await sourceCapability(revision ?? 3),
       skillFilesPath: async (_id: string, revision: number) => sourcePayloads.get(revision)!,
     } as unknown as CapabilityStore;
     const source = await createFixture("skill-update-source", {
@@ -1524,7 +1653,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
         publishedCandidateHash = input.candidateContentHash;
         targetCapability = {
           ...skillCapability(targetCapabilityId, 8, "e".repeat(64)),
-          definition: skillCapability(sourceCapabilityId, 3, "3".repeat(64)).definition,
+          definition: (await sourceCapability(3)).definition,
         };
         return targetCapability;
       },
@@ -1662,9 +1791,13 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       join(payload, "SKILL.md"),
       "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nShared asset.\n",
     );
+    await mkdir(join(payload, "scripts"));
+    await writeFile(join(payload, "scripts/review.sh"), "#!/bin/sh\necho review\n");
+    await chmod(join(payload, "scripts/review.sh"), 0o755);
+    const sourceContentHash = (await scanSkillWorkingTree(payload)).hash;
     const sourceCapabilities = {
-      list: async () => [skillCapability(sourceCapabilityId, 1, "1".repeat(64))],
-      get: async () => skillCapability(sourceCapabilityId, 1, "1".repeat(64)),
+      list: async () => [skillCapability(sourceCapabilityId, 1, sourceContentHash)],
+      get: async () => skillCapability(sourceCapabilityId, 1, sourceContentHash),
       skillFilesPath: async () => payload,
     } as unknown as CapabilityStore;
     const source = await createFixture("shared-skill-source", {
@@ -1703,10 +1836,13 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     let created: Capability | undefined;
     let createCount = 0;
+    let importedExecutable = false;
     const targetCapabilities = {
       list: async () => (created === undefined ? [] : [created]),
-      publishNewSkillRevisionCandidate: async (input: { id: string }) => {
+      publishNewSkillRevisionCandidate: async (input: { id: string; sourcePath: string }) => {
         createCount += 1;
+        importedExecutable =
+          ((await stat(join(input.sourcePath, "scripts/review.sh"))).mode & 0o111) !== 0;
         created = skillCapability(input.id, 1, "2".repeat(64));
         return created;
       },
@@ -1738,6 +1874,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     expect(installation.status).toBe("ready");
     expect(createCount).toBe(1);
+    expect(importedExecutable).toBe(true);
     const imported = await target.project.get();
     const bindings = imported.resources
       .filter(
@@ -2666,6 +2803,19 @@ function portableCapability(): PragmaCapabilityResource {
       config: { key: "portable" },
     },
   };
+}
+
+function testSha256(value: string | Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function testStableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(testStableStringify).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${testStableStringify(entry)}`)
+    .join(",")}}`;
 }
 
 function skillCapability(id: string, latestRevision: number, contentHash: string): Capability {

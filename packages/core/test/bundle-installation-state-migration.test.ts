@@ -134,6 +134,32 @@ describe("Bundle installation state migration", () => {
     ).toThrow("baseline revision and snapshot hash must be paired");
   });
 
+  it("keeps current v8 installation invariants strict", () => {
+    const current = v8Catalog();
+    const installation = current.installations[0]!;
+    expect(() =>
+      BundleInstallationsCatalogV8Schema.parse({
+        ...current,
+        installations: [
+          {
+            ...installation,
+            rootKind: "Capability",
+            knowledgeBaseUpdate: {
+              sourceRef: installation.sourceRootRef,
+              targetRef: installation.rootRef,
+              storeId: "00000000-0000-4000-8000-000000000001",
+              importedSnapshotHash: "b".repeat(64),
+              phase: "prepared",
+            },
+          },
+        ],
+      }),
+    ).toThrow("must describe the installation root");
+    expect(() =>
+      BundleInstallationsCatalogV8Schema.parse({ ...current, unexpected: true }),
+    ).toThrow();
+  });
+
   it("replays an interrupted catalog migration journal", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-bundle-migration-"));
     temporaryRoots.push(root);

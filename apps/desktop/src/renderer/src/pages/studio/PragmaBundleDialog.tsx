@@ -280,6 +280,7 @@ function BundleExportDialog(props: {
         exportRootRef = binding.resourceRef;
         projectRevision = refreshed.revision;
         await props.onChanged();
+        setRootRef(exportRootRef);
       }
       const prepared = await api.preparePragmaBundleExport({
         rootRef: exportRootRef,

@@ -25,9 +25,11 @@ Secrets, local sessions, Missions, usage data, workspace files, provider account
 local paths are excluded. Capability and knowledge-base payloads include only their current active
 snapshot and file metadata; revision history, drafts, revision jobs, and Memory Evidence are
 excluded. Skill payloads use the shared `pragma.skill@v1` codec, record both the Skill revision's
-content hash and an archive file-tree fingerprint, and treat the asset key as archive-local
-metadata rather than local identity. Skill roots without an active ready revision are rejected
-before export.
+content hash and a canonical manifest of every file's path, size, SHA-256 digest, and executable
+bit. Export, Source inspection, and import all recompute both the manifest fingerprint and working
+tree hash, reject undeclared or missing files, and restore executable bits during materialization.
+The asset key remains archive-local metadata rather than local identity. Skill roots without an
+active ready revision are rejected before export.
 
 ## Import
 

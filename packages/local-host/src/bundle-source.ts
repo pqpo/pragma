@@ -7,15 +7,20 @@ import { promisify } from "node:util";
 import { decodePragmaBundle, loadPragmaProject } from "@pragma/interpreter";
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 import {
+  assertValidSkillBundlePayload,
   BUNDLE_SOURCE_KIND_DIRECTORIES,
   BundleSourceItemSchema,
   BundleSourceManifestSchema,
+  BundleSourceV1ItemSchema,
   BundleSourceV1ManifestSchema,
+  BundleSourceV2ItemSchema,
   BundleSourceV2ManifestSchema,
   BundleSourceSemverSchema,
   BundleSourceSlugSchema,
   bundleSourceItemDirectory,
   bundleSourceRootPrefix,
+  migrateBundleSourceV1ItemToV2,
+  migrateBundleSourceV1ManifestToV2,
   parseBundleSourceItem,
   parseBundleSourceManifest,
   parseBundleSourceRepositoryEntry,
@@ -29,6 +34,8 @@ import { parse, stringify } from "yaml";
 const execFileAsync = promisify(execFile);
 const SOURCE_MANIFEST = "pragma-source.yaml";
 const ITEM_CONFIG = "config.yaml";
+const LEGACY_SOURCE_UPGRADE_JOURNAL = ".pragma-source-upgrade.json";
+const SOURCE_V3_UPGRADE_JOURNAL = ".pragma-source-upgrade-v3.json";
 
 export const DEFAULT_BUNDLE_SOURCE_CATEGORIES = [
   ["general", "General", "通用", "一般"],
@@ -129,55 +136,28 @@ export async function inspectBundleSourceBundle(
     const byRef = new Map(
       project.listResources().map((resource) => [canonicalPragmaResourceRef(resource), resource]),
     );
+    const skillPayloadOwners = new Set<string>();
+    for (const requirement of decoded.manifest.requirements) {
+      if (requirement.kind !== "binding" || requirement.payload?.codec !== "pragma.skill@v1") {
+        continue;
+      }
+      const owner = byRef.get(requirement.ownerRef);
+      if (owner?.kind !== "Capability") {
+        throw new Error(`Skill Bundle payload owner must be a Capability: ${requirement.ownerRef}`);
+      }
+      validateSkillBundlePayload({
+        files: decoded.files,
+        payloadRoot: requirement.payload.root,
+        ownerRef: requirement.ownerRef,
+      });
+      skillPayloadOwners.add(requirement.ownerRef);
+    }
     const roots = decoded.manifest.roots.flatMap((ref) => {
       const resource = byRef.get(ref);
       if (resource === undefined) throw new Error(`Bundle root is missing: ${ref}`);
       if (resource.kind === "Capability") {
-        const requirement = decoded.manifest.requirements.find(
-          (candidate) =>
-            candidate.kind === "binding" &&
-            candidate.ownerRef === ref &&
-            candidate.payload?.codec === "pragma.skill@v1",
-        );
-        if (requirement?.payload === undefined) {
+        if (!skillPayloadOwners.has(ref)) {
           throw new Error(`Skill Bundle root must include a pragma.skill@v1 payload: ${ref}`);
-        }
-        const descriptorPath = `${requirement.payload.root}/descriptor.json`;
-        const descriptorBytes = decoded.files.get(descriptorPath);
-        if (descriptorBytes === undefined) {
-          throw new Error(`Skill Bundle descriptor is missing: ${descriptorPath}`);
-        }
-        const descriptor = SkillBundlePayloadDescriptorSchema.parse(
-          JSON.parse(new TextDecoder().decode(descriptorBytes)) as unknown,
-        );
-        const definition = {
-          kind: "skill",
-          name: descriptor.name,
-          description: descriptor.description,
-          entryPath: descriptor.entryPath,
-          contentHash: descriptor.contentHash,
-        } as const;
-        if (descriptor.fingerprint !== sha256(stableStringify(definition))) {
-          throw new Error(`Skill Bundle definition fingerprint does not match: ${ref}`);
-        }
-        if (!decoded.files.has(`${requirement.payload.root}/files/${descriptor.entryPath}`)) {
-          throw new Error(`Skill Bundle entry file is missing: ${descriptor.entryPath}`);
-        }
-        const files = [...decoded.files.entries()]
-          .filter(([path]) => path.startsWith(`${requirement.payload!.root}/files/`))
-          .map(
-            ([path, contents]) =>
-              [path.slice(`${requirement.payload!.root}/files/`.length), contents] as const,
-          );
-        const filesFingerprint = createHash("sha256");
-        for (const [path, contents] of files.toSorted(([left], [right]) =>
-          left.localeCompare(right),
-        )) {
-          filesFingerprint.update(path);
-          filesFingerprint.update(contents);
-        }
-        if (filesFingerprint.digest("hex") !== descriptor.filesFingerprint) {
-          throw new Error(`Skill Bundle files fingerprint does not match: ${ref}`);
         }
         return [inspectedRoot(resource)];
       }
@@ -196,6 +176,33 @@ export async function inspectBundleSourceBundle(
   } finally {
     await project.dispose();
   }
+}
+
+function validateSkillBundlePayload(input: {
+  readonly files: ReadonlyMap<string, Uint8Array>;
+  readonly payloadRoot: string;
+  readonly ownerRef: string;
+}): void {
+  const descriptorPath = `${input.payloadRoot}/descriptor.json`;
+  const descriptorBytes = input.files.get(descriptorPath);
+  if (descriptorBytes === undefined) {
+    throw new Error(`Skill Bundle descriptor is missing: ${descriptorPath}`);
+  }
+  const descriptor = SkillBundlePayloadDescriptorSchema.parse(
+    JSON.parse(new TextDecoder().decode(descriptorBytes)) as unknown,
+  );
+  const payloadPrefix = `${input.payloadRoot}/`;
+  const payloadFiles = new Map(
+    [...input.files.entries()]
+      .filter(([path]) => path.startsWith(payloadPrefix))
+      .map(([path, contents]) => [path.slice(payloadPrefix.length), contents] as const),
+  );
+  assertValidSkillBundlePayload({
+    descriptor,
+    files: payloadFiles,
+    sha256,
+    label: input.ownerRef,
+  });
 }
 
 export async function addBundleSourceVersion(input: {
@@ -382,8 +389,26 @@ export async function upgradeBundleSource(
   const directory = resolve(directoryInput);
   await assertGitWorkTree(directory);
   const manifestPath = join(directory, SOURCE_MANIFEST);
-  const journalPath = join(directory, ".pragma-source-upgrade.json");
-  const raw = parse(await readFile(manifestPath, "utf8")) as unknown;
+  const journalPath = join(directory, SOURCE_V3_UPGRADE_JOURNAL);
+  const legacyJournalPath = join(directory, LEGACY_SOURCE_UPGRADE_JOURNAL);
+  let raw = parse(await readFile(manifestPath, "utf8")) as unknown;
+  const legacyJournal = await readOptionalLegacySourceUpgradeJournal(legacyJournalPath);
+  if (legacyJournal?.status === "prepared" && !BundleSourceManifestSchema.safeParse(raw).success) {
+    const v2 = BundleSourceV2ManifestSchema.safeParse(raw);
+    await finishLegacyBundleSourceUpgrade({
+      directory,
+      manifest: v2.success
+        ? v2.data
+        : migrateBundleSourceV1ManifestToV2(BundleSourceV1ManifestSchema.parse(raw)),
+      configPaths: legacyJournal.files.filter((path) => path !== SOURCE_MANIFEST),
+      journalPath: legacyJournalPath,
+      backupDirectory: join(directory, ...legacyJournal.backupDirectory.split("/")),
+    });
+    raw = parse(await readFile(manifestPath, "utf8")) as unknown;
+  }
+  if (legacyJournal?.status === "complete" && BundleSourceV1ManifestSchema.safeParse(raw).success) {
+    throw new Error("Bundle Source upgrade journal is complete but the manifest is still old.");
+  }
   const current = BundleSourceManifestSchema.safeParse(raw);
   const existingJournal = await readOptionalSourceUpgradeJournal(journalPath);
   if (current.success) {
@@ -488,6 +513,48 @@ interface BundleSourceUpgradeJournal {
   readonly status: "prepared" | "complete";
 }
 
+interface LegacyBundleSourceUpgradeJournal {
+  readonly schemaVersion: "pragma.bundle-source-upgrade/v1";
+  readonly sourceVersion: "pragma.bundle-source/v1";
+  readonly targetVersion: "pragma.bundle-source/v2";
+  readonly backupDirectory: string;
+  readonly files: readonly string[];
+  readonly status: "prepared" | "complete";
+}
+
+async function finishLegacyBundleSourceUpgrade(input: {
+  readonly directory: string;
+  readonly manifest: ReturnType<typeof migrateBundleSourceV1ManifestToV2>;
+  readonly configPaths: readonly string[];
+  readonly journalPath: string;
+  readonly backupDirectory: string;
+}): Promise<void> {
+  for (const path of input.configPaths) {
+    const target = join(input.directory, ...path.split("/"));
+    const raw = parse(await readFile(target, "utf8")) as unknown;
+    const current = BundleSourceV2ItemSchema.safeParse(raw);
+    const value = current.success
+      ? current.data
+      : migrateBundleSourceV1ItemToV2(BundleSourceV1ItemSchema.parse(raw));
+    await writeYamlAtomically(target, value);
+  }
+  await writeYamlAtomically(join(input.directory, SOURCE_MANIFEST), input.manifest);
+  for (const category of input.manifest.sections["knowledge-base"].categories) {
+    await mkdir(
+      join(input.directory, BUNDLE_SOURCE_KIND_DIRECTORIES["knowledge-base"], category.id),
+      { recursive: true },
+    );
+  }
+  await writeJsonAtomically(input.journalPath, {
+    schemaVersion: "pragma.bundle-source-upgrade/v1",
+    sourceVersion: "pragma.bundle-source/v1",
+    targetVersion: "pragma.bundle-source/v2",
+    backupDirectory: repositoryPath(input.directory, input.backupDirectory),
+    files: [SOURCE_MANIFEST, ...input.configPaths],
+    status: "complete",
+  } satisfies LegacyBundleSourceUpgradeJournal);
+}
+
 async function finishBundleSourceUpgrade(input: {
   readonly directory: string;
   readonly manifest: BundleSourceManifest;
@@ -547,6 +614,35 @@ async function readOptionalSourceUpgradeJournal(
       throw new Error(`Invalid Bundle Source upgrade journal: ${path}`);
     }
     return value as BundleSourceUpgradeJournal;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+async function readOptionalLegacySourceUpgradeJournal(
+  path: string,
+): Promise<LegacyBundleSourceUpgradeJournal | undefined> {
+  try {
+    const value = JSON.parse(
+      await readFile(path, "utf8"),
+    ) as Partial<LegacyBundleSourceUpgradeJournal>;
+    if (
+      value.schemaVersion !== "pragma.bundle-source-upgrade/v1" ||
+      value.sourceVersion !== "pragma.bundle-source/v1" ||
+      value.targetVersion !== "pragma.bundle-source/v2" ||
+      value.backupDirectory !== ".pragma-source-v1-backup" ||
+      !Array.isArray(value.files) ||
+      !value.files.every((item) => typeof item === "string") ||
+      value.files[0] !== SOURCE_MANIFEST ||
+      !value.files
+        .slice(1)
+        .every((item) => parseBundleSourceRepositoryEntry(item)?.kind === "config") ||
+      (value.status !== "prepared" && value.status !== "complete")
+    ) {
+      throw new Error(`Invalid Bundle Source upgrade journal: ${path}`);
+    }
+    return value as LegacyBundleSourceUpgradeJournal;
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
@@ -714,15 +810,6 @@ function inspectedRoot(resource: PragmaResource): InspectedBundleSourceRoot {
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
-    .join(",")}}`;
 }
 
 async function readOptionalItem(path: string): Promise<BundleSourceItem | undefined> {

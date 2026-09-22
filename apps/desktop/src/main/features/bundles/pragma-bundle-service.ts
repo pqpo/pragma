@@ -48,7 +48,13 @@ import {
   type PragmaResourceRef,
 } from "@pragma/interpreter/ast";
 import { strFromU8, zipSync } from "fflate";
-import { SkillBundlePayloadDescriptorSchema } from "@pragma/shared";
+import {
+  assertValidSkillBundlePayload,
+  SkillBundlePayloadDescriptorSchema,
+  serializeSkillBundleFileManifest,
+  serializeSkillBundleDefinition,
+  type SkillBundleFile,
+} from "@pragma/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
@@ -985,14 +991,17 @@ export function createPragmaBundleService(options: {
                     ],
                   ]);
                   if (sourceDefinition.kind === "skill") {
-                    await addDirectoryFiles(
-                      files,
-                      await options.capabilities.skillFilesPath(
-                        entry.capability.manifest.id,
-                        sourceRevision,
-                      ),
-                      "files",
+                    const skillFilesPath = await options.capabilities.skillFilesPath(
+                      entry.capability.manifest.id,
+                      sourceRevision,
                     );
+                    const skillSnapshot = await scanSkillWorkingTree(skillFilesPath);
+                    if (skillSnapshot.hash !== sourceDefinition.contentHash) {
+                      throw new Error(
+                        `Skill ${entry.capability.manifest.id} revision ${sourceRevision} content hash does not match its files.`,
+                      );
+                    }
+                    await addDirectoryFiles(files, skillFilesPath, "files");
                     const descriptor = SkillBundlePayloadDescriptorSchema.parse({
                       schemaVersion: "pragma.skill-bundle-payload/v1",
                       assetKey: entry.capability.manifest.id,
@@ -1000,13 +1009,22 @@ export function createPragmaBundleService(options: {
                       description: sourceDefinition.description,
                       entryPath: sourceDefinition.entryPath,
                       contentHash: sourceDefinition.contentHash,
-                      filesFingerprint: skillPayloadFilesFingerprint(files),
-                      fingerprint: sha256(stableStringify(sourceDefinition)),
+                      filesFingerprint: sha256(
+                        serializeSkillBundleFileManifest(skillSnapshot.entries),
+                      ),
+                      fingerprint: sha256(serializeSkillBundleDefinition(sourceDefinition)),
+                      files: skillSnapshot.entries,
                     });
                     files.set(
                       "descriptor.json",
                       new TextEncoder().encode(`${JSON.stringify(descriptor, null, 2)}\n`),
                     );
+                    assertValidSkillBundlePayload({
+                      descriptor,
+                      files,
+                      sha256,
+                      label: `${entry.capability.manifest.id}@${sourceRevision}`,
+                    });
                     return { codec: "pragma.skill@v1", files };
                   }
                   return { codec: "pragma.desktop.capability@v3", files };
@@ -1725,7 +1743,22 @@ export function createPragmaBundleService(options: {
                     archive.files,
                     prefix,
                     "pragma-bundle-skill-revision-",
+                    prefix === currentPrefix
+                      ? new Set(
+                          latest.dependency.skillFiles
+                            ?.filter((file) => file.executable)
+                            .map((file) => file.path) ?? [],
+                        )
+                      : undefined,
                   );
+                  if (prefix === currentPrefix && latest.dependency.skillFiles !== undefined) {
+                    const materializedSnapshot = await scanSkillWorkingTree(payloadPath);
+                    if (materializedSnapshot.hash !== latest.definition.contentHash) {
+                      throw new Error(
+                        `Skill payload content hash does not match after extraction: ${latest.dependency.name}.`,
+                      );
+                    }
+                  }
                   temporaryPayloads.push(payloadPath);
                 }
                 const before = new Set(
@@ -2655,6 +2688,7 @@ interface DesktopBundleArchive {
         readonly included: boolean;
         readonly payloadRoot?: string;
         readonly payloadCodec?: string;
+        readonly skillFiles?: readonly SkillBundleFile[];
       }[];
       readonly contextStores: readonly {
         readonly requirementId: string;
@@ -2920,16 +2954,12 @@ async function readDesktopBundle(
               )
             : undefined;
         if (skill !== undefined) {
-          for (const path of payloadFiles.keys()) {
-            if (path !== "descriptor.json" && !path.startsWith("files/")) {
-              throw new Error(
-                `Skill payload ${requirement.id} contains an undeclared file: ${path}.`,
-              );
-            }
-          }
-          if (skill.filesFingerprint !== skillPayloadFilesFingerprint(payloadFiles)) {
-            throw new Error(`Skill payload files fingerprint does not match: ${requirement.id}.`);
-          }
+          assertValidSkillBundlePayload({
+            descriptor: skill,
+            files: payloadFiles,
+            sha256,
+            label: requirement.id,
+          });
         }
         const v3 =
           requirement.payload?.codec === "pragma.desktop.capability@v3"
@@ -2971,6 +3001,9 @@ async function readDesktopBundle(
                 `Capability descriptor ${requirement.id}`,
               )
             : undefined);
+        if (skill !== undefined && definition === undefined) {
+          throw new Error(`Skill payload definition is missing: ${requirement.id}.`);
+        }
         capabilities.push({
           requirementId: requirement.id,
           resourceRef: requirement.ownerRef,
@@ -2996,6 +3029,7 @@ async function readDesktopBundle(
           included,
           ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
           ...(requirement.payload === undefined ? {} : { payloadCodec: requirement.payload.codec }),
+          ...(skill === undefined ? {} : { skillFiles: skill.files }),
         });
       } else if (requirement.kind === "binding" && owner?.kind === "ContextStore") {
         const v4 =
@@ -3127,26 +3161,6 @@ async function readDesktopBundle(
       ) {
         throw new Error("A Skill root must include its current pragma.skill@v1 payload.");
       }
-      if (rootPayload.definitionFingerprint === undefined) {
-        throw new Error("A Skill root payload is missing its definition fingerprint.");
-      }
-      const entryPath = `${rootPayload.payloadRoot}/files/SKILL.md`;
-      if (!decoded.files.has(entryPath)) {
-        throw new Error(`Skill Bundle entry file is missing: ${entryPath}.`);
-      }
-      const descriptorBytes = requiredBundlePayloadFile(
-        filesBelowPrefix(decoded.files, rootPayload.payloadRoot),
-        "descriptor.json",
-        rootPayload.requirementId,
-      );
-      const descriptor = parseBundlePayloadJson(
-        descriptorBytes,
-        SkillBundlePayloadDescriptorSchema,
-        `Skill descriptor ${rootPayload.requirementId}`,
-      );
-      if (descriptor.fingerprint !== rootPayload.definitionFingerprint) {
-        throw new Error("Skill Bundle definition fingerprint does not match its descriptor.");
-      }
     }
     return {
       bundle: decoded,
@@ -3171,19 +3185,6 @@ async function readDesktopBundle(
   } finally {
     await project.dispose();
   }
-}
-
-function skillPayloadFilesFingerprint(files: ReadonlyMap<string, Uint8Array>): string {
-  const hash = createHash("sha256");
-  const entries = [...files.entries()]
-    .filter(([path]) => path.startsWith("files/"))
-    .map(([path, contents]) => [path.slice("files/".length), contents] as const)
-    .toSorted(([left], [right]) => left.localeCompare(right));
-  for (const [path, contents] of entries) {
-    hash.update(path);
-    hash.update(contents);
-  }
-  return hash.digest("hex");
 }
 
 async function addDirectoryFiles(
@@ -3461,12 +3462,13 @@ async function materializePrefix(
   files: ReadonlyMap<string, Uint8Array>,
   prefix: string,
   temporaryPrefix: string,
+  executablePaths: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), temporaryPrefix));
   for (const [path, contents] of filesBelowPrefix(files, prefix)) {
     const destination = join(root, path);
     await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-    await writeFile(destination, contents, { mode: 0o600 });
+    await writeFile(destination, contents, { mode: executablePaths.has(path) ? 0o700 : 0o600 });
   }
   return root;
 }

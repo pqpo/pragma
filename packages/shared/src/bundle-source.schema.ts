@@ -250,22 +250,20 @@ export function parseBundleSourceManifest(value: unknown): BundleSourceManifest 
   const v2 = BundleSourceV2ManifestSchema.safeParse(value);
   const legacy = v2.success
     ? v2.data
-    : migrateV1Manifest(BundleSourceV1ManifestSchema.parse(value));
+    : migrateBundleSourceV1ManifestToV2(BundleSourceV1ManifestSchema.parse(value));
+  return migrateBundleSourceV2ManifestToV3(legacy);
+}
+
+export function migrateBundleSourceV2ManifestToV3(
+  legacy: z.infer<typeof BundleSourceV2ManifestSchema>,
+): BundleSourceManifest {
   return BundleSourceManifestSchema.parse({
     ...legacy,
     schemaVersion: "pragma.bundle-source/v3",
     sections: {
       ...legacy.sections,
       skill: {
-        categories: legacy.sections.expert.categories.map((category) => ({
-          ...category,
-          name: {
-            ...category.name,
-            ...(category.name.translations === undefined
-              ? {}
-              : { translations: { ...category.name.translations } }),
-          },
-        })),
+        categories: legacy.sections.expert.categories.map(cloneBundleSourceCategory),
       },
     },
   });
@@ -275,14 +273,31 @@ export function parseBundleSourceItem(value: unknown): BundleSourceItem {
   const current = BundleSourceItemSchema.safeParse(value);
   if (current.success) return current.data;
   const v2 = BundleSourceV2ItemSchema.safeParse(value);
-  const legacy = v2.success ? v2.data : BundleSourceV1ItemSchema.parse(value);
+  const legacy = v2.success
+    ? v2.data
+    : migrateBundleSourceV1ItemToV2(BundleSourceV1ItemSchema.parse(value));
+  return migrateBundleSourceV2ItemToV3(legacy);
+}
+
+export function migrateBundleSourceV1ItemToV2(
+  legacy: z.infer<typeof BundleSourceV1ItemSchema>,
+): z.infer<typeof BundleSourceV2ItemSchema> {
+  return BundleSourceV2ItemSchema.parse({
+    ...legacy,
+    schemaVersion: "pragma.bundle-source-item/v2",
+  });
+}
+
+export function migrateBundleSourceV2ItemToV3(
+  legacy: z.infer<typeof BundleSourceV2ItemSchema>,
+): BundleSourceItem {
   return BundleSourceItemSchema.parse({
     ...legacy,
     schemaVersion: "pragma.bundle-source-item/v3",
   });
 }
 
-function migrateV1Manifest(
+export function migrateBundleSourceV1ManifestToV2(
   legacy: z.infer<typeof BundleSourceV1ManifestSchema>,
 ): z.infer<typeof BundleSourceV2ManifestSchema> {
   return BundleSourceV2ManifestSchema.parse({

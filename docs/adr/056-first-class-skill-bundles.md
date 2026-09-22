@@ -30,6 +30,8 @@ a binding but may not derive the semantic Capability ID itself.
 
 - Skill export, import, marketplace installation, and multi-source publication use the same Bundle
   integrity and conflict machinery as other roots.
+- The Skill codec carries a canonical file manifest, including executable bits, so every consumer
+  can verify the revision content hash instead of trusting definition metadata alone.
 - Legacy Bundle v1/v2 and Source v1/v2 data remain readable through static migrations, while future
   versions and malformed or incomplete Skill payloads fail closed.
 - System capabilities and non-Skill connectors cannot be Skill roots.
