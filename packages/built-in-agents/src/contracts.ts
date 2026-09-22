@@ -255,10 +255,18 @@ export const PragmaAgentDslDraftSummarySchema = PragmaAgentDslDraftSchema.omit({
 
 const PragmaAgentDslReviewPathSchema = z.array(z.union([z.string(), z.number()])).max(100);
 
+const PragmaAgentDslValuePreviewSchema = z
+  .string()
+  .max(160)
+  .refine(
+    (value) => [...value].length <= 80,
+    "Value previews must not exceed 80 Unicode characters.",
+  );
+
 export const PragmaAgentDslValueSummarySchema = z
   .object({
     type: z.enum(["string", "number", "boolean", "null", "array", "object"]),
-    preview: z.string().max(80),
+    preview: PragmaAgentDslValuePreviewSchema,
     size: z.number().int().nonnegative().optional(),
   })
   .strict();

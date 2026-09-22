@@ -224,6 +224,19 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         ).metadata,
         futureLabel: "preserve-me",
       },
+      spec: {
+        ...(
+          parsePragmaYaml((await adapter.read("expert:1xddvess309a6gme")).source) as {
+            spec: Record<string, unknown>;
+          }
+        ).spec,
+        plugins: [
+          {
+            ref: "plugin:example@1.0.0",
+            futurePresentation: { color: "blue" },
+          },
+        ],
+      },
     });
     await project.apply({ baseRevision: 1, upserts: [current] });
 
@@ -235,15 +248,17 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     });
     const file = draft.resources[0]!.filePath!;
     const before = await readFile(file, "utf8");
-    await writeFile(
-      file,
-      before
-        .replace(/futureEnvelope:\n {2}enabled: true\n/u, "")
-        .replace(/ {2}futureLabel: preserve-me\n/u, "")
-        .replace("  tags: []\n", "")
-        .replace("  tools: []\n", "")
-        .replace("Write concise text.", "Write concise copy."),
-    );
+    const authored = parsePragmaYaml(before) as Record<string, unknown>;
+    const authoredMetadata = authored["metadata"] as Record<string, unknown>;
+    const authoredSpec = authored["spec"] as Record<string, unknown>;
+    const authoredPlugin = (authoredSpec["plugins"] as Record<string, unknown>[])[0]!;
+    delete authored["futureEnvelope"];
+    delete authoredMetadata["futureLabel"];
+    delete authoredMetadata["tags"];
+    delete authoredPlugin["futurePresentation"];
+    delete authoredSpec["tools"];
+    authoredSpec["instructions"] = "Write concise copy.";
+    await writeFile(file, formatPragmaYaml(authored));
 
     const inspection = await adapter.inspectDslDraft({ missionId, draftId: draft.draftId });
     expect(inspection.review.omittedFields).toEqual(
@@ -256,6 +271,11 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
         {
           ref: "expert:1xddvess309a6gme",
           path: ["metadata", "futureLabel"],
+          effect: "preserved_unknown",
+        },
+        {
+          ref: "expert:1xddvess309a6gme",
+          path: ["spec", "plugins", 0, "futurePresentation"],
           effect: "preserved_unknown",
         },
         expect.objectContaining({
@@ -277,6 +297,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     expect(prepared.review).toEqual(inspection.review);
     expect(preparedExpert.source).toContain("futureEnvelope:");
     expect(preparedExpert.source).toContain("futureLabel: preserve-me");
+    expect(preparedExpert.source).toContain("futurePresentation:");
     await adapter.commit({
       changeSetId: prepared.changeSetId,
       operationId: "unknown-preserved",

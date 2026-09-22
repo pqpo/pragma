@@ -2295,6 +2295,31 @@ function collectDslOmittedFields(
   unknownPaths: ReadonlySet<string>,
   output: DslReviewOmittedField[],
 ): void {
+  if (Array.isArray(base) && Array.isArray(raw)) {
+    const availableRawIndexes = new Set(raw.keys());
+    const availableEffectiveIndexes = new Set(Array.isArray(effective) ? effective.keys() : []);
+    for (const [index, entry] of base.entries()) {
+      const rawIndex = findDslReviewArrayEntry(raw, entry, availableRawIndexes, index);
+      if (rawIndex === undefined) continue;
+      availableRawIndexes.delete(rawIndex);
+      const effectiveIndex = Array.isArray(effective)
+        ? findDslReviewArrayEntry(effective, entry, availableEffectiveIndexes, index)
+        : undefined;
+      if (effectiveIndex !== undefined) availableEffectiveIndexes.delete(effectiveIndex);
+      collectDslOmittedFields(
+        ref,
+        entry,
+        raw[rawIndex],
+        effectiveIndex === undefined || !Array.isArray(effective)
+          ? undefined
+          : effective[effectiveIndex],
+        [...path, index],
+        unknownPaths,
+        output,
+      );
+    }
+    return;
+  }
   if (!isDslReviewRecord(base)) return;
   for (const key of Object.keys(base).toSorted()) {
     const nextPath = [...path, key];
@@ -2304,16 +2329,41 @@ function collectDslOmittedFields(
         path: nextPath,
         effect: unknownPaths.has(dslReviewPathKey(nextPath))
           ? "preserved_unknown"
-          : dslReviewPathExists(effective, nextPath)
+          : isDslReviewRecord(effective) && Object.hasOwn(effective, key)
             ? "defaulted"
             : "removed",
       });
       continue;
     }
-    if (isDslReviewRecord(base[key]) && isDslReviewRecord(raw[key])) {
-      collectDslOmittedFields(ref, base[key], raw[key], effective, nextPath, unknownPaths, output);
+    collectDslOmittedFields(
+      ref,
+      base[key],
+      raw[key],
+      isDslReviewRecord(effective) ? effective[key] : undefined,
+      nextPath,
+      unknownPaths,
+      output,
+    );
+  }
+}
+
+function findDslReviewArrayEntry(
+  entries: readonly unknown[],
+  original: unknown,
+  availableIndexes: ReadonlySet<number>,
+  fallbackIndex: number,
+): number | undefined {
+  if (isDslReviewRecord(original)) {
+    for (const key of ["id", "ref", "name", "key"] as const) {
+      const identity = original[key];
+      if (typeof identity !== "string" && typeof identity !== "number") continue;
+      const match = [...availableIndexes].find(
+        (index) => isDslReviewRecord(entries[index]) && entries[index][key] === identity,
+      );
+      if (match !== undefined) return match;
     }
   }
+  return availableIndexes.has(fallbackIndex) ? fallbackIndex : undefined;
 }
 
 function summarizeDslReviewValue(value: unknown): DslReviewValueSummary {
@@ -2375,20 +2425,6 @@ function truncateDslReviewPreview(value: string): string {
 
 function isDslReviewRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function dslReviewPathExists(value: unknown, path: DslReviewPath): boolean {
-  let current = value;
-  for (const segment of path) {
-    if (typeof segment === "number") {
-      if (!Array.isArray(current) || segment >= current.length) return false;
-      current = current[segment];
-      continue;
-    }
-    if (!isDslReviewRecord(current) || !Object.hasOwn(current, segment)) return false;
-    current = current[segment];
-  }
-  return true;
 }
 
 function compareDslReviewFieldChanges(

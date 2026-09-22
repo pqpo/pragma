@@ -6,10 +6,31 @@ import type {
   PragmaAgentDslProjectPort,
   PragmaAgentMissionPort,
 } from "../src/ports.ts";
-import { PragmaAgentEvaluationDraftSchema, PragmaAgentFlowDraftSchema } from "../src/contracts.ts";
+import {
+  PragmaAgentDslValueSummarySchema,
+  PragmaAgentEvaluationDraftSchema,
+  PragmaAgentFlowDraftSchema,
+} from "../src/contracts.ts";
 import { createPragmaManagementTools } from "../src/pragma-management-tools.ts";
 
 describe("Pragma Host management tools", () => {
+  it("counts bounded DSL value previews by Unicode character", () => {
+    expect(
+      PragmaAgentDslValueSummarySchema.parse({
+        type: "string",
+        preview: "😀".repeat(80),
+        size: 80,
+      }),
+    ).toMatchObject({ preview: "😀".repeat(80) });
+    expect(
+      PragmaAgentDslValueSummarySchema.safeParse({
+        type: "string",
+        preview: "😀".repeat(81),
+        size: 81,
+      }).success,
+    ).toBe(false);
+  });
+
   it("injects Mission ownership into DSL file-draft tools without exposing paths in input", async () => {
     let received: Parameters<PragmaAgentDslProjectPort["startDslDraft"]>[0] | undefined;
     const project = projectPort({
