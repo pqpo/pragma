@@ -136,10 +136,11 @@ export interface PragmaAgentDslProjectPort {
     readonly additionalSources?: readonly string[] | undefined;
   }): Promise<PragmaAgentPrepareResult>;
   discardFlowDraft(draftId: string): Promise<void>;
-  getChangeSet(changeSetId: string): Promise<PragmaAgentChangeSet>;
+  getChangeSet(changeSetId: string, missionId?: string): Promise<PragmaAgentChangeSet>;
   commit(input: {
     readonly changeSetId: string;
     readonly operationId: string;
+    readonly missionId?: string | undefined;
   }): Promise<PragmaAgentProjectCommit>;
 }
 

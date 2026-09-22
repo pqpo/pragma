@@ -91,6 +91,53 @@ describe("Pragma Host management tools", () => {
     expect(operationId).toBe("runtime-call-7");
   });
 
+  it("carries the active Mission into prepared change reads and commits", async () => {
+    const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+    let readMissionId: string | undefined;
+    let commitMissionId: string | undefined;
+    const changeSetId = "4fc96ef9-1825-447d-a17f-d820f6fd4855";
+    const project = projectPort({
+      async getChangeSet(_changeSetId, receivedMissionId) {
+        readMissionId = receivedMissionId;
+        return {
+          changeSetId,
+          projectRevision: 1,
+          diagnostics: [],
+          changes: [
+            {
+              ref: "expert:1h2j3k4m5n6p7q8r",
+              kind: "updated",
+              source: "kind: Expert\n",
+            },
+          ],
+          createdAt: "2026-09-22T00:00:00.000Z",
+        };
+      },
+      async commit(input) {
+        commitMissionId = input.missionId;
+        return { projectId: "studio", projectRevision: 2, changedRefs: [] };
+      },
+    });
+    const tools = createPragmaManagementTools(
+      { project, missions: missionPort() },
+      { missionId, workspacePath: "/workspace/project" },
+    );
+
+    await tools
+      .find((candidate) => candidate.name === "read_prepared_dsl_change")!
+      .call(
+        { changeSetId, ref: "expert:1h2j3k4m5n6p7q8r", offset: 0, limitChars: 100 },
+        undefined,
+        undefined,
+      );
+    await tools
+      .find((candidate) => candidate.name === "commit_dsl_changes")!
+      .call({ changeSetId }, undefined, { toolCallId: "scoped-commit" });
+
+    expect(readMissionId).toBe(missionId);
+    expect(commitMissionId).toBe(missionId);
+  });
+
   it("replaces complete Evaluation YAML with bounded draft tools", async () => {
     const project = projectPort({
       async runEvaluationDraft() {

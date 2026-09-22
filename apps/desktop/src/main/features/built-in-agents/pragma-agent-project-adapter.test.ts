@@ -8,9 +8,11 @@ import { encodePragmaPathSegment } from "@pragma/core";
 import { PRAGMA_TEXT_LIMITS } from "@pragma/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  PragmaForwardCompatibleResourceSchema,
   PragmaFlowResourceSchema,
   PragmaRuntimeProfileResourceSchema,
 } from "@pragma/interpreter/ast";
+import { parsePragmaYaml } from "@pragma/interpreter";
 
 import type { Capability } from "../../../shared/contracts/index.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
@@ -117,7 +119,26 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       )!.value,
     );
     expect(concurrentPrepare.filter((result) => result.status === "rejected")).toHaveLength(1);
-    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "draft-edit" });
+    const otherMissionId = "4fc96ef9-1825-447d-a17f-d820f6fd4855";
+    await expect(adapter.getChangeSet(prepared.changeSetId, otherMissionId)).rejects.toThrow(
+      "owned by another Mission",
+    );
+    await expect(
+      adapter.commit({
+        changeSetId: prepared.changeSetId,
+        operationId: "cross-mission-draft-edit",
+        missionId: otherMissionId,
+      }),
+    ).rejects.toThrow("owned by another Mission");
+    expect((await project.get()).revision).toBe(1);
+    await expect(adapter.getChangeSet(prepared.changeSetId, missionId)).resolves.toMatchObject({
+      changeSetId: prepared.changeSetId,
+    });
+    await adapter.commit({
+      changeSetId: prepared.changeSetId,
+      operationId: "draft-edit",
+      missionId,
+    });
     const saved = await adapter.read("expert:1xddvess309a6gme");
     expect(saved.source).toContain("Write concise copy.");
     expect(saved.source).toContain("description: Original");
@@ -182,13 +203,18 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       adapter.commit({
         changeSetId: discarded.changeSet.changeSetId,
         operationId: "discarded-change-set",
+        missionId,
       }),
     ).rejects.toThrow("no longer matches");
     await expect(project.get()).resolves.toEqual(beforeDiscardedCommit);
 
     const racing = await prepareDraft();
     const outcomes = await Promise.allSettled([
-      adapter.commit({ changeSetId: racing.changeSet.changeSetId, operationId: "racing-commit" }),
+      adapter.commit({
+        changeSetId: racing.changeSet.changeSetId,
+        operationId: "racing-commit",
+        missionId,
+      }),
       adapter.discardDslDraft({ missionId, draftId: racing.draft.draftId }),
     ]);
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
@@ -202,6 +228,125 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
     } else {
       expect(finalProject).toEqual(beforeDiscardedCommit);
       expect(finalDraft.state).toBe("discarded");
+    }
+  });
+
+  it("recovers every durable draft commit phase to the same successful receipt", async () => {
+    for (const phase of ["after-project-apply", "after-published", "after-committed"] as const) {
+      const root = await temporaryRoot(`pragma-dsl-draft-commit-${phase}-`);
+      const stateRoot = join(root, "state");
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const adapter = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+      const runtimeRef = (
+        (await adapter.listExpertOptions({ category: "runtime-models", limit: 25 })).items[0] as {
+          runtimeProfileRef: string;
+        }
+      ).runtimeProfileRef;
+      const initial = requirePrepared(
+        await adapter.prepare({
+          expectedProjectRevision: 0,
+          sources: [expert("Original", runtimeRef)],
+        }),
+      );
+      await adapter.commit({ changeSetId: initial.changeSetId, operationId: `${phase}-base` });
+      const missionId = "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b";
+      const draft = await adapter.startDslDraft({
+        missionId,
+        workspacePath: root,
+        targets: [{ mode: "edit", ref: "expert:1xddvess309a6gme" }],
+      });
+      const file = draft.resources[0]!.filePath!;
+      await writeFile(
+        file,
+        (await readFile(file, "utf8")).replace("Write concise text.", `Write ${phase}.`),
+      );
+      const prepared = requirePrepared(
+        await adapter.prepareDslDraft({ missionId, draftId: draft.draftId }),
+      );
+      const operationId = `${phase}-operation`;
+      const recordRoot = join(
+        stateRoot,
+        "dsl-resource-drafts",
+        encodePragmaPathSegment(draft.draftId),
+      );
+      const journalPath = join(recordRoot, "commit.json");
+      const initiatedJournal = {
+        schemaVersion: "pragma.dsl-draft-commit/v1",
+        draftId: draft.draftId,
+        changeSetId: prepared.changeSetId,
+        operationId,
+        state: "initiated",
+      };
+      await writeFile(journalPath, JSON.stringify(initiatedJournal));
+      const published = await project.apply({
+        baseRevision: prepared.projectRevision,
+        upserts: prepared.changes.map((change) =>
+          PragmaForwardCompatibleResourceSchema.parse(parsePragmaYaml(change.source)),
+        ),
+      });
+      const expectedResult = {
+        projectId: published.projectId,
+        projectRevision: published.revision,
+        changedRefs: prepared.changes.map((change) => change.ref),
+      };
+      if (phase !== "after-project-apply") {
+        await writeFile(
+          journalPath,
+          JSON.stringify({ ...initiatedJournal, state: "published", result: expectedResult }),
+        );
+      }
+      if (phase === "after-committed") {
+        const draftRecordPath = join(recordRoot, "draft.json");
+        const draftRecord = JSON.parse(await readFile(draftRecordPath, "utf8")) as Record<
+          string,
+          unknown
+        >;
+        delete draftRecord.submissionHash;
+        await writeFile(
+          draftRecordPath,
+          JSON.stringify({
+            ...draftRecord,
+            state: "committed",
+            committedProjectRevision: published.revision,
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+      }
+      await expect(
+        readFile(join(stateRoot, "operations", `${encodePragmaPathSegment(operationId)}.json`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+
+      const recovered = createDesktopPragmaAgentProjectPort(adapterOptions(project, stateRoot));
+      if (phase === "after-project-apply") {
+        await expect(recovered.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+          items: [expect.objectContaining({ draftId: draft.draftId, state: "committed" })],
+        });
+      }
+      await expect(
+        recovered.commit({ changeSetId: prepared.changeSetId, operationId, missionId }),
+      ).resolves.toEqual(expectedResult);
+      await expect(
+        recovered.commit({
+          changeSetId: prepared.changeSetId,
+          operationId: `${operationId}-retry`,
+          missionId,
+        }),
+      ).resolves.toEqual(expectedResult);
+      await expect(recovered.listDslDrafts({ missionId, limit: 25 })).resolves.toMatchObject({
+        items: [
+          expect.objectContaining({
+            draftId: draft.draftId,
+            state: "committed",
+            committedProjectRevision: published.revision,
+          }),
+        ],
+      });
+      await expect(
+        readFile(
+          join(stateRoot, "operations", `${encodePragmaPathSegment(operationId)}.json`),
+          "utf8",
+        ),
+      ).resolves.toContain(`"projectRevision": ${published.revision}`);
     }
   });
 
@@ -301,7 +446,11 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       await adapter.prepareDslDraft({ missionId, draftId: unrelatedDraft.draftId }),
     );
     await expect(
-      adapter.commit({ changeSetId: rebased.changeSetId, operationId: "draft-unrelated" }),
+      adapter.commit({
+        changeSetId: rebased.changeSetId,
+        operationId: "draft-unrelated",
+        missionId,
+      }),
     ).resolves.toMatchObject({ projectRevision: 3 });
     await expect(
       adapter.restartDslDraft({ missionId, draftId: unrelatedDraft.draftId }),
@@ -375,7 +524,11 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       operationId: "changed-after-prepare",
     });
     await expect(
-      adapter.commit({ changeSetId: preparedBeforeRace.changeSetId, operationId: "stale-draft" }),
+      adapter.commit({
+        changeSetId: preparedBeforeRace.changeSetId,
+        operationId: "stale-draft",
+        missionId,
+      }),
     ).rejects.toThrow();
     await expect(
       adapter.restartDslDraft({ missionId, draftId: conflictingDraft.draftId }),
@@ -388,6 +541,7 @@ describe("Desktop PragmaAgent DSL project adapter", { timeout: 30_000 }, () => {
       adapter.commit({
         changeSetId: preparedBeforeRace.changeSetId,
         operationId: "restarted-old-change-set",
+        missionId,
       }),
     ).rejects.toThrow("no longer matches");
     await expect(project.get()).resolves.toEqual(afterRestart);

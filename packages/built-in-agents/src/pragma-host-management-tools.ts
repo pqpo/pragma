@@ -549,7 +549,7 @@ function buildPragmaManagementHostTools(options: {
       z.toJSONSchema(ReadPreparedDslChangeInput),
       async (args) => {
         const input = ReadPreparedDslChangeInput.parse(args);
-        const changeSet = await project().getChangeSet(input.changeSetId);
+        const changeSet = await project().getChangeSet(input.changeSetId, options.scope?.missionId);
         const change = changeSet.changes.find((candidate) => candidate.ref === input.ref);
         if (change === undefined) throw new Error(`Prepared DSL change not found: ${input.ref}`);
         return ok({
@@ -711,6 +711,7 @@ function buildPragmaManagementHostTools(options: {
             await project().commit({
               changeSetId: input.changeSetId,
               operationId: operationId(context),
+              ...(options.scope === undefined ? {} : { missionId: options.scope.missionId }),
             }),
           );
         },

@@ -36,6 +36,9 @@ restart, discard and a draft-backed Project commit are serialized by the same pe
 lock. A commit must revalidate `prepared` state and the exact change-set while holding that lock before
 mutating the Project. Mission identity and Workspace path participate in the management binding
 fingerprint so a compiled binding cannot be reused across Mission scopes.
+Reading or committing a draft-backed change-set also requires the originating Mission identity;
+change-set UUID entropy is not an authorization boundary. Generic non-draft change-sets retain their
+existing scope semantics.
 
 The generic full-source `prepare_dsl_changes` entry and Flow `additionalSources` reject Expert and
 ExpertTeam resources. This makes the file-draft route mandatory for Agent-facing authoring while the
@@ -57,9 +60,15 @@ A prepared draft can also restart after a later commit conflict when its candida
 been superseded by current resources that match neither the base nor the prepared candidate.
 
 Draft records start at `pragma.dsl-draft/v1`; discard journals start at
-`pragma.dsl-draft-discard/v1`. These are new persistent-state families and have no historical source
-version to migrate. Future incompatible versions require adjacent migrations under the repository's
-persistent-state rules. Discard first writes a stable journal, moves the Workspace draft into Host
+`pragma.dsl-draft-discard/v1`; draft commit journals start at `pragma.dsl-draft-commit/v1`. These are
+new persistent-state families and have no historical source version to migrate. Future incompatible
+versions require adjacent migrations under the repository's persistent-state rules. Before mutating
+the Project, a draft-backed commit durably records its draft, change-set and operation identities.
+Recovery searches immutable Project revisions after the candidate base for the exact candidate
+resources, publishes only when no matching revision exists, then converges the draft, operation
+receipt and cleanup to one committed result. A committed draft with a missing receipt therefore
+returns the original successful Project revision on retry. Discard first writes a stable journal,
+moves the Workspace draft into Host
 Trash, and marks the record discarded. Listing or accessing drafts replays an interrupted journal.
 Replay treats a completed cross-device copy with a still-present source as an interrupted move and
 rebuilds the Trash destination idempotently. A committed change-set moves its originating draft from
