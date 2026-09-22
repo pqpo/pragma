@@ -48,6 +48,7 @@ import {
   type PragmaResourceRef,
 } from "@pragma/interpreter/ast";
 import { strFromU8, zipSync } from "fflate";
+import { SkillBundlePayloadDescriptorSchema } from "@pragma/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
@@ -110,7 +111,7 @@ import {
 
 const InstallationCatalogSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installations/v7"),
+    schemaVersion: z.literal("pragma.bundle-installations/v8"),
     installations: z.array(PragmaBundleInstallationSchema),
   })
   .strict();
@@ -359,7 +360,7 @@ export function createPragmaBundleService(options: {
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: "pragma.bundle-installations/v7", installations: [] };
+        return { schemaVersion: "pragma.bundle-installations/v8", installations: [] };
       }
       throw error;
     }
@@ -667,16 +668,27 @@ export function createPragmaBundleService(options: {
           resource,
         ): resource is Extract<
           PragmaResource,
-          { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" }
+          { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" | "Capability" }
         > =>
           canonicalPragmaResourceRef(resource) === rootRef &&
           (resource.kind === "Expert" ||
             resource.kind === "ExpertTeam" ||
             resource.kind === "Flow" ||
-            resource.kind === "ContextStore"),
+            resource.kind === "ContextStore" ||
+            resource.kind === "Capability"),
       );
       if (root === undefined) throw new Error(`Bundle root not found: ${rootRef}`);
       const capabilities = await collectCapabilities(resources, options.capabilities);
+      if (root.kind === "Capability") {
+        const rootCapability = capabilities.find(
+          (entry) => canonicalPragmaResourceRef(entry.resource) === rootRef,
+        )?.capability;
+        if (rootCapability?.definition.kind !== "skill" || rootCapability.managedBy === "system") {
+          throw new Error(
+            "Only a user-managed Skill with an active ready revision can be exported.",
+          );
+        }
+      }
       const contexts = await collectContexts(resources, options.contextStores);
       const plugins = await collectPlugins(resources, options.plugins);
       await assertPortablePluginConfigs(resources, plugins, options.plugins);
@@ -842,7 +854,8 @@ export function createPragmaBundleService(options: {
         (root.kind !== "Expert" &&
           root.kind !== "ExpertTeam" &&
           root.kind !== "Flow" &&
-          root.kind !== "ContextStore")
+          root.kind !== "ContextStore" &&
+          root.kind !== "Capability")
       ) {
         throw new Error(`Bundle root not found: ${input.rootRef}`);
       }
@@ -870,6 +883,13 @@ export function createPragmaBundleService(options: {
             tags: prepared.root.metadata.tags,
             ...(prepared.root.kind === "Expert" || prepared.root.kind === "ExpertTeam"
               ? { avatarId: prepared.root.metadata.avatarId }
+              : {}),
+            ...(prepared.root.kind === "Capability"
+              ? {
+                  activeRevision: prepared.capabilities.find(
+                    (entry) => canonicalPragmaResourceRef(entry.resource) === input.rootRef,
+                  )?.capability?.manifest.latestRevision,
+                }
               : {}),
           },
           projectRevision: prepared.snapshot.revision,
@@ -936,7 +956,10 @@ export function createPragmaBundleService(options: {
             exportPayload: async ({ requirement, originalBindingRef }) => {
               if (requirement.kind === "binding") {
                 const resource = resourcesByRef.get(requirement.ownerRef);
-                if (resource?.kind === "Capability" && input.modules.capabilities) {
+                if (
+                  resource?.kind === "Capability" &&
+                  (input.modules.capabilities || prepared.root.kind === "Capability")
+                ) {
                   const entry = capabilityByRef.get(requirement.ownerRef);
                   if (entry?.capability === undefined || originalBindingRef === undefined) {
                     return undefined;
@@ -970,6 +993,21 @@ export function createPragmaBundleService(options: {
                       ),
                       "files",
                     );
+                    const descriptor = SkillBundlePayloadDescriptorSchema.parse({
+                      schemaVersion: "pragma.skill-bundle-payload/v1",
+                      assetKey: entry.capability.manifest.id,
+                      name: sourceDefinition.name,
+                      description: sourceDefinition.description,
+                      entryPath: sourceDefinition.entryPath,
+                      contentHash: sourceDefinition.contentHash,
+                      filesFingerprint: skillPayloadFilesFingerprint(files),
+                      fingerprint: sha256(stableStringify(sourceDefinition)),
+                    });
+                    files.set(
+                      "descriptor.json",
+                      new TextEncoder().encode(`${JSON.stringify(descriptor, null, 2)}\n`),
+                    );
+                    return { codec: "pragma.skill@v1", files };
                   }
                   return { codec: "pragma.desktop.capability@v3", files };
                 }
@@ -1484,8 +1522,8 @@ export function createPragmaBundleService(options: {
           );
           const timestamp = new Date().toISOString();
           const initial = PragmaBundleInstallationSchema.parse({
-            schemaVersion: "pragma.bundle-installation/v7",
-            bundleVersion: "pragma.bundle/v2",
+            schemaVersion: "pragma.bundle-installation/v8",
+            bundleVersion: "pragma.bundle/v3",
             sourceProjectFingerprint: archive.manifest.projectFingerprint,
             id: installationId,
             bundleFingerprint: archive.manifest.bundleFingerprint,
@@ -2591,12 +2629,12 @@ interface DesktopBundleArchive {
     readonly createdAt: string;
     readonly roots: readonly {
       readonly ref: string;
-      readonly kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore";
+      readonly kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" | "Capability";
       readonly name: string;
     }[];
     readonly root: {
       readonly ref: string;
-      readonly kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore";
+      readonly kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" | "Capability";
       readonly name: string;
     };
     readonly projectArtifacts: readonly string[];
@@ -2616,6 +2654,7 @@ interface DesktopBundleArchive {
         }[];
         readonly included: boolean;
         readonly payloadRoot?: string;
+        readonly payloadCodec?: string;
       }[];
       readonly contextStores: readonly {
         readonly requirementId: string;
@@ -2826,7 +2865,8 @@ async function readDesktopBundle(
         (resource.kind !== "Expert" &&
           resource.kind !== "ExpertTeam" &&
           resource.kind !== "Flow" &&
-          resource.kind !== "ContextStore")
+          resource.kind !== "ContextStore" &&
+          resource.kind !== "Capability")
       ) {
         throw new Error(`Bundle root is unavailable: ${ref}.`);
       }
@@ -2871,6 +2911,26 @@ async function readDesktopBundle(
           ? new Map<string, Uint8Array>()
           : filesBelowPrefix(decoded.files, requirement.payload.root);
       if (requirement.kind === "binding" && owner?.kind === "Capability") {
+        const skill =
+          requirement.payload?.codec === "pragma.skill@v1"
+            ? parseBundlePayloadJson(
+                requiredBundlePayloadFile(payloadFiles, "descriptor.json", requirement.id),
+                SkillBundlePayloadDescriptorSchema,
+                `Skill descriptor ${requirement.id}`,
+              )
+            : undefined;
+        if (skill !== undefined) {
+          for (const path of payloadFiles.keys()) {
+            if (path !== "descriptor.json" && !path.startsWith("files/")) {
+              throw new Error(
+                `Skill payload ${requirement.id} contains an undeclared file: ${path}.`,
+              );
+            }
+          }
+          if (skill.filesFingerprint !== skillPayloadFilesFingerprint(payloadFiles)) {
+            throw new Error(`Skill payload files fingerprint does not match: ${requirement.id}.`);
+          }
+        }
         const v3 =
           requirement.payload?.codec === "pragma.desktop.capability@v3"
             ? parseBundlePayloadJson(
@@ -2888,10 +2948,20 @@ async function readDesktopBundle(
               )
             : undefined;
         const included =
+          skill !== undefined ||
           requirement.payload?.codec === "pragma.desktop.capability@v1" ||
           v2 !== undefined ||
           v3 !== undefined;
         const definition =
+          (skill === undefined
+            ? undefined
+            : CapabilityDefinitionSchema.parse({
+                kind: "skill",
+                name: skill.name,
+                description: skill.description,
+                entryPath: skill.entryPath,
+                contentHash: skill.contentHash,
+              })) ??
           v3?.definition ??
           v2?.definition ??
           (requirement.payload?.codec === "pragma.desktop.capability@v1"
@@ -2912,17 +2982,20 @@ async function readDesktopBundle(
                 definition,
                 definitionFingerprint: sha256(stableStringify(definition)),
               }),
-          ...(v3 !== undefined
-            ? { logicalId: v3.assetKey }
-            : v2 !== undefined
-              ? {
-                  logicalId: v2.logicalId,
-                  sourceRevision: v2.revision,
-                  ...(v2.revisions === undefined ? {} : { history: v2.revisions }),
-                }
-              : {}),
+          ...(skill !== undefined
+            ? { logicalId: skill.assetKey }
+            : v3 !== undefined
+              ? { logicalId: v3.assetKey }
+              : v2 !== undefined
+                ? {
+                    logicalId: v2.logicalId,
+                    sourceRevision: v2.revision,
+                    ...(v2.revisions === undefined ? {} : { history: v2.revisions }),
+                  }
+                : {}),
           included,
           ...(requirement.payload === undefined ? {} : { payloadRoot: requirement.payload.root }),
+          ...(requirement.payload === undefined ? {} : { payloadCodec: requirement.payload.codec }),
         });
       } else if (requirement.kind === "binding" && owner?.kind === "ContextStore") {
         const v4 =
@@ -3044,6 +3117,37 @@ async function readDesktopBundle(
         throw new Error("A knowledge-base root must include its current managed snapshot.");
       }
     }
+    if (root.kind === "Capability") {
+      const rootPayload = capabilities.find((dependency) => dependency.resourceRef === root.ref);
+      if (
+        rootPayload?.included !== true ||
+        rootPayload.kind !== "skill" ||
+        rootPayload.payloadCodec !== "pragma.skill@v1" ||
+        rootPayload.payloadRoot === undefined
+      ) {
+        throw new Error("A Skill root must include its current pragma.skill@v1 payload.");
+      }
+      if (rootPayload.definitionFingerprint === undefined) {
+        throw new Error("A Skill root payload is missing its definition fingerprint.");
+      }
+      const entryPath = `${rootPayload.payloadRoot}/files/SKILL.md`;
+      if (!decoded.files.has(entryPath)) {
+        throw new Error(`Skill Bundle entry file is missing: ${entryPath}.`);
+      }
+      const descriptorBytes = requiredBundlePayloadFile(
+        filesBelowPrefix(decoded.files, rootPayload.payloadRoot),
+        "descriptor.json",
+        rootPayload.requirementId,
+      );
+      const descriptor = parseBundlePayloadJson(
+        descriptorBytes,
+        SkillBundlePayloadDescriptorSchema,
+        `Skill descriptor ${rootPayload.requirementId}`,
+      );
+      if (descriptor.fingerprint !== rootPayload.definitionFingerprint) {
+        throw new Error("Skill Bundle definition fingerprint does not match its descriptor.");
+      }
+    }
     return {
       bundle: decoded,
       manifest: {
@@ -3067,6 +3171,19 @@ async function readDesktopBundle(
   } finally {
     await project.dispose();
   }
+}
+
+function skillPayloadFilesFingerprint(files: ReadonlyMap<string, Uint8Array>): string {
+  const hash = createHash("sha256");
+  const entries = [...files.entries()]
+    .filter(([path]) => path.startsWith("files/"))
+    .map(([path, contents]) => [path.slice("files/".length), contents] as const)
+    .toSorted(([left], [right]) => left.localeCompare(right));
+  for (const [path, contents] of entries) {
+    hash.update(path);
+    hash.update(contents);
+  }
+  return hash.digest("hex");
 }
 
 async function addDirectoryFiles(

@@ -17,13 +17,20 @@ export const BundleSourceSemverSchema = z
   )
   .max(100);
 
-export const BundleSourceKindSchema = z.enum(["expert", "expert-team", "flow", "knowledge-base"]);
+export const BundleSourceKindSchema = z.enum([
+  "expert",
+  "expert-team",
+  "flow",
+  "knowledge-base",
+  "skill",
+]);
 
 export const BUNDLE_SOURCE_KIND_DIRECTORIES = {
   expert: "experts",
   "expert-team": "expert-teams",
   flow: "flows",
   "knowledge-base": "knowledge-bases",
+  skill: "skills",
 } as const satisfies Readonly<Record<z.infer<typeof BundleSourceKindSchema>, string>>;
 
 export const BundleSourceLocalizedTextSchema = z
@@ -108,7 +115,7 @@ export const BundleSourceV1ManifestSchema = z
   })
   .strict();
 
-export const BundleSourceManifestSchema = z
+export const BundleSourceV2ManifestSchema = z
   .object({
     schemaVersion: z.literal("pragma.bundle-source/v2"),
     ...BundleSourceManifestCommonShape,
@@ -123,7 +130,28 @@ export const BundleSourceManifestSchema = z
   })
   .strict();
 
+export const BundleSourceManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle-source/v3"),
+    ...BundleSourceManifestCommonShape,
+    sections: z
+      .object({
+        expert: BundleSourceSectionSchema,
+        "expert-team": BundleSourceSectionSchema,
+        flow: BundleSourceSectionSchema,
+        "knowledge-base": BundleSourceSectionSchema,
+        skill: BundleSourceSectionSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 export const BundleSourceRootRefSchema = z
+  .string()
+  .regex(/^(expert|team|flow|context-store|capability):[0-9a-hjkmnp-tv-z]{16}$/u)
+  .max(100);
+
+const BundleSourceV2RootRefSchema = z
   .string()
   .regex(/^(expert|team|flow|context-store):[0-9a-hjkmnp-tv-z]{16}$/u)
   .max(100);
@@ -174,9 +202,18 @@ export const BundleSourceV1ItemSchema = z
   .strict()
   .superRefine(validateBundleSourceItemTimestamps);
 
-export const BundleSourceItemSchema = z
+export const BundleSourceV2ItemSchema = z
   .object({
     schemaVersion: z.literal("pragma.bundle-source-item/v2"),
+    ...BundleSourceItemCommonShape,
+    rootRef: BundleSourceV2RootRefSchema,
+  })
+  .strict()
+  .superRefine(validateBundleSourceItemTimestamps);
+
+export const BundleSourceItemSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle-source-item/v3"),
     ...BundleSourceItemCommonShape,
   })
   .strict()
@@ -197,20 +234,29 @@ export type BundleSourceItemSummary = z.infer<typeof BundleSourceItemSummarySche
 
 export function bundleSourceRootPrefix(
   kind: BundleSourceKind,
-): "expert" | "team" | "flow" | "context-store" {
-  return kind === "expert-team" ? "team" : kind === "knowledge-base" ? "context-store" : kind;
+): "expert" | "team" | "flow" | "context-store" | "capability" {
+  return kind === "expert-team"
+    ? "team"
+    : kind === "knowledge-base"
+      ? "context-store"
+      : kind === "skill"
+        ? "capability"
+        : kind;
 }
 
 export function parseBundleSourceManifest(value: unknown): BundleSourceManifest {
   const current = BundleSourceManifestSchema.safeParse(value);
   if (current.success) return current.data;
-  const legacy = BundleSourceV1ManifestSchema.parse(value);
+  const v2 = BundleSourceV2ManifestSchema.safeParse(value);
+  const legacy = v2.success
+    ? v2.data
+    : migrateV1Manifest(BundleSourceV1ManifestSchema.parse(value));
   return BundleSourceManifestSchema.parse({
     ...legacy,
-    schemaVersion: "pragma.bundle-source/v2",
+    schemaVersion: "pragma.bundle-source/v3",
     sections: {
       ...legacy.sections,
-      "knowledge-base": {
+      skill: {
         categories: legacy.sections.expert.categories.map((category) => ({
           ...category,
           name: {
@@ -228,11 +274,49 @@ export function parseBundleSourceManifest(value: unknown): BundleSourceManifest 
 export function parseBundleSourceItem(value: unknown): BundleSourceItem {
   const current = BundleSourceItemSchema.safeParse(value);
   if (current.success) return current.data;
-  const legacy = BundleSourceV1ItemSchema.parse(value);
+  const v2 = BundleSourceV2ItemSchema.safeParse(value);
+  const legacy = v2.success ? v2.data : BundleSourceV1ItemSchema.parse(value);
   return BundleSourceItemSchema.parse({
     ...legacy,
-    schemaVersion: "pragma.bundle-source-item/v2",
+    schemaVersion: "pragma.bundle-source-item/v3",
   });
+}
+
+function migrateV1Manifest(
+  legacy: z.infer<typeof BundleSourceV1ManifestSchema>,
+): z.infer<typeof BundleSourceV2ManifestSchema> {
+  return BundleSourceV2ManifestSchema.parse({
+    ...legacy,
+    schemaVersion: "pragma.bundle-source/v2",
+    sections: {
+      ...legacy.sections,
+      "knowledge-base": {
+        categories: legacy.sections.expert.categories.map(cloneBundleSourceCategory),
+      },
+    },
+  });
+}
+
+function cloneBundleSourceCategory(category: BundleSourceCategory): BundleSourceCategory {
+  return {
+    ...category,
+    name: {
+      ...category.name,
+      ...(category.name.translations === undefined
+        ? {}
+        : { translations: { ...category.name.translations } }),
+    },
+    ...(category.description === undefined
+      ? {}
+      : {
+          description: {
+            ...category.description,
+            ...(category.description.translations === undefined
+              ? {}
+              : { translations: { ...category.description.translations } }),
+          },
+        }),
+  };
 }
 
 export function bundleSourceItemDirectory(input: {

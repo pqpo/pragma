@@ -33,6 +33,7 @@ describe("SquareDirectoryFragment", () => {
     expect(html).toContain("Expert teams");
     expect(html).toContain("Flows");
     expect(html).toContain("Knowledge bases");
+    expect(html).toContain("Skills");
     expect(html).not.toContain("All business categories");
     expect(html).toContain("Import");
     expect(html).toContain("Export");
@@ -70,6 +71,7 @@ describe("SquareDirectoryFragment", () => {
       squareItem("expert-team", "Release team", SOURCE_A, "productivity", "2026-09-15"),
       squareItem("flow", "Release flow", SOURCE_B, "software-development", "2026-09-16"),
       squareItem("knowledge-base", "Release handbook", SOURCE_B, "research", "2026-09-17"),
+      squareItem("skill", "Review Skill", SOURCE_A, "software-development", "2026-09-18"),
     ];
 
     expect(
@@ -81,7 +83,7 @@ describe("SquareDirectoryFragment", () => {
         sort: "latest",
         locale: "en",
       }).map((item) => item.kind),
-    ).toEqual(["knowledge-base", "flow", "expert-team", "expert"]);
+    ).toEqual(["skill", "knowledge-base", "flow", "expert-team", "expert"]);
     expect(
       squareItemsForView(items, {
         kind: "all",
@@ -109,6 +111,13 @@ describe("SquareDirectoryFragment", () => {
 
     expect(renderToStaticMarkup(<SquareItemVisual item={item} size="md" />)).toContain("expert-07");
     expect(renderToStaticMarkup(<SquareItemVisual item={item} size="lg" />)).toContain("expert-07");
+  });
+
+  it("renders a dedicated Skill icon", () => {
+    const item = squareItem("skill", "Review Skill", SOURCE_A, "general", "2026-09-17");
+    expect(renderToStaticMarkup(<SquareItemVisual item={item} size="md" />)).toContain(
+      "square-card-icon",
+    );
   });
 
   it("downloads and inspects the selected version with the downloaded root", async () => {
@@ -184,9 +193,15 @@ function squareItem(
 ): DesktopSquareCatalog["items"][number] {
   const id = name.toLowerCase().replaceAll(" ", "-");
   const rootPrefix =
-    kind === "expert-team" ? "team" : kind === "knowledge-base" ? "context-store" : kind;
+    kind === "expert-team"
+      ? "team"
+      : kind === "knowledge-base"
+        ? "context-store"
+        : kind === "skill"
+          ? "capability"
+          : kind;
   return {
-    schemaVersion: "pragma.bundle-source-item/v2",
+    schemaVersion: "pragma.bundle-source-item/v3",
     id,
     rootRef: `${rootPrefix}:1234567890abcdef`,
     name: { default: name },

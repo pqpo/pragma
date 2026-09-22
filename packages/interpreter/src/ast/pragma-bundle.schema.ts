@@ -1,16 +1,26 @@
 import { z } from "zod";
 
 import {
+  PragmaCapabilityRefSchema,
   PragmaContextStoreRefSchema,
   PragmaInvocableResourceRefSchema,
   PragmaSemanticResourceRefSchema,
 } from "./pragma-dsl.schema.ts";
 
-export const PRAGMA_BUNDLE_WRITE_VERSION = "pragma.bundle/v2" as const;
+export const PRAGMA_BUNDLE_WRITE_VERSION = "pragma.bundle/v3" as const;
 export const PRAGMA_BUNDLE_DIRECT_READ_VERSIONS = [PRAGMA_BUNDLE_WRITE_VERSION] as const;
-export const PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS = ["pragma.bundle/v1"] as const;
+export const PRAGMA_BUNDLE_UPGRADE_FROM_VERSIONS = [
+  "pragma.bundle/v1",
+  "pragma.bundle/v2",
+] as const;
 
 export const PragmaBundleRootRefSchema = z.union([
+  PragmaInvocableResourceRefSchema,
+  PragmaContextStoreRefSchema,
+  PragmaCapabilityRefSchema,
+]);
+
+export const PragmaBundleV2RootRefSchema = z.union([
   PragmaInvocableResourceRefSchema,
   PragmaContextStoreRefSchema,
 ]);
@@ -101,6 +111,15 @@ export const PragmaBundleV1ManifestSchema = z
   .strict()
   .superRefine(refineBundleManifest);
 
+export const PragmaBundleV2ManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.bundle/v2"),
+    ...PragmaBundleManifestShape,
+    roots: z.array(PragmaBundleV2RootRefSchema).min(1),
+  })
+  .strict()
+  .superRefine(refineBundleManifest);
+
 export const PragmaBundleManifestSchema = z
   .object({
     schemaVersion: z.literal(PRAGMA_BUNDLE_WRITE_VERSION),
@@ -112,6 +131,7 @@ export const PragmaBundleManifestSchema = z
 
 export type PragmaBundleRootRef = z.infer<typeof PragmaBundleRootRefSchema>;
 export type PragmaBundleV1Manifest = z.infer<typeof PragmaBundleV1ManifestSchema>;
+export type PragmaBundleV2Manifest = z.infer<typeof PragmaBundleV2ManifestSchema>;
 
 function refineBundleManifest(
   manifest: {

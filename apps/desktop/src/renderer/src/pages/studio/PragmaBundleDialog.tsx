@@ -9,6 +9,7 @@ import {
   UploadSimple,
   WarningCircle,
   X,
+  Wrench,
 } from "@phosphor-icons/react";
 import { canonicalPragmaResourceRef } from "@pragma/interpreter/ast";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,10 +34,21 @@ import { desktopApi } from "./studio-model.ts";
 
 type BundleMode = "export" | "import";
 type ExportStep = "select" | "modules" | "result";
-type BundleExportRoot = Extract<
+type ProjectBundleExportRoot = Extract<
   PragmaProjectSnapshot["resources"][number],
-  { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" }
+  { kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" | "Capability" }
 >;
+type SkillBundleExportRoot = {
+  readonly kind: "Skill";
+  readonly ref: string;
+  readonly capabilityId: string;
+  readonly metadata: {
+    readonly name: string;
+    readonly description: string;
+    readonly tags: readonly string[];
+  };
+};
+type BundleExportRoot = ProjectBundleExportRoot | SkillBundleExportRoot;
 type ImportStep = "select" | "conflicts" | "bindings" | "review" | "result";
 type AssetConflictSelection = {
   readonly action: "copy" | "update" | "keep_local";
@@ -66,37 +78,39 @@ export const BUNDLE_EXPORT_LIST_PAGE_SIZE = 20;
 
 function isBundleExportRoot(
   resource: PragmaProjectSnapshot["resources"][number],
-): resource is BundleExportRoot {
+): resource is ProjectBundleExportRoot {
   return (
     resource.kind === "Expert" ||
     resource.kind === "ExpertTeam" ||
     resource.kind === "Flow" ||
-    resource.kind === "ContextStore"
+    resource.kind === "ContextStore" ||
+    resource.kind === "Capability"
   );
+}
+
+function bundleExportRootRef(resource: BundleExportRoot): string {
+  return resource.kind === "Skill" ? resource.ref : canonicalPragmaResourceRef(resource);
 }
 
 function compareBundleExportRoots(left: BundleExportRoot, right: BundleExportRoot): number {
   return (
     bundleExportRootCollator.compare(left.metadata.name, right.metadata.name) ||
     bundleExportRootCollator.compare(left.kind, right.kind) ||
-    bundleExportRootCollator.compare(
-      canonicalPragmaResourceRef(left),
-      canonicalPragmaResourceRef(right),
-    )
+    bundleExportRootCollator.compare(bundleExportRootRef(left), bundleExportRootRef(right))
   );
 }
 
-export function orderBundleExportRoots(
-  roots: readonly BundleExportRoot[],
-): readonly BundleExportRoot[] {
+export function orderBundleExportRoots<T extends BundleExportRoot>(
+  roots: readonly T[],
+): readonly T[] {
   return [...roots].sort(compareBundleExportRoots);
 }
 
-export function filterBundleExportRoots(
-  roots: readonly BundleExportRoot[],
+export function filterBundleExportRoots<T extends BundleExportRoot>(
+  roots: readonly T[],
   query: string,
-  kindLabel: (kind: BundleExportRoot["kind"]) => string = (kind) => kind,
-): readonly BundleExportRoot[] {
+  kindLabel: (kind: T["kind"]) => string = (kind) => kind,
+): readonly T[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   return roots.filter((resource) => {
     if (normalizedQuery === "") return true;
@@ -104,17 +118,17 @@ export function filterBundleExportRoots(
       resource.metadata.name,
       resource.metadata.description,
       resource.metadata.tags.join(" "),
-      canonicalPragmaResourceRef(resource),
+      bundleExportRootRef(resource),
       resource.kind,
       kindLabel(resource.kind),
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
   });
 }
 
-export function visibleBundleExportRoots(
-  roots: readonly BundleExportRoot[],
+export function visibleBundleExportRoots<T extends BundleExportRoot>(
+  roots: readonly T[],
   page: number,
-): readonly BundleExportRoot[] {
+): readonly T[] {
   return roots.slice(0, Math.max(1, page) * BUNDLE_EXPORT_LIST_PAGE_SIZE);
 }
 
@@ -155,8 +169,10 @@ export function PragmaBundleDialog(props: {
 
 function BundleExportDialog(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly capabilities: readonly Capability[];
   readonly initialRootRef?: string | undefined;
   readonly onClose: () => void;
+  readonly onChanged: () => void | Promise<void>;
 }) {
   const { t } = useTranslation("studio");
   const requestedRootRef = props.initialRootRef;
@@ -170,6 +186,8 @@ function BundleExportDialog(props: {
       : "";
   const [step, setStep] = useState<ExportStep>(initialRootRef === "" ? "select" : "modules");
   const [rootRef, setRootRef] = useState(initialRootRef);
+  const [preparedRootRef, setPreparedRootRef] = useState(initialRootRef);
+  const [preparedProjectRevision, setPreparedProjectRevision] = useState(props.project.revision);
   const [modules, setModules] = useState<PragmaBundleModuleOptions>({
     capabilities: false,
     plugins: false,
@@ -181,21 +199,54 @@ function BundleExportDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const preparationRequest = useRef(0);
-  const roots = useMemo(
-    () => orderBundleExportRoots(props.project.resources.filter(isBundleExportRoot)),
-    [props.project.resources],
-  );
+  const roots = useMemo(() => {
+    const userSkills = props.capabilities.filter(
+      (capability) => capability.definition.kind === "skill" && capability.managedBy !== "system",
+    );
+    const skillsById = new Map(
+      userSkills.map((capability) => [capability.manifest.id, capability]),
+    );
+    const boundSkillIds = new Set<string>();
+    const projectRoots = props.project.resources.filter(isBundleExportRoot).filter((resource) => {
+      if (resource.kind !== "Capability") return true;
+      const config = resource.spec.config;
+      const key =
+        typeof config === "object" && config !== null && "key" in config
+          ? (config as { readonly key?: unknown }).key
+          : undefined;
+      if (typeof key !== "string" || !skillsById.has(key)) return false;
+      boundSkillIds.add(key);
+      return true;
+    });
+    const skillRoots: SkillBundleExportRoot[] = userSkills.flatMap((capability) =>
+      boundSkillIds.has(capability.manifest.id)
+        ? []
+        : [
+            {
+              kind: "Skill",
+              ref: `skill:${capability.manifest.id}`,
+              capabilityId: capability.manifest.id,
+              metadata: {
+                name: capability.definition.name,
+                description: capability.definition.description,
+                tags: [],
+              },
+            },
+          ],
+    );
+    return orderBundleExportRoots([...projectRoots, ...skillRoots]);
+  }, [props.capabilities, props.project.resources]);
 
   const exportBundle = async () => {
     const api = desktopApi();
-    if (api === undefined || rootRef === "") return;
+    if (api === undefined || preparedRootRef === "") return;
     setBusy(true);
     setError(null);
     setResultPath(null);
     try {
       const result = await api.exportPragmaBundle({
-        rootRef,
-        projectRevision: props.project.revision,
+        rootRef: preparedRootRef,
+        projectRevision: preparedProjectRevision,
         modules,
       });
       if (!result.cancelled) setResultPath(result.path ?? null);
@@ -218,12 +269,26 @@ function BundleExportDialog(props: {
     setBusy(true);
     setError(null);
     try {
+      const selectedRoot = roots.find((resource) => bundleExportRootRef(resource) === rootRef);
+      let exportRootRef = rootRef;
+      let projectRevision = props.project.revision;
+      if (selectedRoot?.kind === "Skill") {
+        const binding = await api.ensurePragmaSkillBinding({
+          capabilityId: selectedRoot.capabilityId,
+        });
+        const refreshed = await api.getPragmaProject();
+        exportRootRef = binding.resourceRef;
+        projectRevision = refreshed.revision;
+        await props.onChanged();
+      }
       const prepared = await api.preparePragmaBundleExport({
-        rootRef,
-        projectRevision: props.project.revision,
+        rootRef: exportRootRef,
+        projectRevision,
       });
       if (preparationRequest.current !== request) return;
       setPreview(prepared);
+      setPreparedRootRef(exportRootRef);
+      setPreparedProjectRevision(projectRevision);
       setModules({
         capabilities: prepared.defaults.capabilities && prepared.capabilityCount > 0,
         plugins: prepared.defaults.plugins && prepared.pluginCount > 0,
@@ -250,7 +315,7 @@ function BundleExportDialog(props: {
     };
   }, []);
 
-  const selected = roots.find((resource) => canonicalPragmaResourceRef(resource) === rootRef);
+  const selected = roots.find((resource) => bundleExportRootRef(resource) === rootRef);
   const footer = (() => {
     if (step === "result") {
       return (
@@ -330,8 +395,13 @@ function BundleExportDialog(props: {
               <small>{t("bundleSelectedExportObject")}</small>
               <strong>{selected.metadata.name}</strong>
               <span>
-                {bundleRootLabel(selected.kind, t)} · {canonicalPragmaResourceRef(selected)}
+                {bundleRootLabel(selected.kind, t)} · {bundleExportRootRef(selected)}
               </span>
+              {preview?.root.activeRevision === undefined ? null : (
+                <small>
+                  {t("bundleSkillActiveRevision", { revision: preview.root.activeRevision })}
+                </small>
+              )}
             </div>
           </header>
           <fieldset className="pragma-bundle-modules">
@@ -339,12 +409,15 @@ function BundleExportDialog(props: {
             <BundleToggle
               label={t("bundleCapabilities")}
               description={
-                preview?.capabilityCount === 0
-                  ? t("bundleModuleUnavailableHint")
-                  : t("bundleCapabilitiesHint")
+                selected.kind === "Skill" || selected.kind === "Capability"
+                  ? t("bundleSkillRequiredHint")
+                  : preview?.capabilityCount === 0
+                    ? t("bundleModuleUnavailableHint")
+                    : t("bundleCapabilitiesHint")
               }
               checked={modules.capabilities}
               disabled={preview === null || preview.capabilityCount === 0}
+              required={selected.kind === "Skill" || selected.kind === "Capability"}
               onChange={(capabilities) => setModules({ ...modules, capabilities })}
             />
             <BundleToggle
@@ -1965,14 +2038,13 @@ function BundleExportObjectStep(props: {
     { id: "ExpertTeam", label: t("bundleFilterTeams") },
     { id: "Flow", label: t("bundleFilterFlows") },
     { id: "ContextStore", label: t("bundleFilterKnowledgeBases") },
+    { id: "Skill", label: t("bundleFilterSkills") },
   ];
   const filtered = filterBundleExportRoots(props.roots, search, (resourceKind) =>
     bundleRootLabel(resourceKind, t),
   ).filter((resource) => kind === "all" || resource.kind === kind);
   const visible = visibleBundleExportRoots(filtered, page);
-  const selected = props.roots.find(
-    (resource) => canonicalPragmaResourceRef(resource) === props.value,
-  );
+  const selected = props.roots.find((resource) => bundleExportRootRef(resource) === props.value);
   const hasExportableRoots = props.roots.length > 0;
 
   const resetPage = () => setPage(1);
@@ -2038,7 +2110,7 @@ function BundleExportObjectStep(props: {
             </div>
           ) : null}
           {visible.map((resource) => {
-            const ref = canonicalPragmaResourceRef(resource);
+            const ref = bundleExportRootRef(resource);
             const isSelected = ref === props.value;
             return (
               <button
@@ -2111,6 +2183,14 @@ function BundleExportRootVisual(props: {
       />
     );
   }
+  if (props.resource.kind === "Skill" || props.resource.kind === "Capability") {
+    return (
+      <Wrench
+        size={props.size === "picker" ? 28 : props.size === "sm" ? 19 : 22}
+        aria-hidden="true"
+      />
+    );
+  }
   return (
     <GitBranch
       size={props.size === "picker" ? 28 : props.size === "sm" ? 19 : 22}
@@ -2126,7 +2206,9 @@ function bundleRootLabel(kind: BundleExportRoot["kind"], t: (key: string) => str
       ? t("bundleRootExpertTeam")
       : kind === "Flow"
         ? t("bundleRootFlow")
-        : t("bundleRootKnowledgeBase");
+        : kind === "ContextStore"
+          ? t("bundleRootKnowledgeBase")
+          : t("bundleRootSkill");
 }
 
 function BundleToggle(props: {
@@ -2134,10 +2216,11 @@ function BundleToggle(props: {
   readonly description: string;
   readonly checked: boolean;
   readonly disabled?: boolean | undefined;
+  readonly required?: boolean | undefined;
   readonly onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className={props.disabled ? "is-disabled" : undefined}>
+    <label className={props.disabled || props.required ? "is-disabled" : undefined}>
       <span>
         <strong>{props.label}</strong>
         <small>{props.description}</small>
@@ -2145,7 +2228,7 @@ function BundleToggle(props: {
       <input
         type="checkbox"
         checked={props.checked}
-        disabled={props.disabled}
+        disabled={props.disabled || props.required}
         onChange={(event) => props.onChange(event.target.checked)}
       />
     </label>

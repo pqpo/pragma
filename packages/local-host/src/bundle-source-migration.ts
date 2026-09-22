@@ -180,7 +180,7 @@ async function prepareMigration(directory: string): Promise<{
   );
   const categories = migrateCategories(legacy.categories);
   const manifest = BundleSourceManifestSchema.parse({
-    schemaVersion: "pragma.bundle-source/v2",
+    schemaVersion: "pragma.bundle-source/v3",
     id: legacy.id,
     name: legacy.name,
     ...(legacy.description === undefined ? {} : { description: legacy.description }),
@@ -190,11 +190,20 @@ async function prepareMigration(directory: string): Promise<{
       "expert-team": { categories },
       flow: { categories },
       "knowledge-base": { categories },
+      skill: { categories },
     },
   });
   const staging = join(directory, STAGING);
   await mkdir(staging, { recursive: true });
   await writeYamlAtomically(join(staging, SOURCE_MANIFEST), manifest);
+  await Promise.all(
+    ["knowledge-bases", "skills"].flatMap((kindDirectory) =>
+      categories.map(
+        async (category) =>
+          await mkdir(join(staging, kindDirectory, category.id), { recursive: true }),
+      ),
+    ),
+  );
 
   const packageConfigs = await findNamedFiles(join(directory, "packages"), "package.yaml");
   const ids = new Set<string>();
@@ -225,7 +234,7 @@ async function prepareMigration(directory: string): Promise<{
     const released = legacyItem.versions.map((version) => version.releasedAt).toSorted();
     const description = await readFile(resolveRepositoryPath(directory, legacyItem.readme), "utf8");
     const item = BundleSourceItemSchema.parse({
-      schemaVersion: "pragma.bundle-source-item/v2",
+      schemaVersion: "pragma.bundle-source-item/v3",
       id: legacyItem.id,
       rootRef: stable.bundle.root.ref,
       name: legacyItem.name,
@@ -297,7 +306,15 @@ async function backupLegacyRegistry(directory: string): Promise<void> {
 
 async function installStagedSource(directory: string): Promise<void> {
   const staging = join(directory, STAGING);
-  for (const name of [SOURCE_MANIFEST, "experts", "expert-teams", "flows", REPORT] as const) {
+  for (const name of [
+    SOURCE_MANIFEST,
+    "experts",
+    "expert-teams",
+    "flows",
+    "knowledge-bases",
+    "skills",
+    REPORT,
+  ] as const) {
     const source = join(staging, name);
     if (!(await exists(source))) continue;
     const destination = join(directory, name);

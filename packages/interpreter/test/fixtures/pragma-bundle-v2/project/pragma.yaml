@@ -1,0 +1,3 @@
+apiVersion: pragma/v1
+kind: Bundle
+resources: []

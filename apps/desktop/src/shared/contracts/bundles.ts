@@ -30,13 +30,14 @@ export const PragmaBundleExportPreviewSchema = z
     root: z
       .object({
         ref: PragmaBundleRootRefSchema,
-        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
+        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
         name: z.string().trim().min(1).max(200),
         description: z.string().trim().min(1).max(8_000),
         tags: z
           .array(z.string().trim().min(1).max(PRAGMA_TEXT_LIMITS.defaultMetadata.tag))
           .max(PRAGMA_TEXT_LIMITS.defaultMetadata.tags),
         avatarId: PragmaAvatarIdSchema.optional(),
+        activeRevision: z.number().int().positive().optional(),
       })
       .strict(),
     projectRevision: z.number().int().positive(),
@@ -198,7 +199,7 @@ export const PragmaBundleImportInspectionSchema = z
     root: z
       .object({
         ref: PragmaBundleRootRefSchema,
-        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
+        kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
         name: z.string().trim().min(1).max(200),
       })
       .strict(),
@@ -207,7 +208,7 @@ export const PragmaBundleImportInspectionSchema = z
         z
           .object({
             ref: PragmaBundleRootRefSchema,
-            kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
+            kind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
             name: z.string().trim().min(1).max(200),
           })
           .strict(),
@@ -404,8 +405,13 @@ export const PragmaBundlePendingDependencySchema = z
 
 export const PragmaBundleInstallationSchema = z
   .object({
-    schemaVersion: z.literal("pragma.bundle-installation/v7"),
-    bundleVersion: z.enum(["pragma.desktop-bundle/v1", "pragma.bundle/v1", "pragma.bundle/v2"]),
+    schemaVersion: z.literal("pragma.bundle-installation/v8"),
+    bundleVersion: z.enum([
+      "pragma.desktop-bundle/v1",
+      "pragma.bundle/v1",
+      "pragma.bundle/v2",
+      "pragma.bundle/v3",
+    ]),
     sourceProjectFingerprint: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -417,7 +423,7 @@ export const PragmaBundleInstallationSchema = z
     sourceRootRef: PragmaBundleRootRefSchema,
     rootRef: PragmaBundleRootRefSchema,
     rootName: z.string().trim().min(1).max(200),
-    rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore"]),
+    rootKind: z.enum(["Expert", "ExpertTeam", "Flow", "ContextStore", "Capability"]),
     resourceRefs: z.array(PragmaResourceRefSchema),
     createdResourceRefs: z.array(PragmaResourceRefSchema),
     createdCapabilityIds: z.array(CapabilityIdSchema).default([]),

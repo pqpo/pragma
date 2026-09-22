@@ -1,4 +1,5 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
+import { createHash } from "node:crypto";
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,12 +60,101 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it("exports a user Skill root from its active ready revision with mandatory files", async () => {
+    const capabilityId = "00000000-0000-4000-8000-000000000290";
+    const payload = await mkdtemp(join(tmpdir(), "pragma-skill-root-"));
+    directories.push(payload);
+    const skillContents =
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nActive revision.\n";
+    await writeFile(join(payload, "SKILL.md"), skillContents);
+    const activeContentHash = createHash("sha256")
+      .update("SKILL.md")
+      .update(skillContents)
+      .digest("hex");
+    const active = {
+      ...skillCapability(capabilityId, 2, activeContentHash),
+      manifest: {
+        ...skillCapability(capabilityId, 2, activeContentHash).manifest,
+        activeRevision: 2,
+      },
+    };
+    const latest = {
+      ...skillCapability(capabilityId, 3, "3".repeat(64)),
+      manifest: {
+        ...skillCapability(capabilityId, 3, "3".repeat(64)).manifest,
+        activeRevision: 2,
+      },
+    };
+    const skillFilesPath = vi.fn(async (_id: string, revision: number) => {
+      expect(revision).toBe(2);
+      return payload;
+    });
+    const source = await createFixture("skill-root", {
+      capabilities: {
+        list: async () => [latest],
+        resolveActive: async () => active,
+        skillFilesPath,
+      } as unknown as CapabilityStore,
+    });
+    const snapshot = await source.project.get();
+    const resource = portableCapability();
+    resource.spec.binding = desktopCapabilityBindingRef(capabilityId);
+    resource.spec.config = { key: capabilityId };
+    resource.metadata.name = active.definition.name;
+    resource.metadata.description = active.definition.description;
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [...snapshot.resources, resource],
+    });
+    const rootRef = canonicalPragmaResourceRef(resource);
+
+    await expect(
+      source.service.prepareExport({ rootRef, projectRevision: published.revision }),
+    ).resolves.toMatchObject({
+      root: { ref: rootRef, kind: "Capability", activeRevision: 2 },
+      capabilityCount: 1,
+    });
+    const path = join(source.root, "skill.pragma");
+    await source.service.exportTo(
+      {
+        rootRef,
+        projectRevision: published.revision,
+        modules: {
+          capabilities: false,
+          plugins: false,
+          knowledgeBases: false,
+          flowLayouts: false,
+        },
+      },
+      path,
+    );
+
+    const archive = unzipSync(new Uint8Array(await readFile(path)));
+    const manifest = JSON.parse(strFromU8(archive["bundle.json"]!)) as {
+      schemaVersion: string;
+      roots: string[];
+      requirements: { ownerRef: string; payload?: { codec: string } }[];
+    };
+    expect(manifest).toMatchObject({ schemaVersion: "pragma.bundle/v3", roots: [rootRef] });
+    expect(manifest.requirements).toContainEqual(
+      expect.objectContaining({
+        ownerRef: rootRef,
+        payload: expect.objectContaining({ codec: "pragma.skill@v1" }),
+      }),
+    );
+    await expect(source.service.inspect(path)).resolves.toMatchObject({
+      root: { ref: rootRef, kind: "Capability", name: active.definition.name },
+      dependencies: [expect.objectContaining({ kind: "capability", included: true })],
+    });
+    expect(skillFilesPath).toHaveBeenCalledOnce();
+  });
+
   it("accepts canonical Capability ids in the current installation journal", () => {
     const timestamp = new Date().toISOString();
     expect(
       PragmaBundleInstallationSchema.parse({
-        schemaVersion: "pragma.bundle-installation/v7",
-        bundleVersion: "pragma.bundle/v2",
+        schemaVersion: "pragma.bundle-installation/v8",
+        bundleVersion: "pragma.bundle/v3",
         id: "00000000-0000-4000-8000-000000000001",
         bundleFingerprint: "a".repeat(64),
         projectId: "project",
@@ -642,7 +732,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v7",
+      "pragma.bundle-installations/v8",
     );
   });
 
@@ -654,7 +744,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v8",
+      schemaVersion: "pragma.bundle-installations/v9",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);

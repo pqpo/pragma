@@ -24,16 +24,20 @@ flows/<category>/<item>/
 knowledge-bases/<category>/<item>/
   config.yaml
   versions/<semver>/bundle.pragma
+
+skills/<category>/<item>/
+  config.yaml
+  versions/<semver>/bundle.pragma
 ```
 
-Source 根目录可以保留 README、许可证和 `.github/`。四种类型目录内只允许上述条目文件：不放
+Source 根目录可以保留 README、许可证和 `.github/`。五种类型目录内只允许上述条目文件：不放
 README、图片、截图、catalog 或对象索引。路径是条目类型和唯一主分类的权威来源，`config.yaml`
 不重复声明。tags 只用于长尾搜索。
 
 ## 根清单
 
-`pragma-source.yaml` 的当前 `schemaVersion` 为 `pragma.bundle-source/v2`，包含 Source ID、多语言
-名称和描述、`maxBundleBytes`，以及 `expert`、`expert-team`、`flow`、`knowledge-base` 四个 section。每个 section
+`pragma-source.yaml` 的当前 `schemaVersion` 为 `pragma.bundle-source/v3`，包含 Source ID、多语言
+名称和描述、`maxBundleBytes`，以及 `expert`、`expert-team`、`flow`、`knowledge-base`、`skill` 五个 section。每个 section
 分别维护一层分类的 ID、多语言名称、说明和排序。推荐初始分类为：
 
 - `general`
@@ -48,7 +52,7 @@ README、图片、截图、catalog 或对象索引。路径是条目类型和唯
 
 ## 条目配置
 
-`config.yaml` 使用 `pragma.bundle-source-item/v2`，包含 `id`、`rootRef`、多语言 name/summary、
+`config.yaml` 使用 `pragma.bundle-source-item/v3`，包含 `id`、`rootRef`、多语言 name/summary、
 Markdown description、author、license、可选 homepage、tags、可选内置 avatarId、latestVersion、
 createdAt 和 updatedAt。
 
@@ -73,14 +77,14 @@ pragma source add ./my-expert.pragma --directory ./awesome-pragma
 交互流程会选择可调用根、类型分类并收集元数据。新增条目写 config 和版本；已有条目只增加版本并
 更新 latestVersion/updatedAt。命令不 clone、commit、push 或创建 PR，也绝不覆盖已有版本。
 
-v1 Source 必须先显式升级；`source add` 会拒绝直接修改旧协议并给出指引：
+v1/v2 Source 必须先显式升级；`source add` 会拒绝直接修改旧协议并给出指引：
 
 ```bash
 pragma source upgrade ./awesome-pragma
 ```
 
-升级命令备份 v1 manifest/config，写入稳定 journal，并通过原子替换升级为 v2；重复执行可恢复
-中断的升级。知识库分类初始复制专家分类，原有三类条目语义不变。
+升级命令按相邻迁移链备份 manifest/config，写入稳定 journal，并通过原子替换升级为 v3；重复执行可恢复
+中断的升级。知识库与技能分类初始复制专家分类，原有条目语义不变。
 
 维护者和 CI 使用内部只读验证入口：
 
@@ -112,7 +116,7 @@ decoder 校验内部文件哈希、fingerprint 和协议。随后核对 config �
 
 ## Desktop 发布
 
-项目中的专家、专家团、流程和知识库可以直接“发布到源”。一个目标源时自动选中；多个目标源时由用户
+项目中的专家、专家团、流程、知识库和用户技能可以直接“发布到源”。一个目标源时自动选中；多个目标源时由用户
 单选或多选。条目元数据、Bundle 模块和版本在目标间共享，分类按源选择；已有条目固定沿用原条目 ID 和
 分类。空仓库尚未提供 Source manifest 时，发布准备和首次写入统一使用上述七个默认分类。版本默认建议为
 已选源现有版本中的下一 patch，用户可以修改。专家和专家团的标签及内置 `avatarId` 从 Project 根资源
@@ -121,7 +125,8 @@ decoder 校验内部文件哈希、fingerprint 和协议。随后核对 config �
 Desktop 只生成一次 Bundle，然后为每个 Source 建立隔离临时工作树，在 Source 级文件锁内校验、写入、
 生成 commit 并执行普通非 force push。系统 Git 继承用户的 SSH agent/credential helper，commit 使用
 全局 `user.name` 和 `user.email`。每次最多并发三个 Source；成功、幂等和失败逐源展示，部分成功保留，
-重试只处理失败源。空仓库首次发布会创建 v2 manifest 和默认分类。成功后立即刷新对应 Source 快照。
+重试只处理失败源。空仓库首次发布会创建 v3 manifest 和默认分类。旧 v1/v2 Source 必须先显式升级，
+不会在发布时静默改写。成功后立即刷新对应 Source 快照。
 
 广场列表与详情页只从条目配置和同步快照读取头像。历史条目的 `config.yaml` 已含 `avatarId` 时刷新源即可
 恢复；从未写入该字段的历史条目无法从列表快照反推头像，需要维护者补充元数据后刷新，或由作者重新发布

@@ -33,7 +33,7 @@ import { sha256, stableStringify } from "../src/compiler/compiler-hash.ts";
 import { PragmaCompilerV6ResourceSchema } from "../src/compiler-migrations/schemas/v6.ts";
 
 describe("portable .pragma bundles", () => {
-  it("verifies a real v1 fingerprint before upgrading the manifest to v2", async () => {
+  it("verifies a real v1 fingerprint before upgrading the manifest to v3", async () => {
     const fixtureRoot = join(import.meta.dirname, "fixtures", "pragma-bundle-v1");
     const legacy = JSON.parse(await readFile(join(fixtureRoot, "bundle.json"), "utf8"));
     const decoded = await decodePragmaBundle({
@@ -46,7 +46,7 @@ describe("portable .pragma bundles", () => {
       }),
     });
     expect(decoded.manifest).toMatchObject({
-      schemaVersion: "pragma.bundle/v2",
+      schemaVersion: "pragma.bundle/v3",
       bundleFingerprint: legacy.bundleFingerprint,
     });
 
@@ -82,7 +82,27 @@ describe("portable .pragma bundles", () => {
     ).toBe(false);
   });
 
-  it("round-trips a ContextStore as a v2 Bundle root", async () => {
+  it("verifies a real v2 fixture before applying the adjacent v2 to v3 migration", async () => {
+    const fixtureRoot = join(import.meta.dirname, "fixtures", "pragma-bundle-v2");
+    const legacy = JSON.parse(await readFile(join(fixtureRoot, "bundle.json"), "utf8"));
+    const decoded = await decodePragmaBundle({
+      kind: "bytes",
+      bytes: zipSync({
+        "bundle.json": strToU8(`${JSON.stringify(legacy, undefined, 2)}\n`),
+        "project/pragma.yaml": new Uint8Array(
+          await readFile(join(fixtureRoot, "project", "pragma.yaml")),
+        ),
+      }),
+    });
+
+    expect(decoded.manifest).toMatchObject({
+      schemaVersion: "pragma.bundle/v3",
+      roots: ["expert:1xddvess309a6gme"],
+      bundleFingerprint: legacy.bundleFingerprint,
+    });
+  });
+
+  it("round-trips a ContextStore as a v3 Bundle root", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-context-bundle-"));
     const entry = join(root, "pragma.yaml");
     await writeFile(join(root, "handbook.md"), "# Team handbook\n");
@@ -113,7 +133,7 @@ describe("portable .pragma bundles", () => {
     const exported = await project.exportBundle({ roots: ["context-store:w01fppfxrn31gf7v"] });
     const decoded = await decodePragmaBundle({ kind: "bytes", bytes: exported.bytes });
     expect(decoded.manifest).toMatchObject({
-      schemaVersion: "pragma.bundle/v2",
+      schemaVersion: "pragma.bundle/v3",
       roots: ["context-store:w01fppfxrn31gf7v"],
     });
     const loaded = await loadPragmaProject({ kind: "decoded-bundle", bundle: decoded });
@@ -165,7 +185,7 @@ describe("portable .pragma bundles", () => {
     });
 
     expect(exported.manifest).toMatchObject({
-      schemaVersion: "pragma.bundle/v2",
+      schemaVersion: "pragma.bundle/v3",
       roots: ["expert:1xddvess309a6gme"],
       project: { entry: "project/pragma.yaml" },
     });
@@ -239,7 +259,7 @@ describe("portable .pragma bundles", () => {
     );
     const historical = await encodePragmaBundle({
       manifest: {
-        schemaVersion: "pragma.bundle/v2",
+        schemaVersion: "pragma.bundle/v3",
         createdAt: "2026-08-11T00:00:00.000Z",
         roots: ["expert:1xddvess309a6gme"],
         project: {

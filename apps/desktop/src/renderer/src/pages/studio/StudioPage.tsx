@@ -1118,6 +1118,35 @@ export function StudioPage(props: {
         {screen === "capability-detail" && selectedCapability !== null ? (
           <CapabilityDetailFragment
             capability={selectedCapability}
+            onExport={
+              selectedCapability.definition.kind === "skill" &&
+              selectedCapability.managedBy !== "system"
+                ? async () => {
+                    const api = desktopApi();
+                    if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+                    const binding = await api.ensurePragmaSkillBinding({
+                      capabilityId: selectedCapability.manifest.id,
+                    });
+                    setProject(await api.getPragmaProject());
+                    setBundleRootRef(binding.resourceRef);
+                    setBundleMode("export");
+                  }
+                : undefined
+            }
+            onPublish={
+              selectedCapability.definition.kind === "skill" &&
+              selectedCapability.managedBy !== "system"
+                ? async () => {
+                    const api = desktopApi();
+                    if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+                    const binding = await api.ensurePragmaSkillBinding({
+                      capabilityId: selectedCapability.manifest.id,
+                    });
+                    setProject(await api.getPragmaProject());
+                    setPublicationRootRef(binding.resourceRef);
+                  }
+                : undefined
+            }
             onBack={() => setScreen("directory")}
             onChanged={updateCapability}
             onOpenMission={props.onOpenMission}

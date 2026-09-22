@@ -30,9 +30,10 @@ describe("Bundle Source repository", () => {
     expect(result.sourceId).toBe("team-source");
     expect(result.directories).toContain("experts/software-development");
     expect(result.directories).toContain("knowledge-bases/general");
+    expect(result.directories).toContain("skills/general");
     await expect(stat(join(root, "expert-teams/product-design"))).resolves.toMatchObject({});
     await expect(readBundleSourceManifest(root)).resolves.toMatchObject({
-      schemaVersion: "pragma.bundle-source/v2",
+      schemaVersion: "pragma.bundle-source/v3",
       id: "team-source",
     });
     const raw = parse(await readFile(join(root, "pragma-source.yaml"), "utf8"));
@@ -175,8 +176,9 @@ describe("Bundle Source repository", () => {
       stat(join(root, ".pragma-source-v1-backup/pragma-source.yaml")),
     ).resolves.toBeDefined();
     await expect(stat(join(root, "knowledge-bases/general"))).resolves.toBeDefined();
+    await expect(stat(join(root, "skills/general"))).resolves.toBeDefined();
     expect(parse(await readFile(join(configDirectory, "config.yaml"), "utf8"))).toMatchObject({
-      schemaVersion: "pragma.bundle-source-item/v2",
+      schemaVersion: "pragma.bundle-source-item/v3",
     });
 
     const journalPath = join(root, ".pragma-source-upgrade.json");
@@ -200,6 +202,39 @@ describe("Bundle Source repository", () => {
       upgraded: false,
       itemCount: 1,
     });
+  });
+
+  it("upgrades v2 sources to v3 and creates Skill categories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-source-v2-upgrade-"));
+    await execFileAsync("git", ["-C", root, "init"]);
+    const categories = [{ id: "general", name: { default: "General" }, order: 0 }];
+    await writeFile(
+      join(root, "pragma-source.yaml"),
+      stringify({
+        schemaVersion: "pragma.bundle-source/v2",
+        id: "legacy-v2",
+        name: { default: "Legacy v2" },
+        sections: {
+          expert: { categories },
+          "expert-team": { categories },
+          flow: { categories },
+          "knowledge-base": { categories },
+        },
+      }),
+    );
+
+    await expect(upgradeBundleSource(root)).resolves.toMatchObject({
+      upgraded: true,
+      itemCount: 0,
+    });
+    await expect(readBundleSourceManifest(root)).resolves.toMatchObject({
+      schemaVersion: "pragma.bundle-source/v3",
+      sections: { skill: { categories } },
+    });
+    await expect(
+      stat(join(root, ".pragma-source-v2-backup/pragma-source.yaml")),
+    ).resolves.toBeDefined();
+    await expect(stat(join(root, "skills/general"))).resolves.toBeDefined();
   });
 
   it("refuses to reuse a stale v1 upgrade backup", async () => {

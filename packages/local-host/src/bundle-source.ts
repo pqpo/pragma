@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -11,6 +11,7 @@ import {
   BundleSourceItemSchema,
   BundleSourceManifestSchema,
   BundleSourceV1ManifestSchema,
+  BundleSourceV2ManifestSchema,
   BundleSourceSemverSchema,
   BundleSourceSlugSchema,
   bundleSourceItemDirectory,
@@ -18,6 +19,7 @@ import {
   parseBundleSourceItem,
   parseBundleSourceManifest,
   parseBundleSourceRepositoryEntry,
+  SkillBundlePayloadDescriptorSchema,
   type BundleSourceItem,
   type BundleSourceKind,
   type BundleSourceManifest,
@@ -90,7 +92,7 @@ export async function initializeBundleSource(input: {
   }
   const categories = defaultBundleSourceCategories();
   const manifest = BundleSourceManifestSchema.parse({
-    schemaVersion: "pragma.bundle-source/v2",
+    schemaVersion: "pragma.bundle-source/v3",
     id,
     name: { default: input.name },
     description: { default: `Community-maintained Pragma Bundles from ${input.name}.` },
@@ -100,6 +102,7 @@ export async function initializeBundleSource(input: {
       "expert-team": { categories },
       flow: { categories },
       "knowledge-base": { categories },
+      skill: { categories },
     },
   });
   await writeYamlAtomically(manifestPath, manifest);
@@ -129,6 +132,55 @@ export async function inspectBundleSourceBundle(
     const roots = decoded.manifest.roots.flatMap((ref) => {
       const resource = byRef.get(ref);
       if (resource === undefined) throw new Error(`Bundle root is missing: ${ref}`);
+      if (resource.kind === "Capability") {
+        const requirement = decoded.manifest.requirements.find(
+          (candidate) =>
+            candidate.kind === "binding" &&
+            candidate.ownerRef === ref &&
+            candidate.payload?.codec === "pragma.skill@v1",
+        );
+        if (requirement?.payload === undefined) {
+          throw new Error(`Skill Bundle root must include a pragma.skill@v1 payload: ${ref}`);
+        }
+        const descriptorPath = `${requirement.payload.root}/descriptor.json`;
+        const descriptorBytes = decoded.files.get(descriptorPath);
+        if (descriptorBytes === undefined) {
+          throw new Error(`Skill Bundle descriptor is missing: ${descriptorPath}`);
+        }
+        const descriptor = SkillBundlePayloadDescriptorSchema.parse(
+          JSON.parse(new TextDecoder().decode(descriptorBytes)) as unknown,
+        );
+        const definition = {
+          kind: "skill",
+          name: descriptor.name,
+          description: descriptor.description,
+          entryPath: descriptor.entryPath,
+          contentHash: descriptor.contentHash,
+        } as const;
+        if (descriptor.fingerprint !== sha256(stableStringify(definition))) {
+          throw new Error(`Skill Bundle definition fingerprint does not match: ${ref}`);
+        }
+        if (!decoded.files.has(`${requirement.payload.root}/files/${descriptor.entryPath}`)) {
+          throw new Error(`Skill Bundle entry file is missing: ${descriptor.entryPath}`);
+        }
+        const files = [...decoded.files.entries()]
+          .filter(([path]) => path.startsWith(`${requirement.payload!.root}/files/`))
+          .map(
+            ([path, contents]) =>
+              [path.slice(`${requirement.payload!.root}/files/`.length), contents] as const,
+          );
+        const filesFingerprint = createHash("sha256");
+        for (const [path, contents] of files.toSorted(([left], [right]) =>
+          left.localeCompare(right),
+        )) {
+          filesFingerprint.update(path);
+          filesFingerprint.update(contents);
+        }
+        if (filesFingerprint.digest("hex") !== descriptor.filesFingerprint) {
+          throw new Error(`Skill Bundle files fingerprint does not match: ${ref}`);
+        }
+        return [inspectedRoot(resource)];
+      }
       if (
         resource.kind !== "Expert" &&
         resource.kind !== "ExpertTeam" &&
@@ -172,9 +224,12 @@ export async function addBundleSourceVersion(input: {
   const directory = resolve(input.directory);
   await assertGitWorkTree(directory);
   const rawManifest = parse(await readFile(join(directory, SOURCE_MANIFEST), "utf8")) as unknown;
-  if (BundleSourceV1ManifestSchema.safeParse(rawManifest).success) {
+  if (
+    BundleSourceV1ManifestSchema.safeParse(rawManifest).success ||
+    BundleSourceV2ManifestSchema.safeParse(rawManifest).success
+  ) {
     throw new Error(
-      "Bundle Source v1 must be upgraded with `pragma source upgrade` before adding versions.",
+      "Bundle Source must be upgraded with `pragma source upgrade` before adding versions.",
     );
   }
   const manifest = await readBundleSourceManifest(directory);
@@ -245,7 +300,7 @@ export async function addBundleSourceVersion(input: {
   const nextItem = BundleSourceItemSchema.parse(
     existing === undefined
       ? {
-          schemaVersion: "pragma.bundle-source-item/v2",
+          schemaVersion: "pragma.bundle-source-item/v3",
           id: itemId,
           rootRef: input.rootRef,
           name: { default: input.name },
@@ -349,6 +404,7 @@ export async function upgradeBundleSource(
       configPaths: existingJournal.files.filter((path) => path !== SOURCE_MANIFEST),
       journalPath,
       backupDirectory: join(directory, ...existingJournal.backupDirectory.split("/")),
+      sourceVersion: existingJournal.sourceVersion,
     });
     return {
       directory,
@@ -357,7 +413,8 @@ export async function upgradeBundleSource(
       backupDirectory: join(directory, ...existingJournal.backupDirectory.split("/")),
     };
   }
-  const legacy = BundleSourceV1ManifestSchema.parse(raw);
+  const v2 = BundleSourceV2ManifestSchema.safeParse(raw);
+  const legacy = v2.success ? v2.data : BundleSourceV1ManifestSchema.parse(raw);
   if (existingJournal?.status === "prepared") {
     await finishBundleSourceUpgrade({
       directory,
@@ -365,6 +422,7 @@ export async function upgradeBundleSource(
       configPaths: existingJournal.files.filter((path) => path !== SOURCE_MANIFEST),
       journalPath,
       backupDirectory: join(directory, ...existingJournal.backupDirectory.split("/")),
+      sourceVersion: existingJournal.sourceVersion,
     });
     return {
       directory,
@@ -374,12 +432,13 @@ export async function upgradeBundleSource(
     };
   }
   if (existingJournal?.status === "complete") {
-    throw new Error("Bundle Source upgrade journal is complete but the manifest is still v1.");
+    throw new Error("Bundle Source upgrade journal is complete but the manifest is still old.");
   }
   const configPaths = (await listRepositoryFiles(directory)).filter(
     (path) => parseBundleSourceRepositoryEntry(path)?.kind === "config",
   );
-  const backupDirectory = join(directory, ".pragma-source-v1-backup");
+  const sourceMajor = legacy.schemaVersion.endsWith("/v1") ? "v1" : "v2";
+  const backupDirectory = join(directory, `.pragma-source-${sourceMajor}-backup`);
   try {
     await stat(backupDirectory);
   } catch (error) {
@@ -399,7 +458,7 @@ export async function upgradeBundleSource(
   await writeJsonAtomically(journalPath, {
     schemaVersion: "pragma.bundle-source-upgrade/v1",
     sourceVersion: legacy.schemaVersion,
-    targetVersion: "pragma.bundle-source/v2",
+    targetVersion: "pragma.bundle-source/v3",
     backupDirectory: repositoryPath(directory, backupDirectory),
     files: [SOURCE_MANIFEST, ...configPaths],
     status: "prepared",
@@ -410,6 +469,7 @@ export async function upgradeBundleSource(
     configPaths,
     journalPath,
     backupDirectory,
+    sourceVersion: legacy.schemaVersion,
   });
   return {
     directory,
@@ -421,8 +481,8 @@ export async function upgradeBundleSource(
 
 interface BundleSourceUpgradeJournal {
   readonly schemaVersion: "pragma.bundle-source-upgrade/v1";
-  readonly sourceVersion: "pragma.bundle-source/v1";
-  readonly targetVersion: "pragma.bundle-source/v2";
+  readonly sourceVersion: "pragma.bundle-source/v1" | "pragma.bundle-source/v2";
+  readonly targetVersion: "pragma.bundle-source/v3";
   readonly backupDirectory: string;
   readonly files: readonly string[];
   readonly status: "prepared" | "complete";
@@ -434,6 +494,7 @@ async function finishBundleSourceUpgrade(input: {
   readonly configPaths: readonly string[];
   readonly journalPath: string;
   readonly backupDirectory: string;
+  readonly sourceVersion: BundleSourceUpgradeJournal["sourceVersion"];
 }): Promise<void> {
   for (const path of input.configPaths) {
     const target = join(input.directory, ...path.split("/"));
@@ -447,10 +508,15 @@ async function finishBundleSourceUpgrade(input: {
       { recursive: true },
     );
   }
+  for (const category of input.manifest.sections.skill.categories) {
+    await mkdir(join(input.directory, BUNDLE_SOURCE_KIND_DIRECTORIES.skill, category.id), {
+      recursive: true,
+    });
+  }
   await writeJsonAtomically(input.journalPath, {
     schemaVersion: "pragma.bundle-source-upgrade/v1",
-    sourceVersion: "pragma.bundle-source/v1",
-    targetVersion: "pragma.bundle-source/v2",
+    sourceVersion: input.sourceVersion,
+    targetVersion: "pragma.bundle-source/v3",
     backupDirectory: repositoryPath(input.directory, input.backupDirectory),
     files: [SOURCE_MANIFEST, ...input.configPaths],
     status: "complete",
@@ -464,10 +530,12 @@ async function readOptionalSourceUpgradeJournal(
     const value = JSON.parse(await readFile(path, "utf8")) as Partial<BundleSourceUpgradeJournal>;
     if (
       value.schemaVersion !== "pragma.bundle-source-upgrade/v1" ||
-      value.sourceVersion !== "pragma.bundle-source/v1" ||
-      value.targetVersion !== "pragma.bundle-source/v2" ||
+      (value.sourceVersion !== "pragma.bundle-source/v1" &&
+        value.sourceVersion !== "pragma.bundle-source/v2") ||
+      value.targetVersion !== "pragma.bundle-source/v3" ||
       typeof value.backupDirectory !== "string" ||
-      value.backupDirectory !== ".pragma-source-v1-backup" ||
+      value.backupDirectory !==
+        `.pragma-source-${value.sourceVersion.endsWith("/v1") ? "v1" : "v2"}-backup` ||
       !Array.isArray(value.files) ||
       !value.files.every((item) => typeof item === "string") ||
       value.files[0] !== SOURCE_MANIFEST ||
@@ -618,7 +686,8 @@ function inspectedRoot(resource: PragmaResource): InspectedBundleSourceRoot {
     resource.kind !== "Expert" &&
     resource.kind !== "ExpertTeam" &&
     resource.kind !== "Flow" &&
-    resource.kind !== "ContextStore"
+    resource.kind !== "ContextStore" &&
+    resource.kind !== "Capability"
   ) {
     throw new Error(`Bundle root is not publishable in a Bundle Source: ${resource.kind}`);
   }
@@ -629,7 +698,9 @@ function inspectedRoot(resource: PragmaResource): InspectedBundleSourceRoot {
         ? "expert-team"
         : resource.kind === "Flow"
           ? "flow"
-          : "knowledge-base";
+          : resource.kind === "ContextStore"
+            ? "knowledge-base"
+            : "skill";
   const metadata = resource.metadata;
   return {
     ref: canonicalPragmaResourceRef(resource),
@@ -639,6 +710,19 @@ function inspectedRoot(resource: PragmaResource): InspectedBundleSourceRoot {
     tags: metadata.tags,
     ...("avatarId" in metadata ? { avatarId: metadata.avatarId } : {}),
   };
+}
+
+function sha256(value: string | Uint8Array): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
+    .join(",")}}`;
 }
 
 async function readOptionalItem(path: string): Promise<BundleSourceItem | undefined> {

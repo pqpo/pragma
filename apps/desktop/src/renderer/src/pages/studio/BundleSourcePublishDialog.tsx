@@ -519,7 +519,9 @@ export function BundleSourcePublishDialog(props: {
                                   key === "knowledgeBases" &&
                                     preparation.root.kind === "knowledge-base"
                                     ? "bundlePublish.moduleHint.rootKnowledgeBase"
-                                    : "bundlePublish.moduleHint.unavailable",
+                                    : key === "capabilities" && preparation.root.kind === "skill"
+                                      ? "bundlePublish.moduleHint.rootSkill"
+                                      : "bundlePublish.moduleHint.unavailable",
                                 )
                               : t(`bundlePublish.moduleHint.${key}`)}
                           </small>
@@ -726,7 +728,8 @@ export function publicationModuleDisabled(
 ): boolean {
   return (
     preparation.moduleCounts[key] === 0 ||
-    (key === "knowledgeBases" && preparation.root.kind === "knowledge-base")
+    (key === "knowledgeBases" && preparation.root.kind === "knowledge-base") ||
+    (key === "capabilities" && preparation.root.kind === "skill")
   );
 }
 

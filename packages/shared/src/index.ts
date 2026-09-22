@@ -18,6 +18,7 @@ export * from "./memory/semantic-memory.schema.ts";
 export * from "./memory/skill-memory.schema.ts";
 export * from "./result.ts";
 export * from "./runtime-context-window.schema.ts";
+export * from "./skill-bundle.schema.ts";
 export {
   RunStatus as ExecutionRunStatus,
   type RunStatus as ExecutionRunStatusValue,

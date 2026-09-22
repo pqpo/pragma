@@ -17,6 +17,8 @@ import {
   UpsertPragmaExpertTeamSchema,
   DesktopPragmaContextStoreBindingSchema,
   EnsurePragmaContextStoreBindingSchema,
+  DesktopPragmaSkillBindingSchema,
+  EnsurePragmaSkillBindingSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../../../shared/contracts/index.ts";
@@ -24,16 +26,20 @@ import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import {
   classifyDesktopContextResource,
   bindExistingDesktopContextResource,
   resolveDesktopContextResource,
+  bindExistingDesktopCapabilityResource,
+  resolveDesktopCapabilityResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 export function installPragmaProjectHandlers(
   store: PragmaProjectStore,
   usage: DesktopUsageStore,
   contextStores: ContextStoreStore,
+  capabilities: CapabilityStore,
 ): void {
   ipcMain.handle("pragma-project:get", () => runDesktopMutation(async () => await store.get()));
   ipcMain.handle("pragma-project:allocate-id", () =>
@@ -87,6 +93,29 @@ export function installPragmaProjectHandlers(
         await store.upsert({ baseRevision: snapshot.revision, resource });
       }
       return DesktopPragmaContextStoreBindingSchema.parse({ storeId, resourceRef });
+    }),
+  );
+  ipcMain.handle("pragma-project:ensure-skill-binding", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      const { capabilityId } = EnsurePragmaSkillBindingSchema.parse(input);
+      const capability = await capabilities.resolveActive(capabilityId);
+      if (capability.managedBy === "system" || capability.definition.kind !== "skill") {
+        throw new Error(`Skill is unavailable: ${capabilityId}`);
+      }
+      const snapshot = await store.get();
+      const resource = bindExistingDesktopCapabilityResource(
+        resolveDesktopCapabilityResource({ capabilityId, resources: snapshot.resources }),
+        { id: capabilityId },
+        { name: capability.definition.name, description: capability.definition.description },
+      );
+      const resourceRef = canonicalPragmaResourceRef(resource);
+      const existing = snapshot.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === resourceRef,
+      );
+      if (existing === undefined || !isDeepStrictEqual(existing, resource)) {
+        await store.upsert({ baseRevision: snapshot.revision, resource });
+      }
+      return DesktopPragmaSkillBindingSchema.parse({ capabilityId, resourceRef });
     }),
   );
   ipcMain.handle("pragma-project:upsert-team", (_event, input: unknown) =>

@@ -118,7 +118,7 @@ export function createBundleSourcePublishingService(options: {
 }
 
 function bundleSourceKind(
-  kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore",
+  kind: "Expert" | "ExpertTeam" | "Flow" | "ContextStore" | "Capability",
 ): BundleSourceKind {
   return kind === "Expert"
     ? "expert"
@@ -126,7 +126,9 @@ function bundleSourceKind(
       ? "expert-team"
       : kind === "Flow"
         ? "flow"
-        : "knowledge-base";
+        : kind === "ContextStore"
+          ? "knowledge-base"
+          : "skill";
 }
 
 function sourceSlug(name: string, rootRef: string): string {

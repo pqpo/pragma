@@ -960,7 +960,7 @@ export async function createDesktopApplicationContainer(
     assertStorageWriteAllowed: async () => await storageCapacityGuard.assertWriteAllowed(),
   });
   installExpertDefinitionHandlers(expertStore, usageStore);
-  installPragmaProjectHandlers(pragmaProjectStore, usageStore, contextStores);
+  installPragmaProjectHandlers(pragmaProjectStore, usageStore, contextStores, capabilityStore);
   const initialSettings = await desktopSettings.getSnapshot(options.getPreferredSystemLanguages());
   await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 }).catch(
     (error: unknown) => {
