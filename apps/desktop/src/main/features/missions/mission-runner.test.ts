@@ -18,6 +18,7 @@ import {
   defineExpertTeam,
   ExecutionWorkHistoryReader,
   fingerprintExpertExecutionDefinition,
+  getExecutionLiveBus,
   InMemoryContextStore,
   PragmaPaths,
   readRuntimeSessionRecord,
@@ -4118,6 +4119,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
+    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
     const runner = createMissionRunner({
       missions,
       project,
@@ -4125,6 +4127,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
+      executionStore,
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const revisions: number[] = [];
@@ -4182,34 +4185,93 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       expect(restored).toContain("Reviewing existing code");
       expect(restored).toContain("inspect-code");
     });
-    const paginated = await runner.openWorkConversationStream({
+    const reviewerTask = reviewerRecord!.tasks.at(-1)!;
+    const reviewerRunId = crypto.randomUUID();
+    const reviewerOccurredAt = new Date().toISOString();
+    for (let index = 0; index < 205; index += 1) {
+      getExecutionLiveBus(executionStore).publish(reviewerTask.executionId, {
+        sourceEventId: `history-tool-${index}`,
+        executionId: reviewerTask.executionId,
+        invocationId: reviewerTask.invocationId,
+        contextId: reviewerRecord!.recordId,
+        runId: reviewerRunId,
+        executorId: reviewer.metadata.id,
+        source: { kind: "agent", runId: reviewerRunId, path: [] },
+        channel: "tool",
+        value: {
+          toolCallId: `history-tool-${index}`,
+          toolName: "read_file",
+          inputPreview: `src/history-${index}.ts`,
+        },
+        occurredAt: reviewerOccurredAt,
+      });
+    }
+    await vi.waitFor(
+      () => {
+        expect(JSON.stringify(streamUpdates)).toContain("history-tool-204");
+      },
+      { timeout: settlementTimeoutMs },
+    );
+
+    let announceDurableRead = (): void => undefined;
+    const durableReadStarted = new Promise<void>((resolve) => {
+      announceDurableRead = resolve;
+    });
+    let releaseDurableRead = (): void => undefined;
+    const durableReadMayFinish = new Promise<void>((resolve) => {
+      releaseDurableRead = resolve;
+    });
+    const originalExecutionGet = executionStore.get.bind(executionStore);
+    vi.spyOn(executionStore, "get").mockImplementationOnce(async (executionId) => {
+      announceDurableRead();
+      await durableReadMayFinish;
+      return await originalExecutionGet(executionId);
+    });
+    const openingPaginated = runner.openWorkConversationStream({
       subscriptionId: secondSubscriptionId,
       missionId: mission.id,
       recordId: reviewerRecord!.recordId,
-      limit: 1,
+      limit: 100,
     });
-    expect(paginated.snapshot.entries).toHaveLength(1);
-    expect(paginated.snapshot.nextBeforeCursor).toBeTypeOf("string");
-    const earlier = await runner.getWorkConversation({
-      id: mission.id,
-      recordId: reviewerRecord!.recordId,
-      beforeCursor: paginated.snapshot.nextBeforeCursor,
-      limit: 1,
-    });
-    expect(earlier.entries.map((entry) => entry.id)).not.toContain(
-      paginated.snapshot.entries[0]!.id,
-    );
+    await durableReadStarted;
     emitReviewerOutput();
     await reviewerOutputSent;
+    releaseDurableRead();
+    const paginated = await openingPaginated;
+    expect(paginated.snapshot.entries).toHaveLength(100);
+    expect(paginated.snapshot.nextBeforeCursor).toBeTypeOf("string");
     await vi.waitFor(() => {
-      expect(JSON.stringify(streamUpdates)).toContain("Live reviewer output");
-      expect(
-        streamUpdates.filter(
+      const secondStreamState = JSON.stringify([
+        paginated.snapshot,
+        ...streamUpdates.filter(
           (update) =>
             (update as { subscriptionId?: string }).subscriptionId === secondSubscriptionId,
         ),
-      ).not.toHaveLength(0);
+      ]);
+      expect(secondStreamState).toContain("Live reviewer output");
     });
+    const traversedEntries = [...paginated.snapshot.entries];
+    let beforeCursor = paginated.snapshot.nextBeforeCursor;
+    while (beforeCursor !== undefined) {
+      const earlier = await runner.getWorkConversation({
+        id: mission.id,
+        recordId: reviewerRecord!.recordId,
+        beforeCursor,
+        limit: 100,
+      });
+      traversedEntries.unshift(...earlier.entries);
+      beforeCursor = earlier.nextBeforeCursor;
+    }
+    expect(new Set(traversedEntries.map((entry) => entry.id)).size).toBe(traversedEntries.length);
+    expect(
+      new Set(
+        traversedEntries.flatMap((entry) =>
+          entry.kind === "tool" && entry.toolCallId.startsWith("history-tool-")
+            ? [entry.toolCallId]
+            : [],
+        ),
+      ).size,
+    ).toBe(205);
     const mainChat = await runner.getChatPage({ id: mission.id, limit: 50 });
     expect(JSON.stringify(mainChat.entries)).not.toContain("Live reviewer output");
 

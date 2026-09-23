@@ -270,10 +270,28 @@ interface MissionWorkConversationStreamSubscriber {
   readonly missionId: string;
   readonly recordId: string;
   sequence: number;
+  pendingUpdates:
+    | Array<{
+        readonly overlayRevision: number;
+        readonly update: MissionWorkConversationUpdatePayload;
+      }>
+    | undefined;
+}
+
+type MissionWorkConversationUpdatePayload =
+  | { readonly kind: "patch"; readonly patches: MissionChatPatch[] }
+  | { readonly kind: "invalidate" };
+
+interface MissionWorkConversationOverlay {
+  readonly missionId: string;
+  readonly recordId: string;
+  readonly live: LiveMissionChat;
+  revision: number;
 }
 
 interface MissionWorkConversationWatcher {
   readonly key: string;
+  readonly overlay: MissionWorkConversationOverlay;
   readonly live: LiveMissionChat;
   readonly subscribers: Map<string, MissionWorkConversationStreamSubscriber>;
   close(): Promise<void>;
@@ -1008,6 +1026,11 @@ export function createMissionRunner(options: {
     string,
     Promise<MissionWorkConversationWatcher>
   >();
+  // The reader, initial stream snapshot, refresh, and Load Earlier all resolve this same active
+  // overlay so one cursor never crosses two different entry sets.
+  const workConversationOverlays = new Map<string, MissionWorkConversationOverlay>();
+  const workConversationOverlayKey = (missionId: string, recordId: string): string =>
+    JSON.stringify([missionId, recordId]);
   const emitWorkConversationStreamUpdate = (update: MissionWorkConversationStreamUpdate): void => {
     for (const listener of workConversationStreamListeners) {
       try {
@@ -1021,6 +1044,19 @@ export function createMissionRunner(options: {
         );
       }
     }
+  };
+  const emitWorkConversationSubscriberUpdate = (
+    subscriber: MissionWorkConversationStreamSubscriber,
+    update: MissionWorkConversationUpdatePayload,
+  ): void => {
+    emitWorkConversationStreamUpdate({
+      subscriptionId: subscriber.subscriptionId,
+      streamId: subscriber.streamId,
+      sequence: ++subscriber.sequence,
+      missionId: subscriber.missionId,
+      recordId: subscriber.recordId,
+      ...update,
+    });
   };
   const statusService =
     options.missionStatus ??
@@ -4737,10 +4773,13 @@ export function createMissionRunner(options: {
     return projection.snapshot;
   };
 
-  const getWorkConversation = async (
+  const readWorkConversation = async (
     input: GetMissionWorkConversation,
-    liveOverlay: readonly MissionChatEntry[] = [],
-  ): Promise<MissionWorkConversationSnapshot> => {
+  ): Promise<{
+    readonly snapshot: MissionWorkConversationSnapshot;
+    readonly overlay?: MissionWorkConversationOverlay | undefined;
+    readonly overlayRevision: number;
+  }> => {
     const t0 = performance.now();
     let mission = await options.missions.get(input.id);
     await awaitTerminalLifecycleSettlement(mission);
@@ -4750,7 +4789,14 @@ export function createMissionRunner(options: {
     if (durableEntries === undefined) {
       throw new Error(`Mission work record not found: ${input.recordId}`);
     }
-    const liveEntries = workService.live(mission.id, input.recordId)?.entries ?? [];
+    const overlay = workConversationOverlays.get(
+      workConversationOverlayKey(mission.id, input.recordId),
+    );
+    const overlayRevision = overlay?.revision ?? 0;
+    const liveEntries = uniqueMissionChatEntries([
+      ...(workService.live(mission.id, input.recordId)?.entries ?? []),
+      ...(overlay?.live.entries ?? []),
+    ]);
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();
     for (const entry of durableEntries) {
@@ -4763,10 +4809,6 @@ export function createMissionRunner(options: {
       }
     }
     for (const entry of liveEntries) byId.set(entry.id, { ...entry });
-    // Apply the active watcher overlay before slicing so the page limit and cursor describe the
-    // exact entry set returned to the renderer. Stable ids replace durable equivalents while
-    // genuinely non-durable tail entries participate in the same pagination window.
-    for (const entry of liveOverlay) byId.set(entry.id, { ...entry });
     const entries = [...byId.values()].toSorted((left, right) =>
       left.createdAt.localeCompare(right.createdAt),
     );
@@ -4790,13 +4832,21 @@ export function createMissionRunner(options: {
       },
     );
     return {
-      missionId: mission.id,
-      recordId: input.recordId,
-      revision: workService.revision(mission.id),
-      entries: entries.slice(start, end),
-      ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
+      snapshot: {
+        missionId: mission.id,
+        recordId: input.recordId,
+        revision: workService.revision(mission.id),
+        entries: entries.slice(start, end),
+        ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
+      },
+      ...(overlay === undefined ? {} : { overlay }),
+      overlayRevision,
     };
   };
+
+  const getWorkConversation = async (
+    input: GetMissionWorkConversation,
+  ): Promise<MissionWorkConversationSnapshot> => (await readWorkConversation(input)).snapshot;
 
   const closeWorkConversationStream = async (subscriptionId: string): Promise<void> => {
     const stream = workConversationStreams.get(subscriptionId);
@@ -4839,22 +4889,22 @@ export function createMissionRunner(options: {
       messageOrdinals: new Map(),
       close: async () => undefined,
     };
+    const overlay: MissionWorkConversationOverlay = {
+      missionId: input.mission.id,
+      recordId: input.record.recordId,
+      live,
+      revision: 0,
+    };
     const subscribers = new Map<string, MissionWorkConversationStreamSubscriber>();
     let closed = false;
-    const emitToSubscribers = (
-      update:
-        | { readonly kind: "patch"; readonly patches: MissionChatPatch[] }
-        | { readonly kind: "invalidate" },
-    ): void => {
+    const emitToSubscribers = (update: MissionWorkConversationUpdatePayload): void => {
+      const overlayRevision = ++overlay.revision;
       for (const subscriber of subscribers.values()) {
-        emitWorkConversationStreamUpdate({
-          subscriptionId: subscriber.subscriptionId,
-          streamId: subscriber.streamId,
-          sequence: ++subscriber.sequence,
-          missionId: subscriber.missionId,
-          recordId: subscriber.recordId,
-          ...update,
-        });
+        if (subscriber.pendingUpdates !== undefined) {
+          subscriber.pendingUpdates.push({ overlayRevision, update });
+        } else {
+          emitWorkConversationSubscriberUpdate(subscriber, update);
+        }
       }
     };
     const coalescer = createMissionOutputCoalescer({
@@ -4869,6 +4919,7 @@ export function createMissionRunner(options: {
     });
     const watcher: MissionWorkConversationWatcher = {
       key: input.key,
+      overlay,
       live,
       subscribers,
       close: async () => {
@@ -4880,6 +4931,10 @@ export function createMissionRunner(options: {
       },
     };
     workConversationWatchers.set(input.key, watcher);
+    workConversationOverlays.set(
+      workConversationOverlayKey(input.mission.id, input.record.recordId),
+      overlay,
+    );
     const outputTask = (async () => {
       try {
         for await (const item of subscription) {
@@ -4901,6 +4956,10 @@ export function createMissionRunner(options: {
         if (workConversationWatchers.get(input.key) === watcher) {
           workConversationWatchers.delete(input.key);
           workConversationWatcherPromises.delete(input.key);
+        }
+        const overlayKey = workConversationOverlayKey(input.mission.id, input.record.recordId);
+        if (workConversationOverlays.get(overlayKey) === overlay) {
+          workConversationOverlays.delete(overlayKey);
         }
         for (const subscriber of subscribers.values()) {
           if (workConversationStreams.get(subscriber.subscriptionId)?.watcher === watcher) {
@@ -4964,40 +5023,51 @@ export function createMissionRunner(options: {
         task: activeTask,
       });
     }
+    let subscriber: MissionWorkConversationStreamSubscriber | undefined;
+    if (watcher !== undefined && workConversationWatchers.get(watcher.key) === watcher) {
+      // Buffer before the asynchronous durable read. The overlay watermark below discards
+      // updates already represented by the opening snapshot and forwards only the later tail.
+      subscriber = {
+        subscriptionId: input.subscriptionId,
+        streamId,
+        missionId: input.missionId,
+        recordId: input.recordId,
+        sequence: 0,
+        pendingUpdates: [],
+      };
+      watcher.subscribers.set(input.subscriptionId, subscriber);
+    } else {
+      watcher = undefined;
+    }
+    workConversationStreams.set(input.subscriptionId, {
+      missionId: input.missionId,
+      streamId,
+      watcher,
+    });
     try {
-      const snapshot = await getWorkConversation(
-        {
-          id: input.missionId,
-          recordId: input.recordId,
-          limit: input.limit,
-        },
-        watcher?.live.entries.map((entry) => ({ ...entry })) ?? [],
-      );
-      if (watcher !== undefined) {
-        if (workConversationWatchers.get(watcher.key) === watcher) {
-          watcher.subscribers.set(input.subscriptionId, {
-            subscriptionId: input.subscriptionId,
-            streamId,
-            missionId: input.missionId,
-            recordId: input.recordId,
-            sequence: 0,
-          });
-        } else {
-          watcher = undefined;
+      const opened = await readWorkConversation({
+        id: input.missionId,
+        recordId: input.recordId,
+        limit: input.limit,
+      });
+      if (
+        watcher !== undefined &&
+        subscriber !== undefined &&
+        watcher.subscribers.get(input.subscriptionId) === subscriber
+      ) {
+        const capturedOverlayRevision =
+          opened.overlay === watcher.overlay ? opened.overlayRevision : -1;
+        const pendingUpdates = subscriber.pendingUpdates ?? [];
+        subscriber.pendingUpdates = undefined;
+        for (const pending of pendingUpdates) {
+          if (pending.overlayRevision > capturedOverlayRevision) {
+            emitWorkConversationSubscriberUpdate(subscriber, pending.update);
+          }
         }
       }
-      workConversationStreams.set(input.subscriptionId, {
-        missionId: input.missionId,
-        streamId,
-        watcher,
-      });
-      return { subscriptionId: input.subscriptionId, streamId, snapshot };
+      return { subscriptionId: input.subscriptionId, streamId, snapshot: opened.snapshot };
     } catch (error) {
-      if (watcher !== undefined && watcher.subscribers.size === 0) {
-        workConversationWatchers.delete(watcher.key);
-        workConversationWatcherPromises.delete(watcher.key);
-        await watcher.close();
-      }
+      await closeWorkConversationStream(input.subscriptionId);
       throw error;
     }
   };
