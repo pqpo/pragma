@@ -89,6 +89,7 @@ import type {
   UpsertPragmaResource,
   UpsertPragmaExpertTeam,
   DesktopPragmaContextStoreBinding,
+  DesktopPragmaSkillBinding,
   AllocatePragmaResourceIdResult,
   PragmaProjectChanges,
   PragmaProjectChangesValidationResult,
@@ -483,6 +484,9 @@ export interface PragmaDesktopAPI {
   ensurePragmaContextStoreBinding: (input: {
     readonly storeId: string;
   }) => Promise<DesktopPragmaContextStoreBinding>;
+  ensurePragmaSkillBinding: (input: {
+    readonly capabilityId: string;
+  }) => Promise<DesktopPragmaSkillBinding>;
   applyPragmaProjectChanges: (input: PragmaProjectChanges) => Promise<PragmaProjectSnapshot>;
   deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
   validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;

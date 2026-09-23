@@ -1,12 +1,19 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PragmaPaths } from "@pragma/core";
 import { pragmaManagementCapabilityResource } from "@pragma/built-in-agents";
 import { createPragmaBundleFingerprint } from "@pragma/interpreter";
-import { resolvePragmaAvatarId } from "@pragma/shared";
+import {
+  legacyWindowsSkillBundleContentHashChunks,
+  resolvePragmaAvatarId,
+  skillBundleContentHashChunks,
+  serializeSkillBundleFileManifest,
+  type SkillBundleFile,
+} from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
   type PragmaCapabilityResource,
@@ -19,7 +26,12 @@ import {
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CapabilityStore } from "../capabilities/capability-store.ts";
+import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
+import {
+  createCapabilityStore,
+  hashSkillDirectoryContent,
+  type CapabilityStore,
+} from "../capabilities/capability-store.ts";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import type {
   Capability,
@@ -59,12 +71,449 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it("exports a user Skill root from its active ready revision with mandatory files", async () => {
+    const capabilityId = "00000000-0000-4000-8000-000000000290";
+    const payload = await mkdtemp(join(tmpdir(), "pragma-skill-root-"));
+    directories.push(payload);
+    const skillContents =
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nActive revision.\n";
+    await writeFile(join(payload, "SKILL.md"), skillContents);
+    await writeFile(join(payload, "a0"), "flat");
+    await mkdir(join(payload, "a"));
+    await writeFile(join(payload, "a", "b"), "nested");
+    const activeContentHash = testSha256(
+      legacyWindowsSkillBundleContentHashChunks([
+        { path: "SKILL.md", contents: strToU8(skillContents) },
+        { path: "a0", contents: strToU8("flat") },
+        { path: "a/b", contents: strToU8("nested") },
+      ]),
+    );
+    expect(activeContentHash).not.toBe(await hashSkillDirectoryContent(payload));
+    let active = {
+      ...skillCapability(capabilityId, 2, activeContentHash),
+      manifest: {
+        ...skillCapability(capabilityId, 2, activeContentHash).manifest,
+        activeRevision: 2,
+      },
+    };
+    const latest = {
+      ...skillCapability(capabilityId, 3, "3".repeat(64)),
+      manifest: {
+        ...skillCapability(capabilityId, 3, "3".repeat(64)).manifest,
+        activeRevision: 2,
+      },
+    };
+    const skillFilesPath = vi.fn(async (_id: string, revision: number) => {
+      expect([2, 3]).toContain(revision);
+      return payload;
+    });
+    const source = await createFixture("skill-root", {
+      capabilities: {
+        list: async () => [latest],
+        resolveActive: async () => active,
+        skillFilesPath,
+      } as unknown as CapabilityStore,
+    });
+    const snapshot = await source.project.get();
+    const resource = portableCapability();
+    resource.spec.binding = desktopCapabilityBindingRef(capabilityId);
+    resource.spec.config = { key: capabilityId };
+    resource.metadata.name = active.definition.name;
+    resource.metadata.description = active.definition.description;
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [...snapshot.resources, resource],
+    });
+    const rootRef = canonicalPragmaResourceRef(resource);
+
+    await expect(
+      source.service.prepareExport({ rootRef, projectRevision: published.revision }),
+    ).resolves.toMatchObject({
+      root: { ref: rootRef, kind: "Capability", activeRevision: 2 },
+      capabilityCount: 1,
+    });
+    const path = join(source.root, "skill.pragma");
+    await source.service.exportTo(
+      {
+        rootRef,
+        projectRevision: published.revision,
+        modules: {
+          capabilities: false,
+          plugins: false,
+          knowledgeBases: false,
+          flowLayouts: false,
+        },
+      },
+      path,
+    );
+
+    const archive = unzipSync(new Uint8Array(await readFile(path)));
+    const manifest = JSON.parse(strFromU8(archive["bundle.json"]!)) as {
+      schemaVersion: string;
+      roots: string[];
+      requirements: { ownerRef: string; payload?: { codec: string } }[];
+    };
+    expect(manifest).toMatchObject({ schemaVersion: "pragma.bundle/v3", roots: [rootRef] });
+    expect(manifest.requirements).toContainEqual(
+      expect.objectContaining({
+        ownerRef: rootRef,
+        payload: expect.objectContaining({ codec: "pragma.skill@v1" }),
+      }),
+    );
+    await expect(source.service.inspect(path)).resolves.toMatchObject({
+      root: { ref: rootRef, kind: "Capability", name: active.definition.name },
+      dependencies: [expect.objectContaining({ kind: "capability", included: true })],
+    });
+    if (active.definition.kind !== "skill") throw new Error("Expected an active Skill.");
+    active = {
+      ...active,
+      definition: { ...active.definition, contentHash: "f".repeat(64) },
+    };
+    await expect(
+      source.service.exportTo(
+        {
+          rootRef,
+          projectRevision: published.revision,
+          modules: {
+            capabilities: true,
+            plugins: false,
+            knowledgeBases: false,
+            flowLayouts: false,
+          },
+        },
+        join(source.root, "corrupt-skill.pragma"),
+      ),
+    ).rejects.toThrow("content hash does not match its files");
+    expect(skillFilesPath).toHaveBeenCalledTimes(3);
+  });
+
+  it("round-trips a real CapabilityStore Skill without changing its content identity", async () => {
+    const sourceStoreRoot = await mkdtemp(join(tmpdir(), "pragma-real-skill-source-store-"));
+    const targetStoreRoot = await mkdtemp(join(tmpdir(), "pragma-real-skill-target-store-"));
+    const skillSource = await mkdtemp(join(tmpdir(), "pragma-real-skill-files-"));
+    directories.push(sourceStoreRoot, targetStoreRoot, skillSource);
+    await mkdir(join(skillSource, "scripts"));
+    await writeFile(
+      join(skillSource, "SKILL.md"),
+      "---\nname: Real Bundle Skill\ndescription: Round-trip a real Skill.\n---\n\nRun it.\n",
+    );
+    await writeFile(join(skillSource, "scripts", "run.sh"), "#!/bin/sh\necho ready\n");
+    await chmod(join(skillSource, "scripts", "run.sh"), 0o755);
+
+    const sourceCapabilities = createRealSkillCapabilityStore(sourceStoreRoot);
+    const importedSourceCapability = await sourceCapabilities.importSkill({
+      sourcePath: skillSource,
+    });
+    if (importedSourceCapability.definition.kind !== "skill") throw new Error("Expected a Skill.");
+    const sourceSnapshot = await scanSkillWorkingTree(skillSource);
+    const sourceCapability = await sourceCapabilities.publishSkillRevisionCandidate({
+      id: importedSourceCapability.manifest.id,
+      baseRevision: importedSourceCapability.manifest.latestRevision,
+      baseContentHash: importedSourceCapability.definition.contentHash,
+      sourcePath: skillSource,
+      candidateContentHash: sourceSnapshot.hash,
+    });
+    if (sourceCapability.definition.kind !== "skill") throw new Error("Expected a Skill.");
+    expect(sourceCapability.definition.contentHash).toBe(
+      await hashSkillDirectoryContent(skillSource),
+    );
+    expect(sourceCapability.definition.contentHash).not.toBe(sourceSnapshot.hash);
+
+    const source = await createFixture("real-skill-round-trip-source", {
+      capabilities: sourceCapabilities,
+    });
+    const sourceProjectSnapshot = await source.project.get();
+    const sourceResource = portableCapability();
+    sourceResource.spec.binding = desktopCapabilityBindingRef(sourceCapability.manifest.id);
+    sourceResource.metadata.name = sourceCapability.definition.name;
+    sourceResource.metadata.description = sourceCapability.definition.description;
+    const sourcePublished = await source.project.publish({
+      expectedRevision: sourceProjectSnapshot.revision,
+      resources: [...sourceProjectSnapshot.resources, sourceResource],
+    });
+    const rootRef = canonicalPragmaResourceRef(sourceResource);
+    const bundlePath = join(source.root, "real-skill.pragma");
+    const exported = await source.service.exportTo(
+      {
+        rootRef,
+        projectRevision: sourcePublished.revision,
+        modules: {
+          capabilities: true,
+          plugins: false,
+          knowledgeBases: false,
+          flowLayouts: false,
+        },
+      },
+      bundlePath,
+    );
+
+    const targetCapabilities = createRealSkillCapabilityStore(targetStoreRoot);
+    const target = await createFixture("real-skill-round-trip-target", {
+      capabilities: targetCapabilities,
+    });
+    const firstInspection = await target.service.inspect(bundlePath, rootRef);
+    const first = await target.service.startImport({
+      sourcePath: bundlePath,
+      rootRef,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: firstInspection.projectRevision,
+      conflicts: [],
+      assetConflicts: [],
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(first.status).toBe("ready");
+    const [imported] = await targetCapabilities.list();
+    expect(imported?.definition).toEqual(sourceCapability.definition);
+    expect(imported?.manifest.latestRevision).toBe(1);
+    expect(
+      (
+        await stat(
+          join(
+            await targetCapabilities.skillFilesPath(imported!.manifest.id, 1),
+            "scripts",
+            "run.sh",
+          ),
+        )
+      ).mode & 0o111,
+    ).not.toBe(0);
+
+    const repeatedInspection = await target.service.inspect(bundlePath, rootRef);
+    const repeated = await target.service.startImport({
+      sourcePath: bundlePath,
+      rootRef,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: repeatedInspection.projectRevision,
+      conflicts: repeatedInspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "update" as const,
+      })),
+      assetConflicts: repeatedInspection.assetConflicts.map((conflict) => ({
+        resourceRef: conflict.resourceRef,
+        assetKind: conflict.assetKind,
+        action: "update" as const,
+        targetAssetId: imported!.manifest.id,
+        expectedTarget: {
+          revision: conflict.candidates[0]!.revision,
+          fingerprint: conflict.candidates[0]!.fingerprint,
+        },
+      })),
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(repeated.status).toBe("ready");
+    expect(await targetCapabilities.list()).toEqual([
+      expect.objectContaining({
+        manifest: expect.objectContaining({ id: imported!.manifest.id, latestRevision: 1 }),
+        definition: sourceCapability.definition,
+      }),
+    ]);
+
+    const nonExecutableStoreRoot = await mkdtemp(
+      join(tmpdir(), "pragma-real-skill-non-executable-store-"),
+    );
+    const nonExecutableSkillSource = await mkdtemp(
+      join(tmpdir(), "pragma-real-skill-non-executable-files-"),
+    );
+    directories.push(nonExecutableStoreRoot, nonExecutableSkillSource);
+    await mkdir(join(nonExecutableSkillSource, "scripts"));
+    await copyFile(join(skillSource, "SKILL.md"), join(nonExecutableSkillSource, "SKILL.md"));
+    await copyFile(
+      join(skillSource, "scripts", "run.sh"),
+      join(nonExecutableSkillSource, "scripts", "run.sh"),
+    );
+    await chmod(join(nonExecutableSkillSource, "scripts", "run.sh"), 0o644);
+    const nonExecutableCapabilities = createRealSkillCapabilityStore(nonExecutableStoreRoot);
+    const nonExecutableCapability = await nonExecutableCapabilities.importSkill({
+      sourcePath: nonExecutableSkillSource,
+    });
+    expect(nonExecutableCapability.definition).toEqual(sourceCapability.definition);
+    expect(
+      (
+        await stat(
+          join(
+            await nonExecutableCapabilities.skillFilesPath(
+              nonExecutableCapability.manifest.id,
+              nonExecutableCapability.manifest.latestRevision,
+            ),
+            "scripts",
+            "run.sh",
+          ),
+        )
+      ).mode & 0o111,
+    ).toBe(0);
+
+    const nonExecutableTarget = await createFixture("real-skill-executable-update-target", {
+      capabilities: nonExecutableCapabilities,
+    });
+    const executableInspection = await nonExecutableTarget.service.inspect(bundlePath, rootRef);
+    expect(executableInspection.assetConflicts).toHaveLength(1);
+    const executableConflict = executableInspection.assetConflicts[0]!;
+    expect(executableConflict.importedFingerprint).not.toBe(
+      executableConflict.candidates[0]!.fingerprint,
+    );
+    const executableUpdate = await nonExecutableTarget.service.startImport({
+      sourcePath: bundlePath,
+      rootRef,
+      expectedFingerprint: exported.bundleFingerprint,
+      expectedProjectFingerprint: exported.projectFingerprint,
+      expectedProjectRevision: executableInspection.projectRevision,
+      conflicts: executableInspection.conflicts.map((conflict) => ({
+        resourceRef: conflict.ref,
+        action: "update" as const,
+      })),
+      assetConflicts: [
+        {
+          resourceRef: executableConflict.resourceRef,
+          assetKind: executableConflict.assetKind,
+          action: "update",
+          targetAssetId: nonExecutableCapability.manifest.id,
+          expectedTarget: {
+            revision: executableConflict.candidates[0]!.revision,
+            fingerprint: executableConflict.candidates[0]!.fingerprint,
+          },
+        },
+      ],
+      runtimes: [],
+      capabilities: [],
+      contextStores: [],
+      secrets: {},
+    });
+    expect(executableUpdate.status).toBe("ready");
+    const updatedExecutableCapability = await nonExecutableCapabilities.get(
+      nonExecutableCapability.manifest.id,
+    );
+    expect(updatedExecutableCapability.manifest.latestRevision).toBe(2);
+    expect(
+      (
+        await stat(
+          join(
+            await nonExecutableCapabilities.skillFilesPath(
+              nonExecutableCapability.manifest.id,
+              updatedExecutableCapability.manifest.latestRevision,
+            ),
+            "scripts",
+            "run.sh",
+          ),
+        )
+      ).mode & 0o111,
+    ).not.toBe(0);
+  });
+
+  it("rejects malformed Skill dependency payloads during inspection", async () => {
+    const capabilityId = "0123456789abcdef";
+    const source = await createFixture("malformed-skill-dependency");
+    const snapshot = await source.project.get();
+    const resource = portableCapability();
+    resource.spec.binding = desktopCapabilityBindingRef(capabilityId);
+    const sourceExpert = snapshot.resources.find(
+      (candidate): candidate is PragmaExpertResource => candidate.kind === "Expert",
+    )!;
+    const published = await source.project.publish({
+      expectedRevision: snapshot.revision,
+      resources: [
+        {
+          ...sourceExpert,
+          spec: {
+            ...sourceExpert.spec,
+            capabilities: [{ ref: canonicalPragmaResourceRef(resource), kind: "tools" }],
+          },
+        },
+        ...snapshot.resources.filter((candidate) => candidate.kind !== "Expert"),
+        resource,
+      ],
+    });
+    const skillDocument = strToU8(
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nPortable.\n",
+    );
+    const skillFile: SkillBundleFile = {
+      path: "SKILL.md",
+      sizeBytes: skillDocument.byteLength,
+      sha256: testSha256(skillDocument),
+      executable: false,
+    };
+    const definition = skillCapability(
+      capabilityId,
+      1,
+      testSha256(skillBundleContentHashChunks([{ path: skillFile.path, contents: skillDocument }])),
+    ).definition;
+    if (definition.kind !== "skill") throw new Error("Expected a Skill definition.");
+    const validFingerprint = testSha256(testStableStringify(definition));
+    const filesFingerprint = testSha256(serializeSkillBundleFileManifest([skillFile]));
+    const exportPayload = async (input: {
+      readonly descriptorFingerprint: string;
+      readonly includeEntry: boolean;
+      readonly output: string;
+    }) => {
+      const project = await source.project.openRevision(published.revision);
+      try {
+        const exported = await project.exportBundle({
+          roots: [canonicalPragmaResourceRef(sourceExpert)],
+          host: {
+            exportPayload: async ({ requirement }) =>
+              requirement.ownerRef === canonicalPragmaResourceRef(resource)
+                ? {
+                    codec: "pragma.skill@v1",
+                    files: new Map([
+                      [
+                        "descriptor.json",
+                        strToU8(
+                          JSON.stringify({
+                            schemaVersion: "pragma.skill-bundle-payload/v1",
+                            assetKey: capabilityId,
+                            name: definition.name,
+                            description: definition.description,
+                            entryPath: definition.entryPath,
+                            contentHash: definition.contentHash,
+                            filesFingerprint,
+                            fingerprint: input.descriptorFingerprint,
+                            files: [skillFile],
+                          }),
+                        ),
+                      ],
+                      ...(input.includeEntry ? ([["files/SKILL.md", skillDocument]] as const) : []),
+                    ]),
+                  }
+                : undefined,
+          },
+        });
+        await writeFile(input.output, exported.bytes);
+      } finally {
+        await project.dispose();
+      }
+    };
+
+    const mismatchedFingerprint = join(source.root, "skill-fingerprint-mismatch.pragma");
+    await exportPayload({
+      descriptorFingerprint: "f".repeat(64),
+      includeEntry: true,
+      output: mismatchedFingerprint,
+    });
+    await expect(source.service.inspect(mismatchedFingerprint)).rejects.toThrow(
+      "definition fingerprint does not match",
+    );
+
+    const missingEntry = join(source.root, "skill-entry-missing.pragma");
+    await exportPayload({
+      descriptorFingerprint: validFingerprint,
+      includeEntry: false,
+      output: missingEntry,
+    });
+    await expect(source.service.inspect(missingEntry)).rejects.toThrow("file is missing");
+  });
+
   it("accepts canonical Capability ids in the current installation journal", () => {
     const timestamp = new Date().toISOString();
     expect(
       PragmaBundleInstallationSchema.parse({
-        schemaVersion: "pragma.bundle-installation/v7",
-        bundleVersion: "pragma.bundle/v2",
+        schemaVersion: "pragma.bundle-installation/v8",
+        bundleVersion: "pragma.bundle/v3",
         id: "00000000-0000-4000-8000-000000000001",
         bundleFingerprint: "a".repeat(64),
         projectId: "project",
@@ -642,7 +1091,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     );
     await expect(fixture.service.listInstallations()).resolves.toEqual([]);
     expect(await readFile(fixture.paths.bundleInstallationsCatalog(), "utf8")).toContain(
-      "pragma.bundle-installations/v7",
+      "pragma.bundle-installations/v8",
     );
   });
 
@@ -654,7 +1103,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     });
     const catalogPath = fixture.paths.bundleInstallationsCatalog();
     const futureCatalog = {
-      schemaVersion: "pragma.bundle-installations/v8",
+      schemaVersion: "pragma.bundle-installations/v9",
       installations: [],
     };
     await writeFile(catalogPath, `${JSON.stringify(futureCatalog)}\n`);
@@ -1383,10 +1832,15 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     const sourceCapabilityId = "0123456789abcdef";
     const targetCapabilityId = "fedcba9876543210";
     const sourcePayloads = new Map<number, string>();
+    const sourceCapability = async (revision: number) =>
+      skillCapability(
+        sourceCapabilityId,
+        revision,
+        await hashSkillDirectoryContent(sourcePayloads.get(revision)!),
+      );
     const sourceCapabilities = {
-      list: async () => [skillCapability(sourceCapabilityId, 3, "3".repeat(64))],
-      get: async (_id: string, revision?: number) =>
-        skillCapability(sourceCapabilityId, 3, String(revision ?? 3).repeat(64)),
+      list: async () => [await sourceCapability(3)],
+      get: async (_id: string, revision?: number) => await sourceCapability(revision ?? 3),
       skillFilesPath: async (_id: string, revision: number) => sourcePayloads.get(revision)!,
     } as unknown as CapabilityStore;
     const source = await createFixture("skill-update-source", {
@@ -1427,14 +1881,30 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     await source.service.exportTo(exportInput(sourcePublished.revision), path);
 
     let publishedCandidateHash: string | undefined;
+    const initialTargetPayload = await mkdtemp(join(tmpdir(), "pragma-skill-update-target-files-"));
+    const updatedTargetPayload = await mkdtemp(
+      join(tmpdir(), "pragma-skill-updated-target-files-"),
+    );
+    directories.push(initialTargetPayload, updatedTargetPayload);
+    await writeFile(
+      join(initialTargetPayload, "SKILL.md"),
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nLocal revision.\n",
+    );
+    let targetPayloadPath = initialTargetPayload;
     let targetCapability = skillCapability(targetCapabilityId, 7, "f".repeat(64));
     const targetCapabilities = {
       list: async () => [targetCapability],
-      publishSkillRevisionCandidate: async (input: { candidateContentHash: string }) => {
+      skillFilesPath: async () => targetPayloadPath,
+      publishSkillRevisionCandidate: async (input: {
+        candidateContentHash: string;
+        sourcePath: string;
+      }) => {
         publishedCandidateHash = input.candidateContentHash;
+        await copyFile(join(input.sourcePath, "SKILL.md"), join(updatedTargetPayload, "SKILL.md"));
+        targetPayloadPath = updatedTargetPayload;
         targetCapability = {
           ...skillCapability(targetCapabilityId, 8, "e".repeat(64)),
-          definition: skillCapability(sourceCapabilityId, 3, "3".repeat(64)).definition,
+          definition: (await sourceCapability(3)).definition,
         };
         return targetCapability;
       },
@@ -1572,9 +2042,13 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
       join(payload, "SKILL.md"),
       "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nShared asset.\n",
     );
+    await mkdir(join(payload, "scripts"));
+    await writeFile(join(payload, "scripts/review.sh"), "#!/bin/sh\necho review\n");
+    await chmod(join(payload, "scripts/review.sh"), 0o755);
+    const sourceContentHash = await hashSkillDirectoryContent(payload);
     const sourceCapabilities = {
-      list: async () => [skillCapability(sourceCapabilityId, 1, "1".repeat(64))],
-      get: async () => skillCapability(sourceCapabilityId, 1, "1".repeat(64)),
+      list: async () => [skillCapability(sourceCapabilityId, 1, sourceContentHash)],
+      get: async () => skillCapability(sourceCapabilityId, 1, sourceContentHash),
       skillFilesPath: async () => payload,
     } as unknown as CapabilityStore;
     const source = await createFixture("shared-skill-source", {
@@ -1613,10 +2087,13 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     let created: Capability | undefined;
     let createCount = 0;
+    let importedExecutable = false;
     const targetCapabilities = {
       list: async () => (created === undefined ? [] : [created]),
-      publishNewSkillRevisionCandidate: async (input: { id: string }) => {
+      publishNewSkillRevisionCandidate: async (input: { id: string; sourcePath: string }) => {
         createCount += 1;
+        importedExecutable =
+          ((await stat(join(input.sourcePath, "scripts/review.sh"))).mode & 0o111) !== 0;
         created = skillCapability(input.id, 1, "2".repeat(64));
         return created;
       },
@@ -1648,6 +2125,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
     expect(installation.status).toBe("ready");
     expect(createCount).toBe(1);
+    expect(importedExecutable).toBe(true);
     const imported = await target.project.get();
     const bindings = imported.resources
       .filter(
@@ -1661,10 +2139,17 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     expect(bindings).toEqual([expectedBinding, expectedBinding]);
 
     const existingId = "fedcba9876543210";
+    const existingPayload = await mkdtemp(join(tmpdir(), "pragma-shared-local-skill-"));
+    directories.push(existingPayload);
+    await writeFile(
+      join(existingPayload, "SKILL.md"),
+      "---\nname: Bundle Skill\ndescription: Bundle Skill description\n---\n\nLocal asset.\n",
+    );
     let updated = skillCapability(existingId, 7, "7".repeat(64));
     let updateCount = 0;
     const updateCapabilities = {
       list: async () => [updated],
+      skillFilesPath: async () => existingPayload,
       publishSkillRevisionCandidate: async () => {
         updateCount += 1;
         updated = skillCapability(existingId, 8, "8".repeat(64));
@@ -2406,6 +2891,44 @@ async function createFixture(
   };
 }
 
+function createRealSkillCapabilityStore(root: string): CapabilityStore {
+  const credentials: CapabilityCredentialStore = {
+    overlay: () => credentials,
+    setMany: async () => undefined,
+    prepareMany: async () => undefined,
+    activate: async () => undefined,
+    finalize: async () => undefined,
+    rollback: async () => undefined,
+    pending: async () => undefined,
+    get: async () => undefined,
+    removeCapability: async () => undefined,
+    fingerprint: async () => createHash("sha256").update("[]").digest("hex"),
+  };
+  return createCapabilityStore({
+    capabilitiesPath: join(root, "capabilities"),
+    credentials,
+    verify: async (definition) => ({
+      definition,
+      health: { status: "ready", checkedAt: "2026-09-23T00:00:00.000Z" },
+    }),
+    mutations: {
+      publish: async (input) => {
+        await input.validateCurrent?.();
+        return await input.commit();
+      },
+      publishHealth: async (input) => {
+        await input.validateCurrent?.();
+        return await input.commit();
+      },
+      mutate: async (input) => {
+        await input.validateCurrent?.();
+        await input.commit();
+      },
+    },
+    isReferenced: async () => false,
+  });
+}
+
 function knowledgeFile(id: string, content: string) {
   return {
     id,
@@ -2576,6 +3099,22 @@ function portableCapability(): PragmaCapabilityResource {
       config: { key: "portable" },
     },
   };
+}
+
+function testSha256(value: string | Uint8Array | readonly (string | Uint8Array)[]): string {
+  const hash = createHash("sha256");
+  if (typeof value === "string" || value instanceof Uint8Array) hash.update(value);
+  else for (const chunk of value) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+function testStableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(testStableStringify).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${testStableStringify(entry)}`)
+    .join(",")}}`;
 }
 
 function skillCapability(id: string, latestRevision: number, contentHash: string): Capability {

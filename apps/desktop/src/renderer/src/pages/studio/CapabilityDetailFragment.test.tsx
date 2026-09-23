@@ -122,6 +122,8 @@ describe("CapabilityDetailFragment", () => {
         onBack={() => undefined}
         onChanged={() => undefined}
         onOpenRevisions={() => undefined}
+        onExport={async () => undefined}
+        onPublish={async () => undefined}
       />,
     );
 
@@ -131,6 +133,8 @@ describe("CapabilityDetailFragment", () => {
     expect(html).toContain('aria-label="Update from package"');
     expect(html).toContain('role="tooltip">Revision tasks</span>');
     expect(html).toContain('aria-label="Delete capability"');
+    expect(html).toContain('aria-label="Export skill"');
+    expect(html).toContain('aria-label="Publish to source"');
     expect(html).not.toContain("Update Skill");
     expect(html).not.toContain("Prepare revision");
     expect(html).not.toContain("skill-revisions-heading");

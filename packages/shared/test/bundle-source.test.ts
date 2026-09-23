@@ -17,7 +17,7 @@ describe("Bundle Source protocol", () => {
     expect(BundleSourceTagSchema.safeParse("a".repeat(81)).success).toBe(false);
     expect(
       BundleSourceItemSchema.parse({
-        schemaVersion: "pragma.bundle-source-item/v2",
+        schemaVersion: "pragma.bundle-source-item/v3",
         id: "reviewer",
         rootRef: "expert:1234567890abcdef",
         name: { default: "Reviewer" },
@@ -36,7 +36,7 @@ describe("Bundle Source protocol", () => {
   it("defines type-specific governed categories", () => {
     expect(
       BundleSourceManifestSchema.parse({
-        schemaVersion: "pragma.bundle-source/v2",
+        schemaVersion: "pragma.bundle-source/v3",
         id: "official",
         name: { default: "Pragma Official", translations: { "zh-Hans": "Pragma 官方" } },
         sections: {
@@ -46,6 +46,7 @@ describe("Bundle Source protocol", () => {
           },
           flow: { categories: [{ id: "content", name: { default: "Content" } }] },
           "knowledge-base": { categories: [{ id: "general", name: { default: "General" } }] },
+          skill: { categories: [{ id: "general", name: { default: "General" } }] },
         },
       }),
     ).toMatchObject({ id: "official", maxBundleBytes: 100 * 1024 * 1024 });
@@ -54,7 +55,7 @@ describe("Bundle Source protocol", () => {
   it("rejects duplicate categories and invalid item timestamps", () => {
     expect(
       BundleSourceManifestSchema.safeParse({
-        schemaVersion: "pragma.bundle-source/v2",
+        schemaVersion: "pragma.bundle-source/v3",
         id: "invalid",
         name: { default: "Invalid" },
         sections: {
@@ -67,12 +68,13 @@ describe("Bundle Source protocol", () => {
           "expert-team": { categories: [{ id: "general", name: { default: "General" } }] },
           flow: { categories: [{ id: "general", name: { default: "General" } }] },
           "knowledge-base": { categories: [{ id: "general", name: { default: "General" } }] },
+          skill: { categories: [{ id: "general", name: { default: "General" } }] },
         },
       }).success,
     ).toBe(false);
     expect(
       BundleSourceManifestSchema.safeParse({
-        schemaVersion: "pragma.bundle-source/v3",
+        schemaVersion: "pragma.bundle-source/v4",
         id: "future",
         name: { default: "Future" },
         sections: {
@@ -84,7 +86,7 @@ describe("Bundle Source protocol", () => {
     ).toBe(false);
     expect(
       BundleSourceItemSchema.safeParse({
-        schemaVersion: "pragma.bundle-source-item/v2",
+        schemaVersion: "pragma.bundle-source-item/v3",
         id: "reviewer",
         rootRef: "expert:1234567890abcdef",
         name: { default: "Reviewer" },
@@ -125,6 +127,9 @@ describe("Bundle Source protocol", () => {
       ),
     ).toMatchObject({ kind: "bundle", sourceKind: "knowledge-base", itemId: "handbook" });
     expect(
+      parseBundleSourceRepositoryEntry("skills/general/reviewer/versions/1.0.0/bundle.pragma"),
+    ).toMatchObject({ kind: "bundle", sourceKind: "skill", itemId: "reviewer" });
+    expect(
       parseBundleSourceRepositoryEntry(
         "experts/general/reviewer/versions/../../outside/bundle.pragma",
       ),
@@ -143,10 +148,11 @@ describe("Bundle Source protocol", () => {
         flow: { categories },
       },
     });
-    expect(manifest.schemaVersion).toBe("pragma.bundle-source/v2");
+    expect(manifest.schemaVersion).toBe("pragma.bundle-source/v3");
     expect(manifest.sections["knowledge-base"].categories).toEqual(
       manifest.sections.expert.categories,
     );
+    expect(manifest.sections.skill.categories).toEqual(manifest.sections.expert.categories);
     expect(
       parseBundleSourceItem({
         schemaVersion: "pragma.bundle-source-item/v1",
@@ -161,6 +167,6 @@ describe("Bundle Source protocol", () => {
         createdAt: "2026-08-31T00:00:00.000Z",
         updatedAt: "2026-08-31T00:00:00.000Z",
       }),
-    ).toMatchObject({ schemaVersion: "pragma.bundle-source-item/v2", id: "reviewer" });
+    ).toMatchObject({ schemaVersion: "pragma.bundle-source-item/v3", id: "reviewer" });
   });
 });

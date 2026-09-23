@@ -3,8 +3,10 @@ import {
   PragmaBundleManifestSchema,
   type PragmaBundleManifest,
   type PragmaBundleV1Manifest,
+  type PragmaBundleV2Manifest,
 } from "../../ast/pragma-bundle.schema.ts";
 import { pragmaBundleV1ToV2Step } from "./steps/v1-to-v2.ts";
+import { pragmaBundleV2ToV3Step } from "./steps/v2-to-v3.ts";
 import type {
   MigratedPragmaBundleManifest,
   PragmaBundleManifestMigrationStep,
@@ -13,6 +15,7 @@ import type {
 
 const migrationSteps = [
   pragmaBundleV1ToV2Step,
+  pragmaBundleV2ToV3Step,
 ] as const satisfies readonly PragmaBundleManifestMigrationStep[];
 const migrationStepsBySource = indexMigrationSteps(migrationSteps);
 
@@ -45,7 +48,8 @@ export function migratePragmaBundleManifestToCurrent(
   }
 
   return {
-    sourceManifest: (sourceManifest ?? value) as PragmaBundleManifest | PragmaBundleV1Manifest,
+    sourceManifest: (sourceManifest ?? value) as
+      PragmaBundleManifest | PragmaBundleV1Manifest | PragmaBundleV2Manifest,
     manifest: PragmaBundleManifestSchema.parse(value),
   };
 }

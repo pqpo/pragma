@@ -8,6 +8,7 @@ import {
   PragmaExpertTeamResourceSchema,
   PragmaExpertTeamContextVisibilitySchema,
   PragmaContextStoreRefSchema,
+  PragmaCapabilityRefSchema,
   PragmaFlowRunDryEvaluationResourceSchema,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
@@ -52,6 +53,17 @@ export const DesktopPragmaContextStoreBindingSchema = z
 
 export const EnsurePragmaContextStoreBindingSchema = z
   .object({ storeId: z.string().uuid() })
+  .strict();
+
+export const DesktopPragmaSkillBindingSchema = z
+  .object({
+    capabilityId: z.string().uuid(),
+    resourceRef: PragmaCapabilityRefSchema,
+  })
+  .strict();
+
+export const EnsurePragmaSkillBindingSchema = z
+  .object({ capabilityId: z.string().uuid() })
   .strict();
 
 export const UpsertPragmaExpertTeamSchema = z

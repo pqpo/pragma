@@ -15,6 +15,44 @@ afterEach(async () => {
 });
 
 describe("Bundle Source publishing", () => {
+  it("maps a Capability root to the Skill source category", async () => {
+    const preparePublicationSources = vi.fn(async () => []);
+    const service = createBundleSourcePublishingService({
+      cacheRoot: "/unused",
+      bundles: {
+        prepareExport: async () => ({
+          root: {
+            ref: "capability:1234567890abcdef",
+            kind: "Capability" as const,
+            name: "Reviewer Skill",
+            description: "Reviews code.",
+            tags: ["review"],
+            activeRevision: 2,
+          },
+          projectRevision: 4,
+          resourceCount: 1,
+          capabilityCount: 1,
+          pluginCount: 0,
+          knowledgeBaseCount: 0,
+          hasFlowLayouts: false,
+          defaults: {
+            capabilities: true,
+            plugins: true,
+            knowledgeBases: false,
+            flowLayouts: false,
+          },
+        }),
+      } as unknown as PragmaBundleService,
+      sources: { preparePublicationSources } as unknown as DesktopBundleRegistrySourceService,
+      readGitIdentity: async () => ({ name: "Pragma Test", email: "test@pragma.invalid" }),
+    });
+
+    await expect(
+      service.prepare({ rootRef: "capability:1234567890abcdef", projectRevision: 4 }),
+    ).resolves.toMatchObject({ root: { kind: "skill" }, modules: { capabilities: true } });
+    expect(preparePublicationSources).toHaveBeenCalledWith("skill", "capability:1234567890abcdef");
+  });
+
   it("prepares listing metadata from the root resource description", async () => {
     const prepareExport = vi.fn(async () => ({
       root: {

@@ -8,6 +8,7 @@ import {
   SealCheck,
   Storefront,
   UploadSimple,
+  Wrench,
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -36,6 +37,7 @@ const KINDS: readonly SquareKindFilter[] = [
   "expert-team",
   "flow",
   "knowledge-base",
+  "skill",
 ];
 
 interface InspectedSquareVersion {
@@ -610,10 +612,14 @@ export function SquareItemVisual(props: {
   readonly item: Pick<DesktopSquareCatalog["items"][number], "kind" | "avatarId">;
   readonly size: "md" | "lg";
 }) {
-  return props.item.kind === "flow" || props.item.kind === "knowledge-base" ? (
+  return props.item.kind === "flow" ||
+    props.item.kind === "knowledge-base" ||
+    props.item.kind === "skill" ? (
     <span className={`square-card-icon is-${props.size}`}>
       {props.item.kind === "knowledge-base" ? (
         <Database size={props.size === "lg" ? 28 : 22} />
+      ) : props.item.kind === "skill" ? (
+        <Wrench size={props.size === "lg" ? 28 : 22} />
       ) : (
         <Storefront size={props.size === "lg" ? 28 : 22} />
       )}

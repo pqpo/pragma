@@ -43,6 +43,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Lightweight Git bundle source](./046-lightweight-git-bundle-source.md)
 - [Desktop 直接发布 Bundle Source](./050-desktop-bundle-source-publication.md)
 - [Mission-owned DSL file drafts](./055-mission-owned-dsl-file-drafts.md)
+- [First-class Skill Bundles](./056-first-class-skill-bundles.md)
 
 ## 持久状态与本机运行
 

@@ -165,7 +165,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       const resolved = await resolveRemoteBranch(repositoryPath, source.branch);
       if (resolved.empty) {
         const snapshot = DesktopBundleRegistrySnapshotSchema.parse({
-          schemaVersion: "pragma.desktop-bundle-source-snapshot/v3",
+          schemaVersion: "pragma.desktop-bundle-source-snapshot/v4",
           empty: true,
           syncedAt: new Date().toISOString(),
           items: [],
@@ -209,7 +209,7 @@ export function createDesktopBundleRegistrySourceService(options: {
       }
       const items = await loadSourceItems(repositoryPath, manifest, tree);
       const snapshot = DesktopBundleRegistrySnapshotSchema.parse({
-        schemaVersion: "pragma.desktop-bundle-source-snapshot/v3",
+        schemaVersion: "pragma.desktop-bundle-source-snapshot/v4",
         commit,
         syncedAt: new Date().toISOString(),
         manifest,
@@ -426,7 +426,7 @@ export function createDesktopBundleRegistrySourceService(options: {
             commit: snapshot.commit,
           })),
         );
-        for (const kind of ["expert", "expert-team", "flow", "knowledge-base"] as const) {
+        for (const kind of ["expert", "expert-team", "flow", "knowledge-base", "skill"] as const) {
           for (const category of snapshot.manifest.sections[kind].categories) {
             const key = `${kind}:${category.id}`;
             if (seenCategories.has(key)) continue;
@@ -436,7 +436,7 @@ export function createDesktopBundleRegistrySourceService(options: {
         }
       }
       if (categories.length === 0) {
-        for (const kind of ["expert", "expert-team", "flow", "knowledge-base"] as const) {
+        for (const kind of ["expert", "expert-team", "flow", "knowledge-base", "skill"] as const) {
           for (const category of defaultPublicationCategories()) {
             categories.push({ ...category, kind });
           }
@@ -836,7 +836,9 @@ async function validateDownloadedBundle(
           ? "ExpertTeam"
           : item.kind === "flow"
             ? "Flow"
-            : "ContextStore";
+            : item.kind === "knowledge-base"
+              ? "ContextStore"
+              : "Capability";
     if (root?.kind !== expectedKind) {
       throw new Error(`Downloaded Bundle root type does not match ${item.kind}.`);
     }

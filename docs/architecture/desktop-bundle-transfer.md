@@ -1,8 +1,8 @@
 # Desktop Bundle Transfer
 
 The Pragma desktop app is the Host Adapter for the `@pragma/interpreter` Bundle protocol. It can
-export one custom Expert, Expert Team, Flow, or managed Markdown knowledge base from Studio as a
-`.pragma`. The file is an ordinary `pragma.bundle/v2` ZIP archive intended for transfer between computers; Desktop does not own a
+export one custom Expert, Expert Team, Flow, managed Markdown knowledge base, or user Skill from
+Studio as a `.pragma`. The file is an ordinary `pragma.bundle/v3` ZIP archive intended for transfer between computers; Desktop does not own a
 second Bundle Schema or codec.
 
 ## Export
@@ -10,7 +10,8 @@ second Bundle Schema or codec.
 Open Studio and use **Export** in the sidebar. Select the root object and the modules that should
 travel with it:
 
-- **Capabilities** includes portable Skills and service definitions.
+- **Capabilities** includes portable Skills and service definitions. For a Skill root, its active
+  ready revision and complete file tree are mandatory and cannot be disabled.
 - **Plugins** includes user-installed plugin packages when available.
 - **Knowledge bases** includes their Markdown content and is off by default for callable roots.
   For a knowledge-base root, its current published snapshot is mandatory and cannot be disabled.
@@ -23,8 +24,12 @@ Host payload, not the DSL dependency, so the destination can guide the user thro
 Secrets, local sessions, Missions, usage data, workspace files, provider accounts, and absolute
 local paths are excluded. Capability and knowledge-base payloads include only their current active
 snapshot and file metadata; revision history, drafts, revision jobs, and Memory Evidence are
-excluded. The Desktop Capability payload descriptor is v3 and treats its asset key as archive-local
-metadata, not a local revision identity.
+excluded. Skill payloads use the shared `pragma.skill@v1` codec, record both the Skill revision's
+content hash and a canonical manifest of every file's path, size, SHA-256 digest, and executable
+bit. Export, Source inspection, and import all recompute both the manifest fingerprint and working
+tree hash, reject undeclared or missing files, and restore executable bits during materialization.
+The asset key remains archive-local metadata rather than local identity. Skill roots without an
+active ready revision are rejected before export.
 
 ## Import
 
@@ -63,10 +68,10 @@ the same archive and root again performs a fresh validated retry. Incomplete cop
 discarded from the import dialog; update imports are not automatically rolled back because doing so
 could overwrite later project work.
 
-Desktop stores installation state as `pragma.bundle-installation/v5`. Archive identity
+Desktop stores installation state as `pragma.bundle-installation/v8`. Archive identity
 (`bundleFingerprint`) and portable content identity (`sourceProjectFingerprint`) are distinct: the
 former protects the inspected bytes and retry transaction, while the latter supports advisory
 content comparison without silently merging installations.
 
 Legacy `pragma.desktop-bundle/v1` archives are deliberately not accepted. Import them with Pragma
-Desktop v0.1.0, upgrade the application, and export them again as `pragma.bundle/v2`.
+Desktop v0.1.0, upgrade the application, and export them again as `pragma.bundle/v3`.

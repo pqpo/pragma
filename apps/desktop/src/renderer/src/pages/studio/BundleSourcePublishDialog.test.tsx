@@ -120,6 +120,21 @@ describe("Bundle Source publication selection", () => {
     expect(publicationModuleDisabled(preparation, "capabilities")).toBe(true);
     expect(publicationModuleDisabled(preparation, "plugins")).toBe(false);
     expect(publicationModuleDisabled(preparation, "knowledgeBases")).toBe(true);
+    expect(
+      publicationModuleDisabled(
+        {
+          ...preparation,
+          root: {
+            ref: "capability:1234567890abcdef",
+            kind: "skill" as const,
+            name: "Review Skill",
+            description: "Review code",
+          },
+          moduleCounts: { ...preparation.moduleCounts, capabilities: 1 },
+        },
+        "capabilities",
+      ),
+    ).toBe(true);
   });
 
   it("derives a bounded summary from the first description paragraph", () => {

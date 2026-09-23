@@ -22,6 +22,7 @@ import {
   UpsertPragmaResourceSchema,
   UpsertPragmaExpertTeamSchema,
   DesktopPragmaContextStoreBindingSchema,
+  DesktopPragmaSkillBindingSchema,
   ValidatePragmaResourceSchema,
 } from "./projects.ts";
 import {
@@ -572,6 +573,7 @@ export type UpsertPragmaExpertTeam = z.infer<typeof UpsertPragmaExpertTeamSchema
 export type DesktopPragmaContextStoreBinding = z.infer<
   typeof DesktopPragmaContextStoreBindingSchema
 >;
+export type DesktopPragmaSkillBinding = z.infer<typeof DesktopPragmaSkillBindingSchema>;
 export type AllocatePragmaResourceIdResult = z.infer<typeof AllocatePragmaResourceIdResultSchema>;
 export type PragmaProjectChanges = z.infer<typeof PragmaProjectChangesSchema>;
 export type PragmaProjectChangesValidationResult = z.infer<

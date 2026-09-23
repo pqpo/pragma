@@ -4,6 +4,8 @@ import {
   Archive,
   ClockCounterClockwise,
   Code,
+  DownloadSimple,
+  GitBranch,
   Globe,
   PaperPlaneTilt,
   Play,
@@ -36,6 +38,8 @@ export function CapabilityDetailFragment(props: {
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onDeleted?: (capabilityId: string) => void;
+  readonly onExport?: (() => Promise<void>) | undefined;
+  readonly onPublish?: (() => Promise<void>) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
@@ -244,6 +248,19 @@ export function CapabilityDetailFragment(props: {
     }
   };
 
+  const runTransferAction = async (action: (() => Promise<void>) | undefined) => {
+    if (action === undefined) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const selectedTool = tools.find((tool) => tool.name === selectedToolName);
   const Icon = capabilityIcon(capability);
 
@@ -282,6 +299,22 @@ export function CapabilityDetailFragment(props: {
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
             <div className="capability-detail-actions">
+              {props.onExport === undefined ? null : (
+                <StudioActionButton
+                  label={t("exportSkill")}
+                  icon={<DownloadSimple size={18} aria-hidden="true" />}
+                  disabled={busy || deleting}
+                  onClick={() => void runTransferAction(props.onExport)}
+                />
+              )}
+              {props.onPublish === undefined ? null : (
+                <StudioActionButton
+                  label={t("publishToSource")}
+                  icon={<GitBranch size={18} aria-hidden="true" />}
+                  disabled={busy || deleting}
+                  onClick={() => void runTransferAction(props.onPublish)}
+                />
+              )}
               <StudioActionButton
                 label={t("updateSkillFromPackage")}
                 icon={<Archive size={18} aria-hidden="true" />}

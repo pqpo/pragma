@@ -14,6 +14,8 @@ import {
   UpsertPragmaExpertTeamSchema,
   DesktopPragmaContextStoreBindingSchema,
   EnsurePragmaContextStoreBindingSchema,
+  DesktopPragmaSkillBindingSchema,
+  EnsurePragmaSkillBindingSchema,
   ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../../shared/contracts/projects.ts";
@@ -50,6 +52,13 @@ export const projectsApi = {
       await invokeMutation(
         "pragma-project:ensure-context-store-binding",
         EnsurePragmaContextStoreBindingSchema.parse(input),
+      ),
+    ),
+  ensurePragmaSkillBinding: async (input) =>
+    DesktopPragmaSkillBindingSchema.parse(
+      await invokeMutation(
+        "pragma-project:ensure-skill-binding",
+        EnsurePragmaSkillBindingSchema.parse(input),
       ),
     ),
   applyPragmaProjectChanges: async (input) =>
@@ -108,6 +117,7 @@ export const projectsApi = {
   | "upsertPragmaExpertTeam"
   | "listPragmaContextStoreBindings"
   | "ensurePragmaContextStoreBinding"
+  | "ensurePragmaSkillBinding"
   | "applyPragmaProjectChanges"
   | "deletePragmaResource"
   | "validatePragmaYaml"

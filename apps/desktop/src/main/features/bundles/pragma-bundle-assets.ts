@@ -7,6 +7,7 @@ export interface ImportedBundleAssetCandidate {
   readonly assetKind: "skill" | "knowledge_base";
   readonly name: string;
   readonly fingerprint: string;
+  readonly fingerprintKind?: "asset" | "definition";
 }
 
 export interface LocalBundleAssetCandidate {
@@ -15,6 +16,7 @@ export interface LocalBundleAssetCandidate {
   readonly name: string;
   readonly revision: number;
   readonly fingerprint: string;
+  readonly definitionFingerprint?: string;
   readonly boundResourceRef?: PragmaResourceRef | undefined;
 }
 
@@ -35,7 +37,10 @@ export function findBundleAssetConflicts(
         assetId: candidate.assetId,
         name: candidate.name,
         revision: candidate.revision,
-        fingerprint: candidate.fingerprint,
+        fingerprint:
+          asset.fingerprintKind === "definition"
+            ? (candidate.definitionFingerprint ?? candidate.fingerprint)
+            : candidate.fingerprint,
         ...(candidate.boundResourceRef === undefined
           ? {}
           : { boundResourceRef: candidate.boundResourceRef }),

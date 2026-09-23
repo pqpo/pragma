@@ -8,7 +8,7 @@ Host objects / compiled objects
   -> Interpreter selects the root dependency closure
   -> canonical portable YAML + lock + project artifacts
   -> typed asset requirements + optional Host payloads
-  -> pragma.bundle/v2 ZIP
+  -> pragma.bundle/v3 ZIP
   -> Interpreter verifies and loads
   -> Host explicitly binds requirements into an overlay
   -> target-scoped validate + compile
@@ -101,10 +101,11 @@ revision; copy starts at local revision 1. Fingerprints provide integrity and op
 checks but never silently select an asset. Bundle logical IDs and source revision numbers stay
 archive-local and do not become local identity or revision numbering.
 
-Bundle roots are limited to `Expert`, `ExpertTeam`, `Flow`, and `ContextStore`. Version 2 adds the
-fourth root kind. The decoder preserves the historical v1 schema, verifies a v1 archive against its
-original fingerprint, and then upgrades the manifest in memory. Unknown future versions fail
-closed.
+Bundle roots are limited to `Expert`, `ExpertTeam`, `Flow`, `ContextStore`, and user-managed Skill
+`Capability` resources. Version 3 adds the fifth root kind. A Skill root must carry a verified
+`pragma.skill@v1` payload containing the active ready revision's `SKILL.md` and complete file tree;
+an empty Capability shell is invalid. The decoder preserves the historical v1 and v2 schemas and
+upgrades through the static v1→v2→v3 chain in memory. Unknown future versions fail closed.
 
 ## Exported project layout
 

@@ -10,11 +10,12 @@ import { parse, stringify } from "yaml";
 import {
   addBundleSourceVersion,
   initializeBundleSource,
+  inspectBundleSourceBundle,
   readBundleSourceManifest,
   upgradeBundleSource,
   validateBundleSourceDirectory,
 } from "../src/index.ts";
-import { createExpertBundle } from "./bundle-source-fixture.ts";
+import { createExpertBundle, createSkillBundle } from "./bundle-source-fixture.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,9 +31,10 @@ describe("Bundle Source repository", () => {
     expect(result.sourceId).toBe("team-source");
     expect(result.directories).toContain("experts/software-development");
     expect(result.directories).toContain("knowledge-bases/general");
+    expect(result.directories).toContain("skills/general");
     await expect(stat(join(root, "expert-teams/product-design"))).resolves.toMatchObject({});
     await expect(readBundleSourceManifest(root)).resolves.toMatchObject({
-      schemaVersion: "pragma.bundle-source/v2",
+      schemaVersion: "pragma.bundle-source/v3",
       id: "team-source",
     });
     const raw = parse(await readFile(join(root, "pragma-source.yaml"), "utf8"));
@@ -133,6 +135,23 @@ describe("Bundle Source repository", () => {
     expect(headAfter).toBe(headBefore);
   });
 
+  it("rejects undeclared files in Skill payloads before Source publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-source-skill-payload-"));
+    const bundlePath = await createSkillBundle(root, { includeUndeclaredFile: true });
+
+    await expect(inspectBundleSourceBundle(bundlePath)).rejects.toThrow("undeclared file");
+  });
+
+  it("rejects malformed nested Skill payloads before Source publication", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-source-nested-skill-payload-"));
+    const bundlePath = await createSkillBundle(root, {
+      includeUndeclaredFile: true,
+      rootKind: "expert",
+    });
+
+    await expect(inspectBundleSourceBundle(bundlePath)).rejects.toThrow("undeclared file");
+  });
+
   it("upgrades v1 sources with backups and resumes a prepared journal idempotently", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-source-upgrade-"));
     await execFileAsync("git", ["-C", root, "init"]);
@@ -175,11 +194,12 @@ describe("Bundle Source repository", () => {
       stat(join(root, ".pragma-source-v1-backup/pragma-source.yaml")),
     ).resolves.toBeDefined();
     await expect(stat(join(root, "knowledge-bases/general"))).resolves.toBeDefined();
+    await expect(stat(join(root, "skills/general"))).resolves.toBeDefined();
     expect(parse(await readFile(join(configDirectory, "config.yaml"), "utf8"))).toMatchObject({
-      schemaVersion: "pragma.bundle-source-item/v2",
+      schemaVersion: "pragma.bundle-source-item/v3",
     });
 
-    const journalPath = join(root, ".pragma-source-upgrade.json");
+    const journalPath = join(root, ".pragma-source-upgrade-v3.json");
     const journal = JSON.parse(await readFile(journalPath, "utf8"));
     await writeFile(
       join(root, "pragma-source.yaml"),
@@ -200,6 +220,78 @@ describe("Bundle Source repository", () => {
       upgraded: false,
       itemCount: 1,
     });
+  });
+
+  it("upgrades v2 sources to v3 and creates Skill categories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-source-v2-upgrade-"));
+    await execFileAsync("git", ["-C", root, "init"]);
+    const categories = [{ id: "general", name: { default: "General" }, order: 0 }];
+    await writeFile(
+      join(root, "pragma-source.yaml"),
+      stringify({
+        schemaVersion: "pragma.bundle-source/v2",
+        id: "legacy-v2",
+        name: { default: "Legacy v2" },
+        sections: {
+          expert: { categories },
+          "expert-team": { categories },
+          flow: { categories },
+          "knowledge-base": { categories },
+        },
+      }),
+    );
+
+    await expect(upgradeBundleSource(root)).resolves.toMatchObject({
+      upgraded: true,
+      itemCount: 0,
+    });
+    await expect(readBundleSourceManifest(root)).resolves.toMatchObject({
+      schemaVersion: "pragma.bundle-source/v3",
+      sections: { skill: { categories } },
+    });
+    await expect(
+      stat(join(root, ".pragma-source-v2-backup/pragma-source.yaml")),
+    ).resolves.toBeDefined();
+    await expect(stat(join(root, "skills/general"))).resolves.toBeDefined();
+  });
+
+  it("preserves a completed v1-to-v2 journal while upgrading the v2 source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-source-legacy-journal-"));
+    await execFileAsync("git", ["-C", root, "init"]);
+    const categories = [{ id: "general", name: { default: "General" }, order: 0 }];
+    await writeFile(
+      join(root, "pragma-source.yaml"),
+      stringify({
+        schemaVersion: "pragma.bundle-source/v2",
+        id: "legacy-v2",
+        name: { default: "Legacy v2" },
+        sections: {
+          expert: { categories },
+          "expert-team": { categories },
+          flow: { categories },
+          "knowledge-base": { categories },
+        },
+      }),
+    );
+    const legacyJournal = `${JSON.stringify({
+      schemaVersion: "pragma.bundle-source-upgrade/v1",
+      sourceVersion: "pragma.bundle-source/v1",
+      targetVersion: "pragma.bundle-source/v2",
+      backupDirectory: ".pragma-source-v1-backup",
+      files: ["pragma-source.yaml"],
+      status: "complete",
+    })}\n`;
+    const legacyJournalPath = join(root, ".pragma-source-upgrade.json");
+    await writeFile(legacyJournalPath, legacyJournal);
+
+    await expect(upgradeBundleSource(root)).resolves.toMatchObject({
+      upgraded: true,
+      itemCount: 0,
+    });
+    await expect(readFile(legacyJournalPath, "utf8")).resolves.toBe(legacyJournal);
+    await expect(readFile(join(root, ".pragma-source-upgrade-v3.json"), "utf8")).resolves.toContain(
+      '"status": "complete"',
+    );
   });
 
   it("refuses to reuse a stale v1 upgrade backup", async () => {

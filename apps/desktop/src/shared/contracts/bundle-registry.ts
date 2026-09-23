@@ -166,7 +166,7 @@ export const DesktopSquareBundleDownloadSchema = z
 export const DesktopBundleRegistrySnapshotSchema = z.union([
   z
     .object({
-      schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v3"),
+      schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v4"),
       commit: z.string().regex(/^[a-f0-9]{40,64}$/),
       syncedAt: z.string().datetime(),
       manifest: BundleSourceManifestSchema,
@@ -175,7 +175,7 @@ export const DesktopBundleRegistrySnapshotSchema = z.union([
     .strict(),
   z
     .object({
-      schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v3"),
+      schemaVersion: z.literal("pragma.desktop-bundle-source-snapshot/v4"),
       empty: z.literal(true),
       syncedAt: z.string().datetime(),
       items: z.array(BundleSourceItemSummarySchema).max(0),

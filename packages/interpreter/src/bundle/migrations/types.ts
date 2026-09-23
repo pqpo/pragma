@@ -1,6 +1,7 @@
 import type {
   PragmaBundleManifest,
   PragmaBundleV1Manifest,
+  PragmaBundleV2Manifest,
 } from "../../ast/pragma-bundle.schema.ts";
 
 export type PragmaBundleSchemaVersion = `pragma.bundle/v${number}`;
@@ -17,6 +18,6 @@ export interface PragmaBundleManifestMigrationStep {
 }
 
 export interface MigratedPragmaBundleManifest {
-  readonly sourceManifest: PragmaBundleManifest | PragmaBundleV1Manifest;
+  readonly sourceManifest: PragmaBundleManifest | PragmaBundleV1Manifest | PragmaBundleV2Manifest;
   readonly manifest: PragmaBundleManifest;
 }
