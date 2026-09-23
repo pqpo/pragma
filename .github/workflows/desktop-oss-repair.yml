@@ -19,7 +19,7 @@ jobs:
   repair:
     name: Re-upload macOS assets to Alibaba Cloud OSS
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: desktop-release
     permissions:
       contents: read
@@ -167,7 +167,7 @@ jobs:
           oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
           role-to-assume: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
           role-session-name: pragma-oss-repair-${{ github.run_id }}
-          role-session-expiration: 1800
+          role-session-expiration: 3600
           audience: github-actions
 
       - name: Upload macOS assets to Alibaba Cloud OSS
@@ -196,5 +196,7 @@ jobs:
               --content-disposition attachment \
               --endpoint "${endpoint}" \
               --force \
+              --parallel 10 \
+              --checkpoint-dir "${RUNNER_TEMP}/ossutil-checkpoint" \
               --region "${ALIYUN_OSS_REGION}"
           done
