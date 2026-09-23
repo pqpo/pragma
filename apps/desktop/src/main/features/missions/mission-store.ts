@@ -80,6 +80,11 @@ import {
 export { MissionStoreError } from "./mission-store-error.ts";
 export type { MissionTimelinePage, MissionTimelineTurn } from "./mission-timeline-storage.ts";
 
+export interface MissionContextStoreReference {
+  readonly id: string;
+  readonly title: string;
+}
+
 export interface MissionStore {
   readonly storagePath?: ((id: string) => string) | undefined;
   readonly forget?: ((id: string) => void) | undefined;
@@ -121,6 +126,7 @@ export interface MissionStore {
     },
   ): Promise<Mission>;
   updateContextMounts(id: string, contextMounts: readonly MissionContextMount[]): Promise<Mission>;
+  removeContextStoreMount(id: string, storeId: string): Promise<Mission>;
   mountManagedRevisionDraft(input: {
     readonly id: string;
     readonly expectedExecutorRef: string;
@@ -155,6 +161,7 @@ export interface MissionStore {
     readonly revisionJobId: string;
   }): Promise<Mission>;
   isContextStoreReferenced(storeId: string): Promise<boolean>;
+  listContextStoreReferences(storeId: string): Promise<readonly MissionContextStoreReference[]>;
   updateExecution(
     id: string,
     execution: NonNullable<Mission["execution"]>,
@@ -999,6 +1006,31 @@ export function createMissionStore(options: {
     }
   };
 
+  const getContextStoreReferences = async (
+    storeId: string,
+  ): Promise<readonly MissionContextStoreReference[]> => {
+    let missionIds: readonly string[];
+    try {
+      missionIds = await listMissionIds();
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    }
+    const references: MissionContextStoreReference[] = [];
+    for (const missionId of missionIds) {
+      const mission = await readMission(missionId);
+      if (
+        isUserFacingMissionOrigin(mission.origin) &&
+        mission.contextMounts.some(
+          (mount) => mount.kind === "context-store" && mount.storeId === storeId,
+        )
+      ) {
+        references.push({ id: mission.id, title: mission.title });
+      }
+    }
+    return references;
+  };
+
   return {
     storagePath: missionPath,
     forget(id) {
@@ -1440,6 +1472,18 @@ export function createMissionStore(options: {
         return { ...current, contextMounts: [...contextMounts], updatedAt: timestamp };
       });
     },
+    async removeContextStoreMount(id, storeId) {
+      const parsedStoreId = z.string().uuid().parse(storeId);
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (!isUserFacingMissionOrigin(current.origin)) return current;
+        const contextMounts = current.contextMounts.filter(
+          (mount) => mount.kind !== "context-store" || mount.storeId !== parsedStoreId,
+        );
+        return contextMounts.length === current.contextMounts.length
+          ? current
+          : { ...current, contextMounts, updatedAt: timestamp };
+      });
+    },
     async mountManagedRevisionDraft(input) {
       return await updateMission(MissionIdSchema.parse(input.id), (current, timestamp) => {
         if (current.executor.ref !== input.expectedExecutorRef) {
@@ -1605,25 +1649,10 @@ export function createMissionStore(options: {
       });
     },
     async isContextStoreReferenced(storeId) {
-      let missionIds;
-      try {
-        missionIds = await listMissionIds();
-      } catch (error) {
-        if (isNodeError(error, "ENOENT")) return false;
-        throw error;
-      }
-      for (const missionId of missionIds) {
-        const mission = await readMission(missionId);
-        if (
-          isUserFacingMissionOrigin(mission.origin) &&
-          mission.contextMounts.some(
-            (mount) => mount.kind === "context-store" && mount.storeId === storeId,
-          )
-        ) {
-          return true;
-        }
-      }
-      return false;
+      return (await getContextStoreReferences(storeId)).length > 0;
+    },
+    async listContextStoreReferences(storeId) {
+      return await getContextStoreReferences(storeId);
     },
     async updateExecution(id, execution, guard) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {

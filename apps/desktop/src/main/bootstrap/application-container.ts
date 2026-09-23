@@ -616,19 +616,27 @@ export async function createDesktopApplicationContainer(
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
       );
-      return (
-        definitions.some((expert) =>
-          expert.contextStoreMounts.some((mount) => mount.storeId === storeId),
-        ) || (await missionStore.isContextStoreReferenced(storeId))
+      return definitions.some((expert) =>
+        expert.contextStoreMounts.some((mount) => mount.storeId === storeId),
       );
+    },
+    removeMissionMounts: async (storeId) => {
+      const references = await missionStore.listContextStoreReferences(storeId);
+      for (const reference of references) {
+        const missionRunner = missionRunnerRef.current;
+        if (missionRunner === undefined) {
+          throw new Error("Mission runner is unavailable while removing Mission Knowledge mounts.");
+        }
+        await missionRunner.removeContextStoreMount({ id: reference.id, storeId });
+      }
     },
     onRemoved: async (storeId) => {
       await knowledgePromotionRef.current?.clearStoreBinding(storeId);
       knowledgeSyncRef.current?.schedule("knowledge-store-removed");
     },
     onPublished: () => knowledgeSyncRef.current?.schedule("knowledge-store-published"),
-    hasActiveRevisions: async (storeId) =>
-      (await storeRevisionsRef.current?.hasActiveJobs(storeId)) ?? false,
+    hasUnmergedRevisionDrafts: async (storeId) =>
+      (await storeRevisionsRef.current?.hasUnmergedDrafts(storeId)) ?? false,
   });
   const contextStoreEditorDrafts = createContextStoreEditorDraftService({
     draftsPath: join(pragmaPaths.stateRoot(), "context-store-editor-drafts"),

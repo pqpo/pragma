@@ -554,6 +554,9 @@ export const studio = {
   discardRevisionDraft: "丢弃草稿",
   discardRevisionDraftTitle: "丢弃此修订草稿？",
   discardRevisionDraftDescription: "“{{name}}”及其未合并修改将移入回收站。",
+  unlinkedRevisionDraftsTitle: "未关联任务的修订草稿",
+  unlinkedRevisionDraftsDescription:
+    "这些草稿没有显示在修订任务列表中，但仍未合并，可能会阻止删除对应知识库。只有确认不再需要这些修改时，才丢弃草稿。",
   deleteRevisionTaskDescription:
     "“{{name}}”将从修订任务列表中移除。删除任务不会回滚已经应用的变更，也不会删除知识库。",
   revisionTasks: "修订任务",
@@ -654,7 +657,14 @@ export const studio = {
   deleteKnowledgeBase: "删除此知识库？",
   deleteKnowledgeBaseAction: "删除知识库",
   deleteKnowledgeBaseDescription:
-    "“{{name}}”及其托管文件将移入废纸篓。删除前必须先从所有专家中移除。",
+    "“{{name}}”及其托管文件将移入废纸篓。请先从专家中解除挂载，并完成或丢弃未合并的修订草稿。若有 Mission 挂载此知识库，确认后会自动解除；正在执行的 Mission 可能无法继续读取知识库。",
+  knowledgeBaseMissionMountWarning:
+    "此知识库当前挂载在一个或多个 Mission 中。确认后将自动解除这些挂载；若 Mission 正在执行，本次执行可能无法继续读取知识库。",
+  knowledgeBaseMissionUnmountFailed:
+    "未能解除所有 Mission 挂载，因此知识库未删除。可能已有部分挂载解除，请刷新后重试。",
+  knowledgeBaseRevisionTasksBlocked:
+    "此知识库仍有未合并的修订草稿，因此暂时不能删除。草稿仍可能继续修改知识库。请先在修订任务中完成并合并草稿，或丢弃草稿。已合并的历史任务不需要删除。",
+  knowledgeBaseStillReferenced: "此知识库仍挂载在一个或多个专家中，请先解除专家挂载后再删除。",
   knowledgeBaseFiles: "知识库文件",
   resizeKnowledgeFileList: "调整文件列表宽度",
   emptyKnowledgeBase: "此知识库还是空的。",
@@ -874,6 +884,9 @@ export const studio = {
   localMcpWrapper: "本地 MCP 封装",
   moreActions: "{{name}}的更多操作",
   deleteCapabilityDescription: "“{{name}}”将被永久删除。使用此能力的专家必须先更新，之后才能删除。",
+  capabilityDeleteReferenced:
+    "此能力仍被一个或多个专家使用，因此暂时无法删除。请先在相关专家的能力列表中移除它，再重试。",
+  capabilityDeleteFailed: "无法删除此能力，请稍后重试。",
   deleting: "删除中…",
   deleteCapability: "删除此能力？",
   deleteCapabilityAction: "删除能力",

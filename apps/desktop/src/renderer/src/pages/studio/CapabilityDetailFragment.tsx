@@ -28,6 +28,7 @@ import { CharacterCount } from "../../components/CharacterCount.tsx";
 import { Dialog } from "../../components/Dialog.tsx";
 import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { StudioActionButton } from "../../components/StudioActionButton.tsx";
+import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
@@ -63,6 +64,7 @@ export function CapabilityDetailFragment(props: {
   const [revisionError, setRevisionError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const tools = useMemo(() => capabilityTools(capability), [capability]);
 
   useEffect(() => {
@@ -227,22 +229,22 @@ export function CapabilityDetailFragment(props: {
     const api = desktopApi();
     if (api === undefined) return;
     setDeleting(true);
-    setError(null);
+    setDeleteError(null);
     try {
       const result = await api.deleteCapability(capability.manifest.id);
       if (!result.ok) {
-        setError(
+        setDeleteError(
           result.code === "capability_referenced"
             ? t("capabilityDeleteReferenced")
             : t("capabilityDeleteFailed"),
         );
-        setDeleteDialogOpen(false);
         return;
       }
+      setDeleteDialogOpen(false);
+      setDeleteError(null);
       props.onDeleted?.(capability.manifest.id);
     } catch (cause) {
-      setError(errorMessage(cause));
-      setDeleteDialogOpen(false);
+      setDeleteError(errorMessage(cause));
     } finally {
       setDeleting(false);
     }
@@ -341,7 +343,10 @@ export function CapabilityDetailFragment(props: {
                 icon={<Trash size={18} aria-hidden="true" />}
                 tone="danger"
                 disabled={busy || deleting}
-                onClick={() => setDeleteDialogOpen(true)}
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteDialogOpen(true);
+                }}
               />
             </div>
           ) : definition.kind === "mcp_server" ? (
@@ -607,33 +612,19 @@ export function CapabilityDetailFragment(props: {
         </Dialog>
       ) : null}
       {deleteDialogOpen ? (
-        <Dialog
-          role="alertdialog"
+        <StudioConfirmationDialog
           title={t("deleteCapability")}
           description={t("deleteCapabilityDescription", { name: capability.manifest.name })}
+          error={deleteError}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteCapabilityAction")}
+          busyLabel={t("deleting")}
           busy={deleting}
-          onCancel={() => setDeleteDialogOpen(false)}
-          footer={
-            <>
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={deleting}
-                onClick={() => setDeleteDialogOpen(false)}
-              >
-                {t("cancel")}
-              </button>
-              <button
-                className="danger-button"
-                type="button"
-                disabled={deleting}
-                onClick={() => void deleteSkill()}
-              >
-                <Trash size={17} aria-hidden="true" />
-                {deleting ? t("deleting") : t("deleteCapabilityAction")}
-              </button>
-            </>
-          }
+          onCancel={() => {
+            setDeleteError(null);
+            setDeleteDialogOpen(false);
+          }}
+          onConfirm={() => void deleteSkill()}
         />
       ) : null}
     </StudioScreenFrame>

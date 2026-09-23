@@ -134,7 +134,7 @@ export interface ContextStoreRevisionService {
   recoverMissionClaimReleases(): Promise<void>;
   processPending(): Promise<void>;
   scheduleProcessing(): void;
-  hasActiveJobs(storeId: string): Promise<boolean>;
+  hasUnmergedDrafts(storeId: string): Promise<boolean>;
   getProfile(): Promise<ContextStoreRevisionProfile>;
   updateProfile(input: UpdateContextStoreRevisionProfile): Promise<ContextStoreRevisionProfile>;
 }
@@ -1676,7 +1676,7 @@ export function createContextStoreRevisionService(options: {
       });
     },
 
-    async hasActiveJobs(storeId) {
+    async hasUnmergedDrafts(storeId) {
       for (const name of await readNames(draftsPath)) {
         try {
           const draft = await readDraft(name);

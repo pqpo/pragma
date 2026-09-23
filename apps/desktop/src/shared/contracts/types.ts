@@ -114,6 +114,8 @@ import {
   DeleteContextStoreEntrySchema,
   DeleteContextStoreRevisionRecordSchema,
   DeleteContextStoreSchema,
+  ContextStoreMissionMountCheckSchema,
+  ContextStoreMissionMountCheckResultSchema,
   ExpertContextStoreMountSchema,
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,
@@ -504,6 +506,7 @@ export type UpdateContextStoreRevisionProfile = z.infer<
 >;
 export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
 export type DeleteContextStore = z.infer<typeof DeleteContextStoreSchema>;
+export type ContextStoreMissionMountCheck = z.infer<typeof ContextStoreMissionMountCheckSchema>;
 export type InspectContextStoreImport = z.infer<typeof InspectContextStoreImportSchema>;
 export type ContextStoreImportInspection = z.infer<typeof ContextStoreImportInspectionSchema>;
 export type ContextStoreContentMetadata = z.infer<typeof ContextStoreContentMetadataSchema>;

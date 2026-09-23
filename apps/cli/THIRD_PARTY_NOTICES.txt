@@ -4,5 +4,5 @@ The upstream copyright and license comments retained by the bundle apply to
 the corresponding bundled components. The native @napi-rs/keyring dependency
 is installed through npm and retains its own package license and notices.
 
-Pragma itself is distributed under the Pragma Source Available License 1.0;
-see LICENSE in this package.
+Pragma itself is distributed under the GNU Affero General Public License v3.0 only
+(AGPL-3.0-only); see LICENSE in this package.

@@ -107,4 +107,5 @@ before loading the main bundle. Install Node.js 22 or later instead.
 
 ## License
 
-Pragma CLI is distributed under the [Pragma Source Available License 1.0](../../LICENSE).
+Pragma CLI is distributed under the [GNU Affero General Public License v3.0 only](../../LICENSE)
+(`AGPL-3.0-only`).

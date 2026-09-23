@@ -128,7 +128,7 @@ function createReleaseManifest(releaseVersion) {
     name: "@pqpo/pragma",
     version: releaseVersion,
     description: "Pragma command-line interface",
-    license: "SEE LICENSE IN LICENSE",
+    license: "AGPL-3.0-only",
     type: "module",
     bin: { pragma: "./dist/pragma.js" },
     exports: {},

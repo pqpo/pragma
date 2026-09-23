@@ -60,6 +60,12 @@ export function createFencedMissionStore(
           operation.input.contextMounts as Parameters<MissionStore["updateContextMounts"]>[1],
         );
         return;
+      case "mission.context-store-mount.remove":
+        await store.removeContextStoreMount(
+          String(operation.input.id),
+          String(operation.input.storeId),
+        );
+        return;
       case "mission.skill-revision-draft.unmount":
         await store.unmountSkillRevisionDraft(
           operation.input.input as Parameters<MissionStore["unmountSkillRevisionDraft"]>[0],
@@ -172,6 +178,13 @@ export function createFencedMissionStore(
         "mission.context-stores.updated",
         named("mission.context-stores.update", { id, contextMounts: [...contextMounts] }),
         async () => await store.updateContextMounts(id, contextMounts),
+      ),
+    removeContextStoreMount: async (id, storeId) =>
+      await write(
+        id,
+        "mission.context-stores.updated",
+        named("mission.context-store-mount.remove", { id, storeId }),
+        async () => await store.removeContextStoreMount(id, storeId),
       ),
     unmountSkillRevisionDraft: async (input) =>
       await write(

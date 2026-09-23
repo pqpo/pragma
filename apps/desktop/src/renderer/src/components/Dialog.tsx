@@ -92,6 +92,9 @@ export function Dialog(props: {
 export function ConfirmationDialog(props: {
   readonly title: string;
   readonly description: string;
+  readonly warning?: string | null | undefined;
+  readonly error?: string | null | undefined;
+  readonly errorAction?: { readonly label: string; readonly onClick: () => void } | undefined;
   readonly className?: string | undefined;
   readonly cancelLabel: string;
   readonly confirmLabel: string;
@@ -130,7 +133,23 @@ export function ConfirmationDialog(props: {
           </button>
         </>
       }
-    />
+    >
+      {props.warning ? (
+        <div className="confirmation-dialog-warning" role="status">
+          <p>{props.warning}</p>
+        </div>
+      ) : null}
+      {props.error ? (
+        <div className="confirmation-dialog-error" role="alert">
+          <p>{props.error}</p>
+          {props.errorAction === undefined ? null : (
+            <button className="secondary-button" type="button" onClick={props.errorAction.onClick}>
+              {props.errorAction.label}
+            </button>
+          )}
+        </div>
+      ) : null}
+    </Dialog>
   );
 }
 

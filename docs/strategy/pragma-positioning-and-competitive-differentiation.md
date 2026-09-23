@@ -82,11 +82,11 @@ Plugin、ContextStore 与 Host adapter 扩展系统。
 
 ## 源码与生态
 
-Pragma 使用 source-available 许可。源码可阅读、修改并用于授权范围内的内部运行和自托管；第三方托管
-服务与商业嵌入遵循仓库 `LICENSE`。Runtime、DSL、Plugin 和本机 Host 的公开实现为安全审阅、协议集成与
+Pragma 使用 AGPL-3.0-only 开源许可。许可证允许商业使用和托管服务；修改后的网络服务需要按照许可证
+向远程交互用户提供对应源代码。Runtime、DSL、Plugin 和本机 Host 的开放实现为安全审阅、协议集成与
 社区扩展提供共同基础。
 
-详细许可与商标边界见[源码可用许可证与商标](./source-available-licensing-and-trademarks.md)。
+详细许可与商标边界见[开源许可与商标](./licensing-and-trademarks.md)。
 
 ## 相关文档
 

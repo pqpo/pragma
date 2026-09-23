@@ -235,6 +235,23 @@ export interface ContextStoreStore {
   }>;
 }
 
+export async function withContextStoreRevisionLocks<T>(
+  stores: Pick<ContextStoreStore, "withRevisionLock"> | undefined,
+  storeIds: readonly string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const uniqueStoreIds = [...new Set(storeIds)].toSorted();
+  const withLock = async (index: number): Promise<T> => {
+    const storeId = uniqueStoreIds[index];
+    if (storeId === undefined) return await operation();
+    if (stores === undefined) {
+      throw new Error(`Knowledge Store is unavailable: ${storeId}`);
+    }
+    return await stores.withRevisionLock(storeId, async () => await withLock(index + 1));
+  };
+  return await withLock(0);
+}
+
 export class ContextStoreStoreError extends Error {
   constructor(
     readonly code:
@@ -246,6 +263,7 @@ export class ContextStoreStoreError extends Error {
       | "invalid_entry"
       | "revision_conflict"
       | "store_referenced"
+      | "mission_unmount_failed"
       | "legacy_note_unsupported",
     message: string,
   ) {
@@ -312,7 +330,8 @@ export function createContextStoreStore(options: {
   readonly isReferenced?: ((storeId: string) => Promise<boolean>) | undefined;
   readonly trashItem?: TrashItem | undefined;
   readonly onRemoved?: ((storeId: string) => Promise<void>) | undefined;
-  readonly hasActiveRevisions?: ((storeId: string) => Promise<boolean>) | undefined;
+  readonly hasUnmergedRevisionDrafts?: ((storeId: string) => Promise<boolean>) | undefined;
+  readonly removeMissionMounts?: ((storeId: string) => Promise<void>) | undefined;
   readonly onPublished?: ((storeId: string) => void) | undefined;
 }): ContextStoreStore {
   const storePath = (id: string) => join(options.storesPath, id);
@@ -1281,10 +1300,19 @@ export function createContextStoreStore(options: {
             "This knowledge base is mounted by one or more Experts. Remove it before deleting.",
           );
         }
-        if (await options.hasActiveRevisions?.(id)) {
+        if (await options.hasUnmergedRevisionDrafts?.(id)) {
           throw new ContextStoreStoreError(
             "store_referenced",
-            "Resolve or delete this knowledge base's revision tasks before deleting it.",
+            "This knowledge base still has unmerged revision drafts. " +
+              "Complete and merge them, or discard them before deleting.",
+          );
+        }
+        try {
+          await options.removeMissionMounts?.(id);
+        } catch {
+          throw new ContextStoreStoreError(
+            "mission_unmount_failed",
+            "Mission references could not be fully cleared. The knowledge base was not deleted; refresh Missions and retry.",
           );
         }
         if (options.trashItem !== undefined) await options.trashItem(storePath(id));

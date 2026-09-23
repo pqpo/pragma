@@ -724,13 +724,13 @@ function CapabilityRow(props: {
     try {
       const result = await api.deleteCapability(capability.manifest.id);
       if (!result.ok) {
-        setError(capabilityDeleteErrorMessage(result.code));
+        setError(capabilityDeleteErrorMessage(result.code, (key) => t(key)));
         setConfirmOpen(false);
         return;
       }
       props.onChanged(undefined, capability.manifest.id);
     } catch {
-      setError(capabilityDeleteErrorMessage());
+      setError(capabilityDeleteErrorMessage(undefined, (key) => t(key)));
       setConfirmOpen(false);
     } finally {
       setBusy(false);
@@ -879,7 +879,15 @@ function CapabilityRow(props: {
   );
 }
 
-export function capabilityDeleteErrorMessage(code?: string): string {
+type CapabilityDeleteErrorKey = "capabilityDeleteReferenced" | "capabilityDeleteFailed";
+
+export function capabilityDeleteErrorMessage(
+  code?: string,
+  translate?: (key: CapabilityDeleteErrorKey) => string,
+): string {
+  const key =
+    code === "capability_referenced" ? "capabilityDeleteReferenced" : "capabilityDeleteFailed";
+  if (translate !== undefined) return translate(key);
   return code === "capability_referenced"
     ? "This capability is still used by one or more Experts. Remove it from those Experts, then try again."
     : "This capability could not be deleted. Please try again.";

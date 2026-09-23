@@ -957,7 +957,7 @@ describe("managed context store", () => {
     const storesPath = join(directory, "stores");
     const store = createContextStoreStore({
       storesPath,
-      hasActiveRevisions: async () => true,
+      hasUnmergedRevisionDrafts: async () => true,
     });
     const created = await store.create({ mode: "blank", name: "Active", description: "" });
 

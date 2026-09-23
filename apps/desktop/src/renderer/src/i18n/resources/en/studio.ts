@@ -592,6 +592,9 @@ export const studio = {
   discardRevisionDraft: "Discard draft",
   discardRevisionDraftTitle: "Discard this revision draft?",
   discardRevisionDraftDescription: "{{name}} and its unmerged changes will be moved to the trash.",
+  unlinkedRevisionDraftsTitle: "Unlinked revision drafts",
+  unlinkedRevisionDraftsDescription:
+    "These drafts are not shown in the revision task list, but they are still unmerged and can block deletion of their knowledge base. Discard a draft only if you no longer need its changes.",
   deleteRevisionTaskDescription:
     "“{{name}}” will be removed from the revision task list. Deleting the task does not roll back changes that have already been applied or delete the knowledge base.",
   revisionTasks: "Revision tasks",
@@ -696,7 +699,15 @@ export const studio = {
   deleteKnowledgeBase: "Delete this knowledge base?",
   deleteKnowledgeBaseAction: "Delete knowledge base",
   deleteKnowledgeBaseDescription:
-    "“{{name}}” and its managed files will be moved to Trash. Remove it from all experts first.",
+    "“{{name}}” and its managed files will be moved to Trash. Remove its Expert mounts and finish or discard unmerged revision drafts first. Any Mission mounts will be removed automatically when you confirm; a Mission running at that time may lose access to the knowledge base during its run.",
+  knowledgeBaseMissionMountWarning:
+    "This knowledge base is currently mounted in one or more Missions. Confirming will remove those mounts automatically. A Mission running now may lose access to the knowledge base during its run.",
+  knowledgeBaseMissionUnmountFailed:
+    "Some Mission mounts could not be removed, so the knowledge base was not deleted. Some mounts may already have been removed; refresh and retry.",
+  knowledgeBaseRevisionTasksBlocked:
+    "This knowledge base still has unmerged revision drafts that could change its contents. Finish and merge them, or discard them, from Revision tasks before deleting the knowledge base. Merged revision history does not need to be deleted.",
+  knowledgeBaseStillReferenced:
+    "This knowledge base is still mounted by one or more Experts. Remove those Expert mounts before deleting it.",
   knowledgeBaseFiles: "Knowledge base files",
   resizeKnowledgeFileList: "Resize file list",
   emptyKnowledgeBase: "This knowledge base is empty.",
@@ -923,6 +934,9 @@ export const studio = {
   moreActions: "More actions for {{name}}",
   deleteCapabilityDescription:
     "“{{name}}” will be permanently removed. Experts that use a capability must be updated before it can be deleted.",
+  capabilityDeleteReferenced:
+    "This capability is still used by one or more Experts, so it cannot be deleted yet. Remove it from the relevant Experts’ capability lists, then try again.",
+  capabilityDeleteFailed: "This capability could not be deleted. Please try again.",
   deleting: "Deleting…",
   deleteCapability: "Delete this capability?",
   deleteCapabilityAction: "Delete capability",

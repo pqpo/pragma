@@ -20,12 +20,17 @@ alternatives, compatibility impact, and verification plan.
 
 ## License Status
 
-Pragma is distributed under the [Pragma Source Available License 1.0](./LICENSE). It is a custom
-source-available license, not the standard Apache License 2.0 or an OSI-approved open-source license.
+Pragma is distributed under the [GNU Affero General Public License v3.0 only](./LICENSE)
+(`AGPL-3.0-only`). Contributions intentionally submitted for inclusion are made available under
+AGPL-3.0-only under Section 5 of the license.
 
-By intentionally submitting a contribution for inclusion in Pragma, you agree to the contribution
-grant in Section 2.7 of the license. If a communication or patch is not intended as a contribution,
-mark it conspicuously as `Not a Contribution` before submitting it.
+By intentionally submitting a contribution for inclusion in Pragma, you also grant the Project
+Steward a perpetual, worldwide, non-exclusive, irrevocable, royalty-free right to use, reproduce,
+modify, prepare derivative works of, publicly display, publicly perform, distribute, sublicense,
+and relicense that contribution, including as part of Pragma under AGPL-3.0-only or other terms.
+This separate grant does not limit the rights recipients receive under AGPL-3.0-only. The Project
+Steward is defined in the [Trademark Policy](./TRADEMARKS.md). If a communication or patch is not
+intended as a contribution, mark it conspicuously as `Not a Contribution` before submitting it.
 
 Do not submit code, documentation, assets, or other material unless you have the right to grant those
 permissions.

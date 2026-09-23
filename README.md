@@ -16,7 +16,7 @@
   <a href="https://github.com/pqpo/pragma/releases"><img alt="Latest preview release" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
   <img alt="Project status: preview" src="https://img.shields.io/badge/status-preview-F59E0B" />
   <img alt="Desktop platform: macOS" src="https://img.shields.io/badge/desktop-macOS-111827?logo=apple" />
-  <a href="./LICENSE"><img alt="License: source available" src="https://img.shields.io/badge/license-source--available-2563EB" /></a>
+  <a href="./LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-3DA639" /></a>
 </p>
 
 <p align="center">
@@ -195,4 +195,4 @@ Read the [Contributing Guide](./CONTRIBUTING.md) before opening a pull request. 
 
 ## License
 
-Pragma uses the [Pragma Source Available License 1.0](./LICENSE), a custom source-available license that is not OSI-approved. The full license controls: in particular, third-party hosted services and commercial embedding require prior written authorization. Use of the Pragma name, logo, and official identity is also governed by the [Trademark Policy](./TRADEMARKS.md).
+Pragma is licensed under the [GNU Affero General Public License v3.0 only (AGPL-3.0-only)](./LICENSE). If you modify Pragma and offer that modified version for remote network interaction, AGPL-3.0 requires you to offer those users access to the corresponding source code. Pragma names, logos, and official identity are governed separately by the [Trademark Policy](./TRADEMARKS.md).

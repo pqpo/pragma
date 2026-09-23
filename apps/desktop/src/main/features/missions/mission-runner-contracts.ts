@@ -104,6 +104,10 @@ export interface MissionRunner {
   };
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextMounts(input: UpdateMissionContextMounts): Promise<Mission>;
+  removeContextStoreMount(input: {
+    readonly id: string;
+    readonly storeId: string;
+  }): Promise<Mission>;
   invalidateContextBindings(id: string): Promise<void>;
   sendMessage(input: {
     readonly id: string;

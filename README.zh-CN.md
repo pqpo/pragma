@@ -16,7 +16,7 @@
   <a href="https://github.com/pqpo/pragma/releases"><img alt="最新预览版本" src="https://img.shields.io/github/v/release/pqpo/pragma?include_prereleases&label=preview" /></a>
   <img alt="项目状态：预览版" src="https://img.shields.io/badge/status-preview-F59E0B" />
   <img alt="桌面平台：macOS" src="https://img.shields.io/badge/desktop-macOS-111827?logo=apple" />
-  <a href="./LICENSE"><img alt="许可证：源码可用" src="https://img.shields.io/badge/license-source--available-2563EB" /></a>
+  <a href="./LICENSE"><img alt="许可证：AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-3DA639" /></a>
 </p>
 
 Pragma 是一个跨模型、跨 Agent Harness 的 AI-native 工作方式平台，用来把一套工作方式构建成可运行、可复用的 Agent Team。一个团队不只是 Prompt，还可以组合 Expert、ExpertTeam、Flow、工具、Skill、共享 Context、Memory、权限和人工确认。
@@ -192,4 +192,4 @@ Pragma 提供三种使用层次：功能完整的 Desktop、从终端直接调�
 
 ## 许可证
 
-Pragma 使用 [Pragma Source Available License 1.0](./LICENSE)。这是自定义的源码可用许可证，不是 OSI 批准的开源许可证。完整条款以许可证正文为准；其中，面向第三方提供托管服务或进行商业嵌入需要事先取得书面授权。Pragma 名称、Logo 与官方视觉标识还受到[商标政策](./TRADEMARKS.md)约束。
+Pragma 使用 [GNU Affero 通用公共许可证第 3 版（AGPL-3.0-only）](./LICENSE)。如果你修改 Pragma 并提供可供用户通过网络远程交互的版本，AGPL-3.0 要求向这些用户提供对应版本的源代码。Pragma 名称、Logo 与官方视觉标识另受[商标政策](./TRADEMARKS.md)约束。

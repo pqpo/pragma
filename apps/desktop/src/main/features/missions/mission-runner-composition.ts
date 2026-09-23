@@ -131,7 +131,10 @@ import {
 } from "../../platform/bindings/desktop-binding-ref.ts";
 import type { CapabilityCredentialStore } from "../capabilities/capability-credential-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import {
+  withContextStoreRevisionLocks,
+  type ContextStoreStore,
+} from "../context-stores/context-store-store.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import { DynamicContextStore } from "../context-stores/dynamic-context-store.ts";
 import { createDesktopKnowledgeRevisionSubmissionPort } from "../context-stores/knowledge-revision-capability.ts";
@@ -3013,36 +3016,41 @@ export function createMissionRunner(options: {
     ) {
       throw new Error("Wait for the current execution before changing Mission Knowledge Stores.");
     }
-    await Promise.all(
-      input.contextMounts.map(async (mount) => {
-        if (mount.kind === "context-store-draft" && mount.revisionJobId !== undefined) {
-          const existing = mission.contextMounts.find(
-            (candidate) =>
-              candidate.kind === "context-store-draft" &&
-              candidate.draftId === mount.draftId &&
-              candidate.revisionJobId === mount.revisionJobId,
-          );
-          if (existing === undefined) {
-            throw new Error("Managed Mission Knowledge Drafts cannot be changed manually.");
-          }
-        }
-        if (mount.kind === "context-store") {
-          if (options.contextStores === undefined) {
-            throw new Error("Mission Knowledge Stores are unavailable.");
-          }
-          await options.contextStores.resolve(mount.storeId);
-          return;
-        }
-        if (options.contextStoreRevisions === undefined) {
-          throw new Error("Mission Knowledge Drafts are unavailable.");
-        }
-        await options.contextStoreRevisions.resolveDraft(mount.draftId);
-      }),
+    const contextStoreIds = input.contextMounts.flatMap((mount) =>
+      mount.kind === "context-store" ? [mount.storeId] : [],
     );
-    await assertNoPendingPrompts(mission);
-    const updated = await options.missions.updateContextMounts(mission.id, input.contextMounts);
-    await invalidateContextBindings(mission.id);
-    return updated;
+    return await withContextStoreRevisionLocks(options.contextStores, contextStoreIds, async () => {
+      await Promise.all(
+        input.contextMounts.map(async (mount) => {
+          if (mount.kind === "context-store-draft" && mount.revisionJobId !== undefined) {
+            const existing = mission.contextMounts.find(
+              (candidate) =>
+                candidate.kind === "context-store-draft" &&
+                candidate.draftId === mount.draftId &&
+                candidate.revisionJobId === mount.revisionJobId,
+            );
+            if (existing === undefined) {
+              throw new Error("Managed Mission Knowledge Drafts cannot be changed manually.");
+            }
+          }
+          if (mount.kind === "context-store") {
+            if (options.contextStores === undefined) {
+              throw new Error("Mission Knowledge Stores are unavailable.");
+            }
+            await options.contextStores.resolve(mount.storeId);
+            return;
+          }
+          if (options.contextStoreRevisions === undefined) {
+            throw new Error("Mission Knowledge Drafts are unavailable.");
+          }
+          await options.contextStoreRevisions.resolveDraft(mount.draftId);
+        }),
+      );
+      await assertNoPendingPrompts(mission);
+      const updated = await options.missions.updateContextMounts(mission.id, input.contextMounts);
+      await invalidateContextBindings(mission.id);
+      return updated;
+    });
   };
 
   const updateMissionContextMounts = async (
@@ -5183,6 +5191,18 @@ export function createMissionRunner(options: {
         input.id,
         async () => await updateMissionContextMounts(input),
       );
+    },
+    async removeContextStoreMount(input) {
+      return await withMissionController(input.id, async () => {
+        sessionService.beginContextBindingChange(input.id);
+        try {
+          const updated = await options.missions.removeContextStoreMount(input.id, input.storeId);
+          await invalidateContextBindings(input.id);
+          return updated;
+        } finally {
+          sessionService.finishContextBindingChange(input.id);
+        }
+      });
     },
     async invalidateContextBindings(id) {
       await invalidateContextBindings(id);

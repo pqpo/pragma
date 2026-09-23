@@ -1105,8 +1105,8 @@ export function StudioPage(props: {
             }}
             onDelete={async () => {
               const api = desktopApi();
-              if (api !== undefined)
-                await api.deleteContextStore({ storeId: selectedContextStore.id });
+              if (api === undefined) throw new Error("Desktop bridge is unavailable.");
+              await api.deleteContextStore({ storeId: selectedContextStore.id });
               setContextStores((current) =>
                 current.filter((store) => store.id !== selectedContextStore.id),
               );

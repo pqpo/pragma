@@ -6,7 +6,9 @@ The source code license and the Pragma brand are separate. Permission to use, mo
 Pragma source code does not grant permission to use the Pragma name, logos, product names, or other
 distinctive brand features (the "Pragma Marks"), except as allowed by applicable law or this policy.
 
-The Pragma Marks are managed by the Project Steward defined in [`LICENSE`](./LICENSE).
+The Pragma Marks are managed by the Project Steward. For this policy, **Project Steward** means the
+owner of the canonical Pragma repository at `https://github.com/pqpo/pragma`, or a successor
+explicitly designated in that repository.
 This policy does not claim that any Pragma Mark is registered.
 
 ## Uses That Do Not Require Additional Permission

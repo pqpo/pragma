@@ -959,7 +959,7 @@ describe("context store sparse draft revisions", () => {
     await mkdir(join(draftsPath, "broken"), { recursive: true });
     await writeFile(join(draftsPath, "broken", "draft.json"), "{invalid");
 
-    await expect(service.hasActiveJobs(store.id)).resolves.toBe(true);
+    await expect(service.hasUnmergedDrafts(store.id)).resolves.toBe(true);
   });
 
   it("reconciles a terminal Mission claim after its first detach attempt is interrupted", async () => {

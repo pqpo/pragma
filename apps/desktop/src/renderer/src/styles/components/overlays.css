@@ -50,6 +50,42 @@
   padding-bottom: 16px;
 }
 
+.confirmation-dialog-error {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d99992;
+  border-radius: 8px;
+  background: #fff0ef;
+  color: #862f28;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.confirmation-dialog-error p {
+  margin: 0;
+}
+
+.confirmation-dialog-error button {
+  justify-self: start;
+}
+
+.confirmation-dialog-warning {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgb(217 95 24 / 42%);
+  border-radius: 8px;
+  background: #fff8f1;
+  color: #8c4317;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.confirmation-dialog-warning p {
+  margin: 0;
+}
+
 .ui-dialog-footer {
   display: flex;
   justify-content: flex-end;

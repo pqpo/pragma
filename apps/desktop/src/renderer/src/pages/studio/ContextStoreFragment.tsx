@@ -110,6 +110,12 @@ const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
   priority: "normal",
 };
+const ACTIVE_REVISION_DRAFT_DELETE_ERROR = "unmerged revision drafts";
+const REVISION_TASK_DELETE_ERROR =
+  "Resolve or delete this knowledge base's revision tasks before deleting it.";
+const KNOWLEDGE_BASE_REFERENCED_DELETE_ERROR =
+  "This knowledge base is mounted by one or more Experts.";
+const MISSION_REFERENCES_DELETE_ERROR = "Mission references could not be fully cleared.";
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).at(-1) ?? path;
@@ -460,8 +466,7 @@ export function ContextStoreDetailFragment(props: {
   readonly onExport?: (() => Promise<void>) | undefined;
   readonly onPublish?: (() => Promise<void>) | undefined;
   readonly onSubmitRevision?:
-    | ((prompt: string) => Promise<ContextStoreRevisionJob | undefined>)
-    | undefined;
+    ((prompt: string) => Promise<ContextStoreRevisionJob | undefined>) | undefined;
   readonly onRevisionSubmitted?: ((job: ContextStoreRevisionJob | undefined) => void) | undefined;
   readonly onDelete: () => Promise<void>;
   readonly onListEntries: (storeId: string) => Promise<readonly ContextStoreEntry[]>;
@@ -520,6 +525,20 @@ export function ContextStoreDetailFragment(props: {
   const [loading, setLoading] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [missionMountCheck, setMissionMountCheck] = useState<{
+    readonly storeId: string;
+    readonly status: "checking" | "mounted" | "unmounted" | "unknown";
+  } | null>(null);
+  const deleteBlockedByRevisionDrafts =
+    deleteError?.includes(ACTIVE_REVISION_DRAFT_DELETE_ERROR) === true ||
+    deleteError?.includes(REVISION_TASK_DELETE_ERROR) === true;
+  const deleteBlockedByReferences =
+    deleteError?.includes(KNOWLEDGE_BASE_REFERENCED_DELETE_ERROR) === true;
+  const deleteMissionUnmountFailed =
+    deleteError?.includes(MISSION_REFERENCES_DELETE_ERROR) === true;
+  const hasMissionMounts =
+    missionMountCheck?.storeId === props.store.id && missionMountCheck.status === "mounted";
   const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
   const [revisionPrompt, setRevisionPrompt] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
@@ -535,6 +554,39 @@ export function ContextStoreDetailFragment(props: {
   const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles,
   );
+
+  useEffect(() => {
+    if (
+      !confirmOpen ||
+      missionMountCheck?.storeId !== props.store.id ||
+      missionMountCheck.status !== "checking"
+    ) {
+      return;
+    }
+    let active = true;
+    const api = desktopApi();
+    void Promise.resolve()
+      .then(async () =>
+        api === undefined
+          ? undefined
+          : await api.isContextStoreMountedInMission({ storeId: props.store.id }),
+      )
+      .then((mounted) => {
+        if (active) {
+          setMissionMountCheck({
+            storeId: props.store.id,
+            status: mounted === undefined ? "unknown" : mounted ? "mounted" : "unmounted",
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setMissionMountCheck({ storeId: props.store.id, status: "unknown" });
+      });
+    return () => {
+      active = false;
+    };
+  }, [confirmOpen, missionMountCheck, props.store.id]);
+
   const visibleEntries = useMemo(
     () => filterCollapsedContextStoreEntries(entries, collapsedDirectoryIds),
     [collapsedDirectoryIds, entries],
@@ -1066,6 +1118,7 @@ export function ContextStoreDetailFragment(props: {
 
   const removeStore = async () => {
     setDeleting(true);
+    setDeleteError(null);
     try {
       const editorDraft = await props.onGetEditorDraft(props.store.id);
       if (editorDraft !== undefined) {
@@ -1073,11 +1126,16 @@ export function ContextStoreDetailFragment(props: {
       }
       await props.onDelete();
     } catch (cause) {
-      setError(errorMessage(cause));
-      setConfirmOpen(false);
+      setDeleteError(errorMessage(cause));
     } finally {
       setDeleting(false);
     }
+  };
+
+  const openDeleteConfirmation = () => {
+    setDeleteError(null);
+    setMissionMountCheck({ storeId: props.store.id, status: "checking" });
+    setConfirmOpen(true);
   };
 
   const submitRevision = async () => {
@@ -1204,7 +1262,7 @@ export function ContextStoreDetailFragment(props: {
               label={t("deleteKnowledgeBaseAction")}
               tone="danger"
               icon={<Trash size={18} aria-hidden="true" />}
-              onClick={() => setConfirmOpen(true)}
+              onClick={openDeleteConfirmation}
             />
           </div>
         </div>
@@ -1729,11 +1787,30 @@ export function ContextStoreDetailFragment(props: {
         <StudioConfirmationDialog
           title={t("deleteKnowledgeBase")}
           description={t("deleteKnowledgeBaseDescription", { name: props.store.name })}
+          warning={hasMissionMounts ? t("knowledgeBaseMissionMountWarning") : null}
+          error={
+            deleteBlockedByRevisionDrafts
+              ? t("knowledgeBaseRevisionTasksBlocked")
+              : deleteBlockedByReferences
+                ? t("knowledgeBaseStillReferenced")
+                : deleteMissionUnmountFailed
+                  ? t("knowledgeBaseMissionUnmountFailed")
+                  : deleteError
+          }
+          errorAction={
+            deleteBlockedByRevisionDrafts && props.onOpenRevisions !== undefined
+              ? { label: t("revisionTasks"), onClick: props.onOpenRevisions }
+              : undefined
+          }
           cancelLabel={t("cancel")}
           confirmLabel={t("deleteKnowledgeBaseAction")}
           busyLabel={t("deleting")}
           busy={deleting}
-          onCancel={() => setConfirmOpen(false)}
+          onCancel={() => {
+            setDeleteError(null);
+            setMissionMountCheck(null);
+            setConfirmOpen(false);
+          }}
           onConfirm={() => void removeStore()}
         />
       ) : null}

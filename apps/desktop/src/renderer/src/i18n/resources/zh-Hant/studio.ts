@@ -554,6 +554,9 @@ export const studio = {
   discardRevisionDraft: "丟棄草稿",
   discardRevisionDraftTitle: "丟棄此修訂草稿？",
   discardRevisionDraftDescription: "「{{name}}」及其未合併修改將移至回收桶。",
+  unlinkedRevisionDraftsTitle: "未關聯任務的修訂草稿",
+  unlinkedRevisionDraftsDescription:
+    "這些草稿未顯示在修訂任務列表中，但仍未合併，可能會阻止刪除對應知識庫。只有確認不再需要這些修改時，才丟棄草稿。",
   deleteRevisionTaskDescription:
     "「{{name}}」將從修訂任務列表中移除。刪除任務不會回滾已套用的變更，也不會刪除知識庫。",
   revisionTasks: "修訂任務",
@@ -655,7 +658,14 @@ export const studio = {
   deleteKnowledgeBase: "刪除此知識庫？",
   deleteKnowledgeBaseAction: "刪除知識庫",
   deleteKnowledgeBaseDescription:
-    "「{{name}}」及其代管檔案將移至垃圾桶。刪除前必須先從所有專家中移除。",
+    "「{{name}}」及其代管檔案將移至垃圾桶。請先從專家解除掛載，並完成或丟棄尚未合併的修訂草稿。若有 Mission 掛載此知識庫，確認後會自動解除；正在執行的 Mission 可能無法繼續讀取知識庫。",
+  knowledgeBaseMissionMountWarning:
+    "此知識庫目前掛載於一個或多個 Mission 中。確認後將自動解除這些掛載；若 Mission 正在執行，本次執行可能無法繼續讀取知識庫。",
+  knowledgeBaseMissionUnmountFailed:
+    "未能解除所有 Mission 掛載，因此知識庫未刪除。可能已有部分掛載解除，請重新整理後重試。",
+  knowledgeBaseRevisionTasksBlocked:
+    "此知識庫仍有尚未合併的修訂草稿，因此暫時無法刪除。草稿仍可能繼續修改知識庫。請先在修訂任務中完成並合併草稿，或丟棄草稿。已合併的歷史任務不需要刪除。",
+  knowledgeBaseStillReferenced: "此知識庫仍掛載於一個或多個專家，請先解除專家掛載再刪除。",
   knowledgeBaseFiles: "知識庫檔案",
   resizeKnowledgeFileList: "調整檔案列表寬度",
   emptyKnowledgeBase: "此知識庫仍是空的。",
@@ -876,6 +886,9 @@ export const studio = {
   moreActions: "{{name}}的更多操作",
   deleteCapabilityDescription:
     "「{{name}}」將被永久刪除。使用此能力的專家必須先更新，之後才能刪除。",
+  capabilityDeleteReferenced:
+    "此能力仍被一個或多個專家使用，因此暫時無法刪除。請先在相關專家的能力列表中移除它，再重試。",
+  capabilityDeleteFailed: "無法刪除此能力，請稍後再試。",
   deleting: "刪除中…",
   deleteCapability: "刪除此能力？",
   deleteCapabilityAction: "刪除能力",

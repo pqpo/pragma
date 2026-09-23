@@ -13,7 +13,10 @@ import type {
 } from "../../../shared/contracts/index.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionStore } from "./mission-store.ts";
-import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
+import {
+  withContextStoreRevisionLocks,
+  type ContextStoreStore,
+} from "../context-stores/context-store-store.ts";
 import type { ContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { validateWorkspace } from "../workspaces/workspace-scope.ts";
@@ -92,7 +95,10 @@ export function createMissionCreator(options: {
       if ((input.contextMounts ?? []).some((mount) => mount.kind === "context-store-draft")) {
         throw new Error("Knowledge drafts can only be mounted by the knowledge revision tools.");
       }
-      await Promise.all((input.contextMounts ?? []).map(resolveContextMount));
+      const contextMounts = input.contextMounts ?? [];
+      const contextStoreIds = contextMounts.flatMap((mount) =>
+        mount.kind === "context-store" ? [mount.storeId] : [],
+      );
 
       const validatedFlowInput =
         executor.kind === "flow" && missionInput.kind === "flow"
@@ -103,23 +109,30 @@ export function createMissionCreator(options: {
         missionInput.kind === "prompt"
           ? missionInput.value
           : summarizeFlowInput(executor.name, flowInput!, validatedFlowInput!.structured);
-      return await options.missions.create({
-        ...(input.id === undefined ? {} : { id: input.id }),
-        workspace: { path: input.workspace, basename: basename(input.workspace) },
-        goal,
-        ...(validatedFlowInput?.structured === true
-          ? { title: titleFromFlowInput(executor.name, flowInput!) }
-          : {}),
-        ...(flowInput === undefined ? {} : { flowInput }),
-        project: { id: project.projectId, revision: project.revision },
-        executor,
-        ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
-        ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
-        ...(input.origin === undefined ? {} : { origin: input.origin }),
-        contextMounts: input.contextMounts ?? [],
-        toolPermissionMode:
-          input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
-      });
+      return await withContextStoreRevisionLocks(
+        options.contextStores,
+        contextStoreIds,
+        async () => {
+          await Promise.all(contextMounts.map(resolveContextMount));
+          return await options.missions.create({
+            ...(input.id === undefined ? {} : { id: input.id }),
+            workspace: { path: input.workspace, basename: basename(input.workspace) },
+            goal,
+            ...(validatedFlowInput?.structured === true
+              ? { title: titleFromFlowInput(executor.name, flowInput!) }
+              : {}),
+            ...(flowInput === undefined ? {} : { flowInput }),
+            project: { id: project.projectId, revision: project.revision },
+            executor,
+            ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+            ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
+            ...(input.origin === undefined ? {} : { origin: input.origin }),
+            contextMounts,
+            toolPermissionMode:
+              input.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
+          });
+        },
+      );
     },
     async createBranch(input) {
       await options.assertStorageWriteAllowed?.();
@@ -147,24 +160,33 @@ export function createMissionCreator(options: {
           project,
         );
       }
-      await Promise.all(
-        input.source.contextMounts.map((mount) =>
-          resolveContextMount(
-            mount.kind === "context-store-draft"
-              ? { kind: "context-store-draft", draftId: mount.draftId }
-              : mount,
-          ),
-        ),
+      const contextStoreIds = input.source.contextMounts.flatMap((mount) =>
+        mount.kind === "context-store" ? [mount.storeId] : [],
       );
-      return await options.missions.createBranch({
-        sourceMissionId: input.source.id,
-        expectedSourceUpdatedAt: input.source.updatedAt,
-        expectedExecutionId: input.expectedExecutionId,
-        expectedMessageId: input.expectedMessageId,
-        project: { id: project.projectId, revision: project.revision },
-        executor,
-        history: input.history,
-      });
+      return await withContextStoreRevisionLocks(
+        options.contextStores,
+        contextStoreIds,
+        async () => {
+          await Promise.all(
+            input.source.contextMounts.map((mount) =>
+              resolveContextMount(
+                mount.kind === "context-store-draft"
+                  ? { kind: "context-store-draft", draftId: mount.draftId }
+                  : mount,
+              ),
+            ),
+          );
+          return await options.missions.createBranch({
+            sourceMissionId: input.source.id,
+            expectedSourceUpdatedAt: input.source.updatedAt,
+            expectedExecutionId: input.expectedExecutionId,
+            expectedMessageId: input.expectedMessageId,
+            project: { id: project.projectId, revision: project.revision },
+            executor,
+            history: input.history,
+          });
+        },
+      );
     },
   };
 

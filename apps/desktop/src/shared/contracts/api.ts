@@ -39,6 +39,7 @@ import type {
   ContextStore,
   CreateContextStore,
   DeleteContextStore,
+  ContextStoreMissionMountCheck,
   InspectContextStoreImport,
   ContextStoreImportInspection,
   ContextStoreContent,
@@ -409,6 +410,7 @@ export interface PragmaDesktopAPI {
     input: InspectContextStoreImport,
   ) => Promise<ContextStoreImportInspection>;
   deleteContextStore: (input: DeleteContextStore) => Promise<void>;
+  isContextStoreMountedInMission: (input: ContextStoreMissionMountCheck) => Promise<boolean>;
   getContextStoreContent: (input: GetContextStoreContent) => Promise<ContextStoreContent>;
   listContextStoreEntries: (input: ListContextStoreEntries) => Promise<ContextStoreEntry[]>;
   createContextStoreFolder: (input: CreateContextStoreFolder) => Promise<void>;

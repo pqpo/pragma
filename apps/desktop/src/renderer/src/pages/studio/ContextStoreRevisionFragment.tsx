@@ -288,6 +288,13 @@ export function ContextStoreRevisionFragment(props: {
     () => filterRevisionEntries(entries, stateFilter, sourceFilter),
     [entries, stateFilter, sourceFilter],
   );
+  const unlinkedDrafts = useMemo(
+    () =>
+      drafts.filter(
+        (draft) => draft.state !== "merged" && !jobs.some((job) => job.draftId === draft.id),
+      ),
+    [drafts, jobs],
+  );
   const { items: pageItems, currentPage, pageCount } = revisionPage(filtered, page, pageSize);
   useEffect(() => {
     setPage(currentPage);
@@ -425,7 +432,51 @@ export function ContextStoreRevisionFragment(props: {
             ]}
           />
         </div>
-        {filtered.length === 0 ? (
+        {unlinkedDrafts.length > 0 ? (
+          <section
+            className={`revision-orphan-drafts${filtered.length === 0 ? " is-only" : ""}`}
+            aria-labelledby="revision-orphan-drafts-title"
+          >
+            <div className="revision-orphan-drafts-heading">
+              <div>
+                <h2 id="revision-orphan-drafts-title">{t("unlinkedRevisionDraftsTitle")}</h2>
+                <p>{t("unlinkedRevisionDraftsDescription")}</p>
+              </div>
+              <span className="revision-task-count">{unlinkedDrafts.length}</span>
+            </div>
+            <div className="revision-orphan-draft-list" role="list">
+              {unlinkedDrafts.map((draft) => {
+                const store = props.stores.find((candidate) => candidate.id === draft.storeId);
+                const storeName =
+                  store?.name ?? draft.resourceName ?? t("unavailableKnowledgeBase");
+                return (
+                  <article className="revision-orphan-draft-row" role="listitem" key={draft.id}>
+                    <span className="revision-task-summary">
+                      <strong title={draft.name}>{draft.name}</strong>
+                      <small>
+                        {storeName} · {t(`revisionState.${draft.state}`)} · {t("revisionUpdatedAt")}{" "}
+                        {formatRevisionTimestamp(draft.updatedAt, i18n.language)}
+                      </small>
+                    </span>
+                    <div className="revision-task-actions">
+                      <button
+                        className="revision-task-icon-button is-danger"
+                        type="button"
+                        aria-label={t("discardRevisionDraft")}
+                        title={t("discardRevisionDraft")}
+                        disabled={busy !== null}
+                        onClick={() => setPendingDiscard(draft)}
+                      >
+                        <Trash size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+        {filtered.length === 0 && (unlinkedDrafts.length === 0 || entries.length > 0) ? (
           <div className="revision-task-empty">
             <ClockCounterClockwise size={28} aria-hidden="true" />
             <h3>{t(entries.length === 0 ? "noStoreRevisionTasks" : "revisionNoMatches")}</h3>
@@ -450,7 +501,7 @@ export function ContextStoreRevisionFragment(props: {
               </button>
             ) : null}
           </div>
-        ) : (
+        ) : filtered.length > 0 ? (
           <div className="revision-task-table" ref={listRef}>
             <div className="revision-task-list-header" aria-hidden="true">
               <span>{t("revisionTaskColumn")}</span>
@@ -554,7 +605,7 @@ export function ContextStoreRevisionFragment(props: {
               })}
             </div>
           </div>
-        )}
+        ) : null}
         <nav className="revision-task-pagination" aria-label={t("revisionPagination")}>
           <span>
             {t("revisionPageRange", {

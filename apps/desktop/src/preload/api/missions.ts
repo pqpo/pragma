@@ -4,6 +4,10 @@ import {
   HomeProjectIdSchema,
   ReorderHomeProjectsSchema,
 } from "../../shared/contracts/home-projects.ts";
+import {
+  ContextStoreMissionMountCheckSchema,
+  ContextStoreMissionMountCheckResultSchema,
+} from "../../shared/contracts/context-stores.ts";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
@@ -85,6 +89,13 @@ export const missionsApi = {
   },
   listMissions: async () =>
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
+  isContextStoreMountedInMission: async (input) =>
+    ContextStoreMissionMountCheckResultSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:context-store:reference-check",
+        ContextStoreMissionMountCheckSchema.parse(input),
+      ),
+    ),
   listMissionExecutors: async () =>
     MissionExecutorOptionSchema.array().parse(await ipcRenderer.invoke("missions:executors:list")),
   getHomeMissionExecutorCatalog: async () =>
@@ -331,6 +342,7 @@ export const missionsApi = {
 } satisfies Pick<
   PragmaDesktopAPI,
   | "listMissions"
+  | "isContextStoreMountedInMission"
   | "listMissionExecutors"
   | "getHomeMissionExecutorCatalog"
   | "updateHomeExecutorPreference"

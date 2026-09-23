@@ -59,6 +59,10 @@ import {
   type PickMissionAttachmentsResult,
   type DesktopToolPermissionMode,
 } from "../../../shared/contracts/index.ts";
+import {
+  ContextStoreMissionMountCheckSchema,
+  ContextStoreMissionMountCheckResultSchema,
+} from "../../../shared/contracts/context-stores.ts";
 import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 import type { MissionCommandOutcomeNotification, MissionRunner } from "./mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "./mission-store.ts";
@@ -276,6 +280,12 @@ export function installMissionHandlers(options: {
         ? mission
         : { ...mission, source: { type: "automation" as const, automationRef } };
     });
+  });
+  ipcMain.handle("missions:context-store:reference-check", async (_event, input: unknown) => {
+    const { storeId } = ContextStoreMissionMountCheckSchema.parse(input);
+    return ContextStoreMissionMountCheckResultSchema.parse(
+      await options.missions.isContextStoreReferenced(storeId),
+    );
   });
   ipcMain.handle("missions:source:get", (_event, id: unknown) =>
     runDesktopMutation(async () =>

@@ -263,6 +263,9 @@ export const DeleteContextStoreSchema = z.object({
   storeId: ContextStoreIdSchema,
 });
 
+export const ContextStoreMissionMountCheckSchema = DeleteContextStoreSchema;
+export const ContextStoreMissionMountCheckResultSchema = z.boolean();
+
 export const ContextStoreContentMetadataSchema = z.object({
   description: z.string().max(2_000).optional(),
   trigger: ContextTriggerSchema,
