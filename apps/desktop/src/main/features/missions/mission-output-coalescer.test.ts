@@ -75,22 +75,22 @@ describe("Mission output coalescer", () => {
     expect(emitted.map((item) => item.delta)).toEqual(["A", "BCD"]);
   });
 
-  it("never combines deltas from different tool calls", () => {
+  it("preserves every raw tool delta boundary", () => {
     vi.useFakeTimers();
     const emitted: ExecutionOutputItem[] = [];
     const coalescer = createMissionOutputCoalescer({ emit: (item) => emitted.push(item) });
 
-    coalescer.push(toolOutput("tool-a-first", "tool-a", "A1"));
-    coalescer.push(toolOutput("tool-a-second", "tool-a", "A2"));
-    coalescer.push(toolOutput("tool-b-first", "tool-b", "B1"));
+    coalescer.push(toolOutput("tool-a-first", "tool-a", '{"text":"A1"}'));
+    coalescer.push(toolOutput("tool-a-second", "tool-a", '{"text":"A2"}'));
+    coalescer.push(toolOutput("tool-a-third", "tool-a", '{"text":"A3"}'));
     vi.advanceTimersByTime(50);
 
     expect(
       emitted.map((item) => ({ toolCallId: item.source.toolCallId, delta: item.delta })),
     ).toEqual([
-      { toolCallId: "tool-a", delta: "A1" },
-      { toolCallId: "tool-a", delta: "A2" },
-      { toolCallId: "tool-b", delta: "B1" },
+      { toolCallId: "tool-a", delta: '{"text":"A1"}' },
+      { toolCallId: "tool-a", delta: '{"text":"A2"}' },
+      { toolCallId: "tool-a", delta: '{"text":"A3"}' },
     ]);
   });
 });

@@ -4173,12 +4173,6 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       recordId: reviewerRecord!.recordId,
       limit: 100,
     });
-    await runner.openWorkConversationStream({
-      subscriptionId: secondSubscriptionId,
-      missionId: mission.id,
-      recordId: reviewerRecord!.recordId,
-      limit: 100,
-    });
     expect(opened.snapshot).toMatchObject({
       missionId: mission.id,
       recordId: reviewerRecord!.recordId,
@@ -4188,6 +4182,23 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       expect(restored).toContain("Reviewing existing code");
       expect(restored).toContain("inspect-code");
     });
+    const paginated = await runner.openWorkConversationStream({
+      subscriptionId: secondSubscriptionId,
+      missionId: mission.id,
+      recordId: reviewerRecord!.recordId,
+      limit: 1,
+    });
+    expect(paginated.snapshot.entries).toHaveLength(1);
+    expect(paginated.snapshot.nextBeforeCursor).toBeTypeOf("string");
+    const earlier = await runner.getWorkConversation({
+      id: mission.id,
+      recordId: reviewerRecord!.recordId,
+      beforeCursor: paginated.snapshot.nextBeforeCursor,
+      limit: 1,
+    });
+    expect(earlier.entries.map((entry) => entry.id)).not.toContain(
+      paginated.snapshot.entries[0]!.id,
+    );
     emitReviewerOutput();
     await reviewerOutputSent;
     await vi.waitFor(() => {

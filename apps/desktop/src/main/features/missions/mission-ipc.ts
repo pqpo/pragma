@@ -8,7 +8,13 @@ import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
-import { dialog, ipcMain, type BrowserWindow, type OpenDialogOptions } from "electron";
+import {
+  dialog,
+  ipcMain,
+  type BrowserWindow,
+  type OpenDialogOptions,
+  type WebContents,
+} from "electron";
 import type {
   LocalHostApplicationPort,
   LocalHostRunApplication,
@@ -92,6 +98,11 @@ type DesktopLocalHostApplication = Pick<
   readonly run: LocalHostRunApplication;
 };
 
+interface WorkConversationStreamOwner {
+  readonly sender: WebContents;
+  readonly onDestroyed: () => void;
+}
+
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
   readonly localHost: DesktopLocalHostApplication;
@@ -122,7 +133,17 @@ export function installMissionHandlers(options: {
   let legacyAutomationMissionSourcesRequest: Promise<ReadonlyMap<string, string>> | undefined;
   const imageDrafts = createMissionImageDraftStore({ temporaryRoot: options.temporaryRoot });
   const submittedAttachmentDrafts = new Map<string, readonly string[]>();
-  const workConversationStreamOwners = new Map<string, number>();
+  const workConversationStreamOwners = new Map<string, WorkConversationStreamOwner>();
+  const releaseWorkConversationStreamOwner = (
+    subscriptionId: string,
+    expected?: WorkConversationStreamOwner,
+  ): boolean => {
+    const owner = workConversationStreamOwners.get(subscriptionId);
+    if (owner === undefined || (expected !== undefined && owner !== expected)) return false;
+    workConversationStreamOwners.delete(subscriptionId);
+    owner.sender.removeListener("destroyed", owner.onDestroyed);
+    return true;
+  };
   installMissionAttachmentProtocol(options.missions, imageDrafts);
   const getCreationDefaults = async () => {
     const workspace = await options.localHost.resolveWorkspace(await options.getDefaultWorkspace());
@@ -706,27 +727,32 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:work:conversation:stream:open", async (event, input: unknown) => {
     const parsed = OpenMissionWorkConversationStreamSchema.parse(input);
     await assertManagedMission(parsed.missionId);
-    workConversationStreamOwners.set(parsed.subscriptionId, event.sender.id);
-    event.sender.once("destroyed", () => {
-      if (workConversationStreamOwners.get(parsed.subscriptionId) !== event.sender.id) return;
-      workConversationStreamOwners.delete(parsed.subscriptionId);
-      void options.runner.closeWorkConversationStream(parsed.subscriptionId);
-    });
+    releaseWorkConversationStreamOwner(parsed.subscriptionId);
+    const owner: WorkConversationStreamOwner = {
+      sender: event.sender,
+      onDestroyed: () => {
+        if (!releaseWorkConversationStreamOwner(parsed.subscriptionId, owner)) return;
+        void options.runner.closeWorkConversationStream(parsed.subscriptionId);
+      },
+    };
+    workConversationStreamOwners.set(parsed.subscriptionId, owner);
+    event.sender.once("destroyed", owner.onDestroyed);
     try {
       const opened = await options.runner.openWorkConversationStream(parsed);
-      if (workConversationStreamOwners.get(parsed.subscriptionId) !== event.sender.id) {
+      if (workConversationStreamOwners.get(parsed.subscriptionId) !== owner) {
         await options.runner.closeWorkConversationStream(parsed.subscriptionId);
       }
       return opened;
     } catch (error) {
-      workConversationStreamOwners.delete(parsed.subscriptionId);
+      releaseWorkConversationStreamOwner(parsed.subscriptionId, owner);
       throw error;
     }
   });
   ipcMain.handle("missions:work:conversation:stream:close", async (event, input: unknown) => {
     const parsed = CloseMissionWorkConversationStreamSchema.parse(input);
-    if (workConversationStreamOwners.get(parsed.subscriptionId) === event.sender.id) {
-      workConversationStreamOwners.delete(parsed.subscriptionId);
+    const owner = workConversationStreamOwners.get(parsed.subscriptionId);
+    if (owner?.sender === event.sender) {
+      releaseWorkConversationStreamOwner(parsed.subscriptionId, owner);
       await options.runner.closeWorkConversationStream(parsed.subscriptionId);
     }
   });
@@ -825,9 +851,9 @@ export function installMissionHandlers(options: {
     });
   });
   options.runner.subscribeWorkConversationStreams(({ update }) => {
-    const ownerId = workConversationStreamOwners.get(update.subscriptionId);
+    const owner = workConversationStreamOwners.get(update.subscriptionId);
     const target = options.getWindow()?.webContents;
-    if (target === undefined || ownerId !== target.id) return;
+    if (target === undefined || owner?.sender !== target) return;
     target.send("missions:work:conversation:stream:updated", update);
   });
 }

@@ -11,6 +11,14 @@ export interface ExecutionEventSubscription extends AsyncIterable<ExecutionEvent
   close(): Promise<void>;
 }
 
+export const EXECUTION_OUTPUT_HISTORY_MAX_ITEMS = 2_048;
+export const EXECUTION_OUTPUT_HISTORY_MAX_CHARACTERS = 1024 * 1_024;
+
+interface ExecutionOutputHistory {
+  readonly items: ExecutionOutputItem[];
+  characters: number;
+}
+
 class ExecutionLiveBus {
   private readonly subscribers = new Map<
     string,
@@ -20,7 +28,7 @@ class ExecutionLiveBus {
     }>
   >();
   private readonly eventSubscribers = new Map<string, Set<AsyncPushQueue<ExecutionEvent>>>();
-  private readonly outputHistory = new Map<string, ExecutionOutputItem[]>();
+  private readonly outputHistory = new Map<string, ExecutionOutputHistory>();
 
   subscribe(
     executionId: string,
@@ -33,7 +41,7 @@ class ExecutionLiveBus {
     subscribers.add(subscriber);
     this.subscribers.set(executionId, subscribers);
     if (replayHistory) {
-      for (const item of this.outputHistory.get(executionId) ?? []) {
+      for (const item of this.outputHistory.get(executionId)?.items ?? []) {
         if (predicate(item)) queue.push(item);
       }
     }
@@ -69,8 +77,22 @@ class ExecutionLiveBus {
   }
 
   publish(executionId: string, output: ExecutionOutputItem): void {
-    const history = this.outputHistory.get(executionId) ?? [];
-    history.push(output);
+    const history = this.outputHistory.get(executionId) ?? { items: [], characters: 0 };
+    const characters = outputHistoryCharacters(output);
+    if (characters > EXECUTION_OUTPUT_HISTORY_MAX_CHARACTERS) {
+      history.items.length = 0;
+      history.characters = 0;
+    } else {
+      history.items.push(output);
+      history.characters += characters;
+      while (
+        history.items.length > EXECUTION_OUTPUT_HISTORY_MAX_ITEMS ||
+        history.characters > EXECUTION_OUTPUT_HISTORY_MAX_CHARACTERS
+      ) {
+        const removed = history.items.shift();
+        if (removed !== undefined) history.characters -= outputHistoryCharacters(removed);
+      }
+    }
     this.outputHistory.set(executionId, history);
     for (const subscriber of this.subscribers.get(executionId) ?? []) {
       if (subscriber.predicate(output)) subscriber.queue.push(output);
@@ -96,6 +118,19 @@ class ExecutionLiveBus {
       for (const subscriber of eventSubscribers) subscriber.close();
     }
   }
+}
+
+function outputHistoryCharacters(output: ExecutionOutputItem): number {
+  let characters = output.delta?.length ?? 0;
+  if (typeof output.value === "string") characters += output.value.length;
+  else if (output.value !== undefined) {
+    try {
+      characters += JSON.stringify(output.value)?.length ?? 0;
+    } catch {
+      // Item count remains a hard bound even for a non-serializable adapter payload.
+    }
+  }
+  return Math.max(1, characters);
 }
 
 const buses = new WeakMap<ExecutionStore, ExecutionLiveBus>();

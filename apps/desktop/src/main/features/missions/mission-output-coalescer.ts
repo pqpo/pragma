@@ -102,10 +102,7 @@ export function createMissionOutputCoalescer(options: {
 }
 
 function coalescibleOutputKey(item: ExecutionOutputItem): string | undefined {
-  if (
-    item.delta === undefined ||
-    (item.channel !== "message" && item.channel !== "thought" && item.channel !== "tool")
-  ) {
+  if (item.delta === undefined || (item.channel !== "message" && item.channel !== "thought")) {
     return undefined;
   }
   return JSON.stringify([

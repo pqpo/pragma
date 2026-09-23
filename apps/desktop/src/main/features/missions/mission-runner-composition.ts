@@ -4739,6 +4739,7 @@ export function createMissionRunner(options: {
 
   const getWorkConversation = async (
     input: GetMissionWorkConversation,
+    liveOverlay: readonly MissionChatEntry[] = [],
   ): Promise<MissionWorkConversationSnapshot> => {
     const t0 = performance.now();
     let mission = await options.missions.get(input.id);
@@ -4762,6 +4763,10 @@ export function createMissionRunner(options: {
       }
     }
     for (const entry of liveEntries) byId.set(entry.id, { ...entry });
+    // Apply the active watcher overlay before slicing so the page limit and cursor describe the
+    // exact entry set returned to the renderer. Stable ids replace durable equivalents while
+    // genuinely non-durable tail entries participate in the same pagination window.
+    for (const entry of liveOverlay) byId.set(entry.id, { ...entry });
     const entries = [...byId.values()].toSorted((left, right) =>
       left.createdAt.localeCompare(right.createdAt),
     );
@@ -4960,19 +4965,15 @@ export function createMissionRunner(options: {
       });
     }
     try {
-      let snapshot = await getWorkConversation({
-        id: input.missionId,
-        recordId: input.recordId,
-        limit: input.limit,
-      });
+      const snapshot = await getWorkConversation(
+        {
+          id: input.missionId,
+          recordId: input.recordId,
+          limit: input.limit,
+        },
+        watcher?.live.entries.map((entry) => ({ ...entry })) ?? [],
+      );
       if (watcher !== undefined) {
-        snapshot = {
-          ...snapshot,
-          entries: uniqueMissionChatEntries([
-            ...snapshot.entries,
-            ...watcher.live.entries.map((entry) => ({ ...entry })),
-          ]),
-        };
         if (workConversationWatchers.get(watcher.key) === watcher) {
           watcher.subscribers.set(input.subscriptionId, {
             subscriptionId: input.subscriptionId,

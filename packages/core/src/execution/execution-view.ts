@@ -125,21 +125,25 @@ export class StoredExecutionView implements ExecutionView {
   async subscribeOutput(
     options: SubscribeOutputOptions = {},
   ): Promise<ExecutionOutputSubscription> {
-    const state = await this.getState();
-    const channels = options.channels === undefined ? undefined : new Set(options.channels);
     const source = getExecutionLiveBus(this.store).subscribe(
       this.executionId,
-      (item) =>
-        matchesOutputScope(item, state.rootInvocationId, options.scope) &&
-        matchesOutputSourceScope(item, options.sourceScope) &&
-        (channels?.has(item.channel) ?? true),
+      () => true,
       options.replay !== "live",
     );
     try {
-      // Re-read after registration. Output history covers the gap before subscribe,
-      // while this second read closes a subscription created just after completion.
-      if (isTerminal((await this.getState()).status)) await source.close();
-      return source;
+      // Register before the first state read so completion cannot clear replay history in the
+      // await gap. Filtering is applied to the already-registered source once root identity is
+      // known, preserving both replayed and concurrently published output.
+      const state = await this.getState();
+      const channels = options.channels === undefined ? undefined : new Set(options.channels);
+      if (isTerminal(state.status)) await source.close();
+      return filterOutputSubscription(
+        source,
+        (item) =>
+          matchesOutputScope(item, state.rootInvocationId, options.scope) &&
+          matchesOutputSourceScope(item, options.sourceScope) &&
+          (channels?.has(item.channel) ?? true),
+      );
     } catch (error) {
       await source.close();
       throw error;
@@ -314,6 +318,18 @@ function filterEventSubscription(
   return {
     async *[Symbol.asyncIterator]() {
       for await (const item of source) if (await predicate(item)) yield item;
+    },
+    close: async () => await source.close(),
+  };
+}
+
+function filterOutputSubscription(
+  source: ExecutionOutputSubscription,
+  predicate: (item: ExecutionOutputItem) => boolean,
+): ExecutionOutputSubscription {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const item of source) if (predicate(item)) yield item;
     },
     close: async () => await source.close(),
   };
