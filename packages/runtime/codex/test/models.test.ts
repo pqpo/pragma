@@ -40,7 +40,7 @@ describe("Codex model discovery cache", () => {
     await expect(second()).resolves.toMatchObject([{ id: "gpt-first" }]);
     expect(mocks.runRuntimeCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runRuntimeCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ args: ["debug", "models", "--bundled"] }),
+      expect.objectContaining({ args: ["debug", "models"] }),
     );
   });
 

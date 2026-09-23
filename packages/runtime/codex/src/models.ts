@@ -175,7 +175,7 @@ function refreshCodexModelCatalog(input: {
       const models = await retryRuntimeModelDiscovery(async () => {
         const result = await runRuntimeCommand({
           executablePath: input.executablePath,
-          args: ["debug", "models", "--bundled"],
+          args: ["debug", "models"],
           cwd: process.cwd(),
           env: input.env,
           timeoutMs: 15_000,
