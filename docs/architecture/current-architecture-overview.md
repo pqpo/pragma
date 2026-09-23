@@ -18,10 +18,6 @@ AI-native 工作方式，并由 Desktop、CLI 或嵌入式 SDK Host 运行。
 ## 分层结构
 
 ```text
-apps/web ───────────────────────────────────────────────> @pragma/shared
-
-apps/server / apps/worker ──────────────────────────────> @pragma/core
-
 apps/desktop ─┬─> @pragma/local-host ─┬─> @pragma/core
               │                       ├─> @pragma/interpreter
               │                       ├─> @pragma/evaluation
@@ -33,6 +29,9 @@ apps/desktop ─┬─> @pragma/local-host ─┬─> @pragma/core
 apps/cli ─────┬─> @pragma/local-host
               └─> @pragma/runtime-*
 ```
+
+The current workspace contains no Web, Server, or Worker app. A future cloud or browser Host must be
+introduced as a separate architecture change and compose the existing package contracts.
 
 这组依赖方向由 ESLint、TypeScript、workspace package exports 与测试共同约束：
 
@@ -158,9 +157,6 @@ stable journal、备份与原子替换保证恢复。业务 parser 只接受当�
 - Desktop：创建、管理和运行 Project、Expert、Team、Flow、Capability、Context、Memory 与 Evaluation；
 - CLI：通过 `@pqpo/pragma` 发现资源、运行和恢复 Mission、查询事件、管理队列及输出机器可读协议；
 - SDK：应用通过 `@pragma/interpreter` 加载 DSL，再通过 `@pragma/core` 运行编译结果；
-- Server：提供 Fastify HTTP 应用与服务组合入口；
-- Worker：提供异步进程与 Runtime composition 入口；
-- Web：使用 `@pragma/shared` 的浏览器安全协议访问服务。
 
 ## 相关文档
 

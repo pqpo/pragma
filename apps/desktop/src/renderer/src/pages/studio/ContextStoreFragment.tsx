@@ -63,6 +63,7 @@ import {
 } from "./context-store-autosave.ts";
 import { StudioConfirmationDialog, StudioTextInputDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { desktopApi } from "./studio-model.ts";
 
 type CreateStep = "intro" | "configure" | "review";
 type CreateMode = CreateContextStore["mode"];

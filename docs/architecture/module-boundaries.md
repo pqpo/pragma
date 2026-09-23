@@ -5,9 +5,6 @@ Pragma uses explicit package layers so product capabilities can grow without blu
 In the diagrams below, `A -> B` means `A` may depend on `B`.
 
 ```text
-apps/web    -> shared
-apps/server -> core/shared
-apps/worker -> runtime-* -> core -> shared
 apps/cli    -> local-host -> shared/core/interpreter/evaluation/built-in-agents/memory/context-filesystem
 apps/desktop main -> local-host
 apps/desktop    -> built-in-agents -> interpreter -> evaluation -> core -> shared
@@ -30,16 +27,13 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `runtime-*`       | Concrete Runtime Adapter implementations                                                             |
 | `local-host`      | Node-only device-local application services and Mission Board shared by Desktop Main and the CLI     |
 | `plugins/*`       | Expert extensions built on the core plugin API                                                       |
-| `apps`            | Composition and process entry points, including the Desktop-owned local bridge boundary              |
+| `apps`            | Current process entry points: Desktop and CLI; future Hosts require an explicit architecture decision |
 | `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                        |
 
 ## Dependency Matrix
 
 | Source                     | Allowed dependencies                                                                                                                                                                                       |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`                 | `@pragma/shared`                                                                                                                                                                                           |
-| `apps/server`              | `@pragma/shared`, `@pragma/core`                                                                                                                                                                           |
-| `apps/worker`              | `@pragma/shared`, `@pragma/core`, concrete `@pragma/runtime-*` packages                                                                                                                                    |
 | `apps/cli`                 | `@pragma/local-host`, `@pragma/shared/integration`, concrete `@pragma/runtime-*` at its composition root                                                                                                   |
 | `apps/desktop`             | `@pragma/shared`, `@pragma/core`, `@pragma/evaluation`, `@pragma/interpreter`, `@pragma/built-in-agents`, concrete `@pragma/runtime-*` packages                                                            |
 | `packages/local-host`      | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/evaluation`, `@pragma/built-in-agents`, `@pragma/memory`, `@pragma/context-filesystem`; Node built-ins and runtime-neutral third parties |
@@ -71,7 +65,7 @@ may consume `@pragma/shared/integration` but never Local Host.
 schemas directly. Detached commands cross the durable Inbox boundary before returning and use
 query/watch for eventual owner/execution state.
 
-Expert Agents are cloud-first execution units scheduled by Server/Worker. Local Claude Code, Codex, Qoder CLI, Antigravity CLI, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
+The current repository runs Expert Agents through Desktop and CLI Hosts. Local Claude Code, Codex, Qoder CLI, Antigravity CLI, or self-hosted runtimes are composed by those Hosts; Desktop owns the local permission boundary and bridge. A future cloud Host may schedule the same Core abstractions, but no Server or Worker app is part of this repository. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
 
 Current runtime implementations:
 
@@ -113,7 +107,7 @@ on `@pragma/interpreter`, concrete runtime packages, runtime SDKs such as PI age
 client SDKs, Web UI, or database packages. `@pragma/interpreter` depends on Core's public object model
 to compile portable YAML declarations, while `@pragma/interpreter/ast` stays browser-safe. Concrete
 runtime packages depend on `@pragma/core` and are assembled by application entry points such as
-Worker. The default runtime selection is an application-layer decision; Desktop currently registers
+Desktop and CLI. The default runtime selection is an application-layer decision; Desktop currently registers
 PI, Codex, Claude Code, Qoder CLI, and Antigravity CLI runtimes and uses PI by default.
 
 `@pragma/built-in-agents` owns the five portable DSL-defined Agents: the general-purpose Pragma and
@@ -145,7 +139,7 @@ Local Host also compares a non-terminal Mission projection with the canonical Co
 a bounded, read-only activity query; no read-triggered timer or Desktop-owned background repair loop
 mutates Mission state.
 
-Local bridge placement:
+Future cloud bridge placement (planned; no Server app currently exists):
 
 ```text
 apps/desktop

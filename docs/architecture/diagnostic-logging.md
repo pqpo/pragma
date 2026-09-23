@@ -87,7 +87,7 @@ interface DiagnosticRecord {
   readonly sequence: number;
   readonly bootId: string;
   readonly process: {
-    readonly kind: "desktop-main" | "desktop-renderer" | "server" | "worker" | "test" | string;
+    readonly kind: "desktop-main" | "desktop-renderer" | "cli" | "test" | string;
     readonly pid?: number;
     readonly version?: string;
   };
@@ -289,8 +289,6 @@ The initial component namespace is:
 | `core.storage`          | File state, locks, migration, archive, and GC  |
 | `runtime.<adapter>`     | Concrete Runtime protocol/process              |
 | `plugin.<plugin-id>`    | Plugin-owned work                              |
-| `server.http`           | Fastify request boundary                       |
-| `worker.execution`      | Worker dispatch and execution                  |
 
 Event names are stable behavior names, not interpolated messages:
 
@@ -435,14 +433,10 @@ Plugins receive `plugin.<id>` with Agent, Execution, Invocation, and Context sco
 They may add operation metadata but may not replace owner ids. Managed tool logs include tool name,
 server key, approval outcome, duration, and result size; arguments and results are excluded.
 
-### 7.7 Server and Worker
+### 7.7 Future Hosts
 
-Server maps the diagnostic record into the existing Fastify/Pino logger so HTTP logs and Pragma
-execution logs share one process sink. HTTP request id becomes `requestId`; tenant/actor audit
-fields, when introduced, remain separate from diagnostic attributes.
-
-Worker initially writes structured JSON to stdout. A deployment may add an OTLP sink, but local and
-remote sinks receive the same already-redacted record.
+The current workspace has no Server or Worker process. A future Host can map diagnostic records to
+its process logger and transport while preserving the same redaction and request-scoping rules.
 
 ## 8. Local storage and retention
 

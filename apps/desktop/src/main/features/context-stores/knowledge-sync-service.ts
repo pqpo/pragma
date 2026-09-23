@@ -125,6 +125,7 @@ export function createKnowledgeSyncService(options: {
   let requestedIntent: SyncIntent = "pull_only";
   let scheduled: NodeJS.Timeout | undefined;
   let transientStatus: "ready" | "syncing" | "conflict" | "error" = "ready";
+  let latestOverview: KnowledgeSyncOverview | undefined;
 
   const providerFor = (configuration: KnowledgeSyncConfiguration): ContextStoreSyncProvider =>
     options.provider ??
@@ -158,6 +159,13 @@ export function createKnowledgeSyncService(options: {
   };
   const writeState = async (state: SyncState) =>
     writeJsonAtomic(options.statePath, KnowledgeSyncStateSchema.parse(state));
+
+  const syncingOverview = (): KnowledgeSyncOverview | undefined => {
+    if (latestOverview === undefined) return undefined;
+    return latestOverview.configured
+      ? { ...latestOverview, status: "syncing" }
+      : latestOverview;
+  };
 
   const localStores = async (): Promise<Map<string, LocalStore>> => {
     const result = new Map<string, LocalStore>();
@@ -383,11 +391,54 @@ export function createKnowledgeSyncService(options: {
     );
   };
 
+  const getOverview = async (): Promise<KnowledgeSyncOverview> => {
+    if (transientStatus === "syncing") {
+      const cached = syncingOverview();
+      if (cached !== undefined) return cached;
+    }
+    const configuration = await readConfiguration();
+    if (configuration === undefined) {
+      latestOverview = unconfiguredOverview();
+      return latestOverview;
+    }
+    if (transientStatus === "syncing") {
+      const cached = syncingOverview();
+      if (cached !== undefined) return cached;
+    }
+    latestOverview = await withFileLock(lockPath, async () => {
+      const state = await readState();
+      const status =
+        transientStatus === "syncing"
+          ? "syncing"
+          : state.errorMessage !== undefined
+            ? "error"
+            : Object.keys(state.conflicts).length > 0
+              ? "conflict"
+              : transientStatus;
+      return await buildOverview(configuration, state, await localStores(), status);
+    });
+    return latestOverview;
+  };
+
   const synchronizeOnce = async (intent: SyncIntent): Promise<KnowledgeSyncOverview> =>
     await withFileLock(lockPath, async () => {
       const configuration = await readConfiguration();
-      if (configuration === undefined) return unconfiguredOverview();
+      if (configuration === undefined) {
+        latestOverview = unconfiguredOverview();
+        return latestOverview;
+      }
       transientStatus = "syncing";
+      const cached = syncingOverview();
+      const cachedConfiguration = cached?.configured ? cached.configuration : undefined;
+      const hasCurrentConfiguration =
+        cachedConfiguration !== undefined &&
+        cachedConfiguration.remote === configuration.remote &&
+        cachedConfiguration.branch === configuration.branch &&
+        cachedConfiguration.autoPush === configuration.autoPush &&
+        cachedConfiguration.pushDeletions === configuration.pushDeletions;
+      latestOverview = cached !== undefined && hasCurrentConfiguration
+        ? cached
+        : await buildOverview(configuration, await readState(), await localStores(), "syncing");
       return await runLocked(configuration, intent);
     });
 
@@ -405,8 +456,10 @@ export function createKnowledgeSyncService(options: {
         const nextIntent = requestedIntent;
         requestedIntent = "pull_only";
         result = await synchronizeOnce(nextIntent);
+        latestOverview = result;
       } while (rerun);
-      return result ?? unconfiguredOverview();
+      latestOverview = result ?? unconfiguredOverview();
+      return latestOverview;
     })().finally(() => {
       running = undefined;
     });
@@ -414,22 +467,7 @@ export function createKnowledgeSyncService(options: {
   };
 
   return {
-    async getOverview() {
-      const configuration = await readConfiguration();
-      if (configuration === undefined) return unconfiguredOverview();
-      return await withFileLock(lockPath, async () => {
-        const state = await readState();
-        const status =
-          transientStatus === "syncing"
-            ? "syncing"
-            : state.errorMessage !== undefined
-              ? "error"
-              : Object.keys(state.conflicts).length > 0
-                ? "conflict"
-                : transientStatus;
-        return await buildOverview(configuration, state, await localStores(), status);
-      });
-    },
+    getOverview,
     async configure(input) {
       const { initializationMode = "merge_and_publish", ...settings } = input;
       const configuration = KnowledgeSyncConfigurationSchema.parse({
@@ -449,12 +487,14 @@ export function createKnowledgeSyncService(options: {
           await writeState(emptyState(backupSourceKey(configuration)));
         }
         transientStatus = "syncing";
-        return await runLocked(
+        const overview = await runLocked(
           configuration,
           initializationMode === "restore_remote" ? "restore" : "full",
           head,
           provider,
         );
+        latestOverview = overview;
+        return overview;
       });
     },
     async removeConfiguration() {
@@ -466,6 +506,7 @@ export function createKnowledgeSyncService(options: {
         await rm(options.cacheRoot, { recursive: true, force: true });
       });
       transientStatus = "ready";
+      latestOverview = unconfiguredOverview();
     },
     sync: () => runSync("full"),
     refresh: () => runSync("pull_only"),
@@ -477,6 +518,7 @@ export function createKnowledgeSyncService(options: {
         () => {
           scheduled = undefined;
           void (async () => {
+            if (reason === "startup") await getOverview();
             const configuration = await readConfiguration();
             if (configuration === undefined || (isLocalPublish && !configuration.autoPush)) return;
             await runSync(isLocalPublish ? "full" : "pull_only");
@@ -492,8 +534,15 @@ export function createKnowledgeSyncService(options: {
         if (configuration === undefined) return unconfiguredOverview();
         const state = await readState();
         const conflict = state.conflicts[storeId];
-        if (conflict === undefined)
-          return await buildOverview(configuration, state, await localStores(), transientStatus);
+        if (conflict === undefined) {
+          latestOverview = await buildOverview(
+            configuration,
+            state,
+            await localStores(),
+            transientStatus,
+          );
+          return latestOverview;
+        }
         const provider = providerFor(configuration);
         const local = await localStores();
         const localStore = local.get(storeId);
@@ -568,7 +617,13 @@ export function createKnowledgeSyncService(options: {
         };
         await writeState(next);
         transientStatus = Object.keys(nextConflicts).length === 0 ? "ready" : "conflict";
-        return await buildOverview(configuration, next, await localStores(), transientStatus);
+        latestOverview = await buildOverview(
+          configuration,
+          next,
+          await localStores(),
+          transientStatus,
+        );
+        return latestOverview;
       });
     },
     async restoreIgnored(storeId) {

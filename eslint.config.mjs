@@ -35,7 +35,6 @@ const config = tseslint.config(
     ignores: [
       "**/dist/**",
       "**/out/**",
-      "**/.next/**",
       "**/coverage/**",
       "**/.plugin-bundles/**",
       "node_modules/**",
@@ -54,27 +53,6 @@ const config = tseslint.config(
         "error",
         {
           patterns: commonRestrictedPatterns,
-        },
-      ],
-    },
-  },
-  {
-    files: ["apps/web/**/*.{ts,tsx}"],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.es2023,
-      },
-    },
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: ["@pragma/core", "@pragma/evaluation", "@prisma/client"],
-          patterns: [
-            ...commonRestrictedPatterns,
-            { group: ["@pragma/server-*", "node:*"], message: "Web must stay browser-safe." },
-          ],
         },
       ],
     },
@@ -336,8 +314,6 @@ const config = tseslint.config(
   },
   {
     files: [
-      "apps/server/**/*.{ts,tsx}",
-      "apps/worker/**/*.{ts,tsx}",
       "packages/core/**/*.{ts,tsx}",
       "packages/evaluation/**/*.{ts,tsx}",
       "packages/interpreter/**/*.{ts,tsx}",
@@ -637,8 +613,6 @@ const config = tseslint.config(
       "packages/memory/**/*.{ts,tsx}",
       "packages/context-filesystem/**/*.{ts,tsx}",
       "packages/runtime/qodercli/**/*.{ts,tsx}",
-      "apps/server/**/*.{ts,tsx}",
-      "apps/worker/**/*.{ts,tsx}",
       "examples/**/*.{ts,tsx}",
     ],
     rules: {

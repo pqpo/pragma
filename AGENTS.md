@@ -19,9 +19,6 @@ Module System: ESM
 Lint: ESLint Flat Config
 Formatting: Prettier
 Test: Vitest
-Web: Next.js
-Server: Fastify
-Worker: Node.js + TypeScript
 ```
 
 所有新增 TypeScript 代码必须满足严格模式。所有 package 必须是 ESM。
@@ -30,10 +27,7 @@ Worker: Node.js + TypeScript
 
 ```text
 apps/
-  web/       Next.js Web 应用，页面与浏览器交互入口
-  server/    Fastify HTTP API 应用
-  worker/    Node Worker 应用
-  desktop/   未来 Desktop App，本地 Agent 桥接入口
+  desktop/   Electron Desktop App，本地 Agent 桥接入口
   cli/       用户手动安装的 Node CLI，argv/TTY/presenter 与 Host composition 入口
 
 packages/
@@ -51,8 +45,6 @@ docs/
   adr/          架构决策记录
   conventions/ 编码约定
 
-infra/
-  compose/      基础设施编排目录
 ```
 
 未来 Desktop 本地 Agent 桥接目录规划：
@@ -125,7 +117,6 @@ lib
 核心原则：
 
 - `shared` 是最底层协议、领域模型和纯工具，不依赖任何运行环境层。
-- `apps/web` 直接依赖 `shared` 的浏览器安全协议；仅供 Web 使用的 HTTP 调用留在 Web 内部。
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime 或应用层。
 - `evaluation` 是独立测评领域包，拥有 Evaluation 协议、Run Dry 执行器与结果模型；只依赖 `core`，不依赖 `interpreter` 或应用层。
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `evaluation` 和 `core`，但 `core` 与 `evaluation` 不得反向依赖 `interpreter`。
@@ -134,15 +125,12 @@ lib
 - Mission Board 是 `local-host` 内的 Mission-scoped 通用白板能力；其通用 binding 只依赖 `core` Context 合约，Host composition 才选择文件系统 adapter。
 - `context-filesystem` 是显式 Node/Host 文件系统 adapter 出口；Memory 不得依赖它。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
-- `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
-- `apps/desktop` 是未来本地 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。
+- `apps/desktop` 是本机 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。
+- 当前仓库不包含 Web、Server 或 Worker 应用；未来云端 Host 必须另行引入，并通过 `core` 与 `shared` 组合能力。
 - `local-host` 是 Node-only 本机 Host application layer，供 Desktop Main 与 CLI 复用；只依赖允许的领域包和 Node/运行时中立第三方库，不依赖 Electron、任意 app 或具体 runtime。
 - `apps/cli` 是用户主动调用的本机集成入口，负责 argv、TTY 与 presenter；它不监听云端、不启动 daemon、不替代 Desktop 本地桥接。
 
 ```text
-apps/web    -> shared
-apps/server -> core/shared
-apps/worker -> runtime-* -> core -> shared
 apps/cli    -> local-host -> shared/core/interpreter/evaluation/built-in-agents/memory/context-filesystem
 apps/desktop    -> built-in-agents -> interpreter -> core -> shared
 apps/desktop    -> interpreter -> evaluation -> core -> shared
@@ -156,9 +144,6 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 | 来源                       | 允许依赖                                                                                                                                                                                |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web`                 | `@pragma/shared`                                                                                                                                                                        |
-| `apps/server`              | `@pragma/shared`、`@pragma/core`                                                                                                                                                        |
-| `apps/worker`              | `@pragma/shared`、`@pragma/core`、具体 `@pragma/runtime-*`                                                                                                                              |
 | `apps/cli`                 | `@pragma/local-host`、`@pragma/shared/integration`、composition root 所需的具体 `@pragma/runtime-*`                                                                                     |
 | `apps/desktop`             | `@pragma/shared`、`@pragma/core`、`@pragma/memory`、`@pragma/evaluation`、`@pragma/interpreter`、`@pragma/built-in-agents`、具体 `@pragma/runtime-*`                                    |
 | `packages/local-host`      | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/evaluation`、`@pragma/built-in-agents`、`@pragma/memory`、`@pragma/context-filesystem`；Node 内置与运行时中立第三方库 |
@@ -233,7 +218,7 @@ built-in-agents -> app
 built-in-agents -> runtime-*
 ```
 
-这里的 `core` 指专家 Agent 的执行抽象、Invocation、Runtime Adapter 合约和公共运行协议。DSL AST、Manifest 解析和对象编译属于 `@pragma/interpreter`。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖 `interpreter`、具体 runtime、Web 或 Server 应用层。
+这里的 `core` 指专家 Agent 的执行抽象、Invocation、Runtime Adapter 合约和公共运行协议。DSL AST、Manifest 解析和对象编译属于 `@pragma/interpreter`。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Desktop、CLI 或未来 Host 应用入口按需装配；不要让 `core` 依赖 `interpreter`、具体 runtime 或应用层。
 
 所有跨 package 依赖必须使用 package import：
 
@@ -318,26 +303,24 @@ next
 fastify
 ```
 
-`apps/web` 必须保持浏览器安全，不允许访问数据库、Agent、Node 内置模块。
+`packages/core` 是 Node-only，不允许依赖 React 页面或 UI 包。
 
-`apps/server` 和 `packages/core` 是 Node-only，不允许依赖 React、Next 页面或 UI 包。
+Host 与 Agent 的关系：
 
-Server 与 Agent 的关系：
-
-- Server/Worker 负责接收请求、创建运行、权限校验、调度 Playbook、记录 Trace、管理成本和治理流程。
+- Host 负责接收任务、创建运行、权限校验、调度 DSL 资源、记录执行事实，并管理成本和治理流程。
 - Core 负责定义专家能力、输入输出协议、Invocation、Runtime Adapter 合约，以及默认云端沙箱执行抽象。
 - Core 通过可选 `UsageSink` 发出逐 Runtime turn 的 token observation，但不持久化跨 Execution
-  的统计账本；Desktop/Server 等 Host 负责统计持久化、保留和查询策略。
+  的统计账本；Desktop、CLI 或未来云端 Host 负责统计持久化、保留和查询策略。
 - 所有 Token 数量预估必须调用 `@pragma/core` 导出的统一 `RuntimeTokenCounter`。具体 Runtime、
-  Desktop、Server、Worker 或插件不得自行实现 chars/token、bytes/token、CJK 修正或其他 Token
+  Desktop、CLI 或插件不得自行实现 chars/token、bytes/token、CJK 修正或其他 Token
   估算算法。Runtime 提供精确上报时必须优先采用上报值；只有缺少上报时才能调用统一计数器。
 - 结构化消息的供应商协议序列化留在具体 Runtime，序列化后的文本统一交给
   `RuntimeTokenCounter`。统一 fallback 在 Core 中懒加载应用内安装的 tokenizer；不得把词表复制到
   Runtime package，不得从 CDN 下载并执行远程代码，也不得要求终端用户配置 tokenizer 环境变量。
 - 新 Runtime 必须测试 Runtime 上报优先级和统一 Token 估算 fallback。代码评审发现新的 Runtime
   本地 Token 估算器时，按架构边界违规处理。
-- Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
-- 本地 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
+- Host 可以调用 Core；Core 不得反向依赖 Desktop、CLI 或未来 Host 应用层。
+- 本地 Claude Code、Codex、Qoder CLI、Antigravity CLI、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接；Host 调用 Core，Core 不依赖 Host。
 
 本地存储边界：
 
@@ -406,7 +389,7 @@ Server 与 Agent 的关系：
 推荐链路：
 
 ```text
-Cloud Server / Worker
+Future Cloud Host
 → Runtime Gateway
 → 双向安全连接
 → Desktop App
@@ -447,13 +430,13 @@ Desktop App 职责：
 packages/core/src/local-agent-bridge
 ```
 
-云端会话和任务下发能力应放在：
+未来云端 Host 的会话和任务下发能力规划放在：
 
 ```text
 apps/server/src/runtime-gateway
 ```
 
-Desktop App 自身未来放在：
+当前 Desktop App 位于：
 
 ```text
 apps/desktop
@@ -462,83 +445,6 @@ apps/desktop
 新增这些目录前必须先补 ADR、边界规则和最小可验证实现方案。
 
 ## 各目录职责
-
-### `apps/web`
-
-职责：
-
-- 页面与路由。
-- 浏览器状态。
-- 调用应用内 HTTP client，并用 `@pragma/shared` Schema 校验响应。
-- 展示 API 数据。
-- 为每个页面提供完整的多语言支持，包括 Home 页面；禁止新增仅支持单一语言的页面。
-
-允许依赖：
-
-```text
-@pragma/shared
-```
-
-禁止依赖：
-
-```text
-@pragma/core
-node:*
-@prisma/client
-服务端 Repository
-```
-
-### `apps/server`
-
-职责：
-
-- HTTP API。
-- 健康检查。
-- 输入校验。
-- 后续承载鉴权、元数据、任务创建、Playbook 运行创建、专家 Agent 调度入口。
-
-允许依赖：
-
-```text
-@pragma/shared
-@pragma/core
-```
-
-禁止依赖：
-
-```text
-React / Next / Web UI 包
-```
-
-当前 API：
-
-```text
-GET /health
-```
-
-返回：
-
-```json
-{
-  "service": "server",
-  "status": "ok"
-}
-```
-
-### `apps/worker`
-
-职责：
-
-- 异步任务进程入口。
-- 后续承载 Agent、Playbook、Runtime、评测执行。
-
-启动后输出：
-
-```text
-Pragma Worker Ready
-```
-
-暂不接队列。
 
 ### `apps/desktop`
 
@@ -816,37 +722,6 @@ pnpm install
 pnpm -r list
 ```
 
-启动 Server：
-
-```bash
-pnpm --filter @pragma/server-app dev
-```
-
-验证 Server：
-
-```bash
-curl http://localhost:3001/health
-```
-
-启动 Web：
-
-```bash
-pnpm --filter @pragma/web dev
-```
-
-访问：
-
-```text
-http://localhost:3000
-```
-
-页面应显示：
-
-```text
-Pragma Web Ready
-Server health: ok
-```
-
 启动 Desktop：
 
 ```bash
@@ -867,18 +742,6 @@ pnpm --filter @pragma/desktop dev
 并为每项保留代码、自动测试和真实 Runtime smoke 证据；配置落盘或 mock 成功不能单独证明 capability 可用。
 
 > **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。Desktop 的 `predev` 会通过 `prepare:electron` 调用 `install-electron`，避免新成员首次 `dev` 时遇到缺失二进制的错误。
-
-启动 Worker：
-
-```bash
-pnpm --filter @pragma/worker dev
-```
-
-应输出：
-
-```text
-Pragma Worker Ready
-```
 
 常用质量命令：
 
@@ -927,7 +790,7 @@ eslint.config.mjs
 以下非法 import 必须被拦截：
 
 ```ts
-// apps/web 中禁止
+// Desktop renderer 中禁止
 import "@pragma/core";
 
 // packages/shared 中禁止
@@ -944,7 +807,7 @@ import "@pragma/interpreter";
 
 ```bash
 printf 'import "@pragma/core";\n' \
-  | pnpm exec eslint --stdin --stdin-filename apps/web/src/illegal.ts
+  | pnpm exec eslint --stdin --stdin-filename apps/desktop/src/renderer/src/illegal.ts
 ```
 
 ## 开发流程
@@ -1024,18 +887,13 @@ docs/conventions/coding-conventions.md
 
 应用：
 
-- Web 可启动。
-- Server 可启动并提供 `/health`。
-- Worker 可启动。
-- Web 可调用 Server `/health` 并展示 `status=ok`。
+- Desktop 与 CLI 使用共享 Local Host 能力。
 
 边界：
 
 - `shared` 不依赖内部运行环境包。
-- `client` 不依赖 `server` / `core`。
-- `server` 不依赖 `client`，但可在调度场景依赖 `core` 抽象。
-- `core` 不依赖 `client` / `server` / Web。
-- `web` 不依赖 `server` / `core`。
+- Desktop preload、renderer 与 shared 代码保持浏览器安全。
+- `core` 不依赖应用层、Web UI 或具体 Runtime。
 - 跨 package 不使用相对路径。
 - `shared` 不导入 Node、React、Prisma、Fastify。
 

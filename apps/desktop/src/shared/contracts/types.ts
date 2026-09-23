@@ -115,7 +115,6 @@ import {
   DeleteContextStoreRevisionRecordSchema,
   DeleteContextStoreSchema,
   ContextStoreMissionMountCheckSchema,
-  ContextStoreMissionMountCheckResultSchema,
   ExpertContextStoreMountSchema,
   GetContextStoreContentSchema,
   InspectContextStoreImportSchema,

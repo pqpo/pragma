@@ -17,7 +17,7 @@
 
 ## 定位结果
 
-用户描述中的 `apps/web/` 与当前仓库不符：该目录只有健康检查首页，没有 Mission 详情页或 `chat / work / memory` 标签。实际实现位于 Desktop renderer：
+分析当时，用户描述中的 `apps/web/` 只有健康检查首页，没有 Mission 详情页或 `chat / work / memory` 标签。该 Web 样板随后已从仓库移除。实际实现位于 Desktop renderer：
 
 - `apps/desktop/src/renderer/src/pages/missions/MissionsPage.tsx`
   - `MissionDetailFragment`：约第 966 行。
@@ -28,7 +28,7 @@
 - `apps/desktop/src/renderer/src/styles.css`
   - `.mission-chat-shell` / `.mission-chat-scroll`：约第 18843–18860 行。
 
-当前 `apps/web` 不是本问题的修改点。若产品确实还有另一套 Web Mission 页面，需要提供对应分支或目录后重新定位。
+该分析针对 Desktop renderer，不包含另一套 Web Mission 页面。
 
 ## 根因与触发链路
 

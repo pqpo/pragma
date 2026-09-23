@@ -4,8 +4,6 @@ node_modules
 .codex/tmp/
 dist
 out
-.next
-next-env.d.ts
 coverage
 .turbo
 .plugin-bundles
