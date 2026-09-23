@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFileExecutionStore,
+  EXECUTION_OUTPUT_HISTORY_MAX_CHARACTERS,
+  EXECUTION_OUTPUT_HISTORY_MAX_ITEMS,
   ExecutionWorkHistoryReader,
   ExecutionFinalStatusConflictError,
   getExecutionLiveBus,
@@ -168,6 +170,193 @@ describe("Execution canonical event log", { timeout: 30_000 }, () => {
       value: { sourceEventId: "early-output", delta: "already emitted" },
     });
     await subscription.close();
+  });
+
+  it("bounds replayable output history while preserving the newest live tail", async () => {
+    const { store } = await fixture();
+    const bus = getExecutionLiveBus(store);
+    const occurredAt = new Date().toISOString();
+    for (let index = 0; index < EXECUTION_OUTPUT_HISTORY_MAX_ITEMS + 2; index += 1) {
+      bus.publish("execution", {
+        sourceEventId: `output-${index}`,
+        executionId: "execution",
+        invocationId: "root",
+        contextId: "root-context",
+        runId: "root-run",
+        source: { kind: "agent", runId: "root-run", path: [] },
+        channel: "message",
+        delta: "x",
+        occurredAt,
+      });
+    }
+
+    const subscription = bus.subscribe("execution");
+    const iterator = subscription[Symbol.asyncIterator]();
+    const replayed: Array<string | undefined> = [];
+    for (let index = 0; index < EXECUTION_OUTPUT_HISTORY_MAX_ITEMS; index += 1) {
+      replayed.push((await iterator.next()).value?.sourceEventId);
+    }
+    await subscription.close();
+
+    expect(replayed).toHaveLength(EXECUTION_OUTPUT_HISTORY_MAX_ITEMS);
+    expect(replayed[0]).toBe("output-2");
+    expect(replayed.at(-1)).toBe(`output-${EXECUTION_OUTPUT_HISTORY_MAX_ITEMS + 1}`);
+  });
+
+  it("does not retain output beyond the replay character budget", async () => {
+    const { store } = await fixture();
+    const bus = getExecutionLiveBus(store);
+    const occurredAt = new Date().toISOString();
+    const delta = "x".repeat(Math.floor(EXECUTION_OUTPUT_HISTORY_MAX_CHARACTERS / 2) + 1);
+    for (const sourceEventId of ["oversized-budget-first", "oversized-budget-second"]) {
+      bus.publish("execution", {
+        sourceEventId,
+        executionId: "execution",
+        invocationId: "root",
+        contextId: "root-context",
+        runId: "root-run",
+        source: { kind: "agent", runId: "root-run", path: [] },
+        channel: "message",
+        delta,
+        occurredAt,
+      });
+    }
+
+    const subscription = bus.subscribe("execution");
+    const iterator = subscription[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { sourceEventId: "oversized-budget-second" },
+    });
+    await subscription.close();
+  });
+
+  it("filters output by Invocation, source, and channel before replay and live delivery", async () => {
+    const { store } = await fixture();
+    const now = new Date().toISOString();
+    const bus = getExecutionLiveBus(store);
+    const output = (
+      sourceEventId: string,
+      invocationId: string,
+      channel: "message" | "thought",
+      source: { readonly sessionId?: string; readonly parentSessionId?: string } = {},
+    ) => ({
+      sourceEventId,
+      executionId: "execution",
+      invocationId,
+      contextId: `${invocationId}-context`,
+      runId: `${invocationId}-run`,
+      source: {
+        kind: "agent" as const,
+        runId: `${invocationId}-run`,
+        path: [],
+        ...source,
+      },
+      channel,
+      delta: sourceEventId,
+      occurredAt: now,
+    });
+    bus.publish("execution", output("root-message", "root", "message"));
+    bus.publish(
+      "execution",
+      output("nested-message", "root", "message", {
+        sessionId: "nested",
+        parentSessionId: "root-session",
+      }),
+    );
+    bus.publish("execution", output("root-thought", "root", "thought"));
+
+    const view = new StoredExecutionView("execution", store);
+    const subscription = await view.subscribeOutput({
+      scope: { kind: "root" },
+      sourceScope: { kind: "root" },
+      channels: ["message"],
+    });
+    const iterator = subscription[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { sourceEventId: "root-message" },
+    });
+    bus.publish("execution", output("live-root", "root", "message"));
+    bus.publish(
+      "execution",
+      output("live-nested", "root", "message", {
+        sessionId: "nested",
+        parentSessionId: "root-session",
+      }),
+    );
+    await expect(iterator.next()).resolves.toMatchObject({ value: { sourceEventId: "live-root" } });
+    await subscription.close();
+
+    const sessionSubscription = await view.subscribeOutput({
+      scope: { kind: "root" },
+      sourceScope: { kind: "session", sessionId: "nested" },
+      channels: ["message"],
+    });
+    await expect(sessionSubscription[Symbol.asyncIterator]().next()).resolves.toMatchObject({
+      value: { sourceEventId: "nested-message" },
+    });
+    await sessionSubscription.close();
+  });
+
+  it("closes an output subscription when execution state is already terminal", async () => {
+    const { store } = await fixture();
+    const originalGet = store.get.bind(store);
+    vi.spyOn(store, "get").mockImplementation(async (executionId) => {
+      const state = await originalGet(executionId);
+      return state === undefined ? undefined : { ...state, status: "succeeded" };
+    });
+
+    const subscription = await new StoredExecutionView("execution", store).subscribeOutput();
+    await expect(subscription[Symbol.asyncIterator]().next()).resolves.toEqual({
+      done: true,
+      value: undefined,
+    });
+  });
+
+  it("does not lose final output when execution completes during the first state read", async () => {
+    const { store } = await fixture();
+    const originalGet = store.get.bind(store);
+    let releaseFirstRead = (): void => undefined;
+    const firstReadCanFinish = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let markFirstReadStarted = (): void => undefined;
+    const firstReadStarted = new Promise<void>((resolve) => {
+      markFirstReadStarted = resolve;
+    });
+    let reads = 0;
+    vi.spyOn(store, "get").mockImplementation(async (executionId) => {
+      reads += 1;
+      if (reads === 1) {
+        markFirstReadStarted();
+        await firstReadCanFinish;
+      }
+      return await originalGet(executionId);
+    });
+
+    const view = new StoredExecutionView("execution", store);
+    const subscribing = view.subscribeOutput();
+    await firstReadStarted;
+    const bus = getExecutionLiveBus(store);
+    bus.publish("execution", {
+      sourceEventId: "final-output",
+      executionId: "execution",
+      invocationId: "root",
+      contextId: "root-context",
+      runId: "root-run",
+      source: { kind: "agent", runId: "root-run", path: [] },
+      channel: "message",
+      delta: "finished",
+      occurredAt: new Date().toISOString(),
+    });
+    bus.complete("execution");
+    releaseFirstRead();
+
+    const subscription = await subscribing;
+    const iterator = subscription[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { sourceEventId: "final-output", delta: "finished" },
+    });
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
   });
 
   it("commits state, Invocation changes, and events atomically and idempotently", async () => {

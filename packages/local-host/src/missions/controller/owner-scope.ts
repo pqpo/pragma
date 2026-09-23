@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
+import { FileLockTimeoutError } from "@pragma/core";
 import { createIntegrationError } from "@pragma/shared/integration";
 
 import type {
@@ -73,6 +74,7 @@ export function createMissionOwnerScope(options: {
     string,
     {
       guard: MissionControllerGuard;
+      leaseExpiresAt: number;
       timer?: ReturnType<typeof setTimeout> | undefined;
       stopped: boolean;
       leaseLossNotified: boolean;
@@ -184,19 +186,32 @@ export function createMissionOwnerScope(options: {
   const renew = async (missionId: string): Promise<void> => {
     const current = active.get(missionId);
     if (current === undefined || current.stopped) return;
-    try {
-      const renewed = await options.controller.renew({
-        missionId,
-        guard: current.guard,
-        leaseMs,
-      });
-      if (active.get(missionId) !== current || current.stopped) return;
-      current.guard = { claimId: renewed.claimId, fencingToken: renewed.fencingToken };
-      scheduleRenewal(missionId);
-    } catch {
-      await stopWithoutCallback(missionId, true);
-      await notifyLeaseLost(missionId, current);
+    while (active.get(missionId) === current && !current.stopped) {
+      if (Date.now() >= current.leaseExpiresAt) break;
+      try {
+        const renewed = await options.controller.renew({
+          missionId,
+          guard: current.guard,
+          leaseMs,
+        });
+        if (active.get(missionId) !== current || current.stopped) return;
+        current.guard = { claimId: renewed.claimId, fencingToken: renewed.fencingToken };
+        current.leaseExpiresAt = Date.parse(renewed.expiresAt);
+        scheduleRenewal(missionId);
+        return;
+      } catch (error) {
+        if (!(error instanceof FileLockTimeoutError)) break;
+        const remainingMs = current.leaseExpiresAt - Date.now();
+        if (remainingMs <= 0) break;
+        await new Promise<void>((resolve) => {
+          const retry = setTimeout(resolve, Math.min(500, remainingMs));
+          retry.unref();
+        });
+      }
     }
+    if (active.get(missionId) !== current || current.stopped) return;
+    await stopWithoutCallback(missionId, true);
+    await notifyLeaseLost(missionId, current);
   };
 
   const startPolling = async (input: {
@@ -308,7 +323,12 @@ export function createMissionOwnerScope(options: {
           await options.controller.release({ missionId, guard }).catch(() => undefined);
           throw error;
         }
-        const current = { guard, stopped: false, leaseLossNotified: false };
+        const current = {
+          guard,
+          leaseExpiresAt: Date.parse(grant.expiresAt),
+          stopped: false,
+          leaseLossNotified: false,
+        };
         active.set(missionId, current);
         scheduleRenewal(missionId);
         if (boundConsumer !== undefined) {

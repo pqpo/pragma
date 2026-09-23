@@ -21,6 +21,9 @@ import {
   DiscardMissionAttachmentDraftsSchema,
   GetMissionChatPageSchema,
   GetMissionWorkConversationSchema,
+  OpenMissionWorkConversationStreamSchema,
+  OpenMissionWorkConversationStreamResultSchema,
+  CloseMissionWorkConversationStreamSchema,
   MissionActionSchema,
   MissionExecutionActionSchema,
   MissionChatPageSchema,
@@ -40,6 +43,7 @@ import {
   MissionStatusUpdateSchema,
   MissionUpdateSchema,
   MissionWorkConversationSnapshotSchema,
+  MissionWorkConversationStreamUpdateSchema,
   MissionWorkSnapshotSchema,
   MissionWorkUpdateSchema,
   RespondMissionHumanInteractionSchema,
@@ -276,6 +280,26 @@ export const missionsApi = {
         GetMissionWorkConversationSchema.parse(input),
       ),
     ),
+  openMissionWorkConversationStream: async (input) =>
+    OpenMissionWorkConversationStreamResultSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:work:conversation:stream:open",
+        OpenMissionWorkConversationStreamSchema.parse(input),
+      ),
+    ),
+  closeMissionWorkConversationStream: async (input) => {
+    await ipcRenderer.invoke(
+      "missions:work:conversation:stream:close",
+      CloseMissionWorkConversationStreamSchema.parse(input),
+    );
+  },
+  subscribeMissionWorkConversationUpdates: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(MissionWorkConversationStreamUpdateSchema.parse(value));
+    };
+    ipcRenderer.on("missions:work:conversation:stream:updated", handler);
+    return () => ipcRenderer.removeListener("missions:work:conversation:stream:updated", handler);
+  },
   subscribeMissionWork: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);
     const handler = (_event: IpcRendererEvent, value: unknown) => {
@@ -349,6 +373,9 @@ export const missionsApi = {
   | "resumeMissionQueue"
   | "getMissionWork"
   | "getMissionWorkConversation"
+  | "openMissionWorkConversationStream"
+  | "closeMissionWorkConversationStream"
+  | "subscribeMissionWorkConversationUpdates"
   | "subscribeMissionWork"
   | "deleteMission"
   | "listMissionHumanInteractions"

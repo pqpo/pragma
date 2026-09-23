@@ -516,6 +516,15 @@ export const GetMissionWorkConversationSchema = z.object({
   beforeCursor: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).default(100),
 });
+export const OpenMissionWorkConversationStreamSchema = z.object({
+  subscriptionId: z.string().uuid(),
+  missionId: MissionIdSchema,
+  recordId: z.string().min(1),
+  limit: z.number().int().min(1).max(200).default(100),
+});
+export const CloseMissionWorkConversationStreamSchema = z.object({
+  subscriptionId: z.string().uuid(),
+});
 export const SendMissionMessageSchema = z.object({
   id: MissionIdSchema,
   content: z.string().trim().min(1).max(100_000),
@@ -678,6 +687,12 @@ export const MissionWorkConversationSnapshotSchema = z.object({
   revision: z.number().int().nonnegative(),
   entries: z.array(MissionChatEntrySchema),
   nextBeforeCursor: z.string().min(1).optional(),
+});
+
+export const OpenMissionWorkConversationStreamResultSchema = z.object({
+  subscriptionId: z.string().uuid(),
+  streamId: z.string().uuid(),
+  snapshot: MissionWorkConversationSnapshotSchema,
 });
 
 export const MissionWorkUpdateSchema = z.object({
@@ -854,6 +869,26 @@ export const MissionChatUpdateSchema = z.discriminatedUnion("kind", [
   MissionChatUpdateBaseSchema.extend({
     kind: z.literal("invalidate"),
     userVisibleOutput: z.literal(true).optional(),
+  }),
+]);
+
+export const MissionWorkConversationStreamUpdateSchema = z.discriminatedUnion("kind", [
+  z.object({
+    subscriptionId: z.string().uuid(),
+    streamId: z.string().uuid(),
+    sequence: z.number().int().positive(),
+    missionId: MissionIdSchema,
+    recordId: z.string().min(1),
+    kind: z.literal("patch"),
+    patches: z.array(MissionChatPatchSchema).min(1),
+  }),
+  z.object({
+    subscriptionId: z.string().uuid(),
+    streamId: z.string().uuid(),
+    sequence: z.number().int().positive(),
+    missionId: MissionIdSchema,
+    recordId: z.string().min(1),
+    kind: z.literal("invalidate"),
   }),
 ]);
 

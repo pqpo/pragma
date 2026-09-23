@@ -55,6 +55,7 @@ import {
   type RuntimeResolver,
   type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
+  type SubscribeOutputOptions,
 } from "@pragma/core";
 import {
   FileSystemContextStore,
@@ -113,9 +114,12 @@ import {
   type MissionHumanInteraction,
   type MissionModelOverride,
   type MissionWorkConversationSnapshot,
+  type MissionWorkConversationStreamUpdate,
   type MissionWorkRecord,
   type MissionWorkSnapshot,
   type GetMissionWorkConversation,
+  type OpenMissionWorkConversationStream,
+  type OpenMissionWorkConversationStreamResult,
   type DesktopToolPermissionMode,
   type UpdateMissionOptions,
   type UpdateMissionContextMounts,
@@ -162,6 +166,10 @@ import { MissionLifecycleService } from "./mission-lifecycle-service.ts";
 import { MissionCommandService } from "./mission-command-service.ts";
 import { MissionSessionService } from "./mission-session-service.ts";
 import { MissionStatusService } from "./mission-status-service.ts";
+import {
+  createMissionOutputCoalescer,
+  type MissionOutputCoalescer,
+} from "./mission-output-coalescer.ts";
 import { MISSION_EXECUTION_PROJECTION_ORDERING_VERSION } from "./mission-execution-projection.ts";
 import {
   hasMissionDeletionIntent,
@@ -181,6 +189,7 @@ import type {
   MissionMessageApplicationResult,
   MissionRunner,
   MissionSurfaceAudience,
+  MissionWorkConversationStreamNotification,
 } from "./mission-runner-contracts.ts";
 
 async function collectMissionExecutionIds(
@@ -253,6 +262,39 @@ export interface LiveMissionChat {
     readonly occurredAt: string;
   };
   close: () => Promise<void>;
+}
+
+interface MissionWorkConversationStreamSubscriber {
+  readonly subscriptionId: string;
+  readonly streamId: string;
+  readonly missionId: string;
+  readonly recordId: string;
+  sequence: number;
+  pendingUpdates:
+    | Array<{
+        readonly overlayRevision: number;
+        readonly update: MissionWorkConversationUpdatePayload;
+      }>
+    | undefined;
+}
+
+type MissionWorkConversationUpdatePayload =
+  | { readonly kind: "patch"; readonly patches: MissionChatPatch[] }
+  | { readonly kind: "invalidate" };
+
+interface MissionWorkConversationOverlay {
+  readonly missionId: string;
+  readonly recordId: string;
+  readonly live: LiveMissionChat;
+  revision: number;
+}
+
+interface MissionWorkConversationWatcher {
+  readonly key: string;
+  readonly overlay: MissionWorkConversationOverlay;
+  readonly live: LiveMissionChat;
+  readonly subscribers: Map<string, MissionWorkConversationStreamSubscriber>;
+  close(): Promise<void>;
 }
 
 type ExecutorNameResolver = (executorId: string) => string | undefined;
@@ -968,6 +1010,54 @@ export function createMissionRunner(options: {
       { missionId },
     );
   });
+  const workConversationStreamListeners = new Set<
+    (notification: MissionWorkConversationStreamNotification) => void
+  >();
+  const workConversationStreams = new Map<
+    string,
+    {
+      readonly missionId: string;
+      readonly streamId: string;
+      readonly watcher?: MissionWorkConversationWatcher | undefined;
+    }
+  >();
+  const workConversationWatchers = new Map<string, MissionWorkConversationWatcher>();
+  const workConversationWatcherPromises = new Map<
+    string,
+    Promise<MissionWorkConversationWatcher>
+  >();
+  // The reader, initial stream snapshot, refresh, and Load Earlier all resolve this same active
+  // overlay so one cursor never crosses two different entry sets.
+  const workConversationOverlays = new Map<string, MissionWorkConversationOverlay>();
+  const workConversationOverlayKey = (missionId: string, recordId: string): string =>
+    JSON.stringify([missionId, recordId]);
+  const emitWorkConversationStreamUpdate = (update: MissionWorkConversationStreamUpdate): void => {
+    for (const listener of workConversationStreamListeners) {
+      try {
+        listener({ update });
+      } catch (error) {
+        logger.error(
+          "mission.work_conversation_listener_failed",
+          `Failed to notify Mission work conversation listeners for ${update.missionId}.`,
+          error,
+          { missionId: update.missionId, recordId: update.recordId },
+        );
+      }
+    }
+  };
+  const emitWorkConversationSubscriberUpdate = (
+    subscriber: MissionWorkConversationStreamSubscriber,
+    update: MissionWorkConversationUpdatePayload,
+  ): void => {
+    emitWorkConversationStreamUpdate({
+      subscriptionId: subscriber.subscriptionId,
+      streamId: subscriber.streamId,
+      sequence: ++subscriber.sequence,
+      missionId: subscriber.missionId,
+      recordId: subscriber.recordId,
+      ...update,
+    });
+  };
   const statusService =
     options.missionStatus ??
     new MissionStatusService(({ error, missionId }) => {
@@ -1971,6 +2061,7 @@ export function createMissionRunner(options: {
         }
       },
       () => invalidateChat(missionId, audience),
+      () => invalidateWork(missionId, audience),
       humanWaitingObserver.onEvent,
       humanWaitingObserver.resync,
       (channel, error) => {
@@ -2022,6 +2113,19 @@ export function createMissionRunner(options: {
       },
       resolveExecutorName,
       resolveExecutorAvatarId,
+      {
+        outputSubscription:
+          input.mission.executor.kind === "team"
+            ? { scope: { kind: "root" }, sourceScope: { kind: "root" } }
+            : { scope: { kind: "all" } },
+        onOutputStats: (stats) => {
+          logger.info("mission.output_coalescing", "Mission live output coalescing completed.", {
+            missionId,
+            executionId: input.handle.executionId,
+            ...stats,
+          });
+        },
+      },
     );
     const replacedLive = chatService.setLive(missionId, live);
     if (replacedLive !== undefined && replacedLive !== live) {
@@ -3292,6 +3396,7 @@ export function createMissionRunner(options: {
       query: input,
       executionStore,
       missions: options.missions,
+      rootOnly: mission.executor.kind === "team",
       ...(capturedLive === undefined ? {} : { activeChat: capturedLive }),
       ...(mission.branch === undefined
         ? {}
@@ -3410,21 +3515,23 @@ export function createMissionRunner(options: {
     let pendingInteractions: MissionHumanInteraction[] = [];
     if (projectedExecutionActive && effectiveExecutionStatus === "waiting") {
       const cachedInteractions = pendingHumanInteractionsByMission.get(id);
-      if (
-        cachedInteractions !== undefined &&
-        cachedInteractions.executionId === latestMission.execution?.id
-      ) {
-        pendingInteractions = [...cachedInteractions.interactions];
-      } else {
-        try {
-          pendingInteractions = [...(await listMissionPendingHumanInteractions(latestMission))];
-          if (latestMission.execution !== undefined) {
-            pendingHumanInteractionsByMission.set(id, {
-              executionId: latestMission.execution.id,
-              interactions: [...pendingInteractions],
-            });
-          }
-        } catch {
+      try {
+        // Execution events are authoritative. The observer cache can briefly contain the empty
+        // seed snapshot after another path has already projected the Mission as waiting.
+        pendingInteractions = [...(await listMissionPendingHumanInteractions(latestMission))];
+        if (latestMission.execution !== undefined) {
+          pendingHumanInteractionsByMission.set(id, {
+            executionId: latestMission.execution.id,
+            interactions: [...pendingInteractions],
+          });
+        }
+      } catch {
+        if (
+          cachedInteractions !== undefined &&
+          cachedInteractions.executionId === latestMission.execution?.id
+        ) {
+          pendingInteractions = [...cachedInteractions.interactions];
+        } else {
           syncIssues.push(missionChatSyncIssue("pending_interactions"));
         }
       }
@@ -4666,9 +4773,13 @@ export function createMissionRunner(options: {
     return projection.snapshot;
   };
 
-  const getWorkConversation = async (
+  const readWorkConversation = async (
     input: GetMissionWorkConversation,
-  ): Promise<MissionWorkConversationSnapshot> => {
+  ): Promise<{
+    readonly snapshot: MissionWorkConversationSnapshot;
+    readonly overlay?: MissionWorkConversationOverlay | undefined;
+    readonly overlayRevision: number;
+  }> => {
     const t0 = performance.now();
     let mission = await options.missions.get(input.id);
     await awaitTerminalLifecycleSettlement(mission);
@@ -4678,7 +4789,14 @@ export function createMissionRunner(options: {
     if (durableEntries === undefined) {
       throw new Error(`Mission work record not found: ${input.recordId}`);
     }
-    const liveEntries = workService.live(mission.id, input.recordId)?.entries ?? [];
+    const overlay = workConversationOverlays.get(
+      workConversationOverlayKey(mission.id, input.recordId),
+    );
+    const overlayRevision = overlay?.revision ?? 0;
+    const liveEntries = uniqueMissionChatEntries([
+      ...(workService.live(mission.id, input.recordId)?.entries ?? []),
+      ...(overlay?.live.entries ?? []),
+    ]);
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();
     for (const entry of durableEntries) {
@@ -4714,12 +4832,244 @@ export function createMissionRunner(options: {
       },
     );
     return {
-      missionId: mission.id,
-      recordId: input.recordId,
-      revision: workService.revision(mission.id),
-      entries: entries.slice(start, end),
-      ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
+      snapshot: {
+        missionId: mission.id,
+        recordId: input.recordId,
+        revision: workService.revision(mission.id),
+        entries: entries.slice(start, end),
+        ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
+      },
+      ...(overlay === undefined ? {} : { overlay }),
+      overlayRevision,
     };
+  };
+
+  const getWorkConversation = async (
+    input: GetMissionWorkConversation,
+  ): Promise<MissionWorkConversationSnapshot> => (await readWorkConversation(input)).snapshot;
+
+  const closeWorkConversationStream = async (subscriptionId: string): Promise<void> => {
+    const stream = workConversationStreams.get(subscriptionId);
+    if (stream === undefined) return;
+    workConversationStreams.delete(subscriptionId);
+    const watcher = stream.watcher;
+    if (watcher === undefined) return;
+    watcher.subscribers.delete(subscriptionId);
+    if (watcher.subscribers.size > 0) return;
+    workConversationWatchers.delete(watcher.key);
+    workConversationWatcherPromises.delete(watcher.key);
+    await watcher.close();
+  };
+
+  const createWorkConversationWatcher = async (input: {
+    readonly key: string;
+    readonly mission: Mission;
+    readonly record: MissionWorkRecord;
+    readonly task: MissionWorkRecord["tasks"][number];
+  }): Promise<MissionWorkConversationWatcher> => {
+    const metadata = await getExecutorMetadataOrFallback(input.mission, "work");
+    const subscription = await new StoredExecutionView(
+      input.task.executionId,
+      executionStore,
+    ).subscribeOutput({
+      scope: { kind: "invocation", invocationId: input.task.invocationId },
+      sourceScope:
+        input.record.kind === "runtime-agent"
+          ? { kind: "session", sessionId: input.record.sessionId }
+          : { kind: "root" },
+      // The latest durable message is written only when a Runtime message completes. Replaying
+      // the bounded in-memory output history is therefore required when the drawer opens after a
+      // thought, tool call, or message has already started. The watcher projection uses the same
+      // stable entry ids as the durable projection, so the opening snapshot can de-duplicate both.
+      replay: "history",
+    });
+    const live: LiveMissionChat = {
+      executionId: input.task.executionId,
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+    };
+    const overlay: MissionWorkConversationOverlay = {
+      missionId: input.mission.id,
+      recordId: input.record.recordId,
+      live,
+      revision: 0,
+    };
+    const subscribers = new Map<string, MissionWorkConversationStreamSubscriber>();
+    let closed = false;
+    const emitToSubscribers = (update: MissionWorkConversationUpdatePayload): void => {
+      const overlayRevision = ++overlay.revision;
+      for (const subscriber of subscribers.values()) {
+        if (subscriber.pendingUpdates !== undefined) {
+          subscriber.pendingUpdates.push({ overlayRevision, update });
+        } else {
+          emitWorkConversationSubscriberUpdate(subscriber, update);
+        }
+      }
+    };
+    const coalescer = createMissionOutputCoalescer({
+      emit: (item) => {
+        const patches = consumeLiveChatOutput(live, item, {
+          includeNestedSource: input.record.kind === "runtime-agent",
+          resolveExecutorName: createMissionExecutorNameResolver(input.mission, metadata.names),
+          resolveExecutorAvatarId: createMissionExecutorAvatarIdResolver(metadata.avatarIds),
+        });
+        if (!closed && patches.length > 0) emitToSubscribers({ kind: "patch", patches });
+      },
+    });
+    const watcher: MissionWorkConversationWatcher = {
+      key: input.key,
+      overlay,
+      live,
+      subscribers,
+      close: async () => {
+        if (closed) return;
+        closed = true;
+        coalescer.close();
+        await subscription.close();
+        await outputTask;
+      },
+    };
+    workConversationWatchers.set(input.key, watcher);
+    workConversationOverlays.set(
+      workConversationOverlayKey(input.mission.id, input.record.recordId),
+      overlay,
+    );
+    const outputTask = (async () => {
+      try {
+        for await (const item of subscription) {
+          if (closed) break;
+          coalescer.push(item);
+        }
+        coalescer.flush();
+        if (!closed) emitToSubscribers({ kind: "invalidate" });
+      } catch (error) {
+        if (!closed) {
+          logger.warn(
+            "mission.work_conversation_subscription_failed",
+            `Mission work conversation watcher failed for ${input.mission.id}:${input.record.recordId}.`,
+            { error, missionId: input.mission.id, recordId: input.record.recordId },
+          );
+          emitToSubscribers({ kind: "invalidate" });
+        }
+      } finally {
+        if (workConversationWatchers.get(input.key) === watcher) {
+          workConversationWatchers.delete(input.key);
+          workConversationWatcherPromises.delete(input.key);
+        }
+        const overlayKey = workConversationOverlayKey(input.mission.id, input.record.recordId);
+        if (workConversationOverlays.get(overlayKey) === overlay) {
+          workConversationOverlays.delete(overlayKey);
+        }
+        for (const subscriber of subscribers.values()) {
+          if (workConversationStreams.get(subscriber.subscriptionId)?.watcher === watcher) {
+            workConversationStreams.delete(subscriber.subscriptionId);
+          }
+        }
+        subscribers.clear();
+      }
+    })();
+    return watcher;
+  };
+
+  const getOrCreateWorkConversationWatcher = async (input: {
+    readonly key: string;
+    readonly mission: Mission;
+    readonly record: MissionWorkRecord;
+    readonly task: MissionWorkRecord["tasks"][number];
+  }): Promise<MissionWorkConversationWatcher> => {
+    const existing = workConversationWatchers.get(input.key);
+    if (existing !== undefined) return existing;
+    const pending = workConversationWatcherPromises.get(input.key);
+    if (pending !== undefined) return await pending;
+    const created = createWorkConversationWatcher(input).catch((error: unknown) => {
+      workConversationWatcherPromises.delete(input.key);
+      throw error;
+    });
+    workConversationWatcherPromises.set(input.key, created);
+    return await created;
+  };
+
+  const openWorkConversationStream = async (
+    input: OpenMissionWorkConversationStream,
+  ): Promise<OpenMissionWorkConversationStreamResult> => {
+    await closeWorkConversationStream(input.subscriptionId);
+    let mission = await options.missions.get(input.missionId);
+    await awaitTerminalLifecycleSettlement(mission);
+    mission = await options.missions.get(input.missionId);
+    const work = await loadWorkSnapshot(mission);
+    const record = work.snapshot.records.find((candidate) => candidate.recordId === input.recordId);
+    if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
+    const activeTask = record.tasks
+      .toReversed()
+      .find(
+        (task) =>
+          task.executionId === mission.execution?.id &&
+          (task.status === "queued" || task.status === "running" || task.status === "waiting"),
+      );
+    const streamId = randomUUID();
+    let watcher: MissionWorkConversationWatcher | undefined;
+    if (mission.executor.kind === "team" && activeTask !== undefined) {
+      const key = JSON.stringify([
+        input.missionId,
+        input.recordId,
+        activeTask.executionId,
+        activeTask.invocationId,
+      ]);
+      watcher = await getOrCreateWorkConversationWatcher({
+        key,
+        mission,
+        record,
+        task: activeTask,
+      });
+    }
+    let subscriber: MissionWorkConversationStreamSubscriber | undefined;
+    if (watcher !== undefined && workConversationWatchers.get(watcher.key) === watcher) {
+      // Buffer before the asynchronous durable read. The overlay watermark below discards
+      // updates already represented by the opening snapshot and forwards only the later tail.
+      subscriber = {
+        subscriptionId: input.subscriptionId,
+        streamId,
+        missionId: input.missionId,
+        recordId: input.recordId,
+        sequence: 0,
+        pendingUpdates: [],
+      };
+      watcher.subscribers.set(input.subscriptionId, subscriber);
+    } else {
+      watcher = undefined;
+    }
+    workConversationStreams.set(input.subscriptionId, {
+      missionId: input.missionId,
+      streamId,
+      watcher,
+    });
+    try {
+      const opened = await readWorkConversation({
+        id: input.missionId,
+        recordId: input.recordId,
+        limit: input.limit,
+      });
+      if (
+        watcher !== undefined &&
+        subscriber !== undefined &&
+        watcher.subscribers.get(input.subscriptionId) === subscriber
+      ) {
+        const capturedOverlayRevision =
+          opened.overlay === watcher.overlay ? opened.overlayRevision : -1;
+        const pendingUpdates = subscriber.pendingUpdates ?? [];
+        subscriber.pendingUpdates = undefined;
+        for (const pending of pendingUpdates) {
+          if (pending.overlayRevision > capturedOverlayRevision) {
+            emitWorkConversationSubscriberUpdate(subscriber, pending.update);
+          }
+        }
+      }
+      return { subscriptionId: input.subscriptionId, streamId, snapshot: opened.snapshot };
+    } catch (error) {
+      await closeWorkConversationStream(input.subscriptionId);
+      throw error;
+    }
   };
 
   const reconcileMissionUsage = async (mission: Mission): Promise<void> => {
@@ -5019,6 +5369,16 @@ export function createMissionRunner(options: {
     async getWorkConversation(input) {
       return await getWorkConversation(input);
     },
+    async openWorkConversationStream(input) {
+      return await openWorkConversationStream(input);
+    },
+    async closeWorkConversationStream(subscriptionId) {
+      await closeWorkConversationStream(subscriptionId);
+    },
+    subscribeWorkConversationStreams(listener) {
+      workConversationStreamListeners.add(listener);
+      return () => workConversationStreamListeners.delete(listener);
+    },
     async delete(id) {
       await lifecycleService.startDeletion(id, async () => {
         lifecycleService.setControlIssue(id, {
@@ -5033,6 +5393,11 @@ export function createMissionRunner(options: {
         if (inFlight !== undefined) await settlesWithin(inFlight, 4_000);
         const liveChat = chatService.live(id);
         if (liveChat !== undefined) await chatService.closeLiveIfCurrent(id, liveChat);
+        await Promise.all(
+          [...workConversationStreams.entries()]
+            .filter(([, stream]) => stream.missionId === id)
+            .map(async ([subscriptionId]) => await closeWorkConversationStream(subscriptionId)),
+        );
         await withMissionController(
           id,
           async () =>
@@ -5509,6 +5874,7 @@ async function readMissionChatHistoryPage(input: {
   readonly query: MissionChatPageQuery;
   readonly executionStore: ReturnType<typeof createFileExecutionStore>;
   readonly missions: MissionStore;
+  readonly rootOnly: boolean;
   readonly activeChat?: LiveMissionChat | undefined;
   readonly loadInheritedEntries?: (() => Promise<readonly MissionChatEntry[]>) | undefined;
 }): Promise<{
@@ -5567,6 +5933,7 @@ async function readMissionChatHistoryPage(input: {
         limit: remaining,
         executionStore: input.executionStore,
         missions: input.missions,
+        rootOnly: input.rootOnly,
         ...(turnCursor === undefined || turnCursor.kind === "timeline"
           ? {}
           : { cursor: turnCursor }),
@@ -5623,6 +5990,7 @@ async function readMissionChatTurnPage(input: {
   readonly limit: number;
   readonly executionStore: ReturnType<typeof createFileExecutionStore>;
   readonly missions: MissionStore;
+  readonly rootOnly: boolean;
   readonly cursor?: Exclude<MissionChatPageCursor, { readonly kind: "timeline" }> | undefined;
   readonly activeChat?: LiveMissionChat | undefined;
   readonly inheritedEntries: readonly MissionChatEntry[];
@@ -5692,10 +6060,17 @@ async function readMissionChatTurnPage(input: {
         orderMissionExecutionEntries(completeProjection),
         true,
         executionState?.rootInvocationId,
-      ).map((entry) => ({
-        ...entry,
-        timelineSequence: entry.timelineSequence ?? input.turn.sequence,
-      }));
+      )
+        .filter(
+          (entry) =>
+            !input.rootOnly ||
+            entry.invocationId === undefined ||
+            entry.invocationId === executionState?.rootInvocationId,
+        )
+        .map((entry) => ({
+          ...entry,
+          timelineSequence: entry.timelineSequence ?? input.turn.sequence,
+        }));
       const combined = [userEntry, ...projectedEntries];
       const entryCursor = input.cursor?.kind === "entries" ? input.cursor : undefined;
       const requestedEnd =
@@ -5746,6 +6121,7 @@ async function readMissionChatTurnPage(input: {
     input.missions,
     input.missionId,
     input.activeChat,
+    input.rootOnly,
   );
   const activeEntries =
     input.activeChat !== undefined && input.turn.executionId === input.activeChat.executionId
@@ -5971,6 +6347,7 @@ async function readMissionChatHistory(
   missions: MissionStore,
   missionId: string,
   activeChat?: LiveMissionChat,
+  rootOnly = false,
 ): Promise<{
   readonly entries: MissionChatEntry[];
   readonly syncIssues: MissionChatSyncIssue[];
@@ -6021,7 +6398,9 @@ async function readMissionChatHistory(
     let histories;
     let activityEntries;
     try {
-      histories = await view.getMessageHistory({ scope: { kind: "all" } });
+      histories = await view.getMessageHistory({
+        scope: rootOnly ? { kind: "root" } : { kind: "all" },
+      });
       const executorIdsByInvocation = new Map(
         histories.flatMap((history) =>
           history.executorId === undefined
@@ -6034,6 +6413,7 @@ async function readMissionChatHistory(
         turn.sequence,
         state.rootInvocationId,
         (invocationId) => executorIdsByInvocation.get(invocationId),
+        rootOnly,
       );
     } catch {
       const projection = await missions.readExecutionProjection(missionId, turn.executionId);
@@ -6098,6 +6478,7 @@ async function readHistoricalRuntimeActivityEntries(
   timelineSequence: number,
   rootInvocationId: string,
   resolveExecutorId: (invocationId: string) => string | undefined,
+  rootOnly = false,
 ): Promise<MissionChatEntry[]> {
   const events: Array<{
     readonly event: ExpertAgentStreamEvent;
@@ -6106,7 +6487,11 @@ async function readHistoricalRuntimeActivityEntries(
   }> = [];
   let after: { executionId: string; sequence: number } | undefined;
   do {
-    const page = await view.listEvents({ scope: { kind: "all" }, limit: 1_000, after });
+    const page = await view.listEvents({
+      scope: rootOnly ? { kind: "root" } : { kind: "all" },
+      limit: 1_000,
+      after,
+    });
     for (const event of page.items) {
       if (event.type !== "runtime.event") continue;
       const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
@@ -6507,12 +6892,18 @@ function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
+  onWorkInvalidate: () => void,
   onEvent: (event: ExecutionEvent) => Promise<void>,
   onEventResync: () => Promise<void>,
   onSubscriptionError: (channel: "output" | "events", error: unknown) => void,
   onItem: (item: ExecutionOutputItem) => void,
   resolveExecutorName: ExecutorNameResolver,
   resolveExecutorAvatarId: ExecutorAvatarIdResolver,
+  options: {
+    readonly outputSubscription: SubscribeOutputOptions;
+    readonly onOutputStats?:
+      ((stats: ReturnType<MissionOutputCoalescer["stats"]>) => void) | undefined;
+  },
 ): LiveMissionChat {
   const chat: LiveMissionChat = {
     executionId: execution.executionId,
@@ -6527,25 +6918,31 @@ function observeMissionChat(
   const seenOutputEventIds = new Set<string>();
   let outputSubscription: Awaited<ReturnType<MutableExecution["subscribeOutput"]>> | undefined;
   let eventSubscription: Awaited<ReturnType<MutableExecution["subscribeEvents"]>> | undefined;
+  const consumeOutput = (item: ExecutionOutputItem): void => {
+    onItem(item);
+    const patches = consumeLiveChatOutput(chat, item, {
+      resolveExecutorName,
+      resolveExecutorAvatarId,
+    });
+    if (patches.length > 0) onOutput(patches);
+    if (isTerminalContextCompactionOutput(item)) onInvalidate();
+  };
+  const outputCoalescer = createMissionOutputCoalescer({ emit: consumeOutput });
   const outputTask = (async () => {
     while (!closed) {
       try {
-        const subscription = await execution.subscribeOutput({ scope: { kind: "all" } });
+        const subscription = await execution.subscribeOutput(options.outputSubscription);
         outputSubscription = subscription;
         for await (const item of subscription) {
           if (closed) break;
           if (seenOutputEventIds.has(item.sourceEventId)) continue;
           seenOutputEventIds.add(item.sourceEventId);
-          onItem(item);
-          const patches = consumeLiveChatOutput(chat, item, {
-            resolveExecutorName,
-            resolveExecutorAvatarId,
-          });
-          if (patches.length > 0) onOutput(patches);
-          if (isTerminalContextCompactionOutput(item)) onInvalidate();
+          outputCoalescer.push(item);
         }
+        outputCoalescer.flush();
         return;
       } catch (error) {
+        outputCoalescer.flush();
         if (isExecutionUnavailable(error, execution.executionId)) return;
         if (!closed) {
           onSubscriptionError("output", error);
@@ -6584,6 +6981,7 @@ function observeMissionChat(
         for await (const event of subscription) {
           if (closed) break;
           await onEvent(event);
+          if (isInvocationLifecycleEvent(event)) onWorkInvalidate();
           if (event.type.startsWith("human.") || event.type.startsWith("execution.")) {
             onInvalidate();
           }
@@ -6604,10 +7002,16 @@ function observeMissionChat(
   chat.close = async () => {
     if (closed) return;
     closed = true;
+    outputCoalescer.close();
     await Promise.allSettled([outputSubscription?.close(), eventSubscription?.close()]);
     await Promise.allSettled([outputTask, eventTask]);
+    options.onOutputStats?.(outputCoalescer.stats());
   };
   return chat;
+}
+
+function isInvocationLifecycleEvent(event: ExecutionEvent): boolean {
+  return event.type.startsWith("invocation.") && event.type !== "invocation.message.appended";
 }
 
 function isExecutionUnavailable(error: unknown, executionId: string): boolean {
@@ -6942,13 +7346,15 @@ export function consumeLiveChatOutput(
   if (item.channel === "tool") {
     const payload = asRecord(item.value);
     if (item.delta !== undefined) {
+      const sourceToolCallId = item.source.toolCallId;
       const tool = [...chat.entries]
         .reverse()
         .find(
           (entry) =>
             entry.kind === "tool" &&
             entry.invocationId === item.invocationId &&
-            entry.status === "running",
+            entry.status === "running" &&
+            (sourceToolCallId === undefined || entry.toolCallId === sourceToolCallId),
         );
       if (tool?.kind === "tool") {
         const delta = normalizeToolDelta(item.delta);

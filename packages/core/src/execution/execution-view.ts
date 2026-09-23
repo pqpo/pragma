@@ -40,6 +40,12 @@ export interface ExecutionEventPage {
 export interface SubscribeOutputOptions {
   readonly scope?: Exclude<InvocationScope, { readonly kind: "context" }> | undefined;
   readonly channels?: readonly ExecutionOutputItem["channel"][] | undefined;
+  readonly sourceScope?:
+    | { readonly kind: "all" }
+    | { readonly kind: "root" }
+    | { readonly kind: "session"; readonly sessionId: string }
+    | undefined;
+  readonly replay?: "history" | "live" | undefined;
 }
 
 export interface GetMessageHistoryOptions {
@@ -119,16 +125,23 @@ export class StoredExecutionView implements ExecutionView {
   async subscribeOutput(
     options: SubscribeOutputOptions = {},
   ): Promise<ExecutionOutputSubscription> {
-    const source = getExecutionLiveBus(this.store).subscribe(this.executionId);
+    const source = getExecutionLiveBus(this.store).subscribe(
+      this.executionId,
+      () => true,
+      options.replay !== "live",
+    );
     try {
+      // Register before the first state read so completion cannot clear replay history in the
+      // await gap. Filtering is applied to the already-registered source once root identity is
+      // known, preserving both replayed and concurrently published output.
       const state = await this.getState();
-      if (isTerminal(state.status)) await source.close();
-      const rootInvocationId = state.rootInvocationId;
       const channels = options.channels === undefined ? undefined : new Set(options.channels);
-      return filterSubscription(
+      if (isTerminal(state.status)) await source.close();
+      return filterOutputSubscription(
         source,
         (item) =>
-          matchesOutputScope(item, rootInvocationId, options.scope) &&
+          matchesOutputScope(item, state.rootInvocationId, options.scope) &&
+          matchesOutputSourceScope(item, options.sourceScope) &&
           (channels?.has(item.channel) ?? true),
       );
     } catch (error) {
@@ -221,6 +234,20 @@ export class StoredExecutionView implements ExecutionView {
   }
 }
 
+function matchesOutputSourceScope(
+  item: ExecutionOutputItem,
+  scope: SubscribeOutputOptions["sourceScope"] = { kind: "all" },
+): boolean {
+  switch (scope.kind) {
+    case "all":
+      return true;
+    case "root":
+      return item.source.parentSessionId === undefined;
+    case "session":
+      return item.source.sessionId === scope.sessionId;
+  }
+}
+
 function matchesOutputScope(
   item: ExecutionOutputItem,
   rootInvocationId: string,
@@ -284,18 +311,6 @@ function matchesInvocationScope(
   }
 }
 
-function filterSubscription(
-  source: ExecutionOutputSubscription,
-  predicate: (item: ExecutionOutputItem) => boolean,
-): ExecutionOutputSubscription {
-  return {
-    async *[Symbol.asyncIterator]() {
-      for await (const item of source) if (predicate(item)) yield item;
-    },
-    close: async () => await source.close(),
-  };
-}
-
 function filterEventSubscription(
   source: ExecutionEventSubscription,
   predicate: (item: ExecutionEvent) => boolean | Promise<boolean>,
@@ -303,6 +318,18 @@ function filterEventSubscription(
   return {
     async *[Symbol.asyncIterator]() {
       for await (const item of source) if (await predicate(item)) yield item;
+    },
+    close: async () => await source.close(),
+  };
+}
+
+function filterOutputSubscription(
+  source: ExecutionOutputSubscription,
+  predicate: (item: ExecutionOutputItem) => boolean,
+): ExecutionOutputSubscription {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const item of source) if (predicate(item)) yield item;
     },
     close: async () => await source.close(),
   };
