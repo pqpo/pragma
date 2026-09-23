@@ -87,6 +87,16 @@ function compareSkillBundlePaths(
   return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 }
 
+function compareLegacyWindowsSkillBundlePaths(
+  left: { readonly path: string },
+  right: { readonly path: string },
+) {
+  return compareSkillBundlePaths(
+    { path: left.path.replaceAll("/", "\\") },
+    { path: right.path.replaceAll("/", "\\") },
+  );
+}
+
 export function serializeSkillBundleFileManifest(files: readonly SkillBundleFile[]): string {
   return JSON.stringify(
     files.toSorted(compareSkillBundlePaths).map(({ path, sizeBytes, sha256, executable }) => ({
@@ -113,6 +123,29 @@ export function skillBundleContentHashChunks(
   return files
     .toSorted(compareSkillBundlePaths)
     .flatMap((file) => [file.path, file.contents] as const);
+}
+
+export function legacyWindowsSkillBundleContentHashChunks(
+  files: readonly SkillBundleContentFile[],
+): readonly (string | Uint8Array)[] {
+  return files
+    .toSorted(compareLegacyWindowsSkillBundlePaths)
+    .flatMap((file) => [file.path, file.contents] as const);
+}
+
+export function serializeSkillBundleAssetIdentity(
+  descriptor: Pick<
+    SkillBundlePayloadDescriptor,
+    "description" | "entryPath" | "filesFingerprint" | "name"
+  >,
+): string {
+  return JSON.stringify({
+    description: descriptor.description,
+    entryPath: descriptor.entryPath,
+    filesFingerprint: descriptor.filesFingerprint,
+    kind: "skill",
+    name: descriptor.name,
+  });
 }
 
 export function serializeSkillBundleDefinition(
@@ -160,15 +193,15 @@ export function assertValidSkillBundlePayload(input: {
   ) {
     throw new Error(`Skill payload files fingerprint does not match: ${input.label}.`);
   }
-  const contentHash = input.sha256(
-    skillBundleContentHashChunks(
-      input.descriptor.files.map((file) => ({
-        path: file.path,
-        contents: input.files.get(`files/${file.path}`)!,
-      })),
-    ),
-  );
-  if (input.descriptor.contentHash !== contentHash) {
+  const contentFiles = input.descriptor.files.map((file) => ({
+    path: file.path,
+    contents: input.files.get(`files/${file.path}`)!,
+  }));
+  const acceptedContentHashes = new Set([
+    input.sha256(skillBundleContentHashChunks(contentFiles)),
+    input.sha256(legacyWindowsSkillBundleContentHashChunks(contentFiles)),
+  ]);
+  if (!acceptedContentHashes.has(input.descriptor.contentHash)) {
     throw new Error(`Skill payload content hash does not match: ${input.label}.`);
   }
   if (

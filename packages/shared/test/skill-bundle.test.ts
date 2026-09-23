@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidSkillBundlePayload,
+  legacyWindowsSkillBundleContentHashChunks,
   SkillBundlePayloadDescriptorSchema,
   skillBundleContentHashChunks,
+  serializeSkillBundleAssetIdentity,
   serializeSkillBundleDefinition,
   serializeSkillBundleFileManifest,
   serializeSkillBundleWorkingTree,
@@ -55,6 +57,37 @@ describe("Skill Bundle payload codec", () => {
         { path: earlierFile.path, contents: new TextEncoder().encode("Read.\n") },
         { path: file.path, contents: new TextEncoder().encode("Review code.") },
       ]),
+    );
+  });
+
+  it("keeps portable ordering distinct from the historical Windows content-hash ordering", () => {
+    const files = [
+      { path: "a0", contents: new TextEncoder().encode("flat") },
+      { path: "a/b", contents: new TextEncoder().encode("nested") },
+    ];
+
+    expect(skillBundleContentHashChunks(files)[0]).toBe("a/b");
+    expect(legacyWindowsSkillBundleContentHashChunks(files)[0]).toBe("a0");
+    expect(testSha256(skillBundleContentHashChunks(files))).not.toBe(
+      testSha256(legacyWindowsSkillBundleContentHashChunks(files)),
+    );
+  });
+
+  it("includes executable file identity without depending on the host content hash", () => {
+    const base = {
+      name: "Review Skill",
+      description: "Reviews code.",
+      entryPath: "SKILL.md" as const,
+      filesFingerprint: "a".repeat(64),
+    };
+
+    expect(serializeSkillBundleAssetIdentity(base)).not.toBe(
+      serializeSkillBundleAssetIdentity({ ...base, filesFingerprint: "b".repeat(64) }),
+    );
+    const firstHostDefinition = { ...base, contentHash: "c".repeat(64) };
+    const secondHostDefinition = { ...base, contentHash: "d".repeat(64) };
+    expect(serializeSkillBundleAssetIdentity(firstHostDefinition)).toBe(
+      serializeSkillBundleAssetIdentity(secondHostDefinition),
     );
   });
 
@@ -138,4 +171,55 @@ describe("Skill Bundle payload codec", () => {
       }),
     ).toThrow("undeclared file");
   });
+
+  it("accepts a payload written with the historical Windows content hash", () => {
+    const contentFiles = [
+      { path: "SKILL.md", contents: new TextEncoder().encode("Review code.") },
+      { path: "a0", contents: new TextEncoder().encode("flat") },
+      { path: "a/b", contents: new TextEncoder().encode("nested") },
+    ];
+    const files = contentFiles.map(({ path, contents }) => ({
+      path,
+      sizeBytes: contents.byteLength,
+      sha256: testSha256(contents),
+      executable: false,
+    }));
+    const definition = {
+      name: "Review Skill",
+      description: "Reviews code.",
+      entryPath: "SKILL.md" as const,
+      contentHash: testSha256(legacyWindowsSkillBundleContentHashChunks(contentFiles)),
+    };
+    const descriptor = SkillBundlePayloadDescriptorSchema.parse({
+      schemaVersion: "pragma.skill-bundle-payload/v1",
+      assetKey: "0123456789abcdef",
+      ...definition,
+      filesFingerprint: testSha256(serializeSkillBundleFileManifest(files)),
+      fingerprint: testSha256(serializeSkillBundleDefinition(definition)),
+      files,
+    });
+
+    expect(descriptor.contentHash).not.toBe(testSha256(skillBundleContentHashChunks(contentFiles)));
+    expect(() =>
+      assertValidSkillBundlePayload({
+        descriptor,
+        files: new Map([
+          ["descriptor.json", new Uint8Array()],
+          ...contentFiles.map(({ path, contents }) => [`files/${path}`, contents] as const),
+        ]),
+        sha256: testSha256,
+        label: "capability:0123456789abcdef",
+      }),
+    ).not.toThrow();
+  });
 });
+
+function testSha256(value: string | Uint8Array | readonly (string | Uint8Array)[]): string {
+  const chunks = typeof value === "string" || value instanceof Uint8Array ? [value] : value;
+  let state = 2_166_136_261;
+  for (const chunk of chunks) {
+    const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
+    for (const byte of bytes) state = Math.imul(state ^ byte, 16_777_619);
+  }
+  return (state >>> 0).toString(16).padStart(8, "0").repeat(8);
+}

@@ -51,6 +51,7 @@ import { strFromU8, zipSync } from "fflate";
 import {
   assertValidSkillBundlePayload,
   SkillBundlePayloadDescriptorSchema,
+  serializeSkillBundleAssetIdentity,
   serializeSkillBundleFileManifest,
   serializeSkillBundleDefinition,
   type SkillBundleFile,
@@ -87,7 +88,7 @@ import {
 } from "../../platform/bindings/desktop-binding-ref.ts";
 import {
   CapabilityStoreError,
-  hashSkillDirectoryContent,
+  portableSkillDirectoryContentHashes,
   type CapabilityStore,
 } from "../capabilities/capability-store.ts";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
@@ -376,6 +377,23 @@ export function createPragmaBundleService(options: {
     }
   };
   let initialization: Promise<void> | undefined;
+
+  const localSkillAssetFingerprint = async (
+    capability: Awaited<ReturnType<CapabilityStore["get"]>>,
+  ): Promise<string> => {
+    if (capability.definition.kind !== "skill") {
+      throw new Error(`Capability is not a Skill: ${capability.manifest.id}.`);
+    }
+    const payloadPath = await options.capabilities.skillFilesPath(
+      capability.manifest.id,
+      capability.manifest.latestRevision,
+    );
+    const snapshot = await scanSkillWorkingTree(payloadPath);
+    return skillAssetFingerprint(
+      capability.definition,
+      sha256(serializeSkillBundleFileManifest(snapshot.entries)),
+    );
+  };
 
   const writeCatalog = async (
     catalog: z.infer<typeof InstallationCatalogSchema>,
@@ -1001,8 +1019,9 @@ export function createPragmaBundleService(options: {
                     );
                     const skillSnapshot = await scanSkillWorkingTree(skillFilesPath);
                     if (
-                      (await hashSkillDirectoryContent(skillFilesPath)) !==
-                      sourceDefinition.contentHash
+                      !(await portableSkillDirectoryContentHashes(skillFilesPath)).has(
+                        sourceDefinition.contentHash,
+                      )
                     ) {
                       throw new Error(
                         `Skill ${entry.capability.manifest.id} revision ${sourceRevision} content hash does not match its files.`,
@@ -1158,6 +1177,7 @@ export function createPragmaBundleService(options: {
           readonly assetKind: "skill";
           readonly name: string;
           readonly fingerprint: string;
+          readonly fingerprintKind: "asset" | "definition";
         }
       >();
       for (const dependency of archive.manifest.dependencies.capabilities) {
@@ -1174,10 +1194,38 @@ export function createPragmaBundleService(options: {
             resourceRef: PragmaResourceRefSchema.parse(dependency.resourceRef),
             assetKind: "skill",
             name: dependency.name,
-            fingerprint: dependency.definitionFingerprint,
+            fingerprint: dependency.assetFingerprint ?? dependency.definitionFingerprint,
+            fingerprintKind: dependency.assetFingerprint === undefined ? "definition" : "asset",
           });
         }
       }
+      const localSkillAssets = await Promise.all(
+        capabilities
+          .filter(
+            (capability) =>
+              capability.definition.kind === "skill" && capability.managedBy !== "system",
+          )
+          .map(async (capability) => {
+            const definitionFingerprint = sha256(stableStringify(capability.definition));
+            const requiresAssetFingerprint = [...importedSkillAssets.values()].some(
+              (asset) =>
+                asset.fingerprintKind === "asset" &&
+                normalizePragmaResourceName(asset.name) ===
+                  normalizePragmaResourceName(capability.definition.name),
+            );
+            return {
+              assetId: capability.manifest.id,
+              assetKind: "skill" as const,
+              name: capability.definition.name,
+              revision: capability.manifest.latestRevision,
+              fingerprint: requiresAssetFingerprint
+                ? await localSkillAssetFingerprint(capability)
+                : definitionFingerprint,
+              definitionFingerprint,
+              boundResourceRef: boundCapabilityRefs.get(capability.manifest.id),
+            };
+          }),
+      );
       const assetConflicts = findBundleAssetConflicts(
         [
           ...importedSkillAssets.values(),
@@ -1199,20 +1247,7 @@ export function createPragmaBundleService(options: {
           ),
         ],
         [
-          ...capabilities.flatMap((capability) =>
-            capability.definition.kind === "skill" && capability.managedBy !== "system"
-              ? [
-                  {
-                    assetId: capability.manifest.id,
-                    assetKind: "skill" as const,
-                    name: capability.definition.name,
-                    revision: capability.manifest.latestRevision,
-                    fingerprint: sha256(stableStringify(capability.definition)),
-                    boundResourceRef: boundCapabilityRefs.get(capability.manifest.id),
-                  },
-                ]
-              : [],
-          ),
+          ...localSkillAssets,
           ...contextStores.map((store) => ({
             assetId: store.id,
             assetKind: "knowledge_base" as const,
@@ -1474,6 +1509,7 @@ export function createPragmaBundleService(options: {
             capabilities: options.capabilities,
             contextStores: options.contextStores,
             allowAlreadyApplied: retryingInterruptedImport,
+            localSkillAssetFingerprint,
           });
           assertUniqueResolutionRefs(input.runtimes, "Runtime");
           assertUniqueResolutionRefs(input.capabilities, "capability");
@@ -1655,14 +1691,18 @@ export function createPragmaBundleService(options: {
                     : (await options.capabilities.list()).find(
                         (candidate) => candidate.manifest.id === targetCapabilityId,
                       );
+                const importedAssetFingerprint =
+                  group[0]!.assetFingerprint ?? group[0]!.definitionFingerprint;
                 const targetCapabilityFingerprint =
                   targetCapability === undefined
                     ? undefined
-                    : sha256(stableStringify(targetCapability.definition));
+                    : group[0]!.assetFingerprint === undefined
+                      ? sha256(stableStringify(targetCapability.definition))
+                      : await localSkillAssetFingerprint(targetCapability);
                 const targetAlreadyUpdated =
                   retryingInterruptedImport &&
                   assetResolution?.action === "update" &&
-                  targetCapabilityFingerprint === group[0]!.definitionFingerprint;
+                  targetCapabilityFingerprint === importedAssetFingerprint;
                 if (
                   assetResolution !== undefined &&
                   assetResolution.action !== "copy" &&
@@ -1760,8 +1800,9 @@ export function createPragmaBundleService(options: {
                   );
                   if (prefix === currentPrefix && latest.dependency.skillFiles !== undefined) {
                     if (
-                      (await hashSkillDirectoryContent(payloadPath)) !==
-                      latest.definition.contentHash
+                      !(await portableSkillDirectoryContentHashes(payloadPath)).has(
+                        latest.definition.contentHash,
+                      )
                     ) {
                       throw new Error(
                         `Skill payload content hash does not match after extraction: ${latest.dependency.name}.`,
@@ -1783,10 +1824,7 @@ export function createPragmaBundleService(options: {
                     latest.definition.kind === "skill" &&
                     payloadPath !== undefined
                   ) {
-                    if (
-                      sha256(stableStringify(targetCapability.definition)) ===
-                      sha256(stableStringify(latest.definition))
-                    ) {
+                    if (targetCapabilityFingerprint === importedAssetFingerprint) {
                       imported = targetCapability;
                     } else {
                       const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
@@ -2687,6 +2725,7 @@ interface DesktopBundleArchive {
         readonly name: string;
         readonly kind?: "skill" | "mcp_server" | "http_service" | "code_service";
         readonly definitionFingerprint?: string;
+        readonly assetFingerprint?: string;
         readonly definition?: z.infer<typeof CapabilityDefinitionSchema>;
         readonly logicalId?: string;
         readonly sourceRevision?: number;
@@ -2745,6 +2784,9 @@ async function validateBundleAssetResolutions(input: {
   readonly capabilities: CapabilityStore;
   readonly contextStores: ContextStoreStore;
   readonly allowAlreadyApplied: boolean;
+  readonly localSkillAssetFingerprint: (
+    capability: Awaited<ReturnType<CapabilityStore["get"]>>,
+  ) => Promise<string>;
 }): Promise<ReadonlyMap<string, BundleAssetResolution>> {
   const resolutionByRef = new Map<string, BundleAssetResolution>();
   for (const resolution of input.resolutions) {
@@ -2789,11 +2831,16 @@ async function validateBundleAssetResolutions(input: {
       (candidate) => candidate.manifest.id === resolution.targetAssetId,
     );
     const fingerprint =
-      target === undefined ? undefined : sha256(stableStringify(target.definition));
+      target === undefined
+        ? undefined
+        : dependency.assetFingerprint === undefined
+          ? sha256(stableStringify(target.definition))
+          : await input.localSkillAssetFingerprint(target);
+    const importedFingerprint = dependency.assetFingerprint ?? dependency.definitionFingerprint;
     const alreadyApplied =
       input.allowAlreadyApplied &&
       resolution.action === "update" &&
-      fingerprint === dependency.definitionFingerprint;
+      fingerprint === importedFingerprint;
     if (
       target === undefined ||
       (!alreadyApplied &&
@@ -3023,6 +3070,11 @@ async function readDesktopBundle(
                 kind: definition.kind,
                 definition,
                 definitionFingerprint: sha256(stableStringify(definition)),
+                ...(skill === undefined || definition.kind !== "skill"
+                  ? {}
+                  : {
+                      assetFingerprint: skillAssetFingerprint(definition, skill.filesFingerprint),
+                    }),
               }),
           ...(skill !== undefined
             ? { logicalId: skill.assetKey }
@@ -3387,6 +3439,24 @@ function sha256(value: string | Uint8Array | readonly (string | Uint8Array)[]): 
   if (typeof value === "string" || value instanceof Uint8Array) hash.update(value);
   else for (const chunk of value) hash.update(chunk);
   return hash.digest("hex");
+}
+
+function skillAssetFingerprint(
+  definition: {
+    readonly name: string;
+    readonly description: string;
+    readonly entryPath: "SKILL.md";
+  },
+  filesFingerprint: string,
+): string {
+  return sha256(
+    serializeSkillBundleAssetIdentity({
+      name: definition.name,
+      description: definition.description,
+      entryPath: definition.entryPath,
+      filesFingerprint,
+    }),
+  );
 }
 
 function knowledgeBaseAssetFingerprint(input: {

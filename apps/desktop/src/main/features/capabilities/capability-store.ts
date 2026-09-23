@@ -6,6 +6,7 @@ import { unzipSync } from "fflate";
 import { z } from "zod";
 import {
   MAX_SKILL_PACKAGE_BYTES,
+  legacyWindowsSkillBundleContentHashChunks,
   skillBundleContentHashChunks,
   SkillPackageSchema,
   type SkillPackage,
@@ -1826,15 +1827,32 @@ function unquote(value: string): string {
 }
 
 export async function hashSkillDirectoryContent(path: string): Promise<string> {
+  const hash = createHash("sha256");
   const files = await listFiles(path);
-  const chunks = skillBundleContentHashChunks(
-    await Promise.all(
-      files.map(async (file) => ({
-        path: relative(path, file).split(sep).join("/"),
-        contents: await readFile(file),
-      })),
-    ),
+  for (const file of files.toSorted()) {
+    hash.update(relative(path, file).split(sep).join("/"));
+    hash.update(await readFile(file));
+  }
+  return hash.digest("hex");
+}
+
+export async function portableSkillDirectoryContentHashes(
+  path: string,
+): Promise<ReadonlySet<string>> {
+  const files = await listFiles(path);
+  const contentFiles = await Promise.all(
+    files.map(async (file) => ({
+      path: relative(path, file).split(sep).join("/"),
+      contents: await readFile(file),
+    })),
   );
+  return new Set([
+    sha256Chunks(skillBundleContentHashChunks(contentFiles)),
+    sha256Chunks(legacyWindowsSkillBundleContentHashChunks(contentFiles)),
+  ]);
+}
+
+function sha256Chunks(chunks: readonly (string | Uint8Array)[]): string {
   const hash = createHash("sha256");
   for (const chunk of chunks) hash.update(chunk);
   return hash.digest("hex");
