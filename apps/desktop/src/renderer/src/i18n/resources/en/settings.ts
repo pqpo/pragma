@@ -42,7 +42,31 @@ export const settings = {
     operationFailed:
       "The operation did not finish. Try again, and check the sync settings if it keeps failing.",
     retryHint: "Try syncing again. If it still fails, check the Skill files or repository access.",
-    skillErrorHint: "This Skill did not sync. You can try syncing again.",
+    skillErrorHint: "The Skill files did not sync. Check their contents and paths, then try again.",
+    diagnosticWithFile: "{{path}}: {{detail}}",
+    diagnostics: {
+      metadataMismatch:
+        "The name or description at the top of SKILL.md does not match the Skill metadata.",
+      unsupportedImport: "This script imports a module that Skills cannot use. Update the file.",
+      dynamicLoading: "This script uses unsupported dynamic loading. Update the file.",
+      networkAccess: "Skill scripts cannot access the network. Remove the related code.",
+      processAccess: "This script uses an unsupported process operation. Update the file.",
+      invalidFileLocation:
+        "This file is in an unsupported folder. Move it to a supported Skill folder.",
+      invalidScriptExtension: "Use the .mjs extension for Skill scripts.",
+      missingScriptTests: "Add tests for this Skill script under the tests folder.",
+      uncoveredScript: "This script is not covered by a test. Add a matching test.",
+      fileTooLarge: "This Skill file is too large. Reduce its size and try again.",
+      packageTooLarge:
+        "The Skill files exceed the sync size limit. Reduce their size and try again.",
+      binaryFile:
+        "This Skill contains a binary file that cannot be synced. Remove it or convert it to text.",
+      gitTimeout: "The Git connection timed out. Check your network and try again.",
+      remoteChanged: "The remote changed during sync. Sync again before resolving this Skill.",
+      invalidFilePath: "This Skill file path is not valid. Check its name and folder.",
+      duplicateFile: "This Skill contains duplicate file paths. Rename one of the files.",
+      missingSkillDocument: "This Skill is missing its required SKILL.md file.",
+    },
     configurationSaved: "Configuration saved. Initial Skill sync completed.",
     configurationSavedWithIssues:
       "Configuration saved, but {{count}} Skills need attention. See the status list below.",

@@ -34,6 +34,11 @@ export function SkillSyncSettingsFragment() {
       setBranch(next.configuration.branch ?? "");
       setAutoPush(next.configuration.autoPush);
       setPushDeletions(next.configuration.pushDeletions);
+    } else {
+      setRemote("");
+      setBranch("");
+      setAutoPush(true);
+      setPushDeletions(false);
     }
   };
 
@@ -78,6 +83,68 @@ export function SkillSyncSettingsFragment() {
               (skill) => skill.status === "error" || skill.status === "conflict",
             ).length,
           });
+
+  const skillErrorHint = (code: string | undefined, message: string | undefined) => {
+    const path = skillDiagnosticPath(code, message);
+    let detail: string;
+    switch (code) {
+      case "skill_metadata_mismatch":
+        detail = t("skillSync.diagnostics.metadataMismatch");
+        break;
+      case "skill_import_forbidden":
+        detail = t("skillSync.diagnostics.unsupportedImport");
+        break;
+      case "skill_dynamic_module_loading_forbidden":
+        detail = t("skillSync.diagnostics.dynamicLoading");
+        break;
+      case "skill_network_access_forbidden":
+        detail = t("skillSync.diagnostics.networkAccess");
+        break;
+      case "skill_process_escape_forbidden":
+        detail = t("skillSync.diagnostics.processAccess");
+        break;
+      case "skill_file_location_invalid":
+        detail = t("skillSync.diagnostics.invalidFileLocation");
+        break;
+      case "skill_executable_extension_invalid":
+        detail = t("skillSync.diagnostics.invalidScriptExtension");
+        break;
+      case "skill_script_tests_missing":
+        detail = t("skillSync.diagnostics.missingScriptTests");
+        break;
+      case "skill_script_uncovered":
+        detail = t("skillSync.diagnostics.uncoveredScript");
+        break;
+      case "skill_sync_size_limit":
+        detail = t("skillSync.diagnostics.fileTooLarge");
+        break;
+      case "skill_sync_binary_file":
+        detail = t("skillSync.diagnostics.binaryFile");
+        break;
+      case "skill_sync_git_timeout":
+        detail = t("skillSync.diagnostics.gitTimeout");
+        break;
+      case "skill_sync_head_changed":
+        detail = t("skillSync.diagnostics.remoteChanged");
+        break;
+      case "custom":
+        if (message?.includes("Skill package paths must be safe relative paths.")) {
+          detail = t("skillSync.diagnostics.invalidFilePath");
+        } else if (message?.includes("Skill file paths must be unique.")) {
+          detail = t("skillSync.diagnostics.duplicateFile");
+        } else if (message?.includes("SKILL.md is required.")) {
+          detail = t("skillSync.diagnostics.missingSkillDocument");
+        } else if (message?.includes("Skill packages may contain at most")) {
+          detail = t("skillSync.diagnostics.packageTooLarge");
+        } else {
+          detail = t("skillSync.skillErrorHint");
+        }
+        break;
+      default:
+        detail = t("skillSync.skillErrorHint");
+    }
+    return path === undefined ? detail : t("skillSync.diagnosticWithFile", { path, detail });
+  };
 
   return (
     <SettingsScreenFrame
@@ -124,7 +191,7 @@ export function SkillSyncSettingsFragment() {
             (next) =>
               next.status === "ready" && next.errorMessage === undefined
                 ? t("skillSync.configurationSaved")
-                : next.errorMessage !== undefined
+                : next.status === "error" || next.errorMessage !== undefined
                   ? t("skillSync.configurationSavedButSyncFailed")
                   : t("skillSync.configurationSavedWithIssues", {
                       count: next.skills.filter(
@@ -308,7 +375,7 @@ export function SkillSyncSettingsFragment() {
                       </details>
                     </>
                   ) : skill.status === "error" ? (
-                    <small>{t("skillSync.skillErrorHint")}</small>
+                    <small>{skillErrorHint(skill.errorCode, skill.errorMessage)}</small>
                   ) : (
                     <small>
                       {skill.status === "ignored_remote"
@@ -371,4 +438,24 @@ export function SkillSyncSettingsFragment() {
       ) : null}
     </SettingsScreenFrame>
   );
+}
+
+function skillDiagnosticPath(code: string | undefined, message: string | undefined) {
+  if (code === "skill_sync_size_limit") {
+    return /^Skill file is too large: (.+)$/u.exec(message ?? "")?.[1];
+  }
+  if (
+    code === "skill_metadata_mismatch" ||
+    code === "skill_import_forbidden" ||
+    code === "skill_dynamic_module_loading_forbidden" ||
+    code === "skill_network_access_forbidden" ||
+    code === "skill_process_escape_forbidden" ||
+    code === "skill_file_location_invalid" ||
+    code === "skill_executable_extension_invalid" ||
+    code === "skill_script_uncovered"
+  ) {
+    const path = /^([^:]+):\s/u.exec(message ?? "")?.[1];
+    return path !== undefined && path.length <= 300 ? path : undefined;
+  }
+  return undefined;
 }
