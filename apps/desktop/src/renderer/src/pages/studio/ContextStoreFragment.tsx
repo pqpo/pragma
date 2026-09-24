@@ -551,6 +551,7 @@ export function ContextStoreDetailFragment(props: {
   const deleteBlockedByRevisionDrafts = deleteError?.code === "revision_drafts_present";
   const deleteBlockedByReferences = deleteError?.code === "expert_referenced";
   const deleteActiveMission = deleteError?.code === "active_mission_referenced";
+  const deleteMissionMessagesPending = deleteError?.code === "mission_message_queue_referenced";
   const deleteMissionUnmountFailed =
     deleteError?.code === "mission_unmount_failed" || deleteError?.code === "mission_referenced";
   const hasMissionMounts =
@@ -1817,7 +1818,9 @@ export function ContextStoreDetailFragment(props: {
                   ? t("knowledgeBaseMissionUnmountFailed")
                   : deleteActiveMission
                     ? t("knowledgeBaseActiveMission")
-                    : deleteError?.message
+                    : deleteMissionMessagesPending
+                      ? t("knowledgeBaseMissionMessagesPending")
+                      : deleteError?.message
           }
           errorAction={
             deleteBlockedByRevisionDrafts && props.onOpenRevisions !== undefined

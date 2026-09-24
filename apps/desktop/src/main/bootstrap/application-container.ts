@@ -79,11 +79,9 @@ import {
   type ContextStoreRevisionGenerator,
   type ContextStoreRevisionService,
 } from "../features/context-stores/context-store-revision-service.ts";
-import {
-  ContextStoreStoreError,
-  createContextStoreStore,
-} from "../features/context-stores/context-store-store.ts";
+import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
 import { createContextStoreEditorDraftService } from "../features/context-stores/context-store-editor-draft-service.ts";
+import { toContextStoreMissionDeletionError } from "./context-store-mission-deletion-error.ts";
 import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
@@ -633,12 +631,8 @@ export async function createDesktopApplicationContainer(
         try {
           await missionRunner?.assertContextMountChangeAllowed(missionId);
         } catch (error) {
-          if (error instanceof MissionStoreError && error.code === "mission_active") {
-            throw new ContextStoreStoreError(
-              "active_mission_referenced",
-              "A Mission using this knowledge base is active. Wait for it to finish before deleting.",
-            );
-          }
+          const blocked = toContextStoreMissionDeletionError(error);
+          if (blocked !== undefined) throw blocked;
           throw error;
         }
       };
@@ -649,12 +643,8 @@ export async function createDesktopApplicationContainer(
         try {
           await missionRunner?.removeContextStoreMount({ id: reference.id, storeId });
         } catch (error) {
-          if (error instanceof MissionStoreError && error.code === "mission_active") {
-            throw new ContextStoreStoreError(
-              "active_mission_referenced",
-              "A Mission using this knowledge base is active. Wait for it to finish before deleting.",
-            );
-          }
+          const blocked = toContextStoreMissionDeletionError(error);
+          if (blocked !== undefined) throw blocked;
           throw error;
         }
       }

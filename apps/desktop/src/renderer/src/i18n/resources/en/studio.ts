@@ -703,7 +703,9 @@ export const studio = {
   knowledgeBaseMissionMountWarning:
     "This knowledge base is mounted in one or more Missions. Inactive mounts will be removed automatically. Deletion is rejected while any of those Missions is queued, running, or waiting.",
   knowledgeBaseActiveMission:
-    "A Mission using this knowledge base is queued, running, or waiting. Finish it before deleting the knowledge base; its Mission mounts were not changed.",
+    "A Mission using this knowledge base is queued, running, or waiting. Wait for it to finish before retrying. The knowledge base was not deleted; some inactive Mission mounts may already have been removed. Refresh Missions to check their current mounts.",
+  knowledgeBaseMissionMessagesPending:
+    "A Mission using this knowledge base has queued messages. Remove or finish those messages before retrying. The knowledge base was not deleted; some inactive Mission mounts may already have been removed. Refresh Missions to check their current mounts.",
   knowledgeBaseMissionUnmountFailed:
     "Some Mission mounts could not be removed, so the knowledge base was not deleted. Some mounts may already have been removed; refresh and retry.",
   knowledgeBaseRevisionTasksBlocked:

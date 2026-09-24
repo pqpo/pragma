@@ -13,7 +13,9 @@ export function unlinkedRevisionDrafts(
   const linkedDraftIds = new Set(jobs.map((job) => job.draftId));
   return drafts.filter(
     (draft) =>
-      draft.storeId === storeId && draft.state !== "merged" && !linkedDraftIds.has(draft.id),
+      (storeId === "" || draft.storeId === storeId) &&
+      draft.state !== "merged" &&
+      !linkedDraftIds.has(draft.id),
   );
 }
 

@@ -110,7 +110,7 @@ describe("revision activity", () => {
     ).toHaveLength(1);
   });
 
-  it("only lists unlinked drafts that belong to the selected knowledge base", () => {
+  it("scopes unlinked drafts by Store while preserving the all-stores view", () => {
     const otherStoreId = "00000000-0000-4000-8000-000000000002";
     const draft = (id: string, storeId: string, state: ContextStoreDraft["state"]) =>
       ({
@@ -132,9 +132,9 @@ describe("revision activity", () => {
     const foreign = draft("20000000-0000-4000-8000-000000000003", otherStoreId, "editing");
     const merged = draft("20000000-0000-4000-8000-000000000004", record.storeId, "merged");
 
-    expect(
-      unlinkedRevisionDrafts([linked, orphan, foreign, merged], [job], record.storeId),
-    ).toEqual([orphan]);
+    const drafts = [linked, orphan, foreign, merged];
+    expect(unlinkedRevisionDrafts(drafts, [job], record.storeId)).toEqual([orphan]);
+    expect(unlinkedRevisionDrafts(drafts, [job], "")).toEqual([orphan, foreign]);
   });
 
   it("paginates filtered records and clamps empty or deleted last pages", () => {

@@ -10,6 +10,14 @@ import {
   PragmaProjectStoreError,
 } from "../../features/projects/pragma-project-store.ts";
 
+const knowledgeBaseDeleteErrorCases = [
+  { code: "active_mission_referenced", message: "A Mission using this knowledge base is active." },
+  {
+    code: "mission_message_queue_referenced",
+    message: "A Mission using this knowledge base has queued messages.",
+  },
+] as const;
+
 describe("runDesktopMutation", () => {
   it("preserves IntegrationError recovery fields across the IPC boundary", async () => {
     const result = await runDesktopMutation(async () => {
@@ -124,23 +132,23 @@ describe("runDesktopMutation", () => {
     });
   });
 
-  it("preserves Knowledge Base deletion error codes for renderer localization", async () => {
-    const result = await runDesktopMutation(async () => {
-      throw new ContextStoreStoreError(
-        "active_mission_referenced",
-        "A Mission using this knowledge base is active.",
-      );
-    });
+  it.each(knowledgeBaseDeleteErrorCases)(
+    "preserves Knowledge Base deletion error code $code for renderer localization",
+    async ({ code, message }) => {
+      const result = await runDesktopMutation(async () => {
+        throw new ContextStoreStoreError(code, message);
+      });
 
-    expect(result).toEqual({
-      ok: false,
-      error: {
-        code: "active_mission_referenced",
-        message: "A Mission using this knowledge base is active.",
-        diagnostics: [],
-      },
-    });
-  });
+      expect(result).toEqual({
+        ok: false,
+        error: {
+          code,
+          message,
+          diagnostics: [],
+        },
+      });
+    },
+  );
 
   it("returns typed Bundle setup guidance without leaking runtime diagnostics", async () => {
     const result = await runDesktopMutation(async () => {

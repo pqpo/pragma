@@ -265,6 +265,7 @@ export class ContextStoreStoreError extends Error {
       | "expert_referenced"
       | "revision_drafts_present"
       | "active_mission_referenced"
+      | "mission_message_queue_referenced"
       | "mission_referenced"
       | "mission_unmount_failed"
       | "legacy_note_unsupported",

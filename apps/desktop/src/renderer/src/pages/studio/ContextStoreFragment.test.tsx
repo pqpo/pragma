@@ -39,6 +39,15 @@ describe("knowledge base UI", () => {
         message: "English wording can change.",
       }),
     ).toEqual({ code: "active_mission_referenced", message: "English wording can change." });
+    expect(
+      contextStoreDeleteError({
+        code: "mission_message_queue_referenced",
+        message: "Queued Mission messages need attention.",
+      }),
+    ).toEqual({
+      code: "mission_message_queue_referenced",
+      message: "Queued Mission messages need attention.",
+    });
     expect(contextStoreDeleteError(new Error("unmerged revision drafts"))).toEqual({
       message: "unmerged revision drafts",
     });

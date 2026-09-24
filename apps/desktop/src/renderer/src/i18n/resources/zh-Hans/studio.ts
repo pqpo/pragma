@@ -661,7 +661,9 @@ export const studio = {
   knowledgeBaseMissionMountWarning:
     "此知识库挂载在一个或多个 Mission 中。空闲 Mission 的挂载会自动解除；只要其中有 Mission 正在排队、运行或等待，删除就会被拒绝。",
   knowledgeBaseActiveMission:
-    "使用此知识库的 Mission 正在排队、运行或等待。请等它结束后再删除；Mission 挂载未被更改。",
+    "使用此知识库的 Mission 正在排队、运行或等待。请等它结束后重试。知识库未删除；部分空闲 Mission 的挂载可能已解除，请刷新 Mission 列表确认当前挂载。",
+  knowledgeBaseMissionMessagesPending:
+    "使用此知识库的 Mission 仍有排队消息。请先删除或完成这些消息，再重试。知识库未删除；部分空闲 Mission 的挂载可能已解除，请刷新 Mission 列表确认当前挂载。",
   knowledgeBaseMissionUnmountFailed:
     "未能解除所有 Mission 挂载，因此知识库未删除。可能已有部分挂载解除，请刷新后重试。",
   knowledgeBaseRevisionTasksBlocked:

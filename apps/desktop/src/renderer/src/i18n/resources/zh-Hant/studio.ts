@@ -662,7 +662,9 @@ export const studio = {
   knowledgeBaseMissionMountWarning:
     "此知識庫掛載於一個或多個 Mission 中。閒置 Mission 的掛載會自動解除；只要其中有 Mission 正在排隊、執行中或等待，刪除就會被拒絕。",
   knowledgeBaseActiveMission:
-    "使用此知識庫的 Mission 正在排隊、執行中或等待。請等它結束後再刪除；Mission 掛載未被更改。",
+    "使用此知識庫的 Mission 正在排隊、執行中或等待。請等它結束後再重試。知識庫未刪除；部分閒置 Mission 的掛載可能已解除，請重新整理 Mission 清單確認目前掛載。",
+  knowledgeBaseMissionMessagesPending:
+    "使用此知識庫的 Mission 仍有排隊訊息。請先刪除或完成這些訊息，再重試。知識庫未刪除；部分閒置 Mission 的掛載可能已解除，請重新整理 Mission 清單確認目前掛載。",
   knowledgeBaseMissionUnmountFailed:
     "未能解除所有 Mission 掛載，因此知識庫未刪除。可能已有部分掛載解除，請重新整理後重試。",
   knowledgeBaseRevisionTasksBlocked:
