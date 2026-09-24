@@ -104,6 +104,7 @@ export interface MissionRunner {
   };
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   updateContextMounts(input: UpdateMissionContextMounts): Promise<Mission>;
+  assertContextMountChangeAllowed(id: string): Promise<void>;
   removeContextStoreMount(input: {
     readonly id: string;
     readonly storeId: string;

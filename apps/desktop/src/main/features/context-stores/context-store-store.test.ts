@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ContentAddressedStore } from "@pragma/core";
 
-import { createContextStoreStore, hashSnapshotContent } from "./context-store-store.ts";
+import {
+  createContextStoreStore,
+  ContextStoreStoreError,
+  hashSnapshotContent,
+  withContextStoreRevisionLocks,
+  type ContextStoreStore,
+} from "./context-store-store.ts";
 
 const directories: string[] = [];
 
@@ -25,6 +31,22 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("acquires multiple revision locks once each in deterministic Store ID order", async () => {
+    const acquired: string[] = [];
+    const stores: Pick<ContextStoreStore, "withRevisionLock"> = {
+      async withRevisionLock<T>(storeId: string, operation: () => Promise<T>): Promise<T> {
+        acquired.push(storeId);
+        return await operation();
+      },
+    };
+    const first = "00000000-0000-4000-8000-000000000001";
+    const second = "00000000-0000-4000-8000-000000000002";
+
+    await withContextStoreRevisionLocks(stores, [second, first, second], async () => undefined);
+
+    expect(acquired).toEqual([first, second]);
+  });
+
   it("changes the resolved binding revision for content and metadata revisions", async () => {
     const { store } = await createStore();
     const created = await store.create({
@@ -533,7 +555,9 @@ describe("managed context store", () => {
     const created = await store.create({ mode: "blank", name: "Mounted", description: "" });
     referenced.add(created.id);
 
-    await expect(store.remove(created.id)).rejects.toMatchObject({ code: "store_referenced" });
+    await expect(store.remove(created.id)).rejects.toMatchObject({
+      code: "expert_referenced",
+    });
     referenced.clear();
     await expect(store.remove(created.id)).resolves.toBeUndefined();
     await expect(
@@ -961,7 +985,71 @@ describe("managed context store", () => {
     });
     const created = await store.create({ mode: "blank", name: "Active", description: "" });
 
-    await expect(store.remove(created.id)).rejects.toMatchObject({ code: "store_referenced" });
+    await expect(store.remove(created.id)).rejects.toMatchObject({
+      code: "revision_drafts_present",
+    });
+    await expect(stat(join(storesPath, created.id))).resolves.toBeDefined();
+  });
+
+  it("unmounts Mission references before taking the final Store deletion lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-context-store-mission-unmount-"));
+    directories.push(directory);
+    const storesPath = join(directory, "stores");
+    const storeRef: { current?: ContextStoreStore } = {};
+    let unmounted = false;
+    const store = createContextStoreStore({
+      storesPath,
+      removeMissionMounts: async (storeId) => {
+        const current = storeRef.current;
+        if (current === undefined) throw new Error("Store was not initialized.");
+        await current.withRevisionLock(storeId, async () => {
+          unmounted = true;
+        });
+      },
+      hasMissionReferences: async () => false,
+    });
+    storeRef.current = store;
+    const created = await store.create({ mode: "blank", name: "Mounted", description: "" });
+
+    await store.remove(created.id);
+
+    expect(unmounted).toBe(true);
+    await expect(stat(join(storesPath, created.id))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects active Mission references without deleting the Store", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-context-store-active-mission-"));
+    directories.push(directory);
+    const storesPath = join(directory, "stores");
+    const store = createContextStoreStore({
+      storesPath,
+      removeMissionMounts: async () => {
+        throw new ContextStoreStoreError(
+          "active_mission_referenced",
+          "Wait for the Mission to finish.",
+        );
+      },
+    });
+    const created = await store.create({ mode: "blank", name: "Active Mission", description: "" });
+
+    await expect(store.remove(created.id)).rejects.toMatchObject({
+      code: "active_mission_referenced",
+    });
+    await expect(stat(join(storesPath, created.id))).resolves.toBeDefined();
+  });
+
+  it("keeps a Store when a Mission mount remains after unmounting", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-context-store-mission-reference-"));
+    directories.push(directory);
+    const storesPath = join(directory, "stores");
+    const store = createContextStoreStore({
+      storesPath,
+      removeMissionMounts: async () => undefined,
+      hasMissionReferences: async () => true,
+    });
+    const created = await store.create({ mode: "blank", name: "Still mounted", description: "" });
+
+    await expect(store.remove(created.id)).rejects.toMatchObject({ code: "mission_referenced" });
     await expect(stat(join(storesPath, created.id))).resolves.toBeDefined();
   });
 

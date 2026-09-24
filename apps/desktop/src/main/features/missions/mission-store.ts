@@ -126,7 +126,6 @@ export interface MissionStore {
     },
   ): Promise<Mission>;
   updateContextMounts(id: string, contextMounts: readonly MissionContextMount[]): Promise<Mission>;
-  removeContextStoreMount(id: string, storeId: string): Promise<Mission>;
   mountManagedRevisionDraft(input: {
     readonly id: string;
     readonly expectedExecutorRef: string;
@@ -1470,18 +1469,6 @@ export function createMissionStore(options: {
         }
         assertManagedRevisionMountsPreserved(current.contextMounts, contextMounts);
         return { ...current, contextMounts: [...contextMounts], updatedAt: timestamp };
-      });
-    },
-    async removeContextStoreMount(id, storeId) {
-      const parsedStoreId = z.string().uuid().parse(storeId);
-      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
-        if (!isUserFacingMissionOrigin(current.origin)) return current;
-        const contextMounts = current.contextMounts.filter(
-          (mount) => mount.kind !== "context-store" || mount.storeId !== parsedStoreId,
-        );
-        return contextMounts.length === current.contextMounts.length
-          ? current
-          : { ...current, contextMounts, updatedAt: timestamp };
       });
     },
     async mountManagedRevisionDraft(input) {

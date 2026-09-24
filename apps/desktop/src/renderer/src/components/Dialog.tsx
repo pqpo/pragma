@@ -100,6 +100,7 @@ export function ConfirmationDialog(props: {
   readonly confirmLabel: string;
   readonly busyLabel: string;
   readonly busy: boolean;
+  readonly confirmDisabled?: boolean | undefined;
   readonly tone?: "danger" | "primary" | undefined;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
@@ -126,7 +127,7 @@ export function ConfirmationDialog(props: {
           <button
             className={props.tone === "primary" ? "primary-button" : "danger-button"}
             type="button"
-            disabled={props.busy}
+            disabled={props.busy || props.confirmDisabled === true}
             onClick={props.onConfirm}
           >
             {props.busy ? props.busyLabel : props.confirmLabel}

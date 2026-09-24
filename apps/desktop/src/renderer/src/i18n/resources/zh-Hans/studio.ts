@@ -657,9 +657,11 @@ export const studio = {
   deleteKnowledgeBase: "删除此知识库？",
   deleteKnowledgeBaseAction: "删除知识库",
   deleteKnowledgeBaseDescription:
-    "“{{name}}”及其托管文件将移入废纸篓。请先从专家中解除挂载，并完成或丢弃未合并的修订草稿。若有 Mission 挂载此知识库，确认后会自动解除；正在执行的 Mission 可能无法继续读取知识库。",
+    "“{{name}}”及其托管文件将移入废纸篓。请先从专家中解除挂载，并完成或丢弃未合并的修订草稿。空闲 Mission 的挂载会自动解除；排队、运行或等待中的 Mission 结束前无法删除。",
   knowledgeBaseMissionMountWarning:
-    "此知识库当前挂载在一个或多个 Mission 中。确认后将自动解除这些挂载；若 Mission 正在执行，本次执行可能无法继续读取知识库。",
+    "此知识库挂载在一个或多个 Mission 中。空闲 Mission 的挂载会自动解除；只要其中有 Mission 正在排队、运行或等待，删除就会被拒绝。",
+  knowledgeBaseActiveMission:
+    "使用此知识库的 Mission 正在排队、运行或等待。请等它结束后再删除；Mission 挂载未被更改。",
   knowledgeBaseMissionUnmountFailed:
     "未能解除所有 Mission 挂载，因此知识库未删除。可能已有部分挂载解除，请刷新后重试。",
   knowledgeBaseRevisionTasksBlocked:

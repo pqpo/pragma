@@ -33,6 +33,7 @@ import {
   revisionEntries,
   revisionPage,
   snapshotDiffItems,
+  unlinkedRevisionDrafts,
 } from "./context-store-revision-model.ts";
 
 type RevisionOperation =
@@ -289,11 +290,8 @@ export function ContextStoreRevisionFragment(props: {
     [entries, stateFilter, sourceFilter],
   );
   const unlinkedDrafts = useMemo(
-    () =>
-      drafts.filter(
-        (draft) => draft.state !== "merged" && !jobs.some((job) => job.draftId === draft.id),
-      ),
-    [drafts, jobs],
+    () => unlinkedRevisionDrafts(drafts, jobs, storeId),
+    [drafts, jobs, storeId],
   );
   const { items: pageItems, currentPage, pageCount } = revisionPage(filtered, page, pageSize);
   useEffect(() => {

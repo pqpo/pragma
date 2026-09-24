@@ -4,6 +4,7 @@ import { createIntegrationError } from "@pragma/shared/integration";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { MissionStoreError } from "../../features/missions/mission-store.ts";
+import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
 import {
   PragmaProjectRevisionUnavailableError,
   PragmaProjectStoreError,
@@ -118,6 +119,24 @@ describe("runDesktopMutation", () => {
       error: {
         code: "message_conflict",
         message: "Mission timeline idempotency conflict for an-internal-id.",
+        diagnostics: [],
+      },
+    });
+  });
+
+  it("preserves Knowledge Base deletion error codes for renderer localization", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw new ContextStoreStoreError(
+        "active_mission_referenced",
+        "A Mission using this knowledge base is active.",
+      );
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "active_mission_referenced",
+        message: "A Mission using this knowledge base is active.",
         diagnostics: [],
       },
     });

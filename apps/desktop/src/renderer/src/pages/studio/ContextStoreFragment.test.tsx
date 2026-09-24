@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
 import {
   canMoveEntryTo,
+  contextStoreDeleteCheckPending,
+  contextStoreDeleteError,
   contextStorePreviewAfterLoad,
   ContextStoreCreatorDrawer,
   ContextStoreDetailFragment,
@@ -30,6 +32,31 @@ const store: ContextStore = {
 };
 
 describe("knowledge base UI", () => {
+  it("uses structured deletion error codes and waits for mount checks before confirmation", () => {
+    expect(
+      contextStoreDeleteError({
+        code: "active_mission_referenced",
+        message: "English wording can change.",
+      }),
+    ).toEqual({ code: "active_mission_referenced", message: "English wording can change." });
+    expect(contextStoreDeleteError(new Error("unmerged revision drafts"))).toEqual({
+      message: "unmerged revision drafts",
+    });
+    expect(
+      contextStoreDeleteCheckPending({ storeId: store.id, status: "checking" }, store.id),
+    ).toBe(true);
+    expect(contextStoreDeleteCheckPending(null, store.id)).toBe(true);
+    expect(
+      contextStoreDeleteCheckPending(
+        { storeId: "00000000-0000-4000-8000-000000000002", status: "mounted" },
+        store.id,
+      ),
+    ).toBe(true);
+    expect(contextStoreDeleteCheckPending({ storeId: store.id, status: "mounted" }, store.id)).toBe(
+      false,
+    );
+  });
+
   it("keeps the current Markdown view when a store notification refreshes the file", () => {
     expect(contextStorePreviewAfterLoad(false, true)).toBe(false);
     expect(contextStorePreviewAfterLoad(true, true)).toBe(true);

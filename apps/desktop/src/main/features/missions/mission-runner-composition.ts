@@ -143,6 +143,7 @@ import {
   shouldCreateSuccessorExpertSession,
 } from "./mission-session-upgrade.ts";
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
+import { MissionStoreError } from "./mission-store-error.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
@@ -2959,35 +2960,67 @@ export function createMissionRunner(options: {
     return updated;
   };
 
+  const activeMissionExecution = (candidate: Mission): boolean =>
+    candidate.execution !== undefined &&
+    ["queued", "running", "waiting"].includes(candidate.execution.status);
+
+  const assertNoPendingMissionPrompts = async (candidate: Mission): Promise<void> => {
+    const sessionId =
+      sessionService.session(candidate.id)?.sessionId ?? candidate.execution?.sessionId;
+    if (sessionId === undefined) return;
+    const pendingPrompts = (await expertSessionStore.listPrompts(sessionId)).filter(
+      (prompt) =>
+        prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
+    );
+    if (pendingPrompts.length > 0) {
+      throw new MissionStoreError(
+        "message_conflict",
+        "Remove or finish queued Mission messages before changing Mission Knowledge Stores.",
+      );
+    }
+  };
+
+  const assertContextMountChangeAllowedWithinController = async (
+    missionId: string,
+  ): Promise<Mission> => {
+    let candidate = await options.missions.get(missionId);
+    if (activeMissionExecution(candidate)) {
+      throw new MissionStoreError(
+        "mission_active",
+        "Wait for the current execution before changing Mission Knowledge Stores.",
+      );
+    }
+    await assertNoPendingMissionPrompts(candidate);
+    await awaitTerminalLifecycleSettlement(candidate);
+    candidate = await options.missions.get(missionId);
+    if (lifecycleService.hasActive(candidate.id) || activeMissionExecution(candidate)) {
+      throw new MissionStoreError(
+        "mission_active",
+        "Wait for the current execution before changing Mission Knowledge Stores.",
+      );
+    }
+    await assertNoPendingMissionPrompts(candidate);
+    return candidate;
+  };
+
+  const revalidateContextMountChangeWithinController = async (
+    missionId: string,
+  ): Promise<Mission> => {
+    const candidate = await options.missions.get(missionId);
+    if (lifecycleService.hasActive(candidate.id) || activeMissionExecution(candidate)) {
+      throw new MissionStoreError(
+        "mission_active",
+        "Wait for the current execution before changing Mission Knowledge Stores.",
+      );
+    }
+    await assertNoPendingMissionPrompts(candidate);
+    return candidate;
+  };
+
   const updateMissionContextMountsWithinChange = async (
     input: UpdateMissionContextMounts,
   ): Promise<Mission> => {
-    let mission = await options.missions.get(input.id);
-    const assertNoPendingPrompts = async (candidate: Mission): Promise<void> => {
-      const sessionId =
-        sessionService.session(candidate.id)?.sessionId ?? candidate.execution?.sessionId;
-      if (sessionId === undefined) return;
-      const pendingPrompts = (await expertSessionStore.listPrompts(sessionId)).filter(
-        (prompt) =>
-          prompt.mode === "enqueue" && (prompt.status === "queued" || prompt.status === "running"),
-      );
-      if (pendingPrompts.length > 0) {
-        throw new Error(
-          "Remove or finish queued Mission messages before changing Mission Knowledge Stores.",
-        );
-      }
-    };
-    if (
-      mission.execution !== undefined &&
-      !["queued", "running", "waiting"].includes(mission.execution.status)
-    ) {
-      // Inspect the durable queue before waiting for terminal observer cleanup.
-      // Otherwise that cleanup may dispatch a queued turn before this mutation
-      // gets a chance to reject it.
-      await assertNoPendingPrompts(mission);
-    }
-    await awaitTerminalLifecycleSettlement(mission);
-    mission = await options.missions.get(input.id);
+    let mission = await assertContextMountChangeAllowedWithinController(input.id);
     const existingDraftMounts = mission.contextMounts.filter(
       (mount): mount is Extract<MissionContextMount, { kind: "context-store-draft" }> =>
         mount.kind === "context-store-draft",
@@ -3008,13 +3041,6 @@ export function createMissionRunner(options: {
       )
     ) {
       throw new Error("Mission Knowledge Drafts can only be changed by revision tools.");
-    }
-    if (
-      lifecycleService.hasActive(mission.id) ||
-      (mission.execution !== undefined &&
-        ["queued", "running", "waiting"].includes(mission.execution.status))
-    ) {
-      throw new Error("Wait for the current execution before changing Mission Knowledge Stores.");
     }
     const contextStoreIds = input.contextMounts.flatMap((mount) =>
       mount.kind === "context-store" ? [mount.storeId] : [],
@@ -3046,7 +3072,9 @@ export function createMissionRunner(options: {
           await options.contextStoreRevisions.resolveDraft(mount.draftId);
         }),
       );
-      await assertNoPendingPrompts(mission);
+      // The settlement wait has already run before Store locks are acquired.
+      // Recheck state without waiting while holding those locks.
+      mission = await revalidateContextMountChangeWithinController(input.id);
       const updated = await options.missions.updateContextMounts(mission.id, input.contextMounts);
       await invalidateContextBindings(mission.id);
       return updated;
@@ -5192,16 +5220,20 @@ export function createMissionRunner(options: {
         async () => await updateMissionContextMounts(input),
       );
     },
+    async assertContextMountChangeAllowed(id) {
+      await withMissionController(id, async () => {
+        await assertContextMountChangeAllowedWithinController(id);
+      });
+    },
     async removeContextStoreMount(input) {
       return await withMissionController(input.id, async () => {
-        sessionService.beginContextBindingChange(input.id);
-        try {
-          const updated = await options.missions.removeContextStoreMount(input.id, input.storeId);
-          await invalidateContextBindings(input.id);
-          return updated;
-        } finally {
-          sessionService.finishContextBindingChange(input.id);
-        }
+        const mission = await options.missions.get(input.id);
+        if (!isUserFacingMissionOrigin(mission.origin)) return mission;
+        const contextMounts = mission.contextMounts.filter(
+          (mount) => mount.kind !== "context-store" || mount.storeId !== input.storeId,
+        );
+        if (contextMounts.length === mission.contextMounts.length) return mission;
+        return await updateMissionContextMounts({ id: input.id, contextMounts });
       });
     },
     async invalidateContextBindings(id) {

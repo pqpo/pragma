@@ -39,6 +39,7 @@ import type { ContextStoreStore } from "./context-store-store.ts";
 import type { ContextStoreRevisionService } from "./context-store-revision-service.ts";
 import type { ContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
 import { getContextStoreRevisionDiff } from "./context-store-revision-diff.ts";
+import { runDesktopMutation } from "../../platform/ipc/desktop-mutation-result.ts";
 
 interface ContextStoreWatchSubscription {
   readonly sender: WebContents;
@@ -77,9 +78,11 @@ export function installContextStoreHandlers(
     const parsed = InspectContextStoreImportSchema.parse(input);
     return store.inspectImport(parsed.sourcePath);
   });
-  ipcMain.handle("context-stores:delete", async (_event, input: unknown) => {
-    await store.remove(DeleteContextStoreSchema.parse(input).storeId);
-  });
+  ipcMain.handle("context-stores:delete", (_event, input: unknown) =>
+    runDesktopMutation(async () => {
+      await store.remove(DeleteContextStoreSchema.parse(input).storeId);
+    }),
+  );
   ipcMain.handle("context-stores:get-content", (_event, input: unknown) => {
     const parsed = GetContextStoreContentSchema.parse(input);
     return (editorDrafts ?? store).getContent(parsed.storeId, parsed.contentId);

@@ -1,8 +1,21 @@
 import type {
+  ContextStoreDraft,
   ContextStoreRevisionJob,
   ContextStoreRevisionRecord,
   ContextStoreRevisionDiff,
 } from "../../../../shared/contracts/index.ts";
+
+export function unlinkedRevisionDrafts(
+  drafts: readonly ContextStoreDraft[],
+  jobs: readonly ContextStoreRevisionJob[],
+  storeId: string,
+): ContextStoreDraft[] {
+  const linkedDraftIds = new Set(jobs.map((job) => job.draftId));
+  return drafts.filter(
+    (draft) =>
+      draft.storeId === storeId && draft.state !== "merged" && !linkedDraftIds.has(draft.id),
+  );
+}
 
 export type RevisionEntry =
   | {

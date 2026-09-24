@@ -8,6 +8,7 @@ import {
 import { IntegrationErrorSchema } from "@pragma/shared/integration";
 import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
 import { MissionStoreError } from "../../features/missions/mission-store.ts";
+import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { CapabilityStoreError } from "../../features/capabilities/capability-store.ts";
 import {
@@ -101,6 +102,13 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
     });
   }
   if (error instanceof MissionStoreError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      diagnostics: [],
+    });
+  }
+  if (error instanceof ContextStoreStoreError) {
     return DesktopMutationErrorSchema.parse({
       code: error.code,
       message: error.message,

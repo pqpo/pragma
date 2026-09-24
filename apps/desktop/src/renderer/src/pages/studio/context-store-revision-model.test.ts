@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  ContextStoreDraft,
   ContextStoreRevisionJob,
   ContextStoreRevisionRecord,
 } from "../../../../shared/contracts/index.ts";
@@ -8,6 +9,7 @@ import {
   revisionEntries,
   revisionPage,
   snapshotDiffItems,
+  unlinkedRevisionDrafts,
 } from "./context-store-revision-model.ts";
 
 const record: ContextStoreRevisionRecord = {
@@ -106,6 +108,33 @@ describe("revision activity", () => {
     expect(
       filterRevisionEntries(mixedEntries, "pending_review", "user", otherStoreId),
     ).toHaveLength(1);
+  });
+
+  it("only lists unlinked drafts that belong to the selected knowledge base", () => {
+    const otherStoreId = "00000000-0000-4000-8000-000000000002";
+    const draft = (id: string, storeId: string, state: ContextStoreDraft["state"]) =>
+      ({
+        schemaVersion: "pragma.context-store-draft/v2",
+        operation: "revise",
+        id,
+        revision: 1,
+        name: "Draft",
+        storeId,
+        baseRevision: 1,
+        baseSnapshotHash: "0".repeat(64),
+        state,
+        overlay: { files: [], deletedFiles: [], directories: [], deletedDirectories: [] },
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+      }) satisfies ContextStoreDraft;
+    const linked = draft(job.draftId, record.storeId, "editing");
+    const orphan = draft("20000000-0000-4000-8000-000000000002", record.storeId, "editing");
+    const foreign = draft("20000000-0000-4000-8000-000000000003", otherStoreId, "editing");
+    const merged = draft("20000000-0000-4000-8000-000000000004", record.storeId, "merged");
+
+    expect(
+      unlinkedRevisionDrafts([linked, orphan, foreign, merged], [job], record.storeId),
+    ).toEqual([orphan]);
   });
 
   it("paginates filtered records and clamps empty or deleted last pages", () => {
