@@ -99,6 +99,19 @@ export function mergeLoadedExperts(
   });
 }
 
+export async function syncSkillsAndRefreshCatalog(
+  syncSkills: () => Promise<SkillSyncOverview>,
+  refreshCatalog: () => Promise<void>,
+): Promise<SkillSyncOverview> {
+  const overview = await syncSkills();
+  try {
+    void refreshCatalog().catch(() => undefined);
+  } catch {
+    // Preserve the completed sync result if the independent catalog refresh fails.
+  }
+  return overview;
+}
+
 function toUnavailableExpertRecord(summary: ExpertSummary): ExpertRecord {
   return {
     id: summary.id,
@@ -1226,10 +1239,14 @@ export function StudioPage(props: {
             onSync={
               activeView === "skills"
                 ? async () => {
-                    const overview = await window.pragmaDesktop.syncSkills();
+                    const overview = await syncSkillsAndRefreshCatalog(
+                      () => window.pragmaDesktop.syncSkills(),
+                      async () => {
+                        setCapabilities(await window.pragmaDesktop.listCapabilities());
+                      },
+                    );
                     setSkillSyncOverview(overview);
                     setSkillSyncOverviewState("ready");
-                    setCapabilities(await window.pragmaDesktop.listCapabilities());
                     return overview;
                   }
                 : undefined

@@ -109,6 +109,9 @@ export function SkillSyncSettingsFragment() {
       case "skill_executable_extension_invalid":
         detail = t("skillSync.diagnostics.invalidScriptExtension");
         break;
+      case "skill_script_language_unsupported":
+        detail = t("skillSync.diagnostics.unsupportedScriptLanguage");
+        break;
       case "skill_script_tests_missing":
         detail = t("skillSync.diagnostics.missingScriptTests");
         break;
@@ -517,6 +520,7 @@ function skillDiagnosticPath(code: string | undefined, message: string | undefin
     code === "skill_process_escape_forbidden" ||
     code === "skill_file_location_invalid" ||
     code === "skill_executable_extension_invalid" ||
+    code === "skill_script_language_unsupported" ||
     code === "skill_script_uncovered"
   ) {
     const path = /^([^:]+):\s/u.exec(message ?? "")?.[1];

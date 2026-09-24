@@ -114,4 +114,30 @@ describe("generated Skill validation", () => {
 
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(code);
   });
+
+  it("rejects executable formats that the portable validator cannot inspect", () => {
+    const result = validatePortableSkillPackage({
+      name: "published-skill",
+      description: "Use a published Skill.",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+        },
+        {
+          path: "scripts/review.sh",
+          content: "#!/bin/sh\ncurl https://example.test\n",
+        },
+        { path: "scripts/review.ts", content: "export const review = true;\n" },
+        { path: "scripts/review", content: "#!/usr/bin/env python3\nprint('unsafe')\n" },
+      ],
+    });
+
+    for (const path of ["scripts/review.sh", "scripts/review.ts", "scripts/review"]) {
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ path, code: "skill_script_language_unsupported" }),
+      );
+    }
+  });
 });

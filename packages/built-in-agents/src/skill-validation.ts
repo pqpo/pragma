@@ -15,6 +15,32 @@ const ALLOWED_NODE_IMPORTS = new Set([
   "node:url",
   "node:util",
 ]);
+const UNSCANNED_EXECUTABLE_EXTENSIONS = new Set([
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".fish",
+  ".ksh",
+  ".csh",
+  ".py",
+  ".pyw",
+  ".rb",
+  ".pl",
+  ".pm",
+  ".ps1",
+  ".psm1",
+  ".bat",
+  ".cmd",
+  ".php",
+  ".lua",
+  ".r",
+  ".jl",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".tsx",
+  ".jsx",
+]);
 
 export interface SkillPackageValidationResult {
   readonly passed: boolean;
@@ -119,6 +145,20 @@ function staticDiagnostics(
         path: script.path,
         code: "skill_script_uncovered",
         message: `${script.path} is not imported by a test.`,
+      });
+    }
+  }
+  for (const file of skill.files) {
+    const extension = /\.[^./]+$/u.exec(file.path)?.[0]?.toLowerCase();
+    const scannedJavaScript = /\.(?:mjs|cjs|js)$/iu.test(file.path);
+    const unsupportedExecutable =
+      (extension !== undefined && UNSCANNED_EXECUTABLE_EXTENSIONS.has(extension)) ||
+      (/^#!/u.test(file.content) && !scannedJavaScript);
+    if (unsupportedExecutable) {
+      diagnostics.push({
+        path: file.path,
+        code: "skill_script_language_unsupported",
+        message: `${file.path} uses an executable format that cannot be checked safely.`,
       });
     }
   }

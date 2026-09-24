@@ -54,6 +54,8 @@ export const settings = {
       invalidFileLocation:
         "This file is in an unsupported folder. Move it to a supported Skill folder.",
       invalidScriptExtension: "Use the .mjs extension for Skill scripts.",
+      unsupportedScriptLanguage:
+        "This script format cannot be checked safely. Use .mjs, .js, or .cjs.",
       missingScriptTests: "Add tests for this Skill script under the tests folder.",
       uncoveredScript: "This script is not covered by a test. Add a matching test.",
       fileTooLarge: "This Skill file is too large. Reduce its size and try again.",

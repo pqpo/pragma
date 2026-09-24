@@ -50,6 +50,7 @@ export const settings = {
       processAccess: "脚本包含不支持的进程操作，请调整该文件。",
       invalidFileLocation: "技能文件放置位置不符合要求，请移动到支持的文件夹。",
       invalidScriptExtension: "脚本扩展名不正确，请使用 .mjs。",
+      unsupportedScriptLanguage: "无法安全检查此脚本类型，请改用 .mjs、.js 或 .cjs。",
       missingScriptTests: "技能脚本缺少配套测试，请补充 tests 文件夹中的测试。",
       uncoveredScript: "脚本尚未被测试覆盖，请补充对应测试。",
       fileTooLarge: "技能文件超过大小限制，请精简后重试。",
