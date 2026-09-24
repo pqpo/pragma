@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { skillSyncRepositoryErrorMessageKey } from "./SkillSyncSettingsFragment.tsx";
+import {
+  skillDiagnosticPath,
+  skillSyncRepositoryErrorMessageKey,
+} from "./SkillSyncSettingsFragment.tsx";
 
 describe("skill sync repository error hints", () => {
   it("maps stable errors to short actionable messages", () => {
@@ -31,5 +34,20 @@ describe("skill sync repository error hints", () => {
     expect(skillSyncRepositoryErrorMessageKey("skill_sync_failed", "Unknown Git error")).toBe(
       "skillSync.diagnostics.repositorySyncFailed",
     );
+  });
+
+  it("shows the local relative path for a non-UTF-8 Skill file without exposing cache paths", () => {
+    expect(
+      skillDiagnosticPath(
+        "skill_sync_binary_file",
+        "Skill file is not UTF-8 text: assets/data.bin",
+      ),
+    ).toBe("assets/data.bin");
+    expect(
+      skillDiagnosticPath(
+        "skill_sync_binary_file",
+        "Skill sync file is not UTF-8: /Users/example/.pragma/cache/skills/assets/data.bin",
+      ),
+    ).toBeUndefined();
   });
 });

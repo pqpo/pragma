@@ -508,9 +508,12 @@ export function skillSyncRepositoryErrorMessageKey(
   return "skillSync.diagnostics.repositorySyncFailed";
 }
 
-function skillDiagnosticPath(code: string | undefined, message: string | undefined) {
+export function skillDiagnosticPath(code: string | undefined, message: string | undefined) {
   if (code === "skill_sync_size_limit") {
     return /^Skill file is too large: (.+)$/u.exec(message ?? "")?.[1];
+  }
+  if (code === "skill_sync_binary_file") {
+    return /^Skill file is not UTF-8 text: (.+)$/u.exec(message ?? "")?.[1];
   }
   if (
     code === "skill_metadata_mismatch" ||
