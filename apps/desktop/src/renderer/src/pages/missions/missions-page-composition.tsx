@@ -2243,7 +2243,7 @@ export function MissionDetailFragment(props: {
     readonly key: string;
     readonly coordinator?: ExpertMentionCandidate | undefined;
     readonly members: readonly ExpertMentionCandidate[];
-  }>(() => {
+  } | undefined>(() => {
     const cached = props.teamIdentityCache?.get(teamIdentityKey);
     return cached === undefined
       ? undefined
