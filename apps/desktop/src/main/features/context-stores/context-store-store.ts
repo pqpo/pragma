@@ -262,7 +262,11 @@ export class ContextStoreStoreError extends Error {
       | "source_unavailable"
       | "invalid_entry"
       | "revision_conflict"
-      | "store_referenced"
+      | "expert_referenced"
+      | "revision_drafts_present"
+      | "active_mission_referenced"
+      | "mission_message_queue_referenced"
+      | "mission_referenced"
       | "mission_unmount_failed"
       | "legacy_note_unsupported",
     message: string,
@@ -332,6 +336,7 @@ export function createContextStoreStore(options: {
   readonly onRemoved?: ((storeId: string) => Promise<void>) | undefined;
   readonly hasUnmergedRevisionDrafts?: ((storeId: string) => Promise<boolean>) | undefined;
   readonly removeMissionMounts?: ((storeId: string) => Promise<void>) | undefined;
+  readonly hasMissionReferences?: ((storeId: string) => Promise<boolean>) | undefined;
   readonly onPublished?: ((storeId: string) => void) | undefined;
 }): ContextStoreStore {
   const storePath = (id: string) => join(options.storesPath, id);
@@ -1278,7 +1283,7 @@ export function createContextStoreStore(options: {
 
     async remove(storeId, expected): Promise<void> {
       const id = z.string().uuid().parse(storeId);
-      await withRevisionLock(id, async () => {
+      const assertDeleteAllowed = async (): Promise<void> => {
         if (!(await pathExists(storePath(id)))) {
           throw new ContextStoreStoreError("store_not_found", `Knowledge base not found: ${id}`);
         }
@@ -1296,23 +1301,38 @@ export function createContextStoreStore(options: {
         }
         if (await options.isReferenced?.(id)) {
           throw new ContextStoreStoreError(
-            "store_referenced",
+            "expert_referenced",
             "This knowledge base is mounted by one or more Experts. Remove it before deleting.",
           );
         }
         if (await options.hasUnmergedRevisionDrafts?.(id)) {
           throw new ContextStoreStoreError(
-            "store_referenced",
+            "revision_drafts_present",
             "This knowledge base still has unmerged revision drafts. " +
               "Complete and merge them, or discard them before deleting.",
           );
         }
-        try {
-          await options.removeMissionMounts?.(id);
-        } catch {
+      };
+
+      // Run the preflight under the Store lock, then release it before touching
+      // Missions. Mission mutations acquire their owner lock before Store locks.
+      await withRevisionLock(id, assertDeleteAllowed);
+      try {
+        await options.removeMissionMounts?.(id);
+      } catch (error) {
+        if (error instanceof ContextStoreStoreError) throw error;
+        throw new ContextStoreStoreError(
+          "mission_unmount_failed",
+          "Mission references could not be fully cleared. The knowledge base was not deleted; refresh Missions and retry.",
+        );
+      }
+
+      await withRevisionLock(id, async () => {
+        await assertDeleteAllowed();
+        if (await options.hasMissionReferences?.(id)) {
           throw new ContextStoreStoreError(
-            "mission_unmount_failed",
-            "Mission references could not be fully cleared. The knowledge base was not deleted; refresh Missions and retry.",
+            "mission_referenced",
+            "One or more Missions still reference this knowledge base. Refresh Missions and retry.",
           );
         }
         if (options.trashItem !== undefined) await options.trashItem(storePath(id));

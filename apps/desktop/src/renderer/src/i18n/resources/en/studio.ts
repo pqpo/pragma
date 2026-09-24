@@ -699,9 +699,13 @@ export const studio = {
   deleteKnowledgeBase: "Delete this knowledge base?",
   deleteKnowledgeBaseAction: "Delete knowledge base",
   deleteKnowledgeBaseDescription:
-    "“{{name}}” and its managed files will be moved to Trash. Remove its Expert mounts and finish or discard unmerged revision drafts first. Any Mission mounts will be removed automatically when you confirm; a Mission running at that time may lose access to the knowledge base during its run.",
+    "“{{name}}” and its managed files will be moved to Trash. Remove its Expert mounts and finish or discard unmerged revision drafts first. Inactive Mission mounts will be removed automatically. Wait for queued, running, or waiting Missions to finish before deleting.",
   knowledgeBaseMissionMountWarning:
-    "This knowledge base is currently mounted in one or more Missions. Confirming will remove those mounts automatically. A Mission running now may lose access to the knowledge base during its run.",
+    "This knowledge base is mounted in one or more Missions. Inactive mounts will be removed automatically. Deletion is rejected while any of those Missions is queued, running, or waiting.",
+  knowledgeBaseActiveMission:
+    "A Mission using this knowledge base is queued, running, or waiting. Wait for it to finish before retrying. The knowledge base was not deleted; some inactive Mission mounts may already have been removed. Refresh Missions to check their current mounts.",
+  knowledgeBaseMissionMessagesPending:
+    "A Mission using this knowledge base has queued messages. Remove or finish those messages before retrying. The knowledge base was not deleted; some inactive Mission mounts may already have been removed. Refresh Missions to check their current mounts.",
   knowledgeBaseMissionUnmountFailed:
     "Some Mission mounts could not be removed, so the knowledge base was not deleted. Some mounts may already have been removed; refresh and retry.",
   knowledgeBaseRevisionTasksBlocked:

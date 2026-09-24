@@ -4,10 +4,19 @@ import { createIntegrationError } from "@pragma/shared/integration";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
 import { MissionStoreError } from "../../features/missions/mission-store.ts";
+import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
 import {
   PragmaProjectRevisionUnavailableError,
   PragmaProjectStoreError,
 } from "../../features/projects/pragma-project-store.ts";
+
+const knowledgeBaseDeleteErrorCases = [
+  { code: "active_mission_referenced", message: "A Mission using this knowledge base is active." },
+  {
+    code: "mission_message_queue_referenced",
+    message: "A Mission using this knowledge base has queued messages.",
+  },
+] as const;
 
 describe("runDesktopMutation", () => {
   it("preserves IntegrationError recovery fields across the IPC boundary", async () => {
@@ -122,6 +131,24 @@ describe("runDesktopMutation", () => {
       },
     });
   });
+
+  it.each(knowledgeBaseDeleteErrorCases)(
+    "preserves Knowledge Base deletion error code $code for renderer localization",
+    async ({ code, message }) => {
+      const result = await runDesktopMutation(async () => {
+        throw new ContextStoreStoreError(code, message);
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        error: {
+          code,
+          message,
+          diagnostics: [],
+        },
+      });
+    },
+  );
 
   it("returns typed Bundle setup guidance without leaking runtime diagnostics", async () => {
     const result = await runDesktopMutation(async () => {

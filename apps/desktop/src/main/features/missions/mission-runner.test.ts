@@ -83,7 +83,10 @@ import { createMissionStore } from "./mission-store.ts";
 import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
 import { persistMissionDeletionIntent } from "./mission-deletion-intent.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+import {
+  createContextStoreStore,
+  type ContextStoreStore,
+} from "../context-stores/context-store-store.ts";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 
@@ -117,6 +120,7 @@ const missionRunnerMethods = new Set([
   "assertLocalHostRunAllowed",
   "updateOptions",
   "updateContextMounts",
+  "removeContextStoreMount",
   "sendMessage",
   "steerQueuedMessage",
   "removeQueuedMessage",
@@ -290,6 +294,201 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 30_000 }, () => {
+  it("removes an inactive Mission Knowledge mount through the guarded update path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-idle-knowledge-mount-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expert = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expert],
+    });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+    const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Remove an inactive Mission mount",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expert),
+      contextMounts: [{ kind: "context-store", storeId: store.id }],
+    });
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await expect(
+      runner.removeContextStoreMount({ id: mission.id, storeId: store.id }),
+    ).resolves.toMatchObject({ contextMounts: [] });
+    await expect(missions.get(mission.id)).resolves.toMatchObject({ contextMounts: [] });
+    await expect(contextStores.resolve(store.id)).resolves.toBeDefined();
+  });
+
+  it.each(["queued", "running", "waiting"] as const)(
+    "rejects removing Mission Knowledge while its %s execution is active",
+    async (status) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-active-knowledge-mount-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const expert = expertFixture();
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expert],
+      });
+      const contextStores = createContextStoreStore({ storesPath: join(root, "context-stores") });
+      const store = await contextStores.create({
+        mode: "blank",
+        name: "Knowledge",
+        description: "",
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Read this knowledge while running",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(expert),
+        contextMounts: [{ kind: "context-store", storeId: store.id }],
+      });
+      await missions.updateExecution(mission.id, {
+        id: "50000000-0000-4000-8000-000000000005",
+        inputMessageId: mission.initialMessageId,
+        status,
+        startedAt: "2026-09-24T00:00:00.000Z",
+        ...(status === "waiting" ? { waitReason: "human_input" as const } : {}),
+      });
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "runtime" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+        mapEvent: () => ({ events: [] }),
+      });
+      const runner = createMissionRunner({
+        missions,
+        project,
+        contextStores,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+
+      await expect(
+        runner.removeContextStoreMount({ id: mission.id, storeId: store.id }),
+      ).rejects.toMatchObject({ code: "mission_active" });
+      await expect(missions.get(mission.id)).resolves.toMatchObject({
+        contextMounts: [{ kind: "context-store", storeId: store.id }],
+      });
+      await expect(contextStores.resolve(store.id)).resolves.toBeDefined();
+    },
+  );
+
+  it("deletes a Knowledge Store without lock inversion during a concurrent Mission update", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-knowledge-delete-race-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expert = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expert],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const runnerRef: { current?: MissionRunner } = {};
+    let signalUnmountRequested!: () => void;
+    const unmountRequested = new Promise<void>((resolve) => {
+      signalUnmountRequested = resolve;
+    });
+    const contextStores = createContextStoreStore({
+      storesPath: join(root, "context-stores"),
+      removeMissionMounts: async (storeId) => {
+        for (const reference of await missions.listContextStoreReferences(storeId)) {
+          signalUnmountRequested();
+          const runner = runnerRef.current;
+          if (runner === undefined) throw new Error("Mission runner is unavailable.");
+          await runner.removeContextStoreMount({ id: reference.id, storeId });
+        }
+      },
+      hasMissionReferences: async (storeId) => await missions.isContextStoreReferenced(storeId),
+    });
+    const store = await contextStores.create({ mode: "blank", name: "Knowledge", description: "" });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Update the Knowledge mount while its Store is deleted",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expert),
+      contextMounts: [{ kind: "context-store", storeId: store.id }],
+    });
+    let signalStoreLockAttempt!: () => void;
+    const storeLockAttempted = new Promise<void>((resolve) => {
+      signalStoreLockAttempt = resolve;
+    });
+    let releaseStoreLockAttempt!: () => void;
+    const storeLockGate = new Promise<void>((resolve) => {
+      releaseStoreLockAttempt = resolve;
+    });
+    const runnerContextStores: ContextStoreStore = {
+      ...contextStores,
+      async withRevisionLock<T>(storeId: string, operation: () => Promise<T>): Promise<T> {
+        if (storeId === store.id) {
+          signalStoreLockAttempt();
+          await storeLockGate;
+        }
+        return await contextStores.withRevisionLock(storeId, operation);
+      },
+    };
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "unused", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      contextStores: runnerContextStores,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    runnerRef.current = runner;
+
+    const update = runner.updateContextMounts({
+      id: mission.id,
+      contextMounts: mission.contextMounts,
+    });
+    await storeLockAttempted;
+    const deletion = contextStores.remove(store.id);
+    try {
+      await unmountRequested;
+    } finally {
+      releaseStoreLockAttempt();
+    }
+    await Promise.all([update, deletion]);
+
+    await expect(missions.get(mission.id)).resolves.toMatchObject({ contextMounts: [] });
+    await expect(contextStores.resolve(store.id)).rejects.toMatchObject({
+      code: "store_not_found",
+    });
+  });
+
   it("includes system dependencies reached from a project Expert in the compilation identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-system-dependency-fingerprint-"));
     temporaryPaths.push(root);

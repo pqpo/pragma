@@ -658,9 +658,13 @@ export const studio = {
   deleteKnowledgeBase: "刪除此知識庫？",
   deleteKnowledgeBaseAction: "刪除知識庫",
   deleteKnowledgeBaseDescription:
-    "「{{name}}」及其代管檔案將移至垃圾桶。請先從專家解除掛載，並完成或丟棄尚未合併的修訂草稿。若有 Mission 掛載此知識庫，確認後會自動解除；正在執行的 Mission 可能無法繼續讀取知識庫。",
+    "「{{name}}」及其代管檔案將移至垃圾桶。請先從專家解除掛載，並完成或丟棄尚未合併的修訂草稿。閒置 Mission 的掛載會自動解除；排隊、執行中或等待中的 Mission 結束前無法刪除。",
   knowledgeBaseMissionMountWarning:
-    "此知識庫目前掛載於一個或多個 Mission 中。確認後將自動解除這些掛載；若 Mission 正在執行，本次執行可能無法繼續讀取知識庫。",
+    "此知識庫掛載於一個或多個 Mission 中。閒置 Mission 的掛載會自動解除；只要其中有 Mission 正在排隊、執行中或等待，刪除就會被拒絕。",
+  knowledgeBaseActiveMission:
+    "使用此知識庫的 Mission 正在排隊、執行中或等待。請等它結束後再重試。知識庫未刪除；部分閒置 Mission 的掛載可能已解除，請重新整理 Mission 清單確認目前掛載。",
+  knowledgeBaseMissionMessagesPending:
+    "使用此知識庫的 Mission 仍有排隊訊息。請先刪除或完成這些訊息，再重試。知識庫未刪除；部分閒置 Mission 的掛載可能已解除，請重新整理 Mission 清單確認目前掛載。",
   knowledgeBaseMissionUnmountFailed:
     "未能解除所有 Mission 掛載，因此知識庫未刪除。可能已有部分掛載解除，請重新整理後重試。",
   knowledgeBaseRevisionTasksBlocked:

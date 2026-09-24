@@ -12,6 +12,7 @@ export function StudioConfirmationDialog(props: {
   readonly confirmLabel: string;
   readonly busyLabel: string;
   readonly busy: boolean;
+  readonly confirmDisabled?: boolean | undefined;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
   readonly action?: "delete" | "reset" | "move" | undefined;
@@ -28,6 +29,7 @@ export function StudioConfirmationDialog(props: {
       confirmLabel={props.confirmLabel}
       busyLabel={props.busyLabel}
       busy={props.busy}
+      confirmDisabled={props.confirmDisabled}
       tone={props.action === "move" ? "primary" : "danger"}
       onCancel={props.onCancel}
       onConfirm={props.onConfirm}

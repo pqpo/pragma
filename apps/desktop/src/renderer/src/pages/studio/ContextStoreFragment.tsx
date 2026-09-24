@@ -111,12 +111,30 @@ const DEFAULT_METADATA: ContextStoreContentMetadata = {
   trigger: "manual",
   priority: "normal",
 };
-const ACTIVE_REVISION_DRAFT_DELETE_ERROR = "unmerged revision drafts";
-const REVISION_TASK_DELETE_ERROR =
-  "Resolve or delete this knowledge base's revision tasks before deleting it.";
-const KNOWLEDGE_BASE_REFERENCED_DELETE_ERROR =
-  "This knowledge base is mounted by one or more Experts.";
-const MISSION_REFERENCES_DELETE_ERROR = "Mission references could not be fully cleared.";
+type ContextStoreDeleteError = {
+  readonly code?: string | undefined;
+  readonly message: string;
+};
+
+export type ContextStoreMissionMountCheck = {
+  readonly storeId: string;
+  readonly status: "checking" | "mounted" | "unmounted" | "unknown";
+};
+
+export function contextStoreDeleteError(error: unknown): ContextStoreDeleteError {
+  const code =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+  return { ...(code === undefined ? {} : { code }), message: errorMessage(error) };
+}
+
+export function contextStoreDeleteCheckPending(
+  check: ContextStoreMissionMountCheck | null,
+  storeId: string,
+): boolean {
+  return check?.storeId !== storeId || check.status === "checking";
+}
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).at(-1) ?? path;
@@ -526,20 +544,22 @@ export function ContextStoreDetailFragment(props: {
   const [loading, setLoading] = useState(true);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [missionMountCheck, setMissionMountCheck] = useState<{
-    readonly storeId: string;
-    readonly status: "checking" | "mounted" | "unmounted" | "unknown";
-  } | null>(null);
-  const deleteBlockedByRevisionDrafts =
-    deleteError?.includes(ACTIVE_REVISION_DRAFT_DELETE_ERROR) === true ||
-    deleteError?.includes(REVISION_TASK_DELETE_ERROR) === true;
-  const deleteBlockedByReferences =
-    deleteError?.includes(KNOWLEDGE_BASE_REFERENCED_DELETE_ERROR) === true;
+  const [deleteError, setDeleteError] = useState<ContextStoreDeleteError | null>(null);
+  const [missionMountCheck, setMissionMountCheck] = useState<ContextStoreMissionMountCheck | null>(
+    null,
+  );
+  const deleteBlockedByRevisionDrafts = deleteError?.code === "revision_drafts_present";
+  const deleteBlockedByReferences = deleteError?.code === "expert_referenced";
+  const deleteActiveMission = deleteError?.code === "active_mission_referenced";
+  const deleteMissionMessagesPending = deleteError?.code === "mission_message_queue_referenced";
   const deleteMissionUnmountFailed =
-    deleteError?.includes(MISSION_REFERENCES_DELETE_ERROR) === true;
+    deleteError?.code === "mission_unmount_failed" || deleteError?.code === "mission_referenced";
   const hasMissionMounts =
     missionMountCheck?.storeId === props.store.id && missionMountCheck.status === "mounted";
+  const missionMountCheckPending = contextStoreDeleteCheckPending(
+    missionMountCheck,
+    props.store.id,
+  );
   const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
   const [revisionPrompt, setRevisionPrompt] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
@@ -557,13 +577,12 @@ export function ContextStoreDetailFragment(props: {
   );
 
   useEffect(() => {
-    if (
-      !confirmOpen ||
-      missionMountCheck?.storeId !== props.store.id ||
-      missionMountCheck.status !== "checking"
-    ) {
+    if (!confirmOpen) return;
+    if (missionMountCheck?.storeId !== props.store.id) {
+      setMissionMountCheck({ storeId: props.store.id, status: "checking" });
       return;
     }
+    if (missionMountCheck.status !== "checking") return;
     let active = true;
     const api = desktopApi();
     void Promise.resolve()
@@ -1118,6 +1137,7 @@ export function ContextStoreDetailFragment(props: {
   };
 
   const removeStore = async () => {
+    if (missionMountCheckPending) return;
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -1127,7 +1147,7 @@ export function ContextStoreDetailFragment(props: {
       }
       await props.onDelete();
     } catch (cause) {
-      setDeleteError(errorMessage(cause));
+      setDeleteError(contextStoreDeleteError(cause));
     } finally {
       setDeleting(false);
     }
@@ -1796,7 +1816,11 @@ export function ContextStoreDetailFragment(props: {
                 ? t("knowledgeBaseStillReferenced")
                 : deleteMissionUnmountFailed
                   ? t("knowledgeBaseMissionUnmountFailed")
-                  : deleteError
+                  : deleteActiveMission
+                    ? t("knowledgeBaseActiveMission")
+                    : deleteMissionMessagesPending
+                      ? t("knowledgeBaseMissionMessagesPending")
+                      : deleteError?.message
           }
           errorAction={
             deleteBlockedByRevisionDrafts && props.onOpenRevisions !== undefined
@@ -1807,6 +1831,7 @@ export function ContextStoreDetailFragment(props: {
           confirmLabel={t("deleteKnowledgeBaseAction")}
           busyLabel={t("deleting")}
           busy={deleting}
+          confirmDisabled={missionMountCheckPending}
           onCancel={() => {
             setDeleteError(null);
             setMissionMountCheck(null);

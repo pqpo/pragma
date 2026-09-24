@@ -81,6 +81,7 @@ import {
 } from "../features/context-stores/context-store-revision-service.ts";
 import { createContextStoreStore } from "../features/context-stores/context-store-store.ts";
 import { createContextStoreEditorDraftService } from "../features/context-stores/context-store-editor-draft-service.ts";
+import { toContextStoreMissionDeletionError } from "./context-store-mission-deletion-error.ts";
 import {
   createDesktopStoreRevisionAgent,
   type DesktopStoreRevisionAgent,
@@ -622,14 +623,34 @@ export async function createDesktopApplicationContainer(
     },
     removeMissionMounts: async (storeId) => {
       const references = await missionStore.listContextStoreReferences(storeId);
-      for (const reference of references) {
-        const missionRunner = missionRunnerRef.current;
-        if (missionRunner === undefined) {
-          throw new Error("Mission runner is unavailable while removing Mission Knowledge mounts.");
+      const missionRunner = missionRunnerRef.current;
+      if (references.length > 0 && missionRunner === undefined) {
+        throw new Error("Mission runner is unavailable while removing Mission Knowledge mounts.");
+      }
+      const assertSafeToUnmount = async (missionId: string): Promise<void> => {
+        try {
+          await missionRunner?.assertContextMountChangeAllowed(missionId);
+        } catch (error) {
+          const blocked = toContextStoreMissionDeletionError(error);
+          if (blocked !== undefined) throw blocked;
+          throw error;
         }
-        await missionRunner.removeContextStoreMount({ id: reference.id, storeId });
+      };
+      for (const reference of references) {
+        await assertSafeToUnmount(reference.id);
+      }
+      for (const reference of references) {
+        try {
+          await missionRunner?.removeContextStoreMount({ id: reference.id, storeId });
+        } catch (error) {
+          const blocked = toContextStoreMissionDeletionError(error);
+          if (blocked !== undefined) throw blocked;
+          throw error;
+        }
       }
     },
+    hasMissionReferences: async (storeId) =>
+      (await missionStore.listContextStoreReferences(storeId)).length > 0,
     onRemoved: async (storeId) => {
       await knowledgePromotionRef.current?.clearStoreBinding(storeId);
       knowledgeSyncRef.current?.schedule("knowledge-store-removed");

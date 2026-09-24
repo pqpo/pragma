@@ -46,6 +46,7 @@ import {
 } from "../../shared/contracts/context-store-revisions.ts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
+import { invokeMutation } from "../invoke-mutation.ts";
 export const contextStoresApi = {
   listContextStores: async () =>
     ContextStoreSchema.array().parse(await ipcRenderer.invoke("context-stores:list")),
@@ -61,7 +62,7 @@ export const contextStoresApi = {
       ),
     ),
   deleteContextStore: async (input) => {
-    await ipcRenderer.invoke("context-stores:delete", DeleteContextStoreSchema.parse(input));
+    await invokeMutation("context-stores:delete", DeleteContextStoreSchema.parse(input));
   },
   getContextStoreContent: async (input) =>
     ContextStoreContentSchema.parse(
