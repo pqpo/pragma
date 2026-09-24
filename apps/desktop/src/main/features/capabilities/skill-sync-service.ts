@@ -70,6 +70,8 @@ export type RemoteSkill = {
 export type RemoteSkillRepository = {
   readonly schemaVersion?: 1 | 2 | 3 | undefined;
   readonly skills: ReadonlyMap<string, RemoteSkill>;
+  /** Transient service-to-provider allowlist; never read from or written to the Git manifest. */
+  readonly grandfatheredExecutablePaths?: ReadonlyMap<string, ReadonlySet<string>> | undefined;
 };
 export type SkillSyncProviderHead = BackupProviderHead<RemoteSkillRepository>;
 
@@ -327,6 +329,7 @@ export function createSkillSyncService(options: {
     let ignoredRemote = [...state.ignoredRemote];
     const publishedKeys: string[] = [];
     const publishedSnapshots = new Map<string, LocalSkill | undefined>();
+    const grandfatheredExecutablePaths = new Map<string, ReadonlySet<string>>();
     Object.assign(errors, localSnapshot.errors);
     const checkpointState = (): SkillSyncState =>
       SkillSyncStateSchema.parse({
@@ -355,7 +358,18 @@ export function createSkillSyncService(options: {
       const localFingerprint = fingerprint(localSkill);
       const remoteFingerprint = fingerprint(remoteSkill);
       const base = bases[key];
+      const baselineFiles = legacyExecutableBaseline(state, key, base, localSkill);
+      const allowInitialRemoteSnapshot =
+        state.revision === undefined && base === undefined && localSkill === undefined;
+      const allowedRemoteLegacyPaths = legacyExecutablePathsForRepositorySkill(
+        remoteSkill,
+        head.repository.schemaVersion,
+        baselineFiles,
+        allowInitialRemoteSnapshot,
+        base,
+      );
       if (localFingerprint === remoteFingerprint) {
+        if (remoteSkill !== undefined) validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
         delete pendingRemoteActivations[key];
         if (localFingerprint === "absent") {
           delete bases[key];
@@ -370,17 +384,28 @@ export function createSkillSyncService(options: {
         continue;
       }
       if (intent === "restore") {
-        if (remoteSkill !== undefined) {
-          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
-          await writeState(checkpointState());
-        }
+        const priorPendingActivation = pendingRemoteActivations[key];
+        let persistedRemoteSnapshot = false;
         try {
-          const applied = await applyRemote(
-            key,
-            remoteSkill,
-            localSkill,
-            legacyExecutablePathsForRepositorySkill(remoteSkill, head.repository.schemaVersion),
-          );
+          if (remoteSkill !== undefined) {
+            const pending = pendingRemoteActivationFor(remoteSkill);
+            if (
+              allowInitialRemoteSnapshot &&
+              head.repository.schemaVersion !== undefined &&
+              head.repository.schemaVersion < 3
+            ) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+            validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+            if (!persistedRemoteSnapshot) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+          }
+          const applied = await applyRemote(key, remoteSkill, localSkill, allowedRemoteLegacyPaths);
           if (remoteSkill === undefined || applied === undefined) {
             delete bases[key];
             delete portableFiles[key];
@@ -393,7 +418,10 @@ export function createSkillSyncService(options: {
           delete errors[key];
           await writeState(checkpointState());
         } catch (error) {
-          delete pendingRemoteActivations[key];
+          if (!persistedRemoteSnapshot) {
+            if (priorPendingActivation === undefined) delete pendingRemoteActivations[key];
+            else pendingRemoteActivations[key] = priorPendingActivation;
+          }
           errors[key] = {
             source: "remote",
             code: errorCode(error),
@@ -419,17 +447,28 @@ export function createSkillSyncService(options: {
         continue;
       }
       if (remoteChanged) {
-        if (remoteSkill !== undefined) {
-          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
-          await writeState(checkpointState());
-        }
+        const priorPendingActivation = pendingRemoteActivations[key];
+        let persistedRemoteSnapshot = false;
         try {
-          const applied = await applyRemote(
-            key,
-            remoteSkill,
-            localSkill,
-            legacyExecutablePathsForRepositorySkill(remoteSkill, head.repository.schemaVersion),
-          );
+          if (remoteSkill !== undefined) {
+            const pending = pendingRemoteActivationFor(remoteSkill);
+            if (
+              allowInitialRemoteSnapshot &&
+              head.repository.schemaVersion !== undefined &&
+              head.repository.schemaVersion < 3
+            ) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+            validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+            if (!persistedRemoteSnapshot) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+          }
+          const applied = await applyRemote(key, remoteSkill, localSkill, allowedRemoteLegacyPaths);
           if (remoteSkill === undefined || applied === undefined) {
             delete bases[key];
             delete portableFiles[key];
@@ -443,7 +482,10 @@ export function createSkillSyncService(options: {
           ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
           await writeState(checkpointState());
         } catch (error) {
-          delete pendingRemoteActivations[key];
+          if (!persistedRemoteSnapshot) {
+            if (priorPendingActivation === undefined) delete pendingRemoteActivations[key];
+            else pendingRemoteActivations[key] = priorPendingActivation;
+          }
           if (errorCode(error) === "revision_conflict") {
             await writeState(checkpointState());
             throw coded(
@@ -472,6 +514,21 @@ export function createSkillSyncService(options: {
       }
       if (localSkill === undefined) desired.delete(key);
       else {
+        const mayPreserveLegacyLocalFiles =
+          (head.repository.schemaVersion !== undefined && head.repository.schemaVersion < 3) ||
+          head.revision === undefined;
+        const allowInitialLocalSnapshot =
+          state.revision === undefined &&
+          base === undefined &&
+          remoteSkill === undefined &&
+          (head.revision === undefined || (head.repository.schemaVersion ?? 3) < 3);
+        const allowedLocalLegacyPaths = mayPreserveLegacyLocalFiles
+          ? legacyExecutablePathsForLocalSkill(localSkill, baselineFiles, allowInitialLocalSnapshot)
+          : new Set<string>();
+        validateRemoteSkill(localSkill, allowedLocalLegacyPaths);
+        if (allowedLocalLegacyPaths.size > 0) {
+          grandfatheredExecutablePaths.set(key, allowedLocalLegacyPaths);
+        }
         desired.set(key, localSkill);
         portableFiles[key] = portableFilesForLocal(localSkill);
       }
@@ -485,6 +542,7 @@ export function createSkillSyncService(options: {
       repository: {
         schemaVersion: repositoryVersionForSkills(desired),
         skills: desired,
+        grandfatheredExecutablePaths,
       },
       publishedKeys,
       publishedSnapshots,
@@ -523,7 +581,10 @@ export function createSkillSyncService(options: {
         try {
           result = await reconcile(configuration, state, head, intent);
         } catch (error) {
-          if (errorCode(error) === "skill_sync_local_changed") continue;
+          if (errorCode(error) === "skill_sync_local_changed") {
+            state = await readState();
+            continue;
+          }
           throw error;
         }
         state = result.state;
@@ -718,16 +779,35 @@ export function createSkillSyncService(options: {
         }
         if (choice === "remote") {
           const remoteSkill = head.repository.skills.get(syncKey);
-          if (remoteSkill !== undefined) {
-            state.pendingRemoteActivations[syncKey] = pendingRemoteActivationFor(remoteSkill);
-            await writeState(state);
-          }
+          const baselineFiles = legacyExecutableBaseline(
+            state,
+            syncKey,
+            state.bases[syncKey],
+            localSkill,
+          );
+          const allowedRemoteLegacyPaths = legacyExecutablePathsForRepositorySkill(
+            remoteSkill,
+            head.repository.schemaVersion,
+            baselineFiles,
+            state.revision === undefined &&
+              state.bases[syncKey] === undefined &&
+              localSkill === undefined,
+            state.bases[syncKey],
+          );
+          const priorPendingActivation = state.pendingRemoteActivations[syncKey];
+          let validatedRemoteSnapshot = false;
           try {
+            if (remoteSkill !== undefined) {
+              validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+              validatedRemoteSnapshot = true;
+              state.pendingRemoteActivations[syncKey] = pendingRemoteActivationFor(remoteSkill);
+              await writeState(state);
+            }
             const applied = await applyRemote(
               syncKey,
               remoteSkill,
               localSkill,
-              legacyExecutablePathsForRepositorySkill(remoteSkill, head.repository.schemaVersion),
+              allowedRemoteLegacyPaths,
             );
             if (remoteSkill === undefined || applied === undefined)
               delete state.portableFiles[syncKey];
@@ -735,7 +815,11 @@ export function createSkillSyncService(options: {
             delete state.pendingRemoteActivations[syncKey];
             await writeState(state);
           } catch (error) {
-            delete state.pendingRemoteActivations[syncKey];
+            if (!validatedRemoteSnapshot) {
+              if (priorPendingActivation === undefined)
+                delete state.pendingRemoteActivations[syncKey];
+              else state.pendingRemoteActivations[syncKey] = priorPendingActivation;
+            }
             await writeState(state);
             throw error;
           }
@@ -753,13 +837,44 @@ export function createSkillSyncService(options: {
             }
             selectedLocal = latestBeforePublish.skills.get(syncKey);
             const desired = new Map(publishHead.repository.skills);
+            const grandfatheredExecutablePaths = new Map<string, ReadonlySet<string>>();
             if (selectedLocal === undefined) desired.delete(syncKey);
-            else desired.set(syncKey, selectedLocal);
+            else {
+              const baselineFiles = legacyExecutableBaseline(
+                state,
+                syncKey,
+                state.bases[syncKey],
+                selectedLocal,
+              );
+              const mayPreserveLegacyLocalFiles =
+                (publishHead.repository.schemaVersion !== undefined &&
+                  publishHead.repository.schemaVersion < 3) ||
+                publishHead.revision === undefined;
+              const allowInitialLocalSnapshot =
+                state.revision === undefined &&
+                state.bases[syncKey] === undefined &&
+                publishHead.repository.skills.get(syncKey) === undefined &&
+                (publishHead.revision === undefined ||
+                  (publishHead.repository.schemaVersion ?? 3) < 3);
+              const allowedLocalLegacyPaths = mayPreserveLegacyLocalFiles
+                ? legacyExecutablePathsForLocalSkill(
+                    selectedLocal,
+                    baselineFiles,
+                    allowInitialLocalSnapshot,
+                  )
+                : new Set<string>();
+              validateRemoteSkill(selectedLocal, allowedLocalLegacyPaths);
+              if (allowedLocalLegacyPaths.size > 0) {
+                grandfatheredExecutablePaths.set(syncKey, allowedLocalLegacyPaths);
+              }
+              desired.set(syncKey, selectedLocal);
+            }
             const published = await provider.publish({
               expectedRevision: publishHead.revision,
               repository: {
                 schemaVersion: repositoryVersionForSkills(desired),
                 skills: desired,
+                grandfatheredExecutablePaths,
               },
               message: `Resolve Skill sync conflict for ${syncKey}`,
             });
@@ -889,7 +1004,20 @@ export function createGitSkillSyncProvider(
       const prepared = await prepare();
       if (prepared.revision !== input.expectedRevision) return { status: "head_changed" };
       const identity = await readGlobalGitIdentity(git);
-      await writeWorkingRepository(repositoryPath, input.repository);
+      const previousRepository =
+        prepared.revision === undefined
+          ? { schemaVersion: 3 as const, skills: new Map<string, RemoteSkill>() }
+          : await readWorkingRepository(
+              repositoryPath,
+              await readGitFileModes(repositoryPath, environment),
+            );
+      const allowedLegacyPaths = repositoryTransitionLegacyPaths(
+        previousRepository,
+        input.repository,
+        prepared.revision === undefined,
+        input.repository.grandfatheredExecutablePaths,
+      );
+      await writeWorkingRepository(repositoryPath, input.repository, allowedLegacyPaths);
       await git(repositoryPath, ["add", "--force", "--", ROOT_MANIFEST, SKILLS_DIRECTORY]);
       await stageGitFileModes(repositoryPath, input.repository, git);
       const tree = (await git(repositoryPath, ["write-tree"])).trim();
@@ -1103,15 +1231,115 @@ function legacyExecutablePathsForSkill(skill: RemoteSkill): ReadonlySet<string> 
   );
 }
 
+function legacyExecutableBaseline(
+  state: SkillSyncState,
+  syncKey: string,
+  base: string | undefined,
+  local: LocalSkill | undefined,
+): readonly LegacyExecutableBaselineFile[] | undefined {
+  const stored = state.portableFiles[syncKey];
+  if (stored !== undefined && stored.files.every((file) => file.sha256 !== undefined)) {
+    return stored.files;
+  }
+  const pending = state.pendingRemoteActivations[syncKey];
+  if (pending !== undefined) return pending.files;
+  if (local !== undefined && (base === undefined || fingerprint(local) === base)) {
+    return portableFileEntries(local);
+  }
+  if (stored !== undefined) return stored.files;
+  return undefined;
+}
+
+type LegacyExecutableBaselineFile = {
+  readonly path: string;
+  readonly executable: boolean;
+  readonly sha256?: string | undefined;
+};
+
+function matchingLegacyExecutablePaths(
+  skill: RemoteSkill,
+  baselineFiles: readonly LegacyExecutableBaselineFile[],
+): ReadonlySet<string> {
+  const baselineByPath = new Map(baselineFiles.map((file) => [file.path, file]));
+  return new Set(
+    skill.files
+      .filter((file) => file.executable && !/\.(?:mjs|cjs|js)$/iu.test(file.path))
+      .filter((file) => {
+        const baseline = baselineByPath.get(file.path);
+        return (
+          baseline?.executable === true &&
+          baseline.sha256 === createHash("sha256").update(file.content).digest("hex")
+        );
+      })
+      .map((file) => file.path),
+  );
+}
+
 function legacyExecutablePathsForRepositorySkill(
   skill: RemoteSkill | undefined,
   schemaVersion: RemoteSkillRepository["schemaVersion"],
+  baselineFiles?: readonly LegacyExecutableBaselineFile[],
+  allowFirstSeenSnapshot = false,
+  previouslySyncedFingerprint?: string,
 ): ReadonlySet<string> {
-  // v1/v2 accepted executable formats which this client cannot statically inspect. Keep those
-  // historical repositories readable; v3 is the explicit boundary for the stricter policy.
-  return skill !== undefined && schemaVersion !== undefined && schemaVersion < 3
-    ? legacyExecutablePathsForSkill(skill)
-    : new Set();
+  if (skill === undefined || schemaVersion === undefined || schemaVersion >= 3) return new Set();
+  if (baselineFiles !== undefined) return matchingLegacyExecutablePaths(skill, baselineFiles);
+  if (
+    previouslySyncedFingerprint !== undefined &&
+    fingerprint(skill) === previouslySyncedFingerprint
+  ) {
+    return legacyExecutablePathsForSkill(skill);
+  }
+  // On the first read of a legacy repository, capture this exact tree in the pending activation
+  // journal before installing it. Later reads compare executable path, mode, and hash to that
+  // snapshot, so keeping a v1/v2 root manifest cannot grandfather new code.
+  return allowFirstSeenSnapshot ? legacyExecutablePathsForSkill(skill) : new Set();
+}
+
+function legacyExecutablePathsForLocalSkill(
+  skill: LocalSkill,
+  baselineFiles: Parameters<typeof matchingLegacyExecutablePaths>[1] | undefined,
+  allowInitialSnapshot: boolean,
+): ReadonlySet<string> {
+  if (baselineFiles !== undefined) return matchingLegacyExecutablePaths(skill, baselineFiles);
+  return allowInitialSnapshot ? legacyExecutablePathsForSkill(skill) : new Set();
+}
+
+function repositoryTransitionLegacyPaths(
+  previous: RemoteSkillRepository,
+  next: RemoteSkillRepository,
+  initialPublish: boolean,
+  requestedGrandfatheredPaths?: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const allowed = new Map<string, ReadonlySet<string>>();
+  for (const [key, skill] of next.skills) {
+    const previousSkill = previous.skills.get(key);
+    let paths = new Set<string>();
+    if (
+      next.schemaVersion !== undefined &&
+      next.schemaVersion < 3 &&
+      previous.schemaVersion !== undefined &&
+      previous.schemaVersion < 3
+    ) {
+      if (previousSkill !== undefined) {
+        paths = new Set(matchingLegacyExecutablePaths(skill, portableFileEntries(previousSkill)));
+      }
+    }
+    if (
+      next.schemaVersion !== undefined &&
+      next.schemaVersion < 3 &&
+      (initialPublish || (previous.schemaVersion !== undefined && previous.schemaVersion < 3))
+    ) {
+      const requested = requestedGrandfatheredPaths?.get(key);
+      if (requested !== undefined) {
+        const unsupported = legacyExecutablePathsForSkill(skill);
+        const explicitlyGrandfathered = [...requested].filter((path) => unsupported.has(path));
+        paths = new Set([...paths, ...explicitlyGrandfathered]);
+      }
+    }
+    if (paths.size > 0) allowed.set(key, paths);
+  }
+  return allowed;
 }
 
 function repositoryVersionForSkills(skills: ReadonlyMap<string, RemoteSkill>): 2 | 3 {
@@ -1254,6 +1482,8 @@ async function readWorkingRepository(
         description: manifest.description,
         files,
       };
+      // The parser has no persisted sync baseline. It keeps v1/v2 data readable here; reconcile
+      // compares legacy executable paths, modes, and hashes before any local activation.
       validateRemoteSkill(
         remote,
         repositoryVersion < 3 ? legacyExecutablePathsForSkill(remote) : new Set(),
@@ -1393,8 +1623,9 @@ function gitExecutable(fileModes: ReadonlyMap<string, string>, path: string): bo
 async function writeWorkingRepository(
   root: string,
   repository: RemoteSkillRepository,
+  allowedLegacyPaths: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<void> {
-  assertRepositoryBounds(repository);
+  assertRepositoryBounds(repository, allowedLegacyPaths);
   await rm(join(root, SKILLS_DIRECTORY), { recursive: true, force: true });
   await mkdir(join(root, SKILLS_DIRECTORY), { recursive: true, mode: 0o700 });
   const schemaVersion = repositoryVersionForSkills(repository.skills);
@@ -1533,7 +1764,10 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await rename(temporary, path);
 }
 
-function assertRepositoryBounds(repository: RemoteSkillRepository): void {
+function assertRepositoryBounds(
+  repository: RemoteSkillRepository,
+  allowedLegacyPaths: ReadonlyMap<string, ReadonlySet<string>>,
+): void {
   if (repository.skills.size > MAX_REPOSITORY_SKILLS)
     throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
   let totalBytes = 0;
@@ -1543,10 +1777,7 @@ function assertRepositoryBounds(repository: RemoteSkillRepository): void {
         "skill_sync_identity_mismatch",
         `Skill map key does not match its identity: ${key}`,
       );
-    validateRemoteSkill(
-      skill,
-      legacyExecutablePathsForRepositorySkill(skill, repository.schemaVersion),
-    );
+    validateRemoteSkill(skill, allowedLegacyPaths.get(key));
     const manifest = createSkillSyncManifest(
       skill,
       skill.files.map((file) => ({

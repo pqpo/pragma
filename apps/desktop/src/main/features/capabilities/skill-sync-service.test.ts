@@ -312,6 +312,73 @@ describe("Skill sync service", () => {
     expect(synchronized.status).toBe("ready");
     expect(fixture.capabilities.has(id)).toBe(true);
     expect(fixture.provider.repository.schemaVersion).toBe(2);
+
+    const changedSkill = fixture.provider.repository.skills.get(`capability/${id}`)!;
+    fixture.provider.repository.skills.set(`capability/${id}`, {
+      ...changedSkill,
+      files: changedSkill.files.map((file) =>
+        file.path === "references/tool.sh" ? { ...file, content: "echo changed tool\n" } : file,
+      ),
+    });
+    fixture.provider.advance();
+
+    const changed = await fixture.service.sync();
+
+    expect(changed.status).toBe("error");
+    expect(changed.skills).toContainEqual(
+      expect.objectContaining({
+        syncKey: `capability/${id}`,
+        status: "error",
+        errorCode: "skill_script_language_unsupported",
+      }),
+    );
+    expect(
+      await readFile(join(fixture.root, "capabilities", id, "1", "references", "tool.sh"), "utf8"),
+    ).toBe("echo legacy tool\n");
+  });
+
+  it("rejects a new unscanned executable added to an already-synced v2 repository", async () => {
+    const fixture = await createFixture();
+    const id = "49494949-4949-4949-8494-494949494949";
+    const skill = remoteSkill({ kind: "capability", id }, "Legacy Executable Skill");
+    fixture.provider.repository = {
+      schemaVersion: 2,
+      skills: new Map([
+        [
+          `capability/${id}`,
+          {
+            ...skill,
+            files: [
+              ...skill.files,
+              { path: "references/tool.sh", content: "echo legacy tool\n", executable: true },
+            ],
+          },
+        ],
+      ]),
+    };
+    fixture.provider.advance();
+    await fixture.service.configure(configuration());
+
+    const existing = fixture.provider.repository.skills.get(`capability/${id}`)!;
+    fixture.provider.repository.skills.set(`capability/${id}`, {
+      ...existing,
+      files: [
+        ...existing.files,
+        { path: "bin/run", content: "echo unreviewed\n", executable: true },
+      ],
+    });
+    fixture.provider.advance();
+
+    const changed = await fixture.service.sync();
+
+    expect(changed.skills).toContainEqual(
+      expect.objectContaining({
+        syncKey: `capability/${id}`,
+        status: "error",
+        errorCode: "skill_script_language_unsupported",
+      }),
+    );
+    expect(fixture.capabilities.get(id)?.manifest.latestRevision).toBe(1);
   });
 
   it("allows non-executable script-like documentation in synced Skills", async () => {
@@ -900,8 +967,21 @@ describe("Git Skill sync provider", () => {
       ],
     };
 
+    await expect(
+      provider.publish({
+        repository: { schemaVersion: 2, skills: new Map([[`capability/${id}`, legacy]]) },
+        message: "reject unapproved legacy executable",
+      }),
+    ).rejects.toMatchObject({ code: "skill_script_language_unsupported" });
+
     await provider.publish({
-      repository: { schemaVersion: 2, skills: new Map([[`capability/${id}`, legacy]]) },
+      repository: {
+        schemaVersion: 2,
+        skills: new Map([[`capability/${id}`, legacy]]),
+        grandfatheredExecutablePaths: new Map([
+          [`capability/${id}`, new Set(["references/tool.sh"])],
+        ]),
+      },
       message: "preserve legacy executable",
     });
     const oldHead = await provider.readHead();
@@ -909,6 +989,51 @@ describe("Git Skill sync provider", () => {
     expect(oldHead.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
       expect.objectContaining({ path: "references/tool.sh", executable: true }),
     );
+
+    await expect(
+      provider.publish({
+        expectedRevision: oldHead.revision,
+        repository: {
+          schemaVersion: 2,
+          skills: new Map([
+            [
+              `capability/${id}`,
+              {
+                ...legacy,
+                files: legacy.files.map((file) =>
+                  file.path === "references/tool.sh"
+                    ? { ...file, content: "echo modified legacy tool\n" }
+                    : file,
+                ),
+              },
+            ],
+          ]),
+        },
+        message: "reject changed legacy executable",
+      }),
+    ).rejects.toMatchObject({ code: "skill_script_language_unsupported" });
+
+    await expect(
+      provider.publish({
+        expectedRevision: oldHead.revision,
+        repository: {
+          schemaVersion: 2,
+          skills: new Map([
+            [
+              `capability/${id}`,
+              {
+                ...legacy,
+                files: [
+                  ...legacy.files,
+                  { path: "bin/run", content: "echo new tool\n", executable: true },
+                ],
+              },
+            ],
+          ]),
+        },
+        message: "reject new legacy executable",
+      }),
+    ).rejects.toMatchObject({ code: "skill_script_language_unsupported" });
 
     await provider.publish({
       expectedRevision: oldHead.revision,
@@ -928,7 +1053,7 @@ describe("Git Skill sync provider", () => {
         message: "reject unscanned executable under v3",
       }),
     ).rejects.toMatchObject({ code: "skill_script_language_unsupported" });
-  });
+  }, 15_000);
 
   it("rejects symbolic links in the managed Skill tree", async () => {
     const root = await temporaryRoot();
