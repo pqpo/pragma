@@ -494,6 +494,28 @@ describe("Skill revision service", () => {
     });
   });
 
+  it("allows safe portable files when revising an existing Skill", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "assets"));
+    await writeFile(join(fixture.sourcePath, "assets", "diagram.svg"), "<svg />\n");
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    expect(editing.workingTree.entries).toContainEqual(
+      expect.objectContaining({ path: "assets/diagram.svg" }),
+    );
+
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Keep the published diagram asset.",
+    });
+    const completed = await fixture.service.approve(pending.id, pending.revision);
+
+    expect(completed).toMatchObject({ state: "completed", publishedRevision: 2 });
+  });
+
   it("recovers a creation candidate under a new id after the reserved id is occupied", async () => {
     let occupied = true;
     const fixture = await createService({

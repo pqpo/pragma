@@ -6,6 +6,7 @@ import { withFileLock } from "@pragma/core";
 import {
   applySkillChangeSet,
   validateSkillPackage,
+  validatePortableSkillPackage,
   type SkillPackageValidationResult,
 } from "@pragma/built-in-agents";
 import {
@@ -1783,7 +1784,7 @@ export function createSkillRevisionService(options: {
       ) {
         throw coded("skill_revision_metadata_mismatch");
       }
-      const validation = validateSkillPackage(candidate);
+      const validation = validateSkillRevisionPackage(candidate, draft.operation);
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const submission = await createStableSkillSubmission({
         worktreePath: worktreePath(draft),
@@ -1902,7 +1903,7 @@ export function createSkillRevisionService(options: {
           ? { name: draft.name, description: draft.resourceDescription! }
           : undefined,
       );
-      const validation = validateSkillPackage(candidate);
+      const validation = validateSkillRevisionPackage(candidate, draft.operation);
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
         state: "publishing",
@@ -2362,6 +2363,15 @@ function readSkillFrontmatter(content: string): { name?: string; description?: s
     ...(name === undefined ? {} : { name }),
     ...(description === undefined ? {} : { description }),
   };
+}
+
+function validateSkillRevisionPackage(
+  candidate: SkillPackage,
+  operation: SkillRevisionDraft["operation"],
+): SkillPackageValidationResult {
+  return operation === "create"
+    ? validateSkillPackage(candidate)
+    : validatePortableSkillPackage(candidate);
 }
 
 async function readJsonNames(path: string): Promise<string[]> {

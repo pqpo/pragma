@@ -128,6 +128,34 @@ export const SkillPackageSchema = z
     }
   });
 
+export const GeneratedSkillPackageSchema = SkillPackageSchema.superRefine((value, context) => {
+  value.files.forEach((file, index) => {
+    if (
+      file.path !== "SKILL.md" &&
+      !file.path.startsWith("references/") &&
+      !file.path.startsWith("scripts/") &&
+      !file.path.startsWith("tests/")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["files", index, "path"],
+        message:
+          "Generated Skill files must be SKILL.md or live under references/, scripts/, or tests/.",
+      });
+    }
+    if (
+      (file.path.startsWith("scripts/") || file.path.startsWith("tests/")) &&
+      !file.path.endsWith(".mjs")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["files", index, "path"],
+        message: "Generated executable files must be Node ESM .mjs files.",
+      });
+    }
+  });
+});
+
 export const SkillExtractionInputSchema = z
   .object({
     schemaVersion: z.literal(SKILL_EXTRACTION_INPUT_SCHEMA_VERSION),
@@ -149,7 +177,7 @@ const SkillCandidateContentSchema = z
     applicability: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
     failureModes: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
     recoverySteps: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
-    package: SkillPackageSchema,
+    package: GeneratedSkillPackageSchema,
   })
   .strict();
 
