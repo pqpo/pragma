@@ -64,6 +64,8 @@ import {
 import { StudioConfirmationDialog, StudioTextInputDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
+import { AssetGitImportButton, AssetGitPanel } from "./AssetGitControls.tsx";
+import type { AssetGitTarget } from "../../../../shared/contracts/index.ts";
 
 type CreateStep = "intro" | "configure" | "review";
 type CreateMode = CreateContextStore["mode"];
@@ -228,6 +230,7 @@ export function ContextStoreDirectoryFragment(props: {
   readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly onOpen: (store: ContextStore) => void;
+  readonly onGitImported?: ((target: AssetGitTarget) => Promise<void>) | undefined;
   readonly syncOverview?: KnowledgeSyncOverview | undefined;
   readonly onSync?: (() => Promise<KnowledgeSyncOverview>) | undefined;
   readonly onConfigureSync?: (() => void) | undefined;
@@ -329,6 +332,9 @@ export function ContextStoreDirectoryFragment(props: {
         </header>
       }
     >
+      {props.onGitImported ? (
+        <AssetGitImportButton kind="knowledge" onImported={props.onGitImported} />
+      ) : null}
       <label className="directory-search store-search">
         <MagnifyingGlass size={18} aria-hidden="true" />
         <span className="sr-only">{t("searchKnowledgeBases")}</span>
@@ -1289,6 +1295,29 @@ export function ContextStoreDetailFragment(props: {
         </div>
       }
     >
+      <AssetGitPanel
+        target={{ kind: "knowledge", id: props.store.id }}
+        revision={props.store.contentRevision}
+        beforeSync={async () => {
+          if (!(await commitDraft())) throw new Error(t("assetGit.saveFailed"));
+        }}
+        onSynced={async () => {
+          const api = desktopApi();
+          if (!api) return;
+          const next = (await api.listContextStores()).find((item) => item.id === props.store.id);
+          if (next) props.onStoreChanged(next);
+          await loadEntries();
+          const selected = currentRef.current.selectedEntry;
+          if (
+            selected?.kind === "file" &&
+            (await props.onListEntries(props.store.id)).some(
+              (entry) => entry.kind === "file" && entry.id === selected.id,
+            )
+          ) {
+            await loadFile(selected, { discardChanges: true, preservePreview: true });
+          }
+        }}
+      />
       <div
         className="knowledge-base-workspace"
         style={{ "--sidebar-width": `${filePanelWidth}px` } as CSSProperties}

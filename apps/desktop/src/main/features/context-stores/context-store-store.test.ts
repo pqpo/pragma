@@ -31,6 +31,16 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("keeps Git internals out of knowledge file enumeration and reads", async () => {
+    const { store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Notes", description: "" });
+    const files = await store.filesPath(created.id);
+    await mkdir(join(files, ".git"));
+    await writeFile(join(files, ".git", "internal.md"), "hidden");
+    await store.createFile(created.id, "visible.md", "# Visible\n");
+    expect((await store.listEntries(created.id)).map((entry) => entry.id)).toEqual(["visible.md"]);
+    await expect(store.getContent(created.id, ".git/internal.md")).rejects.toThrow();
+  });
   it("acquires multiple revision locks once each in deterministic Store ID order", async () => {
     const acquired: string[] = [];
     const stores: Pick<ContextStoreStore, "withRevisionLock"> = {

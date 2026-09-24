@@ -36,6 +36,7 @@ import {
 
 export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
 import { desktopApi } from "./studio-model.ts";
+import { AssetGitImportButton } from "./AssetGitControls.tsx";
 
 type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
@@ -425,6 +426,18 @@ export function CapabilityDirectoryFragment(props: {
             <p>{t(props.kind === "skills" ? "skillsDescription" : "connectorsDescription")}</p>
           </div>
           <div className="studio-create-wrap">
+            {props.kind === "skills" ? (
+              <AssetGitImportButton
+                kind="skill"
+                onImported={async (target) => {
+                  const api = desktopApi();
+                  if (!api || target.kind !== "skill") return;
+                  const capability = await api.getCapability(target.id);
+                  props.onChanged(capability);
+                  props.onOpen(capability);
+                }}
+              />
+            ) : null}
             {props.kind === "skills" && props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
                 <ClockCounterClockwise size={17} aria-hidden="true" />
@@ -548,9 +561,7 @@ export function CapabilityDirectoryFragment(props: {
             capability={capability}
             onOpen={() => props.onOpen(capability)}
             onEdit={
-              capability.definition.kind === "skill"
-                ? undefined
-                : () => openEditDrawer(capability)
+              capability.definition.kind === "skill" ? undefined : () => openEditDrawer(capability)
             }
             onChanged={props.onChanged}
           />

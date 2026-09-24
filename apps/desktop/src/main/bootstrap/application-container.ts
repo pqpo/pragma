@@ -1,4 +1,9 @@
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
+import {
+  createAssetGitService,
+  type AssetGitService,
+} from "../features/asset-git/asset-git-service.ts";
+import { installAssetGitHandlers } from "../features/asset-git/asset-git-ipc.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -560,6 +565,7 @@ export async function createDesktopApplicationContainer(
   // eslint-disable-next-line prefer-const
   let capabilityRevisionCoordinator: ReturnType<typeof createCapabilityRevisionCoordinator>;
   const skillSyncRef: { current?: SkillSyncService } = {};
+  const assetGitRef: { current?: AssetGitService } = {};
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
     credentials: capabilityCredentials,
@@ -584,6 +590,7 @@ export async function createDesktopApplicationContainer(
       );
     },
     onRemoved: async (capabilityId) => {
+      await assetGitRef.current?.unbind({ kind: "skill", id: capabilityId });
       await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
       skillSyncRef.current?.schedule("skill-removed");
     },
@@ -603,6 +610,7 @@ export async function createDesktopApplicationContainer(
     statePath: join(pragmaPaths.stateRoot(), "skill-sync-state.json"),
     cacheRoot: join(pragmaPaths.cacheRoot(), "skill-sync", "git"),
     capabilities: capabilityStore,
+    assetGit: () => assetGitRef.current,
     warn: (message, error) => mainLogger.warn("desktop.skill_sync_failed", message, { error }),
   });
   skillSyncRef.current = skillSync;
@@ -652,6 +660,7 @@ export async function createDesktopApplicationContainer(
     hasMissionReferences: async (storeId) =>
       (await missionStore.listContextStoreReferences(storeId)).length > 0,
     onRemoved: async (storeId) => {
+      await assetGitRef.current?.unbind({ kind: "knowledge", id: storeId });
       await knowledgePromotionRef.current?.clearStoreBinding(storeId);
       knowledgeSyncRef.current?.schedule("knowledge-store-removed");
     },
@@ -668,9 +677,20 @@ export async function createDesktopApplicationContainer(
     statePath: join(pragmaPaths.stateRoot(), "knowledge-sync-state.json"),
     cacheRoot: join(pragmaPaths.cacheRoot(), "knowledge-sync", "git"),
     stores: contextStores,
+    assetGit: () => assetGitRef.current,
     warn: (message, error) => mainLogger.warn("desktop.knowledge_sync_failed", message, { error }),
   });
   knowledgeSyncRef.current = knowledgeSync;
+  const assetGit = createAssetGitService({
+    stateRoot: join(pragmaPaths.stateRoot(), "asset-git"),
+    stores: contextStores,
+    capabilities: capabilityStore,
+    onAssociationChanged: (target) => {
+      if (target.kind === "knowledge") knowledgeSyncRef.current?.schedule("asset-git-changed");
+      else skillSyncRef.current?.schedule("asset-git-changed");
+    },
+  });
+  assetGitRef.current = assetGit;
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {
     async generate(input) {
@@ -913,6 +933,7 @@ export async function createDesktopApplicationContainer(
   );
   installKnowledgeSyncHandlers(knowledgeSync);
   installSkillSyncHandlers(skillSync);
+  installAssetGitHandlers(assetGit);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,

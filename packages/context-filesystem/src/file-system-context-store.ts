@@ -449,7 +449,12 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     const filePath = resolve(this.rootDir, id);
     const relativePath = relative(this.rootDir, filePath);
 
-    if (relativePath.startsWith("..") || relativePath === "" || relativePath.startsWith(sep)) {
+    if (
+      relativePath.startsWith("..") ||
+      relativePath === "" ||
+      relativePath.startsWith(sep) ||
+      relativePath.split(sep).some((segment) => segment.toLowerCase() === ".git")
+    ) {
       throw new Error(`Invalid context id: ${id}`);
     }
 
@@ -1342,6 +1347,7 @@ async function collectContextFiles(
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
+      if (entry.name.toLowerCase() === ".git") return [];
       const entryPath = resolve(directory, entry.name);
 
       if (entry.isDirectory()) {

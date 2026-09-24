@@ -2239,11 +2239,14 @@ export function MissionDetailFragment(props: {
   >(() => new Map());
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const teamIdentityKey = `${props.mission.id}:${props.mission.project.revision}`;
-  const [loadedTeamIdentity, setLoadedTeamIdentity] = useState<{
-    readonly key: string;
-    readonly coordinator?: ExpertMentionCandidate | undefined;
-    readonly members: readonly ExpertMentionCandidate[];
-  }>(() => {
+  const [loadedTeamIdentity, setLoadedTeamIdentity] = useState<
+    | {
+        readonly key: string;
+        readonly coordinator?: ExpertMentionCandidate | undefined;
+        readonly members: readonly ExpertMentionCandidate[];
+      }
+    | undefined
+  >(() => {
     const cached = props.teamIdentityCache?.get(teamIdentityKey);
     return cached === undefined
       ? undefined

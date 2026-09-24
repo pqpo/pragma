@@ -1,0 +1,11 @@
+schemaVersion: pragma.skill-sync-skill/v1
+identity:
+  kind: capability
+  id: 00000000-0000-4000-8000-000000000002
+name: Historical Review
+description: Written by 5e61bc90 provider
+files:
+  - path: SKILL.md
+    sizeBytes: 74
+    sha256: 0174b82cc2d7f52f3e062e1b7506441ffbfc4e80401d74dd525d8edb25ecd4e0
+    executable: false

@@ -1,0 +1,35 @@
+.asset-git-panel,
+.asset-git-import form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--border-subtle, #d9dedb);
+  border-radius: 0.75rem;
+  background: var(--surface-raised, #fff);
+}
+
+.asset-git-panel h2,
+.asset-git-panel p {
+  margin: 0;
+}
+
+.asset-git-panel label,
+.asset-git-import label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.asset-git-panel input,
+.asset-git-import input {
+  width: 100%;
+  min-width: 0;
+}
+
+.asset-git-import {
+  margin-bottom: 1rem;
+}
+
+.asset-git-import form {
+  margin-top: 0.5rem;
+}

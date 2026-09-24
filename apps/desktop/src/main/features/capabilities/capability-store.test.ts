@@ -422,8 +422,18 @@ describe("capability store", () => {
       "---\nname: repo-review\ndescription: Review a repository.\n---\n\n# Repo review\n",
     );
     await writeFile(join(source, "references", "checklist.md"), "Check tests.\n");
+    await mkdir(join(source, ".git"));
+    await writeFile(join(source, ".git", "config"), "[core]\n");
 
     const capability = await store.importSkill({ sourcePath: source });
+    expect(
+      (await store.listSkillFiles({ id: capability.manifest.id })).some((file) =>
+        file.path.includes(".git"),
+      ),
+    ).toBe(false);
+    await expect(
+      store.getSkillFile({ id: capability.manifest.id, path: ".git/config" }),
+    ).rejects.toThrow("invalid");
 
     expect(capability).toMatchObject({
       manifest: { kind: "skill", latestRevision: 1, name: "repo-review" },

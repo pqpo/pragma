@@ -945,6 +945,17 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "context-stores" ? (
           <ContextStoreDirectoryFragment
             stores={contextStores}
+            onGitImported={async (target) => {
+              if (target.kind !== "knowledge") return;
+              const stores = await window.pragmaDesktop.listContextStores();
+              setContextStores(stores);
+              const store = stores.find((item) => item.id === target.id);
+              if (store) {
+                setSelectedContextStoreId(store.id);
+                setContextStoreDetailReturn(null);
+                setScreen("context-store-detail");
+              }
+            }}
             syncOverview={knowledgeSyncOverview}
             onConfigureSync={props.onConfigureKnowledgeSync}
             onSync={async () => {

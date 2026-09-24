@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+import type { AssetGitService } from "../asset-git/asset-git-service.ts";
 
 import type { Capability, SkillSyncConfiguration } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "./capability-store.ts";
@@ -25,6 +26,20 @@ afterEach(async () => {
 });
 
 describe("Skill sync service", () => {
+  it("backs up a Skill Git address and branch independently of its sync base", async () => {
+    const source = { remote: "https://example.test/review.git", branch: "main" };
+    const fixture = await createFixture({
+      assetGit: {
+        source: async () => source,
+      } as unknown as AssetGitService,
+    });
+    const id = "10101010-1010-4010-8010-101010101010";
+    await fixture.addLocalSkill(id, "Local Skill");
+    await fixture.service.configure(configuration());
+    const stored = fixture.provider.repository.skills.get(`capability/${id}`);
+    expect(stored?.assetGit).toEqual(source);
+    expect(JSON.stringify(stored)).not.toContain("baseRevision");
+  });
   it("merges the target and publishes local Skills during configuration", async () => {
     const fixture = await createFixture();
     const localId = "10101010-1010-4010-8010-101010101010";
@@ -1015,7 +1030,10 @@ function configuration(): Omit<SkillSyncConfiguration, "schemaVersion"> {
 }
 
 async function createFixture(
-  options: { readonly supportsExecutableBits?: boolean | undefined } = {},
+  options: {
+    readonly supportsExecutableBits?: boolean | undefined;
+    readonly assetGit?: AssetGitService | undefined;
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "pragma-skill-sync-"));
   roots.push(root);
@@ -1104,6 +1122,7 @@ async function createFixture(
       statePath,
       cacheRoot,
       capabilities: store,
+      assetGit: () => options.assetGit,
       provider,
       supportsExecutableBits: options.supportsExecutableBits,
     });

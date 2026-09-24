@@ -1841,6 +1841,7 @@ export function createContextStoreStore(options: {
         for (const entry of (await readdir(directory, { withFileTypes: true })).toSorted((a, b) =>
           a.name.localeCompare(b.name),
         )) {
+          if (entry.name.toLowerCase() === ".git") continue;
           if (entry.isSymbolicLink()) continue;
           const path = join(directory, entry.name);
           const id = relative(contentRoot(storeId), path).split(sep).join("/");
@@ -1882,7 +1883,12 @@ function normalizeEntryId(id: string, kind: "file" | "directory"): string {
     isAbsolute(id) ||
     portable.startsWith("/") ||
     /^[a-z]:/i.test(portable) ||
-    normalized.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+    normalized
+      .split("/")
+      .some(
+        (segment) =>
+          segment === "" || segment === "." || segment === ".." || segment.toLowerCase() === ".git",
+      )
   ) {
     throw new ContextStoreStoreError(
       "invalid_entry",
@@ -2025,6 +2031,7 @@ async function walkSource(
 ): Promise<void> {
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.name.toLowerCase() === ".git") continue;
     const path = join(root, entry.name);
     await visit(path, entry);
     if (entry.isDirectory() && !entry.isSymbolicLink()) await walkSource(path, visit);
@@ -2090,6 +2097,7 @@ async function collectManagedEntries(root: string): Promise<ContextStoreEntry[]>
   const visit = async (directory: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name.toLowerCase() === ".git") continue;
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) continue;
       const id = relative(root, path).split(sep).join("/");

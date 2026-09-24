@@ -735,6 +735,9 @@ export function createCapabilityStore(options: {
     },
 
     async getSkillFile(input) {
+      if (input.path.split("/").some((segment) => segment.toLowerCase() === ".git")) {
+        throw new CapabilityStoreError("config_invalid", "The Skill file path is invalid.");
+      }
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
         throw new CapabilityStoreError(
@@ -1724,6 +1727,7 @@ async function copySkillDirectory(
   state: { files: number; bytes: number },
 ): Promise<void> {
   for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
+    if (entry.name.toLowerCase() === ".git") continue;
     const source = join(sourcePath, entry.name);
     const target = join(targetPath, entry.name);
     const info = await lstat(source);
@@ -1742,7 +1746,7 @@ async function copySkillDirectory(
     state.files += 1;
     state.bytes += info.size;
     if (state.files > MAX_SKILL_FILES || state.bytes > MAX_SKILL_BYTES) throw importLimitError();
-    await writeFile(target, await readFile(source), { mode: 0o600 });
+    await writeFile(target, await readFile(source), { mode: info.mode & 0o111 ? 0o700 : 0o600 });
   }
 }
 
@@ -1753,7 +1757,13 @@ function validateArchivePath(name: string): string {
     normalized.startsWith("/") ||
     /^[a-zA-Z]:\//.test(normalized) ||
     normalized.includes("\0") ||
-    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+    segments.some(
+      (segment) =>
+        segment.length === 0 ||
+        segment === "." ||
+        segment === ".." ||
+        segment.toLowerCase() === ".git",
+    )
   ) {
     throw new CapabilityStoreError("import_invalid", "The Skill ZIP contains an unsafe path.");
   }
@@ -1861,6 +1871,7 @@ function sha256Chunks(chunks: readonly (string | Uint8Array)[]): string {
 async function listFiles(path: string): Promise<string[]> {
   const output: string[] = [];
   for (const entry of await readdir(path, { withFileTypes: true })) {
+    if (entry.name.toLowerCase() === ".git") continue;
     const target = join(path, entry.name);
     if (entry.isDirectory()) output.push(...(await listFiles(target)));
     else if (entry.isFile()) output.push(target);

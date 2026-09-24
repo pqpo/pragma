@@ -31,6 +31,7 @@ import { StudioActionButton } from "../../components/StudioActionButton.tsx";
 import { StudioConfirmationDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
+import { AssetGitPanel } from "./AssetGitControls.tsx";
 
 export function CapabilityDetailFragment(props: {
   readonly capability: Capability;
@@ -279,6 +280,16 @@ export function CapabilityDetailFragment(props: {
         </button>
       }
     >
+      {definition.kind === "skill" && !isBuiltIn ? (
+        <AssetGitPanel
+          target={{ kind: "skill", id: capability.manifest.id }}
+          revision={capability.manifest.latestRevision}
+          onSynced={async () => {
+            const api = desktopApi();
+            if (api) props.onChanged(await api.getCapability(capability.manifest.id));
+          }}
+        />
+      ) : null}
       <div className="capability-detail-overview">
         <header className="capability-detail-header">
           <span className="expert-avatar" aria-hidden="true">
