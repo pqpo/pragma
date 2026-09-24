@@ -143,6 +143,11 @@ export function App() {
     setActiveView("settings");
   };
 
+  const openSkillSyncSettings = () => {
+    setSettingsView("skill-sync");
+    setActiveView("settings");
+  };
+
   return (
     <main
       className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}
@@ -222,6 +227,7 @@ export function App() {
           memoryEnabled={memoryEnabled === true}
           onMemoryStateChange={setStudioMemoryState}
           onConfigureKnowledgeSync={openKnowledgeSyncSettings}
+          onConfigureSkillSync={openSkillSyncSettings}
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}

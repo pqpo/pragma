@@ -30,6 +30,11 @@ export const SkillSyncRepositoryManifestSchema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v2") })
   .strict();
 
+/** v3 repositories require safe validation for all newly introduced executable files. */
+export const SkillSyncRepositoryManifestV3Schema = z
+  .object({ schemaVersion: z.literal("pragma.skill-sync/v3") })
+  .strict();
+
 export const SkillSyncIdentityV1Schema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("capability"), id: CapabilityIdSchema }).strict(),
   z.object({ kind: z.literal("pragma-bundle"), logicalId: CapabilityIdSchema }).strict(),

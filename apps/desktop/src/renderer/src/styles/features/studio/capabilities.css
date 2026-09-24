@@ -9,7 +9,27 @@
 .capability-heading .studio-create-wrap {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
+}
+
+.capability-sync-feedback {
+  margin: 0 0 16px;
+  color: var(--ui-accent-strong);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.capability-sync-feedback.is-error {
+  color: var(--ui-danger);
+}
+
+.capability-sync-refresh-retry {
+  margin-left: 8px;
+  min-height: 28px;
+  padding-block: 4px;
+  font-size: 12px;
 }
 
 .capability-create-menu {
@@ -1518,6 +1538,7 @@
 
   .capability-catalog .studio-create-wrap {
     align-self: flex-start;
+    justify-content: flex-start;
   }
 
   .capability-catalog .capability-table-heading,

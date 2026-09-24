@@ -6,7 +6,8 @@ import { withFileLock } from "@pragma/core";
 import {
   applySkillChangeSet,
   validateSkillPackage,
-  type GeneratedSkillValidationResult,
+  validatePortableSkillPackage,
+  type SkillPackageValidationResult,
 } from "@pragma/built-in-agents";
 import {
   SkillRevisionDraftSchema,
@@ -1769,7 +1770,7 @@ export function createSkillRevisionService(options: {
           return await requireRebaseForChangedBase(job, draft);
         }
       }
-      const candidate = await readSkillPackage(
+      const candidateSnapshot = await readSkillPackage(
         options.capabilities,
         draft.capabilityId,
         worktreePath(draft),
@@ -1777,13 +1778,26 @@ export function createSkillRevisionService(options: {
           ? { name: draft.name, description: draft.resourceDescription! }
           : undefined,
       );
+      const candidate = candidateSnapshot.package;
       if (
         draft.operation === "create" &&
         (candidate.name !== draft.name || candidate.description !== draft.resourceDescription)
       ) {
         throw coded("skill_revision_metadata_mismatch");
       }
-      const validation = validateSkillPackage(candidate);
+      const validation = validateSkillRevisionPackage(
+        candidate,
+        draft.operation,
+        job.request.source,
+        candidateSnapshot.executablePaths,
+        await unchangedLegacyExecutablePaths(
+          options.capabilities,
+          draft,
+          job.request.source,
+          candidate,
+          candidateSnapshot.entries,
+        ),
+      );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const submission = await createStableSkillSubmission({
         worktreePath: worktreePath(draft),
@@ -1894,7 +1908,7 @@ export function createSkillRevisionService(options: {
       if (draft.submissionHash === undefined || draft.state !== "pending_review") {
         throw coded("skill_revision_approval_invalid");
       }
-      const candidate = await readSkillPackage(
+      const candidateSnapshot = await readSkillPackage(
         options.capabilities,
         draft.capabilityId,
         join(submissionsPath(draft.id), draft.submissionHash),
@@ -1902,7 +1916,20 @@ export function createSkillRevisionService(options: {
           ? { name: draft.name, description: draft.resourceDescription! }
           : undefined,
       );
-      const validation = validateSkillPackage(candidate);
+      const candidate = candidateSnapshot.package;
+      const validation = validateSkillRevisionPackage(
+        candidate,
+        draft.operation,
+        job.request.source,
+        candidateSnapshot.executablePaths,
+        await unchangedLegacyExecutablePaths(
+          options.capabilities,
+          draft,
+          job.request.source,
+          candidate,
+          candidateSnapshot.entries,
+        ),
+      );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
         state: "publishing",
@@ -2187,11 +2214,12 @@ export function createSkillRevisionService(options: {
             }));
             try {
               const draft = await readDraft(running.draftId);
-              const base = await readSkillPackage(
+              const baseSnapshot = await readSkillPackage(
                 options.capabilities,
                 draft.capabilityId,
                 worktreePath(draft),
               );
+              const base = baseSnapshot.package;
               const changeSet = await options.generator.generate({
                 jobId: running.id,
                 draftId: draft.id,
@@ -2311,16 +2339,21 @@ async function readSkillPackage(
   capabilityId: string,
   root: string,
   creation?: { readonly name: string; readonly description: string },
-): Promise<SkillPackage> {
+): Promise<{
+  readonly package: SkillPackage;
+  readonly executablePaths: ReadonlySet<string>;
+  readonly entries: readonly SkillWorkingTreeEntry[];
+}> {
   const capability = creation === undefined ? await capabilities.get(capabilityId) : undefined;
   if (capability !== undefined && capability.definition.kind !== "skill") {
     throw coded("skill_revision_target_unavailable");
   }
   const snapshot = await scanSkillWorkingTree(root);
+  const executablePaths = new Set(
+    snapshot.entries.filter((entry) => entry.executable).map((entry) => entry.path),
+  );
   const files: { path: string; content: string }[] = [];
   for (const entry of snapshot.entries) {
-    if (entry.path !== "SKILL.md" && !/^(?:references|scripts|tests)\/.+/u.test(entry.path))
-      continue;
     const bytes = await readFile(join(root, ...entry.path.split("/")));
     const content = bytes.toString("utf8");
     if (!Buffer.from(content, "utf8").equals(bytes)) continue;
@@ -2328,12 +2361,16 @@ async function readSkillPackage(
   }
   const skillDocument = files.find((file) => file.path === "SKILL.md")?.content ?? "";
   const metadata = readSkillFrontmatter(skillDocument);
-  return SkillPackageSchema.parse({
-    name: metadata.name ?? creation?.name ?? capability!.definition.name,
-    description:
-      metadata.description ?? creation?.description ?? capability!.definition.description,
-    files,
-  });
+  return {
+    package: SkillPackageSchema.parse({
+      name: metadata.name ?? creation?.name ?? capability!.definition.name,
+      description:
+        metadata.description ?? creation?.description ?? capability!.definition.description,
+      files,
+    }),
+    executablePaths,
+    entries: snapshot.entries,
+  };
 }
 
 async function applyLegacyChangeSetToTree(
@@ -2362,6 +2399,56 @@ function readSkillFrontmatter(content: string): { name?: string; description?: s
     ...(name === undefined ? {} : { name }),
     ...(description === undefined ? {} : { description }),
   };
+}
+
+function validateSkillRevisionPackage(
+  candidate: SkillPackage,
+  operation: SkillRevisionDraft["operation"],
+  source: ManagedSkillRevisionJob["request"]["source"],
+  executablePaths: ReadonlySet<string>,
+  allowUnscannedExecutablePaths: ReadonlySet<string> = new Set(),
+): SkillPackageValidationResult {
+  return operation === "create" || source === "memory-learning"
+    ? validateSkillPackage(candidate, { executablePaths })
+    : validatePortableSkillPackage(candidate, {
+        executablePaths,
+        allowUnscannedExecutablePaths,
+      });
+}
+
+async function unchangedLegacyExecutablePaths(
+  capabilities: CapabilityStore,
+  draft: SkillRevisionDraft,
+  source: ManagedSkillRevisionJob["request"]["source"],
+  candidate: SkillPackage,
+  candidateEntries: readonly SkillWorkingTreeEntry[],
+): Promise<ReadonlySet<string>> {
+  if (
+    draft.operation !== "revise" ||
+    source === "memory-learning" ||
+    draft.capabilityId === undefined ||
+    draft.baseRevision < 1
+  ) {
+    return new Set();
+  }
+  const baseRoot = await capabilities.skillFilesPath(draft.capabilityId, draft.baseRevision);
+  const baseEntries = await scanSkillWorkingTree(baseRoot);
+  const baseByPath = new Map(baseEntries.entries.map((entry) => [entry.path, entry]));
+  const candidatePaths = new Set(candidate.files.map((file) => file.path));
+  return new Set(
+    candidateEntries
+      .filter(
+        (entry) =>
+          candidatePaths.has(entry.path) &&
+          entry.executable &&
+          !/\.(?:mjs|cjs|js)$/iu.test(entry.path),
+      )
+      .filter((entry) => {
+        const base = baseByPath.get(entry.path);
+        return base?.executable === true && base.sha256 === entry.sha256;
+      })
+      .map((entry) => entry.path),
+  );
 }
 
 async function readJsonNames(path: string): Promise<string[]> {
@@ -2409,7 +2496,7 @@ export class SkillRevisionValidationError extends Error {
   readonly code = "invalid_input";
   readonly retryable = true;
 
-  constructor(readonly validation: GeneratedSkillValidationResult) {
+  constructor(readonly validation: SkillPackageValidationResult) {
     super(
       validation.diagnostics
         .map((diagnostic) => `${diagnostic.path}: ${diagnostic.code}: ${diagnostic.message}`)

@@ -19,6 +19,7 @@ import type {
   DesktopRuntimeAvailability,
   DesktopPlugin,
   AutomationSummary,
+  SkillSyncOverview,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
   ExpertDefinition,
@@ -98,6 +99,20 @@ export function mergeLoadedExperts(
   });
 }
 
+export async function syncSkillsAndRefreshCatalog(
+  syncSkills: () => Promise<SkillSyncOverview>,
+  refreshCatalog: () => Promise<void>,
+  onRefreshFailure?: (() => void) | undefined,
+): Promise<SkillSyncOverview> {
+  const overview = await syncSkills();
+  try {
+    void refreshCatalog().catch(() => onRefreshFailure?.());
+  } catch {
+    onRefreshFailure?.();
+  }
+  return overview;
+}
+
 function toUnavailableExpertRecord(summary: ExpertSummary): ExpertRecord {
   return {
     id: summary.id,
@@ -139,6 +154,7 @@ export function StudioPage(props: {
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
   readonly onConfigureKnowledgeSync?: (() => void) | undefined;
+  readonly onConfigureSkillSync?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -179,6 +195,11 @@ export function StudioPage(props: {
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [knowledgeSyncOverview, setKnowledgeSyncOverview] = useState<KnowledgeSyncOverview>();
+  const [skillSyncOverview, setSkillSyncOverview] = useState<SkillSyncOverview>();
+  const [skillSyncOverviewState, setSkillSyncOverviewState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [skillCatalogRefreshFailed, setSkillCatalogRefreshFailed] = useState(false);
   const [contextStoreBindings, setContextStoreBindings] = useState<
     readonly DesktopPragmaContextStoreBinding[]
   >([]);
@@ -228,7 +249,10 @@ export function StudioPage(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    if (api === undefined) return;
+    if (api === undefined) {
+      setSkillSyncOverviewState("error");
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -294,6 +318,16 @@ export function StudioPage(props: {
         if (!cancelled) setKnowledgeSyncOverview(overview);
       })
       .catch(() => undefined);
+    void api
+      .getSkillSyncOverview()
+      .then((overview) => {
+        if (cancelled) return;
+        setSkillSyncOverview(overview);
+        setSkillSyncOverviewState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setSkillSyncOverviewState("error");
+      });
     void api
       .listPragmaContextStoreBindings()
       .then((bindings) => {
@@ -1180,6 +1214,56 @@ export function StudioPage(props: {
           <CapabilityDirectoryFragment
             kind={activeView}
             capabilities={capabilities}
+            syncOverview={activeView === "skills" ? skillSyncOverview : undefined}
+            syncOverviewState={activeView === "skills" ? skillSyncOverviewState : undefined}
+            catalogRefreshFailed={activeView === "skills" ? skillCatalogRefreshFailed : undefined}
+            onConfigureSync={props.onConfigureSkillSync}
+            onRetryCatalogRefresh={
+              activeView === "skills"
+                ? async () => {
+                    setCapabilities(await window.pragmaDesktop.listCapabilities());
+                    setSkillCatalogRefreshFailed(false);
+                  }
+                : undefined
+            }
+            onRetrySyncOverview={
+              activeView === "skills"
+                ? async () => {
+                    const api = desktopApi();
+                    if (api === undefined) {
+                      setSkillSyncOverviewState("error");
+                      throw new Error("Desktop API unavailable.");
+                    }
+                    setSkillSyncOverviewState("loading");
+                    try {
+                      const overview = await api.getSkillSyncOverview();
+                      setSkillSyncOverview(overview);
+                      setSkillSyncOverviewState("ready");
+                      return overview;
+                    } catch (cause) {
+                      setSkillSyncOverviewState("error");
+                      throw cause;
+                    }
+                  }
+                : undefined
+            }
+            onSync={
+              activeView === "skills"
+                ? async () => {
+                    setSkillCatalogRefreshFailed(false);
+                    const overview = await syncSkillsAndRefreshCatalog(
+                      () => window.pragmaDesktop.syncSkills(),
+                      async () => {
+                        setCapabilities(await window.pragmaDesktop.listCapabilities());
+                      },
+                      () => setSkillCatalogRefreshFailed(true),
+                    );
+                    setSkillSyncOverview(overview);
+                    setSkillSyncOverviewState("ready");
+                    return overview;
+                  }
+                : undefined
+            }
             revisionTaskCount={skillRevisionTaskCount}
             onOpenRevisions={() => {
               setSelectedCapabilityId(null);
