@@ -1784,7 +1784,11 @@ export function createSkillRevisionService(options: {
       ) {
         throw coded("skill_revision_metadata_mismatch");
       }
-      const validation = validateSkillRevisionPackage(candidate, job.request.source);
+      const validation = validateSkillRevisionPackage(
+        candidate,
+        draft.operation,
+        job.request.source,
+      );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const submission = await createStableSkillSubmission({
         worktreePath: worktreePath(draft),
@@ -1903,7 +1907,11 @@ export function createSkillRevisionService(options: {
           ? { name: draft.name, description: draft.resourceDescription! }
           : undefined,
       );
-      const validation = validateSkillRevisionPackage(candidate, job.request.source);
+      const validation = validateSkillRevisionPackage(
+        candidate,
+        draft.operation,
+        job.request.source,
+      );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
         state: "publishing",
@@ -2365,9 +2373,10 @@ function readSkillFrontmatter(content: string): { name?: string; description?: s
 
 function validateSkillRevisionPackage(
   candidate: SkillPackage,
+  operation: SkillRevisionDraft["operation"],
   source: ManagedSkillRevisionJob["request"]["source"],
 ): SkillPackageValidationResult {
-  return source === "memory-learning"
+  return operation === "create" || source === "memory-learning"
     ? validateSkillPackage(candidate)
     : validatePortableSkillPackage(candidate);
 }

@@ -540,6 +540,47 @@ describe("Skill revision service", () => {
     });
   });
 
+  it("keeps generated layout validation for Agent-created Skills", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start({
+      schemaVersion: "pragma.skill-revision-request/v4",
+      operation: "create",
+      capabilityId: randomUUID(),
+      resourceName: "created-skill",
+      resourceDescription: "A newly generated Skill.",
+      source: "expert-reflection",
+      sourceDigest: "e".repeat(64),
+      sourceRefs: [],
+      prompt: "Create a new Skill.",
+    });
+    const draft = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(draft.draftPath!, "SKILL.md"),
+      "---\nname: created-skill\ndescription: A newly generated Skill.\n---\n",
+    );
+    await mkdir(join(draft.draftPath!, "scripts"));
+    await writeFile(join(draft.draftPath!, "scripts", "run.js"), "export const run = true;\n");
+    await mkdir(join(draft.draftPath!, "assets"));
+    await writeFile(join(draft.draftPath!, "assets", "diagram.svg"), "<svg />\n");
+    const ready = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: ready.draft.revision,
+        expectedWorkingTreeHash: ready.workingTree.hash,
+        summary: "Submit the generated Skill.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ code: "skill_file_location_invalid" }),
+          expect.objectContaining({ code: "skill_executable_extension_invalid" }),
+        ]),
+      },
+    });
+  });
+
   it("recovers a creation candidate under a new id after the reserved id is occupied", async () => {
     let occupied = true;
     const fixture = await createService({
