@@ -185,4 +185,28 @@ describe("generated Skill validation", () => {
 
     expect(result).toMatchObject({ passed: true, diagnostics: [] });
   });
+
+  it("rejects executable metadata for files missing from the text package", () => {
+    const result = validatePortableSkillPackage(
+      {
+        name: "published-skill",
+        description: "Use a published Skill.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+          },
+        ],
+      },
+      { executablePaths: new Set(["bin/native"]) },
+    );
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        path: "bin/native",
+        code: "skill_script_language_unsupported",
+      }),
+    );
+  });
 });

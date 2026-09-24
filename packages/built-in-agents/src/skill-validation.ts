@@ -132,13 +132,15 @@ function staticDiagnostics(
       });
     }
   }
-  for (const file of skill.files) {
-    const scannedJavaScript = /\.(?:mjs|cjs|js)$/iu.test(file.path);
-    if (executablePaths.has(file.path) && !scannedJavaScript) {
+  const filesByPath = new Map(skill.files.map((file) => [file.path, file]));
+  for (const path of executablePaths) {
+    const file = filesByPath.get(path);
+    const scannedJavaScript = file !== undefined && /\.(?:mjs|cjs|js)$/iu.test(file.path);
+    if (!scannedJavaScript) {
       diagnostics.push({
-        path: file.path,
+        path,
         code: "skill_script_language_unsupported",
-        message: `${file.path} uses an executable format that cannot be checked safely.`,
+        message: `${path} uses an executable format that cannot be checked safely.`,
       });
     }
   }

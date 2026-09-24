@@ -635,7 +635,7 @@ export function CapabilityDirectoryFragment(props: {
         </span>
       </div>
 
-      {syncFeedbackMessage !== null ? (
+      {props.kind === "skills" && syncFeedbackMessage !== null ? (
         <p
           className={
             syncNeedsAttention ? "capability-sync-feedback is-error" : "capability-sync-feedback"

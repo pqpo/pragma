@@ -227,6 +227,28 @@ describe("capability row actions", () => {
     expect(html).not.toContain("Skill revisions");
   });
 
+  it("keeps Skill sync feedback out of the connector directory", () => {
+    const syncOverview: SkillSyncOverview = {
+      configured: true,
+      status: "error",
+      errorCode: "skill_sync_failed",
+      skills: [],
+      conflicts: [],
+    };
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="connectors"
+        capabilities={[]}
+        syncOverview={syncOverview}
+        syncOverviewState="error"
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("Sync status is temporarily unavailable");
+  });
+
   it("lists system capabilities as built-in without mutation actions", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment
