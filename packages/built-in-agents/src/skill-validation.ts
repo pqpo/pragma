@@ -15,33 +15,6 @@ const ALLOWED_NODE_IMPORTS = new Set([
   "node:url",
   "node:util",
 ]);
-const UNSCANNED_EXECUTABLE_EXTENSIONS = new Set([
-  ".sh",
-  ".bash",
-  ".zsh",
-  ".fish",
-  ".ksh",
-  ".csh",
-  ".py",
-  ".pyw",
-  ".rb",
-  ".pl",
-  ".pm",
-  ".ps1",
-  ".psm1",
-  ".bat",
-  ".cmd",
-  ".php",
-  ".lua",
-  ".r",
-  ".jl",
-  ".ts",
-  ".mts",
-  ".cts",
-  ".tsx",
-  ".jsx",
-]);
-
 export interface SkillPackageValidationResult {
   readonly passed: boolean;
   readonly diagnostics: readonly {
@@ -51,19 +24,29 @@ export interface SkillPackageValidationResult {
   }[];
 }
 
-export function validateSkillPackage(rawPackage: SkillPackage): SkillPackageValidationResult {
-  return validatePackage(rawPackage, true);
+export interface SkillPackageValidationOptions {
+  /** File paths marked executable by repository metadata or working-tree mode. */
+  readonly executablePaths: ReadonlySet<string>;
 }
 
 export function validatePortableSkillPackage(
   rawPackage: SkillPackage,
+  options: SkillPackageValidationOptions,
 ): SkillPackageValidationResult {
-  return validatePackage(rawPackage, false);
+  return validatePackage(rawPackage, false, options.executablePaths);
+}
+
+export function validateSkillPackage(
+  rawPackage: SkillPackage,
+  options: SkillPackageValidationOptions,
+): SkillPackageValidationResult {
+  return validatePackage(rawPackage, true, options.executablePaths);
 }
 
 function validatePackage(
   rawPackage: SkillPackage,
   generated: boolean,
+  executablePaths: ReadonlySet<string>,
 ): SkillPackageValidationResult {
   const parsed = SkillPackageSchema.safeParse(rawPackage);
   if (!parsed.success) {
@@ -74,13 +57,14 @@ function validatePackage(
     }));
     return { passed: false, diagnostics };
   }
-  const diagnostics = staticDiagnostics(parsed.data, generated);
+  const diagnostics = staticDiagnostics(parsed.data, generated, executablePaths);
   return { passed: diagnostics.length === 0, diagnostics };
 }
 
 function staticDiagnostics(
   skill: SkillPackage,
   generated: boolean,
+  executablePaths: ReadonlySet<string>,
 ): readonly { readonly path: string; readonly code: string; readonly message: string }[] {
   const diagnostics: { path: string; code: string; message: string }[] = [];
   const skillDocument = skill.files.find((file) => file.path === "SKILL.md")?.content ?? "";
@@ -149,12 +133,8 @@ function staticDiagnostics(
     }
   }
   for (const file of skill.files) {
-    const extension = /\.[^./]+$/u.exec(file.path)?.[0]?.toLowerCase();
     const scannedJavaScript = /\.(?:mjs|cjs|js)$/iu.test(file.path);
-    const unsupportedExecutable =
-      (extension !== undefined && UNSCANNED_EXECUTABLE_EXTENSIONS.has(extension)) ||
-      (/^#!/u.test(file.content) && !scannedJavaScript);
-    if (unsupportedExecutable) {
+    if (executablePaths.has(file.path) && !scannedJavaScript) {
       diagnostics.push({
         path: file.path,
         code: "skill_script_language_unsupported",

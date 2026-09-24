@@ -1770,7 +1770,7 @@ export function createSkillRevisionService(options: {
           return await requireRebaseForChangedBase(job, draft);
         }
       }
-      const candidate = await readSkillPackage(
+      const candidateSnapshot = await readSkillPackage(
         options.capabilities,
         draft.capabilityId,
         worktreePath(draft),
@@ -1778,6 +1778,7 @@ export function createSkillRevisionService(options: {
           ? { name: draft.name, description: draft.resourceDescription! }
           : undefined,
       );
+      const candidate = candidateSnapshot.package;
       if (
         draft.operation === "create" &&
         (candidate.name !== draft.name || candidate.description !== draft.resourceDescription)
@@ -1788,6 +1789,7 @@ export function createSkillRevisionService(options: {
         candidate,
         draft.operation,
         job.request.source,
+        candidateSnapshot.executablePaths,
       );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const submission = await createStableSkillSubmission({
@@ -1899,7 +1901,7 @@ export function createSkillRevisionService(options: {
       if (draft.submissionHash === undefined || draft.state !== "pending_review") {
         throw coded("skill_revision_approval_invalid");
       }
-      const candidate = await readSkillPackage(
+      const candidateSnapshot = await readSkillPackage(
         options.capabilities,
         draft.capabilityId,
         join(submissionsPath(draft.id), draft.submissionHash),
@@ -1907,10 +1909,12 @@ export function createSkillRevisionService(options: {
           ? { name: draft.name, description: draft.resourceDescription! }
           : undefined,
       );
+      const candidate = candidateSnapshot.package;
       const validation = validateSkillRevisionPackage(
         candidate,
         draft.operation,
         job.request.source,
+        candidateSnapshot.executablePaths,
       );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
@@ -2196,11 +2200,12 @@ export function createSkillRevisionService(options: {
             }));
             try {
               const draft = await readDraft(running.draftId);
-              const base = await readSkillPackage(
+              const baseSnapshot = await readSkillPackage(
                 options.capabilities,
                 draft.capabilityId,
                 worktreePath(draft),
               );
+              const base = baseSnapshot.package;
               const changeSet = await options.generator.generate({
                 jobId: running.id,
                 draftId: draft.id,
@@ -2320,12 +2325,18 @@ async function readSkillPackage(
   capabilityId: string,
   root: string,
   creation?: { readonly name: string; readonly description: string },
-): Promise<SkillPackage> {
+): Promise<{
+  readonly package: SkillPackage;
+  readonly executablePaths: ReadonlySet<string>;
+}> {
   const capability = creation === undefined ? await capabilities.get(capabilityId) : undefined;
   if (capability !== undefined && capability.definition.kind !== "skill") {
     throw coded("skill_revision_target_unavailable");
   }
   const snapshot = await scanSkillWorkingTree(root);
+  const executablePaths = new Set(
+    snapshot.entries.filter((entry) => entry.executable).map((entry) => entry.path),
+  );
   const files: { path: string; content: string }[] = [];
   for (const entry of snapshot.entries) {
     const bytes = await readFile(join(root, ...entry.path.split("/")));
@@ -2335,12 +2346,15 @@ async function readSkillPackage(
   }
   const skillDocument = files.find((file) => file.path === "SKILL.md")?.content ?? "";
   const metadata = readSkillFrontmatter(skillDocument);
-  return SkillPackageSchema.parse({
-    name: metadata.name ?? creation?.name ?? capability!.definition.name,
-    description:
-      metadata.description ?? creation?.description ?? capability!.definition.description,
-    files,
-  });
+  return {
+    package: SkillPackageSchema.parse({
+      name: metadata.name ?? creation?.name ?? capability!.definition.name,
+      description:
+        metadata.description ?? creation?.description ?? capability!.definition.description,
+      files,
+    }),
+    executablePaths,
+  };
 }
 
 async function applyLegacyChangeSetToTree(
@@ -2375,10 +2389,11 @@ function validateSkillRevisionPackage(
   candidate: SkillPackage,
   operation: SkillRevisionDraft["operation"],
   source: ManagedSkillRevisionJob["request"]["source"],
+  executablePaths: ReadonlySet<string>,
 ): SkillPackageValidationResult {
   return operation === "create" || source === "memory-learning"
-    ? validateSkillPackage(candidate)
-    : validatePortableSkillPackage(candidate);
+    ? validateSkillPackage(candidate, { executablePaths })
+    : validatePortableSkillPackage(candidate, { executablePaths });
 }
 
 async function readJsonNames(path: string): Promise<string[]> {

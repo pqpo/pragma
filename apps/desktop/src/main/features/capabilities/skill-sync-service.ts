@@ -1041,11 +1041,18 @@ function validateRemoteSkill(skill: RemoteSkill): void {
       throw coded("skill_sync_size_limit", `Skill file is too large: ${file.path}`);
     }
   }
-  const validation = validatePortableSkillPackage({
-    name: skill.name,
-    description: skill.description,
-    files: skill.files.map(({ path, content }) => ({ path, content })),
-  });
+  const validation = validatePortableSkillPackage(
+    {
+      name: skill.name,
+      description: skill.description,
+      files: skill.files.map(({ path, content }) => ({ path, content })),
+    },
+    {
+      executablePaths: new Set(
+        skill.files.filter((file) => file.executable).map((file) => file.path),
+      ),
+    },
+  );
   if (!validation.passed) {
     const issue = validation.diagnostics[0]!;
     throw coded(issue.code, `${issue.path}: ${issue.message}`);

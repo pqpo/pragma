@@ -262,6 +262,58 @@ describe("Skill sync service", () => {
     expect(overview.skills[0]).toMatchObject({ syncKey: `capability/${id}`, status: "error" });
   });
 
+  it("rejects executable files without a supported scanner even without a suffix or shebang", async () => {
+    const fixture = await createFixture();
+    const id = "45454545-4545-4545-8454-454545454545";
+    const skill = remoteSkill({ kind: "capability", id }, "Executable Skill");
+    fixture.provider.repository.skills.set(`capability/${id}`, {
+      ...skill,
+      files: [...skill.files, { path: "bin/run", content: "echo unsafe\n", executable: true }],
+    });
+    fixture.provider.advance();
+
+    const overview = await fixture.service.configure(configuration());
+
+    expect(fixture.capabilities.has(id)).toBe(false);
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({
+        syncKey: `capability/${id}`,
+        status: "error",
+        errorCode: "skill_script_language_unsupported",
+      }),
+    );
+  });
+
+  it("allows non-executable script-like documentation in synced Skills", async () => {
+    const fixture = await createFixture();
+    const id = "46464646-4646-4646-8464-464646464646";
+    const skill = remoteSkill({ kind: "capability", id }, "Documented Skill");
+    fixture.provider.repository.skills.set(`capability/${id}`, {
+      ...skill,
+      files: [
+        ...skill.files,
+        {
+          path: "references/example.py",
+          content: "print('documentation sample')\n",
+          executable: false,
+        },
+        {
+          path: "references/example.ts",
+          content: "export const example = true;\n",
+          executable: false,
+        },
+      ],
+    });
+    fixture.provider.advance();
+
+    const overview = await fixture.service.configure(configuration());
+
+    expect(fixture.capabilities.has(id)).toBe(true);
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, status: "synced" }),
+    );
+  });
+
   it("applies a remote deletion to the matching local Skill", async () => {
     const fixture = await createFixture();
     const id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

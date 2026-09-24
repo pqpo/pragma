@@ -282,7 +282,9 @@ export function createSkillDraftSession(input: SkillExtractionInput): SkillDraft
           repairExhausted,
         );
       }
-      const packageValidation = validateSkillPackage(candidate.data.content.package);
+      const packageValidation = validateSkillPackage(candidate.data.content.package, {
+        executablePaths: new Set(),
+      });
       const errors = [
         ...validateSkillExtractionCandidate(
           candidate.data,

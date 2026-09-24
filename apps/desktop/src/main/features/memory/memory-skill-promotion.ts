@@ -432,7 +432,7 @@ export function createMemorySkillPromotionService(options: {
         assertRevision(current, input.expectedRevision);
         if (!["pending_review", "needs_attention"].includes(current.state))
           throw new Error("skill_candidate_state_invalid");
-        const validation = validateSkillPackage(input.package);
+        const validation = validateSkillPackage(input.package, { executablePaths: new Set() });
         if (!validation.passed) throw validationError(validation.diagnostics);
         const updated = MemorySkillCandidateSchema.parse({
           ...current,
@@ -520,7 +520,7 @@ export function createMemorySkillPromotionService(options: {
         assertRevision(current, input.expectedRevision);
         if (current.state !== "pending_review")
           throw new Error("skill_candidate_not_approved_for_promotion");
-        const validation = validateSkillPackage(current.package);
+        const validation = validateSkillPackage(current.package, { executablePaths: new Set() });
         if (!validation.passed) throw validationError(validation.diagnostics);
         const approved = MemorySkillCandidateSchema.parse({
           ...current,

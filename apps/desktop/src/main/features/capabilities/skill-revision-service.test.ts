@@ -516,6 +516,62 @@ describe("Skill revision service", () => {
     expect(completed).toMatchObject({ state: "completed", publishedRevision: 2 });
   });
 
+  it("allows non-executable files with script-like extensions when revising a Skill", async () => {
+    const fixture = await createService();
+    const references = join(fixture.sourcePath, "references");
+    await mkdir(references);
+    const pythonExample = join(references, "example.py");
+    const typescriptExample = join(references, "example.ts");
+    await writeFile(pythonExample, "print('documentation sample')\n");
+    await writeFile(typescriptExample, "export const example = true;\n");
+    await chmod(pythonExample, 0o600);
+    await chmod(typescriptExample, 0o600);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Keep source examples as non-executable documentation.",
+    });
+
+    await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 2,
+    });
+  });
+
+  it("rejects executable files that the portable validator cannot inspect", async () => {
+    const fixture = await createService();
+    const bin = join(fixture.sourcePath, "bin");
+    await mkdir(bin);
+    const executable = join(bin, "run");
+    await writeFile(executable, "echo unsafe\n");
+    await chmod(executable, 0o700);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: editing.draft.revision,
+        expectedWorkingTreeHash: editing.workingTree.hash,
+        summary: "Reject an unscanned executable file.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: [
+          expect.objectContaining({
+            path: "bin/run",
+            code: "skill_script_language_unsupported",
+          }),
+        ],
+      },
+    });
+  });
+
   it("keeps generated layout validation for Memory Skill revisions", async () => {
     const fixture = await createService();
     await mkdir(join(fixture.sourcePath, "scripts"));
