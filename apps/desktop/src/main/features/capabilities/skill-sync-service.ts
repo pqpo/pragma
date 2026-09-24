@@ -14,6 +14,7 @@ import {
   SkillSyncOverviewSchema,
   SkillSyncRepositoryManifestV1Schema,
   SkillSyncRepositoryManifestSchema,
+  SkillSyncRepositoryManifestV3Schema,
   SkillSyncSkillManifestV1Schema,
   SkillSyncSkillManifestSchema,
   type Capability,
@@ -66,7 +67,10 @@ export type RemoteSkill = {
   readonly files: readonly RemoteSkillFile[];
 };
 
-export type RemoteSkillRepository = { readonly skills: ReadonlyMap<string, RemoteSkill> };
+export type RemoteSkillRepository = {
+  readonly schemaVersion?: 1 | 2 | 3 | undefined;
+  readonly skills: ReadonlyMap<string, RemoteSkill>;
+};
 export type SkillSyncProviderHead = BackupProviderHead<RemoteSkillRepository>;
 
 export type SkillSyncProvider = StudioBackupProvider<RemoteSkillRepository>;
@@ -232,7 +236,10 @@ export function createSkillSyncService(options: {
           description: capability.definition.description,
           files,
         };
-        validateRemoteSkill(skill);
+        // Persisted revisions predate the executable scanner policy. Revision publication only
+        // preserves these files when their path, mode, and content match the base revision.
+        const legacyExecutablePaths = legacyExecutablePathsForSkill(skill);
+        validateRemoteSkill(skill, legacyExecutablePaths);
         skills.set(syncKey, skill);
       } catch (error) {
         errors[syncKey] = {
@@ -261,13 +268,14 @@ export function createSkillSyncService(options: {
     syncKey: string,
     remote: RemoteSkill | undefined,
     local: LocalSkill | undefined,
+    allowedLegacyExecutablePaths: ReadonlySet<string> = new Set(),
   ): Promise<Capability | undefined> => {
     if (remote === undefined) {
       if (local !== undefined)
         await options.capabilities.remove(local.capabilityId, local.capabilityRevision);
       return undefined;
     }
-    validateRemoteSkill(remote);
+    validateRemoteSkill(remote, allowedLegacyExecutablePaths);
     const incoming = join(options.cacheRoot, "incoming", randomUUID());
     try {
       await writeSkillTree(incoming, remote);
@@ -367,7 +375,12 @@ export function createSkillSyncService(options: {
           await writeState(checkpointState());
         }
         try {
-          const applied = await applyRemote(key, remoteSkill, localSkill);
+          const applied = await applyRemote(
+            key,
+            remoteSkill,
+            localSkill,
+            legacyExecutablePathsForRepositorySkill(remoteSkill, head.repository.schemaVersion),
+          );
           if (remoteSkill === undefined || applied === undefined) {
             delete bases[key];
             delete portableFiles[key];
@@ -411,7 +424,12 @@ export function createSkillSyncService(options: {
           await writeState(checkpointState());
         }
         try {
-          const applied = await applyRemote(key, remoteSkill, localSkill);
+          const applied = await applyRemote(
+            key,
+            remoteSkill,
+            localSkill,
+            legacyExecutablePathsForRepositorySkill(remoteSkill, head.repository.schemaVersion),
+          );
           if (remoteSkill === undefined || applied === undefined) {
             delete bases[key];
             delete portableFiles[key];
@@ -464,7 +482,10 @@ export function createSkillSyncService(options: {
       ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
     }
     return {
-      repository: { skills: desired },
+      repository: {
+        schemaVersion: repositoryVersionForSkills(desired),
+        skills: desired,
+      },
       publishedKeys,
       publishedSnapshots,
       state: SkillSyncStateSchema.parse({
@@ -702,7 +723,12 @@ export function createSkillSyncService(options: {
             await writeState(state);
           }
           try {
-            const applied = await applyRemote(syncKey, remoteSkill, localSkill);
+            const applied = await applyRemote(
+              syncKey,
+              remoteSkill,
+              localSkill,
+              legacyExecutablePathsForRepositorySkill(remoteSkill, head.repository.schemaVersion),
+            );
             if (remoteSkill === undefined || applied === undefined)
               delete state.portableFiles[syncKey];
             else state.portableFiles[syncKey] = portableFilesFor(applied, remoteSkill);
@@ -731,7 +757,10 @@ export function createSkillSyncService(options: {
             else desired.set(syncKey, selectedLocal);
             const published = await provider.publish({
               expectedRevision: publishHead.revision,
-              repository: { skills: desired },
+              repository: {
+                schemaVersion: repositoryVersionForSkills(desired),
+                skills: desired,
+              },
               message: `Resolve Skill sync conflict for ${syncKey}`,
             });
             if (published.status === "head_changed") {
@@ -758,7 +787,10 @@ export function createSkillSyncService(options: {
             publishHead = {
               revision: published.revision,
               reference: publishHead.reference,
-              repository: { skills: desired },
+              repository: {
+                schemaVersion: repositoryVersionForSkills(desired),
+                skills: desired,
+              },
             };
           }
           if (!resolved) {
@@ -1035,7 +1067,10 @@ function summary(skill: RemoteSkill | undefined) {
       };
 }
 
-function validateRemoteSkill(skill: RemoteSkill): void {
+function validateRemoteSkill(
+  skill: RemoteSkill,
+  allowUnscannedExecutablePaths: ReadonlySet<string> = new Set(),
+): void {
   for (const file of skill.files) {
     if (Buffer.byteLength(file.content, "utf8") > MAX_FILE_BYTES) {
       throw coded("skill_sync_size_limit", `Skill file is too large: ${file.path}`);
@@ -1051,12 +1086,38 @@ function validateRemoteSkill(skill: RemoteSkill): void {
       executablePaths: new Set(
         skill.files.filter((file) => file.executable).map((file) => file.path),
       ),
+      allowUnscannedExecutablePaths,
     },
   );
   if (!validation.passed) {
     const issue = validation.diagnostics[0]!;
     throw coded(issue.code, `${issue.path}: ${issue.message}`);
   }
+}
+
+function legacyExecutablePathsForSkill(skill: RemoteSkill): ReadonlySet<string> {
+  return new Set(
+    skill.files
+      .filter((file) => file.executable && !/\.(?:mjs|cjs|js)$/iu.test(file.path))
+      .map((file) => file.path),
+  );
+}
+
+function legacyExecutablePathsForRepositorySkill(
+  skill: RemoteSkill | undefined,
+  schemaVersion: RemoteSkillRepository["schemaVersion"],
+): ReadonlySet<string> {
+  // v1/v2 accepted executable formats which this client cannot statically inspect. Keep those
+  // historical repositories readable; v3 is the explicit boundary for the stricter policy.
+  return skill !== undefined && schemaVersion !== undefined && schemaVersion < 3
+    ? legacyExecutablePathsForSkill(skill)
+    : new Set();
+}
+
+function repositoryVersionForSkills(skills: ReadonlyMap<string, RemoteSkill>): 2 | 3 {
+  return [...skills.values()].some((skill) => legacyExecutablePathsForSkill(skill).size > 0)
+    ? 2
+    : 3;
 }
 
 async function writeSkillTree(root: string, skill: RemoteSkill): Promise<void> {
@@ -1071,10 +1132,11 @@ async function readWorkingRepository(
   root: string,
   fileModes: ReadonlyMap<string, string>,
 ): Promise<RemoteSkillRepository> {
-  let repositoryVersion: 1 | 2;
+  let repositoryVersion: 1 | 2 | 3;
   try {
     const manifest = parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES));
-    if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 2;
+    if (SkillSyncRepositoryManifestV3Schema.safeParse(manifest).success) repositoryVersion = 3;
+    else if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 2;
     else {
       SkillSyncRepositoryManifestV1Schema.parse(manifest);
       repositoryVersion = 1;
@@ -1084,7 +1146,7 @@ async function readWorkingRepository(
       try {
         await access(join(root, SKILLS_DIRECTORY));
       } catch (directoryError) {
-        if (isNodeError(directoryError, "ENOENT")) return { skills: new Map() };
+        if (isNodeError(directoryError, "ENOENT")) return { schemaVersion: 3, skills: new Map() };
         throw directoryError;
       }
       throw coded(
@@ -1192,6 +1254,10 @@ async function readWorkingRepository(
         description: manifest.description,
         files,
       };
+      validateRemoteSkill(
+        remote,
+        repositoryVersion < 3 ? legacyExecutablePathsForSkill(remote) : new Set(),
+      );
       if (skills.has(key))
         throw coded("skill_sync_identity_mismatch", `Multiple Skills resolve to ${key}.`);
       skills.set(key, remote);
@@ -1199,7 +1265,7 @@ async function readWorkingRepository(
         throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
     }
   }
-  return { skills };
+  return { schemaVersion: repositoryVersion, skills };
 }
 
 async function readGitFileModes(
@@ -1331,7 +1397,9 @@ async function writeWorkingRepository(
   assertRepositoryBounds(repository);
   await rm(join(root, SKILLS_DIRECTORY), { recursive: true, force: true });
   await mkdir(join(root, SKILLS_DIRECTORY), { recursive: true, mode: 0o700 });
-  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: "pragma.skill-sync/v2" }));
+  const schemaVersion = repositoryVersionForSkills(repository.skills);
+  const manifestVersion = schemaVersion === 2 ? "pragma.skill-sync/v2" : "pragma.skill-sync/v3";
+  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: manifestVersion }));
   for (const [key, skill] of [...repository.skills.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
@@ -1475,7 +1543,10 @@ function assertRepositoryBounds(repository: RemoteSkillRepository): void {
         "skill_sync_identity_mismatch",
         `Skill map key does not match its identity: ${key}`,
       );
-    validateRemoteSkill(skill);
+    validateRemoteSkill(
+      skill,
+      legacyExecutablePathsForRepositorySkill(skill, repository.schemaVersion),
+    );
     const manifest = createSkillSyncManifest(
       skill,
       skill.files.map((file) => ({

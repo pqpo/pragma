@@ -284,6 +284,36 @@ describe("Skill sync service", () => {
     );
   });
 
+  it("continues syncing unchanged executable files from a v2 repository", async () => {
+    const fixture = await createFixture();
+    const id = "47474747-4747-4747-8474-474747474747";
+    const skill = remoteSkill({ kind: "capability", id }, "Legacy Executable Skill");
+    fixture.provider.repository = {
+      schemaVersion: 2,
+      skills: new Map([
+        [
+          `capability/${id}`,
+          {
+            ...skill,
+            files: [
+              ...skill.files,
+              { path: "references/tool.sh", content: "echo legacy tool\n", executable: true },
+            ],
+          },
+        ],
+      ]),
+    };
+    fixture.provider.advance();
+
+    const configured = await fixture.service.configure(configuration());
+    const synchronized = await fixture.service.sync();
+
+    expect(configured.status).toBe("ready");
+    expect(synchronized.status).toBe("ready");
+    expect(fixture.capabilities.has(id)).toBe(true);
+    expect(fixture.provider.repository.schemaVersion).toBe(2);
+  });
+
   it("allows non-executable script-like documentation in synced Skills", async () => {
     const fixture = await createFixture();
     const id = "46464646-4646-4646-8464-464646464646";
@@ -851,6 +881,55 @@ describe("Git Skill sync provider", () => {
     ).resolves.toContain("skills/** -text -filter");
   });
 
+  it("reads legacy executable assets from v2 and upgrades safe repositories to v3", async () => {
+    const root = await temporaryRoot();
+    const remote = join(root, "remote.git");
+    await git(undefined, ["init", "--bare", remote]);
+    const globalConfig = join(root, "gitconfig");
+    await writeFile(globalConfig, "[user]\n\tname = Test\n\temail = test@example.com\n");
+    const provider = createGitSkillSyncProvider(join(root, "cache"), gitConfiguration(remote), {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig },
+    });
+    const id = "48484848-4848-4848-8484-484848484848";
+    const skill = remoteSkill({ kind: "capability", id }, "Legacy Executable Skill");
+    const legacy = {
+      ...skill,
+      files: [
+        ...skill.files,
+        { path: "references/tool.sh", content: "echo legacy tool\n", executable: true },
+      ],
+    };
+
+    await provider.publish({
+      repository: { schemaVersion: 2, skills: new Map([[`capability/${id}`, legacy]]) },
+      message: "preserve legacy executable",
+    });
+    const oldHead = await provider.readHead();
+    expect(oldHead.repository.schemaVersion).toBe(2);
+    expect(oldHead.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
+      expect.objectContaining({ path: "references/tool.sh", executable: true }),
+    );
+
+    await provider.publish({
+      expectedRevision: oldHead.revision,
+      repository: { schemaVersion: 2, skills: new Map([[`capability/${id}`, skill]]) },
+      message: "remove legacy executable",
+    });
+    expect((await provider.readHead()).repository.schemaVersion).toBe(3);
+
+    const safeHead = await provider.readHead();
+    await expect(
+      provider.publish({
+        expectedRevision: safeHead.revision,
+        repository: {
+          schemaVersion: 3,
+          skills: new Map([[`capability/${id}`, legacy]]),
+        },
+        message: "reject unscanned executable under v3",
+      }),
+    ).rejects.toMatchObject({ code: "skill_script_language_unsupported" });
+  });
+
   it("rejects symbolic links in the managed Skill tree", async () => {
     const root = await temporaryRoot();
     const source = join(root, "source");
@@ -1213,8 +1292,12 @@ async function createFixture(
   };
 }
 
+type MutableRemoteSkillRepository = Omit<RemoteSkillRepository, "skills"> & {
+  readonly skills: Map<string, RemoteSkill>;
+};
+
 class FakeProvider implements SkillSyncProvider {
-  repository: { skills: Map<string, RemoteSkill> } = { skills: new Map() };
+  repository: MutableRemoteSkillRepository = { schemaVersion: 3, skills: new Map() };
   reference = "main";
   beforePublish?: (() => Promise<void>) | undefined;
   private revision = 0;
@@ -1245,8 +1328,9 @@ class FakeProvider implements SkillSyncProvider {
   }
 }
 
-function cloneRepository(repository: RemoteSkillRepository): { skills: Map<string, RemoteSkill> } {
+function cloneRepository(repository: RemoteSkillRepository): MutableRemoteSkillRepository {
   return {
+    schemaVersion: repository.schemaVersion ?? 3,
     skills: new Map(
       [...repository.skills].map(([key, skill]) => [
         key,

@@ -1790,6 +1790,13 @@ export function createSkillRevisionService(options: {
         draft.operation,
         job.request.source,
         candidateSnapshot.executablePaths,
+        await unchangedLegacyExecutablePaths(
+          options.capabilities,
+          draft,
+          job.request.source,
+          candidate,
+          candidateSnapshot.entries,
+        ),
       );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const submission = await createStableSkillSubmission({
@@ -1915,6 +1922,13 @@ export function createSkillRevisionService(options: {
         draft.operation,
         job.request.source,
         candidateSnapshot.executablePaths,
+        await unchangedLegacyExecutablePaths(
+          options.capabilities,
+          draft,
+          job.request.source,
+          candidate,
+          candidateSnapshot.entries,
+        ),
       );
       if (!validation.passed) throw new SkillRevisionValidationError(validation);
       const publishingDraft = await mutateDraft(draft.id, draft.revision, () => ({
@@ -2328,6 +2342,7 @@ async function readSkillPackage(
 ): Promise<{
   readonly package: SkillPackage;
   readonly executablePaths: ReadonlySet<string>;
+  readonly entries: readonly SkillWorkingTreeEntry[];
 }> {
   const capability = creation === undefined ? await capabilities.get(capabilityId) : undefined;
   if (capability !== undefined && capability.definition.kind !== "skill") {
@@ -2354,6 +2369,7 @@ async function readSkillPackage(
       files,
     }),
     executablePaths,
+    entries: snapshot.entries,
   };
 }
 
@@ -2390,10 +2406,49 @@ function validateSkillRevisionPackage(
   operation: SkillRevisionDraft["operation"],
   source: ManagedSkillRevisionJob["request"]["source"],
   executablePaths: ReadonlySet<string>,
+  allowUnscannedExecutablePaths: ReadonlySet<string> = new Set(),
 ): SkillPackageValidationResult {
   return operation === "create" || source === "memory-learning"
     ? validateSkillPackage(candidate, { executablePaths })
-    : validatePortableSkillPackage(candidate, { executablePaths });
+    : validatePortableSkillPackage(candidate, {
+        executablePaths,
+        allowUnscannedExecutablePaths,
+      });
+}
+
+async function unchangedLegacyExecutablePaths(
+  capabilities: CapabilityStore,
+  draft: SkillRevisionDraft,
+  source: ManagedSkillRevisionJob["request"]["source"],
+  candidate: SkillPackage,
+  candidateEntries: readonly SkillWorkingTreeEntry[],
+): Promise<ReadonlySet<string>> {
+  if (
+    draft.operation !== "revise" ||
+    source === "memory-learning" ||
+    draft.capabilityId === undefined ||
+    draft.baseRevision < 1
+  ) {
+    return new Set();
+  }
+  const baseRoot = await capabilities.skillFilesPath(draft.capabilityId, draft.baseRevision);
+  const baseEntries = await scanSkillWorkingTree(baseRoot);
+  const baseByPath = new Map(baseEntries.entries.map((entry) => [entry.path, entry]));
+  const candidatePaths = new Set(candidate.files.map((file) => file.path));
+  return new Set(
+    candidateEntries
+      .filter(
+        (entry) =>
+          candidatePaths.has(entry.path) &&
+          entry.executable &&
+          !/\.(?:mjs|cjs|js)$/iu.test(entry.path),
+      )
+      .filter((entry) => {
+        const base = baseByPath.get(entry.path);
+        return base?.executable === true && base.sha256 === entry.sha256;
+      })
+      .map((entry) => entry.path),
+  );
 }
 
 async function readJsonNames(path: string): Promise<string[]> {

@@ -547,20 +547,20 @@ describe("Skill revision service", () => {
 
   it("rejects executable files that the portable validator cannot inspect", async () => {
     const fixture = await createService();
-    const bin = join(fixture.sourcePath, "bin");
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const bin = join(editing.draftPath!, "bin");
     await mkdir(bin);
     const executable = join(bin, "run");
     await writeFile(executable, "echo unsafe\n");
     await chmod(executable, 0o700);
-
-    const job = await fixture.service.start(request("expert-reflection"));
-    const editing = await fixture.service.inspectDraft(job.draftId);
+    const changed = await fixture.service.inspectDraft(job.draftId);
 
     await expect(
       fixture.service.submitDraft({
         draftId: job.draftId,
-        expectedRevision: editing.draft.revision,
-        expectedWorkingTreeHash: editing.workingTree.hash,
+        expectedRevision: changed.draft.revision,
+        expectedWorkingTreeHash: changed.workingTree.hash,
         summary: "Reject an unscanned executable file.",
       }),
     ).rejects.toMatchObject({
@@ -568,6 +568,64 @@ describe("Skill revision service", () => {
         diagnostics: [
           expect.objectContaining({
             path: "bin/run",
+            code: "skill_script_language_unsupported",
+          }),
+        ],
+      },
+    });
+  });
+
+  it("preserves an unchanged unsupported executable from an existing Skill revision", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "references"));
+    const legacyTool = join(fixture.sourcePath, "references", "tool.sh");
+    await writeFile(legacyTool, "echo legacy tool\n");
+    await chmod(legacyTool, 0o700);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(editing.draftPath!, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nUpdated instructions.\n",
+    );
+    const changed = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: changed.draft.revision,
+      expectedWorkingTreeHash: changed.workingTree.hash,
+      summary: "Update the instructions while preserving the legacy tool.",
+    });
+
+    await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 2,
+    });
+  });
+
+  it("rejects a changed unsupported executable when revising an existing Skill", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "references"));
+    const legacyTool = join(fixture.sourcePath, "references", "tool.sh");
+    await writeFile(legacyTool, "echo legacy tool\n");
+    await chmod(legacyTool, 0o700);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(join(editing.draftPath!, "references", "tool.sh"), "echo changed tool\n");
+    const changed = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: changed.draft.revision,
+        expectedWorkingTreeHash: changed.workingTree.hash,
+        summary: "Reject the changed unscanned executable.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: [
+          expect.objectContaining({
+            path: "references/tool.sh",
             code: "skill_script_language_unsupported",
           }),
         ],

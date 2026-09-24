@@ -27,26 +27,28 @@ export interface SkillPackageValidationResult {
 export interface SkillPackageValidationOptions {
   /** File paths marked executable by repository metadata or working-tree mode. */
   readonly executablePaths: ReadonlySet<string>;
+  /** Unchanged executable files preserved from a previously accepted Skill revision. */
+  readonly allowUnscannedExecutablePaths?: ReadonlySet<string>;
 }
 
 export function validatePortableSkillPackage(
   rawPackage: SkillPackage,
   options: SkillPackageValidationOptions,
 ): SkillPackageValidationResult {
-  return validatePackage(rawPackage, false, options.executablePaths);
+  return validatePackage(rawPackage, false, options);
 }
 
 export function validateSkillPackage(
   rawPackage: SkillPackage,
   options: SkillPackageValidationOptions,
 ): SkillPackageValidationResult {
-  return validatePackage(rawPackage, true, options.executablePaths);
+  return validatePackage(rawPackage, true, options);
 }
 
 function validatePackage(
   rawPackage: SkillPackage,
   generated: boolean,
-  executablePaths: ReadonlySet<string>,
+  options: SkillPackageValidationOptions,
 ): SkillPackageValidationResult {
   const parsed = SkillPackageSchema.safeParse(rawPackage);
   if (!parsed.success) {
@@ -57,14 +59,14 @@ function validatePackage(
     }));
     return { passed: false, diagnostics };
   }
-  const diagnostics = staticDiagnostics(parsed.data, generated, executablePaths);
+  const diagnostics = staticDiagnostics(parsed.data, generated, options);
   return { passed: diagnostics.length === 0, diagnostics };
 }
 
 function staticDiagnostics(
   skill: SkillPackage,
   generated: boolean,
-  executablePaths: ReadonlySet<string>,
+  options: SkillPackageValidationOptions,
 ): readonly { readonly path: string; readonly code: string; readonly message: string }[] {
   const diagnostics: { path: string; code: string; message: string }[] = [];
   const skillDocument = skill.files.find((file) => file.path === "SKILL.md")?.content ?? "";
@@ -133,10 +135,10 @@ function staticDiagnostics(
     }
   }
   const filesByPath = new Map(skill.files.map((file) => [file.path, file]));
-  for (const path of executablePaths) {
+  for (const path of options.executablePaths) {
     const file = filesByPath.get(path);
     const scannedJavaScript = file !== undefined && /\.(?:mjs|cjs|js)$/iu.test(file.path);
-    if (!scannedJavaScript) {
+    if (!scannedJavaScript && !options.allowUnscannedExecutablePaths?.has(path)) {
       diagnostics.push({
         path,
         code: "skill_script_language_unsupported",
