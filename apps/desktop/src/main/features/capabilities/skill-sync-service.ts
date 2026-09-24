@@ -525,7 +525,18 @@ export function createSkillSyncService(options: {
         const allowedLocalLegacyPaths = mayPreserveLegacyLocalFiles
           ? legacyExecutablePathsForLocalSkill(localSkill, baselineFiles, allowInitialLocalSnapshot)
           : new Set<string>();
-        validateRemoteSkill(localSkill, allowedLocalLegacyPaths);
+        try {
+          validateRemoteSkill(localSkill, allowedLocalLegacyPaths);
+        } catch (error) {
+          errors[key] = {
+            source: "local",
+            code: errorCode(error),
+            message: errorMessage(error),
+            name: localSkill.name,
+            capabilityId: localSkill.capabilityId,
+          };
+          continue;
+        }
         if (allowedLocalLegacyPaths.size > 0) {
           grandfatheredExecutablePaths.set(key, allowedLocalLegacyPaths);
         }
@@ -540,7 +551,7 @@ export function createSkillSyncService(options: {
     }
     return {
       repository: {
-        schemaVersion: repositoryVersionForSkills(desired),
+        schemaVersion: repositoryVersionForSkills(desired, head.repository.schemaVersion),
         skills: desired,
         grandfatheredExecutablePaths,
       },
@@ -872,7 +883,10 @@ export function createSkillSyncService(options: {
             const published = await provider.publish({
               expectedRevision: publishHead.revision,
               repository: {
-                schemaVersion: repositoryVersionForSkills(desired),
+                schemaVersion: repositoryVersionForSkills(
+                  desired,
+                  publishHead.repository.schemaVersion,
+                ),
                 skills: desired,
                 grandfatheredExecutablePaths,
               },
@@ -903,7 +917,10 @@ export function createSkillSyncService(options: {
               revision: published.revision,
               reference: publishHead.reference,
               repository: {
-                schemaVersion: repositoryVersionForSkills(desired),
+                schemaVersion: repositoryVersionForSkills(
+                  desired,
+                  publishHead.repository.schemaVersion,
+                ),
                 skills: desired,
               },
             };
@@ -1011,6 +1028,20 @@ export function createGitSkillSyncProvider(
               repositoryPath,
               await readGitFileModes(repositoryPath, environment),
             );
+      const nextSchemaVersion = repositoryVersionForSkills(
+        input.repository.skills,
+        input.repository.schemaVersion,
+      );
+      if (
+        prepared.revision !== undefined &&
+        previousRepository.schemaVersion === 3 &&
+        nextSchemaVersion < 3
+      ) {
+        throw coded(
+          "skill_sync_protocol_unsupported",
+          "A Skill repository using schema v3 cannot be downgraded.",
+        );
+      }
       const allowedLegacyPaths = repositoryTransitionLegacyPaths(
         previousRepository,
         input.repository,
@@ -1342,7 +1373,11 @@ function repositoryTransitionLegacyPaths(
   return allowed;
 }
 
-function repositoryVersionForSkills(skills: ReadonlyMap<string, RemoteSkill>): 2 | 3 {
+function repositoryVersionForSkills(
+  skills: ReadonlyMap<string, RemoteSkill>,
+  currentVersion?: 1 | 2 | 3,
+): 2 | 3 {
+  if (currentVersion === 3) return 3;
   return [...skills.values()].some((skill) => legacyExecutablePathsForSkill(skill).size > 0)
     ? 2
     : 3;
@@ -1628,7 +1663,7 @@ async function writeWorkingRepository(
   assertRepositoryBounds(repository, allowedLegacyPaths);
   await rm(join(root, SKILLS_DIRECTORY), { recursive: true, force: true });
   await mkdir(join(root, SKILLS_DIRECTORY), { recursive: true, mode: 0o700 });
-  const schemaVersion = repositoryVersionForSkills(repository.skills);
+  const schemaVersion = repositoryVersionForSkills(repository.skills, repository.schemaVersion);
   const manifestVersion = schemaVersion === 2 ? "pragma.skill-sync/v2" : "pragma.skill-sync/v3";
   await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: manifestVersion }));
   for (const [key, skill] of [...repository.skills.entries()].toSorted(([left], [right]) =>

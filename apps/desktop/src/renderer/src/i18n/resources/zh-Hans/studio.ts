@@ -632,6 +632,9 @@ export const studio = {
   skillSyncComplete: "技能同步完成。",
   skillSyncNeedsAttention: "部分技能未同步成功。请到“设置 → 技能同步”重试或处理冲突。",
   skillSyncFailed: "同步未完成，请稍后重试；如果仍失败，请检查同步配置。",
+  skillCatalogRefreshFailed: "同步已完成，但技能列表刷新失败。",
+  retrySkillCatalogRefresh: "刷新列表",
+  refreshingSkillCatalog: "正在刷新…",
   knowledgeSyncStatus: {
     synced: "已同步",
     pending: "等待同步",

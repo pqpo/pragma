@@ -102,12 +102,13 @@ export function mergeLoadedExperts(
 export async function syncSkillsAndRefreshCatalog(
   syncSkills: () => Promise<SkillSyncOverview>,
   refreshCatalog: () => Promise<void>,
+  onRefreshFailure?: (() => void) | undefined,
 ): Promise<SkillSyncOverview> {
   const overview = await syncSkills();
   try {
-    void refreshCatalog().catch(() => undefined);
+    void refreshCatalog().catch(() => onRefreshFailure?.());
   } catch {
-    // Preserve the completed sync result if the independent catalog refresh fails.
+    onRefreshFailure?.();
   }
   return overview;
 }
@@ -198,6 +199,7 @@ export function StudioPage(props: {
   const [skillSyncOverviewState, setSkillSyncOverviewState] = useState<
     "loading" | "ready" | "error"
   >("loading");
+  const [skillCatalogRefreshFailed, setSkillCatalogRefreshFailed] = useState(false);
   const [contextStoreBindings, setContextStoreBindings] = useState<
     readonly DesktopPragmaContextStoreBinding[]
   >([]);
@@ -1214,7 +1216,16 @@ export function StudioPage(props: {
             capabilities={capabilities}
             syncOverview={activeView === "skills" ? skillSyncOverview : undefined}
             syncOverviewState={activeView === "skills" ? skillSyncOverviewState : undefined}
+            catalogRefreshFailed={activeView === "skills" ? skillCatalogRefreshFailed : undefined}
             onConfigureSync={props.onConfigureSkillSync}
+            onRetryCatalogRefresh={
+              activeView === "skills"
+                ? async () => {
+                    setCapabilities(await window.pragmaDesktop.listCapabilities());
+                    setSkillCatalogRefreshFailed(false);
+                  }
+                : undefined
+            }
             onRetrySyncOverview={
               activeView === "skills"
                 ? async () => {
@@ -1239,11 +1250,13 @@ export function StudioPage(props: {
             onSync={
               activeView === "skills"
                 ? async () => {
+                    setSkillCatalogRefreshFailed(false);
                     const overview = await syncSkillsAndRefreshCatalog(
                       () => window.pragmaDesktop.syncSkills(),
                       async () => {
                         setCapabilities(await window.pragmaDesktop.listCapabilities());
                       },
+                      () => setSkillCatalogRefreshFailed(true),
                     );
                     setSkillSyncOverview(overview);
                     setSkillSyncOverviewState("ready");

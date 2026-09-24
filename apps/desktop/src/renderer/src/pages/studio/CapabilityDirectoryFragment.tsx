@@ -141,8 +141,10 @@ export function CapabilityDirectoryFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly syncOverview?: SkillSyncOverview | undefined;
   readonly syncOverviewState?: "loading" | "ready" | "error" | undefined;
+  readonly catalogRefreshFailed?: boolean | undefined;
   readonly onConfigureSync?: (() => void) | undefined;
   readonly onRetrySyncOverview?: (() => Promise<SkillSyncOverview>) | undefined;
+  readonly onRetryCatalogRefresh?: (() => Promise<void>) | undefined;
   readonly onSync?: (() => Promise<SkillSyncOverview>) | undefined;
   readonly onOpen: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
@@ -166,6 +168,7 @@ export function CapabilityDirectoryFragment(props: {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [checkingSyncStatus, setCheckingSyncStatus] = useState(false);
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [syncNeedsAttention, setSyncNeedsAttention] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -308,6 +311,18 @@ export function CapabilityDirectoryFragment(props: {
       setSyncFeedback(t("skillSyncFailed"));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const retrySkillCatalogRefresh = async () => {
+    if (props.onRetryCatalogRefresh === undefined) return;
+    setRefreshingCatalog(true);
+    try {
+      await props.onRetryCatalogRefresh();
+    } catch {
+      // The parent keeps the refresh warning visible until a retry succeeds.
+    } finally {
+      setRefreshingCatalog(false);
     }
   };
 
@@ -643,6 +658,22 @@ export function CapabilityDirectoryFragment(props: {
           role={syncNeedsAttention ? "alert" : "status"}
         >
           {syncFeedbackMessage}
+        </p>
+      ) : null}
+
+      {props.kind === "skills" && props.catalogRefreshFailed === true ? (
+        <p className="capability-sync-feedback is-error" role="alert">
+          <span>{t("skillCatalogRefreshFailed")}</span>
+          {props.onRetryCatalogRefresh !== undefined ? (
+            <button
+              className="secondary-button capability-sync-refresh-retry"
+              type="button"
+              disabled={refreshingCatalog}
+              onClick={() => void retrySkillCatalogRefresh()}
+            >
+              {refreshingCatalog ? t("refreshingSkillCatalog") : t("retrySkillCatalogRefresh")}
+            </button>
+          ) : null}
         </p>
       ) : null}
 

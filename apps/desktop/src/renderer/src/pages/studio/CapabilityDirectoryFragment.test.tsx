@@ -249,6 +249,23 @@ describe("capability row actions", () => {
     expect(html).not.toContain("Sync status is temporarily unavailable");
   });
 
+  it("shows a separate catalog refresh warning and retry action after sync", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="skills"
+        capabilities={[]}
+        catalogRefreshFailed={true}
+        onRetryCatalogRefresh={async () => undefined}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Sync completed, but the Skill list could not be refreshed.");
+    expect(html).toContain(">Refresh list</button>");
+    expect(html).toContain('role="alert"');
+  });
+
   it("lists system capabilities as built-in without mutation actions", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment

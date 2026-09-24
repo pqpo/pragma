@@ -25,6 +25,13 @@
   color: var(--ui-danger);
 }
 
+.capability-sync-refresh-retry {
+  margin-left: 8px;
+  min-height: 28px;
+  padding-block: 4px;
+  font-size: 12px;
+}
+
 .capability-create-menu {
   width: 310px;
   padding: 7px;

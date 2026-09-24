@@ -622,6 +622,36 @@ describe("Skill sync service", () => {
     expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(false);
   });
 
+  it("keeps v3 repositories at v3 and reports incompatible legacy local scripts", async () => {
+    const fixture = await createFixture();
+    const id = "25252525-2525-4525-8525-252525252526";
+    const capability = await fixture.addLocalSkill(id, "Legacy Local Skill");
+    const scriptPath = join(
+      fixture.root,
+      "capabilities",
+      id,
+      String(capability.manifest.latestRevision),
+      "bin",
+      "run.sh",
+    );
+    await mkdir(dirname(scriptPath), { recursive: true });
+    await writeFile(scriptPath, "echo legacy\n");
+    await chmod(scriptPath, 0o700);
+
+    const overview = await fixture.service.configure(configuration());
+
+    expect(overview.status).toBe("error");
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({
+        syncKey: `capability/${id}`,
+        status: "error",
+        errorCode: "skill_script_language_unsupported",
+      }),
+    );
+    expect(fixture.provider.repository.schemaVersion).toBe(3);
+    expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(false);
+  });
+
   it("persists conflict summaries for Skills with more than 64 files", async () => {
     const fixture = await createFixture();
     await fixture.service.configure(configuration());
@@ -1043,6 +1073,15 @@ describe("Git Skill sync provider", () => {
     expect((await provider.readHead()).repository.schemaVersion).toBe(3);
 
     const safeHead = await provider.readHead();
+    await expect(
+      provider.publish({
+        expectedRevision: safeHead.revision,
+        repository: { schemaVersion: 2, skills: new Map([[`capability/${id}`, legacy]]) },
+        message: "reject v3 repository downgrade",
+      }),
+    ).rejects.toMatchObject({ code: "skill_sync_protocol_unsupported" });
+    expect((await provider.readHead()).repository.schemaVersion).toBe(3);
+
     await expect(
       provider.publish({
         expectedRevision: safeHead.revision,

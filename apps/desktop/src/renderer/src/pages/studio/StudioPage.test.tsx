@@ -63,25 +63,36 @@ describe("StudioPage", () => {
     expect(result).toEqual({ kind: "completed", value: overview });
   });
 
-  it("keeps a successful Skill sync result when the catalog refresh fails", async () => {
+  it("keeps a successful Skill sync result and reports a failed catalog refresh", async () => {
     const overview: SkillSyncOverview = {
       configured: true,
       status: "ready",
       skills: [],
       conflicts: [],
     };
-    let refreshAttempted = false;
+    let finishRefresh!: () => void;
+    const refresh = new Promise<void>((_resolve, reject) => {
+      finishRefresh = () => reject(new Error("catalog unavailable"));
+    });
+    let reportRefreshFailure!: () => void;
+    const refreshFailureReported = new Promise<void>((resolve) => {
+      reportRefreshFailure = resolve;
+    });
+    let refreshFailureNotified = false;
 
     await expect(
       syncSkillsAndRefreshCatalog(
         async () => overview,
-        async () => {
-          refreshAttempted = true;
-          throw new Error("catalog unavailable");
+        async () => await refresh,
+        () => {
+          refreshFailureNotified = true;
+          reportRefreshFailure();
         },
       ),
     ).resolves.toBe(overview);
-    expect(refreshAttempted).toBe(true);
+    finishRefresh();
+    await refreshFailureReported;
+    expect(refreshFailureNotified).toBe(true);
   });
 
   it("renders a resizable secondary navigation", () => {

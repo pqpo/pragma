@@ -674,6 +674,9 @@ export const studio = {
     "Some Skills did not sync. Open Settings → Skill Sync to retry or resolve conflicts.",
   skillSyncFailed:
     "Sync did not finish. Try again, and check the sync settings if it keeps failing.",
+  skillCatalogRefreshFailed: "Sync completed, but the Skill list could not be refreshed.",
+  retrySkillCatalogRefresh: "Refresh list",
+  refreshingSkillCatalog: "Refreshing…",
   knowledgeSyncStatus: {
     synced: "Synced",
     pending: "Waiting to sync",

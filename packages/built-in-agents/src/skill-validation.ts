@@ -146,7 +146,20 @@ function staticDiagnostics(
       });
     }
   }
-  for (const file of skill.files.filter((entry) => /\.(?:mjs|cjs|js)$/iu.test(entry.path))) {
+  const executableJavaScriptPaths = new Set(
+    [...options.executablePaths].filter(
+      (path) =>
+        !options.allowUnscannedExecutablePaths?.has(path) && /\.(?:mjs|cjs|js)$/iu.test(path),
+    ),
+  );
+  const generatedCodePaths = generated
+    ? skill.files
+        .filter((file) => file.path.startsWith("scripts/") || file.path.startsWith("tests/"))
+        .map((file) => file.path)
+        .filter((path) => /\.(?:mjs|cjs|js)$/iu.test(path))
+    : [];
+  const filesToScan = new Set([...executableJavaScriptPaths, ...generatedCodePaths]);
+  for (const file of skill.files.filter((entry) => filesToScan.has(entry.path))) {
     if (/\bimport\s*\(/u.test(file.content) || /\brequire\s*\(/u.test(file.content)) {
       diagnostics.push({
         path: file.path,
