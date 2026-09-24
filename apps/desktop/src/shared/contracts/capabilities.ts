@@ -86,12 +86,35 @@ export const CapabilityToolSnapshotSchema = z.object({
   schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
+const SkillFilePathSchema = z
+  .string()
+  .min(1)
+  .max(2_000)
+  .refine(
+    (path) =>
+      !path.startsWith("/") &&
+      !path.includes("\\") &&
+      !path.includes("\0") &&
+      path
+        .split("/")
+        .every(
+          (segment) =>
+            segment.length > 0 &&
+            segment !== "." &&
+            segment !== ".." &&
+            segment.toLowerCase() !== ".git",
+        ),
+    "Skill file paths must be safe relative paths.",
+  );
+
 export const SkillCapabilityDefinitionSchema = z.object({
   kind: z.literal("skill"),
   name: capabilityNameSchema(),
   description: capabilityDescriptionSchema(true),
   entryPath: z.literal("SKILL.md"),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  // Git supplies this metadata even when the host filesystem cannot represent executable bits.
+  executablePaths: z.array(SkillFilePathSchema).max(1_000).optional(),
 });
 
 export const McpConnectionSchema = z.discriminatedUnion("transport", [
@@ -316,17 +339,6 @@ export const SkillDocumentSchema = z.object({
   entryPath: z.literal("SKILL.md"),
   content: z.string(),
 });
-const SkillFilePathSchema = z
-  .string()
-  .min(1)
-  .max(2_000)
-  .refine(
-    (path) =>
-      !path.startsWith("/") &&
-      !path.includes("\\") &&
-      path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
-    "Skill file paths must be safe relative paths.",
-  );
 export const ListSkillFilesSchema = GetSkillDocumentSchema;
 export const SkillFileEntrySchema = z.object({
   path: SkillFilePathSchema,

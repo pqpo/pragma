@@ -2,8 +2,9 @@
 
 Studio can associate one managed knowledge base or user Skill with one Git repository and branch.
 The asset occupies ordinary repository files: Markdown files for knowledge, and the complete Skill
-tree rooted at `SKILL.md`. Repository control files such as `.git` never enter an asset revision or
-the Studio file browser. Knowledge synchronization preserves other repository files; Skill
+tree rooted at `SKILL.md`. New Skill imports omit `.git` at every directory level, and Studio's
+Skill file browser hides and rejects `.git` paths. Older immutable revisions retain their original
+internal file and hash semantics. Knowledge synchronization preserves other repository files; Skill
 synchronization owns the repository file tree. One configured remote address and branch can be
 bound to only one asset on a device.
 
@@ -16,6 +17,8 @@ merge. Conflicting edits, binary files, and competing executable-bit changes are
 neither side is overwritten. Git pushes use the user's configured identity and credential helper
 or SSH agent, with no force push. Incoming files are validated and published as a local revision
 before a Git push. A remote head race causes a fresh fetch and merge attempt.
+Skill executable flags come from the Git index and are recorded in the local revision definition;
+sync uses those flags when a filesystem cannot reliably retain executable mode bits.
 
 Desktop stores only the remote address, branch, last local revision, remote commit, status, and a
 small retry journal in `~/.pragma/state/asset-git/`. Each operation uses a temporary shallow Git

@@ -155,13 +155,17 @@ export interface CapabilityStore extends CapabilityRepository {
   listSkillFiles(input: ListSkillFiles): Promise<SkillFileEntry[]>;
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
   skillFilesPath(id: string, revision: number): Promise<string>;
-  importSkill(input: ImportSkillCapability): Promise<Capability>;
+  importSkill(
+    input: ImportSkillCapability,
+    options?: { readonly executablePaths?: readonly string[] },
+  ): Promise<Capability>;
   publishSkillRevisionCandidate(input: {
     readonly id: string;
     readonly baseRevision: number;
     readonly baseContentHash: string;
     readonly sourcePath: string;
     readonly candidateContentHash: string;
+    readonly executablePaths?: readonly string[];
   }): Promise<Capability>;
   publishNewSkillRevisionCandidate(input: {
     readonly id: string;
@@ -741,6 +745,9 @@ export function createCapabilityStore(options: {
         );
       }
       const revision = capability.manifest.latestRevision;
+      if (isGitMetadataPath(input.path)) {
+        throw new CapabilityStoreError("config_invalid", "The Skill file path is invalid.");
+      }
       const payloadPath = join(revisionPath(capability.manifest.id, revision), "payload");
       const filePath = resolve(payloadPath, ...input.path.split("/"));
       if (!isPathInside(payloadPath, filePath)) {
@@ -780,7 +787,7 @@ export function createCapabilityStore(options: {
       }
       return join(revisionPath(id, revision), "payload");
     },
-    async importSkill(rawInput) {
+    async importSkill(rawInput, importOptions) {
       const input = ImportSkillCapabilitySchema.parse(rawInput);
       const id = randomUUID();
       const timestamp = new Date().toISOString();
@@ -790,6 +797,11 @@ export function createCapabilityStore(options: {
       await mkdir(payloadPath, { recursive: true, mode: 0o700 });
       try {
         await copySkillSource(input.sourcePath, payloadPath);
+        if (importOptions?.executablePaths !== undefined) {
+          await scanSkillWorkingTree(payloadPath, {
+            executablePaths: new Set(importOptions.executablePaths),
+          });
+        }
         const skillFile = await readFile(join(payloadPath, "SKILL.md"), "utf8");
         const metadata = readSkillMetadata(skillFile);
         const name = input.name ?? metadata.name;
@@ -806,6 +818,9 @@ export function createCapabilityStore(options: {
           description,
           entryPath: "SKILL.md",
           contentHash: await hashSkillDirectoryContent(payloadPath),
+          ...(importOptions?.executablePaths !== undefined
+            ? { executablePaths: [...importOptions.executablePaths].toSorted() }
+            : {}),
         });
         const manifest = CapabilityManifestSchema.parse({
           schemaVersion: "pragma.capability/v4",
@@ -893,6 +908,7 @@ export function createCapabilityStore(options: {
           .string()
           .regex(/^[a-f0-9]{64}$/u)
           .parse(rawInput.candidateContentHash),
+        executablePaths: rawInput.executablePaths,
       };
       const current = await readCapability(input.id);
       if (current.definition.kind !== "skill") {
@@ -909,7 +925,10 @@ export function createCapabilityStore(options: {
         const skillDocument = await readFile(join(payloadPath, "SKILL.md"), "utf8");
         const metadata = readSkillMetadata(skillDocument);
         const contentHash = await hashSkillDirectoryContent(payloadPath);
-        const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
+        const executablePaths = input.executablePaths;
+        const candidateSnapshot = await scanSkillWorkingTree(payloadPath, {
+          ...(executablePaths !== undefined ? { executablePaths: new Set(executablePaths) } : {}),
+        });
         if (candidateSnapshot.hash !== input.candidateContentHash) {
           throw new CapabilityStoreError(
             "revision_conflict",
@@ -922,6 +941,9 @@ export function createCapabilityStore(options: {
         ) {
           const publishedSnapshot = await scanSkillWorkingTree(
             join(revisionPath(input.id, current.manifest.latestRevision), "payload"),
+            current.definition.executablePaths !== undefined
+              ? { executablePaths: new Set(current.definition.executablePaths) }
+              : {},
           );
           if (publishedSnapshot.hash === input.candidateContentHash) return current;
           throw new CapabilityStoreError(
@@ -947,6 +969,8 @@ export function createCapabilityStore(options: {
           name,
           description,
           contentHash,
+          executablePaths:
+            executablePaths === undefined ? undefined : [...executablePaths].toSorted(),
         });
         const manifest = CapabilityManifestSchema.parse({
           ...current.manifest,
@@ -1668,14 +1692,16 @@ export async function copySkillSource(sourcePath: string, targetPath: string): P
     const files = Object.entries(archive)
       .filter(([name]) => !name.endsWith("/"))
       .map(([name, content]) => ({ path: validateArchivePath(name), content }));
-    if (files.length > MAX_SKILL_FILES) throw importLimitError();
+    const packageFiles = files.filter(
+      ({ path }) => !isMacOsArchiveMetadata(path) && !isGitMetadataPath(path),
+    );
+    if (packageFiles.length > MAX_SKILL_FILES) throw importLimitError();
     let bytes = 0;
-    for (const { content } of files) {
+    for (const { content } of packageFiles) {
       bytes += content.byteLength;
       if (bytes > MAX_SKILL_BYTES) throw importLimitError();
     }
 
-    const packageFiles = files.filter(({ path }) => !isMacOsArchiveMetadata(path));
     const packageRoot = skillArchiveRoot(packageFiles.map(({ path }) => path));
     const writtenPaths = new Set<string>();
     for (const { path, content } of packageFiles) {
@@ -1722,6 +1748,7 @@ async function copySkillDirectory(
   state: { files: number; bytes: number },
 ): Promise<void> {
   for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
+    if (entry.name.toLowerCase() === ".git") continue;
     const source = join(sourcePath, entry.name);
     const target = join(targetPath, entry.name);
     const info = await lstat(source);
@@ -1869,6 +1896,7 @@ async function listFiles(path: string): Promise<string[]> {
 async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
   const output: SkillFileEntry[] = [];
   for (const file of await listFiles(path)) {
+    if (isGitMetadataPath(relative(path, file).split(sep).join("/"))) continue;
     const info = await lstat(file);
     output.push({
       path: relative(path, file).split(sep).join("/"),
@@ -1876,6 +1904,10 @@ async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
     });
   }
   return output.toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+function isGitMetadataPath(path: string): boolean {
+  return path.split("/").some((segment) => segment.toLowerCase() === ".git");
 }
 
 function decodeTextFile(bytes: Uint8Array): string | null {

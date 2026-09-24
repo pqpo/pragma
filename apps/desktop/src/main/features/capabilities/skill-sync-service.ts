@@ -324,10 +324,13 @@ export function createSkillSyncService(options: {
           files.push({
             path: entry.path,
             content,
-            executable:
-              exactPortableSnapshot || !supportsExecutableBits
-                ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
-                : entry.executable,
+            executable: exactPortableSnapshot
+              ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
+              : capability.definition.executablePaths !== undefined
+                ? capability.definition.executablePaths.includes(entry.path)
+                : !supportsExecutableBits
+                  ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
+                  : entry.executable,
           });
         }
         const skill = {

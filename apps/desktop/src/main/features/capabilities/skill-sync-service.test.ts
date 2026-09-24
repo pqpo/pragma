@@ -26,6 +26,32 @@ afterEach(async () => {
 });
 
 describe("Skill sync service", () => {
+  it("publishes Skill revision executable metadata when the filesystem drops the mode", async () => {
+    const fixture = await createFixture();
+    const id = "18181818-1818-4818-8818-181818181818";
+    const skill = await fixture.addLocalSkill(id, "Portable Skill");
+    if (skill.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    const payload = join(fixture.root, "capabilities", id, String(skill.manifest.latestRevision));
+    await mkdir(join(payload, "scripts"), { recursive: true });
+    await writeFile(join(payload, "scripts", "run.mjs"), "export const run = () => 'ok';\n", {
+      mode: 0o600,
+    });
+    await mkdir(join(payload, "tests"), { recursive: true });
+    await writeFile(join(payload, "tests", "run.test.mjs"), "import '../scripts/run.mjs';\n");
+    fixture.capabilities.set(id, {
+      ...skill,
+      definition: { ...skill.definition, executablePaths: ["scripts/run.mjs"] },
+    });
+
+    await fixture.service.configure(configuration());
+
+    expect(
+      fixture.provider.repository.skills
+        .get(`capability/${id}`)
+        ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
+    ).toBe(true);
+  });
+
   it("backs up a Skill Git address and branch independently of its sync base", async () => {
     const source = { remote: "https://example.test/review.git", branch: "main" };
     const fixture = await createFixture({

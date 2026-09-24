@@ -371,6 +371,9 @@ describe("asset Git Skill sync", () => {
     if (target.kind !== "skill") return;
     const initial = await capabilities.get(target.id);
     expect(initial.manifest.latestRevision).toBe(1);
+    expect(initial.definition.kind === "skill" && initial.definition.executablePaths).toEqual([
+      "scripts/check.sh",
+    ]);
     expect(
       (await capabilities.listSkillFiles({ id: target.id, revision: 1 })).some((file) =>
         file.path.includes(".git"),
@@ -380,6 +383,12 @@ describe("asset Git Skill sync", () => {
       (await stat(join(await capabilities.skillFilesPath(target.id, 1), "scripts", "check.sh")))
         .mode & 0o111,
     ).not.toBe(0);
+    await chmod(
+      join(await capabilities.skillFilesPath(target.id, 1), "scripts", "check.sh"),
+      0o600,
+    );
+    expect((await service.sync(target)).status).toBe("synced");
+    expect((await capabilities.get(target.id)).manifest.latestRevision).toBe(1);
     const stage = join(root, "updated-skill");
     await cp(await capabilities.skillFilesPath(target.id, 1), stage, { recursive: true });
     await writeFile(join(stage, "review.md"), "# Checklist\n");

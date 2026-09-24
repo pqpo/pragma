@@ -152,8 +152,8 @@ export function createAssetGitService(options: {
         throw new Error("Only user Skill capabilities can be associated with Git.");
       }
       if (
-        (await options.capabilities.listSkillFiles({ id: target.id })).some((file) =>
-          file.path.split("/").some((segment) => segment.toLowerCase() === ".git"),
+        await containsGitMetadata(
+          await options.capabilities.skillFilesPath(target.id, capability.manifest.latestRevision),
         )
       ) {
         throw new Error(
@@ -282,8 +282,12 @@ export function createAssetGitService(options: {
         } else {
           const stage = await mkdtemp(join(tmpdir(), "pragma-git-skill-"));
           try {
-            await writeFiles(stage, files, await readGitModes(root));
-            const created = await options.capabilities.importSkill({ sourcePath: stage });
+            const modes = await readGitModes(root);
+            await writeFiles(stage, files, modes);
+            const created = await options.capabilities.importSkill(
+              { sourcePath: stage },
+              { executablePaths: executablePaths(files, modes) },
+            );
             target = { kind: "skill", id: created.manifest.id };
             await saveRecord({
               schemaVersion: "pragma.asset-git/v1",
@@ -331,17 +335,16 @@ export function createAssetGitService(options: {
           return await withCheckout(record.source, async (root, head, branch) => {
             const current = await readLocalFiles(target, options.stores, options.capabilities);
             const remote = await readManagedFiles(root, target.kind);
-            const base =
+            const baseSnapshot =
               record.baseRevision === undefined
-                ? new Map<string, Buffer>()
-                : (
-                    await readLocalFiles(
-                      target,
-                      options.stores,
-                      options.capabilities,
-                      record.baseRevision,
-                    )
-                  ).files;
+                ? undefined
+                : await readLocalFiles(
+                    target,
+                    options.stores,
+                    options.capabilities,
+                    record.baseRevision,
+                  );
+            const base = baseSnapshot?.files ?? new Map<string, Buffer>();
             const merged = await mergeFiles(base, current.files, remote);
             const modes =
               target.kind === "skill"
@@ -356,6 +359,8 @@ export function createAssetGitService(options: {
                     localFiles: current.files,
                     remoteFiles: remote,
                     mergedFiles: merged.files,
+                    baseModes: baseSnapshot?.modes,
+                    localModes: current.modes,
                   })
                 : undefined;
             const conflicts = [...merged.conflicts, ...(modes?.conflicts ?? [])];
@@ -575,7 +580,7 @@ async function readLocalFiles(
   stores: ContextStoreStore,
   capabilities: CapabilityStore,
   revision?: number,
-): Promise<{ files: Files; revision: number }> {
+): Promise<{ files: Files; revision: number; modes?: Modes }> {
   if (target.kind === "knowledge") {
     const snapshot = await stores.getSnapshot(target.id, revision);
     return {
@@ -585,12 +590,19 @@ async function readLocalFiles(
   }
   const capability = await capabilities.get(target.id, revision);
   if (capability.definition.kind !== "skill") throw new Error("Git target is not a Skill.");
+  const files = await readManagedFiles(
+    await capabilities.skillFilesPath(target.id, capability.manifest.latestRevision),
+    "skill",
+  );
+  const executable = capability.definition.executablePaths;
   return {
-    files: await readManagedFiles(
-      await capabilities.skillFilesPath(target.id, capability.manifest.latestRevision),
-      "skill",
-    ),
+    files,
     revision: capability.manifest.latestRevision,
+    ...(executable !== undefined
+      ? {
+          modes: new Map([...files.keys()].map((path) => [path, executable.includes(path)])),
+        }
+      : {}),
   };
 }
 
@@ -718,6 +730,17 @@ async function writeFiles(root: string, files: Files, modes?: Modes): Promise<vo
   }
 }
 type Modes = Map<string, boolean>;
+function executablePaths(files: Files, modes: Modes): string[] {
+  return [...files.keys()].filter((path) => modes.get(path) === true).toSorted();
+}
+
+async function containsGitMetadata(root: string): Promise<boolean> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.name.toLowerCase() === ".git") return true;
+    if (entry.isDirectory() && (await containsGitMetadata(join(root, entry.name)))) return true;
+  }
+  return false;
+}
 async function readGitModes(root: string): Promise<Modes> {
   const modes: Modes = new Map();
   const index = await git(root, ["ls-files", "--stage", "-z"]);
@@ -746,12 +769,15 @@ async function mergeSkillModes(input: {
   readonly localFiles: Files;
   readonly remoteFiles: Files;
   readonly mergedFiles: Files;
+  readonly baseModes?: Modes | undefined;
+  readonly localModes?: Modes | undefined;
 }): Promise<{ local: Modes; merged: Modes; conflicts: string[] }> {
   const [base, local, remote] = await Promise.all([
-    input.base
-      ? readModes(input.base, input.baseFiles)
-      : Promise.resolve(new Map<string, boolean>()),
-    readModes(input.local, input.localFiles),
+    input.baseModes ??
+      (input.base
+        ? readModes(input.base, input.baseFiles)
+        : Promise.resolve(new Map<string, boolean>())),
+    input.localModes ?? readModes(input.local, input.localFiles),
     readGitModes(input.remote),
   ]);
   const merged: Modes = new Map();
@@ -834,13 +860,18 @@ async function publishLocal(
   const stage = await mkdtemp(join(tmpdir(), "pragma-git-skill-"));
   try {
     await writeFiles(stage, files, modes);
-    const snapshot = await scanSkillWorkingTree(stage);
+    const executable = modes === undefined ? undefined : executablePaths(files, modes);
+    const snapshot = await scanSkillWorkingTree(
+      stage,
+      executable === undefined ? {} : { executablePaths: new Set(executable) },
+    );
     const result = await capabilities.publishSkillRevisionCandidate({
       id: target.id,
       baseRevision,
       baseContentHash: current.definition.contentHash,
       sourcePath: stage,
       candidateContentHash: snapshot.hash,
+      ...(executable === undefined ? {} : { executablePaths: executable }),
     });
     return result.manifest.latestRevision;
   } finally {
