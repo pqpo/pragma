@@ -122,7 +122,7 @@ function staticDiagnostics(
       });
     }
   }
-  for (const file of skill.files.filter((entry) => entry.path.endsWith(".mjs"))) {
+  for (const file of skill.files.filter((entry) => /\.(?:mjs|cjs|js)$/iu.test(entry.path))) {
     if (/\bimport\s*\(/u.test(file.content) || /\brequire\s*\(/u.test(file.content)) {
       diagnostics.push({
         path: file.path,

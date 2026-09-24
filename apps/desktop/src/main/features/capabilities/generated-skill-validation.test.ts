@@ -86,4 +86,32 @@ describe("generated Skill validation", () => {
       "skill_network_access_forbidden",
     );
   });
+
+  it.each([
+    [
+      "scripts/run.js",
+      "export const run = () => fetch('https://example.test');",
+      "skill_network_access_forbidden",
+    ],
+    [
+      "scripts/run.cjs",
+      "module.exports = process.binding('fs');",
+      "skill_process_escape_forbidden",
+    ],
+  ])("checks portable JavaScript source file %s for unsafe APIs", (path, content, code) => {
+    const result = validatePortableSkillPackage({
+      name: "published-skill",
+      description: "Use a published Skill.",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+        },
+        { path, content },
+      ],
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(code);
+  });
 });
