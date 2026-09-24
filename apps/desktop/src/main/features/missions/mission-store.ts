@@ -349,14 +349,18 @@ export function createMissionStore(options: {
     missionMutationVersion += 1;
   };
 
-  const withMissionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> =>
+  const withMissionLock = async <T>(
+    id: string,
+    operationName: string,
+    operation: () => Promise<T>,
+  ): Promise<T> =>
     await withFileLock(
       lockPath(id),
       async () => {
         await migrateLegacyMissionPath(id);
         return await operation();
       },
-      { operation: "mission.aggregate" },
+      { operation: operationName },
     );
 
   const migrateLegacyMissionPath = async (id: string): Promise<void> => {
@@ -906,7 +910,7 @@ export function createMissionStore(options: {
   };
 
   const readMission = async (id: string): Promise<Mission> =>
-    await withMissionLock(id, async () => {
+    await withMissionLock(id, "mission.read", async () => {
       await recoverPendingTransactions(id);
       return await readMissionUnlocked(id);
     });
@@ -915,7 +919,7 @@ export function createMissionStore(options: {
     id: string,
     update: (current: Mission, timestamp: string) => Mission,
   ): Promise<Mission> =>
-    await withMissionLock(id, async () => {
+    await withMissionLock(id, "mission.update", async () => {
       await recoverPendingTransactions(id);
       const current = await readMissionUnlocked(id);
       const timestamp = new Date().toISOString();
@@ -927,9 +931,10 @@ export function createMissionStore(options: {
 
   const appendRecord = async (
     id: string,
+    operationName: string,
     create: (sequence: number, records: readonly MissionTimelineRecord[]) => MissionTimelineRecord,
   ): Promise<MissionTimelineRecord> =>
-    await withMissionLock(id, async () => {
+    await withMissionLock(id, operationName, async () => {
       await recoverPendingTransactions(id);
       const mission = await readMissionUnlocked(id);
       const records = await readRecords(id, false);
@@ -1042,7 +1047,7 @@ export function createMissionStore(options: {
     },
     async readExecutionProjection(id, executionId) {
       const parsedId = MissionIdSchema.parse(id);
-      return await withMissionLock(parsedId, async () => {
+      return await withMissionLock(parsedId, "mission.execution-projection.read", async () => {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
@@ -1061,7 +1066,7 @@ export function createMissionStore(options: {
     },
     async readExecutionProjectionPage(id, executionId, input) {
       const parsedId = MissionIdSchema.parse(id);
-      return await withMissionLock(parsedId, async () => {
+      return await withMissionLock(parsedId, "mission.execution-projection.read-page", async () => {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
@@ -1080,7 +1085,7 @@ export function createMissionStore(options: {
     },
     async writeExecutionProjection(id, executionId, entries, sourceUpdatedAt) {
       const parsedId = MissionIdSchema.parse(id);
-      await withMissionLock(parsedId, async () => {
+      await withMissionLock(parsedId, "mission.execution-projection.write", async () => {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
@@ -1148,7 +1153,7 @@ export function createMissionStore(options: {
       const parsedId = MissionIdSchema.parse(id);
       const parsedOrigin = MissionOriginSchema.parse({ type: "automation", automationRef });
       if (parsedOrigin.type !== "automation") throw new Error("Invalid Automation origin.");
-      return await withMissionLock(parsedId, async () => {
+      return await withMissionLock(parsedId, "mission.automation-origin.backfill", async () => {
         await recoverPendingTransactions(parsedId);
         const current = await readMissionUnlocked(parsedId);
         if (current.origin.type === "automation") {
@@ -1174,7 +1179,7 @@ export function createMissionStore(options: {
     },
     async readBranchHistory(id) {
       const parsedId = MissionIdSchema.parse(id);
-      return await withMissionLock(parsedId, async () => {
+      return await withMissionLock(parsedId, "mission.branch-history.read", async () => {
         await recoverPendingTransactions(parsedId);
         const mission = await readMissionUnlocked(parsedId);
         if (mission.branch === undefined) return undefined;
@@ -1190,7 +1195,7 @@ export function createMissionStore(options: {
     },
     async createBranch(input) {
       const sourceMissionId = MissionIdSchema.parse(input.sourceMissionId);
-      return await withMissionLock(sourceMissionId, async () => {
+      return await withMissionLock(sourceMissionId, "mission.branch.create", async () => {
         await recoverPendingTransactions(sourceMissionId);
         const source = await readMissionUnlocked(sourceMissionId);
         if (source.executor.kind === "flow") {
@@ -1355,7 +1360,7 @@ export function createMissionStore(options: {
     },
     async getAttachments(id) {
       const parsedId = MissionIdSchema.parse(id);
-      return await withMissionLock(parsedId, async () => {
+      return await withMissionLock(parsedId, "mission.attachments.read", async () => {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         try {
@@ -1694,70 +1699,77 @@ export function createMissionStore(options: {
       const parsedId = MissionIdSchema.parse(id);
       const parsedMessage = MissionUserMessageSchema.parse(message);
       if ((parsedMessage.attachments?.length ?? 0) > 0) {
-        return await withMissionLock(parsedId, async () => {
-          await recoverPendingTransactions(parsedId);
-          const mission = await readMissionUnlocked(parsedId);
-          const records = await readRecords(parsedId, false);
-          const existing = records.find(
-            (record) => record.kind === "user" && record.id === parsedMessage.id,
-          );
-          if (existing !== undefined) {
-            if (existing.kind !== "user") throw messageConflict(existing);
-            if (!sameUserMessageInput(existing, parsedMessage)) throw messageConflict(existing);
-            return existing;
-          }
-          const baseAttachments = await readAttachmentsManifest(parsedId);
-          const inputAttachments = parsedMessage.attachments ?? [];
-          const inputIds = new Set(inputAttachments.map((attachment) => attachment.id));
-          if (inputIds.size !== inputAttachments.length) {
-            throw new Error("Mission attachment ids must be unique.");
-          }
-          if (baseAttachments.attachments.some((attachment) => inputIds.has(attachment.id))) {
-            throw new Error("Mission attachment ids must be unique.");
-          }
-          if (baseAttachments.attachments.length + inputAttachments.length > 20) {
-            throw new Error("A mission can include up to 20 attachments.");
-          }
-          const stagingPath = userMessageAttachmentsStagingPath(parsedId, parsedMessage.id);
-          await rm(stagingPath, { recursive: true, force: true });
-          await mkdir(stagingPath, { recursive: true, mode: 0o700 });
-          let journalWritten = false;
-          try {
-            const added = await materializeMissionAttachments({
-              attachments: inputAttachments,
-              temporaryMissionPath: stagingPath,
-              targetMissionPath: missionPath(parsedId),
-            });
-            const record = MissionTimelineRecordSchema.parse({
-              schemaVersion: "pragma.mission-message/v1",
-              sequence: (records.at(-1)?.sequence ?? 0) + 1,
-              kind: "user",
-              ...parsedMessage,
-              attachments: added.attachments,
-            });
-            const transaction = UserMessageAttachmentsTransactionSchema.parse({
-              schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
-              baseAttachments,
-              targetAttachments: {
-                schemaVersion: "pragma.mission-attachments/v1",
-                attachments: [...baseAttachments.attachments, ...added.attachments],
-              },
-              record,
-              updatedAt: new Date().toISOString(),
-            });
-            await writeJsonAtomically(userMessageAttachmentsTransactionPath(parsedId), transaction);
-            journalWritten = true;
-            await applyUserMessageAttachmentsTransaction(parsedId, mission, transaction);
-            return record;
-          } catch (error) {
-            if (!journalWritten) {
-              await rm(stagingPath, { recursive: true, force: true });
+        return await withMissionLock(
+          parsedId,
+          "mission.user-message.attachments.append",
+          async () => {
+            await recoverPendingTransactions(parsedId);
+            const mission = await readMissionUnlocked(parsedId);
+            const records = await readRecords(parsedId, false);
+            const existing = records.find(
+              (record) => record.kind === "user" && record.id === parsedMessage.id,
+            );
+            if (existing !== undefined) {
+              if (existing.kind !== "user") throw messageConflict(existing);
+              if (!sameUserMessageInput(existing, parsedMessage)) throw messageConflict(existing);
+              return existing;
             }
-            throw error;
-          }
-        });
+            const baseAttachments = await readAttachmentsManifest(parsedId);
+            const inputAttachments = parsedMessage.attachments ?? [];
+            const inputIds = new Set(inputAttachments.map((attachment) => attachment.id));
+            if (inputIds.size !== inputAttachments.length) {
+              throw new Error("Mission attachment ids must be unique.");
+            }
+            if (baseAttachments.attachments.some((attachment) => inputIds.has(attachment.id))) {
+              throw new Error("Mission attachment ids must be unique.");
+            }
+            if (baseAttachments.attachments.length + inputAttachments.length > 20) {
+              throw new Error("A mission can include up to 20 attachments.");
+            }
+            const stagingPath = userMessageAttachmentsStagingPath(parsedId, parsedMessage.id);
+            await rm(stagingPath, { recursive: true, force: true });
+            await mkdir(stagingPath, { recursive: true, mode: 0o700 });
+            let journalWritten = false;
+            try {
+              const added = await materializeMissionAttachments({
+                attachments: inputAttachments,
+                temporaryMissionPath: stagingPath,
+                targetMissionPath: missionPath(parsedId),
+              });
+              const record = MissionTimelineRecordSchema.parse({
+                schemaVersion: "pragma.mission-message/v1",
+                sequence: (records.at(-1)?.sequence ?? 0) + 1,
+                kind: "user",
+                ...parsedMessage,
+                attachments: added.attachments,
+              });
+              const transaction = UserMessageAttachmentsTransactionSchema.parse({
+                schemaVersion: "pragma.mission-user-message-attachments-transaction/v1",
+                baseAttachments,
+                targetAttachments: {
+                  schemaVersion: "pragma.mission-attachments/v1",
+                  attachments: [...baseAttachments.attachments, ...added.attachments],
+                },
+                record,
+                updatedAt: new Date().toISOString(),
+              });
+              await writeJsonAtomically(
+                userMessageAttachmentsTransactionPath(parsedId),
+                transaction,
+              );
+              journalWritten = true;
+              await applyUserMessageAttachmentsTransaction(parsedId, mission, transaction);
+              return record;
+            } catch (error) {
+              if (!journalWritten) {
+                await rm(stagingPath, { recursive: true, force: true });
+              }
+              throw error;
+            }
+          },
+        );
       }
-      return await appendRecord(parsedId, (sequence) => ({
+      return await appendRecord(parsedId, "mission.user-message.append", (sequence) => ({
         schemaVersion: "pragma.mission-message/v1",
         sequence,
         kind: "user",
@@ -1768,20 +1780,24 @@ export function createMissionStore(options: {
       const missionId = MissionIdSchema.parse(input.missionId);
       const executionId = MissionIdSchema.parse(input.executionId);
       const mission = await readMission(missionId);
-      const record = await appendRecord(missionId, (sequence) => ({
-        schemaVersion: "pragma.mission-message/v1",
-        sequence,
-        kind: "execution",
-        inputMessageId: MissionIdSchema.parse(input.inputMessageId),
-        executionId,
-        createdAt: z.string().datetime().parse(input.createdAt),
-      }));
+      const record = await appendRecord(
+        missionId,
+        "mission.execution-reference.append",
+        (sequence) => ({
+          schemaVersion: "pragma.mission-message/v1",
+          sequence,
+          kind: "execution",
+          inputMessageId: MissionIdSchema.parse(input.inputMessageId),
+          executionId,
+          createdAt: z.string().datetime().parse(input.createdAt),
+        }),
+      );
       executionTitleIndex.set(executionId, { missionId, title: mission.title });
       return record;
     },
     async readTimelinePage(id, pageOptions) {
       const parsedId = MissionIdSchema.parse(id);
-      return await withMissionLock(parsedId, async () => {
+      return await withMissionLock(parsedId, "mission.timeline.read-page", async () => {
         await recoverPendingTransactions(parsedId);
         await readMissionUnlocked(parsedId);
         const file = messagesPath(parsedId);
@@ -1823,7 +1839,7 @@ export function createMissionStore(options: {
     },
     async remove(id) {
       const parsedId = MissionIdSchema.parse(id);
-      await withMissionLock(parsedId, async () => {
+      await withMissionLock(parsedId, "mission.remove", async () => {
         await recoverPendingTransactions(parsedId);
         const current = await readMissionUnlocked(parsedId);
         if (

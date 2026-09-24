@@ -392,12 +392,12 @@ export class ExpertSessionManager {
       updatedAt: now,
     });
     const claimId = randomUUID();
-    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     if (
       !(await this.dependencies.sessions.claimLease(sessionId, claimId, EXPERT_SESSION_LEASE_MS))
     ) {
       throw new Error(`ExpertSession lease could not be acquired: ${sessionId}`);
     }
+    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     const session = this.createActiveSession(
       expert,
       sessionId,
@@ -417,7 +417,10 @@ export class ExpertSessionManager {
     request: ResumeExpertSessionOptions,
   ): Promise<ExpertSession> {
     const existing = this.active.get(request.sessionId);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (!existing.hasLeaseFailure()) return existing;
+      await existing.waitForLeaseFailureCleanup();
+    }
     let record = await this.dependencies.sessions.get(request.sessionId);
     if (record === undefined) throw new Error(`ExpertSession not found: ${request.sessionId}`);
     if (record.status === "closed")
@@ -561,7 +564,6 @@ export class ExpertSessionManager {
           }));
         }
       }
-      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       if (
         !(await this.dependencies.sessions.claimLease(
           request.sessionId,
@@ -571,6 +573,7 @@ export class ExpertSessionManager {
       ) {
         throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
       }
+      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       const session = this.createActiveSession(
         expert,
         request.sessionId,
@@ -582,6 +585,10 @@ export class ExpertSessionManager {
         request.environment,
       );
       await session.recoverPendingQueueSteers();
+      if (session.hasLeaseFailure()) {
+        await session.waitForLeaseFailureCleanup();
+        throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
+      }
       this.active.set(request.sessionId, session);
       return session;
     } catch (error) {
@@ -595,7 +602,10 @@ export class ExpertSessionManager {
     request: RecoverClosedExpertSessionOptions,
   ): Promise<ExpertSession> {
     const existing = this.active.get(request.sessionId);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (!existing.hasLeaseFailure()) return existing;
+      await existing.waitForLeaseFailureCleanup();
+    }
     if (request.reason.trim() === "") {
       throw new Error("Closed ExpertSession recovery requires a reason.");
     }
@@ -637,7 +647,6 @@ export class ExpertSessionManager {
           reason: migration.reason,
         });
       }
-      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       if (
         !(await this.dependencies.sessions.claimLease(
           request.sessionId,
@@ -647,6 +656,7 @@ export class ExpertSessionManager {
       ) {
         throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
       }
+      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       const session = this.createActiveSession(
         expert,
         request.sessionId,
@@ -765,6 +775,7 @@ class ExpertSessionImpl implements ExpertSession {
   private readonly recoveredHumanInteractionIds: readonly string[];
   private waitingForRecoveredHumanInput: boolean;
   private leaseRenewalTask: Promise<void> | undefined;
+  private leaseFailureTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
   private leaseExpiresAt: number;
   private leaseRenewalStopped = false;
@@ -793,6 +804,14 @@ class ExpertSessionImpl implements ExpertSession {
       }
     }, EXPERT_SESSION_LEASE_RENEWAL_MS);
     this.leaseRenewal.unref();
+  }
+
+  hasLeaseFailure(): boolean {
+    return this.leaseError !== undefined;
+  }
+
+  async waitForLeaseFailureCleanup(): Promise<void> {
+    await this.leaseFailureTask;
   }
 
   async prompt(content: string, options: PromptOptions = {}): Promise<ExpertTurn> {
@@ -1223,7 +1242,6 @@ class ExpertSessionImpl implements ExpertSession {
     let lastError: Error | undefined;
     while (!this.leaseRenewalStopped && Date.now() < this.leaseExpiresAt) {
       try {
-        const renewedLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
         const renewed = await this.dependencies.sessions.claimLease(
           this.sessionId,
           this.claimId,
@@ -1233,7 +1251,7 @@ class ExpertSessionImpl implements ExpertSession {
           await this.failLease(new Error(`ExpertSession lease was lost: ${this.sessionId}`));
           return;
         }
-        this.leaseExpiresAt = renewedLeaseExpiresAt;
+        this.leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
         return;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -1259,9 +1277,28 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async failLease(error: Error): Promise<void> {
+    if (this.leaseError !== undefined) {
+      await this.leaseFailureTask;
+      return;
+    }
     this.leaseError = error;
     this.paused = true;
-    await this.controller?.cancel(error.message).catch(() => undefined);
+    this.stopLeaseRenewal();
+    this.leaseFailureTask = this.finishLeaseLoss(error);
+    await this.leaseFailureTask;
+  }
+
+  private async finishLeaseLoss(error: Error): Promise<void> {
+    try {
+      await this.controller?.cancel(error.message).catch(() => undefined);
+      await this.processing?.catch(() => undefined);
+      await this.runtimeSessions.clear().catch(() => undefined);
+      await this.dependencies.sessions
+        .releaseLease(this.sessionId, this.claimId)
+        .catch(() => undefined);
+    } finally {
+      this.onClosed();
+    }
   }
 
   private stopLeaseRenewal(): void {
@@ -2163,13 +2200,16 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async processQueue(generation: number): Promise<void> {
     while (true) {
+      if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
       const prompts = await this.getPromptQueue();
+      if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
       const next = prompts.find((prompt) => prompt.status === "queued");
       if (next === undefined) return;
       const status = await this.runPrompt(next).catch(() => "failed" as const);
       if (this.processingGeneration !== generation) return;
+      if (this.leaseError !== undefined) return;
       if (status === "checkpointed") return;
       if (status === "failed") {
         const hasQueued = (await this.getPromptQueue()).some(
@@ -2229,6 +2269,7 @@ class ExpertSessionImpl implements ExpertSession {
       ],
     });
     const session = await this.getState();
+    if (this.leaseError !== undefined) return "cancelled";
     const rootContextId = session.rootContextId;
     const rootContext = session.contexts[rootContextId];
     if (rootContext === undefined) throw new Error("ExpertSession root Context is missing.");

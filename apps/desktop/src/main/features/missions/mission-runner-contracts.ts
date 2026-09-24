@@ -142,7 +142,10 @@ export interface MissionRunner {
     | undefined
   >;
   compactContext(id: string): Promise<MissionContextCompactionResult>;
-  getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
+  getRuntimeBinding(
+    id: string,
+    missionSnapshot?: Mission | undefined,
+  ): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (notification: MissionChatNotification) => void): () => void;
   subscribeWork(listener: (notification: MissionWorkNotification) => void): () => void;
   subscribeStatus(listener: (notification: MissionStatusNotification) => void): () => void;

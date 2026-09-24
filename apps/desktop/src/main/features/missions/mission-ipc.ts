@@ -350,7 +350,7 @@ export function installMissionHandlers(options: {
     if (missionId === undefined) return await options.executors.getModelOptions(executorRef);
     const mission = await getManagedMission(missionId);
     const [runtimeBinding, project] = await Promise.all([
-      options.runner.getRuntimeBinding(missionId),
+      options.runner.getRuntimeBinding(missionId, mission),
       options.project.openRevision(mission.project.revision),
     ]);
     return await options.executors.getModelOptions(

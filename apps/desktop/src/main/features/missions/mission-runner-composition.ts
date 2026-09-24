@@ -5310,8 +5310,9 @@ export function createMissionRunner(options: {
         async () => await compactMissionContext(id),
       );
     },
-    async getRuntimeBinding(id) {
-      return (await readMissionRootContext(await options.missions.get(id)))?.runtime;
+    async getRuntimeBinding(id, missionSnapshot) {
+      const mission = missionSnapshot ?? (await options.missions.get(id));
+      return (await readMissionRootContext(mission))?.runtime;
     },
     subscribeChat(listener) {
       return chatService.subscribe(listener);
