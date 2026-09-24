@@ -40,11 +40,13 @@ When configuring a target, `merge_and_publish` runs this same bidirectional reco
 publishes local-only changes; it is not a local-authoritative overwrite. `restore_remote` applies the
 selected target without publishing local candidates.
 
-Every incoming package passes the deterministic structure and safety validation used by Skill
-revision approval. Updates append through the Capability mutation coordinator. A ready revision
-becomes the Capability's active revision after compatibility checks; ID-only Project and System
-Expert bindings need no rewrite. Remote deletion uses the ordinary Capability deletion boundary and
-cannot remove a referenced Skill.
+Every incoming package passes portable file-tree, metadata, size, and static code-safety validation.
+The stricter generated-Skill layout and generated-script test-coverage checks apply only to
+Memory-generated candidates; ordinary published Skills may include other safe relative files.
+Updates append through the Capability mutation coordinator. A ready revision becomes the
+Capability's active revision after compatibility checks; ID-only Project and System Expert bindings
+need no rewrite. Remote deletion uses the ordinary Capability deletion boundary and cannot remove a
+referenced Skill.
 
 Desktop startup, window focus, and network-online events perform pull-only refreshes. A successful
 local Skill publication schedules a full sync when automatic upload is enabled. Manual sync is

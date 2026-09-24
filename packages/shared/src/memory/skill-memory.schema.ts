@@ -126,31 +126,6 @@ export const SkillPackageSchema = z
         message: `Skill packages may contain at most ${MAX_SKILL_PACKAGE_BYTES} bytes.`,
       });
     }
-    for (const file of value.files) {
-      if (
-        file.path !== "SKILL.md" &&
-        !file.path.startsWith("references/") &&
-        !file.path.startsWith("scripts/") &&
-        !file.path.startsWith("tests/")
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["files", value.files.indexOf(file), "path"],
-          message:
-            "Generated Skill files must be SKILL.md or live under references/, scripts/, or tests/.",
-        });
-      }
-      if (
-        (file.path.startsWith("scripts/") || file.path.startsWith("tests/")) &&
-        !file.path.endsWith(".mjs")
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["files", value.files.indexOf(file), "path"],
-          message: "Generated executable files must be Node ESM .mjs files.",
-        });
-      }
-    }
   });
 
 export const SkillExtractionInputSchema = z

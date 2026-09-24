@@ -4,7 +4,7 @@ import { access, lstat, mkdir, opendir, readFile, rename, rm, writeFile } from "
 import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
-import { validateSkillPackage } from "@pragma/built-in-agents";
+import { validatePortableSkillPackage } from "@pragma/built-in-agents";
 import { withFileLock } from "@pragma/core";
 import { parse, stringify } from "yaml";
 
@@ -1041,7 +1041,7 @@ function validateRemoteSkill(skill: RemoteSkill): void {
       throw coded("skill_sync_size_limit", `Skill file is too large: ${file.path}`);
     }
   }
-  const validation = validateSkillPackage({
+  const validation = validatePortableSkillPackage({
     name: skill.name,
     description: skill.description,
     files: skill.files.map(({ path, content }) => ({ path, content })),

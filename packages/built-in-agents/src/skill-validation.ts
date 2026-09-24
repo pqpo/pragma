@@ -16,7 +16,7 @@ const ALLOWED_NODE_IMPORTS = new Set([
   "node:util",
 ]);
 
-export interface GeneratedSkillValidationResult {
+export interface SkillPackageValidationResult {
   readonly passed: boolean;
   readonly diagnostics: readonly {
     readonly path: string;
@@ -25,14 +25,36 @@ export interface GeneratedSkillValidationResult {
   }[];
 }
 
-export function validateSkillPackage(rawPackage: SkillPackage): GeneratedSkillValidationResult {
-  const skill = SkillPackageSchema.parse(rawPackage);
-  const diagnostics = staticDiagnostics(skill);
+export function validateSkillPackage(rawPackage: SkillPackage): SkillPackageValidationResult {
+  return validatePackage(rawPackage, true);
+}
+
+export function validatePortableSkillPackage(
+  rawPackage: SkillPackage,
+): SkillPackageValidationResult {
+  return validatePackage(rawPackage, false);
+}
+
+function validatePackage(
+  rawPackage: SkillPackage,
+  generated: boolean,
+): SkillPackageValidationResult {
+  const parsed = SkillPackageSchema.safeParse(rawPackage);
+  if (!parsed.success) {
+    const diagnostics = parsed.error.issues.map((issue) => ({
+      path: issue.path.join("."),
+      code: issue.code,
+      message: issue.message,
+    }));
+    return { passed: false, diagnostics };
+  }
+  const diagnostics = staticDiagnostics(parsed.data, generated);
   return { passed: diagnostics.length === 0, diagnostics };
 }
 
 function staticDiagnostics(
   skill: SkillPackage,
+  generated: boolean,
 ): readonly { readonly path: string; readonly code: string; readonly message: string }[] {
   const diagnostics: { path: string; code: string; message: string }[] = [];
   const skillDocument = skill.files.find((file) => file.path === "SKILL.md")?.content ?? "";
@@ -48,9 +70,36 @@ function staticDiagnostics(
       message: "SKILL.md frontmatter name and description must match the Skill package metadata.",
     });
   }
-  const scripts = skill.files.filter((file) => file.path.startsWith("scripts/"));
-  const tests = skill.files.filter((file) => file.path.startsWith("tests/"));
-  if (scripts.length > 0 && tests.length === 0) {
+  if (generated) {
+    skill.files.forEach((file) => {
+      if (
+        file.path !== "SKILL.md" &&
+        !file.path.startsWith("references/") &&
+        !file.path.startsWith("scripts/") &&
+        !file.path.startsWith("tests/")
+      ) {
+        diagnostics.push({
+          path: file.path,
+          code: "skill_file_location_invalid",
+          message:
+            "Generated Skill files must be SKILL.md or live under references/, scripts/, or tests/.",
+        });
+      }
+      if (
+        (file.path.startsWith("scripts/") || file.path.startsWith("tests/")) &&
+        !file.path.endsWith(".mjs")
+      ) {
+        diagnostics.push({
+          path: file.path,
+          code: "skill_executable_extension_invalid",
+          message: "Generated executable files must be Node ESM .mjs files.",
+        });
+      }
+    });
+  }
+  const scripts = generated ? skill.files.filter((file) => file.path.startsWith("scripts/")) : [];
+  const tests = generated ? skill.files.filter((file) => file.path.startsWith("tests/")) : [];
+  if (generated && scripts.length > 0 && tests.length === 0) {
     diagnostics.push({
       path: "tests/",
       code: "skill_script_tests_missing",

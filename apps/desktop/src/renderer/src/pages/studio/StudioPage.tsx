@@ -19,6 +19,7 @@ import type {
   DesktopRuntimeAvailability,
   DesktopPlugin,
   AutomationSummary,
+  SkillSyncOverview,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
   ExpertDefinition,
@@ -139,6 +140,7 @@ export function StudioPage(props: {
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
   readonly onConfigureKnowledgeSync?: (() => void) | undefined;
+  readonly onConfigureSkillSync?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -179,6 +181,7 @@ export function StudioPage(props: {
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [knowledgeSyncOverview, setKnowledgeSyncOverview] = useState<KnowledgeSyncOverview>();
+  const [skillSyncOverview, setSkillSyncOverview] = useState<SkillSyncOverview>();
   const [contextStoreBindings, setContextStoreBindings] = useState<
     readonly DesktopPragmaContextStoreBinding[]
   >([]);
@@ -292,6 +295,12 @@ export function StudioPage(props: {
       .getKnowledgeSyncOverview()
       .then((overview) => {
         if (!cancelled) setKnowledgeSyncOverview(overview);
+      })
+      .catch(() => undefined);
+    void api
+      .getSkillSyncOverview()
+      .then((overview) => {
+        if (!cancelled) setSkillSyncOverview(overview);
       })
       .catch(() => undefined);
     void api
@@ -1180,6 +1189,18 @@ export function StudioPage(props: {
           <CapabilityDirectoryFragment
             kind={activeView}
             capabilities={capabilities}
+            syncOverview={activeView === "skills" ? skillSyncOverview : undefined}
+            onConfigureSync={props.onConfigureSkillSync}
+            onSync={
+              activeView === "skills"
+                ? async () => {
+                    const overview = await window.pragmaDesktop.syncSkills();
+                    setSkillSyncOverview(overview);
+                    setCapabilities(await window.pragmaDesktop.listCapabilities());
+                    return overview;
+                  }
+                : undefined
+            }
             revisionTaskCount={skillRevisionTaskCount}
             onOpenRevisions={() => {
               setSelectedCapabilityId(null);

@@ -67,6 +67,210 @@
   color: var(--ui-text-tertiary);
 }
 
+@keyframes skill-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.skill-sync-spinner,
+.capability-sync-spinner {
+  animation: skill-sync-spin 900ms linear infinite;
+}
+
+.skill-sync-settings .knowledge-sync-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.skill-sync-settings .knowledge-sync-form .knowledge-sync-field {
+  align-content: start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.skill-sync-settings .knowledge-sync-form .knowledge-sync-toggle {
+  grid-column: auto;
+  align-self: center;
+  min-height: 40px;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.skill-sync-settings .knowledge-sync-form > .form-error,
+.skill-sync-settings .knowledge-sync-form > .knowledge-sync-actions {
+  grid-column: 1 / -1;
+}
+
+.skill-sync-settings .knowledge-sync-form > .knowledge-sync-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 44px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ui-line);
+}
+
+.skill-sync-settings .knowledge-sync-feedback {
+  margin: 16px 0 0;
+  color: var(--ui-accent-strong);
+  font-size: 13px;
+}
+
+.skill-sync-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 24px;
+  padding: 16px 0;
+  border-block: 1px solid var(--ui-line);
+}
+
+.skill-sync-summary-copy {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.skill-sync-summary-copy > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.skill-sync-summary-copy strong {
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.skill-sync-summary-copy p,
+.skill-sync-remote-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.skill-sync-status-mark {
+  display: flex;
+  flex: 0 0 auto;
+  margin-top: 0;
+  color: var(--ui-accent-strong);
+}
+
+.skill-sync-summary.is-error .skill-sync-status-mark,
+.skill-sync-summary.is-conflict .skill-sync-status-mark,
+.skill-sync-summary-error {
+  color: var(--ui-danger);
+}
+
+.skill-sync-summary-error {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.skill-sync-remote-meta {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-sync-items {
+  margin-top: 24px;
+}
+
+.skill-sync-items > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+.skill-sync-items > header h3 {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.skill-sync-items > header > span {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-sync-settings .knowledge-sync-card.skill-sync-item {
+  align-items: center;
+  gap: 24px;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--ui-line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.skill-sync-item-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.skill-sync-item-copy > strong {
+  color: var(--ui-text);
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.skill-sync-item-copy small {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.skill-sync-item-copy details {
+  display: grid;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.skill-sync-item-copy details summary {
+  width: fit-content;
+  color: var(--ui-accent-strong);
+  cursor: pointer;
+}
+
+.skill-sync-item-copy details code {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--ui-danger);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.skill-sync-item .knowledge-sync-actions {
+  flex: 0 0 auto;
+}
+
+.skill-sync-empty {
+  margin: 16px 0;
+  color: var(--ui-text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 @media (max-width: 720px) {
   .knowledge-sync-heading {
     align-items: stretch;
@@ -76,5 +280,28 @@
   .knowledge-sync-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .skill-sync-settings .knowledge-sync-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .skill-sync-settings .knowledge-sync-form > .form-error,
+  .skill-sync-settings .knowledge-sync-form > .knowledge-sync-actions {
+    grid-column: auto;
+  }
+
+  .skill-sync-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .skill-sync-settings .knowledge-sync-card.skill-sync-item {
+    align-items: flex-start;
+  }
+
+  .skill-sync-item .knowledge-sync-actions {
+    width: 100%;
   }
 }

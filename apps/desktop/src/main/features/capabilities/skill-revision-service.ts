@@ -6,7 +6,7 @@ import { withFileLock } from "@pragma/core";
 import {
   applySkillChangeSet,
   validateSkillPackage,
-  type GeneratedSkillValidationResult,
+  type SkillPackageValidationResult,
 } from "@pragma/built-in-agents";
 import {
   SkillRevisionDraftSchema,
@@ -2409,7 +2409,7 @@ export class SkillRevisionValidationError extends Error {
   readonly code = "invalid_input";
   readonly retryable = true;
 
-  constructor(readonly validation: GeneratedSkillValidationResult) {
+  constructor(readonly validation: SkillPackageValidationResult) {
     super(
       validation.diagnostics
         .map((diagnostic) => `${diagnostic.path}: ${diagnostic.code}: ${diagnostic.message}`)

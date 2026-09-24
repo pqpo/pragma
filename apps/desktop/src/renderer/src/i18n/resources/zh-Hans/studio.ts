@@ -623,6 +623,12 @@ export const studio = {
   knowledgeBasesDescription: "由 Pragma 托管、可供专家实时使用的 Markdown 知识。",
   syncKnowledgeBases: "立即同步",
   configureKnowledgeSync: "配置同步",
+  syncSkillsNow: "立即同步",
+  configureSkillSync: "配置同步",
+  syncingSkills: "正在同步…",
+  skillSyncComplete: "技能同步完成。",
+  skillSyncNeedsAttention: "部分技能未同步成功。请到“设置 → 技能同步”重试或处理冲突。",
+  skillSyncFailed: "同步未完成，请稍后重试；如果仍失败，请检查同步配置。",
   knowledgeSyncStatus: {
     synced: "已同步",
     pending: "等待同步",

@@ -663,6 +663,14 @@ export const studio = {
   knowledgeBasesDescription: "Managed Markdown knowledge that experts can use in real time.",
   syncKnowledgeBases: "Sync now",
   configureKnowledgeSync: "Configure sync",
+  syncSkillsNow: "Sync now",
+  configureSkillSync: "Configure sync",
+  syncingSkills: "Syncing…",
+  skillSyncComplete: "Skill sync completed.",
+  skillSyncNeedsAttention:
+    "Some Skills did not sync. Open Settings → Skill Sync to retry or resolve conflicts.",
+  skillSyncFailed:
+    "Sync did not finish. Try again, and check the sync settings if it keeps failing.",
   knowledgeSyncStatus: {
     synced: "Synced",
     pending: "Waiting to sync",
