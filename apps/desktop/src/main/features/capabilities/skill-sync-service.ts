@@ -54,6 +54,25 @@ const MAX_GIT_INDEX_RECORD_BYTES = 16 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
 type SyncIntent = "full" | "pull_only" | "restore";
 
+function safeSkillSyncLogMessage(message: string): string {
+  return message
+    .replace(/\b(https?|ssh):\/\/[^/\s?#@]+@/giu, "$1://[redacted]@")
+    .replace(/\b[^\s/:@]+@([^\s/:]+):/gu, "[redacted]@$1:")
+    .replace(
+      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/gu,
+      "[redacted]",
+    )
+    .replace(
+      /([?&](?:access_token|auth|authorization|credential|password|passwd|secret|token)=)[^&#\s]+/giu,
+      "$1[redacted]",
+    )
+    .replace(/\b(Bearer\s+)[^\s,;]+/giu, "$1[redacted]")
+    .replace(
+      /\b(password|passwd|token|secret|credential|authorization)(\s*[:=]\s*)[^\s,;]+/giu,
+      "$1$2[redacted]",
+    );
+}
+
 export type RemoteSkillFile = {
   readonly path: string;
   readonly content: string;
@@ -129,6 +148,57 @@ export function createSkillSyncService(options: {
   let requestedIntent: SyncIntent = "pull_only";
   let scheduled: NodeJS.Timeout | undefined;
   let transientStatus: "ready" | "syncing" | "conflict" | "error" = "ready";
+  const warnedErrors = new WeakSet<object>();
+  const warnSkillSyncFailure = (
+    message: string,
+    error: unknown,
+    context: {
+      readonly syncKey: string | null;
+      readonly source: "local" | "remote";
+      readonly operation: string;
+      readonly capabilityId?: string | undefined;
+      readonly skillName?: string | undefined;
+    },
+  ) => {
+    if ((typeof error === "object" && error !== null) || typeof error === "function") {
+      if (warnedErrors.has(error)) return;
+      warnedErrors.add(error);
+    }
+    try {
+      options.warn?.(message, {
+        ...context,
+        errorCode: errorCode(error),
+        errorMessage: safeSkillSyncLogMessage(errorMessage(error)),
+      });
+    } catch {
+      // Logging must not change synchronization behavior.
+    }
+  };
+  const recordSkillFailure = (
+    syncKey: string,
+    source: "local" | "remote",
+    error: unknown,
+    context: {
+      readonly operation: string;
+      readonly capabilityId?: string | undefined;
+      readonly skillName?: string | undefined;
+    },
+  ) => {
+    warnSkillSyncFailure("Skill synchronization operation failed.", error, {
+      syncKey,
+      source,
+      operation: context.operation,
+      ...(context.capabilityId === undefined ? {} : { capabilityId: context.capabilityId }),
+      ...(context.skillName === undefined ? {} : { skillName: context.skillName }),
+    });
+    return {
+      source,
+      code: errorCode(error),
+      message: errorMessage(error),
+      ...(context.skillName === undefined ? {} : { name: context.skillName }),
+      ...(context.capabilityId === undefined ? {} : { capabilityId: context.capabilityId }),
+    };
+  };
 
   const providerFor = (configuration: SkillSyncConfiguration): SkillSyncProvider =>
     options.provider ??
@@ -163,24 +233,47 @@ export function createSkillSyncService(options: {
   const writeState = async (state: SkillSyncState): Promise<void> =>
     await writeJsonAtomic(options.statePath, SkillSyncStateSchema.parse(state));
 
-  const localSkills = async (knownState?: SkillSyncState): Promise<LocalSkillSnapshot> => {
+  const localSkills = async (
+    knownState?: SkillSyncState,
+    logFailures = true,
+  ): Promise<LocalSkillSnapshot> => {
     const state = knownState ?? (await readState());
     const skills = new Map<string, LocalSkill>();
     const errors: SkillSyncState["errors"] = {};
     const seenKeys = new Set<string>();
-    for (const capability of await options.capabilities.list()) {
+    let capabilities: readonly Capability[];
+    try {
+      capabilities = await options.capabilities.list();
+    } catch (error) {
+      if (logFailures) {
+        warnSkillSyncFailure("Failed to list local Skills for synchronization.", error, {
+          syncKey: null,
+          source: "local",
+          operation: "list-local-skills",
+        });
+      }
+      throw error;
+    }
+    for (const capability of capabilities) {
       if (capability.managedBy === "system" || capability.definition.kind !== "skill") continue;
       const identity = syncIdentity(capability);
       const syncKey = identityKey(identity);
       if (seenKeys.has(syncKey)) {
         skills.delete(syncKey);
-        errors[syncKey] = {
-          source: "local",
-          code: "duplicate_skill_identity",
-          message: `Multiple Skills claim ${syncKey}.`,
-          name: capability.definition.name,
-          capabilityId: capability.manifest.id,
-        };
+        const error = coded("duplicate_skill_identity", `Multiple Skills claim ${syncKey}.`);
+        errors[syncKey] = logFailures
+          ? recordSkillFailure(syncKey, "local", error, {
+              operation: "scan-local-skills",
+              capabilityId: capability.manifest.id,
+              skillName: capability.definition.name,
+            })
+          : {
+              source: "local",
+              code: errorCode(error),
+              message: errorMessage(error),
+              name: capability.definition.name,
+              capabilityId: capability.manifest.id,
+            };
         continue;
       }
       seenKeys.add(syncKey);
@@ -244,13 +337,19 @@ export function createSkillSyncService(options: {
         validateRemoteSkill(skill, legacyExecutablePaths);
         skills.set(syncKey, skill);
       } catch (error) {
-        errors[syncKey] = {
-          source: "local",
-          code: errorCode(error),
-          message: errorMessage(error),
-          name: capability.definition.name,
-          capabilityId: capability.manifest.id,
-        };
+        errors[syncKey] = logFailures
+          ? recordSkillFailure(syncKey, "local", error, {
+              operation: "validate-local-skill",
+              capabilityId: capability.manifest.id,
+              skillName: capability.definition.name,
+            })
+          : {
+              source: "local",
+              code: errorCode(error),
+              message: errorMessage(error),
+              name: capability.definition.name,
+              capabilityId: capability.manifest.id,
+            };
       }
     }
     return { skills, errors };
@@ -260,7 +359,7 @@ export function createSkillSyncService(options: {
     state?: SkillSyncState,
   ): Promise<Map<string, LocalSkill>> => {
     try {
-      return (await localSkills(state)).skills;
+      return (await localSkills(state, false)).skills;
     } catch {
       return new Map();
     }
@@ -369,7 +468,18 @@ export function createSkillSyncService(options: {
         base,
       );
       if (localFingerprint === remoteFingerprint) {
-        if (remoteSkill !== undefined) validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+        if (remoteSkill !== undefined) {
+          try {
+            validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+          } catch (error) {
+            errors[key] = recordSkillFailure(key, "remote", error, {
+              operation: "validate-remote-skill",
+              capabilityId: localSkill?.capabilityId ?? remoteSkill.identity.id,
+              skillName: remoteSkill.name,
+            });
+            continue;
+          }
+        }
         delete pendingRemoteActivations[key];
         if (localFingerprint === "absent") {
           delete bases[key];
@@ -422,13 +532,15 @@ export function createSkillSyncService(options: {
             if (priorPendingActivation === undefined) delete pendingRemoteActivations[key];
             else pendingRemoteActivations[key] = priorPendingActivation;
           }
-          errors[key] = {
-            source: "remote",
-            code: errorCode(error),
-            message: errorMessage(error),
-            name: remoteSkill?.name ?? localSkill?.name,
-            capabilityId: localSkill?.capabilityId,
-          };
+          errors[key] = recordSkillFailure(key, "remote", error, {
+            operation: "restore-remote-skill",
+            ...(localSkill?.capabilityId === undefined && remoteSkill === undefined
+              ? {}
+              : { capabilityId: localSkill?.capabilityId ?? remoteSkill?.identity.id }),
+            ...(remoteSkill?.name === undefined && localSkill?.name === undefined
+              ? {}
+              : { skillName: remoteSkill?.name ?? localSkill?.name }),
+          });
           await writeState(checkpointState());
         }
         continue;
@@ -493,13 +605,15 @@ export function createSkillSyncService(options: {
               `The local Skill changed during synchronization: ${key}`,
             );
           }
-          errors[key] = {
-            source: "remote",
-            code: errorCode(error),
-            message: errorMessage(error),
-            name: remoteSkill?.name ?? localSkill?.name,
-            capabilityId: localSkill?.capabilityId,
-          };
+          errors[key] = recordSkillFailure(key, "remote", error, {
+            operation: "apply-remote-skill",
+            ...(localSkill?.capabilityId === undefined && remoteSkill === undefined
+              ? {}
+              : { capabilityId: localSkill?.capabilityId ?? remoteSkill?.identity.id }),
+            ...(remoteSkill?.name === undefined && localSkill?.name === undefined
+              ? {}
+              : { skillName: remoteSkill?.name ?? localSkill?.name }),
+          });
           await writeState(checkpointState());
         }
         continue;
@@ -528,13 +642,11 @@ export function createSkillSyncService(options: {
         try {
           validateRemoteSkill(localSkill, allowedLocalLegacyPaths);
         } catch (error) {
-          errors[key] = {
-            source: "local",
-            code: errorCode(error),
-            message: errorMessage(error),
-            name: localSkill.name,
+          errors[key] = recordSkillFailure(key, "local", error, {
+            operation: "validate-local-skill",
             capabilityId: localSkill.capabilityId,
-          };
+            skillName: localSkill.name,
+          });
           continue;
         }
         if (allowedLocalLegacyPaths.size > 0) {
@@ -651,6 +763,12 @@ export function createSkillSyncService(options: {
         "The local or remote Skill repository changed repeatedly. Try again.",
       );
     } catch (error) {
+      warnSkillSyncFailure("Skill synchronization failed.", error, {
+        syncKey: null,
+        source: "remote",
+        operation:
+          intent === "restore" ? "restore-sync" : intent === "pull_only" ? "refresh-sync" : "sync",
+      });
       state = SkillSyncStateSchema.parse({
         ...state,
         errorCode: errorCode(error),
@@ -689,9 +807,18 @@ export function createSkillSyncService(options: {
             : await runLocked(configuration, nextIntent);
       } while (rerun);
       return result;
-    }).finally(() => {
-      running = undefined;
-    });
+    })
+      .catch((error: unknown) => {
+        warnSkillSyncFailure("Skill synchronization failed.", error, {
+          syncKey: null,
+          source: "remote",
+          operation: "sync",
+        });
+        throw error;
+      })
+      .finally(() => {
+        running = undefined;
+      });
     return running;
   };
 
@@ -715,20 +842,30 @@ export function createSkillSyncService(options: {
         schemaVersion: "pragma.skill-sync-settings/v1",
         ...settings,
       });
-      await withFileLock(lockPath, async () => {
-        const head = await providerFor(configuration).readHead();
-        const previous = await readConfiguration();
-        await writeJsonAtomic(options.configurationPath, configuration);
-        if (
-          previous === undefined ||
-          canonicalBackupRemote(previous.remote) !== canonicalBackupRemote(configuration.remote) ||
-          previous.branch !== configuration.branch
-        ) {
-          await writeState(emptyState(backupSourceKey(configuration)));
-        }
-        void head;
-      });
-      return await runSync(initializationMode === "restore_remote" ? "restore" : "full");
+      try {
+        await withFileLock(lockPath, async () => {
+          const head = await providerFor(configuration).readHead();
+          const previous = await readConfiguration();
+          await writeJsonAtomic(options.configurationPath, configuration);
+          if (
+            previous === undefined ||
+            canonicalBackupRemote(previous.remote) !==
+              canonicalBackupRemote(configuration.remote) ||
+            previous.branch !== configuration.branch
+          ) {
+            await writeState(emptyState(backupSourceKey(configuration)));
+          }
+          void head;
+        });
+        return await runSync(initializationMode === "restore_remote" ? "restore" : "full");
+      } catch (error) {
+        warnSkillSyncFailure("Skill sync configuration failed.", error, {
+          syncKey: null,
+          source: "remote",
+          operation: "configure-sync",
+        });
+        throw error;
+      }
     },
     async removeConfiguration() {
       if (scheduled !== undefined) clearTimeout(scheduled);
@@ -752,7 +889,13 @@ export function createSkillSyncService(options: {
             const configuration = await readConfiguration();
             if (configuration === undefined || (localChange && !configuration.autoPush)) return;
             await runSync(localChange ? "full" : "pull_only");
-          })().catch((error: unknown) => options.warn?.("Scheduled Skill sync failed.", error));
+          })().catch((error: unknown) =>
+            warnSkillSyncFailure("Scheduled Skill sync failed.", error, {
+              syncKey: null,
+              source: localChange ? "local" : "remote",
+              operation: "scheduled-sync",
+            }),
+          );
         },
         localChange ? 750 : 0,
       );
@@ -831,6 +974,15 @@ export function createSkillSyncService(options: {
                 delete state.pendingRemoteActivations[syncKey];
               else state.pendingRemoteActivations[syncKey] = priorPendingActivation;
             }
+            warnSkillSyncFailure("Skill conflict resolution failed.", error, {
+              syncKey,
+              source: "remote",
+              operation: "resolve-conflict",
+              capabilityId: localSkill?.capabilityId ?? remoteSkill?.identity.id,
+              ...(remoteSkill?.name === undefined && localSkill?.name === undefined
+                ? {}
+                : { skillName: remoteSkill?.name ?? localSkill?.name }),
+            });
             await writeState(state);
             throw error;
           }
@@ -874,24 +1026,50 @@ export function createSkillSyncService(options: {
                     allowInitialLocalSnapshot,
                   )
                 : new Set<string>();
-              validateRemoteSkill(selectedLocal, allowedLocalLegacyPaths);
+              try {
+                validateRemoteSkill(selectedLocal, allowedLocalLegacyPaths);
+              } catch (error) {
+                warnSkillSyncFailure("Skill conflict resolution failed.", error, {
+                  syncKey,
+                  source: "local",
+                  operation: "resolve-conflict",
+                  capabilityId: selectedLocal.capabilityId,
+                  skillName: selectedLocal.name,
+                });
+                throw error;
+              }
               if (allowedLocalLegacyPaths.size > 0) {
                 grandfatheredExecutablePaths.set(syncKey, allowedLocalLegacyPaths);
               }
               desired.set(syncKey, selectedLocal);
             }
-            const published = await provider.publish({
-              expectedRevision: publishHead.revision,
-              repository: {
-                schemaVersion: repositoryVersionForSkills(
-                  desired,
-                  publishHead.repository.schemaVersion,
-                ),
-                skills: desired,
-                grandfatheredExecutablePaths,
-              },
-              message: `Resolve Skill sync conflict for ${syncKey}`,
-            });
+            const published = await provider
+              .publish({
+                expectedRevision: publishHead.revision,
+                repository: {
+                  schemaVersion: repositoryVersionForSkills(
+                    desired,
+                    publishHead.repository.schemaVersion,
+                  ),
+                  skills: desired,
+                  grandfatheredExecutablePaths,
+                },
+                message: `Resolve Skill sync conflict for ${syncKey}`,
+              })
+              .catch((error: unknown) => {
+                warnSkillSyncFailure("Skill conflict resolution failed.", error, {
+                  syncKey,
+                  source: "local",
+                  operation: "resolve-conflict",
+                  ...(selectedLocal === undefined
+                    ? {}
+                    : {
+                        capabilityId: selectedLocal.capabilityId,
+                        skillName: selectedLocal.name,
+                      }),
+                });
+                throw error;
+              });
             if (published.status === "head_changed") {
               throw coded(
                 "skill_sync_conflict_stale",

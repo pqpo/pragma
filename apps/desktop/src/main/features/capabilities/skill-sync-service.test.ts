@@ -176,6 +176,17 @@ describe("Skill sync service", () => {
     expect(
       fixture.provider.repository.skills.get(`capability/${healthyId}`)?.files[0]?.content,
     ).toContain("Healthy update");
+    expect(fixture.warnings).toContainEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          syncKey: `capability/${invalidId}`,
+          source: "local",
+          errorCode: "skill_sync_binary_file",
+          operation: "validate-local-skill",
+          capabilityId: invalidId,
+        }),
+      }),
+    );
   });
 
   it("remains degraded after resolving the last conflict when another Skill has an error", async () => {
@@ -260,6 +271,144 @@ describe("Skill sync service", () => {
     expect(fixture.capabilities.has(id)).toBe(false);
     expect(overview.status).toBe("error");
     expect(overview.skills[0]).toMatchObject({ syncKey: `capability/${id}`, status: "error" });
+    expect(fixture.warnings).toContainEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          syncKey: `capability/${id}`,
+          source: "remote",
+          errorCode: "skill_network_access_forbidden",
+          operation: "apply-remote-skill",
+          capabilityId: id,
+        }),
+      }),
+    );
+  });
+
+  it("logs remote Skill import failures with structured diagnostic context", async () => {
+    const fixture = await createFixture();
+    const id = "48484848-4848-4848-8484-484848484848";
+    await fixture.service.configure(configuration());
+    fixture.provider.repository.skills.set(
+      `capability/${id}`,
+      remoteSkill({ kind: "capability", id }, "Import Failure Skill"),
+    );
+    fixture.provider.advance();
+    fixture.hooks.publishFailure = Object.assign(new Error("capability store unavailable"), {
+      code: "capability_store_unavailable",
+    });
+
+    const overview = await fixture.service.refresh();
+
+    expect(overview.skills).toContainEqual(
+      expect.objectContaining({ syncKey: `capability/${id}`, status: "error" }),
+    );
+    expect(fixture.warnings).toContainEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          syncKey: `capability/${id}`,
+          source: "remote",
+          errorCode: "capability_store_unavailable",
+          errorMessage: "capability store unavailable",
+          operation: "apply-remote-skill",
+          capabilityId: id,
+          skillName: "Import Failure Skill",
+        }),
+      }),
+    );
+  });
+
+  it("logs Skill validation failures while resolving a remote conflict", async () => {
+    const fixture = await createFixture();
+    const id = "49494949-4949-4949-8494-494949494949";
+    const syncKey = `capability/${id}`;
+    await fixture.addLocalSkill(id, "Conflict Skill");
+    await fixture.service.configure(configuration());
+    await fixture.replaceLocalSkill(id, "Conflict Skill", "Local change");
+    fixture.provider.repository.skills.set(syncKey, unsafeRemoteSkill(id));
+    fixture.provider.advance();
+    expect((await fixture.service.sync()).status).toBe("conflict");
+
+    await expect(fixture.service.resolveConflict(syncKey, "remote")).rejects.toMatchObject({
+      code: "skill_network_access_forbidden",
+    });
+
+    expect(fixture.warnings).toContainEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          syncKey,
+          source: "remote",
+          errorCode: "skill_network_access_forbidden",
+          operation: "resolve-conflict",
+          capabilityId: id,
+          skillName: "Unsafe Skill",
+        }),
+      }),
+    );
+  });
+
+  it("logs remote Skill apply failures while resolving a conflict", async () => {
+    const fixture = await createFixture();
+    const id = "49494949-4949-4949-8494-494949494950";
+    const syncKey = `capability/${id}`;
+    await fixture.addLocalSkill(id, "Conflict Apply Skill");
+    await fixture.service.configure(configuration());
+    await fixture.replaceLocalSkill(id, "Conflict Apply Skill", "Local change");
+    fixture.provider.repository.skills.set(
+      syncKey,
+      remoteSkill({ kind: "capability", id }, "Conflict Apply Skill", "Remote change"),
+    );
+    fixture.provider.advance();
+    expect((await fixture.service.sync()).status).toBe("conflict");
+    fixture.hooks.publishFailure = Object.assign(new Error("revision candidate rejected"), {
+      code: "revision_candidate_rejected",
+    });
+
+    await expect(fixture.service.resolveConflict(syncKey, "remote")).rejects.toMatchObject({
+      code: "revision_candidate_rejected",
+    });
+
+    expect(fixture.warnings).toContainEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          syncKey,
+          source: "remote",
+          errorCode: "revision_candidate_rejected",
+          operation: "resolve-conflict",
+          capabilityId: id,
+          skillName: "Conflict Apply Skill",
+        }),
+      }),
+    );
+  });
+
+  it("logs top-level synchronization failures without leaking remote credentials", async () => {
+    const fixture = await createFixture();
+    await fixture.service.configure(configuration());
+    fixture.provider.readFailure = Object.assign(
+      new Error(
+        "fatal: https://alice:secret@example.com/pragma.git?token=ghp_abcdefghijklmnopqrstuvwxyz123456 failed",
+      ),
+      { code: "EHOSTUNREACH" },
+    );
+
+    const overview = await fixture.service.sync();
+
+    expect(overview.status).toBe("error");
+    const warning = fixture.warnings.find(
+      (entry) =>
+        typeof entry.details === "object" &&
+        entry.details !== null &&
+        "errorCode" in entry.details &&
+        entry.details.errorCode === "EHOSTUNREACH",
+    );
+    expect(warning?.details).toMatchObject({
+      syncKey: null,
+      source: "remote",
+      errorCode: "EHOSTUNREACH",
+    });
+    expect(JSON.stringify(warning?.details)).not.toContain("alice:secret");
+    expect(JSON.stringify(warning?.details)).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz123456");
+    expect(JSON.stringify(warning?.details)).toContain("[redacted]");
   });
 
   it("rejects executable files without a supported scanner even without a suffix or shebang", async () => {
@@ -650,6 +799,17 @@ describe("Skill sync service", () => {
     );
     expect(fixture.provider.repository.schemaVersion).toBe(3);
     expect(fixture.provider.repository.skills.has(`capability/${id}`)).toBe(false);
+    expect(fixture.warnings).toContainEqual(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          syncKey: `capability/${id}`,
+          source: "local",
+          errorCode: "skill_script_language_unsupported",
+          operation: "validate-local-skill",
+          capabilityId: id,
+        }),
+      }),
+    );
   });
 
   it("persists conflict summaries for Skills with more than 64 files", async () => {
@@ -1316,7 +1476,11 @@ async function createFixture(
   roots.push(root);
   const capabilities = new Map<string, Capability>();
   const paths = new Map<string, string>();
-  const hooks: { beforeRemove?: ((id: string) => Promise<void>) | undefined } = {};
+  const hooks: {
+    beforeRemove?: ((id: string) => Promise<void>) | undefined;
+    publishFailure?: Error | undefined;
+  } = {};
+  const warnings: { message: string; details: unknown }[] = [];
   const install = async (
     id: string,
     name: string,
@@ -1364,8 +1528,12 @@ async function createFixture(
       name: string;
       description: string;
       sourcePath: string;
-    }) => await install(input.id, input.name, input.description, input.sourcePath),
+    }) => {
+      if (hooks.publishFailure !== undefined) throw hooks.publishFailure;
+      return await install(input.id, input.name, input.description, input.sourcePath);
+    },
     publishSkillRevisionCandidate: async (input: { id: string; sourcePath: string }) => {
+      if (hooks.publishFailure !== undefined) throw hooks.publishFailure;
       return await install(
         input.id,
         frontmatter(await readFile(join(input.sourcePath, "SKILL.md"), "utf8"), "name"),
@@ -1401,6 +1569,7 @@ async function createFixture(
       capabilities: store,
       provider,
       supportsExecutableBits: options.supportsExecutableBits,
+      warn: (message, details) => warnings.push({ message, details }),
     });
   const service = restartService();
 
@@ -1453,6 +1622,7 @@ async function createFixture(
     reviseLocalSkillMode,
     restartService,
     hooks,
+    warnings,
   };
 }
 
@@ -1464,6 +1634,7 @@ class FakeProvider implements SkillSyncProvider {
   repository: MutableRemoteSkillRepository = { schemaVersion: 3, skills: new Map() };
   reference = "main";
   beforePublish?: (() => Promise<void>) | undefined;
+  readFailure?: Error | undefined;
   private revision = 0;
 
   advance() {
@@ -1471,6 +1642,7 @@ class FakeProvider implements SkillSyncProvider {
   }
 
   async readHead() {
+    if (this.readFailure !== undefined) throw this.readFailure;
     return {
       revision: String(this.revision),
       reference: this.reference,
