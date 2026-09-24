@@ -42,6 +42,16 @@ import { desktopApi } from "./studio-model.ts";
 
 type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
+type SkillSyncAction = "loading" | "retry" | "configure" | "sync";
+
+export function skillSyncActionState(
+  overview: SkillSyncOverview | undefined,
+  overviewState: "loading" | "ready" | "error",
+): SkillSyncAction {
+  if (overviewState === "loading") return "loading";
+  if (overviewState === "error" || overview === undefined) return "retry";
+  return overview.configured ? "sync" : "configure";
+}
 
 export function directCapabilityCreateMode(kind: "connectors" | "skills"): CapabilityMode | null {
   return kind === "skills" ? "skill" : null;
@@ -130,7 +140,9 @@ export function CapabilityDirectoryFragment(props: {
   readonly kind: "connectors" | "skills";
   readonly capabilities: readonly Capability[];
   readonly syncOverview?: SkillSyncOverview | undefined;
+  readonly syncOverviewState?: "loading" | "ready" | "error" | undefined;
   readonly onConfigureSync?: (() => void) | undefined;
+  readonly onRetrySyncOverview?: (() => Promise<SkillSyncOverview>) | undefined;
   readonly onSync?: (() => Promise<SkillSyncOverview>) | undefined;
   readonly onOpen: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
@@ -153,9 +165,19 @@ export function CapabilityDirectoryFragment(props: {
   const [codePreview, setCodePreview] = useState<PreviewCodeServiceResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [checkingSyncStatus, setCheckingSyncStatus] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [syncNeedsAttention, setSyncNeedsAttention] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const syncAction = skillSyncActionState(
+    props.syncOverview,
+    props.syncOverviewState ?? (props.syncOverview === undefined ? "loading" : "ready"),
+  );
+  const syncFeedbackMessage =
+    syncFeedback ??
+    (syncAction === "retry" && props.syncOverviewState === "error"
+      ? t("skillSyncStatusFailed")
+      : null);
   const normalizedQuery = query.trim().toLowerCase();
   const catalog = props.capabilities.filter((capability) =>
     props.kind === "skills"
@@ -249,7 +271,23 @@ export function CapabilityDirectoryFragment(props: {
   };
 
   const runSkillSync = async () => {
-    if (!props.syncOverview?.configured) {
+    if (syncAction === "loading") return;
+    if (syncAction === "retry") {
+      if (props.onRetrySyncOverview === undefined) return;
+      setCheckingSyncStatus(true);
+      setSyncFeedback(null);
+      setSyncNeedsAttention(false);
+      try {
+        await props.onRetrySyncOverview();
+      } catch {
+        setSyncNeedsAttention(true);
+        setSyncFeedback(t("skillSyncStatusFailed"));
+      } finally {
+        setCheckingSyncStatus(false);
+      }
+      return;
+    }
+    if (syncAction === "configure") {
       props.onConfigureSync?.();
       return;
     }
@@ -464,19 +502,28 @@ export function CapabilityDirectoryFragment(props: {
               <button
                 className="secondary-button"
                 type="button"
-                disabled={syncing}
+                disabled={
+                  syncing ||
+                  checkingSyncStatus ||
+                  syncAction === "loading" ||
+                  (syncAction === "retry" && props.onRetrySyncOverview === undefined)
+                }
                 onClick={() => void runSkillSync()}
               >
-                {syncing ? (
+                {syncing || checkingSyncStatus || syncAction === "loading" ? (
                   <SpinnerGap className="capability-sync-spinner" size={17} aria-hidden="true" />
                 ) : (
                   <ArrowsClockwise size={17} aria-hidden="true" />
                 )}
                 {syncing
                   ? t("syncingSkills")
-                  : props.syncOverview?.configured
-                    ? t("syncSkillsNow")
-                    : t("configureSkillSync")}
+                  : checkingSyncStatus || syncAction === "loading"
+                    ? t("checkingSkillSync")
+                    : syncAction === "retry"
+                      ? t("retrySkillSyncStatus")
+                      : syncAction === "sync"
+                        ? t("syncSkillsNow")
+                        : t("configureSkillSync")}
               </button>
             ) : null}
             {props.kind === "skills" && props.onOpenRevisions !== undefined ? (
@@ -588,14 +635,14 @@ export function CapabilityDirectoryFragment(props: {
         </span>
       </div>
 
-      {syncFeedback !== null ? (
+      {syncFeedbackMessage !== null ? (
         <p
           className={
             syncNeedsAttention ? "capability-sync-feedback is-error" : "capability-sync-feedback"
           }
           role={syncNeedsAttention ? "alert" : "status"}
         >
-          {syncFeedback}
+          {syncFeedbackMessage}
         </p>
       ) : null}
 

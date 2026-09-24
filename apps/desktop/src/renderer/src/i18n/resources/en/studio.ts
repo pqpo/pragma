@@ -666,6 +666,9 @@ export const studio = {
   syncSkillsNow: "Sync now",
   configureSkillSync: "Configure sync",
   syncingSkills: "Syncing…",
+  checkingSkillSync: "Checking sync status…",
+  retrySkillSyncStatus: "Retry status check",
+  skillSyncStatusFailed: "Sync status is temporarily unavailable. Please try again.",
   skillSyncComplete: "Skill sync completed.",
   skillSyncNeedsAttention:
     "Some Skills did not sync. Open Settings → Skill Sync to retry or resolve conflicts.",

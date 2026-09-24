@@ -182,6 +182,9 @@ export function StudioPage(props: {
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [knowledgeSyncOverview, setKnowledgeSyncOverview] = useState<KnowledgeSyncOverview>();
   const [skillSyncOverview, setSkillSyncOverview] = useState<SkillSyncOverview>();
+  const [skillSyncOverviewState, setSkillSyncOverviewState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
   const [contextStoreBindings, setContextStoreBindings] = useState<
     readonly DesktopPragmaContextStoreBinding[]
   >([]);
@@ -231,7 +234,10 @@ export function StudioPage(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    if (api === undefined) return;
+    if (api === undefined) {
+      setSkillSyncOverviewState("error");
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -300,9 +306,13 @@ export function StudioPage(props: {
     void api
       .getSkillSyncOverview()
       .then((overview) => {
-        if (!cancelled) setSkillSyncOverview(overview);
+        if (cancelled) return;
+        setSkillSyncOverview(overview);
+        setSkillSyncOverviewState("ready");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setSkillSyncOverviewState("error");
+      });
     void api
       .listPragmaContextStoreBindings()
       .then((bindings) => {
@@ -1190,12 +1200,35 @@ export function StudioPage(props: {
             kind={activeView}
             capabilities={capabilities}
             syncOverview={activeView === "skills" ? skillSyncOverview : undefined}
+            syncOverviewState={activeView === "skills" ? skillSyncOverviewState : undefined}
             onConfigureSync={props.onConfigureSkillSync}
+            onRetrySyncOverview={
+              activeView === "skills"
+                ? async () => {
+                    const api = desktopApi();
+                    if (api === undefined) {
+                      setSkillSyncOverviewState("error");
+                      throw new Error("Desktop API unavailable.");
+                    }
+                    setSkillSyncOverviewState("loading");
+                    try {
+                      const overview = await api.getSkillSyncOverview();
+                      setSkillSyncOverview(overview);
+                      setSkillSyncOverviewState("ready");
+                      return overview;
+                    } catch (cause) {
+                      setSkillSyncOverviewState("error");
+                      throw cause;
+                    }
+                  }
+                : undefined
+            }
             onSync={
               activeView === "skills"
                 ? async () => {
                     const overview = await window.pragmaDesktop.syncSkills();
                     setSkillSyncOverview(overview);
+                    setSkillSyncOverviewState("ready");
                     setCapabilities(await window.pragmaDesktop.listCapabilities());
                     return overview;
                   }
