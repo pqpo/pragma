@@ -69,6 +69,7 @@ import {
   type DesktopMissionMemoryActivity,
   type DesktopToolPermissionMode,
   type ExpertMentionCandidate,
+  type MissionMentionCandidates,
   type MissionModelOverride,
   type PragmaDesktopAPI,
   latestMissionBranchableReply,
@@ -334,6 +335,7 @@ export function MissionsPage(props: {
     initialState.selectedMissionIds,
   );
   const missionChatCacheRef = useRef(new Map<string, MissionConversationSnapshot>());
+  const missionTeamIdentityCacheRef = useRef(new Map<string, MissionMentionCandidates>());
   const missionOutputBoundariesRef = useRef(
     readMissionOutputBoundaries(typeof window === "undefined" ? undefined : window.localStorage),
   );
@@ -1088,6 +1090,7 @@ export function MissionsPage(props: {
             onComposerRecoveryConflict={rejectComposerRecovery}
             memoryEnabled={props.memoryEnabled}
             chatCache={missionChatCacheRef.current}
+            teamIdentityCache={missionTeamIdentityCacheRef.current}
             prefetchedConversation={missionConversationRequestsRef.current.get(selectedMission.id)}
             initialThinkingRequestId={
               initialRunRequest?.missionId === selectedMission.id
@@ -2162,6 +2165,7 @@ export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly navigationId?: string | undefined;
   readonly chatCache?: Map<string, MissionConversationSnapshot> | undefined;
+  readonly teamIdentityCache?: Map<string, MissionMentionCandidates> | undefined;
   readonly prefetchedConversation?: Promise<MissionConversationPrefetch | undefined> | undefined;
   readonly initialComposerDraft?: string | undefined;
   readonly initialComposerRevisionId?: string | undefined;
@@ -2239,7 +2243,12 @@ export function MissionDetailFragment(props: {
     readonly key: string;
     readonly coordinator?: ExpertMentionCandidate | undefined;
     readonly members: readonly ExpertMentionCandidate[];
-  }>();
+  }>(() => {
+    const cached = props.teamIdentityCache?.get(teamIdentityKey);
+    return cached === undefined
+      ? undefined
+      : { key: teamIdentityKey, coordinator: cached.coordinator, members: cached.members };
+  });
   const mentionCandidates =
     isTeam && loadedTeamIdentity?.key === teamIdentityKey ? loadedTeamIdentity.members : [];
   const teamCoordinator =
@@ -2373,7 +2382,9 @@ export function MissionDetailFragment(props: {
     }
     const api = desktopApi();
     if (api === undefined) {
-      setLoadedTeamIdentity({ key: teamIdentityKey, members: [] });
+      if (props.teamIdentityCache?.get(teamIdentityKey) === undefined) {
+        setLoadedTeamIdentity({ key: teamIdentityKey, members: [] });
+      }
       return;
     }
     let cancelled = false;
@@ -2381,6 +2392,15 @@ export function MissionDetailFragment(props: {
       .getMissionMentionCandidates(props.mission.id)
       .then((result) => {
         if (!cancelled) {
+          if (props.teamIdentityCache !== undefined) {
+            props.teamIdentityCache.delete(teamIdentityKey);
+            props.teamIdentityCache.set(teamIdentityKey, result);
+            while (props.teamIdentityCache.size > 8) {
+              const oldest = props.teamIdentityCache.keys().next().value as string | undefined;
+              if (oldest === undefined) break;
+              props.teamIdentityCache.delete(oldest);
+            }
+          }
           setLoadedTeamIdentity({
             key: teamIdentityKey,
             coordinator: result.coordinator,
@@ -2389,14 +2409,14 @@ export function MissionDetailFragment(props: {
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && props.teamIdentityCache?.get(teamIdentityKey) === undefined) {
           setLoadedTeamIdentity({ key: teamIdentityKey, members: [] });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [props.mission.executor.kind, props.mission.id, teamIdentityKey]);
+  }, [props.mission.executor.kind, props.mission.id, props.teamIdentityCache, teamIdentityKey]);
 
   useEffect(() => {
     if (
@@ -4100,9 +4120,11 @@ export function teamParticipantWorkRecords(
         memberIds.has(record.executorId),
     )
     .toSorted((left, right) => {
+      const updated = right.updatedAt.localeCompare(left.updatedAt);
+      if (updated !== 0) return updated;
       const activity = Number(right.status === "running") - Number(left.status === "running");
       if (activity !== 0) return activity;
-      const created = left.createdAt.localeCompare(right.createdAt);
+      const created = right.createdAt.localeCompare(left.createdAt);
       return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
     });
 }
