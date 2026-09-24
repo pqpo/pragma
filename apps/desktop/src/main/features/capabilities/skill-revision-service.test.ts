@@ -497,7 +497,10 @@ describe("Skill revision service", () => {
   it("allows safe portable files when revising an existing Skill", async () => {
     const fixture = await createService();
     await mkdir(join(fixture.sourcePath, "assets"));
-    await writeFile(join(fixture.sourcePath, "assets", "diagram.svg"), "<svg />\n");
+    await writeFile(
+      join(fixture.sourcePath, "assets", "diagram.svg"),
+      `<svg>${"x".repeat(128 * 1_024)}</svg>\n`,
+    );
 
     const job = await fixture.service.start(request("expert-reflection"));
     const editing = await fixture.service.inspectDraft(job.draftId);

@@ -12,6 +12,7 @@ export const SKILL_LEARNING_JOB_SCHEMA_VERSION = "pragma.memory-skill-job/v2" as
 export const SKILL_EXTRACTION_INPUT_SCHEMA_VERSION =
   "pragma.memory-skill-extraction-input/v1" as const;
 export const MAX_SKILL_PACKAGE_BYTES = 25 * 1_024 * 1_024;
+const MAX_GENERATED_SKILL_FILE_CHARACTERS = 128 * 1_024;
 
 function utf8ByteLength(value: string): number {
   let bytes = 0;
@@ -95,7 +96,7 @@ export const SkillPackageFileSchema = z
             ),
         "Skill package paths must be safe relative paths.",
       ),
-    content: z.string().max(128 * 1_024),
+    content: z.string().max(MAX_SKILL_PACKAGE_BYTES),
   })
   .strict();
 
@@ -130,6 +131,13 @@ export const SkillPackageSchema = z
 
 export const GeneratedSkillPackageSchema = SkillPackageSchema.superRefine((value, context) => {
   value.files.forEach((file, index) => {
+    if (file.content.length > MAX_GENERATED_SKILL_FILE_CHARACTERS) {
+      context.addIssue({
+        code: "custom",
+        path: ["files", index, "content"],
+        message: `Generated Skill files may contain at most ${MAX_GENERATED_SKILL_FILE_CHARACTERS} characters.`,
+      });
+    }
     if (
       file.path !== "SKILL.md" &&
       !file.path.startsWith("references/") &&

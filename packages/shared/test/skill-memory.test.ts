@@ -44,6 +44,20 @@ describe("Skill memory contracts", () => {
     }
   });
 
+  it("accepts large existing package files while preserving generated file limits", () => {
+    const packageWithLargeAsset = {
+      name: "Existing Skill",
+      description: "Contains a larger reference asset.",
+      files: [
+        { path: "SKILL.md", content: "# Existing Skill" },
+        { path: "references/archive.txt", content: "x".repeat(128 * 1_024 + 1) },
+      ],
+    };
+
+    expect(SkillPackageSchema.safeParse(packageWithLargeAsset).success).toBe(true);
+    expect(GeneratedSkillPackageSchema.safeParse(packageWithLargeAsset).success).toBe(false);
+  });
+
   it("rejects Git metadata directories anywhere in a Skill path", () => {
     expect(
       SkillPackageSchema.safeParse({
