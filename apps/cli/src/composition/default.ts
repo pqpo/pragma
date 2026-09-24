@@ -7,6 +7,7 @@ import { createAntigravityRuntime } from "@pragma/runtime-antigravity";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import { createCodexRuntime } from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
+import { createOpenCodeRuntime } from "@pragma/runtime-opencode";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 import {
   createRuntimeTokenCounter,
@@ -38,6 +39,18 @@ export function createProductionLocalHost(): CliLocalHost {
       tokenCounter,
       sandboxMode: "workspace-write",
       approvalPolicy: "on-request",
+    }),
+    createOpenCodeRuntime({
+      env: {
+        ...environment,
+        ...(process.env["OPENCODE_CONFIG_CONTENT"] === undefined
+          ? {}
+          : {
+              OPENCODE_CONFIG_CONTENT: process.env["OPENCODE_CONFIG_CONTENT"],
+            }),
+      },
+      permissionMode: "request-approval",
+      tokenCounter,
     }),
     createClaudeCodeRuntime({ env: environment, permissionMode: "default", tokenCounter }),
     createQoderCliRuntime({ env: environment, permissionMode: "default", tokenCounter }),
