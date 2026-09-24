@@ -43,9 +43,31 @@ export interface EnqueuePromptTransaction {
   }[];
 }
 
+export interface ExpertSessionTransactionState {
+  readonly session: ExpertSessionRecord;
+  readonly prompts: readonly PromptRequest[];
+}
+
+export interface ExpertSessionTransactionResult<T> {
+  readonly result: T;
+  readonly session: ExpertSessionRecord;
+  readonly prompts: readonly PromptRequest[];
+}
+
+export type ExpertSessionTransactionAction<T> = (
+  state: ExpertSessionTransactionState,
+) => Promise<ExpertSessionTransactionResult<T>> | ExpertSessionTransactionResult<T>;
+
+export interface ExpertSessionEventInput {
+  readonly eventId: string;
+  readonly type: string;
+  readonly data: unknown;
+  readonly occurredAt?: string | undefined;
+}
+
 export interface ExpertSessionStore {
   create(record: ExpertSessionRecord): Promise<void>;
-  enqueue(transaction: EnqueuePromptTransaction): Promise<string>;
+  enqueue(transaction: EnqueuePromptTransaction, ownerClaimId?: string): Promise<string>;
   get(sessionId: string): Promise<ExpertSessionRecord | undefined>;
   recoverClosed(input: {
     readonly sessionId: string;
@@ -56,31 +78,15 @@ export interface ExpertSessionStore {
   }): Promise<ExpertSessionRecord | undefined>;
   transact<T>(
     sessionId: string,
-    action: (state: {
-      readonly session: ExpertSessionRecord;
-      readonly prompts: readonly PromptRequest[];
-    }) =>
-      | Promise<{
-          readonly result: T;
-          readonly session: ExpertSessionRecord;
-          readonly prompts: readonly PromptRequest[];
-        }>
-      | {
-          readonly result: T;
-          readonly session: ExpertSessionRecord;
-          readonly prompts: readonly PromptRequest[];
-        },
+    action: ExpertSessionTransactionAction<T>,
+    ownerClaimId?: string,
   ): Promise<T>;
   listPrompts(sessionId: string): Promise<readonly PromptRequest[]>;
   listEvents(sessionId: string): Promise<readonly ExpertSessionEvent[]>;
   appendEvent(
     sessionId: string,
-    event: {
-      readonly eventId: string;
-      readonly type: string;
-      readonly data: unknown;
-      readonly occurredAt?: string | undefined;
-    },
+    event: ExpertSessionEventInput,
+    ownerClaimId?: string,
   ): Promise<void>;
   claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   releaseLease(sessionId: string, claimId: string): Promise<void>;
@@ -99,6 +105,13 @@ export function createFileExpertSessionStore(options: {
     await withFileLock(paths.expertSessionLock(sessionId), action, {
       operation: "expert-session.aggregate",
     });
+  const assertLeaseOwner = async (sessionId: string, claimId: string): Promise<void> => {
+    const value = await readJson(paths.expertSessionLease(sessionId));
+    const lease = value === undefined ? undefined : ExpertSessionLeaseSchema.parse(value);
+    if (lease?.claimId !== claimId || Date.parse(lease.expiresAt) <= Date.now()) {
+      throw new Error(`ExpertSession lease is no longer owned: ${sessionId}`);
+    }
+  };
   return {
     async delete(sessionId) {
       await withExpertSessionLock(sessionId, async () => {
@@ -145,9 +158,10 @@ export function createFileExpertSessionStore(options: {
         await applyTransaction(paths, options.executions, record.sessionId, journal);
       });
     },
-    async enqueue(transaction) {
+    async enqueue(transaction, ownerClaimId) {
       const sessionId = transaction.prompt.sessionId;
       return await withExpertSessionLock(sessionId, async () => {
+        if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
         await prepareExpertSession(paths, options.executions, sessionId);
         const session = ExpertSessionRecordSchema.parse(
           await requireJson(paths.expertSessionState(sessionId), sessionId),
@@ -231,6 +245,7 @@ export function createFileExpertSessionStore(options: {
             execution: transaction.execution,
             rootInvocation: transaction.rootInvocation,
           });
+          if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
           await writeJson(paths.expertSessionTransaction(sessionId), journal);
           await applyTransaction(paths, options.executions, sessionId, journal);
           return transaction.execution.executionId;
@@ -277,6 +292,7 @@ export function createFileExpertSessionStore(options: {
           execution: transaction.execution,
           rootInvocation: transaction.rootInvocation,
         });
+        if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
         await writeJson(paths.expertSessionTransaction(sessionId), journal);
         await applyTransaction(paths, options.executions, sessionId, journal);
         return transaction.execution.executionId;
@@ -375,8 +391,9 @@ export function createFileExpertSessionStore(options: {
         return recovered;
       });
     },
-    async transact(sessionId, action) {
+    async transact(sessionId, action, ownerClaimId) {
       return await withExpertSessionLock(sessionId, async () => {
+        if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
         await prepareExpertSession(paths, options.executions, sessionId);
         const sessionValue = await readJson(paths.expertSessionState(sessionId));
         if (sessionValue === undefined) throw new Error(`ExpertSession not found: ${sessionId}`);
@@ -389,6 +406,7 @@ export function createFileExpertSessionStore(options: {
           (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
         const next = await action({ session: session.data, prompts });
+        if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
         const journal = ExpertSessionTransactionJournalSchema.parse({
           schemaVersion: "pragma.expert-session-transaction/v12",
           session: next.session,
@@ -420,8 +438,9 @@ export function createFileExpertSessionStore(options: {
         );
       });
     },
-    async appendEvent(sessionId, event) {
+    async appendEvent(sessionId, event, ownerClaimId) {
       await withExpertSessionLock(sessionId, async () => {
+        if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
         await prepareExpertSession(paths, options.executions, sessionId);
         const session = ExpertSessionRecordSchema.parse(
           await requireJson(paths.expertSessionState(sessionId), sessionId),
@@ -445,6 +464,7 @@ export function createFileExpertSessionStore(options: {
             },
           ]),
         });
+        if (ownerClaimId !== undefined) await assertLeaseOwner(sessionId, ownerClaimId);
         await writeJson(paths.expertSessionTransaction(sessionId), journal);
         await applyTransaction(paths, options.executions, sessionId, journal);
       });
