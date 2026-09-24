@@ -66,7 +66,11 @@ export function useMissionOptions(options: {
     callbacksRef.current.onClearError();
     if (options.api === undefined || options.isFlow) return;
     let cancelled = false;
+    let loading = false;
+    const pendingRuntimeUpdates = new Set<string>();
     const load = (showLoading: boolean) => {
+      if (loading) return;
+      loading = true;
       if (showLoading) setModelsLoading(true);
       void options
         .api!.getMissionModelOptions(options.executorRef, options.missionId)
@@ -83,12 +87,21 @@ export function useMissionOptions(options: {
           if (!cancelled) callbacksRef.current.onError(loadError);
         })
         .finally(() => {
+          loading = false;
           if (!cancelled && showLoading) setModelsLoading(false);
+          const runtimeId = modelRuntimeIdRef.current;
+          const shouldRefresh =
+            runtimeId === undefined
+              ? pendingRuntimeUpdates.size > 0
+              : pendingRuntimeUpdates.has(runtimeId);
+          pendingRuntimeUpdates.clear();
+          if (!cancelled && shouldRefresh) load(false);
         });
     };
     const unsubscribe = options.api.subscribeRuntimeModelCatalog((runtimeId) => {
       if (modelRuntimeIdRef.current === undefined || modelRuntimeIdRef.current === runtimeId) {
-        load(false);
+        if (loading) pendingRuntimeUpdates.add(runtimeId);
+        else load(false);
       }
     });
     load(true);

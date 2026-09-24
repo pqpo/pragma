@@ -66,7 +66,11 @@ import {
   closeExecutionContexts,
   type ContextResolutionScopeSnapshot,
 } from "./context-resolution-service.ts";
-import type { ExpertSessionStore } from "./expert-session-store.ts";
+import type {
+  ExpertSessionEventInput,
+  ExpertSessionStore,
+  ExpertSessionTransactionAction,
+} from "./expert-session-store.ts";
 import { createRuntimeContextRecord, mergeRuntimeContextRecord } from "./runtime-context-record.ts";
 import {
   StoredExecutionView,
@@ -248,6 +252,7 @@ interface ValidDefinitionMigration {
 const EXPERT_SESSION_LEASE_MS = 30_000;
 const EXPERT_SESSION_LEASE_RENEWAL_MS = 10_000;
 const EXPERT_SESSION_LEASE_RETRY_MS = 500;
+const EXPERT_SESSION_LEASE_FAILURE_DRAIN_MS = 5_000;
 
 interface QueuedSteerClaim {
   readonly requestId: string;
@@ -392,12 +397,12 @@ export class ExpertSessionManager {
       updatedAt: now,
     });
     const claimId = randomUUID();
-    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     if (
       !(await this.dependencies.sessions.claimLease(sessionId, claimId, EXPERT_SESSION_LEASE_MS))
     ) {
       throw new Error(`ExpertSession lease could not be acquired: ${sessionId}`);
     }
+    const leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
     const session = this.createActiveSession(
       expert,
       sessionId,
@@ -417,7 +422,10 @@ export class ExpertSessionManager {
     request: ResumeExpertSessionOptions,
   ): Promise<ExpertSession> {
     const existing = this.active.get(request.sessionId);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (!existing.hasLeaseFailure()) return existing;
+      await existing.waitForLeaseFailureCleanup();
+    }
     let record = await this.dependencies.sessions.get(request.sessionId);
     if (record === undefined) throw new Error(`ExpertSession not found: ${request.sessionId}`);
     if (record.status === "closed")
@@ -446,6 +454,7 @@ export class ExpertSessionManager {
       if (migration !== undefined) {
         record = await this.migrateSessionDefinition({
           sessionId: request.sessionId,
+          claimId,
           expertId: expert.id,
           rootExpertId: rootExpert.id,
           definitionFingerprint: currentFingerprint,
@@ -510,58 +519,65 @@ export class ExpertSessionManager {
                 patch: { status: "waiting", waitReason: "human_input" },
               })),
           });
-          await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
-            result: undefined,
-            session: {
-              ...session,
-              activeExecutionId: undefined,
-              queuedRequestIds: [
-                ...new Set([
-                  ...session.queuedRequestIds,
-                  ...prompts
-                    .filter((prompt) => prompt.executionId === execution.executionId)
-                    .map((prompt) => prompt.requestId),
-                ]),
-              ],
-              updatedAt: new Date().toISOString(),
-            },
-            prompts: prompts.map((prompt) =>
-              prompt.executionId === execution.executionId && prompt.status === "running"
-                ? {
-                    ...prompt,
-                    purpose: "human_checkpoint_recovery" as const,
-                    status: "queued" as const,
-                    updatedAt: new Date().toISOString(),
-                  }
-                : prompt,
-            ),
-          }));
+          await this.dependencies.sessions.transact(
+            request.sessionId,
+            ({ session, prompts }) => ({
+              result: undefined,
+              session: {
+                ...session,
+                activeExecutionId: undefined,
+                queuedRequestIds: [
+                  ...new Set([
+                    ...session.queuedRequestIds,
+                    ...prompts
+                      .filter((prompt) => prompt.executionId === execution.executionId)
+                      .map((prompt) => prompt.requestId),
+                  ]),
+                ],
+                updatedAt: new Date().toISOString(),
+              },
+              prompts: prompts.map((prompt) =>
+                prompt.executionId === execution.executionId && prompt.status === "running"
+                  ? {
+                      ...prompt,
+                      purpose: "human_checkpoint_recovery" as const,
+                      status: "queued" as const,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : prompt,
+              ),
+            }),
+            claimId,
+          );
         } else {
           const activeExecutionId = recoveryCandidateId;
           if (execution !== undefined && !isFinal(execution.status)) {
             await interruptRecoveringExecution(this.dependencies.executions, execution.executionId);
           }
-          await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
-            result: undefined,
-            session: {
-              ...session,
-              activeExecutionId: undefined,
-              lastStatus: "interrupted",
-              updatedAt: new Date().toISOString(),
-            },
-            prompts: prompts.map((prompt) =>
-              prompt.executionId === activeExecutionId && prompt.status === "running"
-                ? {
-                    ...prompt,
-                    status: "interrupted" as const,
-                    updatedAt: new Date().toISOString(),
-                  }
-                : prompt,
-            ),
-          }));
+          await this.dependencies.sessions.transact(
+            request.sessionId,
+            ({ session, prompts }) => ({
+              result: undefined,
+              session: {
+                ...session,
+                activeExecutionId: undefined,
+                lastStatus: "interrupted",
+                updatedAt: new Date().toISOString(),
+              },
+              prompts: prompts.map((prompt) =>
+                prompt.executionId === activeExecutionId && prompt.status === "running"
+                  ? {
+                      ...prompt,
+                      status: "interrupted" as const,
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : prompt,
+              ),
+            }),
+            claimId,
+          );
         }
       }
-      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       if (
         !(await this.dependencies.sessions.claimLease(
           request.sessionId,
@@ -571,6 +587,7 @@ export class ExpertSessionManager {
       ) {
         throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
       }
+      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       const session = this.createActiveSession(
         expert,
         request.sessionId,
@@ -582,6 +599,10 @@ export class ExpertSessionManager {
         request.environment,
       );
       await session.recoverPendingQueueSteers();
+      if (session.hasLeaseFailure()) {
+        await session.waitForLeaseFailureCleanup();
+        throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
+      }
       this.active.set(request.sessionId, session);
       return session;
     } catch (error) {
@@ -595,7 +616,10 @@ export class ExpertSessionManager {
     request: RecoverClosedExpertSessionOptions,
   ): Promise<ExpertSession> {
     const existing = this.active.get(request.sessionId);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (!existing.hasLeaseFailure()) return existing;
+      await existing.waitForLeaseFailureCleanup();
+    }
     if (request.reason.trim() === "") {
       throw new Error("Closed ExpertSession recovery requires a reason.");
     }
@@ -629,6 +653,7 @@ export class ExpertSessionManager {
       if (migration !== undefined) {
         await this.migrateSessionDefinition({
           sessionId: request.sessionId,
+          claimId,
           expertId: expert.id,
           rootExpertId: rootExpert.id,
           definitionFingerprint: currentFingerprint,
@@ -637,7 +662,6 @@ export class ExpertSessionManager {
           reason: migration.reason,
         });
       }
-      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       if (
         !(await this.dependencies.sessions.claimLease(
           request.sessionId,
@@ -647,6 +671,7 @@ export class ExpertSessionManager {
       ) {
         throw new Error(`ExpertSession lease was lost during recovery: ${request.sessionId}`);
       }
+      const activationLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
       const session = this.createActiveSession(
         expert,
         request.sessionId,
@@ -667,6 +692,7 @@ export class ExpertSessionManager {
 
   private async migrateSessionDefinition(options: {
     readonly sessionId: string;
+    readonly claimId: string;
     readonly expertId: string;
     readonly rootExpertId: string;
     readonly definitionFingerprint: string;
@@ -716,6 +742,7 @@ export class ExpertSessionManager {
           prompts,
         };
       },
+      options.claimId,
     );
   }
 
@@ -750,6 +777,7 @@ export class ExpertSessionManager {
 }
 
 class ExpertSessionImpl implements ExpertSession {
+  private readonly ownedSessions: Pick<ExpertSessionStore, "enqueue" | "transact" | "appendEvent">;
   private controller: ExecutionController | undefined;
   private processing: Promise<void> | undefined;
   private processingGeneration = 0;
@@ -765,6 +793,7 @@ class ExpertSessionImpl implements ExpertSession {
   private readonly recoveredHumanInteractionIds: readonly string[];
   private waitingForRecoveredHumanInput: boolean;
   private leaseRenewalTask: Promise<void> | undefined;
+  private leaseFailureTask: Promise<void> | undefined;
   private leaseError: Error | undefined;
   private leaseExpiresAt: number;
   private leaseRenewalStopped = false;
@@ -785,6 +814,13 @@ class ExpertSessionImpl implements ExpertSession {
     this.leaseExpiresAt = leaseExpiresAt;
     this.recoveredHumanInteractionIds = recoveredHumanInteractionIds;
     this.waitingForRecoveredHumanInput = recoveredHumanInteractionIds.length > 0;
+    this.ownedSessions = {
+      enqueue: (transaction) => this.dependencies.sessions.enqueue(transaction, this.claimId),
+      transact: <T>(sessionId: string, action: ExpertSessionTransactionAction<T>) =>
+        this.dependencies.sessions.transact(sessionId, action, this.claimId),
+      appendEvent: (sessionId: string, event: ExpertSessionEventInput) =>
+        this.dependencies.sessions.appendEvent(sessionId, event, this.claimId),
+    };
     this.leaseRenewal = setInterval(() => {
       if (this.leaseRenewalTask === undefined) {
         this.leaseRenewalTask = this.renewLease().finally(() => {
@@ -793,6 +829,14 @@ class ExpertSessionImpl implements ExpertSession {
       }
     }, EXPERT_SESSION_LEASE_RENEWAL_MS);
     this.leaseRenewal.unref();
+  }
+
+  hasLeaseFailure(): boolean {
+    return this.leaseError !== undefined;
+  }
+
+  async waitForLeaseFailureCleanup(): Promise<void> {
+    await this.leaseFailureTask;
   }
 
   async prompt(content: string, options: PromptOptions = {}): Promise<ExpertTurn> {
@@ -882,7 +926,7 @@ class ExpertSessionImpl implements ExpertSession {
       createdAt: now,
       updatedAt: now,
     };
-    const executionId = await this.dependencies.sessions.enqueue({
+    const executionId = await this.ownedSessions.enqueue({
       execution,
       prompt,
       ...(fallbackReason === undefined
@@ -926,7 +970,7 @@ class ExpertSessionImpl implements ExpertSession {
   async abort(reason?: string): Promise<void> {
     const controller = this.controller;
     await controller?.cancel(reason);
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: { ...session, activeExecutionId: undefined, updatedAt: new Date().toISOString() },
       prompts: prompts.map((prompt) =>
@@ -958,7 +1002,7 @@ class ExpertSessionImpl implements ExpertSession {
       executionId,
       reason ?? "Execution interrupted by the Mission controller.",
     );
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {
         ...session,
@@ -994,7 +1038,7 @@ class ExpertSessionImpl implements ExpertSession {
       await controller.checkpointWaitingHuman();
     } catch (error) {
       this.paused = previousPaused;
-      await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
         result: undefined,
         session,
         prompts: prompts.map((candidate) =>
@@ -1015,29 +1059,26 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async markExecutionPromptAsHumanCheckpointRecovery(executionId: string): Promise<string> {
-    return await this.dependencies.sessions.transact<string>(
-      this.sessionId,
-      ({ session, prompts }) => {
-        const prompt = prompts.find(
-          (candidate) =>
-            candidate.executionId === executionId &&
-            candidate.mode === "enqueue" &&
-            candidate.status === "running",
-        );
-        if (prompt === undefined) {
-          throw new Error(`ExpertSession has no active human wait prompt: ${this.sessionId}`);
-        }
-        return {
-          result: prompt.requestId,
-          session,
-          prompts: prompts.map((candidate) =>
-            candidate.requestId === prompt.requestId
-              ? { ...candidate, purpose: "human_checkpoint_recovery" as const }
-              : candidate,
-          ),
-        };
-      },
-    );
+    return await this.ownedSessions.transact<string>(this.sessionId, ({ session, prompts }) => {
+      const prompt = prompts.find(
+        (candidate) =>
+          candidate.executionId === executionId &&
+          candidate.mode === "enqueue" &&
+          candidate.status === "running",
+      );
+      if (prompt === undefined) {
+        throw new Error(`ExpertSession has no active human wait prompt: ${this.sessionId}`);
+      }
+      return {
+        result: prompt.requestId,
+        session,
+        prompts: prompts.map((candidate) =>
+          candidate.requestId === prompt.requestId
+            ? { ...candidate, purpose: "human_checkpoint_recovery" as const }
+            : candidate,
+        ),
+      };
+    });
   }
 
   releaseAfterHumanCheckpoint(): Promise<void> {
@@ -1154,7 +1195,7 @@ class ExpertSessionImpl implements ExpertSession {
       const pending = (await this.getPromptQueue()).filter(
         (prompt) => prompt.status === "queued" || prompt.status === "running",
       );
-      await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
         result: undefined,
         session: {
           ...session,
@@ -1192,7 +1233,7 @@ class ExpertSessionImpl implements ExpertSession {
     }
     if (errors.length === 0) {
       try {
-        await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+        await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
           result: undefined,
           session: closeSessionContexts(session),
           prompts,
@@ -1223,7 +1264,6 @@ class ExpertSessionImpl implements ExpertSession {
     let lastError: Error | undefined;
     while (!this.leaseRenewalStopped && Date.now() < this.leaseExpiresAt) {
       try {
-        const renewedLeaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
         const renewed = await this.dependencies.sessions.claimLease(
           this.sessionId,
           this.claimId,
@@ -1233,7 +1273,7 @@ class ExpertSessionImpl implements ExpertSession {
           await this.failLease(new Error(`ExpertSession lease was lost: ${this.sessionId}`));
           return;
         }
-        this.leaseExpiresAt = renewedLeaseExpiresAt;
+        this.leaseExpiresAt = Date.now() + EXPERT_SESSION_LEASE_MS;
         return;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -1259,9 +1299,45 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async failLease(error: Error): Promise<void> {
+    if (this.leaseError !== undefined) {
+      await this.leaseFailureTask;
+      return;
+    }
     this.leaseError = error;
     this.paused = true;
-    await this.controller?.cancel(error.message).catch(() => undefined);
+    this.stopLeaseRenewal();
+    this.leaseFailureTask = this.finishLeaseLoss(error);
+    await this.leaseFailureTask;
+  }
+
+  private async finishLeaseLoss(error: Error): Promise<void> {
+    try {
+      await this.controller?.cancel(error.message).catch(() => undefined);
+      await this.waitForProcessingShutdown();
+      await this.runtimeSessions.clear().catch(() => undefined);
+      await this.dependencies.sessions
+        .releaseLease(this.sessionId, this.claimId)
+        .catch(() => undefined);
+    } finally {
+      this.onClosed();
+    }
+  }
+
+  private async waitForProcessingShutdown(): Promise<void> {
+    const processing = this.processing;
+    if (processing === undefined) return;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        processing.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, EXPERT_SESSION_LEASE_FAILURE_DRAIN_MS);
+          timeout.unref();
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
   }
 
   private stopLeaseRenewal(): void {
@@ -1518,7 +1594,7 @@ class ExpertSessionImpl implements ExpertSession {
 
   async resumePromptQueue(): Promise<void> {
     if ((await this.getPromptQueueState()).state !== "paused") return;
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: { ...session, updatedAt: new Date().toISOString() },
       prompts: prompts.map((prompt) =>
@@ -1532,7 +1608,7 @@ class ExpertSessionImpl implements ExpertSession {
           : prompt,
       ),
     }));
-    await this.dependencies.sessions.appendEvent(this.sessionId, {
+    await this.ownedSessions.appendEvent(this.sessionId, {
       eventId: `prompt-queue-resumed:${randomUUID()}`,
       type: "prompt.queue-resumed",
       data: {},
@@ -1551,7 +1627,7 @@ class ExpertSessionImpl implements ExpertSession {
     );
     for (const prompt of uncertainStrictSteers) {
       const attempt = prompt.deliveryAttempt!;
-      await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+      await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
         result: undefined,
         session: { ...session, updatedAt: new Date().toISOString() },
         prompts: prompts.map((candidate) =>
@@ -1658,7 +1734,7 @@ class ExpertSessionImpl implements ExpertSession {
 
       const controller = await this.waitForSteerController();
       const now = new Date().toISOString();
-      claim = await this.dependencies.sessions.transact<QueuedSteerClaim>(
+      claim = await this.ownedSessions.transact<QueuedSteerClaim>(
         this.sessionId,
         ({ session, prompts }) => {
           if (session.status === "closed") {
@@ -1753,7 +1829,7 @@ class ExpertSessionImpl implements ExpertSession {
   async removeQueuedPrompt(requestId: string, reason?: string): Promise<void> {
     const cancellationReason = reason ?? "Removed from prompt queue.";
     const now = new Date().toISOString();
-    const executionId = await this.dependencies.sessions.transact<string>(
+    const executionId = await this.ownedSessions.transact<string>(
       this.sessionId,
       ({ session, prompts }) => {
         const prompt = prompts.find((candidate) => candidate.requestId === requestId);
@@ -1789,7 +1865,7 @@ class ExpertSessionImpl implements ExpertSession {
     const pending = (await this.getPromptQueue()).filter(
       (prompt) => prompt.status === "queued" || prompt.status === "running",
     );
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {
         ...session,
@@ -1807,7 +1883,7 @@ class ExpertSessionImpl implements ExpertSession {
           : prompt,
       ),
     }));
-    await this.dependencies.sessions.appendEvent(this.sessionId, {
+    await this.ownedSessions.appendEvent(this.sessionId, {
       eventId: `prompt-queue-cleared:${randomUUID()}`,
       type: "prompt.queue-cleared",
       data: {
@@ -1819,7 +1895,7 @@ class ExpertSessionImpl implements ExpertSession {
     for (const prompt of pending) {
       await this.cancelPersistedExecution(prompt.executionId, cancellationReason);
     }
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {
         ...session,
@@ -1843,7 +1919,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async markQueueSteerSucceeded(claim: QueuedSteerClaim): Promise<void> {
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: { ...session, updatedAt: new Date().toISOString() },
       prompts: prompts.map((prompt) =>
@@ -1866,7 +1942,7 @@ class ExpertSessionImpl implements ExpertSession {
     requestId: string,
     attemptId: string | undefined,
   ): Promise<void> {
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: { ...session, updatedAt: new Date().toISOString() },
       prompts: prompts.map((prompt) =>
@@ -1884,7 +1960,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async restoreQueuedSteer(claim: QueuedSteerClaim): Promise<void> {
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => {
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => {
       const current = prompts.find((prompt) => prompt.requestId === claim.requestId);
       if (
         current === undefined ||
@@ -1922,7 +1998,7 @@ class ExpertSessionImpl implements ExpertSession {
     sourceExecutionId: string,
   ): Promise<void> {
     const updatedAt = new Date().toISOString();
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {
         ...session,
@@ -1953,7 +2029,7 @@ class ExpertSessionImpl implements ExpertSession {
           : candidate,
       ),
     }));
-    await this.dependencies.sessions.appendEvent(this.sessionId, {
+    await this.ownedSessions.appendEvent(this.sessionId, {
       eventId: `prompt-queue-paused:delivery-uncertain:${prompt.requestId}`,
       type: "prompt.queue-paused",
       data: { requestId: prompt.requestId, reason: "delivery_uncertain" },
@@ -2003,7 +2079,7 @@ class ExpertSessionImpl implements ExpertSession {
     }
     const controller = await this.waitForSteerController();
     const now = new Date().toISOString();
-    const claim = await this.dependencies.sessions.transact<SteerClaim>(
+    const claim = await this.ownedSessions.transact<SteerClaim>(
       this.sessionId,
       ({ session, prompts }) => {
         if (session.status === "closed") {
@@ -2100,7 +2176,7 @@ class ExpertSessionImpl implements ExpertSession {
     error?: string,
     failureState: "not_dispatched" | "uncertain" = "uncertain",
   ): Promise<void> {
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: { ...session, updatedAt: new Date().toISOString() },
       prompts: prompts.map((prompt) =>
@@ -2163,13 +2239,16 @@ class ExpertSessionImpl implements ExpertSession {
 
   private async processQueue(generation: number): Promise<void> {
     while (true) {
+      if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
       const prompts = await this.getPromptQueue();
+      if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
       const next = prompts.find((prompt) => prompt.status === "queued");
       if (next === undefined) return;
       const status = await this.runPrompt(next).catch(() => "failed" as const);
       if (this.processingGeneration !== generation) return;
+      if (this.leaseError !== undefined) return;
       if (status === "checkpointed") return;
       if (status === "failed") {
         const hasQueued = (await this.getPromptQueue()).some(
@@ -2177,7 +2256,7 @@ class ExpertSessionImpl implements ExpertSession {
         );
         if (hasQueued) {
           this.paused = true;
-          await this.dependencies.sessions.appendEvent(this.sessionId, {
+          await this.ownedSessions.appendEvent(this.sessionId, {
             eventId: `prompt-queue-paused:${next.requestId}`,
             type: "prompt.queue-paused",
             data: { requestId: next.requestId, status },
@@ -2192,29 +2271,26 @@ class ExpertSessionImpl implements ExpertSession {
     prompt: PromptRequest,
   ): Promise<"succeeded" | "failed" | "cancelled" | "checkpointed"> {
     const now = new Date().toISOString();
-    const claimed = await this.dependencies.sessions.transact(
-      this.sessionId,
-      ({ session, prompts }) => {
-        const current = prompts.find((candidate) => candidate.requestId === prompt.requestId);
-        if (current?.mode !== "enqueue" || current.status !== "queued") {
-          return { result: false, session, prompts };
-        }
-        return {
-          result: true,
-          session: {
-            ...session,
-            activeExecutionId: prompt.executionId,
-            queuedRequestIds: session.queuedRequestIds.filter((id) => id !== prompt.requestId),
-            updatedAt: now,
-          },
-          prompts: prompts.map((candidate) =>
-            candidate.requestId === prompt.requestId
-              ? { ...candidate, status: "running" as const, updatedAt: now }
-              : candidate,
-          ),
-        };
-      },
-    );
+    const claimed = await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => {
+      const current = prompts.find((candidate) => candidate.requestId === prompt.requestId);
+      if (current?.mode !== "enqueue" || current.status !== "queued") {
+        return { result: false, session, prompts };
+      }
+      return {
+        result: true,
+        session: {
+          ...session,
+          activeExecutionId: prompt.executionId,
+          queuedRequestIds: session.queuedRequestIds.filter((id) => id !== prompt.requestId),
+          updatedAt: now,
+        },
+        prompts: prompts.map((candidate) =>
+          candidate.requestId === prompt.requestId
+            ? { ...candidate, status: "running" as const, updatedAt: now }
+            : candidate,
+        ),
+      };
+    });
     if (!claimed) return "cancelled";
     await this.dependencies.executions.commit({
       commitId: randomUUID(),
@@ -2229,6 +2305,7 @@ class ExpertSessionImpl implements ExpertSession {
       ],
     });
     const session = await this.getState();
+    if (this.leaseError !== undefined) return "cancelled";
     const rootContextId = session.rootContextId;
     const rootContext = session.contexts[rootContextId];
     if (rootContext === undefined) throw new Error("ExpertSession root Context is missing.");
@@ -2296,7 +2373,7 @@ class ExpertSessionImpl implements ExpertSession {
         error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
       }
     }
-    if (this.closePromise !== undefined) {
+    if (this.closePromise !== undefined || this.leaseError !== undefined) {
       if (this.controller === controller) this.controller = undefined;
       controller.finish();
       return "cancelled";
@@ -2306,32 +2383,29 @@ class ExpertSessionImpl implements ExpertSession {
       // prompt is still the recoverable unit of work. Persist that boundary
       // before releasing the in-memory controller so a later Mission owner
       // can discover and resume the same prompt after a process crash.
-      await this.dependencies.sessions.transact(
-        this.sessionId,
-        ({ session: current, prompts }) => ({
-          result: undefined,
-          session: {
-            ...current,
-            activeExecutionId:
-              current.activeExecutionId === prompt.executionId
-                ? undefined
-                : current.activeExecutionId,
-            queuedRequestIds: [...new Set([...current.queuedRequestIds, prompt.requestId])],
-            lastStatus: "waiting" as const,
-            updatedAt: new Date().toISOString(),
-          },
-          prompts: prompts.map((candidate) =>
-            candidate.requestId === prompt.requestId && candidate.status === "running"
-              ? {
-                  ...candidate,
-                  purpose: "human_checkpoint_recovery" as const,
-                  status: "queued" as const,
-                  updatedAt: new Date().toISOString(),
-                }
-              : candidate,
-          ),
-        }),
-      );
+      await this.ownedSessions.transact(this.sessionId, ({ session: current, prompts }) => ({
+        result: undefined,
+        session: {
+          ...current,
+          activeExecutionId:
+            current.activeExecutionId === prompt.executionId
+              ? undefined
+              : current.activeExecutionId,
+          queuedRequestIds: [...new Set([...current.queuedRequestIds, prompt.requestId])],
+          lastStatus: "waiting" as const,
+          updatedAt: new Date().toISOString(),
+        },
+        prompts: prompts.map((candidate) =>
+          candidate.requestId === prompt.requestId && candidate.status === "running"
+            ? {
+                ...candidate,
+                purpose: "human_checkpoint_recovery" as const,
+                status: "queued" as const,
+                updatedAt: new Date().toISOString(),
+              }
+            : candidate,
+        ),
+      }));
       if (this.controller === controller) this.controller = undefined;
       controller.finish();
       return status;
@@ -2375,7 +2449,7 @@ class ExpertSessionImpl implements ExpertSession {
         ],
       });
     }
-    await this.dependencies.sessions.transact(this.sessionId, ({ session: current, prompts }) => ({
+    await this.ownedSessions.transact(this.sessionId, ({ session: current, prompts }) => ({
       result: undefined,
       session: {
         ...current,
@@ -2398,8 +2472,8 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async persistRuntimeContext(context: RuntimeContextRecord): Promise<void> {
-    if (this.closePromise !== undefined) return;
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+    if (this.closePromise !== undefined || this.leaseError !== undefined) return;
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {
         ...session,
