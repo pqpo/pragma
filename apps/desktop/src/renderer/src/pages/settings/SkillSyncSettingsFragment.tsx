@@ -330,8 +330,19 @@ export function SkillSyncSettingsFragment() {
                   attention: attentionCount,
                 })}
               </p>
-              {overview.status === "error" || overview.errorMessage !== undefined ? (
-                <small className="skill-sync-summary-error">{t("skillSync.retryHint")}</small>
+              {overview.status === "error" ||
+              overview.errorCode !== undefined ||
+              overview.errorMessage !== undefined ? (
+                <small className="skill-sync-summary-error">
+                  {overview.errorCode !== undefined || overview.errorMessage !== undefined
+                    ? t(
+                        skillSyncRepositoryErrorMessageKey(
+                          overview.errorCode,
+                          overview.errorMessage,
+                        ),
+                      )
+                    : t("skillSync.retryHint")}
+                </small>
               ) : null}
             </div>
           </div>
@@ -438,6 +449,60 @@ export function SkillSyncSettingsFragment() {
       ) : null}
     </SettingsScreenFrame>
   );
+}
+
+export function skillSyncRepositoryErrorMessageKey(
+  code: string | undefined,
+  message: string | undefined,
+): string {
+  switch (code) {
+    case "git_identity_missing":
+      return "skillSync.diagnostics.gitIdentityMissing";
+    case "skill_sync_git_timeout":
+      return "skillSync.diagnostics.gitTimeout";
+    case "skill_sync_head_changed":
+      return "skillSync.diagnostics.remoteChanged";
+    case "skill_sync_manifest_missing":
+    case "skill_sync_manifest_invalid":
+    case "skill_sync_protocol_unsupported":
+    case "skill_sync_identity_mismatch":
+    case "skill_sync_entry_invalid":
+    case "skill_sync_integrity_failed":
+      return "skillSync.diagnostics.repositoryFormat";
+    case "skill_sync_binary_file":
+      return "skillSync.diagnostics.binaryFile";
+    case "skill_sync_size_limit":
+      return "skillSync.diagnostics.packageTooLarge";
+    case "skill_sync_path_invalid":
+      return "skillSync.diagnostics.invalidFilePath";
+  }
+
+  const detail = message?.toLowerCase() ?? "";
+  if (
+    /auth|credential|publickey|permission denied|access denied|could not read username/iu.test(
+      detail,
+    )
+  ) {
+    return "skillSync.diagnostics.repositoryAccess";
+  }
+  if (
+    /couldn.t find remote ref|invalid branch|not a valid branch name|invalid ref|unknown revision|reference is not a tree/iu.test(
+      detail,
+    )
+  ) {
+    return "skillSync.diagnostics.branchUnavailable";
+  }
+  if (/not a git repository|repository .* not found|could not read from remote/iu.test(detail)) {
+    return "skillSync.diagnostics.repositoryAddress";
+  }
+  if (
+    /could not resolve host(?:name)?|network|connect.*failed|connection.*(?:timed out|refused|reset)/iu.test(
+      detail,
+    )
+  ) {
+    return "skillSync.diagnostics.repositoryNetwork";
+  }
+  return "skillSync.diagnostics.repositorySyncFailed";
 }
 
 function skillDiagnosticPath(code: string | undefined, message: string | undefined) {

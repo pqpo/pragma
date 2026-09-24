@@ -66,6 +66,16 @@ export const settings = {
       invalidFilePath: "This Skill file path is not valid. Check its name and folder.",
       duplicateFile: "This Skill contains duplicate file paths. Rename one of the files.",
       missingSkillDocument: "This Skill is missing its required SKILL.md file.",
+      gitIdentityMissing: "Set your Git author name and email before syncing.",
+      repositoryAccess: "The repository is not accessible. Check your credentials and permissions.",
+      branchUnavailable: "The target branch could not be found. Check the branch name.",
+      repositoryAddress:
+        "The Git repository could not be found. Check its address and permissions.",
+      repositoryNetwork:
+        "Could not connect to the Git repository. Check your network and try again.",
+      repositoryFormat: "The remote repository format is not supported. Check its contents.",
+      repositorySyncFailed:
+        "Could not sync the repository. Check its address, network, and access.",
     },
     configurationSaved: "Configuration saved. Initial Skill sync completed.",
     configurationSavedWithIssues:

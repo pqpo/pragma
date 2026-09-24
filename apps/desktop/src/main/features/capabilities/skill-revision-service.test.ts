@@ -516,6 +516,30 @@ describe("Skill revision service", () => {
     expect(completed).toMatchObject({ state: "completed", publishedRevision: 2 });
   });
 
+  it("keeps generated layout validation for Memory Skill revisions", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "scripts"));
+    await writeFile(join(fixture.sourcePath, "scripts", "run.js"), "export const run = true;\n");
+
+    const job = await fixture.service.start(request("memory-learning"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: editing.draft.revision,
+        expectedWorkingTreeHash: editing.workingTree.hash,
+        summary: "Validate this generated Skill revision.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ code: "skill_executable_extension_invalid" }),
+        ]),
+      },
+    });
+  });
+
   it("recovers a creation candidate under a new id after the reserved id is occupied", async () => {
     let occupied = true;
     const fixture = await createService({
