@@ -2,11 +2,15 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createOpencodeClient } from "@opencode-ai/sdk";
+import { OpenCode } from "@opencode/client";
 
 import { describe, expect, it } from "vitest";
 
 import { connectOpenCode } from "../src/client.ts";
+import { prepareOpenCodeConfiguration } from "../src/configuration.ts";
 import { prepareOpenCodeDataHome } from "../src/data-home.ts";
+import { v2PermissionRules } from "../src/permissions.ts";
 import { probeOpenCode, startOpenCodeProcess } from "../src/process.ts";
 
 for (const [major, variable] of [
@@ -27,7 +31,31 @@ for (const [major, variable] of [
       try {
         const detected = await probeOpenCode(executablePath!, env);
         expect(detected.major).toBe(major);
-        const sessionEnv = await prepareOpenCodeDataHome(env, join(root, "pragma-session"));
+        await mkdir(join(root, "config", "opencode"), { recursive: true });
+        await mkdir(join(root, "config", "opencode", "plugins"));
+        const pluginMarker = join(root, "unmanaged-plugin-loaded");
+        await writeFile(
+          join(root, "config", "opencode", "plugins", "marker.js"),
+          `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(pluginMarker)}, "loaded"); export default async () => ({});`,
+        );
+        await writeFile(
+          join(root, "config", "opencode", "opencode.json"),
+          JSON.stringify({
+            mcp: { unmanaged: { type: "remote", url: "http://127.0.0.1:9/unmanaged" } },
+            ...(major === 1
+              ? { permission: { read: { "blocked/*": "deny" } } }
+              : { permissions: [{ action: "read", resource: "blocked/*", effect: "deny" }] }),
+          }),
+        );
+        const sessionDir = join(root, "pragma-session");
+        const dataEnv = await prepareOpenCodeDataHome(env, sessionDir);
+        const configured = await prepareOpenCodeConfiguration({
+          env: dataEnv,
+          workspace: root,
+          sessionDir,
+          major,
+        });
+        const sessionEnv = configured.env;
         expect(sessionEnv["XDG_DATA_HOME"]).toBe(join(root, "pragma-session", "data"));
         const native = await startOpenCodeProcess({
           executablePath: executablePath!,
@@ -38,18 +66,52 @@ for (const [major, variable] of [
           mcpUrl: "http://127.0.0.1:9/mcp",
         });
         const client = connectOpenCode(native, root);
+        const rules = v2PermissionRules("request-approval", configured.deniedPermissions);
         let sessionId = "";
         try {
-          sessionId = await client.createSession("", "Pragma integration test", [
-            { action: "*", resource: "*", effect: "ask" },
-          ]);
+          sessionId = await client.createSession("", "Pragma integration test", rules);
           expect(sessionId).not.toBe("");
-          expect(await client.createSession(sessionId, "Pragma integration test", [])).toBe(
+          if (major === 1) {
+            const config = (
+              await createOpencodeClient({
+                baseUrl: native.url,
+                directory: root,
+                headers: { ...native.headers },
+                throwOnError: true,
+              }).config.get({ query: { directory: root } })
+            ).data;
+            expect(config?.permission).toMatchObject({
+              bash: "deny",
+              external_directory: "deny",
+              read: { "blocked/*": "deny" },
+            });
+            expect(Object.keys(config?.mcp ?? {})).toEqual(["pragma_tools"]);
+          } else {
+            const info = await OpenCode.make({
+              baseUrl: native.url,
+              headers: { ...native.headers },
+            }).session.get({ sessionID: sessionId });
+            expect(info.permissions).toEqual(
+              expect.arrayContaining([
+                { action: "shell", resource: "*", effect: "deny" },
+                { action: "external_directory", resource: "*", effect: "deny" },
+                { action: "read", resource: "blocked/*", effect: "deny" },
+              ]),
+            );
+          }
+          expect(await client.createSession(sessionId, "Pragma integration test", rules)).toBe(
             sessionId,
           );
-          expect(await client.createSession(sessionId, "", [])).toBe(sessionId);
+          expect(await client.createSession(sessionId, "", rules)).toBe(sessionId);
           expect(Array.isArray(await client.listModels())).toBe(true);
-          if (major === 2) await client.addMcp("pragma_tools", "http://127.0.0.1:9/mcp");
+          if (major === 2) {
+            await client.addMcp("pragma_tools", "http://127.0.0.1:9/mcp");
+            const servers = await OpenCode.make({
+              baseUrl: native.url,
+              headers: { ...native.headers },
+            }).mcp.list({ location: { directory: root } });
+            expect(JSON.stringify(servers)).not.toContain("unmanaged");
+          }
         } finally {
           await client.close();
         }
@@ -61,13 +123,13 @@ for (const [major, variable] of [
         });
         const restoredClient = connectOpenCode(resumed, root);
         try {
-          expect(await restoredClient.createSession(sessionId, "Pragma integration test", [])).toBe(
-            sessionId,
-          );
+          expect(
+            await restoredClient.createSession(sessionId, "Pragma integration test", rules),
+          ).toBe(sessionId);
           const otherDirectory = join(root, "other");
           await mkdir(otherDirectory);
           await expect(
-            connectOpenCode(resumed, otherDirectory).createSession(sessionId, "", []),
+            connectOpenCode(resumed, otherDirectory).createSession(sessionId, "", rules),
           ).rejects.toThrow(/workspace/);
         } finally {
           await restoredClient.close();
@@ -75,6 +137,7 @@ for (const [major, variable] of [
         expect(await readdir(root)).not.toContain("opencode.jsonc");
         const configPath = join(root, "config", "opencode", "opencode.jsonc");
         expect(await readFile(configPath, "utf8").catch(() => "")).not.toContain("pragma_tools");
+        expect(await readFile(pluginMarker, "utf8").catch(() => "")).toBe("");
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -185,7 +248,14 @@ for (const [major, variable] of [
         );
         const native = await startOpenCodeProcess({
           executablePath: process.env[variable]!,
-          env,
+          env: (
+            await prepareOpenCodeConfiguration({
+              env: await prepareOpenCodeDataHome(env, join(root, "pragma-session")),
+              workspace: root,
+              sessionDir: join(root, "pragma-session"),
+              major,
+            })
+          ).env,
           cwd: root,
           major,
           version: major === 1 ? "1.18.32" : "2.0.16",
@@ -215,6 +285,7 @@ for (const [major, variable] of [
           });
           expect(output.text).toBe("Hello from mock model.");
           expect(deltas.join("")).toBe(output.text);
+          expect(output.usage).toBeUndefined();
         } finally {
           await client.close();
         }

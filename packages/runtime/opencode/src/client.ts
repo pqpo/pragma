@@ -16,6 +16,7 @@ export interface OpenCodeClient {
     permissions: readonly OpenCodePermissionRule[],
   ): Promise<string>;
   listModels(): Promise<readonly OpenCodeModel[]>;
+  serializedContext(sessionId: string): Promise<string>;
   addMcp(name: string, url: string): Promise<void>;
   prompt(input: {
     readonly sessionId: string;
@@ -32,6 +33,11 @@ export interface OpenCodeClient {
   cancel(sessionId: string): Promise<void>;
   compact(sessionId: string, model?: OpenCodeModelRef): Promise<void>;
   replyPermission(sessionId: string, requestId: string, approved: boolean): Promise<void>;
+  replyQuestion(
+    sessionId: string,
+    requestId: string,
+    answers?: readonly (readonly string[])[] | Readonly<Record<string, string | readonly string[]>>,
+  ): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -130,6 +136,13 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
         })),
       );
     },
+    async serializedContext(sessionId) {
+      const messages = await client.session.messages({
+        path: { id: sessionId },
+        query: { directory },
+      });
+      return JSON.stringify(messages.data ?? []);
+    },
     async addMcp(name, url) {
       await client.mcp.add({
         body: { name, config: { type: "remote", url, enabled: true } },
@@ -220,7 +233,7 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join("");
-        return { text: content, usage: readUsage(last.info.tokens) };
+        return { text: content, usage: readUsage(last.info.tokens, content !== "") };
       } finally {
         settled = true;
         controller.abort();
@@ -245,6 +258,9 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
         query: { directory },
         body: { response: approved ? "once" : "reject" },
       });
+    },
+    async replyQuestion(_sessionId, requestId, answers) {
+      await replyV1Question(process, directory, requestId, answers);
     },
     async close() {
       await process.close();
@@ -329,6 +345,9 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
       }
       return [...configured.values()];
     },
+    async serializedContext(sessionId) {
+      return JSON.stringify(await client.session.context({ sessionID: sessionId }));
+    },
     async addMcp(name, url) {
       await client.mcp.add({
         server: name,
@@ -341,8 +360,9 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
       const reader = (async () => {
         for await (const event of client.event.subscribe({ signal: controller.signal })) {
           if (signal.aborted) break;
-          if (asRecord(event.data)?.["sessionID"] !== sessionId) continue;
-          await onEvent({ type: event.type, data: asRecord(event.data) ?? {} });
+          const data = asRecord(event.data) ?? {};
+          if ((data["sessionID"] ?? asRecord(data["form"])?.["sessionID"]) !== sessionId) continue;
+          await onEvent({ type: event.type, data });
         }
         if (!controller.signal.aborted) {
           throw new Error("OpenCode event stream ended before the turn completed.");
@@ -383,13 +403,11 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
           throw new Error("OpenCode turn ended without an assistant message.");
         if (last.error !== undefined)
           throw new Error(`OpenCode turn failed: ${last.error.message}.`);
-        return {
-          text: last.content
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join(""),
-          usage: readUsage(last.tokens),
-        };
+        const outputText = last.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("");
+        return { text: outputText, usage: readUsage(last.tokens, outputText !== "") };
       } finally {
         controller.abort();
         await reader.catch(() => undefined);
@@ -409,6 +427,23 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
         decision: approved ? "once" : "reject",
       });
     },
+    async replyQuestion(sessionId, requestId, answers) {
+      if (requestId.startsWith("que_")) {
+        await replyV1Question(process, directory, requestId, answers);
+        return;
+      }
+      if (answers === undefined) {
+        await client.session.form.cancel({ sessionID: sessionId, formID: requestId });
+      } else if (!Array.isArray(answers)) {
+        await client.session.form.reply({
+          sessionID: sessionId,
+          formID: requestId,
+          answer: { ...(answers as Readonly<Record<string, string | readonly string[]>>) },
+        });
+      } else {
+        throw new Error("OpenCode 2.x form requires keyed answers.");
+      }
+    },
     async close() {
       await process.close();
     },
@@ -421,6 +456,28 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+async function replyV1Question(
+  process: OpenCodeProcess,
+  directory: string,
+  requestId: string,
+  answers:
+    | readonly (readonly string[])[]
+    | Readonly<Record<string, string | readonly string[]>>
+    | undefined,
+): Promise<void> {
+  const url = new URL(
+    `/question/${encodeURIComponent(requestId)}/${answers === undefined ? "reject" : "reply"}`,
+    process.url,
+  );
+  url.searchParams.set("directory", directory);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { ...process.headers, "content-type": "application/json" },
+    ...(answers === undefined ? {} : { body: JSON.stringify({ answers }) }),
+  });
+  if (!response.ok) throw new Error(`OpenCode question response failed: HTTP ${response.status}.`);
+}
+
 function string(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -429,7 +486,7 @@ async function sameDirectory(first: string, second: string): Promise<boolean> {
   return (await realpath(first)) === (await realpath(second));
 }
 
-function readUsage(value: unknown): OpenCodeTurnOutput["usage"] {
+function readUsage(value: unknown, hasResponse: boolean): OpenCodeTurnOutput["usage"] {
   const tokens = asRecord(value);
   if (
     tokens === undefined ||
@@ -442,12 +499,13 @@ function readUsage(value: unknown): OpenCodeTurnOutput["usage"] {
   )
     return undefined;
   const cache = asRecord(tokens["cache"]);
-  return {
+  const usage = {
     input: numeric(tokens["input"]),
     output: numeric(tokens["output"]),
     cacheRead: numeric(cache?.["read"]),
     cacheWrite: numeric(cache?.["write"]),
   };
+  return hasResponse && Object.values(usage).every((count) => count === 0) ? undefined : usage;
 }
 
 function numeric(value: unknown): number {

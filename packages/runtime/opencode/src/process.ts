@@ -4,11 +4,16 @@ import { createServer } from "node:net";
 import type { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { OpenCode } from "@opencode/client";
+import { v1Permission, type OpenCodePermissionMode } from "./permissions.ts";
 
 type OpenCodeChild = ChildProcessByStdio<null, Readable, Readable>;
 const execFileAsync = promisify(execFile);
 
 export type OpenCodeMajor = 1 | 2;
+const MINIMUM_VERSION: Record<OpenCodeMajor, readonly [number, number, number]> = {
+  1: [1, 18, 32],
+  2: [2, 0, 16],
+};
 
 export interface OpenCodeProcess {
   readonly major: OpenCodeMajor;
@@ -32,8 +37,16 @@ export async function probeOpenCode(
   const output = stdout + stderr;
   const match = /(?:^|\s|v)([12])\.(\d+)\.(\d+)(?:\b|[-+])/.exec(output);
   if (match === null) throw new Error("OpenCode CLI version is unavailable or unsupported.");
+  const major = Number(match[1]) as OpenCodeMajor;
+  const version = [major, Number(match[2]), Number(match[3])];
+  const minimum = MINIMUM_VERSION[major];
+  if (version[1]! < minimum[1] || (version[1] === minimum[1] && version[2]! < minimum[2])) {
+    throw new Error(
+      `OpenCode ${version.join(".")} is older than the supported ${minimum.join(".")}.`,
+    );
+  }
   return {
-    major: Number(match[1]) as OpenCodeMajor,
+    major,
     version: `${match[1]}.${match[2]}.${match[3]}`,
   };
 }
@@ -44,7 +57,7 @@ export async function startOpenCodeProcess(input: {
   readonly cwd: string;
   readonly major: OpenCodeMajor;
   readonly version: string;
-  readonly permissionMode?: "request-approval" | "auto-approve" | "full-access" | undefined;
+  readonly permissionMode?: OpenCodePermissionMode | undefined;
   readonly mcpUrl?: string | undefined;
 }): Promise<OpenCodeProcess> {
   const port = await unusedLoopbackPort();
@@ -55,29 +68,39 @@ export async function startOpenCodeProcess(input: {
     throw new Error("OPENCODE_CONFIG_CONTENT must be a JSON object.");
   }
   const config = asObject(parsedConfig);
-  const v1Config =
-    input.major === 1 && (input.permissionMode !== undefined || input.mcpUrl !== undefined)
+  const managedConfig =
+    input.major === 1
       ? {
-          OPENCODE_CONFIG_CONTENT: JSON.stringify({
-            ...config,
-            ...(input.permissionMode === undefined
+          ...config,
+          ...(input.permissionMode === undefined
+            ? {}
+            : {
+                permission: v1Permission(input.permissionMode, asObject(config["permission"])),
+              }),
+          mcp:
+            input.mcpUrl === undefined
               ? {}
               : {
-                  permission: {
-                    "*": input.permissionMode === "request-approval" ? "ask" : "allow",
-                  },
-                }),
-            ...(input.mcpUrl === undefined
-              ? {}
-              : {
-                  mcp: {
-                    ...asObject(config["mcp"]),
-                    pragma_tools: { type: "remote", url: input.mcpUrl, enabled: true },
-                  },
-                }),
-          }),
+                  pragma_tools: { type: "remote", url: input.mcpUrl, enabled: true },
+                },
         }
-      : {};
+      : {
+          ...config,
+          ...(input.permissionMode === undefined || input.permissionMode === "full-access"
+            ? {}
+            : {
+                experimental: {
+                  policies: [
+                    ...(Array.isArray(asObject(config["experimental"])["policies"])
+                      ? (asObject(config["experimental"])["policies"] as unknown[])
+                      : []),
+                    { action: "permission", resource: "shell:*", effect: "deny" },
+                    { action: "permission", resource: "execute:*", effect: "deny" },
+                    { action: "permission", resource: "external_directory:*", effect: "deny" },
+                  ],
+                },
+              }),
+        };
   const child = spawn(
     input.executablePath,
     ["serve", "--hostname", "127.0.0.1", "--port", String(port)],
@@ -85,7 +108,7 @@ export async function startOpenCodeProcess(input: {
       cwd: input.cwd,
       env: {
         ...input.env,
-        ...v1Config,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(managedConfig),
         OPENCODE_SERVER_PASSWORD: password,
         OPENCODE_SERVER_USERNAME: "opencode",
       },

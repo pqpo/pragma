@@ -24,6 +24,7 @@ import {
   type RuntimeTokenCounter,
   type ExpertAgentStartupMessage,
   type ExpertAgentHumanInteractionHandler,
+  type ExpertAgentUserQuestion,
 } from "@pragma/core";
 import type { AgentMessage } from "@pragma/shared";
 
@@ -31,13 +32,14 @@ import {
   connectOpenCode,
   type OpenCodeClient,
   type OpenCodeModelRef,
-  type OpenCodePermissionRule,
   type OpenCodeWireEvent,
 } from "./client.ts";
 import { prepareOpenCodeDataHome } from "./data-home.ts";
+import { prepareOpenCodeConfiguration } from "./configuration.ts";
+import { v2PermissionRules, type OpenCodePermissionMode } from "./permissions.ts";
 import { probeOpenCode, startOpenCodeProcess } from "./process.ts";
 
-export type OpenCodePermissionMode = "request-approval" | "auto-approve" | "full-access";
+export type { OpenCodePermissionMode } from "./permissions.ts";
 
 export interface OpenCodeRuntimeOptions {
   readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
@@ -60,6 +62,7 @@ interface NativeSession {
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly model?: OpenCodeModelRef | undefined;
   readonly tokenCounter: RuntimeTokenCounter;
+  readonly systemPrompt: string;
   activeAbort: AbortController | undefined;
 }
 
@@ -136,14 +139,20 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
     const discoveryRoot = await mkdtemp(join(tmpdir(), "pragma-opencode-discovery-"));
     try {
       const detected = await probeOpenCode(executablePath, env);
-      const discoveryEnv = await prepareOpenCodeDataHome(env, discoveryRoot);
+      const discoveryDataEnv = await prepareOpenCodeDataHome(env, discoveryRoot);
+      const discovery = await prepareOpenCodeConfiguration({
+        env: discoveryDataEnv,
+        workspace: discoveryRoot,
+        sessionDir: discoveryRoot,
+        major: detected.major,
+      });
       const nativeProcess = await startOpenCodeProcess({
         executablePath,
-        env: discoveryEnv,
-        cwd: globalThis.process.cwd(),
+        env: discovery.env,
+        cwd: discoveryRoot,
         ...detected,
       });
-      const client = connectOpenCode(nativeProcess, globalThis.process.cwd());
+      const client = connectOpenCode(nativeProcess, discoveryRoot);
       try {
         return (await client.listModels()).map((model) => ({
           id: model.modelId,
@@ -205,13 +214,17 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
       },
       async createSession(ctx): Promise<NativeSession> {
         const detected = await probeOpenCode(executablePath, env);
-        const sessionEnvironment = await prepareOpenCodeDataHome(
-          ctx.processEnvironment,
-          ctx.paths.runtimeSessionDir("opencode"),
-        );
+        const sessionDir = ctx.paths.runtimeSessionDir("opencode");
+        const dataEnvironment = await prepareOpenCodeDataHome(ctx.processEnvironment, sessionDir);
+        const sessionConfiguration = await prepareOpenCodeConfiguration({
+          env: dataEnvironment,
+          workspace: ctx.workspace,
+          sessionDir,
+          major: detected.major,
+        });
         const process = await startOpenCodeProcess({
           executablePath,
-          env: sessionEnvironment,
+          env: sessionConfiguration.env,
           cwd: ctx.workspace,
           permissionMode: ctx.features.permissions.mode,
           mcpUrl: ctx.features.mcp.registration.url,
@@ -231,7 +244,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             throw new Error(`OpenCode model is unavailable: ${model.providerId}/${model.modelId}.`);
           }
           const mode = ctx.features.permissions.mode;
-          const rules = permissionRules(mode);
+          const rules = v2PermissionRules(mode, sessionConfiguration.deniedPermissions);
           const id = await client.createSession(
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
             ctx.agentContext.systemPrompt,
@@ -263,6 +276,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
                 ? []
                 : [...ctx.agentContext.startupMessages],
             tokenCounter: options.tokenCounter ?? defaultRuntimeTokenCounter,
+            systemPrompt: ctx.agentContext.systemPrompt,
             activeAbort: undefined,
           };
         } catch (error) {
@@ -313,6 +327,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
           ]
             .filter(Boolean)
             .join("\n\n");
+          const previousContext = await session.client.serializedContext(session.id);
           const output = await session.client.prompt({
             sessionId: session.id,
             model,
@@ -322,6 +337,10 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             onEvent: async (event) => {
               if (event.type === "permission.asked" || event.type === "permission.updated") {
                 await handlePermission(session, event);
+                return;
+              }
+              if (event.type === "question.asked" || event.type === "form.created") {
+                await handleOpenCodeQuestion(session, event);
                 return;
               }
               const normalized = normalizeEvent(event, session.toolNames);
@@ -338,9 +357,17 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             output.usage === undefined
               ? createUsageFromTokenCounts({
                   measurement: "estimated",
-                  inputTokens: session.tokenCounter.countText(promptText, {
-                    runtimeKind: "opencode",
-                  }).tokens,
+                  inputTokens: session.tokenCounter.countText(
+                    JSON.stringify({
+                      system: session.systemPrompt,
+                      history: previousContext,
+                      prompt: promptText,
+                      attachments: files,
+                    }),
+                    {
+                      runtimeKind: "opencode",
+                    },
+                  ).tokens,
                   inputTokensIncludeCacheRead: false,
                   outputTokens: session.tokenCounter.countText(output.text, {
                     runtimeKind: "opencode",
@@ -514,14 +541,16 @@ function normalizeEvent(
 async function handlePermission(session: NativeSession, event: OpenCodeWireEvent): Promise<void> {
   const id = event.data["id"];
   if (typeof id !== "string") return;
-  let approved = session.mode !== "request-approval";
+  const action = String(event.data["action"] ?? event.data["type"] ?? "");
+  let approved = session.mode === "full-access";
   if (
     session.mode === "request-approval" &&
+    !["bash", "shell", "execute", "external_directory", "task", "subagent"].includes(action) &&
     typeof session.humanInteractionHandler === "function"
   ) {
     const response = await session.humanInteractionHandler({
       kind: "tool_approval",
-      toolName: String(event.data["action"] ?? event.data["type"] ?? "opencode"),
+      toolName: action || "opencode",
       toolCallId: String(event.data["callID"] ?? id),
       input: event.data["resources"] ?? event.data["metadata"] ?? event.data,
       reason: String(
@@ -533,8 +562,118 @@ async function handlePermission(session: NativeSession, event: OpenCodeWireEvent
   await session.client.replyPermission(session.id, id, approved);
 }
 
-function permissionRules(mode: OpenCodePermissionMode): readonly OpenCodePermissionRule[] {
-  return [{ action: "*", resource: "*", effect: mode === "request-approval" ? "ask" : "allow" }];
+export async function handleOpenCodeQuestion(
+  session: NativeSession,
+  event: OpenCodeWireEvent,
+): Promise<void> {
+  const form = event.type === "form.created" ? object(event.data["form"]) : event.data;
+  const id = form?.["id"];
+  if (form === undefined || typeof id !== "string")
+    throw new Error("OpenCode question event has no request ID.");
+  const raw = event.type === "form.created" ? form["fields"] : form["questions"];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    await session.client.replyQuestion(session.id, id);
+    return;
+  }
+  const parsed = raw.map((entry, index) =>
+    parseQuestion(entry, index, event.type === "form.created"),
+  );
+  if (
+    parsed.some((question) => question === undefined) ||
+    session.humanInteractionHandler === undefined
+  ) {
+    await session.client.replyQuestion(session.id, id);
+    return;
+  }
+  const questions = parsed as { key: string; question: ExpertAgentUserQuestion }[];
+  const response = await session.humanInteractionHandler({
+    kind: "user_question",
+    toolName: "askUserQuestion",
+    toolCallId: id,
+    questions: questions.map((item) => item.question),
+  });
+  if (response.kind !== "user_question" || !response.answered) {
+    await session.client.replyQuestion(session.id, id);
+    return;
+  }
+  const values = object(response.answers);
+  if (values === undefined) {
+    await session.client.replyQuestion(session.id, id);
+    return;
+  }
+  const answered = questions.map(({ key, question }, index) => {
+    const value = values[question.question] ?? values[key] ?? values[String(index)];
+    if (typeof value === "string") return [value];
+    if (Array.isArray(value) && value.every((item) => typeof item === "string"))
+      return value as string[];
+    return undefined;
+  });
+  if (answered.some((answer) => answer === undefined)) {
+    await session.client.replyQuestion(session.id, id);
+    return;
+  }
+  if (event.type === "question.asked") {
+    await session.client.replyQuestion(session.id, id, answered as string[][]);
+  } else {
+    await session.client.replyQuestion(
+      session.id,
+      id,
+      Object.fromEntries(
+        questions.map(({ key, question }, index) => [
+          key,
+          question.kind === "multiple_choice"
+            ? answered[index]!.map(
+                (answer) =>
+                  question.options.find((option) => option.label === answer)?.value ?? answer,
+              )
+            : (question.options.find((option) => option.label === answered[index]![0])?.value ??
+              answered[index]![0]!),
+        ]),
+      ),
+    );
+  }
+}
+
+function parseQuestion(
+  value: unknown,
+  index: number,
+  isForm: boolean,
+): { key: string; question: ExpertAgentUserQuestion } | undefined {
+  const entry = object(value);
+  if (entry === undefined) return undefined;
+  if (isForm && entry["type"] !== "string" && entry["type"] !== "multiselect") return undefined;
+  const text = isForm
+    ? (entry["title"] ?? entry["description"] ?? entry["key"])
+    : entry["question"];
+  if (typeof text !== "string" || text === "") return undefined;
+  const rawOptions = entry["options"];
+  const options = Array.isArray(rawOptions)
+    ? rawOptions.flatMap((candidate) => {
+        const option = object(candidate);
+        if (typeof option?.["label"] !== "string") return [];
+        return [
+          {
+            label: option["label"],
+            description: String(option["description"] ?? ""),
+            ...(typeof option["value"] === "string" ? { value: option["value"] } : {}),
+          },
+        ];
+      })
+    : [];
+  return {
+    key: isForm && typeof entry["key"] === "string" ? entry["key"] : String(index),
+    question: {
+      question: text,
+      header: typeof entry["header"] === "string" ? entry["header"] : "OpenCode",
+      kind:
+        (isForm && entry["type"] === "multiselect") || entry["multiple"] === true
+          ? "multiple_choice"
+          : options.length > 0
+            ? "single_choice"
+            : "text",
+      options,
+    },
+  };
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {

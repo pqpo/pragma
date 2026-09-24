@@ -20,7 +20,8 @@
     "@pragma/core": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@opencode-ai/sdk": "1.18.32",
-    "@opencode/client": "2.0.16"
+    "@opencode/client": "2.0.16",
+    "json5": "2.2.3"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
