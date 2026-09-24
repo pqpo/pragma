@@ -4,7 +4,7 @@ import { access, lstat, mkdir, opendir, readFile, rename, rm, writeFile } from "
 import { dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
-import { validateSkillPackage } from "@pragma/built-in-agents";
+import { validatePortableSkillPackage } from "@pragma/built-in-agents";
 import { withFileLock } from "@pragma/core";
 import { parse, stringify } from "yaml";
 
@@ -12,7 +12,11 @@ import {
   CapabilityIdSchema,
   SkillSyncConfigurationSchema,
   SkillSyncOverviewSchema,
+  SkillSyncRepositoryManifestV1Schema,
+  SkillSyncRepositoryManifestSchema,
+  SkillSyncRepositoryManifestV2Schema,
   SkillSyncSkillManifestSchema,
+  SkillSyncSkillManifestV2Schema,
   type Capability,
   type SkillSyncConfiguration,
   type SkillSyncIdentity,
@@ -56,6 +60,25 @@ const MAX_GIT_INDEX_RECORD_BYTES = 16 * 1024;
 const GIT_TIMEOUT_MS = 60_000;
 type SyncIntent = "full" | "pull_only" | "restore";
 
+function safeSkillSyncLogMessage(message: string): string {
+  return message
+    .replace(/\b(https?|ssh):\/\/[^/\s?#@]+@/giu, "$1://[redacted]@")
+    .replace(/\b[^\s/:@]+@([^\s/:]+):/gu, "[redacted]@$1:")
+    .replace(
+      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/gu,
+      "[redacted]",
+    )
+    .replace(
+      /([?&](?:access_token|auth|authorization|credential|password|passwd|secret|token)=)[^&#\s]+/giu,
+      "$1[redacted]",
+    )
+    .replace(/\b(Bearer\s+)[^\s,;]+/giu, "$1[redacted]")
+    .replace(
+      /\b(password|passwd|token|secret|credential|authorization)(\s*[:=]\s*)[^\s,;]+/giu,
+      "$1$2[redacted]",
+    );
+}
+
 export type RemoteSkillFile = {
   readonly path: string;
   readonly content: string;
@@ -70,7 +93,12 @@ export type RemoteSkill = {
   readonly assetGit?: AssetGitSource | undefined;
 };
 
-export type RemoteSkillRepository = { readonly skills: ReadonlyMap<string, RemoteSkill> };
+export type RemoteSkillRepository = {
+  readonly schemaVersion?: 1 | 2 | 3 | undefined;
+  readonly skills: ReadonlyMap<string, RemoteSkill>;
+  /** Transient service-to-provider allowlist; never read from or written to the Git manifest. */
+  readonly grandfatheredExecutablePaths?: ReadonlyMap<string, ReadonlySet<string>> | undefined;
+};
 export type SkillSyncProviderHead = BackupProviderHead<RemoteSkillRepository>;
 
 export type SkillSyncProvider = StudioBackupProvider<RemoteSkillRepository>;
@@ -128,6 +156,57 @@ export function createSkillSyncService(options: {
   let requestedIntent: SyncIntent = "pull_only";
   let scheduled: NodeJS.Timeout | undefined;
   let transientStatus: "ready" | "syncing" | "conflict" | "error" = "ready";
+  const warnedErrors = new WeakSet<object>();
+  const warnSkillSyncFailure = (
+    message: string,
+    error: unknown,
+    context: {
+      readonly syncKey: string | null;
+      readonly source: "local" | "remote";
+      readonly operation: string;
+      readonly capabilityId?: string | undefined;
+      readonly skillName?: string | undefined;
+    },
+  ) => {
+    if ((typeof error === "object" && error !== null) || typeof error === "function") {
+      if (warnedErrors.has(error)) return;
+      warnedErrors.add(error);
+    }
+    try {
+      options.warn?.(message, {
+        ...context,
+        errorCode: errorCode(error),
+        errorMessage: safeSkillSyncLogMessage(errorMessage(error)),
+      });
+    } catch {
+      // Logging must not change synchronization behavior.
+    }
+  };
+  const recordSkillFailure = (
+    syncKey: string,
+    source: "local" | "remote",
+    error: unknown,
+    context: {
+      readonly operation: string;
+      readonly capabilityId?: string | undefined;
+      readonly skillName?: string | undefined;
+    },
+  ) => {
+    warnSkillSyncFailure("Skill synchronization operation failed.", error, {
+      syncKey,
+      source,
+      operation: context.operation,
+      ...(context.capabilityId === undefined ? {} : { capabilityId: context.capabilityId }),
+      ...(context.skillName === undefined ? {} : { skillName: context.skillName }),
+    });
+    return {
+      source,
+      code: errorCode(error),
+      message: errorMessage(error),
+      ...(context.skillName === undefined ? {} : { name: context.skillName }),
+      ...(context.capabilityId === undefined ? {} : { capabilityId: context.capabilityId }),
+    };
+  };
 
   const providerFor = (configuration: SkillSyncConfiguration): SkillSyncProvider =>
     options.provider ??
@@ -162,24 +241,47 @@ export function createSkillSyncService(options: {
   const writeState = async (state: SkillSyncState): Promise<void> =>
     await writeJsonAtomic(options.statePath, SkillSyncStateSchema.parse(state));
 
-  const localSkills = async (knownState?: SkillSyncState): Promise<LocalSkillSnapshot> => {
+  const localSkills = async (
+    knownState?: SkillSyncState,
+    logFailures = true,
+  ): Promise<LocalSkillSnapshot> => {
     const state = knownState ?? (await readState());
     const skills = new Map<string, LocalSkill>();
     const errors: SkillSyncState["errors"] = {};
     const seenKeys = new Set<string>();
-    for (const capability of await options.capabilities.list()) {
+    let capabilities: readonly Capability[];
+    try {
+      capabilities = await options.capabilities.list();
+    } catch (error) {
+      if (logFailures) {
+        warnSkillSyncFailure("Failed to list local Skills for synchronization.", error, {
+          syncKey: null,
+          source: "local",
+          operation: "list-local-skills",
+        });
+      }
+      throw error;
+    }
+    for (const capability of capabilities) {
       if (capability.managedBy === "system" || capability.definition.kind !== "skill") continue;
       const identity = syncIdentity(capability);
       const syncKey = identityKey(identity);
       if (seenKeys.has(syncKey)) {
         skills.delete(syncKey);
-        errors[syncKey] = {
-          source: "local",
-          code: "duplicate_skill_identity",
-          message: `Multiple Skills claim ${syncKey}.`,
-          name: capability.definition.name,
-          capabilityId: capability.manifest.id,
-        };
+        const error = coded("duplicate_skill_identity", `Multiple Skills claim ${syncKey}.`);
+        errors[syncKey] = logFailures
+          ? recordSkillFailure(syncKey, "local", error, {
+              operation: "scan-local-skills",
+              capabilityId: capability.manifest.id,
+              skillName: capability.definition.name,
+            })
+          : {
+              source: "local",
+              code: errorCode(error),
+              message: errorMessage(error),
+              name: capability.definition.name,
+              capabilityId: capability.manifest.id,
+            };
         continue;
       }
       seenKeys.add(syncKey);
@@ -240,16 +342,25 @@ export function createSkillSyncService(options: {
             .assetGit?.()
             ?.source({ kind: "skill", id: capability.manifest.id }),
         };
-        validateRemoteSkill(skill);
+        // Persisted revisions predate the executable scanner policy. Revision publication only
+        // preserves these files when their path, mode, and content match the base revision.
+        const legacyExecutablePaths = legacyExecutablePathsForSkill(skill);
+        validateRemoteSkill(skill, legacyExecutablePaths);
         skills.set(syncKey, skill);
       } catch (error) {
-        errors[syncKey] = {
-          source: "local",
-          code: errorCode(error),
-          message: errorMessage(error),
-          name: capability.definition.name,
-          capabilityId: capability.manifest.id,
-        };
+        errors[syncKey] = logFailures
+          ? recordSkillFailure(syncKey, "local", error, {
+              operation: "validate-local-skill",
+              capabilityId: capability.manifest.id,
+              skillName: capability.definition.name,
+            })
+          : {
+              source: "local",
+              code: errorCode(error),
+              message: errorMessage(error),
+              name: capability.definition.name,
+              capabilityId: capability.manifest.id,
+            };
       }
     }
     return { skills, errors };
@@ -259,7 +370,7 @@ export function createSkillSyncService(options: {
     state?: SkillSyncState,
   ): Promise<Map<string, LocalSkill>> => {
     try {
-      return (await localSkills(state)).skills;
+      return (await localSkills(state, false)).skills;
     } catch {
       return new Map();
     }
@@ -269,13 +380,14 @@ export function createSkillSyncService(options: {
     syncKey: string,
     remote: RemoteSkill | undefined,
     local: LocalSkill | undefined,
+    allowedLegacyExecutablePaths: ReadonlySet<string> = new Set(),
   ): Promise<Capability | undefined> => {
     if (remote === undefined) {
       if (local !== undefined)
         await options.capabilities.remove(local.capabilityId, local.capabilityRevision);
       return undefined;
     }
-    validateRemoteSkill(remote);
+    validateRemoteSkill(remote, allowedLegacyExecutablePaths);
     const incoming = join(options.cacheRoot, "incoming", randomUUID());
     try {
       await writeSkillTree(incoming, remote);
@@ -339,6 +451,7 @@ export function createSkillSyncService(options: {
     let ignoredRemote = [...state.ignoredRemote];
     const publishedKeys: string[] = [];
     const publishedSnapshots = new Map<string, LocalSkill | undefined>();
+    const grandfatheredExecutablePaths = new Map<string, ReadonlySet<string>>();
     Object.assign(errors, localSnapshot.errors);
     const checkpointState = (): SkillSyncState =>
       SkillSyncStateSchema.parse({
@@ -367,7 +480,29 @@ export function createSkillSyncService(options: {
       const localFingerprint = fingerprint(localSkill);
       const remoteFingerprint = fingerprint(remoteSkill);
       const base = bases[key];
+      const baselineFiles = legacyExecutableBaseline(state, key, base, localSkill);
+      const allowInitialRemoteSnapshot =
+        state.revision === undefined && base === undefined && localSkill === undefined;
+      const allowedRemoteLegacyPaths = legacyExecutablePathsForRepositorySkill(
+        remoteSkill,
+        head.repository.schemaVersion,
+        baselineFiles,
+        allowInitialRemoteSnapshot,
+        base,
+      );
       if (localFingerprint === remoteFingerprint) {
+        if (remoteSkill !== undefined) {
+          try {
+            validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+          } catch (error) {
+            errors[key] = recordSkillFailure(key, "remote", error, {
+              operation: "validate-remote-skill",
+              capabilityId: localSkill?.capabilityId ?? remoteSkill.identity.id,
+              skillName: remoteSkill.name,
+            });
+            continue;
+          }
+        }
         delete pendingRemoteActivations[key];
         if (localFingerprint === "absent") {
           delete bases[key];
@@ -382,12 +517,28 @@ export function createSkillSyncService(options: {
         continue;
       }
       if (intent === "restore") {
-        if (remoteSkill !== undefined) {
-          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
-          await writeState(checkpointState());
-        }
+        const priorPendingActivation = pendingRemoteActivations[key];
+        let persistedRemoteSnapshot = false;
         try {
-          const applied = await applyRemote(key, remoteSkill, localSkill);
+          if (remoteSkill !== undefined) {
+            const pending = pendingRemoteActivationFor(remoteSkill);
+            if (
+              allowInitialRemoteSnapshot &&
+              head.repository.schemaVersion !== undefined &&
+              head.repository.schemaVersion < 3
+            ) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+            validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+            if (!persistedRemoteSnapshot) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+          }
+          const applied = await applyRemote(key, remoteSkill, localSkill, allowedRemoteLegacyPaths);
           if (remoteSkill === undefined || applied === undefined) {
             delete bases[key];
             delete portableFiles[key];
@@ -400,14 +551,19 @@ export function createSkillSyncService(options: {
           delete errors[key];
           await writeState(checkpointState());
         } catch (error) {
-          delete pendingRemoteActivations[key];
-          errors[key] = {
-            source: "remote",
-            code: errorCode(error),
-            message: errorMessage(error),
-            name: remoteSkill?.name ?? localSkill?.name,
-            capabilityId: localSkill?.capabilityId,
-          };
+          if (!persistedRemoteSnapshot) {
+            if (priorPendingActivation === undefined) delete pendingRemoteActivations[key];
+            else pendingRemoteActivations[key] = priorPendingActivation;
+          }
+          errors[key] = recordSkillFailure(key, "remote", error, {
+            operation: "restore-remote-skill",
+            ...(localSkill?.capabilityId === undefined && remoteSkill === undefined
+              ? {}
+              : { capabilityId: localSkill?.capabilityId ?? remoteSkill?.identity.id }),
+            ...(remoteSkill?.name === undefined && localSkill?.name === undefined
+              ? {}
+              : { skillName: remoteSkill?.name ?? localSkill?.name }),
+          });
           await writeState(checkpointState());
         }
         continue;
@@ -426,12 +582,28 @@ export function createSkillSyncService(options: {
         continue;
       }
       if (remoteChanged) {
-        if (remoteSkill !== undefined) {
-          pendingRemoteActivations[key] = pendingRemoteActivationFor(remoteSkill);
-          await writeState(checkpointState());
-        }
+        const priorPendingActivation = pendingRemoteActivations[key];
+        let persistedRemoteSnapshot = false;
         try {
-          const applied = await applyRemote(key, remoteSkill, localSkill);
+          if (remoteSkill !== undefined) {
+            const pending = pendingRemoteActivationFor(remoteSkill);
+            if (
+              allowInitialRemoteSnapshot &&
+              head.repository.schemaVersion !== undefined &&
+              head.repository.schemaVersion < 3
+            ) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+            validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+            if (!persistedRemoteSnapshot) {
+              pendingRemoteActivations[key] = pending;
+              await writeState(checkpointState());
+              persistedRemoteSnapshot = true;
+            }
+          }
+          const applied = await applyRemote(key, remoteSkill, localSkill, allowedRemoteLegacyPaths);
           if (remoteSkill === undefined || applied === undefined) {
             delete bases[key];
             delete portableFiles[key];
@@ -445,7 +617,10 @@ export function createSkillSyncService(options: {
           ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
           await writeState(checkpointState());
         } catch (error) {
-          delete pendingRemoteActivations[key];
+          if (!persistedRemoteSnapshot) {
+            if (priorPendingActivation === undefined) delete pendingRemoteActivations[key];
+            else pendingRemoteActivations[key] = priorPendingActivation;
+          }
           if (errorCode(error) === "revision_conflict") {
             await writeState(checkpointState());
             throw coded(
@@ -453,13 +628,15 @@ export function createSkillSyncService(options: {
               `The local Skill changed during synchronization: ${key}`,
             );
           }
-          errors[key] = {
-            source: "remote",
-            code: errorCode(error),
-            message: errorMessage(error),
-            name: remoteSkill?.name ?? localSkill?.name,
-            capabilityId: localSkill?.capabilityId,
-          };
+          errors[key] = recordSkillFailure(key, "remote", error, {
+            operation: "apply-remote-skill",
+            ...(localSkill?.capabilityId === undefined && remoteSkill === undefined
+              ? {}
+              : { capabilityId: localSkill?.capabilityId ?? remoteSkill?.identity.id }),
+            ...(remoteSkill?.name === undefined && localSkill?.name === undefined
+              ? {}
+              : { skillName: remoteSkill?.name ?? localSkill?.name }),
+          });
           await writeState(checkpointState());
         }
         continue;
@@ -474,6 +651,30 @@ export function createSkillSyncService(options: {
       }
       if (localSkill === undefined) desired.delete(key);
       else {
+        const mayPreserveLegacyLocalFiles =
+          (head.repository.schemaVersion !== undefined && head.repository.schemaVersion < 3) ||
+          head.revision === undefined;
+        const allowInitialLocalSnapshot =
+          state.revision === undefined &&
+          base === undefined &&
+          remoteSkill === undefined &&
+          (head.revision === undefined || (head.repository.schemaVersion ?? 3) < 3);
+        const allowedLocalLegacyPaths = mayPreserveLegacyLocalFiles
+          ? legacyExecutablePathsForLocalSkill(localSkill, baselineFiles, allowInitialLocalSnapshot)
+          : new Set<string>();
+        try {
+          validateRemoteSkill(localSkill, allowedLocalLegacyPaths);
+        } catch (error) {
+          errors[key] = recordSkillFailure(key, "local", error, {
+            operation: "validate-local-skill",
+            capabilityId: localSkill.capabilityId,
+            skillName: localSkill.name,
+          });
+          continue;
+        }
+        if (allowedLocalLegacyPaths.size > 0) {
+          grandfatheredExecutablePaths.set(key, allowedLocalLegacyPaths);
+        }
         desired.set(key, localSkill);
         portableFiles[key] = portableFilesForLocal(localSkill);
       }
@@ -484,7 +685,11 @@ export function createSkillSyncService(options: {
       ignoredRemote = ignoredRemote.filter((item) => item.syncKey !== key);
     }
     return {
-      repository: { skills: desired },
+      repository: {
+        schemaVersion: repositoryVersionForSkills(desired, head.repository.schemaVersion),
+        skills: desired,
+        grandfatheredExecutablePaths,
+      },
       publishedKeys,
       publishedSnapshots,
       state: SkillSyncStateSchema.parse({
@@ -522,7 +727,10 @@ export function createSkillSyncService(options: {
         try {
           result = await reconcile(configuration, state, head, intent);
         } catch (error) {
-          if (errorCode(error) === "skill_sync_local_changed") continue;
+          if (errorCode(error) === "skill_sync_local_changed") {
+            state = await readState();
+            continue;
+          }
           throw error;
         }
         state = result.state;
@@ -578,6 +786,12 @@ export function createSkillSyncService(options: {
         "The local or remote Skill repository changed repeatedly. Try again.",
       );
     } catch (error) {
+      warnSkillSyncFailure("Skill synchronization failed.", error, {
+        syncKey: null,
+        source: "remote",
+        operation:
+          intent === "restore" ? "restore-sync" : intent === "pull_only" ? "refresh-sync" : "sync",
+      });
       state = SkillSyncStateSchema.parse({
         ...state,
         errorCode: errorCode(error),
@@ -616,9 +830,18 @@ export function createSkillSyncService(options: {
             : await runLocked(configuration, nextIntent);
       } while (rerun);
       return result;
-    }).finally(() => {
-      running = undefined;
-    });
+    })
+      .catch((error: unknown) => {
+        warnSkillSyncFailure("Skill synchronization failed.", error, {
+          syncKey: null,
+          source: "remote",
+          operation: "sync",
+        });
+        throw error;
+      })
+      .finally(() => {
+        running = undefined;
+      });
     return running;
   };
 
@@ -642,20 +865,30 @@ export function createSkillSyncService(options: {
         schemaVersion: "pragma.skill-sync-settings/v1",
         ...settings,
       });
-      await withFileLock(lockPath, async () => {
-        const head = await providerFor(configuration).readHead();
-        const previous = await readConfiguration();
-        await writeJsonAtomic(options.configurationPath, configuration);
-        if (
-          previous === undefined ||
-          canonicalBackupRemote(previous.remote) !== canonicalBackupRemote(configuration.remote) ||
-          previous.branch !== configuration.branch
-        ) {
-          await writeState(emptyState(backupSourceKey(configuration)));
-        }
-        void head;
-      });
-      return await runSync(initializationMode === "restore_remote" ? "restore" : "full");
+      try {
+        await withFileLock(lockPath, async () => {
+          const head = await providerFor(configuration).readHead();
+          const previous = await readConfiguration();
+          await writeJsonAtomic(options.configurationPath, configuration);
+          if (
+            previous === undefined ||
+            canonicalBackupRemote(previous.remote) !==
+              canonicalBackupRemote(configuration.remote) ||
+            previous.branch !== configuration.branch
+          ) {
+            await writeState(emptyState(backupSourceKey(configuration)));
+          }
+          void head;
+        });
+        return await runSync(initializationMode === "restore_remote" ? "restore" : "full");
+      } catch (error) {
+        warnSkillSyncFailure("Skill sync configuration failed.", error, {
+          syncKey: null,
+          source: "remote",
+          operation: "configure-sync",
+        });
+        throw error;
+      }
     },
     async removeConfiguration() {
       if (scheduled !== undefined) clearTimeout(scheduled);
@@ -679,7 +912,13 @@ export function createSkillSyncService(options: {
             const configuration = await readConfiguration();
             if (configuration === undefined || (localChange && !configuration.autoPush)) return;
             await runSync(localChange ? "full" : "pull_only");
-          })().catch((error: unknown) => options.warn?.("Scheduled Skill sync failed.", error));
+          })().catch((error: unknown) =>
+            warnSkillSyncFailure("Scheduled Skill sync failed.", error, {
+              syncKey: null,
+              source: localChange ? "local" : "remote",
+              operation: "scheduled-sync",
+            }),
+          );
         },
         localChange ? 750 : 0,
       );
@@ -717,19 +956,56 @@ export function createSkillSyncService(options: {
         }
         if (choice === "remote") {
           const remoteSkill = head.repository.skills.get(syncKey);
-          if (remoteSkill !== undefined) {
-            state.pendingRemoteActivations[syncKey] = pendingRemoteActivationFor(remoteSkill);
-            await writeState(state);
-          }
+          const baselineFiles = legacyExecutableBaseline(
+            state,
+            syncKey,
+            state.bases[syncKey],
+            localSkill,
+          );
+          const allowedRemoteLegacyPaths = legacyExecutablePathsForRepositorySkill(
+            remoteSkill,
+            head.repository.schemaVersion,
+            baselineFiles,
+            state.revision === undefined &&
+              state.bases[syncKey] === undefined &&
+              localSkill === undefined,
+            state.bases[syncKey],
+          );
+          const priorPendingActivation = state.pendingRemoteActivations[syncKey];
+          let validatedRemoteSnapshot = false;
           try {
-            const applied = await applyRemote(syncKey, remoteSkill, localSkill);
+            if (remoteSkill !== undefined) {
+              validateRemoteSkill(remoteSkill, allowedRemoteLegacyPaths);
+              validatedRemoteSnapshot = true;
+              state.pendingRemoteActivations[syncKey] = pendingRemoteActivationFor(remoteSkill);
+              await writeState(state);
+            }
+            const applied = await applyRemote(
+              syncKey,
+              remoteSkill,
+              localSkill,
+              allowedRemoteLegacyPaths,
+            );
             if (remoteSkill === undefined || applied === undefined)
               delete state.portableFiles[syncKey];
             else state.portableFiles[syncKey] = portableFilesFor(applied, remoteSkill);
             delete state.pendingRemoteActivations[syncKey];
             await writeState(state);
           } catch (error) {
-            delete state.pendingRemoteActivations[syncKey];
+            if (!validatedRemoteSnapshot) {
+              if (priorPendingActivation === undefined)
+                delete state.pendingRemoteActivations[syncKey];
+              else state.pendingRemoteActivations[syncKey] = priorPendingActivation;
+            }
+            warnSkillSyncFailure("Skill conflict resolution failed.", error, {
+              syncKey,
+              source: "remote",
+              operation: "resolve-conflict",
+              capabilityId: localSkill?.capabilityId ?? remoteSkill?.identity.id,
+              ...(remoteSkill?.name === undefined && localSkill?.name === undefined
+                ? {}
+                : { skillName: remoteSkill?.name ?? localSkill?.name }),
+            });
             await writeState(state);
             throw error;
           }
@@ -747,13 +1023,76 @@ export function createSkillSyncService(options: {
             }
             selectedLocal = latestBeforePublish.skills.get(syncKey);
             const desired = new Map(publishHead.repository.skills);
+            const grandfatheredExecutablePaths = new Map<string, ReadonlySet<string>>();
             if (selectedLocal === undefined) desired.delete(syncKey);
-            else desired.set(syncKey, selectedLocal);
-            const published = await provider.publish({
-              expectedRevision: publishHead.revision,
-              repository: { skills: desired },
-              message: `Resolve Skill sync conflict for ${syncKey}`,
-            });
+            else {
+              const baselineFiles = legacyExecutableBaseline(
+                state,
+                syncKey,
+                state.bases[syncKey],
+                selectedLocal,
+              );
+              const mayPreserveLegacyLocalFiles =
+                (publishHead.repository.schemaVersion !== undefined &&
+                  publishHead.repository.schemaVersion < 3) ||
+                publishHead.revision === undefined;
+              const allowInitialLocalSnapshot =
+                state.revision === undefined &&
+                state.bases[syncKey] === undefined &&
+                publishHead.repository.skills.get(syncKey) === undefined &&
+                (publishHead.revision === undefined ||
+                  (publishHead.repository.schemaVersion ?? 3) < 3);
+              const allowedLocalLegacyPaths = mayPreserveLegacyLocalFiles
+                ? legacyExecutablePathsForLocalSkill(
+                    selectedLocal,
+                    baselineFiles,
+                    allowInitialLocalSnapshot,
+                  )
+                : new Set<string>();
+              try {
+                validateRemoteSkill(selectedLocal, allowedLocalLegacyPaths);
+              } catch (error) {
+                warnSkillSyncFailure("Skill conflict resolution failed.", error, {
+                  syncKey,
+                  source: "local",
+                  operation: "resolve-conflict",
+                  capabilityId: selectedLocal.capabilityId,
+                  skillName: selectedLocal.name,
+                });
+                throw error;
+              }
+              if (allowedLocalLegacyPaths.size > 0) {
+                grandfatheredExecutablePaths.set(syncKey, allowedLocalLegacyPaths);
+              }
+              desired.set(syncKey, selectedLocal);
+            }
+            const published = await provider
+              .publish({
+                expectedRevision: publishHead.revision,
+                repository: {
+                  schemaVersion: repositoryVersionForSkills(
+                    desired,
+                    publishHead.repository.schemaVersion,
+                  ),
+                  skills: desired,
+                  grandfatheredExecutablePaths,
+                },
+                message: `Resolve Skill sync conflict for ${syncKey}`,
+              })
+              .catch((error: unknown) => {
+                warnSkillSyncFailure("Skill conflict resolution failed.", error, {
+                  syncKey,
+                  source: "local",
+                  operation: "resolve-conflict",
+                  ...(selectedLocal === undefined
+                    ? {}
+                    : {
+                        capabilityId: selectedLocal.capabilityId,
+                        skillName: selectedLocal.name,
+                      }),
+                });
+                throw error;
+              });
             if (published.status === "head_changed") {
               throw coded(
                 "skill_sync_conflict_stale",
@@ -778,7 +1117,13 @@ export function createSkillSyncService(options: {
             publishHead = {
               revision: published.revision,
               reference: publishHead.reference,
-              repository: { skills: desired },
+              repository: {
+                schemaVersion: repositoryVersionForSkills(
+                  desired,
+                  publishHead.repository.schemaVersion,
+                ),
+                skills: desired,
+              },
             };
           }
           if (!resolved) {
@@ -877,7 +1222,34 @@ export function createGitSkillSyncProvider(
       const prepared = await prepare();
       if (prepared.revision !== input.expectedRevision) return { status: "head_changed" };
       const identity = await readGlobalGitIdentity(git);
-      await writeWorkingRepository(repositoryPath, input.repository);
+      const previousRepository =
+        prepared.revision === undefined
+          ? { schemaVersion: 3 as const, skills: new Map<string, RemoteSkill>() }
+          : await readWorkingRepository(
+              repositoryPath,
+              await readGitFileModes(repositoryPath, environment),
+            );
+      const nextSchemaVersion = repositoryVersionForSkills(
+        input.repository.skills,
+        input.repository.schemaVersion,
+      );
+      if (
+        prepared.revision !== undefined &&
+        previousRepository.schemaVersion === 3 &&
+        nextSchemaVersion < 3
+      ) {
+        throw coded(
+          "skill_sync_protocol_unsupported",
+          "A Skill repository using schema v3 cannot be downgraded.",
+        );
+      }
+      const allowedLegacyPaths = repositoryTransitionLegacyPaths(
+        previousRepository,
+        input.repository,
+        prepared.revision === undefined,
+        input.repository.grandfatheredExecutablePaths,
+      );
+      await writeWorkingRepository(repositoryPath, input.repository, allowedLegacyPaths);
       await git(repositoryPath, ["add", "--force", "--", ROOT_MANIFEST, SKILLS_DIRECTORY]);
       await stageGitFileModes(repositoryPath, input.repository, git);
       const tree = (await git(repositoryPath, ["write-tree"])).trim();
@@ -1056,21 +1428,161 @@ function summary(skill: RemoteSkill | undefined) {
       };
 }
 
-function validateRemoteSkill(skill: RemoteSkill): void {
+function validateRemoteSkill(
+  skill: RemoteSkill,
+  allowUnscannedExecutablePaths: ReadonlySet<string> = new Set(),
+): void {
   for (const file of skill.files) {
     if (Buffer.byteLength(file.content, "utf8") > MAX_FILE_BYTES) {
       throw coded("skill_sync_size_limit", `Skill file is too large: ${file.path}`);
     }
   }
-  const validation = validateSkillPackage({
-    name: skill.name,
-    description: skill.description,
-    files: skill.files.map(({ path, content }) => ({ path, content })),
-  });
+  const validation = validatePortableSkillPackage(
+    {
+      name: skill.name,
+      description: skill.description,
+      files: skill.files.map(({ path, content }) => ({ path, content })),
+    },
+    {
+      executablePaths: new Set(
+        skill.files.filter((file) => file.executable).map((file) => file.path),
+      ),
+      allowUnscannedExecutablePaths,
+    },
+  );
   if (!validation.passed) {
     const issue = validation.diagnostics[0]!;
     throw coded(issue.code, `${issue.path}: ${issue.message}`);
   }
+}
+
+function legacyExecutablePathsForSkill(skill: RemoteSkill): ReadonlySet<string> {
+  return new Set(
+    skill.files
+      .filter((file) => file.executable && !/\.(?:mjs|cjs|js)$/iu.test(file.path))
+      .map((file) => file.path),
+  );
+}
+
+function legacyExecutableBaseline(
+  state: SkillSyncState,
+  syncKey: string,
+  base: string | undefined,
+  local: LocalSkill | undefined,
+): readonly LegacyExecutableBaselineFile[] | undefined {
+  const stored = state.portableFiles[syncKey];
+  if (stored !== undefined && stored.files.every((file) => file.sha256 !== undefined)) {
+    return stored.files;
+  }
+  const pending = state.pendingRemoteActivations[syncKey];
+  if (pending !== undefined) return pending.files;
+  if (local !== undefined && (base === undefined || fingerprint(local) === base)) {
+    return portableFileEntries(local);
+  }
+  if (stored !== undefined) return stored.files;
+  return undefined;
+}
+
+type LegacyExecutableBaselineFile = {
+  readonly path: string;
+  readonly executable: boolean;
+  readonly sha256?: string | undefined;
+};
+
+function matchingLegacyExecutablePaths(
+  skill: RemoteSkill,
+  baselineFiles: readonly LegacyExecutableBaselineFile[],
+): ReadonlySet<string> {
+  const baselineByPath = new Map(baselineFiles.map((file) => [file.path, file]));
+  return new Set(
+    skill.files
+      .filter((file) => file.executable && !/\.(?:mjs|cjs|js)$/iu.test(file.path))
+      .filter((file) => {
+        const baseline = baselineByPath.get(file.path);
+        return (
+          baseline?.executable === true &&
+          baseline.sha256 === createHash("sha256").update(file.content).digest("hex")
+        );
+      })
+      .map((file) => file.path),
+  );
+}
+
+function legacyExecutablePathsForRepositorySkill(
+  skill: RemoteSkill | undefined,
+  schemaVersion: RemoteSkillRepository["schemaVersion"],
+  baselineFiles?: readonly LegacyExecutableBaselineFile[],
+  allowFirstSeenSnapshot = false,
+  previouslySyncedFingerprint?: string,
+): ReadonlySet<string> {
+  if (skill === undefined || schemaVersion === undefined || schemaVersion >= 3) return new Set();
+  if (baselineFiles !== undefined) return matchingLegacyExecutablePaths(skill, baselineFiles);
+  if (
+    previouslySyncedFingerprint !== undefined &&
+    fingerprint(skill) === previouslySyncedFingerprint
+  ) {
+    return legacyExecutablePathsForSkill(skill);
+  }
+  // On the first read of a legacy repository, capture this exact tree in the pending activation
+  // journal before installing it. Later reads compare executable path, mode, and hash to that
+  // snapshot, so keeping a v1/v2 root manifest cannot grandfather new code.
+  return allowFirstSeenSnapshot ? legacyExecutablePathsForSkill(skill) : new Set();
+}
+
+function legacyExecutablePathsForLocalSkill(
+  skill: LocalSkill,
+  baselineFiles: Parameters<typeof matchingLegacyExecutablePaths>[1] | undefined,
+  allowInitialSnapshot: boolean,
+): ReadonlySet<string> {
+  if (baselineFiles !== undefined) return matchingLegacyExecutablePaths(skill, baselineFiles);
+  return allowInitialSnapshot ? legacyExecutablePathsForSkill(skill) : new Set();
+}
+
+function repositoryTransitionLegacyPaths(
+  previous: RemoteSkillRepository,
+  next: RemoteSkillRepository,
+  initialPublish: boolean,
+  requestedGrandfatheredPaths?: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const allowed = new Map<string, ReadonlySet<string>>();
+  for (const [key, skill] of next.skills) {
+    const previousSkill = previous.skills.get(key);
+    let paths = new Set<string>();
+    if (
+      next.schemaVersion !== undefined &&
+      next.schemaVersion < 3 &&
+      previous.schemaVersion !== undefined &&
+      previous.schemaVersion < 3
+    ) {
+      if (previousSkill !== undefined) {
+        paths = new Set(matchingLegacyExecutablePaths(skill, portableFileEntries(previousSkill)));
+      }
+    }
+    if (
+      next.schemaVersion !== undefined &&
+      next.schemaVersion < 3 &&
+      (initialPublish || (previous.schemaVersion !== undefined && previous.schemaVersion < 3))
+    ) {
+      const requested = requestedGrandfatheredPaths?.get(key);
+      if (requested !== undefined) {
+        const unsupported = legacyExecutablePathsForSkill(skill);
+        const explicitlyGrandfathered = [...requested].filter((path) => unsupported.has(path));
+        paths = new Set([...paths, ...explicitlyGrandfathered]);
+      }
+    }
+    if (paths.size > 0) allowed.set(key, paths);
+  }
+  return allowed;
+}
+
+function repositoryVersionForSkills(
+  skills: ReadonlyMap<string, RemoteSkill>,
+  currentVersion?: 1 | 2 | 3,
+): 2 | 3 {
+  if (currentVersion === 3) return 3;
+  return [...skills.values()].some((skill) => legacyExecutablePathsForSkill(skill).size > 0)
+    ? 2
+    : 3;
 }
 
 async function writeSkillTree(root: string, skill: RemoteSkill): Promise<void> {
@@ -1085,15 +1597,22 @@ async function readWorkingRepository(
   root: string,
   fileModes: ReadonlyMap<string, string>,
 ): Promise<RemoteSkillRepository> {
+  let repositoryVersion: 1 | 2 | 3;
   try {
     const manifest = parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES));
+    if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 3;
+    else if (SkillSyncRepositoryManifestV2Schema.safeParse(manifest).success) repositoryVersion = 2;
+    else {
+      SkillSyncRepositoryManifestV1Schema.parse(manifest);
+      repositoryVersion = 1;
+    }
     upgradeSkillRepositoryManifest(manifest);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) {
       try {
         await access(join(root, SKILLS_DIRECTORY));
       } catch (directoryError) {
-        if (isNodeError(directoryError, "ENOENT")) return { skills: new Map() };
+        if (isNodeError(directoryError, "ENOENT")) return { schemaVersion: 3, skills: new Map() };
         throw directoryError;
       }
       throw coded(
@@ -1199,6 +1718,12 @@ async function readWorkingRepository(
         files,
         ...(manifest.assetGit ? { assetGit: manifest.assetGit } : {}),
       };
+      // The parser has no persisted sync baseline. It keeps v1/v2 data readable here; reconcile
+      // compares legacy executable paths, modes, and hashes before any local activation.
+      validateRemoteSkill(
+        remote,
+        repositoryVersion < 3 ? legacyExecutablePathsForSkill(remote) : new Set(),
+      );
       if (skills.has(key))
         throw coded("skill_sync_identity_mismatch", `Multiple Skills resolve to ${key}.`);
       skills.set(key, remote);
@@ -1206,7 +1731,7 @@ async function readWorkingRepository(
         throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
     }
   }
-  return { skills };
+  return { schemaVersion: repositoryVersion, skills };
 }
 
 async function readGitFileModes(
@@ -1334,11 +1859,14 @@ function gitExecutable(fileModes: ReadonlyMap<string, string>, path: string): bo
 async function writeWorkingRepository(
   root: string,
   repository: RemoteSkillRepository,
+  allowedLegacyPaths: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<void> {
-  assertRepositoryBounds(repository);
+  assertRepositoryBounds(repository, allowedLegacyPaths);
   await rm(join(root, SKILLS_DIRECTORY), { recursive: true, force: true });
   await mkdir(join(root, SKILLS_DIRECTORY), { recursive: true, mode: 0o700 });
-  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: "pragma.skill-sync/v3" }));
+  const schemaVersion = repositoryVersionForSkills(repository.skills, repository.schemaVersion);
+  const manifestVersion = schemaVersion === 2 ? "pragma.skill-sync/v2" : "pragma.skill-sync/v3";
+  await writeFile(join(root, ROOT_MANIFEST), stringify({ schemaVersion: manifestVersion }));
   for (const [key, skill] of [...repository.skills.entries()].toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
@@ -1349,7 +1877,7 @@ async function writeWorkingRepository(
       sha256: createHash("sha256").update(file.content).digest("hex"),
       executable: file.executable,
     }));
-    const manifest = createSkillSyncManifest(skill, files);
+    const manifest = createSkillSyncManifest(skill, files, schemaVersion);
     await mkdir(join(base, "files"), { recursive: true, mode: 0o700 });
     await writeFile(join(base, "skill.yaml"), stringify(manifest));
     await writeSkillTree(join(base, "files"), skill);
@@ -1472,17 +2000,21 @@ async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await rename(temporary, path);
 }
 
-function assertRepositoryBounds(repository: RemoteSkillRepository): void {
+function assertRepositoryBounds(
+  repository: RemoteSkillRepository,
+  allowedLegacyPaths: ReadonlyMap<string, ReadonlySet<string>>,
+): void {
   if (repository.skills.size > MAX_REPOSITORY_SKILLS)
     throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
   let totalBytes = 0;
+  const schemaVersion = repositoryVersionForSkills(repository.skills, repository.schemaVersion);
   for (const [key, skill] of repository.skills) {
     if (identityKey(skill.identity) !== key)
       throw coded(
         "skill_sync_identity_mismatch",
         `Skill map key does not match its identity: ${key}`,
       );
-    validateRemoteSkill(skill);
+    validateRemoteSkill(skill, allowedLegacyPaths.get(key));
     const manifest = createSkillSyncManifest(
       skill,
       skill.files.map((file) => ({
@@ -1491,6 +2023,7 @@ function assertRepositoryBounds(repository: RemoteSkillRepository): void {
         sha256: createHash("sha256").update(file.content).digest("hex"),
         executable: file.executable,
       })),
+      schemaVersion,
     );
     if (Buffer.byteLength(stringify(manifest), "utf8") > MAX_MANIFEST_BYTES) {
       throw coded("skill_sync_size_limit", `Skill manifest is too large: ${key}`);
@@ -1509,13 +2042,23 @@ function assertRepositoryBounds(repository: RemoteSkillRepository): void {
 function createSkillSyncManifest(
   skill: RemoteSkill,
   files: SkillSyncSkillManifest["files"],
-): SkillSyncSkillManifest {
-  return SkillSyncSkillManifestSchema.parse({
-    schemaVersion: "pragma.skill-sync-skill/v3",
+  repositoryVersion: 2 | 3,
+) {
+  const fields = {
     identity: skill.identity,
     name: skill.name,
     description: skill.description,
     files,
+  };
+  if (repositoryVersion === 2 && skill.assetGit === undefined) {
+    return SkillSyncSkillManifestV2Schema.parse({
+      ...fields,
+      schemaVersion: "pragma.skill-sync-skill/v2",
+    });
+  }
+  return SkillSyncSkillManifestSchema.parse({
+    ...fields,
+    schemaVersion: "pragma.skill-sync-skill/v3",
     ...(skill.assetGit ? { assetGit: skill.assetGit } : {}),
   });
 }

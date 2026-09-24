@@ -1,25 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { validateSkillPackage } from "@pragma/built-in-agents";
+import { validatePortableSkillPackage, validateSkillPackage } from "@pragma/built-in-agents";
+
+const noExecutableFiles = { executablePaths: new Set<string>() };
 
 describe("generated Skill validation", () => {
   it("checks script coverage without executing script or test files", () => {
-    const result = validateSkillPackage({
-      name: "safe-workflow",
-      description: "Run a deterministic safe workflow.",
-      files: [
-        {
-          path: "SKILL.md",
-          content:
-            "---\nname: safe-workflow\ndescription: Run a deterministic safe workflow.\n---\n\nUse the script.",
-        },
-        { path: "scripts/run.mjs", content: "throw new Error('must not execute');\n" },
-        {
-          path: "tests/run.test.mjs",
-          content: "import '../scripts/run.mjs';\nthrow new Error('must not execute');\n",
-        },
-      ],
-    });
+    const result = validateSkillPackage(
+      {
+        name: "safe-workflow",
+        description: "Run a deterministic safe workflow.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: safe-workflow\ndescription: Run a deterministic safe workflow.\n---\n\nUse the script.",
+          },
+          { path: "scripts/run.mjs", content: "throw new Error('must not execute');\n" },
+          {
+            path: "tests/run.test.mjs",
+            content: "import '../scripts/run.mjs';\nthrow new Error('must not execute');\n",
+          },
+        ],
+      },
+      noExecutableFiles,
+    );
     expect(result).toMatchObject({
       passed: true,
       diagnostics: [],
@@ -27,21 +32,181 @@ describe("generated Skill validation", () => {
   });
 
   it("rejects mismatched metadata and network APIs", () => {
-    const result = validateSkillPackage({
-      name: "safe-workflow",
-      description: "Safe.",
-      files: [
-        { path: "SKILL.md", content: "---\nname: another-name\ndescription: Safe.\n---" },
-        {
-          path: "scripts/run.mjs",
-          content: "export const run = () => fetch('https://example.test');",
-        },
-        { path: "tests/run.test.mjs", content: "import '../scripts/run.mjs';" },
-      ],
-    });
+    const result = validateSkillPackage(
+      {
+        name: "safe-workflow",
+        description: "Safe.",
+        files: [
+          { path: "SKILL.md", content: "---\nname: another-name\ndescription: Safe.\n---" },
+          {
+            path: "scripts/run.mjs",
+            content: "export const run = () => fetch('https://example.test');",
+          },
+          { path: "tests/run.test.mjs", content: "import '../scripts/run.mjs';" },
+        ],
+      },
+      noExecutableFiles,
+    );
     expect(result.passed).toBe(false);
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
       expect.arrayContaining(["skill_metadata_mismatch", "skill_network_access_forbidden"]),
+    );
+  });
+
+  it("allows safe portable files outside the generated Skill layout", () => {
+    const skill = {
+      name: "published-skill",
+      description: "Use a published Skill.",
+      files: [
+        {
+          path: "SKILL.md",
+          content:
+            "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+        },
+        { path: "assets/diagram.svg", content: "<svg />" },
+      ],
+    };
+
+    expect(validatePortableSkillPackage(skill, noExecutableFiles)).toMatchObject({
+      passed: true,
+      diagnostics: [],
+    });
+    expect(
+      validateSkillPackage(skill, noExecutableFiles).diagnostics.map(
+        (diagnostic) => diagnostic.code,
+      ),
+    ).toContain("skill_file_location_invalid");
+  });
+
+  it("keeps static code-safety checks for portable Skills", () => {
+    const result = validatePortableSkillPackage(
+      {
+        name: "published-skill",
+        description: "Use a published Skill.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+          },
+          {
+            path: "tools/run.mjs",
+            content: "export const run = () => fetch('https://example.test');",
+          },
+        ],
+      },
+      noExecutableFiles,
+    );
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "skill_network_access_forbidden",
+    );
+  });
+
+  it.each([
+    [
+      "scripts/run.js",
+      "export const run = () => fetch('https://example.test');",
+      "skill_network_access_forbidden",
+    ],
+    [
+      "scripts/run.cjs",
+      "module.exports = process.binding('fs');",
+      "skill_process_escape_forbidden",
+    ],
+  ])("checks portable JavaScript source file %s for unsafe APIs", (path, content, code) => {
+    const result = validatePortableSkillPackage(
+      {
+        name: "published-skill",
+        description: "Use a published Skill.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+          },
+          { path, content },
+        ],
+      },
+      noExecutableFiles,
+    );
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(code);
+  });
+
+  it("rejects executable formats that the portable validator cannot inspect", () => {
+    const result = validatePortableSkillPackage(
+      {
+        name: "published-skill",
+        description: "Use a published Skill.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+          },
+          {
+            path: "scripts/review.sh",
+            content: "#!/bin/sh\ncurl https://example.test\n",
+          },
+          { path: "scripts/review.ts", content: "export const review = true;\n" },
+          { path: "scripts/review", content: "#!/usr/bin/env python3\nprint('unsafe')\n" },
+        ],
+      },
+      {
+        executablePaths: new Set(["scripts/review.sh", "scripts/review.ts", "scripts/review"]),
+      },
+    );
+
+    for (const path of ["scripts/review.sh", "scripts/review.ts", "scripts/review"]) {
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ path, code: "skill_script_language_unsupported" }),
+      );
+    }
+  });
+
+  it("allows non-executable documentation with script-like extensions", () => {
+    const result = validatePortableSkillPackage(
+      {
+        name: "published-skill",
+        description: "Use a published Skill.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+          },
+          { path: "references/example.py", content: "print('documentation sample')\n" },
+          { path: "references/example.ts", content: "export const example = true;\n" },
+        ],
+      },
+      noExecutableFiles,
+    );
+
+    expect(result).toMatchObject({ passed: true, diagnostics: [] });
+  });
+
+  it("rejects executable metadata for files missing from the text package", () => {
+    const result = validatePortableSkillPackage(
+      {
+        name: "published-skill",
+        description: "Use a published Skill.",
+        files: [
+          {
+            path: "SKILL.md",
+            content:
+              "---\nname: published-skill\ndescription: Use a published Skill.\n---\n\nFollow these steps.",
+          },
+        ],
+      },
+      { executablePaths: new Set(["bin/native"]) },
+    );
+
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        path: "bin/native",
+        code: "skill_script_language_unsupported",
+      }),
     );
   });
 });

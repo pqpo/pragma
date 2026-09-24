@@ -25,8 +25,12 @@ records names, descriptions, paths, sizes, SHA-256 digests, and executable bits.
 Symlinks, hard links, undeclared files, invalid paths, binary content, oversized packages, and
 integrity mismatches fail closed. Files outside the managed root are preserved.
 
-Repository protocol v3 retains this Capability-only identity and adds the optional asset Git
-association. The v1 reader accepts only
+Repository protocol v3 retains this Capability-only identity, requires safe validation for newly
+introduced executable files, and supports an optional asset Git association in Skill manifests.
+Existing v1/v2 executable files can be adopted as an initial snapshot; subsequent changes to
+their path, mode, or content require current validation. Repositories with such legacy files remain
+on the v2 root protocol until they can safely move to v3. The v2 Skill manifest stays in use there
+unless the Skill carries an asset Git association, which requires its v3 Skill manifest. The v1 reader accepts only
 `capability/<id>` entries. Because the legacy Bundle identity protocol was never released to users,
 `bundle/<logicalId>` repository entries and persisted sync keys intentionally fail closed with an
 instruction to reinitialize Skill sync; current reconciliation and conflict handling
@@ -42,11 +46,13 @@ When configuring a target, `merge_and_publish` runs this same bidirectional reco
 publishes local-only changes; it is not a local-authoritative overwrite. `restore_remote` applies the
 selected target without publishing local candidates.
 
-Every incoming package passes the deterministic structure and safety validation used by Skill
-revision approval. Updates append through the Capability mutation coordinator. A ready revision
-becomes the Capability's active revision after compatibility checks; ID-only Project and System
-Expert bindings need no rewrite. Remote deletion uses the ordinary Capability deletion boundary and
-cannot remove a referenced Skill.
+Every incoming package passes portable file-tree, metadata, size, and static code-safety validation.
+The stricter generated-Skill layout and generated-script test-coverage checks apply only to
+Memory-generated candidates; ordinary published Skills may include other safe relative files.
+Updates append through the Capability mutation coordinator. A ready revision becomes the
+Capability's active revision after compatibility checks; ID-only Project and System Expert bindings
+need no rewrite. Remote deletion uses the ordinary Capability deletion boundary and cannot remove a
+referenced Skill.
 
 Desktop startup, window focus, and network-online events perform pull-only refreshes. A successful
 local Skill publication schedules a full sync when automatic upload is enabled. Manual sync is

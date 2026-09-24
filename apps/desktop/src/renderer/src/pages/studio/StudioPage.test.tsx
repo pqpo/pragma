@@ -2,8 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { User } from "@phosphor-icons/react";
 
-import type { ExpertDefinition } from "../../../../shared/contracts/index.ts";
-import { mergeLoadedExperts, StudioPage } from "./StudioPage.tsx";
+import type { ExpertDefinition, SkillSyncOverview } from "../../../../shared/contracts/index.ts";
+import { mergeLoadedExperts, StudioPage, syncSkillsAndRefreshCatalog } from "./StudioPage.tsx";
 import { toExpertRecord } from "./studio-model.ts";
 
 const persistedExpert: ExpertDefinition = {
@@ -32,6 +32,69 @@ const persistedExpert: ExpertDefinition = {
 };
 
 describe("StudioPage", () => {
+  it("does not wait for a Skill catalog refresh after sync succeeds", async () => {
+    const overview: SkillSyncOverview = {
+      configured: true,
+      status: "ready",
+      skills: [],
+      conflicts: [],
+    };
+    let refreshAttempted = false;
+    let finishRefresh!: () => void;
+    const refresh = new Promise<void>((resolve) => {
+      finishRefresh = resolve;
+    });
+
+    const result = await Promise.race([
+      syncSkillsAndRefreshCatalog(
+        async () => overview,
+        async () => {
+          refreshAttempted = true;
+          await refresh;
+        },
+      ).then((value) => ({ kind: "completed" as const, value })),
+      new Promise<{ kind: "blocked" }>((resolve) => {
+        setTimeout(() => resolve({ kind: "blocked" }), 50);
+      }),
+    ]);
+
+    finishRefresh();
+    expect(refreshAttempted).toBe(true);
+    expect(result).toEqual({ kind: "completed", value: overview });
+  });
+
+  it("keeps a successful Skill sync result and reports a failed catalog refresh", async () => {
+    const overview: SkillSyncOverview = {
+      configured: true,
+      status: "ready",
+      skills: [],
+      conflicts: [],
+    };
+    let finishRefresh!: () => void;
+    const refresh = new Promise<void>((_resolve, reject) => {
+      finishRefresh = () => reject(new Error("catalog unavailable"));
+    });
+    let reportRefreshFailure!: () => void;
+    const refreshFailureReported = new Promise<void>((resolve) => {
+      reportRefreshFailure = resolve;
+    });
+    let refreshFailureNotified = false;
+
+    await expect(
+      syncSkillsAndRefreshCatalog(
+        async () => overview,
+        async () => await refresh,
+        () => {
+          refreshFailureNotified = true;
+          reportRefreshFailure();
+        },
+      ),
+    ).resolves.toBe(overview);
+    finishRefresh();
+    await refreshFailureReported;
+    expect(refreshFailureNotified).toBe(true);
+  });
+
   it("renders a resizable secondary navigation", () => {
     const html = renderToStaticMarkup(
       <StudioPage memoryEnabled={true} onTryExpert={() => undefined} />,

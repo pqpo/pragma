@@ -494,6 +494,210 @@ describe("Skill revision service", () => {
     });
   });
 
+  it("allows safe portable files when revising an existing Skill", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "assets"));
+    await writeFile(
+      join(fixture.sourcePath, "assets", "diagram.svg"),
+      `<svg>${"x".repeat(128 * 1_024)}</svg>\n`,
+    );
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    expect(editing.workingTree.entries).toContainEqual(
+      expect.objectContaining({ path: "assets/diagram.svg" }),
+    );
+
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Keep the published diagram asset.",
+    });
+    const completed = await fixture.service.approve(pending.id, pending.revision);
+
+    expect(completed).toMatchObject({ state: "completed", publishedRevision: 2 });
+  });
+
+  it("allows non-executable files with script-like extensions when revising a Skill", async () => {
+    const fixture = await createService();
+    const references = join(fixture.sourcePath, "references");
+    await mkdir(references);
+    const pythonExample = join(references, "example.py");
+    const typescriptExample = join(references, "example.ts");
+    await writeFile(pythonExample, "print('documentation sample')\n");
+    await writeFile(typescriptExample, "export const example = true;\n");
+    await chmod(pythonExample, 0o600);
+    await chmod(typescriptExample, 0o600);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Keep source examples as non-executable documentation.",
+    });
+
+    await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 2,
+    });
+  });
+
+  it("rejects executable files that the portable validator cannot inspect", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const bin = join(editing.draftPath!, "bin");
+    await mkdir(bin);
+    const executable = join(bin, "run");
+    await writeFile(executable, "echo unsafe\n");
+    await chmod(executable, 0o700);
+    const changed = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: changed.draft.revision,
+        expectedWorkingTreeHash: changed.workingTree.hash,
+        summary: "Reject an unscanned executable file.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: [
+          expect.objectContaining({
+            path: "bin/run",
+            code: "skill_script_language_unsupported",
+          }),
+        ],
+      },
+    });
+  });
+
+  it("preserves an unchanged unsupported executable from an existing Skill revision", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "references"));
+    const legacyTool = join(fixture.sourcePath, "references", "tool.sh");
+    await writeFile(legacyTool, "echo legacy tool\n");
+    await chmod(legacyTool, 0o700);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(editing.draftPath!, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nUpdated instructions.\n",
+    );
+    const changed = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: changed.draft.revision,
+      expectedWorkingTreeHash: changed.workingTree.hash,
+      summary: "Update the instructions while preserving the legacy tool.",
+    });
+
+    await expect(fixture.service.approve(pending.id, pending.revision)).resolves.toMatchObject({
+      state: "completed",
+      publishedRevision: 2,
+    });
+  });
+
+  it("rejects a changed unsupported executable when revising an existing Skill", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "references"));
+    const legacyTool = join(fixture.sourcePath, "references", "tool.sh");
+    await writeFile(legacyTool, "echo legacy tool\n");
+    await chmod(legacyTool, 0o700);
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(join(editing.draftPath!, "references", "tool.sh"), "echo changed tool\n");
+    const changed = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: changed.draft.revision,
+        expectedWorkingTreeHash: changed.workingTree.hash,
+        summary: "Reject the changed unscanned executable.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: [
+          expect.objectContaining({
+            path: "references/tool.sh",
+            code: "skill_script_language_unsupported",
+          }),
+        ],
+      },
+    });
+  });
+
+  it("keeps generated layout validation for Memory Skill revisions", async () => {
+    const fixture = await createService();
+    await mkdir(join(fixture.sourcePath, "scripts"));
+    await writeFile(join(fixture.sourcePath, "scripts", "run.js"), "export const run = true;\n");
+
+    const job = await fixture.service.start(request("memory-learning"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: editing.draft.revision,
+        expectedWorkingTreeHash: editing.workingTree.hash,
+        summary: "Validate this generated Skill revision.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ code: "skill_executable_extension_invalid" }),
+        ]),
+      },
+    });
+  });
+
+  it("keeps generated layout validation for Agent-created Skills", async () => {
+    const fixture = await createService();
+    const job = await fixture.service.start({
+      schemaVersion: "pragma.skill-revision-request/v4",
+      operation: "create",
+      capabilityId: randomUUID(),
+      resourceName: "created-skill",
+      resourceDescription: "A newly generated Skill.",
+      source: "expert-reflection",
+      sourceDigest: "e".repeat(64),
+      sourceRefs: [],
+      prompt: "Create a new Skill.",
+    });
+    const draft = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(
+      join(draft.draftPath!, "SKILL.md"),
+      "---\nname: created-skill\ndescription: A newly generated Skill.\n---\n",
+    );
+    await mkdir(join(draft.draftPath!, "scripts"));
+    await writeFile(join(draft.draftPath!, "scripts", "run.js"), "export const run = true;\n");
+    await mkdir(join(draft.draftPath!, "assets"));
+    await writeFile(join(draft.draftPath!, "assets", "diagram.svg"), "<svg />\n");
+    const ready = await fixture.service.inspectDraft(job.draftId);
+
+    await expect(
+      fixture.service.submitDraft({
+        draftId: job.draftId,
+        expectedRevision: ready.draft.revision,
+        expectedWorkingTreeHash: ready.workingTree.hash,
+        summary: "Submit the generated Skill.",
+      }),
+    ).rejects.toMatchObject({
+      validation: {
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ code: "skill_file_location_invalid" }),
+          expect.objectContaining({ code: "skill_executable_extension_invalid" }),
+        ]),
+      },
+    });
+  });
+
   it("recovers a creation candidate under a new id after the reserved id is occupied", async () => {
     let occupied = true;
     const fixture = await createService({

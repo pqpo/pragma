@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { Capability } from "../../../../shared/contracts/index.ts";
+import type { Capability, SkillSyncOverview } from "../../../../shared/contracts/index.ts";
 import {
   CapabilityDirectoryFragment,
   capabilityEditMode,
@@ -12,6 +12,7 @@ import {
   formatCommandArguments,
   httpDraftFromDefinition,
   parseCommandArguments,
+  skillSyncActionState,
   toHttpToolDefinition,
 } from "./CapabilityDirectoryFragment.tsx";
 
@@ -226,6 +227,62 @@ describe("capability row actions", () => {
     expect(html).not.toContain("Skill revisions");
   });
 
+  it("keeps asset Git import and environment Skill sync available together", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="skills"
+        capabilities={[]}
+        syncOverview={{ configured: true, status: "ready", skills: [], conflicts: [] }}
+        syncOverviewState="ready"
+        onSync={async () => ({ configured: true, status: "ready", skills: [], conflicts: [] })}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Import from Git");
+    expect(html).toContain("Sync now");
+  });
+
+  it("keeps Skill sync feedback out of the connector directory", () => {
+    const syncOverview: SkillSyncOverview = {
+      configured: true,
+      status: "error",
+      errorCode: "skill_sync_failed",
+      skills: [],
+      conflicts: [],
+    };
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="connectors"
+        capabilities={[]}
+        syncOverview={syncOverview}
+        syncOverviewState="error"
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("Sync status is temporarily unavailable");
+  });
+
+  it("shows a separate catalog refresh warning and retry action after sync", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="skills"
+        capabilities={[]}
+        catalogRefreshFailed={true}
+        onRetryCatalogRefresh={async () => undefined}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Sync completed, but the Skill list could not be refreshed.");
+    expect(html).toContain(">Refresh list</button>");
+    expect(html).toContain('role="alert"');
+  });
+
   it("lists system capabilities as built-in without mutation actions", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment
@@ -263,5 +320,27 @@ describe("capability row actions", () => {
     expect(capabilityDeleteErrorMessage()).toBe(
       "This capability could not be deleted. Please try again.",
     );
+  });
+});
+
+describe("skill sync action state", () => {
+  const overview: SkillSyncOverview = {
+    configured: true,
+    status: "ready",
+    skills: [],
+    conflicts: [],
+  };
+
+  it("keeps an unknown overview in the loading state", () => {
+    expect(skillSyncActionState(undefined, "loading")).toBe("loading");
+  });
+
+  it("offers retry when loading the overview fails", () => {
+    expect(skillSyncActionState(undefined, "error")).toBe("retry");
+  });
+
+  it("routes to settings only for an explicitly unconfigured overview", () => {
+    expect(skillSyncActionState({ ...overview, configured: false }, "ready")).toBe("configure");
+    expect(skillSyncActionState(overview, "ready")).toBe("sync");
   });
 });

@@ -30,6 +30,7 @@ export const SkillSyncRepositoryManifestV1Schema = z
 export const SkillSyncRepositoryManifestV2Schema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v2") })
   .strict();
+/** v3 repositories require safe validation for newly introduced executable files. */
 export const SkillSyncRepositoryManifestSchema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v3") })
   .strict();
