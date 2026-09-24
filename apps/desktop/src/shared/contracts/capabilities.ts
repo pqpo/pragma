@@ -324,15 +324,7 @@ const SkillFilePathSchema = z
     (path) =>
       !path.startsWith("/") &&
       !path.includes("\\") &&
-      path
-        .split("/")
-        .every(
-          (segment) =>
-            segment.length > 0 &&
-            segment !== "." &&
-            segment !== ".." &&
-            segment.toLowerCase() !== ".git",
-        ),
+      path.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
     "Skill file paths must be safe relative paths.",
   );
 export const ListSkillFilesSchema = GetSkillDocumentSchema;

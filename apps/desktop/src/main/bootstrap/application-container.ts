@@ -589,11 +589,6 @@ export async function createDesktopApplicationContainer(
         expert.capabilities.some((reference) => reference.capabilityId === capabilityId),
       );
     },
-    onRemoved: async (capabilityId) => {
-      await assetGitRef.current?.unbind({ kind: "skill", id: capabilityId });
-      await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
-      skillSyncRef.current?.schedule("skill-removed");
-    },
     onSkillCreated: () => skillSyncRef.current?.schedule("skill-published"),
   });
   capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
@@ -602,6 +597,11 @@ export async function createDesktopApplicationContainer(
     project: pragmaProjectStore,
     systemExperts,
     credentials: capabilityCredentials,
+    onDeleted: async (capabilityId) => {
+      await assetGitRef.current?.unbind({ kind: "skill", id: capabilityId });
+      await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
+      skillSyncRef.current?.schedule("skill-removed");
+    },
     warn: (message, error) =>
       mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
   });

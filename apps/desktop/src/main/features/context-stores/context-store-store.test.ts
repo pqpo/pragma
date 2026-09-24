@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { ContentAddressedStore } from "@pragma/core";
+import { ContentAddressedStore, withFileLock } from "@pragma/core";
 
 import {
   createContextStoreStore,
@@ -31,14 +31,18 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
-  it("keeps Git internals out of knowledge file enumeration and reads", async () => {
+  it("preserves historical .git directory enumeration in ordinary knowledge bases", async () => {
     const { store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Notes", description: "" });
     const files = await store.filesPath(created.id);
     await mkdir(join(files, ".git"));
     await writeFile(join(files, ".git", "internal.md"), "hidden");
     await store.createFile(created.id, "visible.md", "# Visible\n");
-    expect((await store.listEntries(created.id)).map((entry) => entry.id)).toEqual(["visible.md"]);
+    expect((await store.listEntries(created.id)).map((entry) => entry.id)).toEqual([
+      ".git",
+      ".git/internal.md",
+      "visible.md",
+    ]);
     await expect(store.getContent(created.id, ".git/internal.md")).rejects.toThrow();
   });
   it("acquires multiple revision locks once each in deterministic Store ID order", async () => {
@@ -575,6 +579,20 @@ describe("managed context store", () => {
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("runs deletion cleanup after releasing the revision lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-context-stores-"));
+    directories.push(directory);
+    const storesPath = join(directory, "stores");
+    const store = createContextStoreStore({
+      storesPath,
+      onRemoved: async (id) => {
+        await withFileLock(join(storesPath, ".locks", `${id}.lock`), async () => undefined);
+      },
+    });
+    const created = await store.create({ mode: "blank", name: "Delete", description: "" });
+    await expect(store.remove(created.id)).resolves.toBeUndefined();
   });
 
   it("rejects a prepared deletion after the knowledge base changes", async () => {

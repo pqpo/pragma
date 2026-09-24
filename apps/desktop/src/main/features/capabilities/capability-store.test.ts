@@ -10,7 +10,7 @@ import type { CapabilityCredentialStore } from "./capability-credential-store.ts
 import { createCapabilityVerifier } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
 import { createCapabilityStore, type CapabilityRevisionPublishInput } from "./capability-store.ts";
-import { scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
+import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
 
 const directories: string[] = [];
 
@@ -430,10 +430,17 @@ describe("capability store", () => {
       (await store.listSkillFiles({ id: capability.manifest.id })).some((file) =>
         file.path.includes(".git"),
       ),
-    ).toBe(false);
-    await expect(
-      store.getSkillFile({ id: capability.manifest.id, path: ".git/config" }),
-    ).rejects.toThrow("invalid");
+    ).toBe(true);
+    expect(
+      (await store.getSkillFile({ id: capability.manifest.id, path: ".git/config" })).content,
+    ).toContain("[core]");
+    const revisionFiles = await store.skillFilesPath(capability.manifest.id, 1);
+    const copiedRevision = join(directory, "copied-revision");
+    await copySkillTree(revisionFiles, copiedRevision);
+    expect((await scanSkillWorkingTree(copiedRevision)).hash).toBe(
+      (await scanSkillWorkingTree(revisionFiles)).hash,
+    );
+    expect(await readFile(join(copiedRevision, ".git", "config"), "utf8")).toBe("[core]\n");
 
     expect(capability).toMatchObject({
       manifest: { kind: "skill", latestRevision: 1, name: "repo-review" },

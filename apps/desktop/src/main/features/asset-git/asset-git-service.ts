@@ -133,11 +133,32 @@ export function createAssetGitService(options: {
     return await withFileLock(join(options.stateRoot, "bindings.lock"), operation);
   };
   const assertExists = async (target: AssetGitTarget): Promise<void> => {
-    if (target.kind === "knowledge") await options.stores.getSnapshot(target.id);
-    else {
+    if (target.kind === "knowledge") {
+      const snapshot = await options.stores.getSnapshot(target.id);
+      if (
+        [
+          ...snapshot.directories,
+          ...snapshot.files.map((file) => file.id),
+          ...(await options.stores.listEntries(target.id)).map((entry) => entry.id),
+        ].some((path) => path.split("/").some((segment) => segment.toLowerCase() === ".git"))
+      ) {
+        throw new Error(
+          "This knowledge base contains historical .git files; remove them before Git sync.",
+        );
+      }
+    } else {
       const capability = await options.capabilities.get(target.id);
       if (capability.definition.kind !== "skill" || capability.managedBy === "system") {
         throw new Error("Only user Skill capabilities can be associated with Git.");
+      }
+      if (
+        (await options.capabilities.listSkillFiles({ id: target.id })).some((file) =>
+          file.path.split("/").some((segment) => segment.toLowerCase() === ".git"),
+        )
+      ) {
+        throw new Error(
+          "This Skill contains historical .git files; remove them in a new revision before Git sync.",
+        );
       }
     }
   };
@@ -261,7 +282,7 @@ export function createAssetGitService(options: {
         } else {
           const stage = await mkdtemp(join(tmpdir(), "pragma-git-skill-"));
           try {
-            await writeFiles(stage, files, root);
+            await writeFiles(stage, files, await readGitModes(root));
             const created = await options.capabilities.importSkill({ sourcePath: stage });
             target = { kind: "skill", id: created.manifest.id };
             await saveRecord({
@@ -348,9 +369,9 @@ export function createAssetGitService(options: {
               return await status(target);
             }
             await replaceManagedFiles(root, remote, merged.files);
-            if (modes) await applyModes(root, modes.merged);
             await git(root, ["add", "-A"]);
             for (const path of merged.files.keys()) await git(root, ["add", "-f", "--", path]);
+            if (modes) await applyModes(root, modes.merged);
             const changed = (await git(root, ["status", "--porcelain"])).trim() !== "";
             if (changed) await assertGitIdentity(root);
             await saveJournal(target, {
@@ -370,7 +391,7 @@ export function createAssetGitService(options: {
                 target,
                 current.revision,
                 merged.files,
-                root,
+                modes?.merged,
                 options.stores,
                 options.capabilities,
               );
@@ -683,18 +704,30 @@ async function assertSafeWritePath(root: string, path: string): Promise<void> {
     }
   }
 }
-async function writeFiles(root: string, files: Files, modeSource?: string): Promise<void> {
+async function writeFiles(root: string, files: Files, modes?: Modes): Promise<void> {
   for (const [path, bytes] of files) {
     const target = join(root, ...path.split("/"));
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     await writeFile(target, bytes);
-    if (modeSource) {
-      const sourceMode = (await stat(join(modeSource, ...path.split("/")))).mode;
-      await chmod(target, sourceMode & 0o111 ? 0o700 : 0o600);
+    if (modes) {
+      const executable = modes.get(path);
+      if (executable === undefined)
+        throw new Error(`Git index is missing the Skill file mode: ${path}`);
+      await chmod(target, executable ? 0o700 : 0o600);
     }
   }
 }
 type Modes = Map<string, boolean>;
+async function readGitModes(root: string): Promise<Modes> {
+  const modes: Modes = new Map();
+  const index = await git(root, ["ls-files", "--stage", "-z"]);
+  for (const record of index.split("\0")) {
+    if (!record) continue;
+    const match = /^(100644|100755) [a-f0-9]+ [0-3]\t([\s\S]+)$/u.exec(record);
+    if (match) modes.set(match[2]!, match[1] === "100755");
+  }
+  return modes;
+}
 async function readModes(root: string, files: Files): Promise<Modes> {
   return new Map(
     await Promise.all(
@@ -719,7 +752,7 @@ async function mergeSkillModes(input: {
       ? readModes(input.base, input.baseFiles)
       : Promise.resolve(new Map<string, boolean>()),
     readModes(input.local, input.localFiles),
-    readModes(input.remote, input.remoteFiles),
+    readGitModes(input.remote),
   ]);
   const merged: Modes = new Map();
   const conflicts: string[] = [];
@@ -737,6 +770,7 @@ async function mergeSkillModes(input: {
 async function applyModes(root: string, modes: Modes): Promise<void> {
   for (const [path, executable] of modes) {
     await chmod(join(root, ...path.split("/")), executable ? 0o700 : 0o600);
+    await git(root, ["update-index", `--chmod=${executable ? "+x" : "-x"}`, "--", path]);
   }
 }
 function sameModes(a: Modes, b: Modes): boolean {
@@ -758,7 +792,7 @@ async function publishLocal(
   target: AssetGitTarget,
   baseRevision: number,
   files: Files,
-  checkoutRoot: string,
+  modes: Modes | undefined,
   stores: ContextStoreStore,
   capabilities: CapabilityStore,
 ): Promise<number> {
@@ -772,13 +806,21 @@ async function publishLocal(
       content: decodeMarkdown(bytes),
       metadata: metadata.get(id) ?? { trigger: "manual", priority: "normal" },
     }));
+    const directories = new Set(current.directories);
+    for (const file of nextFiles) {
+      const segments = file.id.split("/");
+      for (let length = 1; length < segments.length; length += 1) {
+        directories.add(segments.slice(0, length).join("/"));
+      }
+    }
+    const nextDirectories = [...directories].toSorted();
     const result = await stores.appendSnapshot(
       {
         storeId: target.id,
         baseRevision,
         baseSnapshotHash: current.snapshotHash,
-        snapshotHash: hashSnapshotContent(nextFiles, current.directories),
-        directories: current.directories,
+        snapshotHash: hashSnapshotContent(nextFiles, nextDirectories),
+        directories: nextDirectories,
         files: nextFiles,
         summary: "Sync knowledge base from Git",
       },
@@ -791,7 +833,7 @@ async function publishLocal(
     throw new Error("Skill changed during Git sync.");
   const stage = await mkdtemp(join(tmpdir(), "pragma-git-skill-"));
   try {
-    await writeFiles(stage, files, checkoutRoot);
+    await writeFiles(stage, files, modes);
     const snapshot = await scanSkillWorkingTree(stage);
     const result = await capabilities.publishSkillRevisionCandidate({
       id: target.id,

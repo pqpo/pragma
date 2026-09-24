@@ -50,7 +50,6 @@ export async function scanSkillWorkingTree(
   const visit = async (directory: string): Promise<void> => {
     const children = await readdir(directory, { withFileTypes: true });
     for (const child of children.toSorted((left, right) => left.name.localeCompare(right.name))) {
-      if (child.name.toLowerCase() === ".git") continue;
       const absolute = join(directory, child.name);
       const logical = relative(absoluteRoot, absolute).split(sep).join("/");
       if (logical.startsWith("../") || logical === ".." || logical.includes("\0")) {
@@ -126,7 +125,6 @@ export async function copySkillTree(source: string, target: string): Promise<voi
   await mkdir(targetRoot, { recursive: true, mode: 0o700 });
   const visit = async (directory: string): Promise<void> => {
     for (const child of await readdir(directory, { withFileTypes: true })) {
-      if (child.name.toLowerCase() === ".git") continue;
       const absolute = join(directory, child.name);
       const logical = relative(sourceRoot, absolute);
       const destination = resolve(targetRoot, logical);

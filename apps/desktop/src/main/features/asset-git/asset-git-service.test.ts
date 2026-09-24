@@ -157,6 +157,30 @@ describe("asset Git knowledge sync", () => {
     );
   });
 
+  it("publishes remote files in new nested directories", async () => {
+    const { seed, stores, service, source } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    await stores.createFolder(target.id, "empty");
+    await mkdir(join(seed, "docs"));
+    await writeFile(join(seed, "docs", "new.md"), "# New\n");
+    await run(seed, ["add", "docs/new.md"]);
+    await run(seed, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.test",
+      "commit",
+      "-m",
+      "Nested",
+    ]);
+    await run(seed, ["push", "origin", "main"]);
+    expect((await service.sync(target)).status).toBe("synced");
+    const snapshot = await stores.getSnapshot(target.id);
+    expect(snapshot.directories).toContain("docs");
+    expect(snapshot.directories).toContain("empty");
+    expect(snapshot.files.some((file) => file.id === "docs/new.md")).toBe(true);
+  });
+
   it("reports overlapping first-bind changes without replacing either side", async () => {
     const { seed, stores, service, source } = await fixture();
     const local = await stores.create({ mode: "blank", name: "Local", description: "" });
@@ -320,6 +344,10 @@ describe("asset Git Skill sync", () => {
       "Skill",
     ]);
     await run(seed, ["push", "origin", "main"]);
+    await run(seed, ["config", "core.filemode", "false"]);
+    await chmod(join(seed, "scripts", "check.sh"), 0o644);
+    expect(await run(seed, ["ls-files", "--stage", "scripts/check.sh"])).toContain("100755");
+    expect((await stat(join(seed, "scripts", "check.sh"))).mode & 0o111).toBe(0);
     const mutations = {
       publish: async (input: { commit: () => Promise<unknown> }) => await input.commit(),
     } as unknown as Parameters<typeof createCapabilityStore>[0]["mutations"];

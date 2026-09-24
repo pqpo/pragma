@@ -236,7 +236,6 @@ export function createCapabilityStore(options: {
   readonly verify: CapabilityVerifier;
   readonly mutations: CapabilityMutationService;
   readonly isReferenced: (capabilityId: string) => Promise<boolean>;
-  readonly onRemoved?: ((capabilityId: string) => Promise<void>) | undefined;
   readonly onSkillCreated?: ((capability: Capability) => void) | undefined;
 }): CapabilityStore {
   const capabilityPath = (id: string) => join(options.capabilitiesPath, id);
@@ -289,7 +288,6 @@ export function createCapabilityStore(options: {
       );
     }
     await options.credentials.removeCapability(id);
-    await options.onRemoved?.(id);
     await rm(capabilityPath(id), { recursive: true, force: true });
   };
   const completeRemoval = async (id: string, expectedRevision: number): Promise<void> => {
@@ -735,9 +733,6 @@ export function createCapabilityStore(options: {
     },
 
     async getSkillFile(input) {
-      if (input.path.split("/").some((segment) => segment.toLowerCase() === ".git")) {
-        throw new CapabilityStoreError("config_invalid", "The Skill file path is invalid.");
-      }
       const capability = await readCapability(input.id, input.revision);
       if (capability.definition.kind !== "skill") {
         throw new CapabilityStoreError(
@@ -1727,7 +1722,6 @@ async function copySkillDirectory(
   state: { files: number; bytes: number },
 ): Promise<void> {
   for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
-    if (entry.name.toLowerCase() === ".git") continue;
     const source = join(sourcePath, entry.name);
     const target = join(targetPath, entry.name);
     const info = await lstat(source);
@@ -1757,13 +1751,7 @@ function validateArchivePath(name: string): string {
     normalized.startsWith("/") ||
     /^[a-zA-Z]:\//.test(normalized) ||
     normalized.includes("\0") ||
-    segments.some(
-      (segment) =>
-        segment.length === 0 ||
-        segment === "." ||
-        segment === ".." ||
-        segment.toLowerCase() === ".git",
-    )
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     throw new CapabilityStoreError("import_invalid", "The Skill ZIP contains an unsafe path.");
   }
@@ -1871,7 +1859,6 @@ function sha256Chunks(chunks: readonly (string | Uint8Array)[]): string {
 async function listFiles(path: string): Promise<string[]> {
   const output: string[] = [];
   for (const entry of await readdir(path, { withFileTypes: true })) {
-    if (entry.name.toLowerCase() === ".git") continue;
     const target = join(path, entry.name);
     if (entry.isDirectory()) output.push(...(await listFiles(target)));
     else if (entry.isFile()) output.push(target);
