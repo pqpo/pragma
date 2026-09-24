@@ -4,7 +4,7 @@ import JSON5 from "json5";
 
 import type { OpenCodeMajor } from "./process.ts";
 
-const MODEL_KEYS = [
+const TRUSTED_MODEL_KEYS = [
   "provider",
   "providers",
   "model",
@@ -12,8 +12,10 @@ const MODEL_KEYS = [
   "enabled_providers",
   "disabled_providers",
 ] as const;
+const PROJECT_SELECTOR_KEYS = ["model", "small_model"] as const;
+const PROJECT_PROVIDER_LIST_KEYS = ["enabled_providers", "disabled_providers"] as const;
 
-/** Import model settings as data; never execute a host or project customization. */
+/** Import host model configuration and project selectors into a private native config. */
 export async function prepareOpenCodeConfiguration(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly workspace: string;
@@ -27,7 +29,7 @@ export async function prepareOpenCodeConfiguration(input: {
   await mkdir(join(privateConfigHome, "opencode"), { recursive: true, mode: 0o700 });
   const config: Record<string, unknown> = {};
   const hostConfigHome = input.env["XDG_CONFIG_HOME"] ?? join(requiredHome(input.env), ".config");
-  const candidates = [
+  const trustedCandidates = [
     join(hostConfigHome, "opencode", "opencode.json"),
     join(hostConfigHome, "opencode", "opencode.jsonc"),
     ...(input.env["OPENCODE_CONFIG"] === undefined ? [] : [input.env["OPENCODE_CONFIG"]]),
@@ -38,6 +40,10 @@ export async function prepareOpenCodeConfiguration(input: {
           join(input.env["OPENCODE_CONFIG_DIR"], "opencode.jsonc"),
         ]),
   ];
+  for (const path of trustedCandidates) {
+    const content = await readConfig(path);
+    if (content !== undefined) importTrustedHostConfig(config, JSON5.parse(content), path);
+  }
   const ancestors = workspaceAncestors(input.workspace);
   for (const directory of ancestors) {
     if (await exists(join(directory, ".opencode"))) {
@@ -45,18 +51,14 @@ export async function prepareOpenCodeConfiguration(input: {
         `OpenCode workspace customization is not governed by Pragma: ${join(directory, ".opencode")}`,
       );
     }
-    candidates.push(join(directory, "opencode.json"), join(directory, "opencode.jsonc"));
-  }
-  for (const path of candidates) {
-    const content = await readFile(path, "utf8").catch((error: unknown) => {
-      if (isMissing(error)) return undefined;
-      throw error;
-    });
-    if (content !== undefined) importModelConfig(config, JSON5.parse(content), path);
+    for (const path of [join(directory, "opencode.json"), join(directory, "opencode.jsonc")]) {
+      const content = await readConfig(path);
+      if (content !== undefined) importUntrustedProjectConfig(config, JSON5.parse(content), path);
+    }
   }
   const inline = input.env["OPENCODE_CONFIG_CONTENT"];
   if (inline !== undefined)
-    importModelConfig(config, JSON5.parse(inline), "OPENCODE_CONFIG_CONTENT");
+    importTrustedHostConfig(config, JSON5.parse(inline), "OPENCODE_CONFIG_CONTENT");
 
   const deniedPermissions = Array.isArray(config["permissions"])
     ? (config["permissions"] as { action: string; resource: string; effect: "deny" }[])
@@ -80,14 +82,53 @@ export async function prepareOpenCodeConfiguration(input: {
   };
 }
 
-function importModelConfig(target: Record<string, unknown>, raw: unknown, source: string): void {
+function importTrustedHostConfig(
+  target: Record<string, unknown>,
+  raw: unknown,
+  source: string,
+): void {
+  const config = configObject(raw, source);
+  for (const key of TRUSTED_MODEL_KEYS) {
+    if (config[key] !== undefined) target[key] = config[key];
+  }
+  importDenials(target, config);
+}
+
+function importUntrustedProjectConfig(
+  target: Record<string, unknown>,
+  raw: unknown,
+  source: string,
+): void {
+  const config = configObject(raw, source);
+  for (const key of PROJECT_SELECTOR_KEYS) {
+    const value = config[key];
+    if (value === undefined) continue;
+    if (!isPlainSelector(value)) throw new Error(`Unsafe OpenCode project ${key}: ${source}`);
+    target[key] = value;
+  }
+  for (const key of PROJECT_PROVIDER_LIST_KEYS) {
+    const value = config[key];
+    if (value === undefined) continue;
+    if (!Array.isArray(value) || !value.every(isPlainSelector)) {
+      throw new Error(`Unsafe OpenCode project ${key}: ${source}`);
+    }
+    target[key] = value;
+  }
+  importDenials(target, config);
+}
+
+function isPlainSelector(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && !/[{}\r\n]/.test(value);
+}
+
+function configObject(raw: unknown, source: string): Record<string, unknown> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error(`OpenCode configuration must be an object: ${source}`);
   }
-  const config = raw as Record<string, unknown>;
-  for (const key of MODEL_KEYS) {
-    if (config[key] !== undefined) target[key] = config[key];
-  }
+  return raw as Record<string, unknown>;
+}
+
+function importDenials(target: Record<string, unknown>, config: Record<string, unknown>): void {
   // Preserve explicit denials as data. Positive grants never cross this boundary.
   if (config["permission"] === "deny") target["permission"] = { "*": "deny" };
   const permission = asObject(config["permission"]);
@@ -145,6 +186,13 @@ function importModelConfig(target: Record<string, unknown>, raw: unknown, source
       ],
     };
   }
+}
+
+async function readConfig(path: string): Promise<string | undefined> {
+  return await readFile(path, "utf8").catch((error: unknown) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
 }
 
 function workspaceAncestors(workspace: string): string[] {

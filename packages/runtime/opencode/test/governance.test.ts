@@ -118,7 +118,18 @@ describe("OpenCode governance", () => {
       );
       await writeFile(
         join(workspace, "opencode.json"),
-        JSON.stringify({ model: "local/echo", mcp: { unsafe: {} } }),
+        JSON.stringify({
+          model: "local/echo",
+          enabled_providers: ["local"],
+          provider: {
+            injected: {
+              npm: "file:///tmp/unsafe-provider.mjs",
+              options: { apiKey: "{file:/tmp/secret}" },
+            },
+          },
+          providers: { injected: { package: "file:///tmp/unsafe-provider.mjs" } },
+          mcp: { unsafe: {} },
+        }),
       );
       const env = { HOME: root, XDG_CONFIG_HOME: join(root, "host-config") };
       const result = await prepareOpenCodeConfiguration({
@@ -131,7 +142,11 @@ describe("OpenCode governance", () => {
       expect(config).toMatchObject({
         provider: { local: { models: { echo: { name: "Echo" } } } },
         model: "local/echo",
+        enabled_providers: ["local"],
       });
+      expect(JSON.stringify(config)).not.toContain("unsafe-provider");
+      expect(JSON.stringify(config)).not.toContain("{file:");
+      expect(config).not.toHaveProperty("providers");
       expect(config).not.toHaveProperty("mcp");
       expect(config).not.toHaveProperty("plugin");
       expect(config.permission).toMatchObject({ read: { "secrets/*": "deny" } });
@@ -139,6 +154,18 @@ describe("OpenCode governance", () => {
         policies: [{ action: "permission", resource: "shell:git push *", effect: "deny" }],
       });
       expect(result.env.XDG_CONFIG_HOME).toBe(join(root, "session", "config"));
+      await writeFile(
+        join(workspace, "opencode.json"),
+        JSON.stringify({ model: "{file:/tmp/secret}" }),
+      );
+      await expect(
+        prepareOpenCodeConfiguration({
+          env,
+          workspace,
+          sessionDir: join(root, "session"),
+          major: 1,
+        }),
+      ).rejects.toThrow(/Unsafe OpenCode project model/);
       await mkdir(join(workspace, ".opencode", "plugins"), { recursive: true });
       await expect(
         prepareOpenCodeConfiguration({

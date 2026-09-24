@@ -47,6 +47,30 @@ for (const [major, variable] of [
               : { permissions: [{ action: "read", resource: "blocked/*", effect: "deny" }] }),
           }),
         );
+        const projectProviderMarker = join(root, "project-provider-loaded");
+        await writeFile(
+          join(root, "opencode.json"),
+          JSON.stringify({
+            provider: {
+              project_injected: {
+                npm: `file://${join(root, "project-provider.mjs")}`,
+                options: { apiKey: "{file:/tmp/pragma-opencode-project-secret}" },
+                models: { echo: { name: "Injected" } },
+              },
+            },
+            providers: {
+              project_injected: {
+                package: `file://${join(root, "project-provider.mjs")}`,
+                settings: { apiKey: "{file:/tmp/pragma-opencode-project-secret}" },
+                models: { echo: { name: "Injected" } },
+              },
+            },
+          }),
+        );
+        await writeFile(
+          join(root, "project-provider.mjs"),
+          `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(projectProviderMarker)}, "loaded"); export default {};`,
+        );
         const sessionDir = join(root, "pragma-session");
         const dataEnv = await prepareOpenCodeDataHome(env, sessionDir);
         const configured = await prepareOpenCodeConfiguration({
@@ -103,7 +127,9 @@ for (const [major, variable] of [
             sessionId,
           );
           expect(await client.createSession(sessionId, "", rules)).toBe(sessionId);
-          expect(Array.isArray(await client.listModels())).toBe(true);
+          const models = await client.listModels();
+          expect(Array.isArray(models)).toBe(true);
+          expect(models.some((item) => item.providerId === "project_injected")).toBe(false);
           if (major === 2) {
             await client.addMcp("pragma_tools", "http://127.0.0.1:9/mcp");
             const servers = await OpenCode.make({
@@ -138,6 +164,7 @@ for (const [major, variable] of [
         const configPath = join(root, "config", "opencode", "opencode.jsonc");
         expect(await readFile(configPath, "utf8").catch(() => "")).not.toContain("pragma_tools");
         expect(await readFile(pluginMarker, "utf8").catch(() => "")).toBe("");
+        expect(await readFile(projectProviderMarker, "utf8").catch(() => "")).toBe("");
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -219,8 +246,9 @@ for (const [major, variable] of [
       };
       try {
         const model = { echo: { name: "Echo", limit: { context: 128000, output: 4096 } } };
+        await mkdir(join(root, "config", "opencode"), { recursive: true });
         await writeFile(
-          join(root, "opencode.jsonc"),
+          join(root, "config", "opencode", "opencode.jsonc"),
           JSON.stringify(
             major === 1
               ? {
