@@ -1,4 +1,4 @@
-import { SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+import { GeneratedSkillPackageSchema, SkillPackageSchema, type SkillPackage } from "@pragma/shared";
 const ALLOWED_NODE_IMPORTS = new Set([
   "node:assert",
   "node:assert/strict",
@@ -50,7 +50,9 @@ function validatePackage(
   generated: boolean,
   options: SkillPackageValidationOptions,
 ): SkillPackageValidationResult {
-  const parsed = SkillPackageSchema.safeParse(rawPackage);
+  const parsed = (generated ? GeneratedSkillPackageSchema : SkillPackageSchema).safeParse(
+    rawPackage,
+  );
   if (!parsed.success) {
     const diagnostics = parsed.error.issues.map((issue) => ({
       path: issue.path.join("."),

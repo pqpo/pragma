@@ -58,4 +58,27 @@ describe("Skill package validation", () => {
       validation.diagnostics.some((diagnostic) => diagnostic.path === "references/example.js"),
     ).toBe(false);
   });
+
+  it("applies the generated per-file size limit without narrowing portable packages", () => {
+    const largeContent = "x".repeat(128 * 1_024 + 1);
+    const skill = {
+      name: "Large Skill",
+      description: "Has a larger reference file.",
+      files: [
+        {
+          path: "SKILL.md",
+          content: "---\nname: Large Skill\ndescription: Has a larger reference file.\n---\n",
+        },
+        { path: "references/large.md", content: largeContent },
+      ],
+    };
+
+    const generated = validateSkillPackage(skill, { executablePaths: new Set() });
+    const portable = validatePortableSkillPackage(skill, { executablePaths: new Set() });
+
+    expect(generated.diagnostics).toContainEqual(
+      expect.objectContaining({ path: "files.1.content", code: "custom" }),
+    );
+    expect(portable.passed).toBe(true);
+  });
 });
