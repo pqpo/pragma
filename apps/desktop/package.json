@@ -38,8 +38,8 @@
     "clean": "rm -rf out dist .plugin-bundles"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^3.0.0",
-    "@lobehub/icons-static-svg": "1.94.0",
+    "@dagrejs/dagre": "^3.1.1",
+    "@lobehub/icons-static-svg": "1.95.1",
     "@napi-rs/keyring": "1.3.0",
     "@phosphor-icons/react": "latest",
     "@tanstack/react-virtual": "^3.13.18",
@@ -57,16 +57,16 @@
     "@pragma/shared": "workspace:*",
     "@pragma/built-in-agents": "workspace:*",
     "@pragma/evaluation": "workspace:*",
-    "@xyflow/react": "^12.11.2",
+    "@xyflow/react": "^12.11.6",
     "croner": "^10.0.1",
     "fflate": "^0.8.2",
-    "i18next": "^26.3.6",
-    "marked": "18.0.7",
+    "i18next": "^26.4.2",
+    "marked": "18.0.13",
     "react": "latest",
     "react-dom": "latest",
-    "react-i18next": "^17.0.11",
-    "sharp": "^0.35.3",
-    "yaml": "^2.9.0",
+    "react-i18next": "^17.0.15",
+    "sharp": "^0.35.4",
+    "yaml": "^2.9.1",
     "zod": "latest"
   },
   "optionalDependencies": {
