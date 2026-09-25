@@ -15,6 +15,7 @@ import {
   type ContextStoreEntry,
   type ContextStoreSnapshot,
 } from "../../../shared/contracts/index.ts";
+import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
 import {
   contextStoreDraftFileRevision,
   contextStoreOverlayBetween,
@@ -141,20 +142,26 @@ export function createContextStoreEditorDraftService(options: {
     async listEntries(storeId) {
       const { effective } = await effectiveSnapshot(storeId);
       return [
-        ...effective.directories.map((id) => ({ id, kind: "directory" as const })),
-        ...effective.files.map((file) => ({
-          id: file.id,
-          kind: "file" as const,
-          sizeBytes: Buffer.byteLength(file.content, "utf8"),
-          revision: contextStoreDraftFileRevision(file.content, file.metadata),
-        })),
+        ...effective.directories
+          .filter((id) => !isGitMetadataPath(id))
+          .map((id) => ({ id, kind: "directory" as const })),
+        ...effective.files
+          .filter((file) => !isGitMetadataPath(file.id))
+          .map((file) => ({
+            id: file.id,
+            kind: "file" as const,
+            sizeBytes: Buffer.byteLength(file.content, "utf8"),
+            revision: contextStoreDraftFileRevision(file.content, file.metadata),
+          })),
       ].toSorted((left, right) => left.id.localeCompare(right.id));
     },
     async getContent(storeId, id) {
+      assertVisibleKnowledgePath(id);
       const { effective } = await effectiveSnapshot(storeId);
       return contentResult(findFile(effective, id));
     },
     async createFolder(storeId, id) {
+      assertVisibleKnowledgePath(id);
       await mutate(storeId, (snapshot) => {
         if (snapshot.directories.includes(id) || snapshot.files.some((file) => file.id === id)) {
           throw new Error(`Entry already exists: ${id}`);
@@ -163,6 +170,7 @@ export function createContextStoreEditorDraftService(options: {
       });
     },
     async createFile(storeId, id, content, metadata) {
+      assertVisibleKnowledgePath(id);
       const result = await mutate(storeId, (snapshot) => {
         if (snapshot.files.some((file) => file.id === id)) {
           throw new Error(`Entry already exists: ${id}`);
@@ -177,6 +185,7 @@ export function createContextStoreEditorDraftService(options: {
       return contentResult(findFile(result.effective, id));
     },
     async updateFile(storeId, id, content, metadata, expectedRevision) {
+      assertVisibleKnowledgePath(id);
       const result = await mutate(storeId, (snapshot) => {
         const current = findFile(snapshot, id);
         if (contextStoreDraftFileRevision(current.content, current.metadata) !== expectedRevision) {
@@ -190,6 +199,8 @@ export function createContextStoreEditorDraftService(options: {
       return contentResult(findFile(result.effective, id));
     },
     async renameEntry(storeId, id, nextId, kind) {
+      assertVisibleKnowledgePath(id);
+      assertVisibleKnowledgePath(nextId);
       await mutate(storeId, (snapshot) => {
         if (
           snapshot.files.some((file) => file.id === nextId) ||
@@ -221,6 +232,7 @@ export function createContextStoreEditorDraftService(options: {
       });
     },
     async deleteEntry(storeId, id, kind) {
+      assertVisibleKnowledgePath(id);
       await mutate(storeId, (snapshot) => {
         const prefix = `${id}/`;
         if (kind === "file") findFile(snapshot, id);
@@ -348,6 +360,10 @@ function contentResult(file: ContextStoreSnapshot["files"][number]): ContextStor
     sizeBytes: Buffer.byteLength(file.content, "utf8"),
     truncated: false,
   };
+}
+
+function assertVisibleKnowledgePath(id: string): void {
+  if (isGitMetadataPath(id)) throw new Error("Repository metadata is not a knowledge-base entry.");
 }
 
 function overlayIsEmpty(overlay: ContextStoreDraftOverlay): boolean {

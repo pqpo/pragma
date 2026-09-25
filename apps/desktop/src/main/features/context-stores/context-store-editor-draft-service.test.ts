@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,6 +26,30 @@ async function setup() {
 }
 
 describe("context store editor drafts", () => {
+  it("hides historical .git entries in the editor and rejects direct reads", async () => {
+    const { stores, drafts, store } = await setup();
+    const root = await stores.filesPath(store.id);
+    await mkdir(join(root, ".git"));
+    await writeFile(join(root, ".git", "internal.md"), "# Internal\n");
+    await stores.createFile(store.id, "visible.md", "# Visible\n");
+    await drafts.createFile(store.id, "draft.md", "# Draft\n", {
+      trigger: "manual",
+      priority: "normal",
+    });
+
+    expect((await drafts.listEntries(store.id)).map((entry) => entry.id)).toEqual([
+      "draft.md",
+      "visible.md",
+    ]);
+    await expect(drafts.getContent(store.id, ".git/internal.md")).rejects.toThrow();
+    await expect(
+      drafts.createFile(store.id, ".git/new.md", "Hidden", {
+        trigger: "manual",
+        priority: "normal",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("backs up multiple edits without publishing and commits them as one revision", async () => {
     const { stores, drafts, store } = await setup();
 

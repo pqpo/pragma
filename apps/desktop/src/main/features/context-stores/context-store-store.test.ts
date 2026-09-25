@@ -31,18 +31,15 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
-  it("preserves historical .git directory enumeration in ordinary knowledge bases", async () => {
+  it("hides historical .git entries from browsing while preserving snapshot contents", async () => {
     const { store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Notes", description: "" });
     const files = await store.filesPath(created.id);
     await mkdir(join(files, ".git"));
     await writeFile(join(files, ".git", "internal.md"), "hidden");
     await store.createFile(created.id, "visible.md", "# Visible\n");
-    expect((await store.listEntries(created.id)).map((entry) => entry.id)).toEqual([
-      ".git",
-      ".git/internal.md",
-      "visible.md",
-    ]);
+    expect((await store.listEntries(created.id)).map((entry) => entry.id)).toEqual(["visible.md"]);
+    expect((await store.getSnapshot(created.id)).directories).toContain(".git");
     await expect(store.getContent(created.id, ".git/internal.md")).rejects.toThrow();
   });
   it("acquires multiple revision locks once each in deterministic Store ID order", async () => {
@@ -146,6 +143,8 @@ describe("managed context store", () => {
     await mkdir(join(source, "guides"), { recursive: true });
     await writeFile(join(source, "README.md"), "# Original\n", "utf8");
     await writeFile(join(source, "guides", "review.md"), "Review boundaries.\n", "utf8");
+    await mkdir(join(source, ".git"));
+    await writeFile(join(source, ".git", "internal.md"), "# Internal\n", "utf8");
     await writeFile(join(source, "ignored.txt"), "Ignored", "utf8");
 
     await expect(store.inspectImport(source)).resolves.toMatchObject({
@@ -166,6 +165,9 @@ describe("managed context store", () => {
     ).resolves.toBe("# Original\n");
     await expect(
       readFile(join(storesPath, created.id, "files", "ignored.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(storesPath, created.id, "files", ".git", "internal.md"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 

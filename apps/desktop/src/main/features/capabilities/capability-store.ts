@@ -50,6 +50,7 @@ import {
   type PreviewCodeServiceResult,
   type UpdateCapability,
 } from "../../../shared/contracts/index.ts";
+import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
 import type {
   CapabilityCredentialStore,
   PreparedCapabilityCredentials,
@@ -1904,10 +1905,6 @@ async function listSkillFileEntries(path: string): Promise<SkillFileEntry[]> {
     });
   }
   return output.toSorted((left, right) => left.path.localeCompare(right.path));
-}
-
-function isGitMetadataPath(path: string): boolean {
-  return path.split("/").some((segment) => segment.toLowerCase() === ".git");
 }
 
 function decodeTextFile(bytes: Uint8Array): string | null {

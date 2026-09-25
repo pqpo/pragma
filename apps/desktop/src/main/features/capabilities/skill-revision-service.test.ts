@@ -519,6 +519,77 @@ describe("Skill revision service", () => {
     expect(completed).toMatchObject({ state: "completed", publishedRevision: 2 });
   });
 
+  it("retains portable executable metadata through an ordinary Skill revision", async () => {
+    const fixture = await createService({
+      executablePaths: ["scripts/run.mjs"],
+      supportsExecutableBits: false,
+    });
+    await mkdir(join(fixture.sourcePath, "scripts"));
+    await writeFile(
+      join(fixture.sourcePath, "scripts", "run.mjs"),
+      "export const run = () => 'ok';\n",
+      {
+        mode: 0o600,
+      },
+    );
+    await mkdir(join(fixture.sourcePath, "tests"));
+    await writeFile(
+      join(fixture.sourcePath, "tests", "run.test.mjs"),
+      "import '../scripts/run.mjs';\n",
+    );
+
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    await writeFile(join(editing.draftPath!, "notes.md"), "# Updated notes\n");
+    const changed = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: changed.draft.revision,
+      expectedWorkingTreeHash: changed.workingTree.hash,
+      summary: "Update documentation without changing the executable script.",
+    });
+    await fixture.service.approve(pending.id, pending.revision);
+
+    expect(fixture.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ executablePaths: ["scripts/run.mjs"] }),
+    );
+  });
+
+  it("rejects a submitted Skill tree changed after review", async () => {
+    const fixture = await createService({
+      executablePaths: ["scripts/run.mjs"],
+      supportsExecutableBits: false,
+    });
+    await mkdir(join(fixture.sourcePath, "scripts"));
+    await writeFile(
+      join(fixture.sourcePath, "scripts", "run.mjs"),
+      "export const run = () => 'ok';\n",
+    );
+    await mkdir(join(fixture.sourcePath, "tests"));
+    await writeFile(
+      join(fixture.sourcePath, "tests", "run.test.mjs"),
+      "import '../scripts/run.mjs';\n",
+    );
+    const job = await fixture.service.start(request("expert-reflection"));
+    const editing = await fixture.service.inspectDraft(job.draftId);
+    const pending = await fixture.service.submitDraft({
+      draftId: job.draftId,
+      expectedRevision: editing.draft.revision,
+      expectedWorkingTreeHash: editing.workingTree.hash,
+      summary: "Review the Skill.",
+    });
+    const draft = await fixture.service.getDraft(job.draftId);
+    await writeFile(
+      join(fixture.draftsPath, job.draftId, "submissions", draft.submissionHash!, "SKILL.md"),
+      "---\nname: safe-workflow\ndescription: Safe workflow.\n---\n\nChanged after review.\n",
+    );
+
+    await expect(fixture.service.approve(pending.id, pending.revision)).rejects.toMatchObject({
+      code: "skill_revision_working_tree_changed",
+    });
+    expect(fixture.publish).not.toHaveBeenCalled();
+  });
+
   it("allows non-executable files with script-like extensions when revising a Skill", async () => {
     const fixture = await createService();
     const references = join(fixture.sourcePath, "references");
@@ -2029,6 +2100,8 @@ async function createService(
       readonly id: string;
       readonly sourcePath: string;
     }) => Promise<{ readonly manifest: { readonly latestRevision: number } }>;
+    readonly executablePaths?: readonly string[];
+    readonly supportsExecutableBits?: boolean;
   } = {},
 ) {
   const root = join(tmpdir(), `pragma-skill-revisions-${randomUUID()}`);
@@ -2063,6 +2136,9 @@ async function createService(
           name: "safe-workflow",
           description: "Safe workflow.",
           contentHash: revision === 1 ? baseContentHash : "d".repeat(64),
+          ...(options.executablePaths === undefined
+            ? {}
+            : { executablePaths: options.executablePaths }),
         },
       };
     },
@@ -2091,6 +2167,9 @@ async function createService(
       capabilities,
       resolveWorkspacePath: options.resolveWorkspacePath ?? (async () => canonicalWorkspacePath),
       ...(options.generator === undefined ? {} : { generator: options.generator }),
+      ...(options.supportsExecutableBits === undefined
+        ? {}
+        : { supportsExecutableBits: options.supportsExecutableBits }),
     }),
   };
 }
