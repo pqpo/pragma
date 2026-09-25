@@ -391,7 +391,7 @@ describe("built-in Runtime process environments", () => {
     async () => {
       const executableDirectory = await mkdtemp(join(tmpdir(), "pragma-runtime-probes-"));
       await Promise.all(
-        ["codex", "claude", "qodercli", "agy"].map(async (name) => {
+        ["codex", "claude", "qodercli", "agy", "opencode"].map(async (name) => {
           await writeFile(
             join(executableDirectory, name),
             [
@@ -422,6 +422,7 @@ describe("built-in Runtime process environments", () => {
           ["claude-code", "pragma.runtime.claude-code"],
           ["qodercli", "pragma.runtime.qodercli"],
           ["antigravity", "pragma.runtime.antigravity"],
+          ["opencode", "pragma.runtime.opencode"],
         ].map(async ([id, adapterId]) => {
           const factory = factories.find((candidate) => candidate.id === adapterId)!;
           return await factory.create(definition(id!, id!, adapterId));
@@ -435,12 +436,13 @@ describe("built-in Runtime process environments", () => {
         expect.objectContaining({ usable: true }),
         expect.objectContaining({ usable: true }),
         expect.objectContaining({ usable: true }),
+        expect.objectContaining({ usable: false }),
       ]);
-      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(4);
+      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(5);
 
       const piFactory = factories.find((candidate) => candidate.id === "pragma.runtime.pi")!;
       await piFactory.create(definition("pi", "PI", "pragma.runtime.pi"));
-      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(5);
+      expect(getRuntimeProcessEnvironment).toHaveBeenCalledTimes(6);
     },
   );
 });

@@ -18,6 +18,7 @@ import {
   type CodexRuntimeSandboxMode,
 } from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
+import { createOpenCodeRuntime } from "@pragma/runtime-opencode";
 import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 import type { QoderCliRuntimePermissionMode } from "@pragma/runtime-qodercli";
 
@@ -336,6 +337,33 @@ export function createBuiltInRuntimeFactories(
   }
 
   return [
+    {
+      id: "pragma.runtime.opencode",
+      version: "v1",
+      create: async (environment, context) => {
+        assertEmptyRuntimeConfig(environment);
+        const [permissionMode, env] = await Promise.all([
+          context?.toolPermissionMode ?? getToolPermissionMode(),
+          getRuntimeProcessEnvironment(),
+        ]);
+        return createOpenCodeRuntime({
+          descriptor: { id: environment.id, displayName: environment.displayName },
+          permissionMode,
+          env: {
+            ...env,
+            ...(process.env["OPENCODE_CONFIG_CONTENT"] === undefined
+              ? {}
+              : {
+                  OPENCODE_CONFIG_CONTENT: process.env["OPENCODE_CONFIG_CONTENT"],
+                }),
+          },
+          tokenCounter: options.tokenCounter,
+          ...(options.mcpToolRegistryPool === undefined
+            ? {}
+            : { mcpToolRegistryPool: options.mcpToolRegistryPool }),
+        });
+      },
+    },
     {
       id: "pragma.runtime.codex",
       version: "v1",

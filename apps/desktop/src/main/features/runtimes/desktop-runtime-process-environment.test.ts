@@ -24,7 +24,7 @@ describe("DesktopRuntimeProcessEnvironment", () => {
     const shell = join(shellDirectory, "zsh");
     await writeFile(
       shell,
-      `#!/bin/sh\nprintf x >> '${invocationFile}'\nexport PATH='${loginBinLink}:${loginBin}:${loginBinLink}:${originalBin}'\nexport NVM_DIR='${root}/.nvm'\nexport PNPM_HOME='${root}/.pnpm'\nexport JAVA_HOME='${root}/.java'\nexport OPENAI_API_KEY='must-not-reach-runtime'\nprintf 'shell startup noise\\n'\nexec /bin/sh -c "$2"\n`,
+      `#!/bin/sh\nprintf x >> '${invocationFile}'\nexport PATH='${loginBinLink}:${loginBin}:${loginBinLink}:${originalBin}'\nexport NVM_DIR='${root}/.nvm'\nexport PNPM_HOME='${root}/.pnpm'\nexport JAVA_HOME='${root}/.java'\nexport XDG_CONFIG_HOME='${root}/config'\nexport OPENCODE_CONFIG_DIR='${root}/opencode-config'\nexport OPENAI_API_KEY='must-not-reach-runtime'\nprintf 'shell startup noise\\n'\nexec /bin/sh -c "$2"\n`,
     );
     await chmod(shell, 0o755);
     const logger = { info: vi.fn(), warn: vi.fn() };
@@ -58,6 +58,8 @@ describe("DesktopRuntimeProcessEnvironment", () => {
       NVM_DIR: `${root}/.nvm`,
       PNPM_HOME: `${root}/.pnpm`,
       JAVA_HOME: `${root}/.java`,
+      XDG_CONFIG_HOME: `${root}/config`,
+      OPENCODE_CONFIG_DIR: `${root}/opencode-config`,
     });
     expect(first["OPENAI_API_KEY"]).toBeUndefined();
     expect(logger.info).toHaveBeenCalledWith(

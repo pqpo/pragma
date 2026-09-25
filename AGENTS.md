@@ -87,6 +87,7 @@ tsconfig.base.json
 @pragma/built-in-agents
 @pragma/runtime-pi
 @pragma/runtime-codex
+@pragma/runtime-opencode
 @pragma/runtime-claude-code
 @pragma/runtime-qodercli
 @pragma/runtime-antigravity
@@ -731,6 +732,10 @@ pnpm --filter @pragma/desktop dev
 使用内置 Qoder CLI Runtime 前，主机必须已安装可直接执行的 `qodercli`。可先运行
 `qodercli --version` 验证；认证可复用本机已完成的 Qoder CLI 登录状态，或通过
 `QODER_PERSONAL_ACCESS_TOKEN` 提供 PAT。非标准安装路径使用 `QODERCLI_PATH` 指向原生可执行文件。
+
+使用内置 OpenCode Runtime 前，主机必须已安装可直接执行的 `opencode` 1.x 或 2.x，且 CLI
+已配置可用模型。先运行 `opencode --version` 验证。Runtime 复用本机 OpenCode 配置与认证，
+协议和存储边界见 [`docs/architecture/opencode-runtime.md`](docs/architecture/opencode-runtime.md)。
 
 使用内置 Antigravity CLI Runtime 前，主机必须安装可直接执行的 `agy` 1.1.11 或更高版本；可先运行
 `agy --version` 验证。认证复用操作系统安全钥匙串中的 Antigravity CLI 登录状态，首次登录应在 Pragma

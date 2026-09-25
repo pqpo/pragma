@@ -28,6 +28,7 @@ describe("RuntimeEnvironmentStore", () => {
     expect((await store.listHeads()).map((head) => head.entry.runtimeId)).toEqual([
       "pi",
       "codex",
+      "opencode",
       "claude-code",
       "qodercli",
       "antigravity",
@@ -72,6 +73,7 @@ describe("RuntimeEnvironmentStore", () => {
     expect((await reconciled.listHeads()).map((head) => head.entry.runtimeId)).toEqual([
       "pi",
       "codex",
+      "opencode",
       "claude-code",
       "qodercli",
       "antigravity",

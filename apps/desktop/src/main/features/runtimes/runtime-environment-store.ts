@@ -29,6 +29,7 @@ export const BUILT_IN_RUNTIME_DISPLAY_NAME = "Built-in Runtime";
 export const DEFAULT_RUNTIME_ENVIRONMENTS: readonly RuntimeEnvironmentDefinition[] = [
   environment("pi", BUILT_IN_RUNTIME_DISPLAY_NAME, "pragma.runtime.pi"),
   environment("codex", "Codex", "pragma.runtime.codex"),
+  environment("opencode", "OpenCode", "pragma.runtime.opencode"),
   environment("claude-code", "Claude Code", "pragma.runtime.claude-code"),
   environment("qodercli", "Qoder CLI", "pragma.runtime.qodercli"),
   environment("antigravity", "Antigravity CLI", "pragma.runtime.antigravity"),
