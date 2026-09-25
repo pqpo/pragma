@@ -85,6 +85,16 @@ describe("OpenCode governance", () => {
     });
     expect(v1Permission("request-approval", {}).edit).toBe("ask");
     expect(v1Permission("full-access", { "*": "deny" })).toEqual({ "*": "deny" });
+    expect(
+      v1Permission("full-access", {
+        read: { "secrets/*": "deny" },
+        bash: { "git push *": "deny" },
+      }),
+    ).toEqual({
+      "*": "allow",
+      read: { "*": "allow", "secrets/*": "deny" },
+      bash: { "*": "allow", "git push *": "deny" },
+    });
     expect(v1Permission("auto-approve", { read: { "*": "deny" } }).read).toBe("deny");
     expect(v2PermissionRules("auto-approve", [])).toEqual(
       expect.arrayContaining([

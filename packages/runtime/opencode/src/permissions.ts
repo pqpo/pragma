@@ -34,7 +34,7 @@ export function v1Permission(
       safe[action] = {
         ...(typeof safe[action] === "object"
           ? (safe[action] as object)
-          : { "*": safe[action] ?? "deny" }),
+          : { "*": safe[action] ?? safe["*"] ?? "deny" }),
         ...denial,
       };
     }

@@ -146,9 +146,25 @@ for (const [major, variable] of [
           env: sessionEnv,
           cwd: root,
           ...detected,
+          ...(major === 1 ? { permissionMode: "full-access" as const } : {}),
         });
         const restoredClient = connectOpenCode(resumed, root);
         try {
+          if (major === 1) {
+            const config = (
+              await createOpencodeClient({
+                baseUrl: resumed.url,
+                directory: root,
+                headers: { ...resumed.headers },
+                throwOnError: true,
+              }).config.get({ query: { directory: root } })
+            ).data;
+            const permission = config?.permission as Record<string, unknown> | undefined;
+            expect(permission?.["read"]).toMatchObject({
+              "*": "allow",
+              "blocked/*": "deny",
+            });
+          }
           expect(
             await restoredClient.createSession(sessionId, "Pragma integration test", rules),
           ).toBe(sessionId);
