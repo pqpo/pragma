@@ -547,6 +547,7 @@ export function createContextStoreStore(options: {
     const adapter = new FileSystemContextStore({
       rootDir: root,
       maxContextBytes: FILE_CONTENT_MAX_BYTES,
+      allowGitMetadataPaths: true,
     });
     const listed = await adapter.listContext();
     if (!listed.ok) {
@@ -2091,6 +2092,7 @@ async function materializeSnapshot(
   const adapter = new FileSystemContextStore({
     rootDir: root,
     maxContextBytes: FILE_CONTENT_MAX_BYTES,
+    allowGitMetadataPaths: true,
   });
   for (const file of snapshot.files) {
     const result = await adapter.addContext({

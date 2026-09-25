@@ -57,6 +57,8 @@ export type FileSystemContextStoreCommandRunner = (
 
 export interface FileSystemContextStoreOptions {
   readonly rootDir: string;
+  /** For trusted storage migration and immutable snapshot reconstruction only. */
+  readonly allowGitMetadataPaths?: boolean | undefined;
   readonly commandRunner?: FileSystemContextStoreCommandRunner | undefined;
   readonly maxContextBytes?: number | undefined;
   readonly include?: readonly string[] | undefined;
@@ -80,12 +82,14 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
   readonly include: readonly string[];
   readonly exclude: readonly string[];
   readonly maxFrontmatterBytes: number;
+  private readonly allowGitMetadataPaths: boolean;
   private readonly commandRunner: FileSystemContextStoreCommandRunner;
   private readonly authorize: FileSystemContextStoreAuthorizer | undefined;
   private readonly mutations = new Map<string, Promise<void>>();
 
   constructor(options: FileSystemContextStoreOptions) {
     this.rootDir = resolve(options.rootDir);
+    this.allowGitMetadataPaths = options.allowGitMetadataPaths ?? false;
     this.maxContextBytes = options.maxContextBytes;
     this.include = options.include ?? ["*.md", "**/*.md"];
     this.exclude = options.exclude ?? [];
@@ -98,7 +102,12 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
     try {
-      const files = await collectContextFiles(this.rootDir, (id) => this.isAllowedId(id));
+      const files = await collectContextFiles(
+        this.rootDir,
+        (id) => this.isAllowedId(id),
+        this.rootDir,
+        this.allowGitMetadataPaths,
+      );
       const authorizedIds = await this.authorizeIds(
         "list",
         files.map((filePath) => toContextId(this.rootDir, filePath)),
@@ -360,7 +369,12 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     try {
-      const files = await collectContextFiles(this.rootDir, (id) => this.isAllowedId(id));
+      const files = await collectContextFiles(
+        this.rootDir,
+        (id) => this.isAllowedId(id),
+        this.rootDir,
+        this.allowGitMetadataPaths,
+      );
 
       if (files.length === 0) {
         return ok([]);
@@ -453,7 +467,8 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
       relativePath.startsWith("..") ||
       relativePath === "" ||
       relativePath.startsWith(sep) ||
-      relativePath.split(sep).some((segment) => segment.toLowerCase() === ".git")
+      (!this.allowGitMetadataPaths &&
+        relativePath.split(sep).some((segment) => segment.toLowerCase() === ".git"))
     ) {
       throw new Error(`Invalid context id: ${id}`);
     }
@@ -1337,6 +1352,7 @@ async function collectContextFiles(
   directory: string,
   isAllowed: (id: string) => boolean,
   rootDir: string = directory,
+  allowGitMetadataPaths = false,
 ): Promise<string[]> {
   const directoryStat = await stat(directory);
 
@@ -1347,11 +1363,11 @@ async function collectContextFiles(
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(
     entries.map(async (entry) => {
-      if (entry.name.toLowerCase() === ".git") return [];
+      if (!allowGitMetadataPaths && entry.name.toLowerCase() === ".git") return [];
       const entryPath = resolve(directory, entry.name);
 
       if (entry.isDirectory()) {
-        return collectContextFiles(entryPath, isAllowed, rootDir);
+        return collectContextFiles(entryPath, isAllowed, rootDir, allowGitMetadataPaths);
       }
 
       if (entry.isFile() && isAllowed(toContextId(rootDir, entryPath))) {

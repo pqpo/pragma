@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ContentAddressedStore, withFileLock } from "@pragma/core";
 
+import { createContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
 import {
   createContextStoreStore,
   ContextStoreStoreError,
@@ -298,6 +299,55 @@ describe("managed context store", () => {
       code: "ENOENT",
     });
     await expect(recovered.history(id)).resolves.toHaveLength(1);
+  });
+
+  it("preserves historical Git metadata through v3 migration and editor draft commit", async () => {
+    const { directory, storesPath, store } = await createStore();
+    const id = "00000000-0000-4000-8000-000000000031";
+    const root = join(storesPath, id);
+    await mkdir(storesPath, { recursive: true });
+    await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+    await mkdir(join(root, "files", ".git"));
+    await writeFile(join(root, "files", ".git", "internal.md"), "# Historical metadata\n");
+    await writeFile(join(root, "files", "visible.md"), "# Visible\n");
+
+    const migrated = await store.getSnapshot(id);
+    expect(migrated.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: ".git/internal.md", content: "# Historical metadata\n" }),
+        expect.objectContaining({ id: "visible.md", content: "# Visible\n" }),
+      ]),
+    );
+    expect((await store.listEntries(id)).map((entry) => entry.id)).not.toContain(
+      ".git/internal.md",
+    );
+    await expect(store.getContent(id, ".git/internal.md")).rejects.toThrow();
+
+    const drafts = createContextStoreEditorDraftService({
+      draftsPath: join(directory, "editor-drafts"),
+      stores: store,
+    });
+    expect((await drafts.listEntries(id)).map((entry) => entry.id)).not.toContain(
+      ".git/internal.md",
+    );
+    await expect(drafts.getContent(id, ".git/internal.md")).rejects.toThrow();
+    const visible = await drafts.getContent(id, "visible.md");
+    await drafts.updateFile(id, "visible.md", "# Revised\n", visible.metadata, visible.revision!);
+    const draft = await drafts.get(id);
+    await drafts.commit(id, draft!.revision);
+
+    const committed = await store.getSnapshot(id);
+    expect(committed.revision).toBe(2);
+    expect(committed.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: ".git/internal.md", content: "# Historical metadata\n" }),
+        expect.objectContaining({ id: "visible.md", content: "# Revised\n" }),
+      ]),
+    );
+    expect((await store.getSnapshot(id, 1)).snapshotHash).toBe(migrated.snapshotHash);
+    await expect(readFile(join(root, "files", ".git", "internal.md"), "utf8")).resolves.toContain(
+      "# Historical metadata\n",
+    );
   });
 
   it("creates, edits, renames, lists, and deletes managed entries", async () => {
