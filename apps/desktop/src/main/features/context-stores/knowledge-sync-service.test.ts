@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+import type { AssetGitService } from "../asset-git/asset-git-service.ts";
 
 import {
   KnowledgeSyncStoreManifestSchema,
@@ -121,7 +122,11 @@ function memoryProvider(initialStores: ReturnType<typeof remoteStore>[]) {
   };
 }
 
-async function fixture(provider: ContextStoreSyncProvider, storeOverride?: ContextStoreStore) {
+async function fixture(
+  provider: ContextStoreSyncProvider,
+  storeOverride?: ContextStoreStore,
+  assetGit?: AssetGitService,
+) {
   const root = await temporaryRoot();
   const stores =
     storeOverride ?? createContextStoreStore({ storesPath: join(root, "data", "context-stores") });
@@ -130,6 +135,7 @@ async function fixture(provider: ContextStoreSyncProvider, storeOverride?: Conte
     statePath: join(root, "state", "knowledge-sync-state.json"),
     cacheRoot: join(root, "cache", "knowledge-sync"),
     stores,
+    assetGit: () => assetGit,
     provider,
   });
   return { root, stores, service };
@@ -144,6 +150,23 @@ async function configure(service: Awaited<ReturnType<typeof fixture>>["service"]
 }
 
 describe("knowledge sync service", () => {
+  it("backs up the asset Git address and branch without its device sync base", async () => {
+    const memory = memoryProvider([]);
+    const source = { remote: "https://example.test/notes.git", branch: "docs" };
+    const assetGit = { source: async () => source } as unknown as AssetGitService;
+    const { stores, service } = await fixture(memory.provider, undefined, assetGit);
+    await stores.createFromSnapshot({
+      id: localStoreId,
+      name: "Notes",
+      description: "",
+      files: remoteStore(localStoreId, "Notes", "# Notes\n").files,
+      author: "import",
+      summary: "Create Notes",
+    });
+    await configure(service);
+    expect(memory.stores().get(localStoreId)?.assetGit).toEqual(source);
+    expect(JSON.stringify(memory.stores().get(localStoreId))).not.toContain("baseRevision");
+  });
   it("merges local-only and remote-only stores on first connection", async () => {
     const memory = memoryProvider([remoteStore(remoteStoreId, "Remote", "# Remote\n")]);
     const { stores, service } = await fixture(memory.provider);
@@ -643,7 +666,7 @@ describe("Git knowledge sync provider", { timeout: 15_000 }, () => {
       ),
     ).toBe("# Directly readable\n");
     expect(await readFile(join(checkout, "pragma-knowledge-sync.yaml"), "utf8")).toContain(
-      "pragma.knowledge-sync/v1",
+      "pragma.knowledge-sync/v2",
     );
     expect((await git(checkout, "log", "-1", "--format=%an <%ae>")).trim()).toBe(
       "Desktop Git User <desktop-user@example.test>",

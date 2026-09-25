@@ -40,6 +40,12 @@ import {
   sourceChanged,
   type StudioBackupProvider,
 } from "../studio-sync/studio-backup-sync.ts";
+import type { AssetGitService } from "../asset-git/asset-git-service.ts";
+import type { AssetGitSource } from "../../../shared/contracts/index.ts";
+import {
+  upgradeKnowledgeRepositoryManifest,
+  upgradeKnowledgeStoreManifest,
+} from "../studio-sync/asset-git-protocol-migrations.ts";
 import {
   KnowledgeSyncStateV2Schema as KnowledgeSyncStateSchema,
   StoredKnowledgeSyncSummarySchema as StoredStoreSummarySchema,
@@ -67,6 +73,7 @@ export type RemoteStore = {
   readonly description: string;
   readonly directories: readonly string[];
   readonly files: ContextStoreSnapshot["files"];
+  readonly assetGit?: AssetGitSource | undefined;
 };
 
 export type RemoteRepository = {
@@ -114,6 +121,7 @@ export function createKnowledgeSyncService(options: {
   readonly statePath: string;
   readonly cacheRoot: string;
   readonly stores: ContextStoreStore;
+  readonly assetGit?: (() => AssetGitService | undefined) | undefined;
   readonly provider?: ContextStoreSyncProvider | undefined;
   readonly providerFactory?:
     ((configuration: KnowledgeSyncConfiguration) => ContextStoreSyncProvider) | undefined;
@@ -162,9 +170,7 @@ export function createKnowledgeSyncService(options: {
 
   const syncingOverview = (): KnowledgeSyncOverview | undefined => {
     if (latestOverview === undefined) return undefined;
-    return latestOverview.configured
-      ? { ...latestOverview, status: "syncing" }
-      : latestOverview;
+    return latestOverview.configured ? { ...latestOverview, status: "syncing" } : latestOverview;
   };
 
   const localStores = async (): Promise<Map<string, LocalStore>> => {
@@ -173,6 +179,7 @@ export function createKnowledgeSyncService(options: {
       const snapshot = await options.stores.getSnapshot(store.id);
       result.set(store.id, {
         ...toRemoteStore(store, snapshot),
+        assetGit: await options.assetGit?.()?.source({ kind: "knowledge", id: store.id }),
         revision: snapshot.revision,
         snapshotHash: snapshot.snapshotHash,
       });
@@ -203,6 +210,11 @@ export function createKnowledgeSyncService(options: {
         author: "sync",
         summary: "Synchronize knowledge from Git.",
       });
+      if (remote.assetGit)
+        await options
+          .assetGit?.()
+          ?.restoreSource({ kind: "knowledge", id: remote.id }, remote.assetGit);
+      else await options.assetGit?.()?.unbind({ kind: "knowledge", id: remote.id });
       return;
     }
     await options.stores.appendSnapshot(
@@ -219,6 +231,11 @@ export function createKnowledgeSyncService(options: {
       },
       "sync",
     );
+    if (remote.assetGit)
+      await options
+        .assetGit?.()
+        ?.restoreSource({ kind: "knowledge", id: remote.id }, remote.assetGit);
+    else await options.assetGit?.()?.unbind({ kind: "knowledge", id: remote.id });
   };
 
   const reconcileLocked = async (
@@ -436,9 +453,10 @@ export function createKnowledgeSyncService(options: {
         cachedConfiguration.branch === configuration.branch &&
         cachedConfiguration.autoPush === configuration.autoPush &&
         cachedConfiguration.pushDeletions === configuration.pushDeletions;
-      latestOverview = cached !== undefined && hasCurrentConfiguration
-        ? cached
-        : await buildOverview(configuration, await readState(), await localStores(), "syncing");
+      latestOverview =
+        cached !== undefined && hasCurrentConfiguration
+          ? cached
+          : await buildOverview(configuration, await readState(), await localStores(), "syncing");
       return await runLocked(configuration, intent);
     });
 
@@ -749,7 +767,7 @@ async function readWorkingRepository(root: string): Promise<RemoteRepository> {
   const manifestPath = join(root, ROOT_MANIFEST);
   try {
     await assertRegularFile(manifestPath);
-    KnowledgeSyncRepositoryManifestSchema.parse(
+    upgradeKnowledgeRepositoryManifest(
       parse(await readUtf8FileBounded(manifestPath, MAX_MANIFEST_BYTES)),
     );
   } catch (error) {
@@ -779,9 +797,8 @@ async function readWorkingRepository(root: string): Promise<RemoteRepository> {
     const base = join(storeRoot, id);
     const storeManifestPath = join(base, "store.yaml");
     await assertRegularFile(storeManifestPath);
-    const manifest = KnowledgeSyncStoreManifestSchema.parse(
-      parse(await readUtf8FileBounded(storeManifestPath, MAX_MANIFEST_BYTES)),
-    );
+    const rawManifest = parse(await readUtf8FileBounded(storeManifestPath, MAX_MANIFEST_BYTES));
+    const manifest = upgradeKnowledgeStoreManifest(rawManifest);
     if (manifest.id !== id) throw new Error(`Knowledge store path does not match its id: ${id}`);
     const metadata = new Map(manifest.files.map((file) => [file.path, file.metadata]));
     const paths = await listMarkdownFiles(join(base, "files"));
@@ -811,6 +828,7 @@ async function readWorkingRepository(root: string): Promise<RemoteRepository> {
       description: manifest.description,
       directories: manifest.directories,
       files,
+      ...(manifest.assetGit ? { assetGit: manifest.assetGit } : {}),
     });
   }
   return { stores };
@@ -823,7 +841,7 @@ async function writeWorkingRepository(root: string, repository: RemoteRepository
   await writeFile(
     join(root, ROOT_MANIFEST),
     stringify(
-      KnowledgeSyncRepositoryManifestSchema.parse({ schemaVersion: "pragma.knowledge-sync/v1" }),
+      KnowledgeSyncRepositoryManifestSchema.parse({ schemaVersion: "pragma.knowledge-sync/v2" }),
     ),
   );
   for (const store of [...repository.stores.values()].toSorted((a, b) =>
@@ -831,7 +849,7 @@ async function writeWorkingRepository(root: string, repository: RemoteRepository
   )) {
     const base = join(root, STORES_DIRECTORY, store.id);
     const manifest: KnowledgeSyncStoreManifest = KnowledgeSyncStoreManifestSchema.parse({
-      schemaVersion: "pragma.knowledge-sync-store/v1",
+      schemaVersion: "pragma.knowledge-sync-store/v2",
       id: store.id,
       name: store.name,
       description: store.description,
@@ -839,6 +857,7 @@ async function writeWorkingRepository(root: string, repository: RemoteRepository
       files: store.files
         .map((file) => ({ path: file.id, metadata: file.metadata }))
         .toSorted((a, b) => a.path.localeCompare(b.path)),
+      ...(store.assetGit ? { assetGit: store.assetGit } : {}),
     });
     await mkdir(join(base, "files"), { recursive: true, mode: 0o700 });
     await writeFile(join(base, "store.yaml"), stringify(manifest));
@@ -1034,6 +1053,7 @@ function fingerprint(store: RemoteStore | undefined): string {
         description: store.description,
         directories: [...store.directories].toSorted(),
         files: [...store.files].toSorted((a, b) => a.id.localeCompare(b.id)),
+        assetGit: store.assetGit,
       }),
     )
     .digest("hex");

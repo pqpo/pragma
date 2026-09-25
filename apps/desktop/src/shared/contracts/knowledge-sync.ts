@@ -8,6 +8,7 @@ import {
   DesktopBundleRegistryRemoteSchema,
 } from "./bundle-registry.ts";
 import { z } from "zod";
+import { AssetGitSourceSchema } from "./asset-git.ts";
 
 export const KnowledgeSyncConfigurationSchema = z
   .object({
@@ -25,8 +26,11 @@ export const UpdateKnowledgeSyncConfigurationSchema = KnowledgeSyncConfiguration
   initializationMode: z.enum(["merge_and_publish", "restore_remote"]).default("merge_and_publish"),
 });
 
-export const KnowledgeSyncRepositoryManifestSchema = z
+export const KnowledgeSyncRepositoryManifestV1Schema = z
   .object({ schemaVersion: z.literal("pragma.knowledge-sync/v1") })
+  .strict();
+export const KnowledgeSyncRepositoryManifestSchema = z
+  .object({ schemaVersion: z.literal("pragma.knowledge-sync/v2") })
   .strict();
 
 export const KnowledgeSyncFileMetadataSchema = z
@@ -36,40 +40,52 @@ export const KnowledgeSyncFileMetadataSchema = z
   })
   .strict();
 
-export const KnowledgeSyncStoreManifestSchema = z
+const KnowledgeSyncStoreManifestBaseSchema = z
   .object({
-    schemaVersion: z.literal("pragma.knowledge-sync-store/v1"),
     id: ContextStoreIdSchema,
     name: z.string().trim().min(1).max(50),
     description: z.string().trim().max(500),
     directories: ContextStoreSnapshotSchema.shape.directories,
     files: z.array(KnowledgeSyncFileMetadataSchema).max(5_000),
   })
-  .strict()
-  .superRefine((manifest, context) => {
-    const paths = new Set<string>();
-    for (const [index, file] of manifest.files.entries()) {
-      if (paths.has(file.path)) {
-        context.addIssue({
-          code: "custom",
-          path: ["files", index, "path"],
-          message: `Duplicate knowledge sync file path: ${file.path}`,
-        });
-      }
-      paths.add(file.path);
+  .strict();
+
+function validateStoreManifest(
+  manifest: z.infer<typeof KnowledgeSyncStoreManifestBaseSchema>,
+  context: z.RefinementCtx,
+): void {
+  const paths = new Set<string>();
+  for (const [index, file] of manifest.files.entries()) {
+    if (paths.has(file.path)) {
+      context.addIssue({
+        code: "custom",
+        path: ["files", index, "path"],
+        message: `Duplicate knowledge sync file path: ${file.path}`,
+      });
     }
-    const directories = new Set<string>();
-    for (const [index, directory] of manifest.directories.entries()) {
-      if (directories.has(directory)) {
-        context.addIssue({
-          code: "custom",
-          path: ["directories", index],
-          message: `Duplicate knowledge sync directory: ${directory}`,
-        });
-      }
-      directories.add(directory);
+    paths.add(file.path);
+  }
+  const directories = new Set<string>();
+  for (const [index, directory] of manifest.directories.entries()) {
+    if (directories.has(directory)) {
+      context.addIssue({
+        code: "custom",
+        path: ["directories", index],
+        message: `Duplicate knowledge sync directory: ${directory}`,
+      });
     }
-  });
+    directories.add(directory);
+  }
+}
+
+export const KnowledgeSyncStoreManifestV1Schema = KnowledgeSyncStoreManifestBaseSchema.extend({
+  schemaVersion: z.literal("pragma.knowledge-sync-store/v1"),
+}).superRefine(validateStoreManifest);
+
+export const KnowledgeSyncStoreManifestSchema = KnowledgeSyncStoreManifestBaseSchema.extend({
+  schemaVersion: z.literal("pragma.knowledge-sync-store/v2"),
+  assetGit: AssetGitSourceSchema.optional(),
+}).superRefine(validateStoreManifest);
 
 export const KnowledgeSyncStoreStatusSchema = z
   .object({

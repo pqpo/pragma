@@ -1,0 +1,11 @@
+schemaVersion: pragma.knowledge-sync-store/v1
+id: 00000000-0000-4000-8000-000000000001
+name: Historical Notes
+description: Written by origin/main provider
+directories:
+  - guides
+files:
+  - path: guides/readme.md
+    metadata:
+      trigger: always_on
+      priority: normal

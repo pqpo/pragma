@@ -227,6 +227,23 @@ describe("capability row actions", () => {
     expect(html).not.toContain("Skill revisions");
   });
 
+  it("keeps asset Git import and environment Skill sync available together", () => {
+    const html = renderToStaticMarkup(
+      <CapabilityDirectoryFragment
+        kind="skills"
+        capabilities={[]}
+        syncOverview={{ configured: true, status: "ready", skills: [], conflicts: [] }}
+        syncOverviewState="ready"
+        onSync={async () => ({ configured: true, status: "ready", skills: [], conflicts: [] })}
+        onOpen={() => undefined}
+        onChanged={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Import from Git");
+    expect(html).toContain("Sync now");
+  });
+
   it("keeps Skill sync feedback out of the connector directory", () => {
     const syncOverview: SkillSyncOverview = {
       configured: true,

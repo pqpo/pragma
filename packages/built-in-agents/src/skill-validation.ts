@@ -1,4 +1,8 @@
-import { GeneratedSkillPackageSchema, SkillPackageSchema, type SkillPackage } from "@pragma/shared";
+import {
+  MAX_GENERATED_SKILL_FILE_CHARACTERS,
+  SkillPackageSchema,
+  type SkillPackage,
+} from "@pragma/shared";
 const ALLOWED_NODE_IMPORTS = new Set([
   "node:assert",
   "node:assert/strict",
@@ -50,9 +54,7 @@ function validatePackage(
   generated: boolean,
   options: SkillPackageValidationOptions,
 ): SkillPackageValidationResult {
-  const parsed = (generated ? GeneratedSkillPackageSchema : SkillPackageSchema).safeParse(
-    rawPackage,
-  );
+  const parsed = SkillPackageSchema.safeParse(rawPackage);
   if (!parsed.success) {
     const diagnostics = parsed.error.issues.map((issue) => ({
       path: issue.path.join("."),
@@ -85,7 +87,14 @@ function staticDiagnostics(
     });
   }
   if (generated) {
-    skill.files.forEach((file) => {
+    skill.files.forEach((file, index) => {
+      if (file.content.length > MAX_GENERATED_SKILL_FILE_CHARACTERS) {
+        diagnostics.push({
+          path: `files.${index}.content`,
+          code: "custom",
+          message: `Generated Skill files may contain at most ${MAX_GENERATED_SKILL_FILE_CHARACTERS} characters.`,
+        });
+      }
       if (
         file.path !== "SKILL.md" &&
         !file.path.startsWith("references/") &&
@@ -160,7 +169,17 @@ function staticDiagnostics(
         .map((file) => file.path)
         .filter((path) => /\.(?:mjs|cjs|js)$/iu.test(path))
     : [];
-  const filesToScan = new Set([...executableJavaScriptPaths, ...generatedCodePaths]);
+  const portableSourcePaths = generated
+    ? []
+    : skill.files
+        .filter((file) => !file.path.startsWith("references/"))
+        .map((file) => file.path)
+        .filter((path) => /\.(?:mjs|cjs|js)$/iu.test(path));
+  const filesToScan = new Set([
+    ...executableJavaScriptPaths,
+    ...generatedCodePaths,
+    ...portableSourcePaths,
+  ]);
   for (const file of skill.files.filter((entry) => filesToScan.has(entry.path))) {
     if (/\bimport\s*\(/u.test(file.content) || /\brequire\s*\(/u.test(file.content)) {
       diagnostics.push({

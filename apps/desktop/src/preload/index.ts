@@ -1,4 +1,5 @@
 import { contextBridge } from "electron";
+import { assetGitApi } from "./api/asset-git.ts";
 
 import type { PragmaDesktopAPI } from "../shared/contracts/api.ts";
 import { automationsApi } from "./api/automations.ts";
@@ -23,6 +24,7 @@ import { usageApi } from "./api/usage.ts";
 import { workspacesApi } from "./api/workspaces.ts";
 
 const api = {
+  ...assetGitApi,
   ...systemApi,
   ...settingsApi,
   ...skillLearningApi,

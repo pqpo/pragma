@@ -1,4 +1,27 @@
 export const studio = {
+  assetGit: {
+    title: "Git asset sync",
+    description: "Share this asset's files through its own Git repository.",
+    remote: "Git address",
+    branch: "Branch",
+    defaultBranch: "Remote default branch",
+    save: "Save Git address",
+    saveFailed: "Save the knowledge base before syncing Git.",
+    sync: "Sync Git asset",
+    syncing: "Syncing…",
+    unbind: "Remove Git address",
+    import: "Import from Git",
+    lastSync: "Last synced",
+    conflict: "Resolve these file conflicts before syncing again",
+    status: {
+      unbound: "No Git address set",
+      pending: "Changes waiting to sync",
+      syncing: "Syncing",
+      synced: "Up to date locally",
+      conflict: "File conflict",
+      error: "Last sync failed",
+    },
+  },
   revisionDiffLoadFailed:
     "Could not load the historical snapshots for this revision. Please try again.",
   revisionErrors: "Errors",

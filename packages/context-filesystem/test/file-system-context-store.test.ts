@@ -17,6 +17,45 @@ afterEach(async () => {
 });
 
 describe("FileSystemContextStore", () => {
+  it("keeps Git internals out of listing, search, and direct reads", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-git-"));
+    temporaryRoots.push(rootDir);
+    await mkdir(join(rootDir, ".git"));
+    await writeFile(join(rootDir, ".git", "config.md"), "hidden token", "utf8");
+    await writeFile(join(rootDir, "visible.md"), "visible", "utf8");
+    const store = new FileSystemContextStore({ rootDir });
+
+    await expect(store.listContext({})).resolves.toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ id: "visible.md" })],
+    });
+    await expect(
+      store.searchContext({ query: "hidden token", scope: "content", maxResults: 10 }),
+    ).resolves.toMatchObject({ ok: true, value: [] });
+    await expect(store.readContext({ id: ".git/config.md" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "store_error" },
+    });
+  });
+
+  it("preserves Git metadata paths when reconstructing trusted historical storage", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-legacy-git-"));
+    temporaryRoots.push(rootDir);
+    const store = new FileSystemContextStore({ rootDir, allowGitMetadataPaths: true });
+
+    await expect(
+      store.addContext({ id: ".git/internal.md", content: "# Historical metadata\n" }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(store.listContext()).resolves.toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ id: ".git/internal.md" })],
+    });
+    await expect(store.readContext({ id: ".git/internal.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: "# Historical metadata\n" },
+    });
+  });
+
   it("prepends and appends content with the requested separator", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-"));
     temporaryRoots.push(rootDir);

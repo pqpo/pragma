@@ -14,9 +14,9 @@ import {
   SkillSyncOverviewSchema,
   SkillSyncRepositoryManifestV1Schema,
   SkillSyncRepositoryManifestSchema,
-  SkillSyncRepositoryManifestV3Schema,
-  SkillSyncSkillManifestV1Schema,
+  SkillSyncRepositoryManifestV2Schema,
   SkillSyncSkillManifestSchema,
+  SkillSyncSkillManifestV2Schema,
   type Capability,
   type SkillSyncConfiguration,
   type SkillSyncIdentity,
@@ -42,6 +42,12 @@ import {
   type SkillSyncStateV2 as SkillSyncState,
 } from "../studio-sync/migrations/skill-sync/index.ts";
 import { readStudioSyncState } from "../studio-sync/studio-sync-state-migration.ts";
+import type { AssetGitService } from "../asset-git/asset-git-service.ts";
+import type { AssetGitSource } from "../../../shared/contracts/index.ts";
+import {
+  upgradeSkillRepositoryManifest,
+  upgradeSkillManifest,
+} from "../studio-sync/asset-git-protocol-migrations.ts";
 
 const execFileAsync = promisify(execFile);
 const ROOT_MANIFEST = "pragma-skill-sync.yaml";
@@ -84,6 +90,7 @@ export type RemoteSkill = {
   readonly name: string;
   readonly description: string;
   readonly files: readonly RemoteSkillFile[];
+  readonly assetGit?: AssetGitSource | undefined;
 };
 
 export type RemoteSkillRepository = {
@@ -136,6 +143,7 @@ export function createSkillSyncService(options: {
   readonly statePath: string;
   readonly cacheRoot: string;
   readonly capabilities: CapabilityStore;
+  readonly assetGit?: (() => AssetGitService | undefined) | undefined;
   readonly provider?: SkillSyncProvider | undefined;
   readonly providerFactory?:
     ((configuration: SkillSyncConfiguration) => SkillSyncProvider) | undefined;
@@ -316,10 +324,13 @@ export function createSkillSyncService(options: {
           files.push({
             path: entry.path,
             content,
-            executable:
-              exactPortableSnapshot || !supportsExecutableBits
-                ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
-                : entry.executable,
+            executable: exactPortableSnapshot
+              ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
+              : capability.definition.executablePaths !== undefined
+                ? capability.definition.executablePaths.includes(entry.path)
+                : !supportsExecutableBits
+                  ? (portableFiles?.get(entry.path)?.executable ?? entry.executable)
+                  : entry.executable,
           });
         }
         const skill = {
@@ -330,6 +341,9 @@ export function createSkillSyncService(options: {
           name: capability.definition.name,
           description: capability.definition.description,
           files,
+          assetGit: await options
+            .assetGit?.()
+            ?.source({ kind: "skill", id: capability.manifest.id }),
         };
         // Persisted revisions predate the executable scanner policy. Revision publication only
         // preserves these files when their path, mode, and content match the base revision.
@@ -382,21 +396,33 @@ export function createSkillSyncService(options: {
       await writeSkillTree(incoming, remote);
       const snapshot = await scanSkillWorkingTree(incoming);
       if (local === undefined) {
-        return await options.capabilities.publishNewSkillRevisionCandidate({
+        const created = await options.capabilities.publishNewSkillRevisionCandidate({
           id: remote.identity.id,
           name: remote.name,
           description: remote.description,
           sourcePath: incoming,
           candidateContentHash: snapshot.hash,
         });
+        if (remote.assetGit)
+          await options
+            .assetGit?.()
+            ?.restoreSource({ kind: "skill", id: created.manifest.id }, remote.assetGit);
+        else await options.assetGit?.()?.unbind({ kind: "skill", id: created.manifest.id });
+        return created;
       } else {
-        return await options.capabilities.publishSkillRevisionCandidate({
+        const updated = await options.capabilities.publishSkillRevisionCandidate({
           id: local.capabilityId,
           baseRevision: local.capabilityRevision,
           baseContentHash: local.capabilityContentHash,
           sourcePath: incoming,
           candidateContentHash: snapshot.hash,
         });
+        if (remote.assetGit)
+          await options
+            .assetGit?.()
+            ?.restoreSource({ kind: "skill", id: updated.manifest.id }, remote.assetGit);
+        else await options.assetGit?.()?.unbind({ kind: "skill", id: updated.manifest.id });
+        return updated;
       }
     } finally {
       await rm(incoming, { recursive: true, force: true });
@@ -1388,6 +1414,7 @@ function fingerprint(skill: RemoteSkill | undefined): string {
             createHash("sha256").update(file.content).digest("hex"),
             file.executable,
           ]),
+        assetGit: skill.assetGit,
       }),
     )
     .digest("hex");
@@ -1576,12 +1603,13 @@ async function readWorkingRepository(
   let repositoryVersion: 1 | 2 | 3;
   try {
     const manifest = parse(await readUtf8Bounded(join(root, ROOT_MANIFEST), MAX_MANIFEST_BYTES));
-    if (SkillSyncRepositoryManifestV3Schema.safeParse(manifest).success) repositoryVersion = 3;
-    else if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 2;
+    if (SkillSyncRepositoryManifestSchema.safeParse(manifest).success) repositoryVersion = 3;
+    else if (SkillSyncRepositoryManifestV2Schema.safeParse(manifest).success) repositoryVersion = 2;
     else {
       SkillSyncRepositoryManifestV1Schema.parse(manifest);
       repositoryVersion = 1;
     }
+    upgradeSkillRepositoryManifest(manifest);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) {
       try {
@@ -1632,10 +1660,7 @@ async function readWorkingRepository(
       const rawManifest = parse(
         await readUtf8Bounded(join(base, "skill.yaml"), MAX_MANIFEST_BYTES),
       );
-      const manifest =
-        repositoryVersion === 1
-          ? SkillSyncSkillManifestV1Schema.parse(rawManifest)
-          : SkillSyncSkillManifestSchema.parse(rawManifest);
+      const manifest = upgradeSkillManifest(rawManifest);
       if (manifest.identity.kind !== "capability") {
         throw coded(
           "skill_sync_protocol_unsupported",
@@ -1694,6 +1719,7 @@ async function readWorkingRepository(
         name: manifest.name,
         description: manifest.description,
         files,
+        ...(manifest.assetGit ? { assetGit: manifest.assetGit } : {}),
       };
       // The parser has no persisted sync baseline. It keeps v1/v2 data readable here; reconcile
       // compares legacy executable paths, modes, and hashes before any local activation.
@@ -1854,7 +1880,7 @@ async function writeWorkingRepository(
       sha256: createHash("sha256").update(file.content).digest("hex"),
       executable: file.executable,
     }));
-    const manifest = createSkillSyncManifest(skill, files);
+    const manifest = createSkillSyncManifest(skill, files, schemaVersion);
     await mkdir(join(base, "files"), { recursive: true, mode: 0o700 });
     await writeFile(join(base, "skill.yaml"), stringify(manifest));
     await writeSkillTree(join(base, "files"), skill);
@@ -1984,6 +2010,7 @@ function assertRepositoryBounds(
   if (repository.skills.size > MAX_REPOSITORY_SKILLS)
     throw coded("skill_sync_size_limit", "The Skill repository has too many Skills.");
   let totalBytes = 0;
+  const schemaVersion = repositoryVersionForSkills(repository.skills, repository.schemaVersion);
   for (const [key, skill] of repository.skills) {
     if (identityKey(skill.identity) !== key)
       throw coded(
@@ -1999,6 +2026,7 @@ function assertRepositoryBounds(
         sha256: createHash("sha256").update(file.content).digest("hex"),
         executable: file.executable,
       })),
+      schemaVersion,
     );
     if (Buffer.byteLength(stringify(manifest), "utf8") > MAX_MANIFEST_BYTES) {
       throw coded("skill_sync_size_limit", `Skill manifest is too large: ${key}`);
@@ -2017,13 +2045,24 @@ function assertRepositoryBounds(
 function createSkillSyncManifest(
   skill: RemoteSkill,
   files: SkillSyncSkillManifest["files"],
-): SkillSyncSkillManifest {
-  return SkillSyncSkillManifestSchema.parse({
-    schemaVersion: "pragma.skill-sync-skill/v2",
+  repositoryVersion: 2 | 3,
+) {
+  const fields = {
     identity: skill.identity,
     name: skill.name,
     description: skill.description,
     files,
+  };
+  if (repositoryVersion === 2 && skill.assetGit === undefined) {
+    return SkillSyncSkillManifestV2Schema.parse({
+      ...fields,
+      schemaVersion: "pragma.skill-sync-skill/v2",
+    });
+  }
+  return SkillSyncSkillManifestSchema.parse({
+    ...fields,
+    schemaVersion: "pragma.skill-sync-skill/v3",
+    ...(skill.assetGit ? { assetGit: skill.assetGit } : {}),
   });
 }
 function settledStatus(state: SkillSyncState): "ready" | "conflict" | "error" {

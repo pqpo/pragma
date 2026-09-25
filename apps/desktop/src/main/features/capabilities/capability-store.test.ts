@@ -10,7 +10,7 @@ import type { CapabilityCredentialStore } from "./capability-credential-store.ts
 import { createCapabilityVerifier } from "./capability-verifier.ts";
 import type { CapabilityVerifier } from "./capability-verification.ts";
 import { createCapabilityStore, type CapabilityRevisionPublishInput } from "./capability-store.ts";
-import { scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
+import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
 
 const directories: string[] = [];
 
@@ -422,8 +422,37 @@ describe("capability store", () => {
       "---\nname: repo-review\ndescription: Review a repository.\n---\n\n# Repo review\n",
     );
     await writeFile(join(source, "references", "checklist.md"), "Check tests.\n");
+    await mkdir(join(source, ".git"));
+    await writeFile(join(source, ".git", "config"), "[core]\n");
 
     const capability = await store.importSkill({ sourcePath: source });
+    expect(
+      (await store.listSkillFiles({ id: capability.manifest.id })).some((file) =>
+        file.path.includes(".git"),
+      ),
+    ).toBe(false);
+    await expect(
+      store.getSkillFile({ id: capability.manifest.id, path: ".git/config" }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    const revisionFiles = await store.skillFilesPath(capability.manifest.id, 1);
+    await expect(readFile(join(revisionFiles, ".git", "config"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    // Historical immutable revisions may contain Git metadata. Their internal copy/hash
+    // semantics stay intact even though user-visible file APIs hide those paths.
+    await mkdir(join(revisionFiles, ".git"));
+    await writeFile(join(revisionFiles, ".git", "config"), "[core]\n");
+    expect(
+      (await store.listSkillFiles({ id: capability.manifest.id })).some((file) =>
+        file.path.includes(".git"),
+      ),
+    ).toBe(false);
+    const copiedRevision = join(directory, "copied-revision");
+    await copySkillTree(revisionFiles, copiedRevision);
+    expect((await scanSkillWorkingTree(copiedRevision)).hash).toBe(
+      (await scanSkillWorkingTree(revisionFiles)).hash,
+    );
+    expect(await readFile(join(copiedRevision, ".git", "config"), "utf8")).toBe("[core]\n");
 
     expect(capability).toMatchObject({
       manifest: { kind: "skill", latestRevision: 1, name: "repo-review" },
@@ -465,6 +494,7 @@ describe("capability store", () => {
           "---\nname: repo-review\ndescription: Review a repository.\n---\n",
         ),
         "repo-review/references/checklist.md": strToU8("Check tests.\n"),
+        "repo-review/.git/config": strToU8("[core]\n"),
         "__MACOSX/repo-review/._SKILL.md": strToU8("metadata"),
       }),
     );
@@ -535,6 +565,52 @@ describe("capability store", () => {
       ),
     );
     expect(executable.mode & 0o111).not.toBe(0);
+  });
+
+  it("publishes portable executable metadata when the filesystem mode is unavailable", async () => {
+    const { directory, store } = await createStore();
+    const originalSource = join(directory, "portable-original");
+    const candidateSource = join(directory, "portable-candidate");
+    await mkdir(join(candidateSource, "scripts"), { recursive: true });
+    await mkdir(originalSource);
+    const skillDocument =
+      "---\nname: portable-skill\ndescription: Portable Skill.\n---\n\n# Portable\n";
+    await writeFile(join(originalSource, "SKILL.md"), skillDocument);
+    await writeFile(join(candidateSource, "SKILL.md"), skillDocument);
+    await writeFile(join(candidateSource, "scripts", "run.mjs"), "process.exit(0);\n", {
+      mode: 0o600,
+    });
+    const original = await store.importSkill({ sourcePath: originalSource });
+    if (original.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    const executablePaths = ["scripts/run.mjs"];
+    const snapshot = await scanSkillWorkingTree(candidateSource, {
+      executablePaths: new Set(executablePaths),
+    });
+    const published = await store.publishSkillRevisionCandidate({
+      id: original.manifest.id,
+      baseRevision: 1,
+      baseContentHash: original.definition.contentHash,
+      sourcePath: candidateSource,
+      candidateContentHash: snapshot.hash,
+      executablePaths,
+    });
+    const replayed = await store.publishSkillRevisionCandidate({
+      id: original.manifest.id,
+      baseRevision: 1,
+      baseContentHash: original.definition.contentHash,
+      sourcePath: candidateSource,
+      candidateContentHash: snapshot.hash,
+      executablePaths,
+    });
+    expect(replayed.manifest.latestRevision).toBe(2);
+    expect(published.definition.kind === "skill" && published.definition.executablePaths).toEqual(
+      executablePaths,
+    );
+    const payload = await store.skillFilesPath(original.manifest.id, 2);
+    expect((await stat(join(payload, "scripts", "run.mjs"))).mode & 0o111).toBe(0);
+    expect(
+      (await scanSkillWorkingTree(payload, { executablePaths: new Set(executablePaths) })).hash,
+    ).toBe(snapshot.hash);
   });
 
   it("publishes a reviewed new Skill candidate idempotently as revision 1", async () => {

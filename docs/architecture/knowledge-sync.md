@@ -1,7 +1,9 @@
 # Knowledge-base synchronization
 
 Pragma synchronizes only the current published state of managed knowledge bases. Drafts, revision
-records, Missions, Memory, bindings, locks, journals, and content-addressed objects remain local.
+records, Missions, Memory, runtime bindings, locks, journals, and content-addressed objects remain local.
+An optional asset Git address and branch are portable; the asset Git sync base and retry journal
+remain local to each device.
 The synchronization boundary is `ContextStoreSyncProvider`; Git is the first provider, while future
 object-storage or WebDAV implementations can keep the same reconciliation semantics. Provider
 instances capture provider-specific configuration. The shared boundary exchanges only repository

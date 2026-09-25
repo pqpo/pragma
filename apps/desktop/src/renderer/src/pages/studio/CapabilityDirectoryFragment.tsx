@@ -39,6 +39,7 @@ import {
 
 export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
 import { desktopApi } from "./studio-model.ts";
+import { AssetGitImportButton } from "./AssetGitControls.tsx";
 
 type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
@@ -512,6 +513,18 @@ export function CapabilityDirectoryFragment(props: {
             <p>{t(props.kind === "skills" ? "skillsDescription" : "connectorsDescription")}</p>
           </div>
           <div className="studio-create-wrap">
+            {props.kind === "skills" ? (
+              <AssetGitImportButton
+                kind="skill"
+                onImported={async (target) => {
+                  const api = desktopApi();
+                  if (!api || target.kind !== "skill") return;
+                  const capability = await api.getCapability(target.id);
+                  props.onChanged(capability);
+                  props.onOpen(capability);
+                }}
+              />
+            ) : null}
             {props.kind === "skills" &&
             (props.onSync !== undefined || props.onConfigureSync !== undefined) ? (
               <button

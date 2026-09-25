@@ -34,6 +34,7 @@ export function createCapabilityRevisionCoordinator(options: {
   readonly project: PragmaProjectStore;
   readonly systemExperts: DesktopSystemExpertRegistry;
   readonly credentials: CapabilityCredentialStore;
+  readonly onDeleted?: ((capabilityId: string) => Promise<void>) | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): CapabilityRevisionCoordinator {
   const capabilityDirectory = (id: string) =>
@@ -120,7 +121,6 @@ export function createCapabilityRevisionCoordinator(options: {
       const journal = await readJournal(path);
       if (journal.mutationType === "delete") {
         await options.capabilities.completeRemoval(id, journal.targetRevision);
-        await rm(path, { force: true });
         continue;
       }
       const latest = await options.capabilities.get(id);
@@ -267,11 +267,14 @@ export function createCapabilityRevisionCoordinator(options: {
           });
           await writeJournal(journal);
           await input.commit();
-          await rm(journalPath(input.id, input.expectedRevision), { force: true });
           return;
         }
         await input.commit();
       });
+      if (input.mutationType === "delete") {
+        await options.onDeleted?.(input.id);
+        await rm(journalPath(input.id, input.expectedRevision), { force: true });
+      }
       await cleanupCapabilityDirectory(input.id);
     },
     async publishHealth(input) {
@@ -399,6 +402,10 @@ export function createCapabilityRevisionCoordinator(options: {
           await withFileLock(lockPath(journal.capabilityId), async () => {
             await recoverCapabilityLocked(journal.capabilityId);
           });
+          if (journal.mutationType === "delete") {
+            await options.onDeleted?.(journal.capabilityId);
+            await rm(journalPath(journal.capabilityId, journal.targetRevision), { force: true });
+          }
           await cleanupCapabilityDirectory(journal.capabilityId);
         } catch (error) {
           options.warn?.("Capability revision propagation could not be recovered.", error);

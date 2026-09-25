@@ -38,6 +38,7 @@ import {
   type ContextStoreSnapshot,
   type CreateContextStore,
 } from "../../../shared/contracts/index.ts";
+import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
 
 const FILE_CONTENT_MAX_BYTES = 1_000_000;
 const MIGRATION_READY_FILE = ".pragma-migration-ready.json";
@@ -546,6 +547,7 @@ export function createContextStoreStore(options: {
     const adapter = new FileSystemContextStore({
       rootDir: root,
       maxContextBytes: FILE_CONTENT_MAX_BYTES,
+      allowGitMetadataPaths: true,
     });
     const listed = await adapter.listContext();
     if (!listed.ok) {
@@ -1337,13 +1339,15 @@ export function createContextStoreStore(options: {
         }
         if (options.trashItem !== undefined) await options.trashItem(storePath(id));
         else await rm(storePath(id), { recursive: true, force: true });
-        await options.onRemoved?.(id);
       });
+      await options.onRemoved?.(id);
     },
 
     async listEntries(storeId) {
       await readStore(storeId);
-      return await collectManagedEntries(contentRoot(storeId));
+      return (await collectManagedEntries(contentRoot(storeId))).filter(
+        (entry) => !isGitMetadataPath(entry.id),
+      );
     },
 
     async createFolder(storeId, id) {
@@ -1396,6 +1400,7 @@ export function createContextStoreStore(options: {
     },
 
     async updateFile(storeId, id, content, metadata, expectedRevision) {
+      assertVisibleKnowledgePath(id);
       return await mutateCurrentState(storeId, `Update ${id}.`, async (stagedRoot, currentRoot) => {
         const currentPath = await resolveEntryAtRoot(currentRoot, id, "file", true);
         const currentDetails = await stat(currentPath, { bigint: true });
@@ -1424,6 +1429,8 @@ export function createContextStoreStore(options: {
     },
 
     async renameEntry(storeId, id, nextId, kind) {
+      assertVisibleKnowledgePath(id);
+      assertVisibleKnowledgePath(nextId);
       const currentName = entryNameFromId(id, kind);
       const nextName = entryNameFromId(nextId, kind);
       if (currentName !== nextName) assertManagedEntryName(nextId, kind);
@@ -1453,6 +1460,7 @@ export function createContextStoreStore(options: {
     },
 
     async deleteEntry(storeId, id, kind) {
+      assertVisibleKnowledgePath(id);
       await mutateCurrentState(storeId, `Delete ${id}.`, async (stagedRoot) => {
         const target = await resolveEntryAtRoot(stagedRoot, id, kind, true);
         if (options.trashItem !== undefined) await options.trashItem(target);
@@ -1461,6 +1469,7 @@ export function createContextStoreStore(options: {
     },
 
     async getContent(storeId: string, contentId: string): Promise<ContextStoreContent> {
+      assertVisibleKnowledgePath(contentId);
       await readStore(storeId);
       const result = await fileStore(storeId).readContext({
         id: contentId,
@@ -1904,6 +1913,7 @@ function entryNameFromId(id: string, kind: "file" | "directory"): string {
 }
 
 function assertManagedEntryName(id: string, kind: "file" | "directory"): void {
+  assertVisibleKnowledgePath(id);
   const issue = pragmaKnowledgeBaseEntryNameIssue(entryNameFromId(id, kind));
   if (issue === undefined) return;
   throw new ContextStoreStoreError(
@@ -2025,9 +2035,19 @@ async function walkSource(
 ): Promise<void> {
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.name.toLowerCase() === ".git") continue;
     const path = join(root, entry.name);
     await visit(path, entry);
     if (entry.isDirectory() && !entry.isSymbolicLink()) await walkSource(path, visit);
+  }
+}
+
+function assertVisibleKnowledgePath(id: string): void {
+  if (isGitMetadataPath(id)) {
+    throw new ContextStoreStoreError(
+      "invalid_entry",
+      "Repository metadata is not a knowledge-base entry.",
+    );
   }
 }
 
@@ -2072,6 +2092,7 @@ async function materializeSnapshot(
   const adapter = new FileSystemContextStore({
     rootDir: root,
     maxContextBytes: FILE_CONTENT_MAX_BYTES,
+    allowGitMetadataPaths: true,
   });
   for (const file of snapshot.files) {
     const result = await adapter.addContext({

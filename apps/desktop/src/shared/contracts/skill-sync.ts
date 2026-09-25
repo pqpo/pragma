@@ -5,6 +5,7 @@ import {
   DesktopBundleRegistryRemoteSchema,
 } from "./bundle-registry.ts";
 import { CapabilityIdSchema } from "./capabilities.ts";
+import { AssetGitSourceSchema } from "./asset-git.ts";
 
 export const SkillSyncConfigurationSchema = z
   .object({
@@ -26,12 +27,11 @@ export const SkillSyncRepositoryManifestV1Schema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v1") })
   .strict();
 
-export const SkillSyncRepositoryManifestSchema = z
+export const SkillSyncRepositoryManifestV2Schema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v2") })
   .strict();
-
-/** v3 repositories require safe validation for all newly introduced executable files. */
-export const SkillSyncRepositoryManifestV3Schema = z
+/** v3 repositories require safe validation for newly introduced executable files. */
+export const SkillSyncRepositoryManifestSchema = z
   .object({ schemaVersion: z.literal("pragma.skill-sync/v3") })
   .strict();
 
@@ -63,7 +63,7 @@ export const SkillSyncSkillManifestV1Schema = z
   })
   .strict();
 
-export const SkillSyncSkillManifestSchema = z
+export const SkillSyncSkillManifestV2Schema = z
   .object({
     schemaVersion: z.literal("pragma.skill-sync-skill/v2"),
     identity: SkillSyncIdentitySchema,
@@ -72,6 +72,10 @@ export const SkillSyncSkillManifestSchema = z
     files: z.array(SkillSyncFileMetadataSchema).min(1).max(1_000),
   })
   .strict();
+export const SkillSyncSkillManifestSchema = SkillSyncSkillManifestV2Schema.extend({
+  schemaVersion: z.literal("pragma.skill-sync-skill/v3"),
+  assetGit: AssetGitSourceSchema.optional(),
+});
 
 export const SkillSyncItemStatusSchema = z
   .object({

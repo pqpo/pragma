@@ -1,4 +1,5 @@
 export * from "./api.ts";
+export * from "./asset-git.ts";
 export * from "./automations.ts";
 export * from "./avatars.ts";
 export * from "./bundles.ts";

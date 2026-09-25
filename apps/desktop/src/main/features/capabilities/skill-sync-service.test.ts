@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
+import type { AssetGitService } from "../asset-git/asset-git-service.ts";
 
 import type { Capability, SkillSyncConfiguration } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "./capability-store.ts";
@@ -25,6 +26,46 @@ afterEach(async () => {
 });
 
 describe("Skill sync service", () => {
+  it("publishes Skill revision executable metadata when the filesystem drops the mode", async () => {
+    const fixture = await createFixture();
+    const id = "18181818-1818-4818-8818-181818181818";
+    const skill = await fixture.addLocalSkill(id, "Portable Skill");
+    if (skill.definition.kind !== "skill") throw new Error("Expected a Skill capability.");
+    const payload = join(fixture.root, "capabilities", id, String(skill.manifest.latestRevision));
+    await mkdir(join(payload, "scripts"), { recursive: true });
+    await writeFile(join(payload, "scripts", "run.mjs"), "export const run = () => 'ok';\n", {
+      mode: 0o600,
+    });
+    await mkdir(join(payload, "tests"), { recursive: true });
+    await writeFile(join(payload, "tests", "run.test.mjs"), "import '../scripts/run.mjs';\n");
+    fixture.capabilities.set(id, {
+      ...skill,
+      definition: { ...skill.definition, executablePaths: ["scripts/run.mjs"] },
+    });
+
+    await fixture.service.configure(configuration());
+
+    expect(
+      fixture.provider.repository.skills
+        .get(`capability/${id}`)
+        ?.files.find((file) => file.path === "scripts/run.mjs")?.executable,
+    ).toBe(true);
+  });
+
+  it("backs up a Skill Git address and branch independently of its sync base", async () => {
+    const source = { remote: "https://example.test/review.git", branch: "main" };
+    const fixture = await createFixture({
+      assetGit: {
+        source: async () => source,
+      } as unknown as AssetGitService,
+    });
+    const id = "10101010-1010-4010-8010-101010101010";
+    await fixture.addLocalSkill(id, "Local Skill");
+    await fixture.service.configure(configuration());
+    const stored = fixture.provider.repository.skills.get(`capability/${id}`);
+    expect(stored?.assetGit).toEqual(source);
+    expect(JSON.stringify(stored)).not.toContain("baseRevision");
+  });
   it("merges the target and publishes local Skills during configuration", async () => {
     const fixture = await createFixture();
     const localId = "10101010-1010-4010-8010-101010101010";
@@ -1176,6 +1217,12 @@ describe("Git Skill sync provider", () => {
     });
     const oldHead = await provider.readHead();
     expect(oldHead.repository.schemaVersion).toBe(2);
+    expect(
+      await readFile(
+        join(root, "cache", "repository", "skills", "capability", id, "skill.yaml"),
+        "utf8",
+      ),
+    ).toContain("pragma.skill-sync-skill/v2");
     expect(oldHead.repository.skills.get(`capability/${id}`)?.files).toContainEqual(
       expect.objectContaining({ path: "references/tool.sh", executable: true }),
     );
@@ -1470,7 +1517,10 @@ function configuration(): Omit<SkillSyncConfiguration, "schemaVersion"> {
 }
 
 async function createFixture(
-  options: { readonly supportsExecutableBits?: boolean | undefined } = {},
+  options: {
+    readonly supportsExecutableBits?: boolean | undefined;
+    readonly assetGit?: AssetGitService | undefined;
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "pragma-skill-sync-"));
   roots.push(root);
@@ -1567,6 +1617,7 @@ async function createFixture(
       statePath,
       cacheRoot,
       capabilities: store,
+      assetGit: () => options.assetGit,
       provider,
       supportsExecutableBits: options.supportsExecutableBits,
       warn: (message, details) => warnings.push({ message, details }),

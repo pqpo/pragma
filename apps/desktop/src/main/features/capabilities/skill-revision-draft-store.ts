@@ -41,7 +41,10 @@ export function emptySkillWorkingTreeSnapshot(): SkillWorkingTreeSnapshot {
 
 export async function scanSkillWorkingTree(
   root: string,
-  options: { readonly allowMissingSkillDocument?: boolean } = {},
+  options: {
+    readonly allowMissingSkillDocument?: boolean;
+    readonly executablePaths?: ReadonlySet<string>;
+  } = {},
 ): Promise<SkillWorkingTreeSnapshot> {
   const absoluteRoot = resolve(root);
   const entries: SkillWorkingTreeEntry[] = [];
@@ -93,12 +96,23 @@ export async function scanSkillWorkingTree(
         path: logical,
         sizeBytes: bytes.byteLength,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-        executable: (metadata.mode & 0o111) !== 0,
+        executable: options.executablePaths?.has(logical) ?? (metadata.mode & 0o111) !== 0,
       });
     }
   };
 
   await visit(absoluteRoot);
+  if (options.executablePaths !== undefined) {
+    const paths = new Set(entries.map((entry) => entry.path));
+    for (const path of options.executablePaths) {
+      if (!paths.has(path)) {
+        throw new SkillWorkingTreeError(
+          "skill_revision_invalid_entry_type",
+          `Executable Skill metadata references a missing file: ${path}`,
+        );
+      }
+    }
+  }
   if (
     options.allowMissingSkillDocument !== true &&
     !entries.some((entry) => entry.path === "SKILL.md")

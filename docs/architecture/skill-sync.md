@@ -1,8 +1,9 @@
 # Skill synchronization
 
 Pragma synchronizes the current published state of every non-system Skill through a dedicated Git
-repository. Drafts, revision jobs, historical revisions, credentials, bindings, Missions, and
-built-in Skills remain local. The configured repository is an explicit trusted replication boundary:
+repository. Drafts, revision jobs, historical revisions, credentials, runtime bindings, Missions,
+and built-in Skills remain local. An optional asset Git address and branch are portable; its sync
+base remains local to each device. The configured repository is an explicit trusted replication boundary:
 one-sided remote changes may become active after deterministic validation, while concurrent changes
 require user resolution.
 
@@ -24,7 +25,12 @@ records names, descriptions, paths, sizes, SHA-256 digests, and executable bits.
 Symlinks, hard links, undeclared files, invalid paths, binary content, oversized packages, and
 integrity mismatches fail closed. Files outside the managed root are preserved.
 
-Repository protocol v2 enforces this Capability-only identity. The v1 reader accepts only
+Repository protocol v3 retains this Capability-only identity, requires safe validation for newly
+introduced executable files, and supports an optional asset Git association in Skill manifests.
+Existing v1/v2 executable files can be adopted as an initial snapshot; subsequent changes to
+their path, mode, or content require current validation. Repositories with such legacy files remain
+on the v2 root protocol until they can safely move to v3. The v2 Skill manifest stays in use there
+unless the Skill carries an asset Git association, which requires its v3 Skill manifest. The v1 reader accepts only
 `capability/<id>` entries. Because the legacy Bundle identity protocol was never released to users,
 `bundle/<logicalId>` repository entries and persisted sync keys intentionally fail closed with an
 instruction to reinitialize Skill sync; current reconciliation and conflict handling

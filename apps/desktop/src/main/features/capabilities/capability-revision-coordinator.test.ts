@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { encodePragmaPathSegment } from "@pragma/core";
+import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 
 import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
 
@@ -671,11 +671,18 @@ describe("CapabilityRevisionCoordinator", () => {
       get: async () => current,
       completeRemoval,
     } as unknown as CapabilityStore;
+    const onDeleted = vi.fn(async () => {
+      await withFileLock(
+        join(root, `${encodePragmaPathSegment(CAPABILITY_ID)}.lock`),
+        async () => undefined,
+      );
+    });
     const coordinator = createCapabilityRevisionCoordinator({
       journalRoot: root,
       capabilities: store,
       project: fakeProject([]).store,
       systemExperts: fakeSystemExpert([]).registry,
+      onDeleted,
     });
 
     await expect(
@@ -692,6 +699,7 @@ describe("CapabilityRevisionCoordinator", () => {
     await coordinator.recover();
 
     expect(completeRemoval).toHaveBeenCalledWith(CAPABILITY_ID, 1);
+    expect(onDeleted).toHaveBeenCalledWith(CAPABILITY_ID);
     expect(await journalFiles(root)).toEqual([]);
   });
 

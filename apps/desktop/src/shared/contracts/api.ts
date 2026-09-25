@@ -1,4 +1,5 @@
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
+import type { AssetGitSource, AssetGitStatus, AssetGitTarget } from "./asset-git.ts";
 import type {
   ManagedSkillRevisionJob,
   SkillRevisionDraft,
@@ -273,6 +274,17 @@ import type {
 } from "./skill-learning.ts";
 
 export interface PragmaDesktopAPI {
+  getAssetGitStatus: (target: AssetGitTarget) => Promise<AssetGitStatus>;
+  bindAssetGit: (input: {
+    target: AssetGitTarget;
+    source: AssetGitSource;
+  }) => Promise<AssetGitStatus>;
+  unbindAssetGit: (target: AssetGitTarget) => Promise<void>;
+  importAssetGit: (input: {
+    kind: AssetGitTarget["kind"];
+    source: AssetGitSource;
+  }) => Promise<AssetGitTarget>;
+  syncAssetGit: (target: AssetGitTarget) => Promise<AssetGitStatus>;
   reportRendererLog: (input: DesktopRendererLog) => void;
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;

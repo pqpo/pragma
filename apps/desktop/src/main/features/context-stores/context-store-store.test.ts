@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { ContentAddressedStore } from "@pragma/core";
+import { ContentAddressedStore, withFileLock } from "@pragma/core";
 
+import { createContextStoreEditorDraftService } from "./context-store-editor-draft-service.ts";
 import {
   createContextStoreStore,
   ContextStoreStoreError,
@@ -31,6 +32,17 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("hides historical .git entries from browsing while preserving snapshot contents", async () => {
+    const { store } = await createStore();
+    const created = await store.create({ mode: "blank", name: "Notes", description: "" });
+    const files = await store.filesPath(created.id);
+    await mkdir(join(files, ".git"));
+    await writeFile(join(files, ".git", "internal.md"), "hidden");
+    await store.createFile(created.id, "visible.md", "# Visible\n");
+    expect((await store.listEntries(created.id)).map((entry) => entry.id)).toEqual(["visible.md"]);
+    expect((await store.getSnapshot(created.id)).directories).toContain(".git");
+    await expect(store.getContent(created.id, ".git/internal.md")).rejects.toThrow();
+  });
   it("acquires multiple revision locks once each in deterministic Store ID order", async () => {
     const acquired: string[] = [];
     const stores: Pick<ContextStoreStore, "withRevisionLock"> = {
@@ -132,6 +144,8 @@ describe("managed context store", () => {
     await mkdir(join(source, "guides"), { recursive: true });
     await writeFile(join(source, "README.md"), "# Original\n", "utf8");
     await writeFile(join(source, "guides", "review.md"), "Review boundaries.\n", "utf8");
+    await mkdir(join(source, ".git"));
+    await writeFile(join(source, ".git", "internal.md"), "# Internal\n", "utf8");
     await writeFile(join(source, "ignored.txt"), "Ignored", "utf8");
 
     await expect(store.inspectImport(source)).resolves.toMatchObject({
@@ -152,6 +166,9 @@ describe("managed context store", () => {
     ).resolves.toBe("# Original\n");
     await expect(
       readFile(join(storesPath, created.id, "files", "ignored.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(storesPath, created.id, "files", ".git", "internal.md"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -282,6 +299,55 @@ describe("managed context store", () => {
       code: "ENOENT",
     });
     await expect(recovered.history(id)).resolves.toHaveLength(1);
+  });
+
+  it("preserves historical Git metadata through v3 migration and editor draft commit", async () => {
+    const { directory, storesPath, store } = await createStore();
+    const id = "00000000-0000-4000-8000-000000000031";
+    const root = join(storesPath, id);
+    await mkdir(storesPath, { recursive: true });
+    await cp(new URL("./fixtures/context-store-v3/", import.meta.url), root, { recursive: true });
+    await mkdir(join(root, "files", ".git"));
+    await writeFile(join(root, "files", ".git", "internal.md"), "# Historical metadata\n");
+    await writeFile(join(root, "files", "visible.md"), "# Visible\n");
+
+    const migrated = await store.getSnapshot(id);
+    expect(migrated.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: ".git/internal.md", content: "# Historical metadata\n" }),
+        expect.objectContaining({ id: "visible.md", content: "# Visible\n" }),
+      ]),
+    );
+    expect((await store.listEntries(id)).map((entry) => entry.id)).not.toContain(
+      ".git/internal.md",
+    );
+    await expect(store.getContent(id, ".git/internal.md")).rejects.toThrow();
+
+    const drafts = createContextStoreEditorDraftService({
+      draftsPath: join(directory, "editor-drafts"),
+      stores: store,
+    });
+    expect((await drafts.listEntries(id)).map((entry) => entry.id)).not.toContain(
+      ".git/internal.md",
+    );
+    await expect(drafts.getContent(id, ".git/internal.md")).rejects.toThrow();
+    const visible = await drafts.getContent(id, "visible.md");
+    await drafts.updateFile(id, "visible.md", "# Revised\n", visible.metadata, visible.revision!);
+    const draft = await drafts.get(id);
+    await drafts.commit(id, draft!.revision);
+
+    const committed = await store.getSnapshot(id);
+    expect(committed.revision).toBe(2);
+    expect(committed.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: ".git/internal.md", content: "# Historical metadata\n" }),
+        expect.objectContaining({ id: "visible.md", content: "# Revised\n" }),
+      ]),
+    );
+    expect((await store.getSnapshot(id, 1)).snapshotHash).toBe(migrated.snapshotHash);
+    await expect(readFile(join(root, "files", ".git", "internal.md"), "utf8")).resolves.toContain(
+      "# Historical metadata\n",
+    );
   });
 
   it("creates, edits, renames, lists, and deletes managed entries", async () => {
@@ -565,6 +631,20 @@ describe("managed context store", () => {
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("runs deletion cleanup after releasing the revision lock", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-context-stores-"));
+    directories.push(directory);
+    const storesPath = join(directory, "stores");
+    const store = createContextStoreStore({
+      storesPath,
+      onRemoved: async (id) => {
+        await withFileLock(join(storesPath, ".locks", `${id}.lock`), async () => undefined);
+      },
+    });
+    const created = await store.create({ mode: "blank", name: "Delete", description: "" });
+    await expect(store.remove(created.id)).resolves.toBeUndefined();
   });
 
   it("rejects a prepared deletion after the knowledge base changes", async () => {
