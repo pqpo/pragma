@@ -16,6 +16,7 @@ import {
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
+import { ensureLoopbackNoProxy } from "../src/runtime/process-environment.ts";
 
 const roots: string[] = [];
 
@@ -24,6 +25,45 @@ afterEach(async () => {
 });
 
 describe("Runtime Session process environment", () => {
+  it("adds loopback hosts to both proxy bypass variables without dropping existing values", () => {
+    const environment = {
+      HTTP_PROXY: "http://invalid.proxy.test:8080",
+      HTTPS_PROXY: "http://invalid.proxy.test:8080",
+      ALL_PROXY: "socks5://invalid.proxy.test:1080",
+      NO_PROXY: "example.test, 127.0.0.1",
+      no_proxy: "example.test,localhost,::1",
+    };
+
+    expect(ensureLoopbackNoProxy(environment)).toEqual({
+      ...environment,
+      NO_PROXY: "example.test,127.0.0.1,localhost,::1",
+      no_proxy: "example.test,127.0.0.1,localhost,::1",
+    });
+    expect(environment.NO_PROXY).toBe("example.test, 127.0.0.1");
+  });
+
+  it("passes loopback proxy bypasses to the shared Runtime child-process environment", async () => {
+    const root = await temporaryRoot();
+    const captured: Readonly<NodeJS.ProcessEnv>[] = [];
+    const runtime = fakeRuntime(captured, {
+      HTTP_PROXY: "http://invalid.proxy.test:8080",
+      HTTPS_PROXY: "http://invalid.proxy.test:8080",
+      ALL_PROXY: "socks5://invalid.proxy.test:1080",
+    });
+    const agent = await expert(root, "proxy-bypass", "token");
+    const session = await open(agent, runtime, "proxy-bypass-session");
+
+    expect(captured[0]).toMatchObject({
+      HTTP_PROXY: "http://invalid.proxy.test:8080",
+      HTTPS_PROXY: "http://invalid.proxy.test:8080",
+      ALL_PROXY: "socks5://invalid.proxy.test:1080",
+      NO_PROXY: "127.0.0.1,localhost,::1",
+      no_proxy: "127.0.0.1,localhost,::1",
+    });
+
+    await session.close();
+  });
+
   it("isolates concurrent Expert environment patches without mutating the host", async () => {
     const root = await temporaryRoot();
     const captured: Readonly<NodeJS.ProcessEnv>[] = [];
@@ -268,7 +308,13 @@ async function expert(root: string, id: string, token: string) {
   });
 }
 
-function fakeRuntime(captured: Readonly<NodeJS.ProcessEnv>[]) {
+function fakeRuntime(
+  captured: Readonly<NodeJS.ProcessEnv>[],
+  environment: NodeJS.ProcessEnv = {
+    PRAGMA_TEST_BASE: "base",
+    PRAGMA_TEST_REMOVE: "remove-me",
+  },
+) {
   return defineRuntimeDriver<never, { readonly context: RuntimeNativeSessionContext }>(
     {
       features: createRuntimeTestFeatures(),
@@ -281,10 +327,7 @@ function fakeRuntime(captured: Readonly<NodeJS.ProcessEnv>[]) {
       mapEvent: () => ({ events: [] }),
     },
     {
-      createProcessEnvironment: () => ({
-        PRAGMA_TEST_BASE: "base",
-        PRAGMA_TEST_REMOVE: "remove-me",
-      }),
+      createProcessEnvironment: () => environment,
     },
   );
 }

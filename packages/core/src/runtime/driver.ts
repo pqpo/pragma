@@ -97,6 +97,7 @@ import {
   type RuntimeFeatureSet,
 } from "./features.ts";
 import { RuntimeResourceScope, type RuntimeResourceRegistrar } from "./resource-scope.ts";
+import { ensureLoopbackNoProxy } from "./process-environment.ts";
 import type {
   ExpertAgentHumanInteractionHandler,
   ExpertToolExecutionContext,
@@ -1147,9 +1148,11 @@ function freezeProcessEnvironment(
 ): Readonly<NodeJS.ProcessEnv> {
   return Object.freeze(
     Object.fromEntries(
-      Object.entries(environment).filter((entry): entry is [string, string] => {
-        return entry[1] !== undefined;
-      }),
+      Object.entries(ensureLoopbackNoProxy(environment)).filter(
+        (entry): entry is [string, string] => {
+          return entry[1] !== undefined;
+        },
+      ),
     ),
   );
 }
