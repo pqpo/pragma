@@ -193,6 +193,7 @@ export class PragmaProjectRevisionUnavailableError extends Error {
 }
 
 export function createPragmaProjectStore(options: {
+  readonly onPublished?: (() => void) | undefined;
   readonly projectsPath: string;
   readonly objectsPath?: string | undefined;
   readonly projectViewsPath?: string | undefined;
@@ -479,9 +480,11 @@ export function createPragmaProjectStore(options: {
         effectiveCandidate.resources,
         effectiveChangeSet.removals ?? [],
       );
-      return PragmaProjectSnapshotSchema.parse(
+      const published = PragmaProjectSnapshotSchema.parse(
         await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet, publicationId }),
       );
+      options.onPublished?.();
+      return published;
     } catch (error) {
       return normalizeError(error);
     }
@@ -513,9 +516,11 @@ export function createPragmaProjectStore(options: {
         (input.expectedRevision === 0
           ? new Map<string, string>()
           : await readRevisionArtifacts(repository, projectId, input.expectedRevision, current!));
-      return PragmaProjectSnapshotSchema.parse(
+      const published = PragmaProjectSnapshotSchema.parse(
         await service.publish({ projectId, ...input, artifacts }),
       );
+      options.onPublished?.();
+      return published;
     } catch (error) {
       return normalizeError(error);
     }

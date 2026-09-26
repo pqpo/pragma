@@ -20,6 +20,7 @@ import type { HomeMissionExecutorOption, Mission } from "../../shared/contracts/
 
 export function App() {
   const { t } = useTranslation("common");
+  const { t: settingsT } = useTranslation("settings");
   const [activeView, setActiveView] = useState<AppView>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readSidebarCollapsed(typeof window === "undefined" ? undefined : window.localStorage),
@@ -38,7 +39,21 @@ export function App() {
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
+  const [legacySyncStopped, setLegacySyncStopped] = useState(false);
   const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.pragmaDesktop
+      .getCoreAssetSyncOverview()
+      .then((overview) => {
+        if (!cancelled) setLegacySyncStopped(overview.legacySyncStopped === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView]);
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -59,8 +74,7 @@ export function App() {
 
   useEffect(() => {
     const sync = () => {
-      void window.pragmaDesktop.refreshKnowledgeBases().catch(() => undefined);
-      void window.pragmaDesktop.refreshSkills().catch(() => undefined);
+      void window.pragmaDesktop.refreshCoreAssets().catch(() => undefined);
     };
     window.addEventListener("focus", sync);
     window.addEventListener("online", sync);
@@ -138,13 +152,8 @@ export function App() {
     setActiveView("settings");
   };
 
-  const openKnowledgeSyncSettings = () => {
-    setSettingsView("knowledge-sync");
-    setActiveView("settings");
-  };
-
-  const openSkillSyncSettings = () => {
-    setSettingsView("skill-sync");
+  const openCoreAssetSyncSettings = () => {
+    setSettingsView("core-asset-sync");
     setActiveView("settings");
   };
 
@@ -226,8 +235,7 @@ export function App() {
           initialMemoryState={studioMemoryState}
           memoryEnabled={memoryEnabled === true}
           onMemoryStateChange={setStudioMemoryState}
-          onConfigureKnowledgeSync={openKnowledgeSyncSettings}
-          onConfigureSkillSync={openSkillSyncSettings}
+          onConfigureCoreAssetSync={openCoreAssetSyncSettings}
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}
@@ -258,7 +266,19 @@ export function App() {
       ) : activeView === "memory" ? (
         <MemoryPage onConfigureExtraction={openMemorySettings} />
       ) : (
-        <SettingsPage initialView={settingsView} onMemoryEnabledChange={setMemoryEnabled} />
+        <SettingsPage
+          initialView={settingsView}
+          onMemoryEnabledChange={setMemoryEnabled}
+          onLegacySyncStoppedChange={setLegacySyncStopped}
+        />
+      )}
+      {legacySyncStopped && (
+        <aside className="core-sync-cutover-notice" role="alert">
+          <span>{settingsT("coreAssetSync.legacyStopped")}</span>
+          <button type="button" onClick={openCoreAssetSyncSettings}>
+            {settingsT("coreAssetSync.configureNew")}
+          </button>
+        </aside>
       )}
     </main>
   );
