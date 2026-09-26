@@ -1,19 +1,175 @@
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  PRAGMA_DSL_WRITE_API_VERSION,
+  PragmaBundleSchema,
   PragmaForwardCompatibleResourceSchema,
+  PragmaLockSchema,
   type PragmaResource,
   type PragmaSemanticResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
+import { pragmaResourceDirectory, pragmaResourceFileName } from "../ast/resource-identity.ts";
 import {
   createDefaultPragmaResourceAdapterRegistry,
   type PragmaResourceAdapterRegistry,
 } from "../runtime/resource-adapters.ts";
 import { sha256, stableStringify } from "./compiler-hash.ts";
-import { type PragmaBundleRequirement } from "../ast/pragma-bundle.schema.ts";
-import { type IndexedResource, PragmaDslError } from "./project-contracts.ts";
+import { PRAGMA_COMPILER_WRITE_VERSION } from "../ast/compiler-compatibility.ts";
+import {
+  PRAGMA_BUNDLE_WRITE_VERSION,
+  type PragmaBundleRequirement,
+} from "../ast/pragma-bundle.schema.ts";
+import { encodePragmaBundle } from "../bundle/pragma-bundle-codec.ts";
+import {
+  type IndexedResource,
+  type PragmaBundleExportResult,
+  type PragmaProjectBundleExportOptions,
+  PragmaDslError,
+} from "./project-contracts.ts";
 import { canonicalRef, isDeclarativeResource } from "./project-dependencies.ts";
 import { hashArtifactPath } from "./project-environment.ts";
+import { formatPragmaYaml } from "./project-yaml.ts";
+
+export interface ProjectBundleExportContext {
+  readonly rootDir: string;
+  readonly resourceAdapters: PragmaResourceAdapterRegistry | undefined;
+  readonly collectDependencyClosure: (
+    root: IndexedResource,
+  ) => ReadonlyMap<string, IndexedResource>;
+}
+
+export async function exportProjectBundle(
+  options: PragmaProjectBundleExportOptions,
+  roots: readonly IndexedResource[],
+  additionalRoots: readonly IndexedResource[],
+  context: ProjectBundleExportContext,
+): Promise<PragmaBundleExportResult> {
+  const selected = new Map<string, IndexedResource>();
+  for (const root of [...roots, ...additionalRoots]) {
+    for (const [ref, indexed] of context.collectDependencyClosure(root)) selected.set(ref, indexed);
+  }
+  const portable = portableizeBundleResources(selected, context.resourceAdapters);
+  const files = new Map<string, Uint8Array>();
+  const resourcePaths = portable.resources
+    .map((resource) => {
+      const path = `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`;
+      files.set(`project/${path}`, new TextEncoder().encode(formatPragmaYaml(resource)));
+      return path;
+    })
+    .toSorted();
+  const projectBundle = {
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Bundle" as const,
+    imports: resourcePaths.map((path) => `./${path}`),
+  };
+  PragmaBundleSchema.parse(projectBundle);
+  files.set("project/pragma.yaml", new TextEncoder().encode(formatPragmaYaml(projectBundle)));
+
+  const generatedProjectPaths = new Set(files.keys());
+  generatedProjectPaths.add("project/pragma.lock.yaml");
+  const artifacts = await collectSelectedBundleArtifacts(
+    portable.resources,
+    context.rootDir,
+    context.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry(),
+    files,
+    generatedProjectPaths,
+  );
+  const lockResources = portable.resources
+    .map((resource) => ({
+      ref: canonicalRef(resource),
+      contentHash: sha256(stableStringify(resource)),
+      source: `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`,
+    }))
+    .toSorted((left, right) => left.ref.localeCompare(right.ref));
+  const projectFingerprint = sha256(
+    stableStringify({
+      resources: lockResources.map(({ ref, contentHash }) => ({ ref, contentHash })),
+      artifacts,
+    }),
+  );
+  const lock = PragmaLockSchema.parse({
+    apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+    kind: "Lock",
+    compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+    projectFingerprint,
+    resources: lockResources,
+    artifacts,
+  });
+  files.set("project/pragma.lock.yaml", new TextEncoder().encode(formatPragmaYaml(lock)));
+
+  const requirements: PragmaBundleRequirement[] = [];
+  for (const draft of portable.requirements) {
+    const payload =
+      draft.requirement.kind === "secret"
+        ? undefined
+        : await options.host?.exportPayload?.({
+            requirement: draft.requirement,
+            ...(draft.originalBindingRef === undefined
+              ? {}
+              : { originalBindingRef: draft.originalBindingRef }),
+          });
+    if (payload === undefined) {
+      requirements.push(draft.requirement);
+      continue;
+    }
+    if (payload.files.size === 0) {
+      throw new PragmaDslError(`Bundle payload is empty: ${draft.requirement.id}.`);
+    }
+    const root = `assets/${draft.requirement.id}`;
+    const payloadEntries: { path: string; sha256: string }[] = [];
+    for (const [relativePath, contents] of payload.files) {
+      const path = `${root}/${relativePath}`;
+      files.set(path, contents);
+      payloadEntries.push({ path: relativePath, sha256: sha256(contents) });
+    }
+    requirements.push({
+      ...draft.requirement,
+      payload: {
+        codec: payload.codec,
+        root,
+        fingerprint: sha256(
+          stableStringify(payloadEntries.toSorted((a, b) => a.path.localeCompare(b.path))),
+        ),
+      },
+    });
+  }
+
+  const extensions = (options.extensions ?? []).map((extension) => {
+    if (extension.files.size === 0) {
+      throw new PragmaDslError(`Bundle extension is empty: ${extension.id}@${extension.version}.`);
+    }
+    const root = `extensions/${sha256(`${extension.id}@${extension.version}`).slice(0, 24)}`;
+    const entries: { path: string; sha256: string }[] = [];
+    for (const [relativePath, contents] of extension.files) {
+      files.set(`${root}/${relativePath}`, contents);
+      entries.push({ path: relativePath, sha256: sha256(contents) });
+    }
+    return {
+      id: extension.id,
+      version: extension.version,
+      required: extension.required ?? false,
+      root,
+      fingerprint: sha256(
+        stableStringify(entries.toSorted((a, b) => a.path.localeCompare(b.path))),
+      ),
+    };
+  });
+  return await encodePragmaBundle({
+    manifest: {
+      schemaVersion: PRAGMA_BUNDLE_WRITE_VERSION,
+      createdAt: options.createdAt ?? new Date().toISOString(),
+      roots: roots.map((root) => canonicalRef(root.resource)),
+      project: {
+        entry: "project/pragma.yaml",
+        compilerVersion: PRAGMA_COMPILER_WRITE_VERSION,
+        projectFingerprint,
+      },
+      requirements,
+      extensions,
+    },
+    files,
+  });
+}
 
 const PRAGMA_BUNDLE_BINDING_PREFIX = "binding:pragma.bundle." as const;
 

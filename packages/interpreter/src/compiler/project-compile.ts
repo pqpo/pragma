@@ -2,6 +2,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   defineExpert,
+  defineExpertTeam,
   defineFlow,
   mergeExpertAgentToolApprovals,
   sanitizeExecutionToolName,
@@ -19,28 +20,425 @@ import {
 import { z } from "zod";
 import {
   type PragmaExpertResource,
+  type PragmaDiagnostic,
+  type PragmaDeclarativeResource,
   type PragmaFlowDestination,
   type PragmaFlowResource,
   type PragmaFlowTarget,
   type PragmaFlowTransition,
+  type PragmaLock,
+  type PragmaResourceRef,
+  type PragmaResourceHealth,
+  type PragmaSemanticResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
+import { parsePragmaReference } from "../ast/resource-identity.ts";
 import {
   ContextPolicyRegistry,
   FlowActionRegistry,
+  ToolAdapterRegistry,
   type InvocableResource,
   type PragmaCompileHost,
   type PragmaPluginResolution,
+  type ResolvedInvocableResource,
 } from "../runtime/registries.ts";
 import {
   createContextSystem,
+  createDefaultPragmaResourceAdapterRegistry,
+  PragmaResourceNeedsAttentionError,
   type PragmaCapabilityContribution,
   type PragmaContextStoreContribution,
+  type PragmaResourceContribution,
+  type PragmaResourceInspection,
   type PragmaRuntimeProfileContribution,
 } from "../runtime/resource-adapters.ts";
 import { evaluatePragmaFlowValue, renderPragmaFlowPrompt } from "../runtime/flow-values.ts";
-import { PragmaDslError } from "./project-contracts.ts";
+import { sha256, stableStringify } from "./compiler-hash.ts";
+import {
+  type CompiledResource,
+  type IndexedResource,
+  type LoadPragmaProjectOptions,
+  type PragmaCompileOptions,
+  PragmaDslError,
+} from "./project-contracts.ts";
 import { createJsonSchemaZod, validateAndReadLoopMembers } from "./project-validation.ts";
-import { requireStepReference } from "./project-dependencies.ts";
+import {
+  canonicalRef,
+  collectLockedDependencies,
+  isInvocableResource,
+  isPlainExpert,
+  requireStepReference,
+} from "./project-dependencies.ts";
+import {
+  resolveRootModelSelection,
+  resolveRootRuntime,
+  verifyRuntimeEnvironment,
+} from "./project-environment.ts";
+
+export interface ProjectCompileContext {
+  readonly sourceDiagnostics: readonly PragmaDiagnostic[];
+  readonly resolveResource: (ref: string) => IndexedResource;
+  readonly validateFor: (ref: PragmaResourceRef) => Promise<readonly PragmaDiagnostic[]>;
+  readonly options: LoadPragmaProjectOptions;
+  readonly artifacts: ReadonlyMap<string, string>;
+  readonly resources: ReadonlyMap<string, IndexedResource>;
+  readonly createLock: () => PragmaLock;
+  readonly recordProvenance: (value: InvocableResource, indexed: IndexedResource) => void;
+}
+
+export async function compileProjectResource<T extends InvocableResource>(
+  ref: PragmaResourceRef,
+  host: PragmaCompileOptions,
+  context: ProjectCompileContext,
+): Promise<CompiledResource<T>> {
+  const compilerErrors = context.sourceDiagnostics.filter(
+    (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("compiler."),
+  );
+  if (compilerErrors.length > 0) {
+    throw new PragmaDslError(
+      `Pragma project compiler compatibility check failed: ${compilerErrors
+        .map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)
+        .join("; ")}`,
+      compilerErrors,
+    );
+  }
+  const indexed = context.resolveResource(ref);
+  if (!isInvocableResource(indexed.resource)) {
+    throw new PragmaDslError(`Resource is not invocable: ${ref}`);
+  }
+  const diagnostics = await context.validateFor(ref);
+  const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+  if (errors.length > 0) {
+    throw new PragmaDslError(
+      `Pragma project validation failed: ${errors.map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`).join("; ")}`,
+      errors,
+    );
+  }
+  const cache = new Map<string, ResolvedInvocableResource>();
+  const compiling = new Set<string>();
+  const contextPolicies = host.contextPolicies ?? new ContextPolicyRegistry();
+  const actions = host.actions ?? new FlowActionRegistry();
+  const toolAdapters = host.toolAdapters ?? new ToolAdapterRegistry();
+  const resourceAdapters =
+    host.resourceAdapters ??
+    context.options.resourceAdapters ??
+    createDefaultPragmaResourceAdapterRegistry();
+  const adapterHost = createAdapterHost(
+    host,
+    context.artifacts,
+    context.options.sourceIdentity !== undefined,
+  );
+  const resolvedResources = new Map<
+    string,
+    { readonly contribution: PragmaResourceContribution; readonly health: PragmaResourceHealth }
+  >();
+  const resolvingResources = new Map<
+    string,
+    Promise<{
+      readonly contribution: PragmaResourceContribution;
+      readonly health: PragmaResourceHealth;
+    }>
+  >();
+  const resolvedPlugins: {
+    readonly expertRef: string;
+    readonly ref: string;
+    readonly resolution: PragmaPluginResolution;
+  }[] = [];
+  const resolvingPlugins = new Map<string, Promise<PragmaPluginResolution>>();
+
+  const resolveDeclarative = async <TContribution extends PragmaResourceContribution>(
+    resourceRef: string,
+    kind: PragmaDeclarativeResource["kind"],
+  ): Promise<{ readonly contribution: TContribution; readonly health: PragmaResourceHealth }> => {
+    const indexed = context.resolveResource(resourceRef);
+    if (indexed.resource.kind !== kind) {
+      throw new PragmaDslError(`Expected ${kind} resource, received: ${resourceRef}`);
+    }
+    const key = canonicalRef(indexed.resource);
+    const existing = resolvedResources.get(key);
+    if (existing !== undefined) {
+      return existing as {
+        readonly contribution: TContribution;
+        readonly health: PragmaResourceHealth;
+      };
+    }
+    const pending = resolvingResources.get(key);
+    if (pending !== undefined) {
+      return (await pending) as {
+        readonly contribution: TContribution;
+        readonly health: PragmaResourceHealth;
+      };
+    }
+    const resolving = (async () => {
+      const baseResolved = await resourceAdapters.resolve<TContribution>(
+        indexed.resource as PragmaDeclarativeResource,
+        adapterHost,
+      );
+      const resolved =
+        indexed.resource.kind === "RuntimeProfile" && host.runtimes !== undefined
+          ? await verifyRuntimeEnvironment(
+              baseResolved as PragmaResourceInspection<PragmaRuntimeProfileContribution>,
+              host.runtimes,
+              false,
+            )
+          : baseResolved;
+      if (resolved.health.status !== "ready" || resolved.contribution === undefined) {
+        throw new PragmaResourceNeedsAttentionError(resolved.health);
+      }
+      const value = {
+        contribution: resolved.contribution,
+        health: resolved.health,
+      };
+      resolvedResources.set(key, value);
+      return value;
+    })();
+    resolvingResources.set(key, resolving);
+    try {
+      return (await resolving) as {
+        readonly contribution: TContribution;
+        readonly health: PragmaResourceHealth;
+      };
+    } finally {
+      if (resolvingResources.get(key) === resolving) resolvingResources.delete(key);
+    }
+  };
+
+  const resolveRuntime = async (runtimeRef: string): Promise<PragmaRuntimeProfileContribution> =>
+    (await resolveDeclarative<PragmaRuntimeProfileContribution>(runtimeRef, "RuntimeProfile"))
+      .contribution;
+
+  const rootExpertRefs = new Set<string>();
+  if (indexed.resource.kind === "Expert") {
+    rootExpertRefs.add(canonicalRef(indexed.resource));
+  } else if (indexed.resource.kind === "ExpertTeam") {
+    rootExpertRefs.add(indexed.resource.spec.coordinator.ref);
+  }
+
+  const instantiate = async (resourceRef: string): Promise<ResolvedInvocableResource> => {
+    const parsedRef = parsePragmaReference(resourceRef);
+    const externalKey = `${parsedRef.kind}:${parsedRef.id}` as PragmaResourceRef;
+    const indexed = context.resources.get(externalKey);
+    if (indexed === undefined) {
+      const existing = cache.get(externalKey);
+      if (existing !== undefined) return existing;
+      const external = await host.resolveExternalInvocable?.(externalKey);
+      if (external === undefined) {
+        throw new PragmaDslError(`Pragma resource not found: ${resourceRef}`);
+      }
+      cache.set(externalKey, external);
+      return external;
+    }
+    const key = canonicalRef(indexed.resource);
+    const existing = cache.get(key);
+    if (existing !== undefined) return existing;
+    if (compiling.has(key)) throw new PragmaDslError(`Cyclic resource dependency: ${key}`);
+    compiling.add(key);
+    let value: InvocableResource;
+    if (indexed.resource.kind === "Expert") {
+      const tools: ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] = [];
+      for (const binding of indexed.resource.spec.tools) {
+        const targetRefs = binding.target === undefined ? binding.targets! : [binding.target];
+        const targets = await Promise.all(
+          targetRefs.map(async (target) => await instantiate(target.ref)),
+        );
+        const runtimeEntries = await Promise.all(
+          Object.entries(binding.policy?.runtimes ?? {}).map(
+            async ([expertId, runtimeRef]) =>
+              [expertId, (await resolveRuntime(runtimeRef)).runtimeId] as const,
+          ),
+        );
+        tools.push(
+          ...toolAdapters.createTools({
+            binding,
+            targets,
+            contextPolicies,
+            runtimeByExpert: Object.fromEntries(runtimeEntries),
+          }),
+        );
+      }
+      value = await compileExpert(
+        indexed.resource,
+        tools,
+        host,
+        rootExpertRefs.has(key) ? host.rootExecutionOverride : undefined,
+        {
+          resolveCapability: async (resourceRef) =>
+            (await resolveDeclarative<PragmaCapabilityContribution>(resourceRef, "Capability"))
+              .contribution,
+          resolveContextStore: async (resourceRef) =>
+            (await resolveDeclarative<PragmaContextStoreContribution>(resourceRef, "ContextStore"))
+              .contribution,
+          resolveRuntime,
+          resolvePlugin: async (binding) => {
+            if (host.plugins === undefined) {
+              throw new PragmaDslError(
+                `Expert ${indexed.resource.metadata.id} references ${binding.ref}, but the host has no Plugin resolver.`,
+              );
+            }
+            const expertRef = canonicalRef(indexed.resource) as `expert:${string}`;
+            const resolutionKey = stableStringify({ expertRef, binding });
+            let resolving = resolvingPlugins.get(resolutionKey);
+            if (resolving === undefined) {
+              resolving = host.plugins.resolve({ expertRef, binding }).then((resolution) => {
+                assertPluginResolution(binding.ref, resolution);
+                resolvedPlugins.push({
+                  expertRef,
+                  ref: binding.ref,
+                  resolution,
+                });
+                return resolution;
+              });
+              resolvingPlugins.set(resolutionKey, resolving);
+            }
+            return await resolving;
+          },
+        },
+      );
+    } else if (indexed.resource.kind === "ExpertTeam") {
+      const coordinator = (await instantiate(indexed.resource.spec.coordinator.ref)).value;
+      const members = await Promise.all(
+        indexed.resource.spec.members.map(async (member) => (await instantiate(member.ref)).value),
+      );
+      if (!isPlainExpert(coordinator) || members.some((member) => !isPlainExpert(member))) {
+        throw new PragmaDslError(
+          `ExpertTeam ${indexed.resource.metadata.id} only accepts Experts.`,
+        );
+      }
+      const runtimeEntries = await Promise.all(
+        Object.entries(indexed.resource.spec.delegation.runtimes).map(
+          async ([expertId, runtimeRef]) =>
+            [expertId, (await resolveRuntime(runtimeRef)).runtimeId] as const,
+        ),
+      );
+      const contextStores = await Promise.all(
+        indexed.resource.spec.contextStores.map(async (binding) => {
+          const contribution = (
+            await resolveDeclarative<PragmaContextStoreContribution>(binding.ref, "ContextStore")
+          ).contribution;
+          return {
+            namespace: binding.namespace,
+            required: binding.required,
+            visibility: binding.visibility,
+            store: contribution.store,
+            ...(contribution.storeName === undefined ? {} : { storeName: contribution.storeName }),
+          };
+        }),
+      );
+      value = defineExpertTeam({
+        id: indexed.resource.metadata.id,
+        name: indexed.resource.metadata.name,
+        description: indexed.resource.metadata.description,
+        instructions: indexed.resource.spec.instructions,
+        coordinator,
+        members: members as Expert[],
+        contextStores,
+        delegation: {
+          permissions: indexed.resource.spec.delegation.permissions,
+          maxConcurrency: indexed.resource.spec.delegation.maxConcurrency,
+          maxDepth: indexed.resource.spec.delegation.maxDepth,
+          runtimeByExpert: Object.fromEntries(runtimeEntries),
+        },
+      });
+    } else if (indexed.resource.kind === "Flow") {
+      value = await compileFlowResource(
+        indexed.resource,
+        async (targetRef) => (await instantiate(targetRef)).value,
+        actions,
+        contextPolicies,
+        resolveRuntime,
+      );
+    } else {
+      throw new PragmaDslError(`Resource is not invocable: ${resourceRef}`);
+    }
+    compiling.delete(key);
+    const resolved = { resource: indexed.resource, value } satisfies ResolvedInvocableResource;
+    cache.set(key, resolved);
+    context.recordProvenance(value, indexed);
+    return resolved;
+  };
+
+  const value = (await instantiate(ref)).value as T;
+  const rootRuntimeId = await resolveRootRuntime(
+    indexed.resource,
+    context.resources,
+    resolveRuntime,
+    host,
+  );
+  let rootRuntimeEnvironment: unknown;
+  if (host.runtimes !== undefined) {
+    const rootModelSelection = await resolveRootModelSelection(
+      indexed.resource,
+      context.resources,
+      resolveRuntime,
+      host,
+    );
+    const resolvedRootRuntime = await host.runtimes.bind({
+      runtimeId: rootRuntimeId,
+      ...(rootModelSelection === undefined ? {} : { modelSelection: rootModelSelection }),
+    });
+    const availability = await resolvedRootRuntime.adapter.canUse();
+    if (!availability.usable) {
+      throw new Error(
+        availability.reason ??
+          `Runtime is unavailable: ${resolvedRootRuntime.adapter.descriptor.id}`,
+      );
+    }
+    const models =
+      resolvedRootRuntime.adapter.listModels === undefined
+        ? undefined
+        : await resolvedRootRuntime.adapter.listModels();
+    rootRuntimeEnvironment = {
+      binding: resolvedRootRuntime.binding,
+      descriptor: resolvedRootRuntime.adapter.descriptor,
+      availability,
+      models,
+      ...(rootModelSelection === undefined ? {} : { modelSelection: rootModelSelection }),
+    };
+  }
+  const projectFingerprint = context.createLock().projectFingerprint;
+  const fingerprintResources = [...resolvedResources.entries()]
+    .map(([resourceRef, resolved]) => ({
+      ref: resourceRef as PragmaSemanticResourceRef,
+      ...(resolved.health.bindingRevision === undefined
+        ? {}
+        : { bindingRevision: resolved.health.bindingRevision }),
+      verificationFingerprint: resolved.health.verificationFingerprint!,
+    }))
+    .sort((left, right) => left.ref.localeCompare(right.ref));
+  const fingerprintPlugins = resolvedPlugins
+    .map((resolved) => ({
+      expertRef: resolved.expertRef,
+      ref: resolved.ref,
+      packageFingerprint: resolved.resolution.packageFingerprint,
+      verificationFingerprint: resolved.resolution.verificationFingerprint,
+    }))
+    .sort((left, right) =>
+      `${left.expertRef}:${left.ref}`.localeCompare(`${right.expertRef}:${right.ref}`),
+    );
+  const environmentFingerprintValue = sha256(
+    stableStringify({
+      environmentId: adapterHost.environmentId,
+      projectFingerprint,
+      resources: fingerprintResources,
+      plugins: fingerprintPlugins,
+      rootRuntime: rootRuntimeEnvironment,
+    }),
+  );
+  return {
+    ref: canonicalRef(indexed.resource),
+    value,
+    fingerprint: indexed.contentHash,
+    projectFingerprint,
+    environmentFingerprint: {
+      environmentId: adapterHost.environmentId,
+      projectFingerprint,
+      value: environmentFingerprintValue,
+      resources: fingerprintResources,
+      plugins: fingerprintPlugins,
+    },
+    ...(rootRuntimeId === undefined ? {} : { rootRuntimeId }),
+    dependencies: collectLockedDependencies(indexed, context.resources),
+  };
+}
 
 export async function compileExpert(
   resource: PragmaExpertResource,

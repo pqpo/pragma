@@ -1,5 +1,5 @@
 import { parseDocument, stringify } from "yaml";
-import { PragmaDslError } from "./project-contracts.ts";
+import { PragmaDslError } from "./project-error.ts";
 
 export function formatPragmaYaml(value: unknown): string {
   return stringify(value, { lineWidth: 100 });

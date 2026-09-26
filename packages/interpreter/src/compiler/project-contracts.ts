@@ -1,32 +1,31 @@
-import {
-  type PragmaDiagnostic,
-  type PragmaEnvironmentFingerprint,
-  type PragmaLock,
-  type PragmaResource,
-  type PragmaResourceRef,
-  type PragmaResourceHealth,
-  type PragmaSemanticResourceRef,
+import type {
+  PragmaDiagnostic,
+  PragmaEnvironmentFingerprint,
+  PragmaLock,
+  PragmaResource,
+  PragmaResourceRef,
+  PragmaResourceHealth,
+  PragmaSemanticResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
-import {
+import type {
   DefinitionSerializerRegistry,
-  type InvocableResource,
-  type PragmaCompileHost,
+  InvocableResource,
+  PragmaCompileHost,
 } from "../runtime/registries.ts";
-import { type PragmaResourceAdapterRegistry } from "../runtime/resource-adapters.ts";
-import {
-  type PragmaBundleManifest,
-  type PragmaBundleRequirement,
-} from "../ast/pragma-bundle.schema.ts";
-import {
-  type DecodedPragmaBundle,
-  type PragmaBundleBinarySource,
-  type PragmaBundleLimits,
+import type { PragmaResourceAdapterRegistry } from "../runtime/resource-adapters.ts";
+import type { PragmaBundleManifest, PragmaBundleRequirement } from "../ast/pragma-bundle.schema.ts";
+import type {
+  DecodedPragmaBundle,
+  PragmaBundleBinarySource,
+  PragmaBundleLimits,
 } from "../bundle/pragma-bundle-codec.ts";
-import {
-  type PragmaBundleBindingHost,
-  type PragmaBundleRequirementInspection,
-  type PragmaEnvironmentBindingOverlay,
+import type {
+  PragmaBundleBindingHost,
+  PragmaBundleRequirementInspection,
+  PragmaEnvironmentBindingOverlay,
 } from "../bundle/pragma-bundle-environment.ts";
+
+export { PragmaDslError } from "./project-error.ts";
 
 export interface LoadPragmaProjectOptions {
   readonly rootDir?: string | undefined;
@@ -201,16 +200,6 @@ export type PragmaPrepareCompileResult<T> =
       readonly resources: readonly PragmaResourceHealth[];
     }
   | { readonly status: "invalid"; readonly diagnostics: readonly PragmaDiagnostic[] };
-
-export class PragmaDslError extends Error {
-  constructor(
-    message: string,
-    readonly diagnostics: readonly PragmaDiagnostic[] = [],
-  ) {
-    super(message);
-    this.name = "PragmaDslError";
-  }
-}
 
 export interface IndexedResource {
   readonly resource: PragmaResource;
