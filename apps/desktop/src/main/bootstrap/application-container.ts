@@ -57,11 +57,6 @@ import { createCapabilityCredentialStore } from "../features/capabilities/capabi
 import { installCapabilityHandlers } from "../features/capabilities/capability-ipc.ts";
 import { createCapabilityRevisionCoordinator } from "../features/capabilities/capability-revision-coordinator.ts";
 import { createCapabilityStore } from "../features/capabilities/capability-store.ts";
-import { installSkillSyncHandlers } from "../features/capabilities/skill-sync-ipc.ts";
-import {
-  createSkillSyncService,
-  type SkillSyncService,
-} from "../features/capabilities/skill-sync-service.ts";
 import { createDesktopSkillRevisionSubmissionPort } from "../features/capabilities/skill-revision-capability.ts";
 import {
   createDesktopSkillAgents,
@@ -73,11 +68,12 @@ import {
 } from "../features/capabilities/skill-revision-service.ts";
 import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
-import { installKnowledgeSyncHandlers } from "../features/context-stores/knowledge-sync-ipc.ts";
+import { installCoreAssetSyncHandlers } from "../features/studio-sync/core-asset-sync-ipc.ts";
 import {
-  createKnowledgeSyncService,
-  type KnowledgeSyncService,
-} from "../features/context-stores/knowledge-sync-service.ts";
+  createCoreAssetSyncService,
+  unavailableCoreAssetRuntimeBindings,
+  type CoreAssetSyncService,
+} from "../features/studio-sync/core-asset-sync-service.ts";
 import {
   createContextStoreRevisionService,
   type ContextStoreRevisionGenerator,
@@ -337,7 +333,9 @@ export async function createDesktopApplicationContainer(
     ];
   };
   const blueprintCache = createDesktopPragmaBlueprintCacheStore(pragmaPaths);
+  const coreSyncRef: { current?: CoreAssetSyncService } = {};
   const pragmaProjectStore = createPragmaProjectStore({
+    onPublished: () => coreSyncRef.current?.schedule("project-published"),
     projectsPath,
     objectsPath: pragmaPaths.contentObjectsRoot(),
     projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
@@ -354,7 +352,10 @@ export async function createDesktopApplicationContainer(
     fixedResources: [pragmaManagementCapabilityResource()],
     externalResources: () => systemExperts.listResources(),
   });
-  const workflowLayouts = createWorkflowLayoutStore({ projectsPath });
+  const workflowLayouts = createWorkflowLayoutStore({
+    projectsPath,
+    onChanged: () => coreSyncRef.current?.schedule("flow-layout-changed"),
+  });
   installWorkflowLayoutHandlers(workflowLayouts);
   const pluginCredentials = createPluginCredentialStore({
     configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
@@ -563,7 +564,6 @@ export async function createDesktopApplicationContainer(
   // during construction, which closes the coordinator/store composition cycle without a setter.
   // eslint-disable-next-line prefer-const
   let capabilityRevisionCoordinator: ReturnType<typeof createCapabilityRevisionCoordinator>;
-  const skillSyncRef: { current?: SkillSyncService } = {};
   const assetGitRef: { current?: AssetGitService } = {};
   const capabilityStore = createCapabilityStore({
     capabilitiesPath,
@@ -573,8 +573,7 @@ export async function createDesktopApplicationContainer(
     mutations: {
       publish: async (input) => {
         const published = await capabilityRevisionCoordinator.publish(input);
-        if (published.definition.kind === "skill")
-          skillSyncRef.current?.schedule("skill-published");
+        coreSyncRef.current?.schedule("capability-published");
         return published;
       },
       publishHealth: async (input) => await capabilityRevisionCoordinator.publishHealth(input),
@@ -588,7 +587,7 @@ export async function createDesktopApplicationContainer(
         expert.capabilities.some((reference) => reference.capabilityId === capabilityId),
       );
     },
-    onSkillCreated: () => skillSyncRef.current?.schedule("skill-published"),
+    onSkillCreated: () => coreSyncRef.current?.schedule("skill-published"),
   });
   capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
     journalRoot: join(pragmaPaths.stateRoot(), "capability-revision-propagation"),
@@ -599,24 +598,14 @@ export async function createDesktopApplicationContainer(
     onDeleted: async (capabilityId) => {
       await assetGitRef.current?.unbind({ kind: "skill", id: capabilityId });
       await memoryLearningRevisionsRef.current?.clearCapabilityBinding(capabilityId);
-      skillSyncRef.current?.schedule("skill-removed");
+      coreSyncRef.current?.schedule("skill-removed");
     },
     warn: (message, error) =>
       mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
   });
-  const skillSync = createSkillSyncService({
-    configurationPath: join(pragmaPaths.stateRoot(), "skill-sync-settings.json"),
-    statePath: join(pragmaPaths.stateRoot(), "skill-sync-state.json"),
-    cacheRoot: join(pragmaPaths.cacheRoot(), "skill-sync", "git"),
-    capabilities: capabilityStore,
-    assetGit: () => assetGitRef.current,
-    warn: (message, error) => mainLogger.warn("desktop.skill_sync_failed", message, { error }),
-  });
-  skillSyncRef.current = skillSync;
   const evaluationStore = createEvaluationStore(join(pragmaPaths.stateRoot(), "evaluations"));
   const evaluationMocks = createEvaluationMockAdapterRegistry(capabilityStore);
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
-  const knowledgeSyncRef: { current?: KnowledgeSyncService } = {};
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
     trashItem: options.trashItem,
@@ -661,9 +650,9 @@ export async function createDesktopApplicationContainer(
     onRemoved: async (storeId) => {
       await assetGitRef.current?.unbind({ kind: "knowledge", id: storeId });
       await memoryLearningRevisionsRef.current?.clearStoreBinding(storeId);
-      knowledgeSyncRef.current?.schedule("knowledge-store-removed");
+      coreSyncRef.current?.schedule("knowledge-store-removed");
     },
-    onPublished: () => knowledgeSyncRef.current?.schedule("knowledge-store-published"),
+    onPublished: () => coreSyncRef.current?.schedule("knowledge-store-published"),
     hasUnmergedRevisionDrafts: async (storeId) =>
       (await storeRevisionsRef.current?.hasUnmergedDrafts(storeId)) ?? false,
   });
@@ -671,25 +660,27 @@ export async function createDesktopApplicationContainer(
     draftsPath: join(pragmaPaths.stateRoot(), "context-store-editor-drafts"),
     stores: contextStores,
   });
-  const knowledgeSync = createKnowledgeSyncService({
-    configurationPath: join(pragmaPaths.stateRoot(), "knowledge-sync-settings.json"),
-    statePath: join(pragmaPaths.stateRoot(), "knowledge-sync-state.json"),
-    cacheRoot: join(pragmaPaths.cacheRoot(), "knowledge-sync", "git"),
-    stores: contextStores,
-    assetGit: () => assetGitRef.current,
-    warn: (message, error) => mainLogger.warn("desktop.knowledge_sync_failed", message, { error }),
-  });
-  knowledgeSyncRef.current = knowledgeSync;
   const assetGit = createAssetGitService({
     stateRoot: join(pragmaPaths.stateRoot(), "asset-git"),
     stores: contextStores,
     capabilities: capabilityStore,
-    onAssociationChanged: (target) => {
-      if (target.kind === "knowledge") knowledgeSyncRef.current?.schedule("asset-git-changed");
-      else skillSyncRef.current?.schedule("asset-git-changed");
-    },
   });
   assetGitRef.current = assetGit;
+  const coreAssetSync = createCoreAssetSyncService({
+    configurationPath: join(pragmaPaths.stateRoot(), "core-asset-sync-settings.json"),
+    legacyConfigurationPaths: [
+      join(pragmaPaths.stateRoot(), "knowledge-sync-settings.json"),
+      join(pragmaPaths.stateRoot(), "skill-sync-settings.json"),
+    ],
+    statePath: join(pragmaPaths.stateRoot(), "core-asset-sync-state.json"),
+    project: pragmaProjectStore,
+    layouts: workflowLayouts,
+    stores: contextStores,
+    capabilities: capabilityStore,
+    getRuntimes: async () => await getRuntimeAvailability(runtimes),
+    warn: (message, error) => mainLogger.warn("desktop.core_asset_sync_failed", message, { error }),
+  });
+  coreSyncRef.current = coreAssetSync;
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {
     async generate(input) {
@@ -926,8 +917,7 @@ export async function createDesktopApplicationContainer(
     storeRevisions,
     contextStoreEditorDrafts,
   );
-  installKnowledgeSyncHandlers(knowledgeSync);
-  installSkillSyncHandlers(skillSync);
+  installCoreAssetSyncHandlers(coreAssetSync);
   installAssetGitHandlers(assetGit);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
@@ -979,7 +969,25 @@ export async function createDesktopApplicationContainer(
     ref: string,
     operation: "create_mission" | "run_mission",
   ): Promise<void> => {
-    const dependencies = await bundleService.getReadinessForRef(ref);
+    const dependencies = [...(await bundleService.getReadinessForRef(ref))];
+    const projectSnapshot = await pragmaProjectStore.get();
+    const runtimesAvailable = await getRuntimeAvailability(runtimes);
+    for (const missing of unavailableCoreAssetRuntimeBindings(
+      ref,
+      projectSnapshot.resources,
+      runtimesAvailable,
+    )) {
+      dependencies.push({
+        id: `core-asset-runtime:${missing.ref}`,
+        kind: "runtime",
+        resourceRef: missing.ref,
+        name: missing.name,
+        status: "action_required",
+        code: "core_asset_runtime_binding_missing",
+        action: "choose_runtime",
+        message: "Choose an available local harness and model before running this asset.",
+      });
+    }
     if (dependencies.length === 0) return;
     throw new BundleSetupRequiredError(
       ref,
@@ -1761,8 +1769,7 @@ export async function createDesktopApplicationContainer(
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
-      knowledgeSync.schedule("startup");
-      skillSync.schedule("startup");
+      coreAssetSync.schedule("startup");
       runtimeProcessEnvironment.warmUp();
       // This starts only after the first window is available.  The three fixed
       // credential aggregates are targeted explicitly; it never scans Projects,

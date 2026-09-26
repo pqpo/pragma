@@ -19,12 +19,10 @@ import type {
   DesktopRuntimeAvailability,
   DesktopPlugin,
   AutomationSummary,
-  SkillSyncOverview,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
   ExpertDefinition,
   ExpertSummary,
-  KnowledgeSyncOverview,
 } from "../../../../shared/contracts/index.ts";
 import { ContextStoreSchema } from "../../../../shared/contracts/index.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -99,20 +97,6 @@ export function mergeLoadedExperts(
   });
 }
 
-export async function syncSkillsAndRefreshCatalog(
-  syncSkills: () => Promise<SkillSyncOverview>,
-  refreshCatalog: () => Promise<void>,
-  onRefreshFailure?: (() => void) | undefined,
-): Promise<SkillSyncOverview> {
-  const overview = await syncSkills();
-  try {
-    void refreshCatalog().catch(() => onRefreshFailure?.());
-  } catch {
-    onRefreshFailure?.();
-  }
-  return overview;
-}
-
 function toUnavailableExpertRecord(summary: ExpertSummary): ExpertRecord {
   return {
     id: summary.id,
@@ -153,8 +137,7 @@ export function StudioPage(props: {
   readonly onTryExpert: (expert: ExpertRecord) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
-  readonly onConfigureKnowledgeSync?: (() => void) | undefined;
-  readonly onConfigureSkillSync?: (() => void) | undefined;
+  readonly onConfigureCoreAssetSync?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -194,12 +177,6 @@ export function StudioPage(props: {
   >();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
-  const [knowledgeSyncOverview, setKnowledgeSyncOverview] = useState<KnowledgeSyncOverview>();
-  const [skillSyncOverview, setSkillSyncOverview] = useState<SkillSyncOverview>();
-  const [skillSyncOverviewState, setSkillSyncOverviewState] = useState<
-    "loading" | "ready" | "error"
-  >("loading");
-  const [skillCatalogRefreshFailed, setSkillCatalogRefreshFailed] = useState(false);
   const [contextStoreBindings, setContextStoreBindings] = useState<
     readonly DesktopPragmaContextStoreBinding[]
   >([]);
@@ -250,7 +227,6 @@ export function StudioPage(props: {
   useEffect(() => {
     const api = desktopApi();
     if (api === undefined) {
-      setSkillSyncOverviewState("error");
       return;
     }
     let cancelled = false;
@@ -311,22 +287,6 @@ export function StudioPage(props: {
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
-      });
-    void api
-      .getKnowledgeSyncOverview()
-      .then((overview) => {
-        if (!cancelled) setKnowledgeSyncOverview(overview);
-      })
-      .catch(() => undefined);
-    void api
-      .getSkillSyncOverview()
-      .then((overview) => {
-        if (cancelled) return;
-        setSkillSyncOverview(overview);
-        setSkillSyncOverviewState("ready");
-      })
-      .catch(() => {
-        if (!cancelled) setSkillSyncOverviewState("error");
       });
     void api
       .listPragmaContextStoreBindings()
@@ -979,6 +939,7 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "context-stores" ? (
           <ContextStoreDirectoryFragment
             stores={contextStores}
+            onConfigureSync={props.onConfigureCoreAssetSync}
             onGitImported={async (target) => {
               if (target.kind !== "knowledge") return;
               const stores = await window.pragmaDesktop.listContextStores();
@@ -989,23 +950,6 @@ export function StudioPage(props: {
                 setContextStoreDetailReturn(null);
                 setScreen("context-store-detail");
               }
-            }}
-            syncOverview={knowledgeSyncOverview}
-            onConfigureSync={props.onConfigureKnowledgeSync}
-            onSync={async () => {
-              const overview = await window.pragmaDesktop.syncKnowledgeBases();
-              setKnowledgeSyncOverview(overview);
-              setContextStores(await window.pragmaDesktop.listContextStores());
-              return overview;
-            }}
-            onResolveSyncConflict={async (storeId, choice) => {
-              const overview = await window.pragmaDesktop.resolveKnowledgeSyncConflict({
-                storeId,
-                choice,
-              });
-              setKnowledgeSyncOverview(overview);
-              setContextStores(await window.pragmaDesktop.listContextStores());
-              return overview;
             }}
             onCreate={createContextStore}
             onInspectImport={inspectContextStoreImport}
@@ -1225,56 +1169,7 @@ export function StudioPage(props: {
           <CapabilityDirectoryFragment
             kind={activeView}
             capabilities={capabilities}
-            syncOverview={activeView === "skills" ? skillSyncOverview : undefined}
-            syncOverviewState={activeView === "skills" ? skillSyncOverviewState : undefined}
-            catalogRefreshFailed={activeView === "skills" ? skillCatalogRefreshFailed : undefined}
-            onConfigureSync={props.onConfigureSkillSync}
-            onRetryCatalogRefresh={
-              activeView === "skills"
-                ? async () => {
-                    setCapabilities(await window.pragmaDesktop.listCapabilities());
-                    setSkillCatalogRefreshFailed(false);
-                  }
-                : undefined
-            }
-            onRetrySyncOverview={
-              activeView === "skills"
-                ? async () => {
-                    const api = desktopApi();
-                    if (api === undefined) {
-                      setSkillSyncOverviewState("error");
-                      throw new Error("Desktop API unavailable.");
-                    }
-                    setSkillSyncOverviewState("loading");
-                    try {
-                      const overview = await api.getSkillSyncOverview();
-                      setSkillSyncOverview(overview);
-                      setSkillSyncOverviewState("ready");
-                      return overview;
-                    } catch (cause) {
-                      setSkillSyncOverviewState("error");
-                      throw cause;
-                    }
-                  }
-                : undefined
-            }
-            onSync={
-              activeView === "skills"
-                ? async () => {
-                    setSkillCatalogRefreshFailed(false);
-                    const overview = await syncSkillsAndRefreshCatalog(
-                      () => window.pragmaDesktop.syncSkills(),
-                      async () => {
-                        setCapabilities(await window.pragmaDesktop.listCapabilities());
-                      },
-                      () => setSkillCatalogRefreshFailed(true),
-                    );
-                    setSkillSyncOverview(overview);
-                    setSkillSyncOverviewState("ready");
-                    return overview;
-                  }
-                : undefined
-            }
+            onConfigureSync={props.onConfigureCoreAssetSync}
             revisionTaskCount={skillRevisionTaskCount}
             onOpenRevisions={() => {
               setSelectedCapabilityId(null);

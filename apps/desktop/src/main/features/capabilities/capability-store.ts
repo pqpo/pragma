@@ -174,12 +174,13 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly description: string;
     readonly sourcePath: string;
     readonly candidateContentHash: string;
+    readonly executablePaths?: readonly string[];
   }): Promise<Capability>;
   createGeneratedSkill(input: {
     readonly package: SkillPackage;
     readonly id?: string;
   }): Promise<Capability>;
-  create(input: CreateCapability): Promise<Capability>;
+  create(input: CreateCapability, options?: { readonly id?: string }): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
   retry(id: string, expectedRevision: number): Promise<Capability>;
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
@@ -1013,6 +1014,7 @@ export function createCapabilityStore(options: {
           .string()
           .regex(/^[a-f0-9]{64}$/u)
           .parse(rawInput.candidateContentHash),
+        executablePaths: rawInput.executablePaths,
       };
       const publish = async (): Promise<Capability> => {
         const existing = await readCapability(input.id).catch(() => undefined);
@@ -1020,6 +1022,9 @@ export function createCapabilityStore(options: {
           if (existing.definition.kind === "skill" && existing.manifest.latestRevision === 1) {
             const publishedSnapshot = await scanSkillWorkingTree(
               join(revisionPath(input.id, 1), "payload"),
+              existing.definition.executablePaths === undefined
+                ? {}
+                : { executablePaths: new Set(existing.definition.executablePaths) },
             ).catch(() => undefined);
             if (publishedSnapshot?.hash === input.candidateContentHash) return existing;
           }
@@ -1033,7 +1038,12 @@ export function createCapabilityStore(options: {
         const payloadPath = join(temporaryPath, "revisions", "000001", "payload");
         try {
           await copySkillTree(input.sourcePath, payloadPath);
-          const snapshot = await scanSkillWorkingTree(payloadPath);
+          const snapshot = await scanSkillWorkingTree(
+            payloadPath,
+            input.executablePaths === undefined
+              ? {}
+              : { executablePaths: new Set(input.executablePaths) },
+          );
           if (snapshot.hash !== input.candidateContentHash) {
             throw new CapabilityStoreError(
               "revision_conflict",
@@ -1055,6 +1065,9 @@ export function createCapabilityStore(options: {
             description: input.description,
             entryPath: "SKILL.md",
             contentHash,
+            ...(input.executablePaths === undefined
+              ? {}
+              : { executablePaths: [...input.executablePaths].toSorted() }),
           });
           const manifest = CapabilityManifestSchema.parse({
             schemaVersion: "pragma.capability/v4",
@@ -1089,6 +1102,9 @@ export function createCapabilityStore(options: {
           if (replay?.definition.kind === "skill" && replay.manifest.latestRevision === 1) {
             const publishedSnapshot = await scanSkillWorkingTree(
               join(revisionPath(input.id, 1), "payload"),
+              replay.definition.executablePaths === undefined
+                ? {}
+                : { executablePaths: new Set(replay.definition.executablePaths) },
             ).catch(() => undefined);
             if (publishedSnapshot?.hash === input.candidateContentHash) return replay;
           }
@@ -1097,9 +1113,10 @@ export function createCapabilityStore(options: {
       };
       return await publish();
     },
-    async create(rawInput) {
+    async create(rawInput, createOptions) {
       const input = CreateCapabilitySchema.parse(rawInput);
-      const id = randomUUID();
+      const id =
+        createOptions?.id === undefined ? randomUUID() : CapabilityIdSchema.parse(createOptions.id);
       const timestamp = new Date().toISOString();
       const verified = await options.verify(
         validateDefinition(input.definition),

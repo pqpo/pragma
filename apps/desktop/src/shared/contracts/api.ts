@@ -1,23 +1,16 @@
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
 import type { AssetGitSource, AssetGitStatus, AssetGitTarget } from "./asset-git.ts";
 import type {
+  CoreAssetSyncOverview,
+  ResolveCoreAssetSyncConflict,
+  UpdateCoreAssetSyncConfiguration,
+} from "./core-asset-sync.ts";
+import type {
   ManagedSkillRevisionJob,
   SkillRevisionDraft,
 } from "@pragma/built-in-agents/contracts";
 import type { DesktopRendererLog } from "./logging.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
-import type {
-  KnowledgeSyncOverview,
-  ResolveKnowledgeSyncConflict,
-  RestoreIgnoredRemoteKnowledgeBase,
-  UpdateKnowledgeSyncConfiguration,
-} from "./knowledge-sync.ts";
-import type {
-  ResolveSkillSyncConflict,
-  RestoreIgnoredRemoteSkill,
-  SkillSyncOverview,
-  UpdateSkillSyncConfiguration,
-} from "./skill-sync.ts";
 import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeProcessEnvironmentStatus,
@@ -264,6 +257,17 @@ import type {
 } from "./types.ts";
 
 export interface PragmaDesktopAPI {
+  getCoreAssetSyncOverview: () => Promise<CoreAssetSyncOverview>;
+  updateCoreAssetSyncConfiguration: (
+    input: UpdateCoreAssetSyncConfiguration,
+  ) => Promise<CoreAssetSyncOverview>;
+  removeCoreAssetSyncConfiguration: () => Promise<void>;
+  syncCoreAssets: () => Promise<CoreAssetSyncOverview>;
+  refreshCoreAssets: () => Promise<CoreAssetSyncOverview>;
+  resolveCoreAssetSyncConflict: (
+    input: ResolveCoreAssetSyncConflict,
+  ) => Promise<CoreAssetSyncOverview>;
+  restoreIgnoredCoreAsset: (key: string) => Promise<CoreAssetSyncOverview>;
   getAssetGitStatus: (target: AssetGitTarget) => Promise<AssetGitStatus>;
   bindAssetGit: (input: {
     target: AssetGitTarget;
@@ -279,26 +283,6 @@ export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
-  getKnowledgeSyncOverview: () => Promise<KnowledgeSyncOverview>;
-  updateKnowledgeSyncConfiguration: (
-    input: UpdateKnowledgeSyncConfiguration,
-  ) => Promise<KnowledgeSyncOverview>;
-  removeKnowledgeSyncConfiguration: () => Promise<void>;
-  syncKnowledgeBases: () => Promise<KnowledgeSyncOverview>;
-  refreshKnowledgeBases: () => Promise<KnowledgeSyncOverview>;
-  resolveKnowledgeSyncConflict: (
-    input: ResolveKnowledgeSyncConflict,
-  ) => Promise<KnowledgeSyncOverview>;
-  restoreIgnoredRemoteKnowledgeBase: (
-    input: RestoreIgnoredRemoteKnowledgeBase,
-  ) => Promise<KnowledgeSyncOverview>;
-  getSkillSyncOverview: () => Promise<SkillSyncOverview>;
-  updateSkillSyncConfiguration: (input: UpdateSkillSyncConfiguration) => Promise<SkillSyncOverview>;
-  removeSkillSyncConfiguration: () => Promise<void>;
-  syncSkills: () => Promise<SkillSyncOverview>;
-  refreshSkills: () => Promise<SkillSyncOverview>;
-  resolveSkillSyncConflict: (input: ResolveSkillSyncConflict) => Promise<SkillSyncOverview>;
-  restoreIgnoredRemoteSkill: (input: RestoreIgnoredRemoteSkill) => Promise<SkillSyncOverview>;
   getGlobalMemoryPolicy: () => Promise<DesktopGlobalMemoryPolicySnapshot>;
   updateGlobalMemoryPolicy: (
     input: UpdateDesktopGlobalMemoryPolicy,

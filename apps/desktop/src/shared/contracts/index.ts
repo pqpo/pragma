@@ -1,5 +1,6 @@
 export * from "./api.ts";
 export * from "./asset-git.ts";
+export * from "./core-asset-sync.ts";
 export * from "./automations.ts";
 export * from "./avatars.ts";
 export * from "./bundles.ts";
@@ -11,8 +12,6 @@ export * from "./context-store-browser.ts";
 export * from "./experts.ts";
 export * from "./evaluations.ts";
 export * from "./logging.ts";
-export * from "./knowledge-sync.ts";
-export * from "./skill-sync.ts";
 export * from "./memory.ts";
 export * from "./mission-base.ts";
 export * from "./missions.ts";

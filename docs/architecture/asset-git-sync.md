@@ -28,10 +28,7 @@ Sync re-evaluates the current local revision and remote head, then clears the jo
 sides agree. Removing the asset association deletes its local binding and journal; it does not
 delete the remote repository.
 
-This is separate from [environment knowledge sync](knowledge-sync.md) and
-[environment Skill sync](skill-sync.md), which replicate all assets through their own portable
-manifests. Those manifests now carry an optional asset Git address and branch so another device
-can restore the association. They never carry the local sync base or journal. Manifest readers
-upgrade previous protocol versions before reconciliation; existing Git history remains the source
-backup for the environment repository. Changing an asset association schedules environment sync
-when that service is configured.
+This is separate from [core asset sync](core-asset-sync.md), which backs up the Desktop's
+published Experts, ExpertTeams, Flows, Knowledge Bases, Skills, and referenced Capability
+definitions in one Git repository. Individual asset associations remain local to the device;
+the core asset repository does not clone another asset repository on restore.
