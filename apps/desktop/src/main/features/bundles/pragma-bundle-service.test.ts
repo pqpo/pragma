@@ -71,6 +71,56 @@ afterEach(async () => {
 });
 
 describe("PragmaBundleService", { timeout: 30_000 }, () => {
+  it("blocks public Bundle operations for plugin dependencies", async () => {
+    const fixture = await createFixture("plugin-boundary");
+    const snapshot = await fixture.project.get();
+    const resources = snapshot.resources.map((resource) =>
+      resource.kind === "Expert"
+        ? {
+            ...resource,
+            spec: { ...resource.spec, plugins: [{ ref: "plugin:example@1.0.0" }] },
+          }
+        : resource,
+    );
+    const published = await fixture.project.publish({
+      expectedRevision: snapshot.revision,
+      resources,
+    });
+    await expect(
+      fixture.service.prepareExport({
+        rootRef: "expert:1xddvess309a6gme",
+        projectRevision: published.revision,
+      }),
+    ).rejects.toThrow("plugin dependencies are unavailable");
+    const exportRequest = exportInput(published.revision);
+    await expect(
+      fixture.service.exportTo(
+        { ...exportRequest, modules: { ...exportRequest.modules, plugins: true } },
+        join(fixture.root, "blocked.pragma"),
+      ),
+    ).rejects.toThrow("plugin dependencies are unavailable");
+
+    const project = await fixture.project.openRevision(published.revision);
+    const path = join(fixture.root, "plugin-boundary.pragma");
+    try {
+      const exported = await project.exportBundle({ roots: ["expert:1xddvess309a6gme"] });
+      await writeFile(path, exported.bytes);
+      await expect(fixture.service.inspect(path)).rejects.toThrow("cannot be imported");
+      await expect(
+        fixture.service.startImport(
+          importInput(
+            path,
+            exported.manifest.bundleFingerprint,
+            exported.manifest.project.projectFingerprint,
+            published.revision,
+          ),
+        ),
+      ).rejects.toThrow("cannot be imported");
+    } finally {
+      await project.dispose();
+    }
+  });
+
   it("exports a user Skill root from its active ready revision with mandatory files", async () => {
     const capabilityId = "00000000-0000-4000-8000-000000000290";
     const payload = await mkdtemp(join(tmpdir(), "pragma-skill-root-"));
@@ -2990,7 +3040,7 @@ function exportInput(projectRevision: number) {
     projectRevision,
     modules: {
       capabilities: true,
-      plugins: true,
+      plugins: false,
       knowledgeBases: false,
       flowLayouts: true,
     },

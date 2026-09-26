@@ -92,7 +92,7 @@ describe("Bundle Source publishing", () => {
       moduleCounts: { capabilities: 2, plugins: 1, knowledgeBases: 0, flowLayouts: 0 },
       modules: {
         capabilities: true,
-        plugins: true,
+        plugins: false,
         knowledgeBases: false,
         flowLayouts: false,
       },
@@ -160,7 +160,7 @@ describe("Bundle Source publishing", () => {
       projectRevision: 3,
       modules: {
         capabilities: true,
-        plugins: true,
+        plugins: false,
         knowledgeBases: false,
         flowLayouts: true,
       },

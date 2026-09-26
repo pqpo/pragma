@@ -17,7 +17,6 @@ import type {
   ContextStoreImportInspection,
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
-  DesktopPlugin,
   AutomationSummary,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
@@ -54,7 +53,6 @@ import {
   type ResourceKind,
   type TeamKnowledgeSelection,
 } from "./PragmaResourceDirectoryFragment.tsx";
-import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { PragmaBundleDialog } from "./PragmaBundleDialog.tsx";
@@ -77,7 +75,7 @@ import {
 } from "./studio-model.ts";
 
 export interface StudioPageMemoryState {
-  readonly activeView: StudioView;
+  readonly activeView: StudioView | "plugins";
   readonly experts?: readonly ExpertRecord[] | undefined;
 }
 
@@ -145,7 +143,9 @@ export function StudioPage(props: {
   );
   const contextStoreLeaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
   const [activeView, setActiveView] = useState<StudioView>(
-    props.initialMemoryState?.activeView ?? "experts",
+    props.initialMemoryState?.activeView === "plugins"
+      ? "experts"
+      : (props.initialMemoryState?.activeView ?? "experts"),
   );
   const [screen, setScreen] = useState<
     | "directory"
@@ -154,7 +154,6 @@ export function StudioPage(props: {
     | "context-store-revisions"
     | "capability-detail"
     | "skill-revisions"
-    | "plugin-detail"
     | "resource-detail"
     | "resource-edit"
     | "create"
@@ -191,8 +190,6 @@ export function StudioPage(props: {
   const [skillRevisionTaskCount, setSkillRevisionTaskCount] = useState(0);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
   const userCapabilities = capabilities.filter((capability) => capability.managedBy !== "system");
-  const [plugins, setPlugins] = useState<readonly DesktopPlugin[]>([]);
-  const [selectedPluginRef, setSelectedPluginRef] = useState<string | null>(null);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
@@ -326,14 +323,6 @@ export function StudioPage(props: {
         if (!cancelled) setExpertError(errorMessage(loadError));
       });
     void api
-      .listPlugins()
-      .then((items) => {
-        if (!cancelled) setPlugins(items);
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setExpertError(errorMessage(loadError));
-      });
-    void api
       .getRuntimeAvailability()
       .then((availability) => {
         if (!cancelled) setRuntimes(availability);
@@ -355,9 +344,7 @@ export function StudioPage(props: {
     mode: ExpertEditorMode = expert === undefined ? "create" : "edit",
     initialStep?: ExpertEditorStep,
   ) => {
-    setDraft(
-      expert === undefined ? emptyDraft() : { ...expert, tagInput: "", pluginSecretMutations: {} },
-    );
+    setDraft(expert === undefined ? emptyDraft() : { ...expert, tagInput: "" });
     setExpertEditor({
       mode,
       baseRevision:
@@ -380,7 +367,7 @@ export function StudioPage(props: {
     openedInitialExpertRef.current = props.initialExpertRef;
     setActiveView("experts");
     setSelectedExpert(expert);
-    setDraft({ ...expert, tagInput: "", pluginSecretMutations: {} });
+    setDraft({ ...expert, tagInput: "" });
     setExpertEditor({
       mode: "edit",
       baseRevision: expert.persisted?.revision ?? project?.revision ?? 0,
@@ -596,7 +583,6 @@ export function StudioPage(props: {
     contextStores.find((store) => store.id === selectedContextStoreId) ?? null;
   const selectedCapability =
     capabilities.find((capability) => capability.manifest.id === selectedCapabilityId) ?? null;
-  const selectedPlugin = plugins.find((plugin) => plugin.ref === selectedPluginRef) ?? null;
   const selectedResource =
     project?.resources.find(
       (resource) => canonicalPragmaResourceRef(resource) === selectedResourceRef,
@@ -734,23 +720,15 @@ export function StudioPage(props: {
   const refreshBundleData = async () => {
     const api = desktopApi();
     if (api === undefined) return;
-    const [
-      nextProject,
-      summaries,
-      nextCapabilities,
-      nextStores,
-      nextBindings,
-      nextPlugins,
-      nextRuntimes,
-    ] = await Promise.all([
-      api.getPragmaProject(),
-      api.listExperts(),
-      api.listCapabilities(),
-      api.listContextStores(),
-      api.listPragmaContextStoreBindings(),
-      api.listPlugins(),
-      api.getRuntimeAvailability(),
-    ]);
+    const [nextProject, summaries, nextCapabilities, nextStores, nextBindings, nextRuntimes] =
+      await Promise.all([
+        api.getPragmaProject(),
+        api.listExperts(),
+        api.listCapabilities(),
+        api.listContextStores(),
+        api.listPragmaContextStoreBindings(),
+        api.getRuntimeAvailability(),
+      ]);
     const definitions = await Promise.allSettled(
       summaries.map((summary) => api.getExpert(summary.ref)),
     );
@@ -759,7 +737,6 @@ export function StudioPage(props: {
     setCapabilities(nextCapabilities);
     setContextStores(nextStores);
     setContextStoreBindings(nextBindings);
-    setPlugins(nextPlugins);
     setRuntimes(nextRuntimes);
   };
 
@@ -860,7 +837,6 @@ export function StudioPage(props: {
             expert={selectedExpert}
             contextStores={contextStores}
             capabilities={capabilities}
-            plugins={plugins}
             experts={experts}
             resources={project?.resources ?? []}
             runtimes={runtimes}
@@ -907,7 +883,6 @@ export function StudioPage(props: {
             runtimes={runtimes}
             contextStores={contextStores}
             capabilities={capabilities}
-            plugins={plugins}
             experts={experts}
             resources={project?.resources ?? []}
             memoryEnabled={props.memoryEnabled}
@@ -1191,22 +1166,6 @@ export function StudioPage(props: {
             }}
           />
         ) : null}
-        {screen === "directory" && activeView === "plugins" ? (
-          <PluginDirectoryFragment
-            plugins={plugins}
-            onOpen={(plugin) => {
-              setSelectedPluginRef(plugin.ref);
-              setScreen("plugin-detail");
-            }}
-            onChanged={(plugin) =>
-              setPlugins((current) =>
-                current.some((item) => item.ref === plugin.ref)
-                  ? current.map((item) => (item.ref === plugin.ref ? plugin : item))
-                  : [plugin, ...current],
-              )
-            }
-          />
-        ) : null}
         {screen === "directory" && activeView === "integrations" && project !== null ? (
           <AutomationDirectoryFragment
             automations={automations}
@@ -1221,22 +1180,6 @@ export function StudioPage(props: {
               ]);
               setProject(nextProject);
               setAutomations(nextAutomations);
-            }}
-          />
-        ) : null}
-        {screen === "plugin-detail" && selectedPlugin !== null ? (
-          <PluginDetailFragment
-            plugin={selectedPlugin}
-            onBack={() => setScreen("directory")}
-            onChanged={(plugin) => {
-              setPlugins((current) =>
-                current.map((item) => (item.ref === plugin.ref ? plugin : item)),
-              );
-            }}
-            onDeleted={(ref) => {
-              setPlugins((current) => current.filter((item) => item.ref !== ref));
-              setSelectedPluginRef(null);
-              setScreen("directory");
             }}
           />
         ) : null}

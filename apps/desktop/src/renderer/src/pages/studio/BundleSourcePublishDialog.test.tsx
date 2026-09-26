@@ -111,12 +111,7 @@ describe("Bundle Source publication selection", () => {
       sources: [],
     };
 
-    expect(publicationModuleKeys()).toEqual([
-      "capabilities",
-      "plugins",
-      "knowledgeBases",
-      "flowLayouts",
-    ]);
+    expect(publicationModuleKeys()).toEqual(["capabilities", "knowledgeBases", "flowLayouts"]);
     expect(publicationModuleDisabled(preparation, "capabilities")).toBe(true);
     expect(publicationModuleDisabled(preparation, "plugins")).toBe(false);
     expect(publicationModuleDisabled(preparation, "knowledgeBases")).toBe(true);

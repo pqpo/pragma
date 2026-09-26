@@ -9,7 +9,10 @@ import { IntegrationErrorSchema } from "@pragma/shared/integration";
 import { ExpertDefinitionStoreError } from "../../features/experts/expert-definition-store.ts";
 import { MissionStoreError } from "../../features/missions/mission-store.ts";
 import { ContextStoreStoreError } from "../../features/context-stores/context-store-store.ts";
-import { BundleSetupRequiredError } from "../../features/bundles/pragma-bundle-errors.ts";
+import {
+  BundlePluginUnavailableError,
+  BundleSetupRequiredError,
+} from "../../features/bundles/pragma-bundle-errors.ts";
 import { CapabilityStoreError } from "../../features/capabilities/capability-store.ts";
 import {
   PragmaProjectRevisionUnavailableError,
@@ -57,6 +60,13 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
         ...(error.installationId === undefined ? {} : { installationId: error.installationId }),
         dependencies: error.dependencies,
       },
+    });
+  }
+  if (error instanceof BundlePluginUnavailableError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      diagnostics: [],
     });
   }
   if (error instanceof CapabilityStoreError) {

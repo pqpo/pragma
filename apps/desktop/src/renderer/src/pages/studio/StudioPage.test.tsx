@@ -32,6 +32,19 @@ const persistedExpert: ExpertDefinition = {
 };
 
 describe("StudioPage", () => {
+  it("returns a cached plugin view to the expert directory", () => {
+    const html = renderToStaticMarkup(
+      <StudioPage
+        memoryEnabled={true}
+        initialMemoryState={{ activeView: "plugins" }}
+        onTryExpert={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="studio-screen expert-directory"');
+    expect(html).not.toContain('class="plugin-directory"');
+  });
+
   it("renders a resizable secondary navigation", () => {
     const html = renderToStaticMarkup(
       <StudioPage memoryEnabled={true} onTryExpert={() => undefined} />,

@@ -62,51 +62,6 @@ export async function collectContexts(
   });
 }
 
-export async function collectPlugins(resources: readonly PragmaResource[], store: PluginStore) {
-  const refs = unique(
-    resources.flatMap((resource) =>
-      resource.kind === "Expert" ? resource.spec.plugins.map((plugin) => plugin.ref) : [],
-    ),
-  );
-  const result = [];
-  for (const ref of refs) {
-    const plugin = await store.get(ref).catch(() => undefined);
-    const packageInfo =
-      plugin === undefined ? undefined : await store.exportPackage(ref).catch(() => undefined);
-    result.push({ ref, plugin, packageInfo });
-  }
-  return result;
-}
-
-export async function assertPortablePluginConfigs(
-  resources: readonly PragmaResource[],
-  plugins: readonly {
-    readonly ref: string;
-    readonly plugin: Awaited<ReturnType<PluginStore["get"]>> | undefined;
-  }[],
-  store: PluginStore,
-): Promise<void> {
-  for (const resource of resources) {
-    if (resource.kind !== "Expert") continue;
-    for (const binding of resource.spec.plugins) {
-      const config = binding.config ?? {};
-      if (!isPortableValue(config)) {
-        throw new Error(`Plugin config contains a machine-local path: ${binding.ref}.`);
-      }
-      const plugin = plugins.find((candidate) => candidate.ref === binding.ref)?.plugin;
-      if (plugin === undefined) {
-        if (Object.keys(config).length > 0) {
-          throw new Error(
-            `Cannot verify whether plugin config contains secrets because ${binding.ref} is not installed.`,
-          );
-        }
-        continue;
-      }
-      await store.assertPortableConfig(binding.ref, config);
-    }
-  }
-}
-
 export function runtimeDependencyAvailable(
   runtime: DesktopRuntimeAvailability,
   dependency: RuntimeDependency,

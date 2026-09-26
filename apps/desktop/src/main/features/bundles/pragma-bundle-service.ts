@@ -98,12 +98,11 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { writeBundleAtomically } from "./pragma-bundle-file.ts";
+import { BundlePluginUnavailableError } from "./pragma-bundle-errors.ts";
 import {
-  assertPortablePluginConfigs,
   assertUniqueResolutionRefs,
   collectCapabilities,
   collectContexts,
-  collectPlugins,
   inspectBundleReadiness,
   isPortableValue,
   mergePendingMetadata,
@@ -718,8 +717,11 @@ export function createPragmaBundleService(options: {
         }
       }
       const contexts = await collectContexts(resources, options.contextStores);
-      const plugins = await collectPlugins(resources, options.plugins);
-      await assertPortablePluginConfigs(resources, plugins, options.plugins);
+      if (
+        resources.some((resource) => resource.kind === "Expert" && resource.spec.plugins.length > 0)
+      ) {
+        throw new BundlePluginUnavailableError("export");
+      }
       const flows = resources.filter((resource) => resource.kind === "Flow");
       return {
         snapshot,
@@ -728,7 +730,6 @@ export function createPragmaBundleService(options: {
         resources,
         capabilities,
         contexts,
-        plugins,
         flows,
       };
     } catch (error) {
@@ -923,12 +924,12 @@ export function createPragmaBundleService(options: {
           projectRevision: prepared.snapshot.revision,
           resourceCount: prepared.resources.length,
           capabilityCount: prepared.capabilities.length,
-          pluginCount: prepared.plugins.length,
+          pluginCount: 0,
           knowledgeBaseCount: prepared.contexts.length,
           hasFlowLayouts: flowLayouts.some((layout) => layout !== null),
           defaults: {
             capabilities: true,
-            plugins: true,
+            plugins: false,
             knowledgeBases: false,
             flowLayouts: flowLayouts.some((layout) => layout !== null),
           },
@@ -939,6 +940,9 @@ export function createPragmaBundleService(options: {
     },
 
     async exportTo(input, destinationPath) {
+      if (input.modules.plugins) {
+        throw new BundlePluginUnavailableError("export");
+      }
       const prepared = await prepare(input.rootRef, input.projectRevision);
       try {
         const includeKnowledgeBases =
@@ -952,7 +956,6 @@ export function createPragmaBundleService(options: {
         const contextByRef = new Map(
           prepared.contexts.map((entry) => [canonicalPragmaResourceRef(entry.resource), entry]),
         );
-        const pluginByRef = new Map(prepared.plugins.map((entry) => [entry.ref, entry]));
         const extensions = [];
         if (input.modules.flowLayouts) {
           const layoutFiles = new Map<string, Uint8Array>();
@@ -1101,18 +1104,6 @@ export function createPragmaBundleService(options: {
                 }
                 return undefined;
               }
-              if (requirement.kind === "plugin" && input.modules.plugins) {
-                const entry = pluginByRef.get(requirement.contract);
-                if (entry?.packageInfo?.origin !== "user") return undefined;
-                const files = new Map<string, Uint8Array>();
-                await addDirectoryFiles(
-                  files,
-                  entry.packageInfo.root,
-                  "",
-                  new Set([".pragma-install.json"]),
-                );
-                return { codec: "pragma.desktop.plugin@v1", files };
-              }
               return undefined;
             },
           },
@@ -1137,6 +1128,7 @@ export function createPragmaBundleService(options: {
 
     async inspect(sourcePath, rootRef) {
       const archive = await readDesktopBundle(sourcePath, rootRef);
+      assertBundleHasNoPlugins(archive);
       const current = await options.project.get();
       const conflicts = findBundleConflicts(
         archive.resources.filter((resource) => !isPragmaManagementCapability(resource)),
@@ -1451,6 +1443,7 @@ export function createPragmaBundleService(options: {
 
     async startImport(input) {
       const archive = await readDesktopBundle(input.sourcePath, input.rootRef);
+      assertBundleHasNoPlugins(archive);
       const unsupportedRequirement = archive.manifest.dependencies.unsupported.find(
         (requirement) => requirement.required,
       );
@@ -2776,6 +2769,17 @@ interface DesktopBundleArchive {
   readonly archiveBytes: number;
   readonly fileCount: number;
   readonly unpackedBytes: number;
+}
+
+function assertBundleHasNoPlugins(archive: DesktopBundleArchive): void {
+  if (
+    archive.manifest.dependencies.plugins.length > 0 ||
+    archive.resources.some(
+      (resource) => resource.kind === "Expert" && resource.spec.plugins.length > 0,
+    )
+  ) {
+    throw new BundlePluginUnavailableError("import");
+  }
 }
 
 async function validateBundleAssetResolutions(input: {

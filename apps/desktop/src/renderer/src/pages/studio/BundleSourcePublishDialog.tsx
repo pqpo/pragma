@@ -26,6 +26,7 @@ import {
 import { Dialog } from "../../components/Dialog.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import { isBundlePluginUnavailableError } from "../../lib/bundle-errors.ts";
 
 export function BundleSourcePublishDialog(props: {
   readonly rootRef: string;
@@ -58,7 +59,7 @@ export function BundleSourcePublishDialog(props: {
         if (cancelled) return;
         setPreparation(prepared);
         setMetadata(prepared.metadata);
-        setModules(prepared.modules);
+        setModules({ ...prepared.modules, plugins: false });
         setTagInput("");
         setFieldErrors({});
         const initialSelection = initialPublicationSourceSelection(prepared.sources);
@@ -77,7 +78,14 @@ export function BundleSourcePublishDialog(props: {
         setVersionEdited(false);
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setError(errorMessage(cause));
+        if (!cancelled)
+          setError(
+            publicationErrorMessage(
+              cause,
+              t("bundlePublish.validation.form"),
+              t("bundlePluginsUnavailable"),
+            ),
+          );
       });
     return () => {
       cancelled = true;
@@ -136,7 +144,7 @@ export function BundleSourcePublishDialog(props: {
     const request = PublishBundleSourceSchema.safeParse({
       rootRef: props.rootRef,
       projectRevision: props.projectRevision,
-      modules,
+      modules: { ...modules, plugins: false },
       metadata: nextMetadata,
       targets: requestedTargets,
     });
@@ -155,7 +163,13 @@ export function BundleSourcePublishDialog(props: {
         return current.map((result) => replacements.get(result.sourceId) ?? result);
       });
     } catch (cause) {
-      setError(publicationErrorMessage(cause, t("bundlePublish.validation.form")));
+      setError(
+        publicationErrorMessage(
+          cause,
+          t("bundlePublish.validation.form"),
+          t("bundlePluginsUnavailable"),
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -719,7 +733,7 @@ export function publicationItemIdForSelection(
 }
 
 export function publicationModuleKeys(): Array<keyof PragmaBundleModuleOptions> {
-  return ["capabilities", "plugins", "knowledgeBases", "flowLayouts"];
+  return ["capabilities", "knowledgeBases", "flowLayouts"];
 }
 
 export function publicationModuleDisabled(
@@ -778,7 +792,14 @@ function publicationFieldError(
   return t("bundlePublish.validation.tooManyTags", { count: issue.limit });
 }
 
-function publicationErrorMessage(error: unknown, invalidFormMessage: string): string {
+function publicationErrorMessage(
+  error: unknown,
+  invalidFormMessage: string,
+  pluginUnavailableMessage: string,
+): string {
+  if (isBundlePluginUnavailableError(error)) {
+    return pluginUnavailableMessage;
+  }
   if (
     typeof error === "object" &&
     error !== null &&

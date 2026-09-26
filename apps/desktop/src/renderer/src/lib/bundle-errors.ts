@@ -2,6 +2,13 @@ import { DesktopMutationErrorSchema } from "../../../shared/contracts/mutation.t
 
 import { errorMessage } from "./errors.ts";
 
+export function isBundlePluginUnavailableError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    if (error.code === "bundle_plugin_unavailable") return true;
+  }
+  return errorMessage(error).includes("bundle_plugin_unavailable:");
+}
+
 export function localizedBundleMutationError(
   error: unknown,
   translate: (key: string, options?: Record<string, unknown>) => string,

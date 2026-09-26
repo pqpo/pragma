@@ -22,3 +22,16 @@ export class BundleSetupRequiredError extends Error {
     });
   }
 }
+
+export class BundlePluginUnavailableError extends Error {
+  readonly code = "bundle_plugin_unavailable" as const;
+
+  constructor(operation: "import" | "export") {
+    super(
+      operation === "import"
+        ? "bundle_plugin_unavailable: Bundles containing plugin dependencies cannot be imported in this version of Desktop."
+        : "bundle_plugin_unavailable: Bundles containing plugin dependencies are unavailable in this version of Desktop.",
+    );
+    this.name = "BundlePluginUnavailableError";
+  }
+}

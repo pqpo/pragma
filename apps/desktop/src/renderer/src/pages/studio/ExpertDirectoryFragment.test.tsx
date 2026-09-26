@@ -185,7 +185,6 @@ describe("ExpertDetailFragment", () => {
         expert={{ ...expert, model: { ...expert.model!, thinkingLevel: "high" } }}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         runtimes={[runtime]}
@@ -224,7 +223,6 @@ describe("ExpertDetailFragment", () => {
         }}
         contextStores={[contextStore]}
         capabilities={[skillCapability, toolCapability]}
-        plugins={[plugin]}
         experts={[]}
         resources={resources}
         runtimes={[]}
@@ -241,8 +239,8 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("Product Docs");
     expect(html).toContain("Writing Skill");
     expect(html).toContain("search_docs、save_note");
-    expect(html).toContain("Research Plugin");
-    expect(html.match(/expert-capability-detail-selection-text/g)).toHaveLength(4);
+    expect(html).not.toContain("Research Plugin");
+    expect(html.match(/expert-capability-detail-selection-text/g)).toHaveLength(3);
     expect(html).not.toContain("Context store details should not be shown here.");
     expect(html).not.toContain("Skill instructions should not be shown here.");
     expect(html).not.toContain("Tool service details should not be shown here.");
@@ -267,7 +265,6 @@ describe("ExpertDetailFragment", () => {
         }}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         runtimes={[]}
@@ -321,7 +318,6 @@ describe("ExpertDetailFragment", () => {
         }}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         runtimes={[]}
@@ -360,7 +356,6 @@ describe("ExpertDetailFragment", () => {
         }}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         runtimes={[]}
@@ -483,7 +478,7 @@ describe("ExpertDirectoryFragment", () => {
 });
 
 describe("ExpertEditorFragment", () => {
-  const draft = { ...expert, tagInput: "", pluginSecretMutations: {} };
+  const draft = { ...expert, tagInput: "" };
 
   it("does not expose semantic identity fields during an ordinary edit", () => {
     const html = renderToStaticMarkup(
@@ -493,7 +488,6 @@ describe("ExpertEditorFragment", () => {
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         memoryEnabled={true}
@@ -522,7 +516,6 @@ describe("ExpertEditorFragment", () => {
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         memoryEnabled={true}
@@ -544,7 +537,6 @@ describe("ExpertEditorFragment", () => {
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         memoryEnabled={true}
@@ -573,7 +565,6 @@ describe("ExpertEditorFragment", () => {
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         memoryEnabled={true}
@@ -595,7 +586,6 @@ describe("ExpertEditorFragment", () => {
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         memoryEnabled={true}
@@ -616,7 +606,6 @@ describe("ExpertEditorFragment", () => {
         runtimes={[]}
         contextStores={[]}
         capabilities={[]}
-        plugins={[]}
         experts={[]}
         resources={[]}
         memoryEnabled={false}

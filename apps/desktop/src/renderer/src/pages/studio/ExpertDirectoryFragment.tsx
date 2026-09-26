@@ -9,7 +9,6 @@ import {
   MagnifyingGlass,
   Network,
   PencilSimple,
-  PuzzlePiece,
   Play,
   Plus,
   Trash,
@@ -24,7 +23,6 @@ import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpr
 import type {
   Capability,
   ContextStore,
-  DesktopPlugin,
   DesktopRuntimeAvailability,
 } from "../../../../shared/contracts/index.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -203,7 +201,6 @@ export function ExpertDetailFragment(props: {
   readonly expert: ExpertRecord;
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
-  readonly plugins: readonly DesktopPlugin[];
   readonly experts: readonly ExpertRecord[];
   readonly resources: readonly PragmaResource[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
@@ -291,10 +288,6 @@ export function ExpertDetailFragment(props: {
     ),
     ...selectedToolReferences.flatMap((reference) => reference.toolNames),
   ];
-  const selectedPlugins = props.expert.plugins.map(
-    (reference) =>
-      props.plugins.find((plugin) => plugin.ref === reference.ref)?.manifest.name ?? reference.ref,
-  );
   const selectionList = (items: readonly string[]): ReactNode =>
     items.length === 0 ? (
       <span className="expert-capability-detail-empty">{t("noneSelected")}</span>
@@ -495,11 +488,6 @@ export function ExpertDetailFragment(props: {
               icon={Wrench}
               title={t("tools")}
               selected={selectionList(selectedTools)}
-            />
-            <ExpertCapabilityDetailRow
-              icon={PuzzlePiece}
-              title={t("plugins")}
-              selected={selectionList(selectedPlugins)}
             />
           </div>
         </section>

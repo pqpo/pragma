@@ -52,6 +52,16 @@ const persistedExpert: ExpertDefinition = {
 };
 
 describe("toPersistedInput", () => {
+  it("preserves hidden plugin references when saving other expert changes", () => {
+    const definition = {
+      ...persistedExpert,
+      plugins: [{ ref: "plugin:example@1.0.0" }],
+    };
+    const record = { ...toExpertRecord(definition), description: "Updated description" };
+
+    expect(toPersistedInput(record).plugins).toEqual(definition.plugins);
+  });
+
   it("persists context store mounts edited on an existing expert record", () => {
     const record = {
       ...toExpertRecord(persistedExpert),

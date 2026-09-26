@@ -20,16 +20,9 @@ import {
   type ContextStore,
   type DesktopRuntimeAvailability,
   type DesktopRuntimeModel,
-  type DesktopPlugin,
 } from "../../../../shared/contracts/index.ts";
-import {
-  desktopApi,
-  isBuiltInExpert,
-  type ExpertDraft,
-  type ExpertRecord,
-} from "./studio-model.ts";
+import { isBuiltInExpert, type ExpertDraft, type ExpertRecord } from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
-import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
 import { ExpertAvatarPicker } from "./ExpertAvatarPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { AssetMemoryPolicySection } from "../settings/AssetMemoryPolicySection.tsx";
@@ -43,7 +36,6 @@ export function ExpertEditorFragment(props: {
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
-  readonly plugins: readonly DesktopPlugin[];
   readonly experts: readonly ExpertRecord[];
   readonly resources: readonly PragmaResource[];
   readonly memoryEnabled: boolean;
@@ -182,20 +174,11 @@ export function ExpertEditorFragment(props: {
     }
     setSaving(true);
     try {
-      const api = desktopApi();
-      if (api !== undefined && Object.keys(draft.pluginSecretMutations).length > 0) {
-        await api.setPluginSecrets(draft.pluginSecretMutations);
-      }
-      const {
-        pluginSecretMutations: _pluginSecretMutations,
-        tagInput: _tagInput,
-        ...record
-      } = draft;
+      const { tagInput: _tagInput, ...record } = draft;
       const model =
         draft.model === null || thinkingLevels.length > 0
           ? draft.model
           : clearThinkingLevel(draft.model);
-      void _pluginSecretMutations;
       void _tagInput;
       await props.onCreated({
         ...record,
@@ -610,15 +593,6 @@ export function ExpertEditorFragment(props: {
                     setDraft((current) => ({ ...current, toolApprovals }))
                   }
                 />
-                <ExpertPluginPicker
-                  plugins={props.plugins}
-                  references={draft.plugins}
-                  secretMutations={draft.pluginSecretMutations}
-                  onReferencesChange={(plugins) => setDraft({ ...draft, plugins: [...plugins] })}
-                  onSecretMutationsChange={(pluginSecretMutations) =>
-                    setDraft({ ...draft, pluginSecretMutations })
-                  }
-                />
               </div>
             ) : null}
             {step === "review" ? (
@@ -653,8 +627,7 @@ export function ExpertEditorFragment(props: {
                         ? t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })
                         : `${draft.model.runtimeId} / ${draft.model.modelId}`}{" "}
                       · {draft.contextStoreMounts.length} knowledge bases · {draft.skills} skills ·{" "}
-                      {draft.tools} tools · {draft.mcpServers} MCP server · {draft.plugins.length}{" "}
-                      plugins
+                      {draft.tools} tools · {draft.mcpServers} MCP server
                       {isBuiltIn
                         ? ` · ${t("requiredSystemCapabilitiesLocked", { ns: "studio" })}`
                         : ""}

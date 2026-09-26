@@ -828,7 +828,7 @@ export const studio = {
   resetBuiltInExpert: "Reset to default",
   resetBuiltInExpertConfirm: "Reset this built-in expert?",
   resetBuiltInExpertDescription:
-    "Your display, model, behavior, context, capability, plugin, and approval customizations for “{{name}}” will be removed.",
+    "Your display, model, behavior, context, capability, and approval customizations for “{{name}}” will be removed.",
   resettingBuiltInExpert: "Resetting…",
   deleteExpert: "Delete this expert?",
   deleteExpertAction: "Delete expert",
@@ -1584,6 +1584,8 @@ export const studio = {
   bundleRecheck: "Check again",
   bundleConfigureCapability: "Configure {{name}}",
   bundleGenericError: "The Bundle operation could not be completed. Check the file and try again.",
+  bundlePluginsUnavailable:
+    "This item uses plugins, so Bundle operations are unavailable in this version.",
   bundleStatus: {
     ready: "Ready",
     missing: "Missing",

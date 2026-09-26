@@ -50,7 +50,7 @@ export function createBundleSourcePublishingService(options: {
         projectRevision: preview.projectRevision,
         modules: {
           capabilities: preview.defaults.capabilities && preview.capabilityCount > 0,
-          plugins: preview.defaults.plugins && preview.pluginCount > 0,
+          plugins: false,
           knowledgeBases: false,
           flowLayouts: preview.defaults.flowLayouts && preview.hasFlowLayouts,
         },

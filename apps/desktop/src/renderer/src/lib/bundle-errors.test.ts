@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { localizedBundleMutationError } from "./bundle-errors.ts";
+import { isBundlePluginUnavailableError, localizedBundleMutationError } from "./bundle-errors.ts";
+
+describe("isBundlePluginUnavailableError", () => {
+  it("recognizes mutation errors and errors from read-only IPC", () => {
+    expect(isBundlePluginUnavailableError({ code: "bundle_plugin_unavailable" })).toBe(true);
+    expect(
+      isBundlePluginUnavailableError(
+        new Error("Error invoking remote method: bundle_plugin_unavailable: unavailable"),
+      ),
+    ).toBe(true);
+    expect(isBundlePluginUnavailableError(new Error("Invalid Bundle"))).toBe(false);
+  });
+});
 
 describe("localizedBundleMutationError", () => {
   it("replaces legacy generated Context names with a useful knowledge-base label", () => {

@@ -28,7 +28,6 @@ export type StudioView =
   | "integrations"
   | "connectors"
   | "skills"
-  | "plugins"
   | "context-stores";
 
 export type ExpertRecord = {
@@ -62,7 +61,6 @@ export type ExpertRecord = {
 export type ExpertDraft = Omit<ExpertRecord, "icon" | "model"> & {
   readonly model: ExpertModel | null;
   readonly tagInput: string;
-  readonly pluginSecretMutations: Readonly<Record<string, string | null>>;
 };
 
 export const emptyDraft = (random: () => number = Math.random): ExpertDraft => ({
@@ -88,7 +86,6 @@ export const emptyDraft = (random: () => number = Math.random): ExpertDraft => (
   plugins: [],
   usesApproval: false,
   tagInput: "",
-  pluginSecretMutations: {},
 });
 
 export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {

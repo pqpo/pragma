@@ -30,6 +30,7 @@ import type {
 import { DesktopMutationErrorSchema } from "../../../../shared/contracts/mutation.ts";
 import { ExpertAvatar } from "../../components/ExpertAvatar.tsx";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
+import { isBundlePluginUnavailableError } from "../../lib/bundle-errors.ts";
 import { desktopApi } from "./studio-model.ts";
 
 type BundleMode = "export" | "import";
@@ -292,7 +293,7 @@ function BundleExportDialog(props: {
       setPreparedProjectRevision(projectRevision);
       setModules({
         capabilities: prepared.defaults.capabilities && prepared.capabilityCount > 0,
-        plugins: prepared.defaults.plugins && prepared.pluginCount > 0,
+        plugins: false,
         knowledgeBases: false,
         flowLayouts: prepared.defaults.flowLayouts && prepared.hasFlowLayouts,
       });
@@ -420,17 +421,6 @@ function BundleExportDialog(props: {
               disabled={preview === null || preview.capabilityCount === 0}
               required={selected.kind === "Skill" || selected.kind === "Capability"}
               onChange={(capabilities) => setModules({ ...modules, capabilities })}
-            />
-            <BundleToggle
-              label={t("bundlePlugins")}
-              description={
-                preview?.pluginCount === 0
-                  ? t("bundleModuleUnavailableHint")
-                  : t("bundlePluginsHint")
-              }
-              checked={modules.plugins}
-              disabled={preview === null || preview.pluginCount === 0}
-              onChange={(plugins) => setModules({ ...modules, plugins })}
             />
             <BundleToggle
               label={t("bundleKnowledgeBases")}
@@ -1991,6 +1981,7 @@ function bundleErrorMessage(
   error: unknown,
   translate: (key: string, options?: Record<string, unknown>) => string,
 ): string {
+  if (isBundlePluginUnavailableError(error)) return translate("bundlePluginsUnavailable");
   const parsed = DesktopMutationErrorSchema.safeParse(error);
   if (!parsed.success) return translate("bundleGenericError");
   if (parsed.data.code === "bundle_setup_required") return translate("bundleSetupDescription");

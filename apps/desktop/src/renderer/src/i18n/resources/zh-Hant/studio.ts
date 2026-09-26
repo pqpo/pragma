@@ -784,7 +784,7 @@ export const studio = {
   resetBuiltInExpert: "重設為預設設定",
   resetBuiltInExpertConfirm: "重設此內建專家？",
   resetBuiltInExpertDescription:
-    "將移除「{{name}}」的顯示、模型、行為、上下文、能力、外掛程式和核准自訂設定。",
+    "將移除「{{name}}」的顯示、模型、行為、上下文、能力和核准自訂設定。",
   resettingBuiltInExpert: "正在重設…",
   deleteExpert: "刪除此專家？",
   deleteExpertAction: "刪除專家",
@@ -1513,6 +1513,7 @@ export const studio = {
   bundleRecheck: "重新檢查",
   bundleConfigureCapability: "設定 {{name}}",
   bundleGenericError: "Bundle 操作未完成，請檢查檔案後重試。",
+  bundlePluginsUnavailable: "此物件依賴外掛程式，目前版本暫不支援 Bundle 操作。",
   bundleStatus: {
     ready: "已就緒",
     missing: "缺少",
