@@ -909,6 +909,7 @@ export async function createDesktopApplicationContainer(
   };
   const memoryLearningRevisions = createMemoryLearningRevisions({
     statePath: join(pragmaPaths.stateRoot(), "memory-learning-revisions"),
+    skillWorkspacePath: join(pragmaPaths.workspaceRoot(), "system-memory"),
     knowledgeRevisions: storeRevisions,
     skillRevisions,
     contextStores,

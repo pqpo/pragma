@@ -172,16 +172,16 @@ export async function createSkillMemoryModule(options: {
               available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
             );
             const selectedTarget = change.target;
+            const keyOwners = existingTargets.filter((target) =>
+              target.normalizedKeys.includes(change.normalizedKey),
+            );
             const targetAllowed =
               selectedTarget.type === "create"
-                ? !existingTargets.some((target) =>
-                    target.normalizedKeys.includes(change.normalizedKey),
-                  )
+                ? keyOwners.length === 0
                 : existingTargets.some(
-                    (target) =>
-                      target.capabilityId === selectedTarget.capabilityId &&
-                      target.normalizedKeys.includes(change.normalizedKey),
-                  );
+                    (target) => target.capabilityId === selectedTarget.capabilityId,
+                  ) &&
+                  keyOwners.every((target) => target.capabilityId === selectedTarget.capabilityId);
             return (
               selected.every((source) => source !== undefined) &&
               skillSourceThresholdMet(selected as SkillSourceSnapshot[]) &&

@@ -132,6 +132,7 @@ const EMPTY: State = {
 
 export function createMemoryLearningRevisions(options: {
   readonly statePath: string;
+  readonly skillWorkspacePath: string;
   readonly knowledgeRevisions: ContextStoreRevisionService;
   readonly skillRevisions: SkillRevisionService;
   readonly contextStores: ContextStoreStore;
@@ -476,7 +477,10 @@ export function createMemoryLearningRevisions(options: {
             sourceDigest: digest,
             sourceRefs: change.sourceRefs,
           };
-          const job = await options.skillRevisions.start(request);
+          await mkdir(options.skillWorkspacePath, { recursive: true, mode: 0o700 });
+          const job = await options.skillRevisions.start(request, {
+            workspacePath: options.skillWorkspacePath,
+          });
           state = {
             ...state,
             skills: [
@@ -557,26 +561,54 @@ export function createMemoryLearningRevisions(options: {
           (binding) => binding.revisionPending && binding.revisionJobId !== undefined,
         )) {
           if (item.revisionJobId === undefined) continue;
-          const job = await options.skillRevisions.get(item.revisionJobId);
+          let binding = item;
+          let job = await options.skillRevisions.get(item.revisionJobId);
+          const visited = new Set([job.id]);
+          while (job.state === "superseded") {
+            if (job.supersededBy === undefined || visited.has(job.supersededBy)) {
+              throw new Error("memory_skill_revision_replacement_invalid");
+            }
+            const replacement = await options.skillRevisions.get(job.supersededBy);
+            if (replacement.request.source !== "memory-learning") {
+              throw new Error("memory_skill_revision_replacement_invalid");
+            }
+            visited.add(replacement.id);
+            const previous = binding;
+            binding = {
+              ...binding,
+              revisionJobId: replacement.id,
+              capabilityId: replacement.request.capabilityId,
+            };
+            next = {
+              ...next,
+              skills: next.skills.map((candidate) =>
+                candidate === previous ? binding : candidate,
+              ),
+            };
+            await write(next);
+            job = replacement;
+          }
           if (job.state === "rejected") {
             settled = true;
             next = {
               ...next,
-              skills: item.mounted
-                ? next.skills.map((binding) =>
-                    binding === item ? { ...binding, revisionPending: false } : binding,
+              skills: binding.mounted
+                ? next.skills.map((candidate) =>
+                    candidate === binding ? { ...candidate, revisionPending: false } : candidate,
                   )
-                : next.skills.filter((binding) => binding !== item),
+                : next.skills.filter((candidate) => candidate !== binding),
             };
             continue;
           }
           if (job.state !== "completed") continue;
-          if (!item.mounted) await options.bindSkill(item.expertRef, item.capabilityId);
+          if (!binding.mounted) await options.bindSkill(binding.expertRef, binding.capabilityId);
           settled = true;
           next = {
             ...next,
-            skills: next.skills.map((binding) =>
-              binding === item ? { ...binding, mounted: true, revisionPending: false } : binding,
+            skills: next.skills.map((candidate) =>
+              candidate === binding
+                ? { ...candidate, mounted: true, revisionPending: false }
+                : candidate,
             ),
           };
         }

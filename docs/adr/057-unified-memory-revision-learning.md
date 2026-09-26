@@ -18,6 +18,8 @@ The unified binding file is written under `state/memory-learning-revisions/` wit
 
 A binding tracks whether its current revision is still pending. New evidence for the same Store or Skill waits in a retryable Memory job until that revision is merged, published, or rejected. Reconciliation wakes deferred jobs after the revision settles, preventing parallel drafts for one identity and preserving evidence that arrived during review.
 
+Skill plans may add a new normalized workflow key to an existing Skill when no other Skill owns that key. If Skill creation conflict recovery supersedes a revision job, reconciliation persists the replacement job and capability identity before waiting for publication. Memory-initiated Skill drafts use Pragma's `workspace/system-memory/` directory instead of the user's selected workspace.
+
 ## Consequences
 
 - Knowledge and Skill learning have one revision, review, publication, and binding path each.

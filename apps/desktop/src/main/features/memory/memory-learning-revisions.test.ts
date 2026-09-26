@@ -27,6 +27,15 @@ async function fixture() {
   const skillJobId = randomUUID();
   let knowledgeState = "pending_review";
   let skillState = "pending_review";
+  const skillJobs = new Map<
+    string,
+    {
+      id: string;
+      state: string;
+      supersededBy?: string;
+      request?: { source: string; capabilityId: string };
+    }
+  >();
   let capabilityKind = "skill";
   let capabilityMissing = false;
   const knowledgeStart = vi.fn(
@@ -53,6 +62,7 @@ async function fixture() {
   });
   const service = createMemoryLearningRevisions({
     statePath: join(root, "state", "memory-learning-revisions"),
+    skillWorkspacePath: join(root, "workspace", "system-memory"),
     knowledgeRevisions: {
       submit: knowledgeStart,
       get: async () => ({ state: knowledgeState }),
@@ -60,7 +70,7 @@ async function fixture() {
     } as unknown as ContextStoreRevisionService,
     skillRevisions: {
       start: skillStart,
-      get: async () => ({ state: skillState }),
+      get: async (id: string) => skillJobs.get(id) ?? { id, state: skillState },
       scheduleProcessing: vi.fn(),
     } as unknown as SkillRevisionService,
     contextStores: {
@@ -90,6 +100,7 @@ async function fixture() {
     expertRef,
     service,
     knowledgeStart,
+    skillJobId,
     skillStart,
     mountStore,
     bindSkill,
@@ -100,6 +111,16 @@ async function fixture() {
     },
     publishSkill: () => {
       skillState = "completed";
+    },
+    setSkillJob: (
+      id: string,
+      job: {
+        state: string;
+        supersededBy?: string;
+        request?: { source: string; capabilityId: string };
+      },
+    ) => {
+      skillJobs.set(id, { id, ...job });
     },
     setCapabilityKind: (kind: string) => {
       capabilityKind = kind;
@@ -188,6 +209,9 @@ describe("Memory revision learning bindings", () => {
     expect(f.skillStart).toHaveBeenCalledTimes(2);
     const firstId = f.skillStart.mock.calls[0]?.[0].capabilityId;
     expect(f.skillStart.mock.calls[1]?.[0].capabilityId).toBe(firstId);
+    expect(f.skillStart).toHaveBeenCalledWith(expect.anything(), {
+      workspacePath: join(f.root, "workspace", "system-memory"),
+    });
     await f.service.reconcile();
     expect(f.bindSkill).not.toHaveBeenCalled();
     f.publishSkill();
@@ -236,6 +260,68 @@ describe("Memory revision learning bindings", () => {
     });
     expect(f.skillStart).toHaveBeenCalledTimes(2);
     expect(f.skillStart.mock.calls[1]![0].capabilityId).toBe(capabilityId);
+  });
+
+  it("follows a superseded Skill creation and binds its published replacement", async () => {
+    const f = await fixture();
+    const sourceRefs = [1, 2, 3].map((revision) => ({
+      kind: "episodic" as const,
+      id: `episode-${revision}`,
+      revision,
+    }));
+    await f.service.submitSkills({
+      expertRef: f.expertRef,
+      sourceDigest: "a".repeat(64),
+      plan: {
+        action: "apply",
+        changes: [
+          {
+            name: "Workflow",
+            description: "Reusable workflow",
+            normalizedKey: "workflow.replaced",
+            sourceRefs,
+            target: { type: "create" },
+          },
+        ],
+      },
+      sources: [],
+    });
+    const replacementJobId = randomUUID();
+    const replacementCapabilityId = randomUUID();
+    f.setSkillJob(f.skillJobId, {
+      state: "superseded",
+      supersededBy: replacementJobId,
+    });
+    f.setSkillJob(replacementJobId, {
+      state: "pending_review",
+      request: { source: "memory-learning", capabilityId: replacementCapabilityId },
+    });
+    expect(await f.service.reconcile()).toBe(false);
+    const statePath = join(f.root, "state", "memory-learning-revisions", "bindings.json");
+    expect(JSON.parse(await readFile(statePath, "utf8")).skills).toMatchObject([
+      {
+        revisionJobId: replacementJobId,
+        capabilityId: replacementCapabilityId,
+        revisionPending: true,
+        mounted: false,
+      },
+    ]);
+    f.setSkillJob(replacementJobId, {
+      state: "completed",
+      request: { source: "memory-learning", capabilityId: replacementCapabilityId },
+    });
+    expect(await f.service.reconcile()).toBe(true);
+    expect(f.bindSkill).toHaveBeenCalledWith(f.expertRef, replacementCapabilityId);
+    expect(await f.service.reconcile()).toBe(false);
+    expect(f.bindSkill).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(await readFile(statePath, "utf8")).skills).toMatchObject([
+      {
+        revisionJobId: replacementJobId,
+        capabilityId: replacementCapabilityId,
+        revisionPending: false,
+        mounted: true,
+      },
+    ]);
   });
 
   it("fails closed when an existing Skill target resolves to another capability kind", async () => {

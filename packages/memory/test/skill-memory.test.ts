@@ -152,7 +152,7 @@ describe("Skill learning revision planning", () => {
           {
             name: "Workflow",
             description: "A reusable workflow.",
-            normalizedKey: "workflow.new",
+            normalizedKey: "workflow.conflict",
             sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
             target: { type: "revise", capabilityId: "1h2j3k4m5n6p7q8r" },
           },
@@ -167,12 +167,54 @@ describe("Skill learning revision planning", () => {
           description: "Existing Skill",
           normalizedKeys: ["workflow.old"],
         },
+        {
+          bindingId: "binding-other",
+          capabilityId: "2h3j4k5m6n7p8q9r",
+          name: "Other workflow",
+          description: "Another Skill",
+          normalizedKeys: ["workflow.conflict"],
+        },
       ],
     });
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
     expect(submit).not.toHaveBeenCalled();
     expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    module.close();
+  });
+
+  it("allows an existing Skill to learn a new normalized key", async () => {
+    const sourceRevisions = sources();
+    const submit = vi.fn(async () => undefined);
+    const change = {
+      name: "Expanded workflow",
+      description: "A new workflow in an existing Skill",
+      normalizedKey: "workflow.new",
+      sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+      target: { type: "revise" as const, capabilityId: "1h2j3k4m5n6p7q8r" },
+    };
+    const module = await createModule(sourceRevisions, {
+      plan: async () => ({ action: "apply", changes: [change] }),
+      submit,
+      targets: [
+        {
+          bindingId: "binding-old",
+          capabilityId: change.target.capabilityId,
+          name: "Existing Skill",
+          description: "Reusable workflows",
+          normalizedKeys: ["workflow.old"],
+        },
+      ],
+    });
+    await schedule(module, sourceRevisions);
+    await module.runBackgroundOnce?.();
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: { action: "apply", changes: [change] } }),
+    );
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "retained",
+    });
     module.close();
   });
 });
