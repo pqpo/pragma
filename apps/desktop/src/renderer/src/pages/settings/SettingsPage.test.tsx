@@ -101,4 +101,14 @@ describe("SettingsPage", () => {
     expect(html).toContain('<div class="setting-row general-language-setting">');
     expect(html).not.toContain('<label class="setting-row general-language-setting">');
   });
+
+  it("opens storage cleanup as a dedicated settings section", () => {
+    const html = renderToStaticMarkup(<SettingsPage initialView="storage" />);
+
+    expect(html).toContain('id="storage-panel"');
+    expect(html).toContain("Local storage usage");
+    expect(html).toContain("Completed conversations");
+    expect(html).toContain("Rebuildable cache");
+    expect(html).toContain("Trash");
+  });
 });

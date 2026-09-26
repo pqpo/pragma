@@ -77,23 +77,37 @@ export function createLocalHostProjectCatalog(options: {
       ? await reader.getHead(requestedProjectId)
       : await reader.getRevision(requestedProjectId, revision);
 
+  const withOpenedProject = async <T>(
+    location: NonNullable<Awaited<ReturnType<typeof readLocation>>>,
+    operation: (
+      project: Awaited<ReturnType<LocalHostProjectRevisionReader["openRevision"]>>,
+    ) => Promise<T>,
+  ): Promise<T> => {
+    if (reader.withOpenRevision !== undefined)
+      return await reader.withOpenRevision(location, operation);
+    const project = await reader.openRevision(location);
+    try {
+      return await operation(project);
+    } finally {
+      await project.dispose();
+    }
+  };
+
   const readSummary = async (
     requestedProjectId: string,
     revision?: number,
   ): Promise<LocalHostProjectRevisionSummary | undefined> => {
     const location = await readLocation(requestedProjectId, revision);
     if (location === undefined || location.projectFingerprint === undefined) return undefined;
-    const project = await reader.openRevision(location);
-    try {
+    const sourceFingerprint = location.projectFingerprint;
+    return await withOpenedProject(location, async (project) => {
       return {
         id: location.projectId,
         revision: location.revision,
-        fingerprint: location.projectFingerprint,
+        fingerprint: sourceFingerprint,
         resources: project.listResources(),
       };
-    } finally {
-      await project.dispose();
-    }
+    });
   };
 
   const listProjectResources = async (): Promise<
@@ -107,12 +121,9 @@ export function createLocalHostProjectCatalog(options: {
   > => {
     const location = await reader.getHead(projectId);
     if (location === undefined) return undefined;
-    const project = await reader.openRevision(location);
-    try {
+    return await withOpenedProject(location, async (project) => {
       return { location, resources: project.listResources() };
-    } finally {
-      await project.dispose();
-    }
+    });
   };
 
   const resolve = async (input: {
@@ -126,8 +137,8 @@ export function createLocalHostProjectCatalog(options: {
     if (!PragmaInvocableResourceRefSchema.safeParse(exactRef).success) return undefined;
     const location = await readLocation(targetProjectId, input.revision);
     if (location === undefined || location.projectFingerprint === undefined) return undefined;
-    const project = await reader.openRevision(location);
-    try {
+    const sourceFingerprint = location.projectFingerprint;
+    return await withOpenedProject(location, async (project) => {
       const resource = project
         .listResources()
         .find((candidate) => canonicalPragmaResourceRef(candidate) === exactRef);
@@ -158,13 +169,11 @@ export function createLocalHostProjectCatalog(options: {
           // The descriptor is the stable Mission/Revision pin. A migrated
           // compiler view may have a different derived fingerprint, but that
           // value must never replace the historical source fingerprint.
-          fingerprint: location.projectFingerprint,
+          fingerprint: sourceFingerprint,
         }),
         definition: compiled.value,
       };
-    } finally {
-      await project.dispose();
-    }
+    });
   };
 
   return {

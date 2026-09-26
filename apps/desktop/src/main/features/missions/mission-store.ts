@@ -70,6 +70,10 @@ import {
 } from "./mission-projection-storage.ts";
 import { MissionStoreError } from "./mission-store-error.ts";
 import {
+  hasMissionDeletionIntent,
+  persistMissionDeletionIntent,
+} from "./mission-deletion-intent.ts";
+import {
   foldTimeline,
   readTimelinePageFromTail,
   readTimelineRecords,
@@ -182,6 +186,7 @@ export interface MissionStore {
   ): Promise<MissionTimelinePage>;
   markComplete(id: string): Promise<Mission>;
   reopen(id: string): Promise<Mission>;
+  claimCompletedTaskDeletion(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   readExecutionProjection(
     id: string,
@@ -917,9 +922,13 @@ export function createMissionStore(options: {
   const updateMission = async (
     id: string,
     update: (current: Mission, timestamp: string) => Mission,
+    rejectDeletionIntent = false,
   ): Promise<Mission> =>
     await withMissionLock(id, "mission.update", async () => {
       await recoverPendingTransactions(id);
+      if (rejectDeletionIntent && (await hasMissionDeletionIntent(missionPath(id), id))) {
+        throw new Error("Mission deletion is already pending.");
+      }
       const current = await readMissionUnlocked(id);
       const timestamp = new Date().toISOString();
       const updated = MissionSchema.parse(update(current, timestamp));
@@ -1810,18 +1819,42 @@ export function createMissionStore(options: {
       });
     },
     async markComplete(id) {
-      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => ({
-        ...current,
-        lifecycleStatus: "completed",
-        completedAt: timestamp,
-        updatedAt: timestamp,
-      }));
+      return await updateMission(
+        MissionIdSchema.parse(id),
+        (current, timestamp) => ({
+          ...current,
+          lifecycleStatus: "completed",
+          completedAt: timestamp,
+          updatedAt: timestamp,
+        }),
+        true,
+      );
     },
     async reopen(id) {
-      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
-        const mission = { ...current };
-        delete mission.completedAt;
-        return { ...mission, lifecycleStatus: "active", updatedAt: timestamp };
+      return await updateMission(
+        MissionIdSchema.parse(id),
+        (current, timestamp) => {
+          const mission = { ...current };
+          delete mission.completedAt;
+          return { ...mission, lifecycleStatus: "active", updatedAt: timestamp };
+        },
+        true,
+      );
+    },
+    async claimCompletedTaskDeletion(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      await withMissionLock(parsedId, "mission.cleanup-claim", async () => {
+        await recoverPendingTransactions(parsedId);
+        const mission = await readMissionUnlocked(parsedId);
+        if (
+          mission.origin.type !== "user" ||
+          mission.lifecycleStatus !== "completed" ||
+          (mission.execution !== undefined &&
+            ["queued", "running", "waiting"].includes(mission.execution.status))
+        ) {
+          throw new Error("Only completed user-created conversations can be cleaned up.");
+        }
+        await persistMissionDeletionIntent(missionPath(parsedId), parsedId);
       });
     },
     async remove(id) {

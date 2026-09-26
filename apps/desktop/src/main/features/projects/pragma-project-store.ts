@@ -914,8 +914,19 @@ function createDesktopProjectSourceRepository(options: {
     async withCheckout(project, operation) {
       const snapshotHash = project.snapshotHash;
       if (snapshotHash === undefined) return await operation(project);
-      const leaseDirectory = join(projectViewLeasesPath, basename(project.rootDir));
-      const lease = await createProjectViewLease(leaseDirectory);
+      const viewName = basename(project.rootDir);
+      const leaseDirectory = join(projectViewLeasesPath, viewName);
+      const viewLock = join(projectViewLocksPath, viewName);
+      let lease: string | undefined;
+      while (lease === undefined) {
+        lease = await withFileLock(viewLock, async () =>
+          viewName !== snapshotHash ||
+          (await hasSnapshotMarker(join(project.rootDir, ".pragma-snapshot"), snapshotHash))
+            ? await createProjectViewLease(leaseDirectory)
+            : undefined,
+        );
+        if (lease === undefined) await ensureView(snapshotHash);
+      }
       try {
         return await operation(project);
       } finally {

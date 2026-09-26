@@ -18,6 +18,7 @@
 @import "./features/studio/asset-git.css";
 @import "./features/settings/runtimes.css";
 @import "./features/settings/memory.css";
+@import "./features/settings/storage-cleanup.css";
 
 @import "./features/studio/base.css";
 @import "./features/studio/automations.css";

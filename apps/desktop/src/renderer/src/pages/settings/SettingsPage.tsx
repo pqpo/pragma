@@ -13,6 +13,7 @@ import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 import { BundleRegistrySourcesFragment } from "./BundleRegistrySourcesFragment.tsx";
 import { CoreAssetSyncSettingsFragment } from "./CoreAssetSyncSettingsFragment.tsx";
+import { StorageCleanupFragment } from "./StorageCleanupFragment.tsx";
 
 export type SettingsView =
   | "general"
@@ -21,7 +22,8 @@ export type SettingsView =
   | "bundle-sources"
   | "core-asset-sync"
   | "models"
-  | "runtimes";
+  | "runtimes"
+  | "storage";
 
 export function SettingsPage(
   props: {
@@ -73,6 +75,15 @@ export function SettingsPage(
           onClick={() => setActiveView("memory")}
         >
           {t("memory.navigation")}
+        </button>
+        <button
+          className={activeView === "storage" ? "settings-nav-item is-active" : "settings-nav-item"}
+          type="button"
+          aria-selected={activeView === "storage"}
+          aria-controls="storage-panel"
+          onClick={() => setActiveView("storage")}
+        >
+          {t("storage.navigation")}
         </button>
         <button
           className={activeView === "models" ? "settings-nav-item is-active" : "settings-nav-item"}
@@ -129,6 +140,8 @@ export function SettingsPage(
           <GeneralSettingsFragment />
         ) : activeView === "memory" ? (
           <MemorySettingsFragment onMemoryEnabledChange={props.onMemoryEnabledChange} />
+        ) : activeView === "storage" ? (
+          <StorageCleanupFragment />
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
         ) : activeView === "core-asset-sync" ? (

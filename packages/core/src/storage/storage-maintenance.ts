@@ -38,6 +38,22 @@ export interface TrashMaintenanceResult {
   readonly reclaimedBytes: number;
 }
 
+export interface StorageCleanupOverview {
+  readonly storage: StorageOverview;
+  readonly workspaceBytes: number;
+  readonly clearableCacheBytes: number;
+  readonly clearableCacheEntries: number;
+  readonly clearableTrashBytes: number;
+  readonly clearableTrashEntries: number;
+}
+
+export interface StorageCleanupResult {
+  readonly beforeBytes: number;
+  readonly afterBytes: number;
+  readonly deletedEntries: number;
+  readonly reclaimedBytes: number;
+}
+
 export interface TransientStorageMaintenanceResult extends TrashMaintenanceResult {
   readonly deletedCacheEntries: number;
   readonly deletedTemporaryEntries: number;
@@ -82,6 +98,72 @@ export async function inspectStorage(
     softLimitBytes: policy.globalSoftLimitBytes,
     hardLimitBytes: policy.globalHardLimitBytes,
   };
+}
+
+/** Scans on demand for Settings; incomplete deletion journals are never counted as clearable. */
+export async function inspectStorageCleanup(paths: PragmaPaths): Promise<StorageCleanupOverview> {
+  const [storage, workspaceBytes, cache, trash] = await Promise.all([
+    inspectStorage(paths),
+    directoryBytes(paths.workspaceRoot()),
+    collectManuallyClearableCacheCandidates(paths, false),
+    completedTrashCandidates(paths),
+  ]);
+  return {
+    storage,
+    workspaceBytes,
+    clearableCacheBytes: cache.reduce((total, item) => total + item.bytes, 0),
+    clearableCacheEntries: cache.length,
+    clearableTrashBytes: trash.reduce((total, item) => total + item.bytes, 0),
+    clearableTrashEntries: trash.length,
+  };
+}
+
+/** Clears only snapshot views whose active checkout leases can be checked atomically. */
+export async function clearRebuildableCache(paths: PragmaPaths): Promise<StorageCleanupResult> {
+  return await withFileLock(paths.storageGcLock(), async () => {
+    const beforeBytes = await directoryBytes(paths.cacheRoot());
+    const views = (await unleasedProjectViewCandidates(paths, true)).filter((candidate) =>
+      /^[a-f0-9]{64}$/.test(basename(candidate.path)),
+    );
+    let deletedEntries = 0;
+    for (const candidate of views) {
+      const deleted = await withFileLock(
+        join(paths.cacheRoot(), "project-view-locks", basename(candidate.path)),
+        async () => {
+          const stillUnleased = (await unleasedProjectViewCandidates(paths, false)).some(
+            (view) => view.path === candidate.path,
+          );
+          if (!stillUnleased) return false;
+          await rm(candidate.path, { recursive: true, force: true });
+          return true;
+        },
+      );
+      if (deleted) deletedEntries += 1;
+    }
+    const afterBytes = await directoryBytes(paths.cacheRoot());
+    return {
+      beforeBytes,
+      afterBytes,
+      deletedEntries,
+      reclaimedBytes: Math.max(0, beforeBytes - afterBytes),
+    };
+  });
+}
+
+/** Permanently clears only completed deletion transactions with a valid journal. */
+export async function emptyCompletedTrash(paths: PragmaPaths): Promise<StorageCleanupResult> {
+  return await withFileLock(paths.storageGcLock(), async () => {
+    const beforeBytes = await directoryBytes(paths.trashRoot());
+    const candidates = await completedTrashCandidates(paths);
+    for (const candidate of candidates) await deleteTrashCandidate(candidate);
+    const afterBytes = await directoryBytes(paths.trashRoot());
+    return {
+      beforeBytes,
+      afterBytes,
+      deletedEntries: candidates.length,
+      reclaimedBytes: Math.max(0, beforeBytes - afterBytes),
+    };
+  });
 }
 
 export async function assertStorageWriteAllowed(
@@ -403,18 +485,34 @@ interface Candidate {
   readonly accessedAt: number;
 }
 
-async function collectCacheCandidates(paths: PragmaPaths): Promise<Candidate[]> {
+async function collectCacheCandidates(
+  paths: PragmaPaths,
+  cleanStaleLeases = true,
+): Promise<Candidate[]> {
   return [
     ...(await hashDirectoryCandidates(paths.compilerBlueprintsCacheRoot())),
     ...(await hashDirectoryCandidates(paths.pluginPackagesCacheRoot())),
-    ...(await unleasedCodexBaseCandidates(paths)),
+    ...(await unleasedCodexBaseCandidates(paths, cleanStaleLeases)),
     ...(await hashDirectoryCandidates(join(paths.codexRuntimeCacheRoot(), "skills"))),
-    ...(await unleasedProjectViewCandidates(paths)),
+    ...(await unleasedProjectViewCandidates(paths, cleanStaleLeases)),
     ...(await directChildren(paths.agentsCacheRoot())),
   ];
 }
 
-async function unleasedCodexBaseCandidates(paths: PragmaPaths): Promise<Candidate[]> {
+/** Manual cleanup is limited to raw project views with active checkout leases. */
+async function collectManuallyClearableCacheCandidates(
+  paths: PragmaPaths,
+  cleanStaleLeases: boolean,
+): Promise<Candidate[]> {
+  return (await unleasedProjectViewCandidates(paths, cleanStaleLeases)).filter((candidate) =>
+    /^[a-f0-9]{64}$/.test(basename(candidate.path)),
+  );
+}
+
+async function unleasedCodexBaseCandidates(
+  paths: PragmaPaths,
+  cleanStaleLeases: boolean,
+): Promise<Candidate[]> {
   const candidates = (await directChildren(join(paths.codexRuntimeCacheRoot(), "bases"))).filter(
     (candidate) => /^[a-f0-9]{64}$/.test(basename(candidate.path)),
   );
@@ -434,17 +532,20 @@ async function unleasedCodexBaseCandidates(paths: PragmaPaths): Promise<Candidat
       }
       if (typeof pid === "number" && isProcessAlive(pid)) {
         leased = true;
-      } else {
+      } else if (cleanStaleLeases) {
         await rm(lease.path, { force: true });
       }
     }
     if (leased) leasedFingerprints.add(fingerprint);
-    else await removeEmptyDirectory(leaseDirectory.path);
+    else if (cleanStaleLeases) await removeEmptyDirectory(leaseDirectory.path);
   }
   return candidates.filter((candidate) => !leasedFingerprints.has(basename(candidate.path)));
 }
 
-async function unleasedProjectViewCandidates(paths: PragmaPaths): Promise<Candidate[]> {
+async function unleasedProjectViewCandidates(
+  paths: PragmaPaths,
+  cleanStaleLeases: boolean,
+): Promise<Candidate[]> {
   const candidates = await directChildren(paths.projectViewsCacheRoot());
   const leasesRoot = join(paths.cacheRoot(), "project-view-leases");
   const leasedSnapshots = new Set<string>();
@@ -463,10 +564,10 @@ async function unleasedProjectViewCandidates(paths: PragmaPaths): Promise<Candid
         leased = true;
         continue;
       }
-      await rm(lease.path, { force: true });
+      if (cleanStaleLeases) await rm(lease.path, { force: true });
     }
     if (leased) leasedSnapshots.add(basename(leaseDirectory.path));
-    else await removeEmptyDirectory(leaseDirectory.path);
+    else if (cleanStaleLeases) await removeEmptyDirectory(leaseDirectory.path);
   }
   return candidates.filter((candidate) => !leasedSnapshots.has(basename(candidate.path)));
 }
