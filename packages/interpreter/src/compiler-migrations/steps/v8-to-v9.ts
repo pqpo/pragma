@@ -3,7 +3,7 @@ import {
   canonicalPragmaResourceRef,
   type PragmaResource,
 } from "../../ast/index.ts";
-import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
+import { parsePragmaYaml } from "../../compiler/project-yaml.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
 import {
   PragmaCompilerV8BundleSchema,
