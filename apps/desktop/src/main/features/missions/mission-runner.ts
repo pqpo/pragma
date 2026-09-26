@@ -7,15 +7,12 @@
 export {
   activeMissionKnowledgeDraftNamespace,
   compactExpertSessionContext,
-  consumeLiveChatOutput,
   createMissionRunner,
-  isRootMissionRuntimeOutput,
   mergeMissionExecutorMetadata,
   missionKnowledgeDraftNamespace,
   missionKnowledgeNamespace,
   readMissionConversationSnapshot,
   toDesktopHumanRequest,
-  type LiveMissionChat,
   type MissionChatNotification,
   type MissionCommandOutcomeNotification,
   type MissionRunner,
@@ -23,3 +20,8 @@ export {
   type MissionSurfaceAudience,
   type MissionWorkNotification,
 } from "./mission-runner-composition.ts";
+export {
+  consumeLiveChatOutput,
+  isRootMissionRuntimeOutput,
+  type LiveMissionChat,
+} from "./mission-chat-live.ts";
