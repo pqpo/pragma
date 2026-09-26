@@ -3,6 +3,8 @@ export const settings = {
     navigation: "核心资产同步",
     title: "核心资产同步",
     description: "通过一个 Git 仓库恢复专家、专家团、流程、知识库和技能。",
+    legacyStopped: "旧环境同步已停止。请配置新的核心资产同步 Git 地址，才能继续备份这些资产。",
+    configureNew: "配置核心资产同步",
     remote: "Git 地址",
     branch: "分支（可选）",
     autoPush: "自动上传已发布的修改",

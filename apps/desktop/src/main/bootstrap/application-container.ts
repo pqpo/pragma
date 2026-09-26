@@ -72,7 +72,6 @@ import { installContextStoreHandlers } from "../features/context-stores/context-
 import { installCoreAssetSyncHandlers } from "../features/studio-sync/core-asset-sync-ipc.ts";
 import {
   createCoreAssetSyncService,
-  containsDeprecatedPluginReference,
   unavailableCoreAssetRuntimeBindings,
   type CoreAssetSyncService,
 } from "../features/studio-sync/core-asset-sync-service.ts";
@@ -670,6 +669,10 @@ export async function createDesktopApplicationContainer(
   assetGitRef.current = assetGit;
   const coreAssetSync = createCoreAssetSyncService({
     configurationPath: join(pragmaPaths.stateRoot(), "core-asset-sync-settings.json"),
+    legacyConfigurationPaths: [
+      join(pragmaPaths.stateRoot(), "knowledge-sync-settings.json"),
+      join(pragmaPaths.stateRoot(), "skill-sync-settings.json"),
+    ],
     statePath: join(pragmaPaths.stateRoot(), "core-asset-sync-state.json"),
     project: pragmaProjectStore,
     layouts: workflowLayouts,
@@ -994,18 +997,6 @@ export async function createDesktopApplicationContainer(
         code: "core_asset_runtime_binding_missing",
         action: "choose_runtime",
         message: "Choose an available local harness and model before running this asset.",
-      });
-    }
-    if (containsDeprecatedPluginReference(ref, projectSnapshot.resources)) {
-      dependencies.push({
-        id: `core-asset-plugin:${ref}`,
-        kind: "plugin",
-        resourceRef: ref,
-        name: ref,
-        status: "action_required",
-        code: "core_asset_plugin_deprecated",
-        action: "none",
-        message: "Remove the deprecated plugin reference before running this asset.",
       });
     }
     if (dependencies.length === 0) return;

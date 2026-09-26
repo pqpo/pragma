@@ -6,6 +6,9 @@ RuntimeProfile binding descriptions, and Flow layouts. The root `pragma-core-ass
 uses protocol `pragma.core-asset-sync/v1`. Each item has a stable kind and resource ID, a canonical
 content fingerprint, and a validated payload. Other repository paths are left untouched. The old
 knowledge and Skill environment sync protocols are retired; no repository or state migration runs.
+This is a breaking cutover: devices with only an old sync configuration show a persistent
+notice to configure Core Asset Sync. The old Git repositories and settings are never read as
+new sync sources, and synchronization does not resume until a new Git remote is configured.
 
 Runtime profiles describe the original harness and model but do not install either on a new
 device. Missing local selections appear as `needs_attention`; the affected Expert, Team, or Flow

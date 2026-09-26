@@ -20,6 +20,7 @@ import type { HomeMissionExecutorOption, Mission } from "../../shared/contracts/
 
 export function App() {
   const { t } = useTranslation("common");
+  const { t: settingsT } = useTranslation("settings");
   const [activeView, setActiveView] = useState<AppView>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readSidebarCollapsed(typeof window === "undefined" ? undefined : window.localStorage),
@@ -38,7 +39,21 @@ export function App() {
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
+  const [legacySyncStopped, setLegacySyncStopped] = useState(false);
   const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.pragmaDesktop
+      .getCoreAssetSyncOverview()
+      .then((overview) => {
+        if (!cancelled) setLegacySyncStopped(overview.legacySyncStopped === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView]);
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -251,7 +266,19 @@ export function App() {
       ) : activeView === "memory" ? (
         <MemoryPage onConfigureExtraction={openMemorySettings} />
       ) : (
-        <SettingsPage initialView={settingsView} onMemoryEnabledChange={setMemoryEnabled} />
+        <SettingsPage
+          initialView={settingsView}
+          onMemoryEnabledChange={setMemoryEnabled}
+          onLegacySyncStoppedChange={setLegacySyncStopped}
+        />
+      )}
+      {legacySyncStopped && (
+        <aside className="core-sync-cutover-notice" role="alert">
+          <span>{settingsT("coreAssetSync.legacyStopped")}</span>
+          <button type="button" onClick={openCoreAssetSyncSettings}>
+            {settingsT("coreAssetSync.configureNew")}
+          </button>
+        </aside>
       )}
     </main>
   );

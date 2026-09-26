@@ -59,6 +59,7 @@ export const CoreAssetSyncItemStatusSchema = CoreAssetSyncItemSchema.pick({
 export const CoreAssetSyncOverviewSchema = z
   .object({
     configuration: CoreAssetSyncConfigurationSchema.optional(),
+    legacySyncStopped: z.boolean().optional(),
     status: z.enum(["unconfigured", "ready", "syncing", "conflict", "error"]),
     syncedAt: z.string().datetime().optional(),
     error: z.string().max(2_000).optional(),

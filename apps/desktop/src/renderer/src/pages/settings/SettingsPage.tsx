@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import { SidebarResizeHandle } from "../../components/SidebarResizeHandle.tsx";
@@ -27,10 +27,14 @@ export function SettingsPage(
   props: {
     readonly initialView?: SettingsView;
     readonly onMemoryEnabledChange?: ((enabled: boolean) => void) | undefined;
+    readonly onLegacySyncStoppedChange?: ((stopped: boolean) => void) | undefined;
   } = {},
 ) {
   const { t } = useTranslation("settings");
   const [activeView, setActiveView] = useState<SettingsView>(props.initialView ?? "general");
+  useEffect(() => {
+    setActiveView(props.initialView ?? "general");
+  }, [props.initialView]);
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.settings,
   );
@@ -128,7 +132,9 @@ export function SettingsPage(
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
         ) : activeView === "core-asset-sync" ? (
-          <CoreAssetSyncSettingsFragment />
+          <CoreAssetSyncSettingsFragment
+            onLegacySyncStoppedChange={props.onLegacySyncStoppedChange}
+          />
         ) : activeView === "bundle-sources" ? (
           <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (

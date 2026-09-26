@@ -16,6 +16,7 @@ import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { unavailableCoreAssetRuntimeBindings } from "./core-asset-sync-service.ts";
+import { createDesktopCapabilityResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import {
   canonicalPragmaResourceRef,
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -74,6 +75,7 @@ function device(
     viewport: { x: number; y: number; zoom: number };
   },
   projectOverride?: PragmaProjectStore,
+  capabilitiesOverride?: CapabilityStore,
 ) {
   let value = name;
   let revision = 1;
@@ -122,6 +124,7 @@ function device(
   const fakeProject = {
     projectId: "studio",
     get: async () => ({ projectId: "studio", revision: projectRevision, resources }),
+    validateChanges: async () => [],
     apply: async (input: { upserts: PragmaResource[]; removals: string[] }) => {
       const remove = new Set([...input.removals, ...input.upserts.map(canonicalPragmaResourceRef)]);
       resources = [
@@ -141,16 +144,18 @@ function device(
       return value;
     },
   } as unknown as WorkflowLayoutStore;
-  const capabilities = {
-    list: async () => (skillRoot === undefined ? [] : [skillCapability()]),
-    skillFilesPath: async () => skillRoot,
-    publishNewSkillRevisionCandidate: async (input: { sourcePath: string }) => {
-      const destination = join(root, "restored-skill");
-      await cp(input.sourcePath, destination, { recursive: true });
-      skillRoot = destination;
-      return skillCapability();
-    },
-  } as unknown as CapabilityStore;
+  const capabilities =
+    capabilitiesOverride ??
+    ({
+      list: async () => (skillRoot === undefined ? [] : [skillCapability()]),
+      skillFilesPath: async () => skillRoot,
+      publishNewSkillRevisionCandidate: async (input: { sourcePath: string }) => {
+        const destination = join(root, "restored-skill");
+        await cp(input.sourcePath, destination, { recursive: true });
+        skillRoot = destination;
+        return skillCapability();
+      },
+    } as unknown as CapabilityStore);
   const service = createCoreAssetSyncService({
     configurationPath: join(root, "settings.json"),
     statePath: join(root, "state.json"),
@@ -172,6 +177,10 @@ function device(
     },
     skillRoot: () => skillRoot,
     resources: () => resources,
+    replaceResources: (next: readonly PragmaResource[]) => {
+      resources = [...next];
+      projectRevision += 1;
+    },
     layout: () => layout,
   };
 }
@@ -219,6 +228,29 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(local.name()).toBeUndefined();
     await local.service.restore(`knowledge:${storeId}`);
     expect(local.name()).toBe("Shared docs");
+  });
+
+  it("warns when only retired sync settings exist", async () => {
+    const root = await fixture();
+    const local = device(join(root, "legacy"));
+    const legacyPath = join(root, "legacy", "knowledge-sync-settings.json");
+    await mkdir(join(root, "legacy"), { recursive: true });
+    await writeFile(legacyPath, "{}");
+    const service = createCoreAssetSyncService({
+      configurationPath: join(root, "legacy", "settings.json"),
+      legacyConfigurationPaths: [legacyPath],
+      statePath: join(root, "legacy", "state.json"),
+      project: {
+        projectId: "studio",
+        get: async () => ({ projectId: "studio", revision: 1, resources: [] }),
+      } as unknown as PragmaProjectStore,
+      layouts: {} as WorkflowLayoutStore,
+      stores: {} as ContextStoreStore,
+      capabilities: {} as CapabilityStore,
+      getRuntimes: async () => [],
+    });
+    expect((await service.overview()).legacySyncStopped).toBe(true);
+    expect((await local.service.overview()).legacySyncStopped).toBe(false);
   });
 
   it("shows a locally deleted asset as restorable after a pull-only refresh", async () => {
@@ -342,6 +374,147 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect((await first.service.sync()).status).toBe("ready");
     expect((await second.service.refresh()).status).toBe("ready");
     expect(second.name()).toBeUndefined();
+  });
+
+  it("does not upload deletions made before enabling deletion uploads", async () => {
+    const root = await fixture();
+    const local = device(join(root, "local"), "Shared docs");
+    const base = { remote, branch: "main", autoPush: true };
+    await local.service.configure({ ...base, pushDeletions: false });
+    local.remove();
+    expect(
+      (await local.service.sync()).items.find((item) => item.key === `knowledge:${storeId}`)
+        ?.status,
+    ).toBe("ignored_remote");
+    const enabled = await local.service.configure({ ...base, pushDeletions: true });
+    expect(enabled.items.find((item) => item.key === `knowledge:${storeId}`)?.status).toBe(
+      "ignored_remote",
+    );
+    const restored = device(join(root, "restored"));
+    await restored.service.configure({ ...base, pushDeletions: false });
+    expect(restored.name()).toBe("Shared docs");
+  });
+
+  it("grandfathers a local deletion even when deletion uploads are enabled before the next sync", async () => {
+    const root = await fixture();
+    const local = device(join(root, "local"), "Shared docs");
+    const base = { remote, branch: "main", autoPush: true };
+    await local.service.configure({ ...base, pushDeletions: false });
+    local.remove();
+    await local.service.configure({ ...base, pushDeletions: true });
+    const restored = device(join(root, "restored"));
+    await restored.service.configure({ ...base, pushDeletions: false });
+    expect(restored.name()).toBe("Shared docs");
+  });
+
+  it("updates the incoming Expert graph before removing a selected Capability tool", async () => {
+    const root = await fixture();
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+      name: "Search",
+    });
+    const expert = (tools: string[]) =>
+      ({
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "Expert",
+        metadata: {
+          id: "1xddvess309a6gme",
+          name: "Writer",
+          description: "Writes",
+          tags: [],
+          avatarId: "pragma.avatar.expert.default",
+        },
+        spec: {
+          scope: "Writing",
+          instructions: "Write.",
+          runtime: { ref: "runtime-profile:zdkgs0fde4xt00vr" },
+          capabilities: [{ ref: canonicalPragmaResourceRef(binding), kind: "tools", tools }],
+          toolApprovals: {},
+          contextStores: [],
+          plugins: [],
+          tools: [],
+        },
+      }) as PragmaResource;
+    const definition = (tools: string[]) => ({
+      kind: "mcp_server" as const,
+      name: "Search",
+      description: "Search",
+      connection: {
+        transport: "stdio" as const,
+        command: "search",
+        args: [],
+        env: {},
+        secretEnv: {},
+      },
+      timeoutMs: 30_000,
+      tools: tools.map((name) => ({ name, schemaHash: "0".repeat(64) })),
+    });
+    let sourceTools = ["old", "keep"];
+    const sourceCapabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: definition(sourceTools),
+          managedBy: "user",
+        },
+      ],
+    } as unknown as CapabilityStore;
+    const source = device(
+      join(root, "source"),
+      undefined,
+      undefined,
+      [binding, expert(sourceTools)],
+      undefined,
+      undefined,
+      sourceCapabilities,
+    );
+    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    expect((await source.service.configure(configuration)).status).toBe("ready");
+    let targetTools = ["old", "keep"];
+    const targetCapabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: definition(targetTools),
+          managedBy: "user",
+        },
+      ],
+      update: async (input: { definition: ReturnType<typeof definition> }) => {
+        const available = new Set(input.definition.tools.map((tool) => tool.name));
+        const selected = target
+          .resources()
+          .flatMap((resource) =>
+            resource.kind === "Expert"
+              ? resource.spec.capabilities.flatMap((reference) =>
+                  reference.kind === "tools" ? (reference.tools ?? []) : [],
+                )
+              : [],
+          );
+        if (selected.some((tool) => !available.has(tool)))
+          throw new Error("old Expert still selects removed tool");
+        targetTools = input.definition.tools.map((tool) => tool.name);
+      },
+    } as unknown as CapabilityStore;
+    const target = device(
+      join(root, "target"),
+      undefined,
+      undefined,
+      [binding, expert(["old", "keep"])],
+      undefined,
+      undefined,
+      targetCapabilities,
+    );
+    expect((await target.service.configure(configuration)).status).toBe("ready");
+    sourceTools = ["keep"];
+    source.replaceResources([binding, expert(["keep"])]);
+    expect((await source.service.sync()).status).toBe("ready");
+    expect((await target.service.refresh()).status).toBe("ready");
+    expect(targetTools).toEqual(["keep"]);
+    expect(
+      target.resources().find((resource) => resource.kind === "Expert")?.spec.capabilities,
+    ).toEqual([{ ref: canonicalPragmaResourceRef(binding), kind: "tools", tools: ["keep"] }]);
   });
 
   it("restores Skill contents at the original Capability ID", async () => {

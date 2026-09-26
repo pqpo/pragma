@@ -120,6 +120,7 @@ export interface CoreAssetSyncService {
 
 export function createCoreAssetSyncService(options: {
   readonly configurationPath: string;
+  readonly legacyConfigurationPaths?: readonly string[];
   readonly statePath: string;
   readonly project: PragmaProjectStore;
   readonly layouts: WorkflowLayoutStore;
@@ -302,11 +303,6 @@ export function createCoreAssetSyncService(options: {
             item.key,
             `Choose a local harness and model for ${missing.map((entry) => entry.name).join(", ")}.`,
           );
-        if (containsDeprecatedPluginReference(item.key.slice(item.kind.length + 1), resources))
-          unavailable.set(
-            item.key,
-            "Remove the deprecated plugin reference before running this asset.",
-          );
       }
       if (item.kind !== "runtime-profile") continue;
       const resource = PragmaForwardCompatibleResourceSchema.parse(item.data);
@@ -339,7 +335,22 @@ export function createCoreAssetSyncService(options: {
     state?: SyncState,
     remote?: ItemMap,
   ): Promise<CoreAssetSyncOverview> => {
-    if (config === undefined) return { status: "unconfigured", items: [] };
+    if (config === undefined) {
+      const legacySyncStopped = (
+        await Promise.all(
+          (options.legacyConfigurationPaths ?? []).map(async (path) => {
+            try {
+              await lstat(path);
+              return true;
+            } catch (error) {
+              if (isMissing(error)) return false;
+              throw error;
+            }
+          }),
+        )
+      ).some(Boolean);
+      return { status: "unconfigured", legacySyncStopped, items: [] };
+    }
     const current = state ?? (await readState(sourceKey(config)));
     const local = await collect();
     const missing = await readiness(local);
@@ -398,6 +409,17 @@ export function createCoreAssetSyncService(options: {
     const projectUpserts: PragmaResource[] = [];
     const projectRemovals: string[] = [];
     const deferredRemovals: { kind: "knowledge" | "skill" | "capability"; id: string }[] = [];
+    const capabilityUpdates: {
+      id: string;
+      definition: Exclude<z.infer<typeof CapabilityDefinitionSchema>, { kind: "skill" }>;
+    }[] = [];
+    for (const { remote } of changes) {
+      if (remote?.kind !== "capability" || remote.key.startsWith("capability:capability:"))
+        continue;
+      const definition = CapabilityDefinitionSchema.parse(remote.data);
+      if (definition.kind === "skill") throw new Error("Skill payload is missing.");
+      capabilityUpdates.push({ id: remote.key.slice("capability:".length), definition });
+    }
     for (const { local, remote } of changes) {
       const item = remote ?? local;
       if (item === undefined) continue;
@@ -472,15 +494,6 @@ export function createCoreAssetSyncService(options: {
       if (item.kind === "capability") {
         const definition = CapabilityDefinitionSchema.parse(remote.data);
         if (definition.kind === "skill") throw new Error("Skill payload is missing.");
-        if (localCapability === undefined)
-          await options.capabilities.create({ definition, credentials: {} }, { id });
-        else
-          await options.capabilities.update({
-            id,
-            baseRevision: localCapability.manifest.latestRevision,
-            definition,
-            credentials: {},
-          });
         continue;
       }
       if (item.kind === "skill") {
@@ -540,14 +553,81 @@ export function createCoreAssetSyncService(options: {
         }
       }
     }
-    if (projectUpserts.length > 0 || projectRemovals.length > 0) {
-      const current = await options.project.get();
-      await options.project.apply({
-        baseRevision: current.revision,
-        upserts: projectUpserts,
-        removals: projectRemovals,
-      });
+    const current = await options.project.get();
+    const replaced = new Set([
+      ...projectRemovals,
+      ...projectUpserts.map(canonicalPragmaResourceRef),
+    ]);
+    const desiredResources = [
+      ...current.resources.filter(
+        (resource) => !replaced.has(canonicalPragmaResourceRef(resource)),
+      ),
+      ...projectUpserts,
+    ];
+    const referencedTools = (resources: readonly PragmaResource[], id: string): string[] => {
+      const refs = new Set(
+        resources.flatMap((resource) =>
+          classifyDesktopCapabilityResource(resource)?.id === id
+            ? [canonicalPragmaResourceRef(resource)]
+            : [],
+        ),
+      );
+      return resources.flatMap((resource) =>
+        resource.kind === "Expert"
+          ? resource.spec.capabilities.flatMap((reference) =>
+              reference.kind === "tools" && refs.has(reference.ref) ? (reference.tools ?? []) : [],
+            )
+          : [],
+      );
+    };
+    const availableTools = (definition: z.infer<typeof CapabilityDefinitionSchema>): Set<string> =>
+      new Set(
+        definition.kind === "code_service"
+          ? [definition.tool.name]
+          : definition.kind === "skill"
+            ? []
+            : definition.tools.map((tool) => tool.name),
+      );
+    let projectFirst = false;
+    for (const { id, definition } of capabilityUpdates) {
+      const tools = availableTools(definition);
+      const missingDesired = referencedTools(desiredResources, id).filter(
+        (tool) => !tools.has(tool),
+      );
+      if (missingDesired.length > 0)
+        throw new Error(
+          `Incoming Capability ${id} lacks tools selected by incoming Experts: ${missingDesired.join(", ")}.`,
+        );
+      if (referencedTools(current.resources, id).some((tool) => !tools.has(tool)))
+        projectFirst = true;
     }
+    const projectChanges = {
+      baseRevision: current.revision,
+      upserts: projectUpserts,
+      removals: projectRemovals,
+    };
+    const hasProjectChanges = projectUpserts.length > 0 || projectRemovals.length > 0;
+    if (hasProjectChanges) {
+      const diagnostics = await options.project.validateChanges(projectChanges);
+      const error = diagnostics.find((diagnostic) => diagnostic.severity === "error");
+      if (error) throw new Error(`Incoming project is invalid: ${error.message}`);
+    }
+    if (projectFirst && hasProjectChanges) await options.project.apply(projectChanges);
+    for (const { id, definition } of capabilityUpdates) {
+      const localCapability = (await options.capabilities.list()).find(
+        (candidate) => candidate.manifest.id === id,
+      );
+      if (localCapability === undefined)
+        await options.capabilities.create({ definition, credentials: {} }, { id });
+      else
+        await options.capabilities.update({
+          id,
+          baseRevision: localCapability.manifest.latestRevision,
+          definition,
+          credentials: {},
+        });
+    }
+    if (!projectFirst && hasProjectChanges) await options.project.apply(projectChanges);
     for (const removal of deferredRemovals) {
       if (removal.kind === "knowledge") {
         const store = (await options.stores.list()).find(
@@ -607,6 +687,15 @@ export function createCoreAssetSyncService(options: {
                 if (here) bases[key] = here.fingerprint;
                 else delete bases[key];
                 ignored.delete(key);
+                continue;
+              }
+              if (
+                here === undefined &&
+                there !== undefined &&
+                state.ignoredRemote.includes(key) &&
+                resolution?.key !== key
+              ) {
+                ignored.add(key);
                 continue;
               }
               const localChanged = here?.fingerprint !== base;
@@ -702,9 +791,23 @@ export function createCoreAssetSyncService(options: {
         ...input,
         schemaVersion: "pragma.core-asset-sync-settings/v1",
       });
-      await withFileLock(`${options.statePath}.lock`, async () =>
-        writeAtomic(options.configurationPath, config),
-      );
+      await withFileLock(`${options.statePath}.lock`, async () => {
+        const previous = await readConfig();
+        if (
+          previous?.pushDeletions === false &&
+          config.pushDeletions &&
+          sourceKey(previous) === sourceKey(config)
+        ) {
+          const state = await readState(sourceKey(config));
+          const local = await collect();
+          const ignored = new Set(state.ignoredRemote);
+          for (const key of Object.keys(state.remoteItems)) {
+            if (!local.has(key)) ignored.add(key);
+          }
+          await writeState({ ...state, ignoredRemote: [...ignored] });
+        }
+        await writeAtomic(options.configurationPath, config);
+      });
       return await run("full");
     },
     async removeConfiguration() {
@@ -977,25 +1080,4 @@ export function unavailableCoreAssetRuntimeBindings(
     for (const dependency of referencedPragmaResourceRefs([resource])) queue.push(dependency);
   }
   return unavailable;
-}
-
-export function containsDeprecatedPluginReference(
-  rootRef: string,
-  resources: readonly PragmaResource[],
-): boolean {
-  const byRef = new Map(
-    resources.map((resource) => [canonicalPragmaResourceRef(resource), resource] as const),
-  );
-  const visited = new Set<string>();
-  const queue = [rootRef];
-  while (queue.length > 0) {
-    const ref = queue.shift()!;
-    if (visited.has(ref)) continue;
-    visited.add(ref);
-    const resource = byRef.get(ref);
-    if (resource === undefined) continue;
-    if (resource.kind === "Expert" && resource.spec.plugins.length > 0) return true;
-    for (const dependency of referencedPragmaResourceRefs([resource])) queue.push(dependency);
-  }
-  return false;
 }

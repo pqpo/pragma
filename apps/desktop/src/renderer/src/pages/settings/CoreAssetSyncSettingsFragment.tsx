@@ -5,7 +5,9 @@ import type { CoreAssetSyncOverview } from "../../../../shared/contracts/index.t
 import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
-export function CoreAssetSyncSettingsFragment() {
+export function CoreAssetSyncSettingsFragment(props: {
+  readonly onLegacySyncStoppedChange?: ((stopped: boolean) => void) | undefined;
+}) {
   const { t } = useTranslation("settings");
   const [overview, setOverview] = useState<CoreAssetSyncOverview>();
   const [remote, setRemote] = useState("");
@@ -16,6 +18,7 @@ export function CoreAssetSyncSettingsFragment() {
   const [error, setError] = useState<string>();
   const apply = (next: CoreAssetSyncOverview) => {
     setOverview(next);
+    props.onLegacySyncStoppedChange?.(next.legacySyncStopped === true);
     if (next.configuration) {
       setRemote(next.configuration.remote);
       setBranch(next.configuration.branch ?? "");
@@ -51,6 +54,11 @@ export function CoreAssetSyncSettingsFragment() {
         </header>
       }
     >
+      {overview?.legacySyncStopped && (
+        <p role="alert" className="form-error">
+          {t("coreAssetSync.legacyStopped")}
+        </p>
+      )}
       <form
         className="knowledge-sync-form"
         onSubmit={(event) => {

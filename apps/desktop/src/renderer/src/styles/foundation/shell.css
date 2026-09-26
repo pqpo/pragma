@@ -1,3 +1,23 @@
+.core-sync-cutover-notice {
+  position: fixed;
+  z-index: 50;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-large);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.core-sync-cutover-notice button {
+  flex: none;
+}
+
 .desktop-fatal-error {
   display: grid;
   width: 100%;
