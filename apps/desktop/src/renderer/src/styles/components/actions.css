@@ -290,28 +290,6 @@
   white-space: nowrap;
 }
 
-.memory-candidate-actions .primary-button {
-  border-color: transparent;
-  background: var(--ui-accent);
-  color: #fff;
-}
-
-.memory-candidate-actions .primary-button:hover:not(:disabled) {
-  background: var(--ui-accent-strong);
-}
-
-.memory-candidate-actions .secondary-button {
-  border-color: var(--ui-line-strong);
-  background: var(--ui-surface);
-  color: var(--ui-text);
-}
-
-.memory-candidate-actions .danger-button {
-  border-color: #d8bbb6;
-  background: #fff8f7;
-  color: #9d3f34;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .primary-button:hover:not(:disabled),
   .studio-primary-action:hover:not(:disabled),

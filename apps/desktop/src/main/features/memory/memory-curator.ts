@@ -12,25 +12,18 @@ import {
 } from "@pragma/core";
 import {
   MEMORY_CURATOR_REF as BUILT_IN_MEMORY_CURATOR_REF,
-  MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF,
   builtInAgentFingerprint,
   compileBuiltInAgent,
   createBuiltInMemoryCurator,
-  createSkillDraftSession,
-  type SkillDraftSession,
 } from "@pragma/built-in-agents";
-import type { CompiledResource, InvocableResource, PragmaBindingRecord } from "@pragma/interpreter";
+import type { CompiledResource, InvocableResource } from "@pragma/interpreter";
 import {
   MEMORY_CURATOR_PROMPT_VERSION,
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
-  KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
-  SKILL_MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_REF,
   DEFAULT_MEMORY_STORAGE_POLICY,
   type EpisodicMemoryExtractor,
-  type KnowledgeMemoryExtractor,
   type SemanticMemoryExtractor,
-  type SkillMemoryExtractor,
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
 } from "@pragma/memory";
@@ -66,8 +59,6 @@ const CuratorMissionRegistrySchema = z.object({
 export interface DesktopMemoryCurator {
   readonly episodicExtractor: EpisodicMemoryExtractor;
   readonly semanticExtractor: SemanticMemoryExtractor;
-  readonly knowledgeExtractor: KnowledgeMemoryExtractor;
-  readonly skillExtractor: SkillMemoryExtractor;
   compile(input: {
     readonly missionId: string;
     readonly runtimes: RuntimeResolver;
@@ -110,7 +101,6 @@ export function createDesktopMemoryCurator(options: {
     },
   });
   const activeRuns = new Map<string, DesktopMemoryExtractionRun>();
-  const skillDraftSessions = new Map<string, SkillDraftSession>();
   const runChatListeners = new Set<(update: DesktopMemoryExtractionRunChatUpdate) => void>();
   options.runner.subscribeChat(({ update }) => {
     const run = activeRuns.get(update.missionId);
@@ -165,7 +155,6 @@ export function createDesktopMemoryCurator(options: {
     readonly loggerProvider?: PragmaLoggerProvider | undefined;
   }): Promise<CompiledResource<InvocableResource>> => {
     const runtime = await resolveRuntime(await options.profiles.get(), input.runtimes);
-    const tools = skillDraftSessions.get(input.missionId)?.tools ?? [];
     return await compileBuiltInAgent({
       ref: BUILT_IN_MEMORY_CURATOR_REF,
       environmentId: "desktop",
@@ -181,39 +170,6 @@ export function createDesktopMemoryCurator(options: {
         ? {}
         : { defaultModelSelection: runtime.modelSelection }),
       loggerProvider: input.loggerProvider,
-      adapterHost: {
-        environmentId: "desktop",
-        projectRoot: input.workspace,
-        async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
-          if (ref !== MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) return undefined;
-          return {
-            ref,
-            // Skill draft tools close over Mission-local mutable state. Keep the binding
-            // revision Mission-specific so Interpreter environment caches can never reuse
-            // another Mission's tool instances.
-            revision: input.missionId,
-            fingerprint: createHash("sha256")
-              .update(
-                JSON.stringify({
-                  missionId: input.missionId,
-                  tools: tools.map((tool) => ({
-                    name: tool.name,
-                    inputSchema: tool.inputSchema,
-                    approval: tool.approval?.mode,
-                  })),
-                }),
-              )
-              .digest("hex"),
-            value: { contribution: { tools } },
-          };
-        },
-        async resolveArtifact(source) {
-          throw new Error(`Unexpected Memory Curator artifact: ${JSON.stringify(source)}`);
-        },
-        async resolveSecret() {
-          return undefined;
-        },
-      },
     });
   };
 
@@ -233,8 +189,6 @@ export function createDesktopMemoryCurator(options: {
           signal: input.signal,
           runArchive,
           activeRuns,
-          skillDraftSessions,
-          skillInput: input.skillInput,
         });
         return {
           ...result,
@@ -311,8 +265,6 @@ export function createDesktopMemoryCurator(options: {
     },
     episodicExtractor: curator.episodicExtractor,
     semanticExtractor: curator.semanticExtractor,
-    knowledgeExtractor: curator.knowledgeExtractor,
-    skillExtractor: curator.skillExtractor,
   };
 }
 
@@ -332,21 +284,13 @@ async function runCuratorMission(input: {
   readonly signal?: AbortSignal | undefined;
   readonly runArchive: MemoryExtractionRunArchive;
   readonly activeRuns: Map<string, DesktopMemoryExtractionRun>;
-  readonly skillDraftSessions: Map<string, SkillDraftSession>;
-  readonly skillInput?: import("@pragma/shared").SkillExtractionInput | undefined;
 }): Promise<{
   readonly content: string;
   readonly responseModel?: string | undefined;
   readonly finishReason?: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined;
   readonly usage?: import("@pragma/shared").AgentMessageUsage | undefined;
-  readonly skillOutput?: import("@pragma/shared").SkillExtractionOutput | undefined;
 }> {
   input.signal?.throwIfAborted();
-  if (input.module === "skill" && input.skillInput === undefined) {
-    throw new Error("skill_extraction_input_missing");
-  }
-  const skillDraftSession =
-    input.module === "skill" ? createSkillDraftSession(input.skillInput!) : undefined;
   const project = await input.options.project.ensurePublished();
   const mission = await input.options.missions.create({
     workspace: {
@@ -394,9 +338,6 @@ async function runCuratorMission(input: {
         }),
   };
   input.activeRuns.set(mission.id, activeRun);
-  if (skillDraftSession !== undefined) {
-    input.skillDraftSessions.set(mission.id, skillDraftSession);
-  }
   let failure: MemoryExtractionFailureDiagnostic | undefined;
   let finalStatus: DesktopMemoryExtractionRun["status"] = "failed";
   const interrupt = (): void => {
@@ -436,19 +377,6 @@ async function runCuratorMission(input: {
       .at(-1);
     if (content === undefined) throw new Error("memory_curator_output_missing");
     const runtimeOutput = await input.options.runner.getTerminalRuntimeOutputDiagnostic(mission.id);
-    if (skillDraftSession?.beginRepairExhausted() === true) {
-      throw Object.assign(new Error("skill_draft_begin_repair_exhausted"), {
-        code: "skill_draft_begin_repair_exhausted",
-        retryable: true,
-      });
-    }
-    if (skillDraftSession?.repairExhausted() === true) {
-      throw Object.assign(new Error("skill_draft_repair_exhausted"), {
-        code: "skill_draft_repair_exhausted",
-        retryable: true,
-      });
-    }
-    const skillOutput = skillDraftSession?.output();
     finalStatus = "succeeded";
     return {
       content,
@@ -459,7 +387,6 @@ async function runCuratorMission(input: {
         ? {}
         : { finishReason: runtimeOutput.finishReason }),
       ...(runtimeOutput?.usage === undefined ? {} : { usage: runtimeOutput.usage }),
-      ...(skillOutput === undefined ? {} : { skillOutput }),
     };
   } catch (error) {
     failure ??= curatorFailureDiagnostic(error, activeRun, startedAt);
@@ -486,7 +413,6 @@ async function runCuratorMission(input: {
         );
       });
     input.activeRuns.delete(mission.id);
-    input.skillDraftSessions.delete(mission.id);
     if (await cleanupCuratorMission(input.options.runner, mission.id)) {
       await unregisterCuratorMission(pragmaHome, mission.id).catch((error: unknown) => {
         logger.warn(
@@ -576,8 +502,6 @@ async function createFingerprint(profile: MemoryExtractorProfile): Promise<strin
       JSON.stringify({
         episodicCurator: MEMORY_CURATOR_PROMPT_VERSION,
         semanticCurator: SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
-        knowledgeCurator: KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
-        skillCurator: SKILL_MEMORY_CURATOR_PROMPT_VERSION,
         definition: builtInAgentFingerprint(BUILT_IN_MEMORY_CURATOR_REF),
         profile,
       }),

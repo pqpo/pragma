@@ -331,10 +331,6 @@ import {
   DesktopMemoryExtractionTaskDetailSchema,
   DesktopMemoryExtractionRunRefSchema,
   DesktopMemoryExtractionRunChatUpdateSchema,
-  MemoryKnowledgeInitializationCandidateSchema,
-  ListMemoryKnowledgeInitializationCandidatesSchema,
-  MemoryKnowledgeInitializationCandidateRefSchema,
-  UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "./memory.ts";
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type PragmaBundleModuleOptions = z.infer<typeof PragmaBundleModuleOptionsSchema>;
@@ -444,18 +440,6 @@ export type DesktopMemoryExtractionTaskDetail = z.infer<
 export type DesktopMemoryExtractionRunRef = z.infer<typeof DesktopMemoryExtractionRunRefSchema>;
 export type DesktopMemoryExtractionRunChatUpdate = z.infer<
   typeof DesktopMemoryExtractionRunChatUpdateSchema
->;
-export type MemoryKnowledgeInitializationCandidate = z.infer<
-  typeof MemoryKnowledgeInitializationCandidateSchema
->;
-export type ListMemoryKnowledgeInitializationCandidates = z.input<
-  typeof ListMemoryKnowledgeInitializationCandidatesSchema
->;
-export type MemoryKnowledgeInitializationCandidateRef = z.infer<
-  typeof MemoryKnowledgeInitializationCandidateRefSchema
->;
-export type UpdateMemoryKnowledgeInitializationCandidate = z.infer<
-  typeof UpdateMemoryKnowledgeInitializationCandidateSchema
 >;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
 export type ModelCompatibilityProfileDescriptor = z.infer<

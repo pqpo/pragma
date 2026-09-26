@@ -8,41 +8,11 @@ import {
 } from "./memory-plane.schema.ts";
 
 export const KNOWLEDGE_JOB_SCHEMA_VERSION = "pragma.memory-knowledge-job/v3" as const;
-export const KNOWLEDGE_EXTRACTION_INPUT_SCHEMA_VERSION =
-  "pragma.memory-knowledge-extraction-input/v2" as const;
-
 export const KnowledgeSourceRevisionRefSchema = z
   .object({
     kind: z.enum(["episodic", "semantic"]),
     id: z.string().min(1),
     revision: z.number().int().positive(),
-  })
-  .strict();
-
-export const KnowledgeContentSchema = z
-  .object({
-    title: z.string().trim().min(1).max(200),
-    summary: z.string().trim().min(1).max(4_000),
-    guidance: z.array(z.string().trim().min(1).max(2_000)).min(1).max(50),
-    normalizedKey: z
-      .string()
-      .trim()
-      .min(1)
-      .max(300)
-      .regex(/^[a-z0-9][a-z0-9._:/-]*$/),
-  })
-  .strict();
-
-export const KnowledgeExtractorProvenanceSchema = z
-  .object({
-    curatorRef: z.string().min(1),
-    promptVersion: z.string().min(1),
-    profileRevision: z.number().int().nonnegative(),
-    runtimeId: z.string().min(1),
-    providerId: z.string().min(1),
-    modelId: z.string().min(1),
-    responseModel: z.string().min(1).optional(),
-    extractedAt: z.string().datetime(),
   })
   .strict();
 
@@ -61,37 +31,6 @@ export const KnowledgeSourceSnapshotSchema = z
     sensitivity: MemorySensitivitySchema,
   })
   .strict();
-
-export const KnowledgeExtractionInputSchema = z
-  .object({
-    schemaVersion: z.literal(KNOWLEDGE_EXTRACTION_INPUT_SCHEMA_VERSION),
-    jobId: z.string().min(1),
-    rootRef: MemorySubjectRefSchema,
-    sources: z.array(KnowledgeSourceSnapshotSchema).min(1).max(100),
-  })
-  .strict();
-
-export const KnowledgeExtractionCandidateSchema = z
-  .object({
-    content: KnowledgeContentSchema,
-    sourceRefs: z.array(KnowledgeSourceRevisionRefSchema).min(1).max(100),
-  })
-  .strict();
-
-export const KnowledgeExtractionOutputSchema = z.discriminatedUnion("retain", [
-  z
-    .object({
-      retain: z.literal(true),
-      candidates: z.array(KnowledgeExtractionCandidateSchema).min(1).max(20),
-    })
-    .strict(),
-  z
-    .object({
-      retain: z.literal(false),
-      reason: z.enum(["no-reusable-knowledge", "insufficient-sources", "sensitive"]),
-    })
-    .strict(),
-]);
 
 export const KnowledgeExtractionJobSchema = z
   .object({
@@ -119,10 +58,5 @@ export const KnowledgeExtractionJobSchema = z
   .strict();
 
 export type KnowledgeSourceRevisionRef = z.infer<typeof KnowledgeSourceRevisionRefSchema>;
-export type KnowledgeContent = z.infer<typeof KnowledgeContentSchema>;
-export type KnowledgeExtractorProvenance = z.infer<typeof KnowledgeExtractorProvenanceSchema>;
 export type KnowledgeSourceSnapshot = z.infer<typeof KnowledgeSourceSnapshotSchema>;
-export type KnowledgeExtractionInput = z.infer<typeof KnowledgeExtractionInputSchema>;
-export type KnowledgeExtractionCandidate = z.infer<typeof KnowledgeExtractionCandidateSchema>;
-export type KnowledgeExtractionOutput = z.infer<typeof KnowledgeExtractionOutputSchema>;
 export type KnowledgeExtractionJob = z.infer<typeof KnowledgeExtractionJobSchema>;

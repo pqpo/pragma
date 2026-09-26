@@ -13,7 +13,6 @@ import {
   SemanticFactSchema,
 } from "@pragma/shared";
 import { z } from "zod";
-import { ContextStoreIdSchema, ContextStoreSnapshotFileSchema } from "./context-stores.ts";
 import { MissionConversationSnapshotSchema, MissionChatUpdateSchema } from "./missions.ts";
 
 export const DesktopMemoryPolicyTargetSchema = MemorySubjectRefSchema.refine(
@@ -324,62 +323,6 @@ export const UpdateDesktopMemoryExtractionSettingsSchema = z
     allowToolAssisted: DesktopMemoryExtractionSettingsSchema.shape.allowToolAssisted,
   })
   .strict();
-
-export const KnowledgeStoreFilesSchema = ContextStoreSnapshotFileSchema.array()
-  .min(1)
-  .max(1_000)
-  .superRefine((files, context) => {
-    const byId = new Map(files.map((file) => [file.id, file]));
-    if (byId.size !== files.length) {
-      context.addIssue({
-        code: "custom",
-        message: "Knowledge store file ids must be unique.",
-      });
-    }
-  });
-
-export const MemoryKnowledgeInitializationCandidateSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.memory-knowledge-initialization-candidate/v2"),
-    id: z.string().uuid(),
-    revision: z.number().int().positive(),
-    expertRef: z.string().regex(/^expert:[0-9a-hjkmnp-tv-z]{16}$/u),
-    sourceDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-    name: z.string().trim().min(1).max(50),
-    description: z.string().trim().max(500),
-    files: KnowledgeStoreFilesSchema,
-    state: z.enum(["pending_review", "rejected", "created"]),
-    storeId: ContextStoreIdSchema.optional(),
-    createdAt: z.string().datetime(),
-    updatedAt: z.string().datetime(),
-  })
-  .strict()
-  .superRefine((candidate, context) => {
-    if (candidate.state === "created" && candidate.storeId === undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["storeId"],
-        message: "Created candidates require a store id.",
-      });
-    }
-  });
-
-export const ListMemoryKnowledgeInitializationCandidatesSchema = z
-  .object({
-    state: z.enum(["all", "pending_review", "rejected", "created"]).default("pending_review"),
-  })
-  .strict();
-
-export const MemoryKnowledgeInitializationCandidateRefSchema = z
-  .object({ id: z.string().uuid(), expectedRevision: z.number().int().positive() })
-  .strict();
-
-export const UpdateMemoryKnowledgeInitializationCandidateSchema =
-  MemoryKnowledgeInitializationCandidateRefSchema.extend({
-    name: z.string().trim().min(1).max(50),
-    description: z.string().trim().max(500),
-    files: ContextStoreSnapshotFileSchema.array().min(4).max(1_000),
-  }).strict();
 
 export const ReviseDesktopSemanticFactSchema = z
   .object({

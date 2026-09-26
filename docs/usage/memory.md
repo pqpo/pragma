@@ -10,7 +10,7 @@ Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需�
 ## 当前已经可用的能力
 
 当前已完成 Memory Plane 基础设施、策略、Episodic Memory、Semantic Memory、治理管理中心、
-Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
+Store/Skill Revision Agent 托管的 Knowledge 与 Skill 学习闭环：
 
 - Execution 语义事件通过持久 Canonical Event Feed 交给 Memory Plane；
 - Memory Evidence 自动记录 root Expert/ExpertTeam/Flow 与实际 producer Expert；
@@ -19,7 +19,7 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
 - Desktop 设置页可以控制全局 capture、recall、learning，并查看 Feed 容量、安全 checkpoint、固定保留
   策略、Evidence 截断、dead letter 和提炼失败；
 - Expert、ExpertTeam、Flow 编辑页可以继承或收紧全局策略。
-- Execution 终态会创建持久提炼任务，由隐藏 Memory Curator 生成目标、尝试、失败、恢复和结果；
+- Execution 终态会创建持久提炼任务；Memory Curator 处理 Episode/Fact，Store/Skill Revision Agent 处理 Knowledge/Skill 学习；
 - 普通 Expert、ExpertTeam 和 Flow 内 Expert 会加载有界 Memory guide、类型摘要与热点索引；
 - 独立 Expert 只能看到自己的 Episode；Team/Flow 内 Expert 看到当前 Team/Flow Episode 与自己的个人
   Episode，不会混入其他专家或其他团队资产；
@@ -37,27 +37,12 @@ Knowledge Store promotion/revision 与 Skill promotion/revision 闭环：
   支持按 revision 立即提炼、重试、删除失败输入，或中断运行任务并重新等待六小时；
 - Mission 的 Memory 页签显示每次 Execution 的 capture/recall 计数。搜索审计只保存 digest 和长度，
   不保存 query 原文。
-- Knowledge learning 从有效 Episode 与已验证/无冲突 Fact 提炼初始化 Candidate；每个 Expert 最多一个
-  Memory Knowledge Store，ExpertTeam/Flow 按实际 producer Expert 路由；
-- 首次 Candidate 在 Memory 页面预览和编辑；确认后原子创建普通 Studio Context Store rev1 并自动挂载；
-- Store 已存在时，Memory 只能提交修订提示词。修订任务只在“工作室 → 知识库 → 修订任务”显示，由独立
-  Store Revision Agent 直接编辑稀疏草稿 Context Store；用户批准前不改正式 Store，批准时将 overlay
-  转为最小 change set，并以 revision/hash CAS 原子激活；
-- Store 使用 `guide → overview → index/indexes → items` 渐进披露，不保存 Evidence、sourceRefs 或提炼提示词；
-- 分享与导入只使用普通 Context Store Bundle 路径。旧 Published Knowledge API/UI 与
-  `pragma.memory.knowledge@v1` extension 已删除，旧目录不迁移、不读取。
-- Skill learning 只在同一 producer Expert 至少出现 3 条高价值独立 Episode、覆盖 2 个 conversation，且
-  至少 2 条成功或成功恢复后运行；Memory Curator 仍必须确认它是完整、通用、可维护的工作流，而不是
-  片段或一次性提示；
-- 相似目标只匹配该 Expert 先前由 Memory 创建并绑定的 Skill；无匹配生成新建 Candidate，唯一匹配提交
-  修订任务，多匹配时在 Memory 页面暂停并要求用户选择；
-- 新 Skill Candidate 必须通过至少 3 次来源回放、1 次边界用例、静态检查与脚本测试，随后在 Memory 页面
-  人工批准才会创建普通 Skill Capability 并绑定 Expert；
-- 已有 Skill 的 Memory learning 由共用 Revision Agent 产生文件 diff，并在独立 Evaluation Agent 中评测；
-  评测通过后由修订服务经 Capability revision coordinator 自动激活，技能详情页不再提供手动提交或审批修订入口；
-  Memory 不直接改写 Skill；
-- 生成脚本仅允许 Node 22 ESM，并在无网络、无子进程、无 Worker、无 native addon、只能访问临时技能包
-  目录的 Permission Model 子进程中执行 `node:test` 覆盖。
+- Knowledge learning 从有效 Episode 与已验证/无冲突 Fact 选择有界投影；Store Revision Agent 判断是否值得沉淀，随后创建或修订托管 Context Store 草稿。首次创建和后续修订使用同一审核、合并、挂载链路；
+- ExpertTeam/Flow 的来源按实际 producer Expert 路由；每个 Expert 保持一个 Memory Knowledge Store。正式 Store 不保存 Evidence、sourceRefs 或提炼提示词；
+- Skill learning 只在同一 producer Expert 至少出现 3 条高价值独立 Episode、覆盖 2 个 conversation，且至少 2 条成功或成功恢复后运行；Skill Revision Agent 从来源中最多选择 3 个完整可复用工作流；
+- Skill 创建和修订均生成托管草稿，保留同步格式与安全验证，由用户审核后发布并绑定 Expert。Memory 不直接改写正式 Skill，不执行来源回放测评；
+- 旧 Knowledge/Skill 候选审批页及二次 promotion 链路已移除。首次访问时先恢复旧版已批准但未完成的 promotion journal，再迁入已批准绑定；未审批候选连同旧状态按需归档，不进入新流程；
+- 分享与导入使用普通 Context Store 和 Skill Bundle 路径。旧 Published Knowledge API/UI 与 `pragma.memory.knowledge@v1` extension 已删除。
 
 内置 Mission Board 提供 Mission-scoped 协作与大输出交接。CodeGraph 作为可选 Module
 扩展接入同一 SPI。旧插件与其 Task/Experience/Fact/Skill 数据不属于当前 Memory Plane
@@ -82,8 +67,7 @@ memory/<type>/evidence/<evidenceId>.md  # 按需核验证据
 ```
 
 Promoted Knowledge 由 Studio Context Store 以 `guide → overview/summary → index → items` 渐进披露；入口
-保持有界，大型索引分页或分片，不能把全部内容合并成巨型文档。初始化 Candidate 不进入任何可召回
-Context。
+保持有界，大型索引分页或分片，不能把全部内容合并成巨型文档。待审核草稿不进入任何可召回 Context。
 
 guide 最多 2KB，overview 最多 4KB，其中 Semantic Fact 使用主要空间，Episodic 只显示最近三条。
 Summary/Index 只展示按价值、新近度和实际召回选出的 hot 记录，并使用内部链接指向详情；archived
@@ -111,10 +95,10 @@ Semantic 是当前信念投影，也不是无条件真值。详情会展示 conf
 
 - Memory feature：记忆功能总开关，默认关闭；关闭时不会采集、召回或学习，且其他记忆设置隐藏不可配置；再次开启时保留 Recall 与 Learning 的选择；
 - Recall：是否允许从 Memory Context 读取；
-- Learning：是否生成本地 Knowledge/Skill 候选；候选不会自动发布；
+- Learning：是否创建 Knowledge/Skill 修订草稿；草稿经人工批准后才发布；
 - Health：Plane 状态、Feed logical/file bytes、安全 checkpoint、blocked bytes、Module Evidence 和
   dead letter 数量；
-- Extraction model：继承系统默认模型，或固定 Memory Curator 使用的 Runtime 和模型。
+- Extraction model：继承系统默认模型，或固定 Memory Curator 提炼 Episode/Fact 使用的 Runtime 和模型。
 
 设置 → General：
 
@@ -142,8 +126,7 @@ Memory 持续捕获，但不会无限积累原始上下文：
 - Mission 删除使用可重放 cleanup journal 清除该 Mission Execution 的 Feed、job、待提炼 Evidence 和
   subject context。已经生成的 Episode/Fact 不随 Mission 删除；需要删除长期 Memory 时应在 Memory
   管理中心执行独立的 invalidate/forget 治理；
-- 隐藏 Memory Curator Mission 正常结束立即删除；崩溃遗留通过专用 registry 定向恢复，不扫描所有
-  Mission。
+- 隐藏 Memory Curator 与 Revision 规划 Mission 正常结束立即删除；崩溃遗留通过各自的定向 registry 恢复，不扫描所有 Mission。
 
 这些值来自 `pragma.memory-storage-policy/v2` 固定策略，设置页只读展示，当前不提供用户自定义。Episodic
 最多 10,000 条或 512 MiB，Semantic 最多 20,000 条或 512 MiB，每条最多保留最近 100 个完整 revision；
@@ -181,9 +164,9 @@ Episodic 与 Semantic Module 都使用各自的共享物理 Store，并在查询
 - 原 TaskMemory：改为可选 Mission Board 使用范式，不是 Memory 前置依赖；
 - Experience：进入 Episodic Memory，记录过去做过什么；
 - Fact：进入 Semantic/Fact Memory，记录当前相信什么是真的；
-- Skill：先成为 Skill Memory Candidate，评测通过后升级为现有 Skill Capability。
+- Skill：由 Skill Revision Agent 创建或修订托管草稿，人工批准后成为正式 Skill Capability。
 
-Knowledge promotion Candidate 来自 Memory，但用户批准后的 Knowledge 是 Studio 托管 Context Store，
+Knowledge 学习来源于 Memory，但用户批准后的 Knowledge 是 Studio 托管 Context Store，
 不再是 Memory type，也不再依赖 Memory Evidence。可选 CodeGraph 仍可作为独立 Memory Module。
 
 ## 团队资产与分享
@@ -222,8 +205,9 @@ Expert、ExpertTeam 与 Flow；Repository 等其他 subject 等有稳定 registr
 ~/.pragma/data/context-store-drafts/<draftId>/            # 稀疏草稿 overlay 与固定基线
 ~/.pragma/state/context-store-editor-drafts/<storeId>/    # Studio 未发布的可恢复稀疏编辑草稿
 ~/.pragma/state/context-store-revisions/                  # v2 修订任务与持久 Mission registry
-~/.pragma/state/memory-knowledge-promotion/              # 初始化 Candidate 与 content-free Expert binding
-~/.pragma/state/memory-skill-promotion/                  # Skill Candidate、content-free Expert binding 与 promotion journal
+~/.pragma/state/memory-learning-revisions/bindings.json # Knowledge/Skill 统一绑定与 Revision job identity
+~/.pragma/state/memory-revision-planning/                # Revision 规划 Mission 定向恢复标记
+~/.pragma/archives/memory-learning-v1/                   # 按需归档的旧 Candidate 与绑定原始数据
 ~/.pragma/state/skill-revisions/                         # Skill 修订任务与 change set
 ~/.pragma/state/skill-agents/missions.json                # 隐藏 Skill Agent Mission 定向恢复 registry
 ~/.pragma/state/memory/executions/<executionId>/activity.sqlite # capture/recall metadata audit
@@ -246,4 +230,5 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 - [ADR 036: Memory Storage Retention and Recovery](../adr/036-memory-storage-retention-and-recovery.md)
 - [ADR 037: Mission Board as a Host-bound Context Store](../adr/037-mission-board-context-store.md)
 - [ADR 039: Promoted Knowledge Stores and Agent-driven Store Revision](../adr/039-promoted-knowledge-stores-and-agent-revision.md)
+- [ADR 057: Unified Memory revision learning](../adr/057-unified-memory-revision-learning.md)
 - [ADR 索引](../adr/README.md)

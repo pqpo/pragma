@@ -2,23 +2,20 @@ import { createHash } from "node:crypto";
 
 import { StaticContextStore } from "@pragma/core";
 import {
-  SkillExtractionInputSchema,
-  SkillExtractionOutputSchema,
   type ExistingMemorySkillTarget,
   type MemoryEvidenceEnvelope,
   type MemoryExtractionFailurePhase,
   type MemorySubjectRef,
-  type SkillExtractionCandidate,
   type SkillSourceSnapshot,
 } from "@pragma/shared";
 
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
-import type { SkillMemoryExtractor } from "./schema.ts";
 import type { SkillSourceReader } from "./source-reader.ts";
 import { createSkillLearningStore, type SkillLearningStore } from "./store.ts";
-import { skillSourceThresholdMet, validateSkillExtractionCandidate } from "./validation.ts";
+import { skillSourceThresholdMet } from "./validation.ts";
+import type { SkillLearningPlan } from "../learning/revision-plan.ts";
 
 const MAX_SOURCE_REVISIONS = 100;
 
@@ -30,14 +27,26 @@ export interface SkillLearningSink {
   submit(input: {
     readonly rootRef: MemorySubjectRef;
     readonly sourceDigest: string;
-    readonly candidates: readonly SkillExtractionCandidate[];
+    readonly expertRef: string;
+    readonly plan: Extract<SkillLearningPlan, { action: "apply" }>;
     readonly sources: readonly SkillSourceSnapshot[];
   }): Promise<void>;
 }
 
+export interface SkillLearningPlanner {
+  plan(input: {
+    readonly rootRef: MemorySubjectRef;
+    readonly expertRef: string;
+    readonly sourceDigest: string;
+    readonly sources: readonly SkillSourceSnapshot[];
+    readonly existingTargets: readonly ExistingMemorySkillTarget[];
+    readonly signal: AbortSignal;
+  }): Promise<SkillLearningPlan>;
+}
+
 export interface SkillMemoryModule extends MemoryModule {
   readonly store: SkillLearningStore;
-  setExtractor(extractor: SkillMemoryExtractor | undefined): Promise<void>;
+  setPlanner(planner: SkillLearningPlanner | undefined): Promise<void>;
   interruptExtractionJob(input: {
     readonly id: string;
     readonly expectedRevision: number;
@@ -51,12 +60,12 @@ export async function createSkillMemoryModule(options: {
   readonly targetReader: SkillLearningTargetReader;
   readonly learningSink: SkillLearningSink;
   readonly pragmaHome?: string;
-  readonly extractor?: SkillMemoryExtractor;
+  readonly planner?: SkillLearningPlanner;
   readonly now?: () => Date;
 }): Promise<SkillMemoryModule> {
   const store = await createSkillLearningStore(options);
   const now = options.now ?? (() => new Date());
-  let extractor = options.extractor;
+  let planner = options.planner;
   const running = new Map<string, AbortController>();
   return {
     descriptor: {
@@ -100,7 +109,7 @@ export async function createSkillMemoryModule(options: {
       return {};
     },
     async runBackgroundOnce() {
-      if (extractor === undefined) return;
+      if (planner === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
       const controller = new AbortController();
@@ -139,28 +148,54 @@ export async function createSkillMemoryModule(options: {
         for (const { expertRef, sources: expertSources } of eligibleExpertSources) {
           phase = "target_read";
           const existingTargets = await options.targetReader.listTargets({ expertRef });
-          const input = SkillExtractionInputSchema.parse({
-            schemaVersion: "pragma.memory-skill-extraction-input/v1",
-            jobId: job.id,
-            rootRef: job.rootRef,
-            sources: expertSources,
-            existingTargets,
-          });
           if (!(await store.isClaimCurrent(job))) return;
           controller.signal.throwIfAborted();
-          phase = "curator_run";
-          const result = await extractor.extract(input, { signal: controller.signal });
+          phase = "revision_plan";
+          const plan = await planner.plan({
+            rootRef: job.rootRef,
+            expertRef,
+            sourceDigest,
+            sources: expertSources,
+            existingTargets,
+            signal: controller.signal,
+          });
           phase = "validation";
-          const output = SkillExtractionOutputSchema.parse(result.output);
-          if (!output.retain) continue;
-          const candidates = eligibleCandidates(output.candidates, input.sources, existingTargets);
-          if (candidates.length === 0) continue;
-          phase = "promotion";
+          if (plan.action === "skip") continue;
+          if (
+            new Set(plan.changes.map((change) => change.normalizedKey)).size !== plan.changes.length
+          ) {
+            throw new Error("skill_learning_plan_duplicate_key");
+          }
+          const available = new Map(expertSources.map((source) => [sourceKey(source), source]));
+          const valid = plan.changes.every((change) => {
+            const selected = change.sourceRefs.map((ref) =>
+              available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
+            );
+            const selectedTarget = change.target;
+            const targetAllowed =
+              selectedTarget.type === "create"
+                ? !existingTargets.some((target) =>
+                    target.normalizedKeys.includes(change.normalizedKey),
+                  )
+                : existingTargets.some(
+                    (target) =>
+                      target.capabilityId === selectedTarget.capabilityId &&
+                      target.normalizedKeys.includes(change.normalizedKey),
+                  );
+            return (
+              selected.every((source) => source !== undefined) &&
+              skillSourceThresholdMet(selected as SkillSourceSnapshot[]) &&
+              targetAllowed
+            );
+          });
+          if (!valid) throw new Error("skill_learning_plan_invalid");
+          phase = "revision_submit";
           await options.learningSink.submit({
             rootRef: job.rootRef,
             sourceDigest,
-            candidates,
-            sources: input.sources,
+            expertRef,
+            plan,
+            sources: expertSources,
           });
           retained = true;
         }
@@ -181,8 +216,8 @@ export async function createSkillMemoryModule(options: {
         if (running.get(job.id) === controller) running.delete(job.id);
       }
     },
-    async setExtractor(next) {
-      extractor = next;
+    async setPlanner(next) {
+      planner = next;
     },
     async interruptExtractionJob(input) {
       const job = await store.interruptJob(input);
@@ -193,21 +228,6 @@ export async function createSkillMemoryModule(options: {
       store.close();
     },
   };
-}
-
-function eligibleCandidates(
-  candidates: readonly SkillExtractionCandidate[],
-  sources: readonly SkillSourceSnapshot[],
-  targets: readonly ExistingMemorySkillTarget[],
-): readonly SkillExtractionCandidate[] {
-  const normalizedKeys = new Set<string>();
-  return candidates.filter((candidate) => {
-    if (validateSkillExtractionCandidate(candidate, sources, targets, normalizedKeys).length > 0) {
-      return false;
-    }
-    normalizedKeys.add(candidate.content.normalizedKey);
-    return true;
-  });
 }
 
 function groupTerminalSignals(
@@ -241,7 +261,7 @@ function boundSources(sources: readonly SkillSourceSnapshot[]): readonly SkillSo
     if (
       Buffer.byteLength(
         JSON.stringify([...selected.map((item) => item.source), candidate.source]),
-      ) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes
+      ) > Math.min(DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes, 35_000)
     )
       continue;
     selected.push(candidate);
@@ -284,7 +304,9 @@ function digest(...parts: readonly string[]): string {
   return createHash("sha256").update(parts.join("\0")).digest("hex");
 }
 function isConfigurationError(error: unknown): boolean {
-  return /(?:unavailable|not configured|profile|runtime|provider|model)/iu.test(
-    error instanceof Error ? error.message : String(error),
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+  return /(?:unavailable|not configured|profile|runtime|provider|model|memory_revision_pending)/iu.test(
+    `${code} ${error instanceof Error ? error.message : String(error)}`,
   );
 }

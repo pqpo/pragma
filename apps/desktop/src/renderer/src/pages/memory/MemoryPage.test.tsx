@@ -9,7 +9,6 @@ import {
   MemoryHealth,
   MemoryPage,
   canRunMemoryAction,
-  formatMemoryCandidateExpert,
   formatMemorySubjectRefs,
   memoryExtractionPollDelay,
 } from "./MemoryPage.tsx";
@@ -19,15 +18,6 @@ afterEach(async () => {
 });
 
 describe("MemoryPage", () => {
-  it("formats candidate experts with the expert name and id", () => {
-    expect(
-      formatMemoryCandidateExpert("expert:r5pjstt2yftkg8dx", {
-        "expert:r5pjstt2yftkg8dx": "Release reviewer",
-      }),
-    ).toBe("Release reviewer (r5pjstt2yftkg8dx)");
-    expect(formatMemoryCandidateExpert("expert:missing", {})).toBe("expert:missing");
-  });
-
   it("shows human-readable subject names while preserving canonical memory references", () => {
     expect(
       formatMemorySubjectRefs(
@@ -64,10 +54,9 @@ describe("MemoryPage", () => {
     ).toBe(10_000);
   });
 
-  it("does not require a Fact reason for Knowledge initialization candidate actions", () => {
-    expect(canRunMemoryAction("knowledge-initialization", "")).toBe(true);
-    expect(canRunMemoryAction("memory-governance", "")).toBe(false);
-    expect(canRunMemoryAction("memory-governance", "confirmed by the user")).toBe(true);
+  it("requires a reason for Memory governance actions", () => {
+    expect(canRunMemoryAction("")).toBe(false);
+    expect(canRunMemoryAction("confirmed by the user")).toBe(true);
   });
 
   it("renders the first-level layered Memory management entry", () => {
@@ -223,7 +212,7 @@ describe("MemoryPage", () => {
     expect(html).toContain("Prepare the release");
     expect(html).toContain("Episodic memory");
     expect(html).toContain("Knowledge memory");
-    expect(html).toContain("Candidate capacity is full");
+    expect(html).toContain("Memory capacity needs attention");
     expect(html).toContain("Technical details");
     expect(html).toContain("knowledge_candidate_capacity_exceeded");
     expect(html.indexOf("<details")).toBeLessThan(
@@ -231,7 +220,7 @@ describe("MemoryPage", () => {
     );
     expect(html).toContain("Extract now");
     expect(html).toContain("Retry extraction");
-    expect(html).toContain("Review candidates");
+    expect(html).not.toContain("Review candidates");
     expect(html).toContain("Abandon this extraction");
     expect(html).not.toContain("internal-job-a");
     expect(html).not.toContain("Evidence records");
@@ -272,7 +261,7 @@ describe("MemoryPage", () => {
     );
 
     expect(html).toContain("研发专家团");
-    expect(html).toContain("本次未生成");
+    expect(html).toContain("本次无变更");
     expect(html).not.toContain("skill_source_threshold_not_met");
     expect(html).not.toContain("重新提炼");
     expect(html).not.toContain(">删除<");

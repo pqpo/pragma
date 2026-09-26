@@ -30,7 +30,6 @@ import {
   BUILT_IN_PRAGMA_REF,
   EVALUATION_JUDGE_EXPERT_REF,
   MEMORY_CURATOR_REF,
-  MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF,
   SKILL_REVISION_EXPERT_REF,
   STORE_REVISION_EXPERT_REF,
   builtInAgentFingerprint,
@@ -64,16 +63,7 @@ describe("built-in Pragma Agent DSL", () => {
         .listResources()
         .map((resource) => resource.kind)
         .toSorted(),
-    ).toEqual([
-      "Capability",
-      "Capability",
-      "Capability",
-      "Expert",
-      "Expert",
-      "Expert",
-      "Expert",
-      "Expert",
-    ]);
+    ).toEqual(["Capability", "Capability", "Expert", "Expert", "Expert", "Expert", "Expert"]);
 
     const unavailable = async (): Promise<never> => {
       throw new Error("This compile-only test does not execute Pragma tools.");
@@ -194,14 +184,6 @@ describe("built-in Pragma Agent DSL", () => {
                 value: { contribution: { tools: [] } },
               };
             }
-            if (bindingRef === MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) {
-              return {
-                ref: bindingRef,
-                revision: "1",
-                fingerprint: "c".repeat(64),
-                value: { contribution: { tools: [] } },
-              };
-            }
             return undefined;
           },
           async resolveArtifact(source) {
@@ -214,74 +196,6 @@ describe("built-in Pragma Agent DSL", () => {
       });
       expect(hidden.value.id).toBe(ref.slice("expert:".length));
       expect(hidden.value.tools ?? []).toEqual([]);
-    }
-
-    const draftToolNames = ["begin_skill_draft", "put_skill_file", "submit_skill_draft"];
-    const memoryWithDraftTools = await project.compile<Expert>(MEMORY_CURATOR_REF, {
-      workspace: root,
-      environmentId: "test-skill",
-      adapterHost: {
-        environmentId: "test-skill",
-        projectRoot: dirname(entry),
-        async resolveBinding(bindingRef) {
-          if (bindingRef !== MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) return undefined;
-          return {
-            ref: bindingRef,
-            revision: "skill",
-            fingerprint: "d".repeat(64),
-            value: {
-              contribution: {
-                tools: draftToolNames.map((name) => ({
-                  name,
-                  description: name,
-                  inputSchema: { type: "object" },
-                  approval: { mode: "none" as const },
-                  async call() {
-                    return { text: "{}" };
-                  },
-                })),
-              },
-            },
-          };
-        },
-        async resolveArtifact(source) {
-          throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
-        },
-        async resolveSecret() {
-          return undefined;
-        },
-      },
-    });
-    expect(memoryWithDraftTools.value.tools?.map((tool) => tool.name)).toEqual(draftToolNames);
-    expect(memoryWithDraftTools.value.toolPolicy).toMatchObject({
-      deniedTools: ["askUserQuestion"],
-    });
-
-    const memoryRegistration = await registerExpertToolsMcpSession({
-      agent: memoryWithDraftTools.value,
-      getContext: () => undefined,
-      logger: createPragmaLogger(undefined, {
-        component: "runtime.adapter",
-        scope: { agentId: memoryWithDraftTools.value.id },
-      }),
-      state: {},
-    });
-    const memoryClient = new Client(
-      { name: "memory-curator-tool-policy-test", version: "1.0.0" },
-      { capabilities: {} },
-    );
-    try {
-      await memoryClient.connect(
-        new StreamableHTTPClientTransport(new URL(memoryRegistration.url)),
-      );
-      const catalog = await memoryClient.listTools();
-      expect(catalog.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(draftToolNames),
-      );
-      expect(catalog.tools.map((tool) => tool.name)).not.toContain("askUserQuestion");
-    } finally {
-      await memoryClient.close().catch(() => undefined);
-      await memoryRegistration.dispose();
     }
 
     const registration = await registerExpertToolsMcpSession({
@@ -469,7 +383,7 @@ describe("built-in Pragma Agent DSL", () => {
     );
     expect(
       project.listResources().filter((candidate) => candidate.kind === "Capability"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(await project.validate()).toEqual([]);
   });
 
@@ -579,14 +493,6 @@ describe("built-in Pragma Agent DSL", () => {
                 ref: bindingRef,
                 revision: "1",
                 fingerprint: "e".repeat(64),
-                value: { contribution: { tools: [] } },
-              };
-            }
-            if (bindingRef === MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF) {
-              return {
-                ref: bindingRef,
-                revision: "1",
-                fingerprint: "d".repeat(64),
                 value: { contribution: { tools: [] } },
               };
             }

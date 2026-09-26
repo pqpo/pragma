@@ -7,6 +7,8 @@ export const MemoryExtractionFailurePhaseSchema = z.enum([
   "source_read",
   "target_read",
   "curator_run",
+  "revision_plan",
+  "revision_submit",
   "output_parse",
   "validation",
   "promotion",
