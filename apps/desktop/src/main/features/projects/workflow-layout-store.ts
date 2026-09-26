@@ -19,6 +19,7 @@ export interface WorkflowLayoutStore {
 
 export function createWorkflowLayoutStore(options: {
   readonly projectsPath: string;
+  readonly onChanged?: (() => void) | undefined;
 }): WorkflowLayoutStore {
   const layoutPath = (input: GetWorkflowLayout) =>
     join(
@@ -48,10 +49,12 @@ export function createWorkflowLayoutStore(options: {
       const temporaryPath = `${path}.${randomUUID()}.tmp`;
       await writeFile(temporaryPath, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
       await rename(temporaryPath, path);
+      options.onChanged?.();
       return parsed;
     },
     async remove(input) {
       await rm(layoutPath(input), { force: true });
+      options.onChanged?.();
     },
   };
 }

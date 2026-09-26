@@ -59,8 +59,7 @@ export function App() {
 
   useEffect(() => {
     const sync = () => {
-      void window.pragmaDesktop.refreshKnowledgeBases().catch(() => undefined);
-      void window.pragmaDesktop.refreshSkills().catch(() => undefined);
+      void window.pragmaDesktop.refreshCoreAssets().catch(() => undefined);
     };
     window.addEventListener("focus", sync);
     window.addEventListener("online", sync);
@@ -138,13 +137,8 @@ export function App() {
     setActiveView("settings");
   };
 
-  const openKnowledgeSyncSettings = () => {
-    setSettingsView("knowledge-sync");
-    setActiveView("settings");
-  };
-
-  const openSkillSyncSettings = () => {
-    setSettingsView("skill-sync");
+  const openCoreAssetSyncSettings = () => {
+    setSettingsView("core-asset-sync");
     setActiveView("settings");
   };
 
@@ -226,8 +220,7 @@ export function App() {
           initialMemoryState={studioMemoryState}
           memoryEnabled={memoryEnabled === true}
           onMemoryStateChange={setStudioMemoryState}
-          onConfigureKnowledgeSync={openKnowledgeSyncSettings}
-          onConfigureSkillSync={openSkillSyncSettings}
+          onConfigureCoreAssetSync={openCoreAssetSyncSettings}
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}

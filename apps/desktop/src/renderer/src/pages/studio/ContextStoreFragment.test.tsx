@@ -114,38 +114,11 @@ describe("knowledge base UI", () => {
     expect(html).not.toContain("/Users/");
   });
 
-  it("keeps delete-versus-edit conflicts actionable when the local store no longer exists", () => {
+  it("links the knowledge directory to core asset sync", () => {
     const html = renderToStaticMarkup(
       <ContextStoreDirectoryFragment
         stores={[]}
-        syncOverview={{
-          configured: true,
-          status: "conflict",
-          configuration: {
-            schemaVersion: "pragma.knowledge-sync-settings/v1",
-            remote: "ssh://git@example.test/knowledge.git",
-            autoPush: true,
-            pushDeletions: false,
-          },
-          stores: [],
-          conflicts: [
-            {
-              storeId: store.id,
-              name: store.name,
-              remoteRevision: "abc123",
-              localExists: false,
-              remoteExists: true,
-              localFiles: [],
-              remoteFiles: ["guide.md"],
-            },
-          ],
-        }}
-        onSync={async () => {
-          throw new Error("not called");
-        }}
-        onResolveSyncConflict={async () => {
-          throw new Error("not called");
-        }}
+        onConfigureSync={() => undefined}
         onCreate={async () => store}
         onInspectImport={async (sourcePath) => ({
           sourcePath,
@@ -158,7 +131,7 @@ describe("knowledge base UI", () => {
       />,
     );
 
-    expect(html).toContain("Product docs · Resolve conflict");
+    expect(html).toContain("Core asset sync");
   });
 
   it("keeps mount options compact and exposes selection state without per-file loading copy", () => {

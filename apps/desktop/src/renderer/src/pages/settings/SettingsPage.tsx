@@ -12,16 +12,14 @@ import { MemorySettingsFragment } from "./MemorySettingsFragment.tsx";
 import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 import { BundleRegistrySourcesFragment } from "./BundleRegistrySourcesFragment.tsx";
-import { KnowledgeSyncSettingsFragment } from "./KnowledgeSyncSettingsFragment.tsx";
-import { SkillSyncSettingsFragment } from "./SkillSyncSettingsFragment.tsx";
+import { CoreAssetSyncSettingsFragment } from "./CoreAssetSyncSettingsFragment.tsx";
 
 export type SettingsView =
   | "general"
   | "memory"
   | "evaluations"
   | "bundle-sources"
-  | "knowledge-sync"
-  | "skill-sync"
+  | "core-asset-sync"
   | "models"
   | "runtimes";
 
@@ -105,25 +103,14 @@ export function SettingsPage(
         </button>
         <button
           className={
-            activeView === "knowledge-sync" ? "settings-nav-item is-active" : "settings-nav-item"
+            activeView === "core-asset-sync" ? "settings-nav-item is-active" : "settings-nav-item"
           }
           type="button"
-          aria-selected={activeView === "knowledge-sync"}
-          aria-controls="knowledge-sync-panel"
-          onClick={() => setActiveView("knowledge-sync")}
+          aria-selected={activeView === "core-asset-sync"}
+          aria-controls="core-asset-sync-panel"
+          onClick={() => setActiveView("core-asset-sync")}
         >
-          {t("knowledgeSync.navigation")}
-        </button>
-        <button
-          className={
-            activeView === "skill-sync" ? "settings-nav-item is-active" : "settings-nav-item"
-          }
-          type="button"
-          aria-selected={activeView === "skill-sync"}
-          aria-controls="skill-sync-panel"
-          onClick={() => setActiveView("skill-sync")}
-        >
-          {t("skillSync.navigation")}
+          {t("coreAssetSync.navigation")}
         </button>
       </nav>
       <SidebarResizeHandle
@@ -140,10 +127,8 @@ export function SettingsPage(
           <MemorySettingsFragment onMemoryEnabledChange={props.onMemoryEnabledChange} />
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
-        ) : activeView === "knowledge-sync" ? (
-          <KnowledgeSyncSettingsFragment />
-        ) : activeView === "skill-sync" ? (
-          <SkillSyncSettingsFragment />
+        ) : activeView === "core-asset-sync" ? (
+          <CoreAssetSyncSettingsFragment />
         ) : activeView === "bundle-sources" ? (
           <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (
