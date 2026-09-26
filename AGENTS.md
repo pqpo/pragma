@@ -559,7 +559,7 @@ Expert API 设计要求：
 - 将 Core 的持久 Canonical Event Feed 适配为版本化 Memory Evidence。
 - 定义静态 Memory Module registry、独立 checkpoint/retry/dead-letter 调度和 Module 健康诊断。
 - 提供只读的联邦 `memory` Context Store；Episodic、Semantic 和其他动态投影由独立 Module 拥有。
-- Memory 可以产生 Knowledge promotion 或 Store revision 候选，但用户批准后的 Knowledge authority 属于
+- Memory 将符合策略的来源交给 Store/Skill Revision Agent 创建或修订托管草稿；用户批准后的 Knowledge authority 属于
   Desktop“工作室 → 知识库”的托管 Context Store，不属于 `@pragma/memory`，也不依赖 Memory Evidence。
 
 边界要求：
@@ -568,8 +568,8 @@ Expert API 设计要求：
 - `@pragma/core` 不得反向依赖 `@pragma/memory`；Core 的 Canonical Event Bus 必须保持 Memory 无关。
 - Module 静态注册，不扫描目录；Module id、版本和 Context prefix 必须唯一。
 - Module 不直接写另一个 Module Store，只通过版本化 Evidence/derived event 协作。
-- Memory Module 不直接改写 Studio Knowledge Store；它只能向 Host 通用 Store Revision 能力提交修订提示词。
-  内置 Store Revision Agent 加载目标 Store 与提示词产生 change set，用户批准后才激活新 Store revision。
+- Memory Module 不直接改写 Studio Knowledge Store 或 Skill；Host 通过 Store/Skill Revision Agent 创建和修订草稿，
+  用户批准后才激活正式 revision。Memory Curator 只提炼 Episodic 和 Semantic。
 - Memory 存储治理使用 `@pragma/memory` 的固定版本化 policy；Feed 只能在所有注册 consumer 的最小
   checkpoint 之前清理，落后 consumer 固定的数据必须报告 degraded/blocked，不能为满足容量目标越过
   checkpoint 删除。
@@ -654,8 +654,8 @@ Expert API 设计要求：
 
 - 主入口 `@pragma/built-in-agents` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
 - `@pragma/built-in-agents/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
-- Pragma、Store Revision 和 Skill Revision 是可在 Studio 配置的系统 Agent；Memory Curator、
-  Skill Evaluation 和 Evaluation Judge 是隐藏、不可定制的托管能力。
+- Pragma、Store Revision 和 Skill Revision 是可在 Studio 配置的系统 Agent；Memory Curator 和
+  Evaluation Judge 是隐藏、不可定制的托管能力。Skill 测评 Agent 已删除。
 - Pragma 修改 Expert、ExpertTeam 和 Flow 时只通过 DSL 能力；应用层实现持久化与任务端口。
 - Desktop 将 Pragma 注册为只读系统专家；Home 只负责创建全新 Mission，不维护独立 Chat。
 - Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Home

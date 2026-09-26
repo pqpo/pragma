@@ -29,12 +29,12 @@ import {
   type MemoryPolicyStore,
   type MemoryRecallScope,
   type EpisodicMemoryExtractor,
-  type KnowledgeMemoryExtractor,
+  type KnowledgeLearningPlanner,
   type KnowledgeMemoryModule,
   type KnowledgeLearningSink,
   type SkillLearningSink,
   type SkillLearningTargetReader,
-  type SkillMemoryExtractor,
+  type SkillLearningPlanner,
   type SkillMemoryModule,
   type MemoryExtractorProfileStore,
   type MemoryExtractionSettingsStore,
@@ -92,8 +92,8 @@ export interface DesktopMemoryPlane {
   ): Promise<import("@pragma/core").ExpertAgentContextStore>;
   setEpisodicExtractor(extractor: EpisodicMemoryExtractor | undefined): Promise<void>;
   setSemanticExtractor(extractor: SemanticMemoryExtractor | undefined): Promise<void>;
-  setKnowledgeExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
-  setSkillExtractor(extractor: SkillMemoryExtractor | undefined): Promise<void>;
+  setKnowledgePlanner(planner: KnowledgeLearningPlanner | undefined): Promise<void>;
+  setSkillPlanner(planner: SkillLearningPlanner | undefined): Promise<void>;
   registerMemoryExecutionContext(input: {
     readonly executionId: string;
     readonly missionId: string;
@@ -130,6 +130,7 @@ export interface DesktopMemoryPlane {
     readonly reason: string;
   }): Promise<void>;
   wakeMemoryJobs(): Promise<void>;
+  wakeRevisionLearningJobs(): Promise<void>;
   wakePipeline(): void;
   manageMemoryJob(input: {
     readonly module: "episodic" | "semantic" | "knowledge" | "skill";
@@ -173,6 +174,7 @@ export async function createDesktopMemoryPlane(options: {
   readonly pragmaHome: string;
   readonly logger: PragmaLogger;
   readonly pollIntervalMs?: number | undefined;
+  readonly onTick?: (() => Promise<void>) | undefined;
   readonly knowledgeLearningSink?: KnowledgeLearningSink | undefined;
   readonly skillLearningSink?: SkillLearningSink | undefined;
   readonly skillLearningTargetReader?: SkillLearningTargetReader | undefined;
@@ -419,6 +421,7 @@ export async function createDesktopMemoryPlane(options: {
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
       const adapted = await adapter.runOnce();
       await scheduler.runOnce();
+      await options.onTick?.();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
       }
@@ -543,12 +546,12 @@ export async function createDesktopMemoryPlane(options: {
       await semantic.setExtractor(extractor);
       wakePipeline();
     },
-    async setKnowledgeExtractor(extractor) {
-      await knowledge.setExtractor(extractor);
+    async setKnowledgePlanner(planner) {
+      await knowledge.setPlanner(planner);
       wakePipeline();
     },
-    async setSkillExtractor(extractor) {
-      await skill.setExtractor(extractor);
+    async setSkillPlanner(planner) {
+      await skill.setPlanner(planner);
       wakePipeline();
     },
     async registerMemoryExecutionContext(input) {
@@ -649,8 +652,13 @@ export async function createDesktopMemoryPlane(options: {
     async wakeMemoryJobs() {
       await Promise.all([
         episodic.store.wakeNeedsAttention(new Date(), "configuration"),
-        knowledge.store.wakeNeedsAttention(new Date(), "configuration"),
         semantic.store.wakeNeedsAttention(new Date(), "configuration"),
+      ]);
+      wakePipeline();
+    },
+    async wakeRevisionLearningJobs() {
+      await Promise.all([
+        knowledge.store.wakeNeedsAttention(new Date(), "configuration"),
         skill.store.wakeNeedsAttention(new Date(), "configuration"),
       ]);
       wakePipeline();

@@ -759,7 +759,7 @@ const PRAGMA_SKILL_REVISION_TOOL_DEFINITIONS = [
   ),
   definition(
     SKILL_REVISION_SUBMIT_DRAFT_TOOL_NAME,
-    "Submit a stable Skill working tree for evaluation and human review. This does not approve or publish it.",
+    "Submit a stable Skill working tree for validation and human review. This does not approve or publish it.",
     SkillRevisionSubmitDraftInputSchema,
     SkillRevisionDraftReceiptSchema,
   ),

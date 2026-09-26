@@ -5,19 +5,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { PragmaPaths } from "@pragma/core";
-import type {
-  MemorySubjectRef,
-  SkillExtractionCandidate,
-  SkillLearningJob,
-  SkillSourceSnapshot,
-} from "@pragma/shared";
+import type { MemorySubjectRef, SkillLearningJob, SkillSourceSnapshot } from "@pragma/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  createSkillMemoryModule,
-  type SkillLearningSink,
-  type SkillMemoryExtractor,
-} from "../src/index.ts";
+import { createSkillMemoryModule, type SkillLearningSink } from "../src/index.ts";
 import { createSkillLearningStore } from "../src/skill/store.ts";
 
 const roots: string[] = [];
@@ -29,162 +20,201 @@ afterEach(async () => {
   );
 });
 
-describe("Skill learning extraction", () => {
-  it("completes insufficient overall evidence as a normal rejected result", async () => {
-    const sourceRevisions = sources().slice(0, 2);
-    const extract = vi.fn<SkillMemoryExtractor["extract"]>(async () =>
-      extractionResult([candidate("unused", validRefs())]),
-    );
-    const module = await createModule(sourceRevisions, { extract });
-
-    await schedule(module, sourceRevisions);
+describe("Skill learning revision planning", () => {
+  it("completes insufficient evidence without invoking the Agent", async () => {
+    const plan = vi.fn(async () => ({ action: "skip" as const }));
+    const module = await createModule(sources().slice(0, 2), { plan });
+    await schedule(module, sources().slice(0, 2));
     await module.runBackgroundOnce?.();
-
-    expect(extract).not.toHaveBeenCalled();
-    expect(await module.store.listJobs()).toEqual([
-      expect.objectContaining({ status: "completed", completion: "rejected" }),
-    ]);
-    expect(await module.store.inspect()).toMatchObject({ needsAttention: 0, completed: 1 });
-    module.close();
-  });
-
-  it("extracts only from producer Experts whose own evidence meets the threshold", async () => {
-    const sourceRevisions = [
-      episode("expert-a-one", "conversation-a", "succeeded", "expert-a"),
-      episode("expert-a-two", "conversation-a", "succeeded", "expert-a"),
-      episode("expert-a-three", "conversation-a", "succeeded", "expert-a"),
-      episode("expert-b-one", "conversation-b", "succeeded", "expert-b"),
-      episode("expert-b-two", "conversation-b", "succeeded", "expert-b"),
-      episode("expert-b-three", "conversation-c", "failed", "expert-b"),
-    ];
-    const extract = vi.fn<SkillMemoryExtractor["extract"]>(async (input) => {
-      expect(
-        input.sources.every((source) => source.producerRefs.some((ref) => ref.id === "expert-b")),
-      ).toBe(true);
-      return {
-        output: { retain: false, reason: "no-reusable-skill" },
-        provenance: provenance(),
-      };
+    expect(plan).not.toHaveBeenCalled();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "rejected",
     });
-    const module = await createModule(sourceRevisions, { extract });
-
-    await schedule(module, sourceRevisions);
-    await module.runBackgroundOnce?.();
-
-    expect(extract).toHaveBeenCalledOnce();
-    expect(await module.store.listJobs()).toEqual([
-      expect.objectContaining({ status: "completed", completion: "rejected" }),
-    ]);
     module.close();
   });
 
-  it("filters a candidate below the source threshold and completes without user attention", async () => {
+  it("submits a validated revision plan with three cited Episodes", async () => {
     const sourceRevisions = sources();
     const submit = vi.fn(async () => undefined);
-    const module = await createModule(sourceRevisions, {
-      extract: vi.fn(async () => extractionResult([candidate("invalid", invalidRefs())])),
-      submit,
-    });
-
+    const plan = {
+      action: "apply" as const,
+      changes: [
+        {
+          name: "Workflow",
+          description: "A reusable workflow.",
+          normalizedKey: "workflow.example",
+          sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+          target: { type: "create" as const },
+        },
+      ],
+    };
+    const module = await createModule(sourceRevisions, { plan: async () => plan, submit });
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
-
-    expect(submit).not.toHaveBeenCalled();
-    const [job] = await module.store.listJobs();
-    expect(job).toMatchObject({ status: "completed", completion: "rejected" });
-    expect(job).not.toHaveProperty("lastErrorCode");
-    expect(job).not.toHaveProperty("failureClass");
-    expect(await module.store.inspect()).toMatchObject({ needsAttention: 0, completed: 1 });
-    module.close();
-  });
-
-  it("submits valid candidates while quietly discarding threshold failures", async () => {
-    const sourceRevisions = sources();
-    const valid = candidate("valid", validRefs());
-    const submit = vi.fn(async () => undefined);
-    const module = await createModule(sourceRevisions, {
-      extract: vi.fn(async () => extractionResult([candidate("invalid", invalidRefs()), valid])),
-      submit,
-    });
-
-    await schedule(module, sourceRevisions);
-    await module.runBackgroundOnce?.();
-
-    expect(submit).toHaveBeenCalledOnce();
     expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ candidates: [valid], sources: sourceRevisions }),
+      expect.objectContaining({
+        expertRef: "expert:expert-a",
+        plan,
+      }),
     );
-    expect(await module.store.listJobs()).toEqual([
-      expect.objectContaining({ status: "completed", completion: "retained" }),
-    ]);
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "retained",
+    });
     module.close();
   });
 
-  it("filters stale targets and duplicate keys without discarding valid siblings", async () => {
+  it("retries a plan with an invented source", async () => {
     const sourceRevisions = sources();
-    const valid = candidate("valid", validRefs());
-    const duplicate = {
-      ...candidate("valid", validRefs()),
-      content: { ...valid.content, package: { ...valid.content.package, name: "Duplicate" } },
-    };
-    const staleTarget = {
-      ...candidate("stale-target", validRefs()),
-      route: {
-        type: "revise" as const,
-        bindingId: "00000000-0000-4000-8000-000000000099",
-      },
-    };
-    const submit = vi.fn(async () => undefined);
     const module = await createModule(sourceRevisions, {
-      extract: vi.fn(async () => extractionResult([staleTarget, valid, duplicate])),
+      plan: async () => ({
+        action: "apply",
+        changes: [
+          {
+            name: "Workflow",
+            description: "A reusable workflow.",
+            normalizedKey: "workflow.invalid",
+            sourceRefs: [
+              ...sourceRevisions.slice(0, 2).map((source) => source.ref),
+              { kind: "episodic" as const, id: "missing", revision: 1 },
+            ],
+            target: { type: "create" },
+          },
+        ],
+      }),
+    });
+    await schedule(module, sourceRevisions);
+    await module.runBackgroundOnce?.();
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    module.close();
+  });
+
+  it("parks new evidence while a Skill revision is pending and keeps it wakeable", async () => {
+    const sourceRevisions = sources();
+    const module = await createModule(sourceRevisions, {
+      plan: async () => ({
+        action: "apply",
+        changes: [
+          {
+            name: "Workflow",
+            description: "A reusable workflow.",
+            normalizedKey: "workflow.example",
+            sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+            target: { type: "create" },
+          },
+        ],
+      }),
+      submit: async () => {
+        throw new Error("memory_revision_pending");
+      },
+    });
+    await schedule(module, sourceRevisions);
+    await module.runBackgroundOnce?.();
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "needs_attention",
+      failureClass: "configuration",
+      lastErrorCode: "memory_revision_pending",
+    });
+    await module.store.wakeNeedsAttention(now, "configuration");
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
+    module.close();
+  });
+
+  it("rejects duplicate Skill identities in one plan", async () => {
+    const sourceRevisions = sources();
+    const submit = vi.fn(async () => undefined);
+    const change = {
+      name: "Workflow",
+      description: "A reusable workflow.",
+      normalizedKey: "workflow.duplicate",
+      sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+      target: { type: "create" as const },
+    };
+    const module = await createModule(sourceRevisions, {
+      plan: async () => ({ action: "apply", changes: [change, change] }),
       submit,
     });
-
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
-
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ candidates: [valid] }));
-    expect(await module.store.listJobs()).toEqual([
-      expect.objectContaining({ status: "completed", completion: "retained" }),
-    ]);
+    expect(submit).not.toHaveBeenCalled();
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
     module.close();
   });
 
-  it("records retain=false as rejected instead of retained", async () => {
+  it("rejects revising a target owned by another Skill identity", async () => {
     const sourceRevisions = sources();
+    const submit = vi.fn(async () => undefined);
     const module = await createModule(sourceRevisions, {
-      extract: vi.fn(async () => ({
-        output: { retain: false as const, reason: "no-reusable-skill" as const },
-        provenance: provenance(),
-      })),
+      plan: async () => ({
+        action: "apply",
+        changes: [
+          {
+            name: "Workflow",
+            description: "A reusable workflow.",
+            normalizedKey: "workflow.conflict",
+            sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+            target: { type: "revise", capabilityId: "1h2j3k4m5n6p7q8r" },
+          },
+        ],
+      }),
+      submit,
+      targets: [
+        {
+          bindingId: "binding-old",
+          capabilityId: "1h2j3k4m5n6p7q8r",
+          name: "Old workflow",
+          description: "Existing Skill",
+          normalizedKeys: ["workflow.old"],
+        },
+        {
+          bindingId: "binding-other",
+          capabilityId: "2h3j4k5m6n7p8q9r",
+          name: "Other workflow",
+          description: "Another Skill",
+          normalizedKeys: ["workflow.conflict"],
+        },
+      ],
     });
-
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
-
-    expect(await module.store.listJobs()).toEqual([
-      expect.objectContaining({ status: "completed", completion: "rejected" }),
-    ]);
+    expect(submit).not.toHaveBeenCalled();
+    expect((await module.store.listJobs())[0]).toMatchObject({ status: "pending" });
     module.close();
   });
 
-  it("keeps genuine extractor configuration failures actionable", async () => {
+  it("allows an existing Skill to learn a new normalized key", async () => {
     const sourceRevisions = sources();
+    const submit = vi.fn(async () => undefined);
+    const change = {
+      name: "Expanded workflow",
+      description: "A new workflow in an existing Skill",
+      normalizedKey: "workflow.new",
+      sourceRefs: sourceRevisions.slice(0, 3).map((source) => source.ref),
+      target: { type: "revise" as const, capabilityId: "1h2j3k4m5n6p7q8r" },
+    };
     const module = await createModule(sourceRevisions, {
-      extract: vi.fn(async () => {
-        throw new Error("provider unavailable");
-      }),
+      plan: async () => ({ action: "apply", changes: [change] }),
+      submit,
+      targets: [
+        {
+          bindingId: "binding-old",
+          capabilityId: change.target.capabilityId,
+          name: "Existing Skill",
+          description: "Reusable workflows",
+          normalizedKeys: ["workflow.old"],
+        },
+      ],
     });
-
     await schedule(module, sourceRevisions);
     await module.runBackgroundOnce?.();
-
-    expect(await module.store.listJobs()).toEqual([
-      expect.objectContaining({
-        status: "needs_attention",
-        failureClass: "configuration",
-      }),
-    ]);
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ plan: { action: "apply", changes: [change] } }),
+    );
+    expect((await module.store.listJobs())[0]).toMatchObject({
+      status: "completed",
+      completion: "retained",
+    });
     module.close();
   });
 });
@@ -316,15 +346,16 @@ describe("Skill learning store v3 migration", () => {
 async function createModule(
   sourceRevisions: readonly SkillSourceSnapshot[],
   overrides: {
-    readonly extract: SkillMemoryExtractor["extract"];
+    readonly plan: NonNullable<Parameters<typeof createSkillMemoryModule>[0]["planner"]>["plan"];
     readonly submit?: SkillLearningSink["submit"];
+    readonly targets?: readonly import("@pragma/shared").ExistingMemorySkillTarget[];
   },
 ) {
   return await createSkillMemoryModule({
     pragmaHome: await temporaryRoot(),
     sourceReader: { listEligibleSources: async () => sourceRevisions },
-    targetReader: { listTargets: async () => [] },
-    extractor: { extract: overrides.extract },
+    targetReader: { listTargets: async () => overrides.targets ?? [] },
+    planner: { plan: overrides.plan },
     learningSink: { submit: overrides.submit ?? vi.fn(async () => undefined) },
     now: () => now,
   });
@@ -339,61 +370,6 @@ async function schedule(
     sourceDigest: digestSources(sourceRevisions),
     now,
   });
-}
-
-function extractionResult(
-  candidates: readonly SkillExtractionCandidate[],
-): Awaited<ReturnType<SkillMemoryExtractor["extract"]>> {
-  return { output: { retain: true, candidates: [...candidates] }, provenance: provenance() };
-}
-
-function provenance() {
-  return {
-    curatorRef: "pragma.memory.curator",
-    promptVersion: "skill-curator/v1",
-    profileRevision: 1,
-    runtimeId: "runtime-a",
-    providerId: "provider-a",
-    modelId: "model-a",
-    extractedAt: now.toISOString(),
-  };
-}
-
-function candidate(
-  normalizedKey: string,
-  sourceRefs: SkillExtractionCandidate["sourceRefs"],
-): SkillExtractionCandidate {
-  return {
-    content: {
-      normalizedKey: `workflow.${normalizedKey}`,
-      applicability: ["A repeated workflow is required."],
-      failureModes: ["The workflow is applied without enough evidence."],
-      recoverySteps: ["Re-check the source evidence."],
-      package: {
-        name: `Workflow ${normalizedKey}`,
-        description: "A reusable workflow learned from successful executions.",
-        files: [
-          {
-            path: "SKILL.md",
-            content: `---\nname: workflow-${normalizedKey}\ndescription: Reusable workflow\n---\n`,
-          },
-        ],
-      },
-    },
-    sourceRefs,
-    route: { type: "create" },
-  };
-}
-
-function validRefs(): SkillExtractionCandidate["sourceRefs"] {
-  return sources()
-    .slice(0, 3)
-    .map((source) => source.ref);
-}
-
-function invalidRefs(): SkillExtractionCandidate["sourceRefs"] {
-  const sourceRevisions = sources();
-  return [sourceRevisions[0]!.ref, sourceRevisions[1]!.ref, sourceRevisions[3]!.ref];
 }
 
 function sources(): readonly SkillSourceSnapshot[] {

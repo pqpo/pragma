@@ -66,7 +66,6 @@ import {
   createSkillRevisionService,
   type SkillRevisionGenerator,
 } from "../features/capabilities/skill-revision-service.ts";
-import { installSkillLearningHandlers } from "../features/capabilities/skill-learning-ipc.ts";
 import { createCapabilityVerifier } from "../features/capabilities/capability-verifier.ts";
 import { installContextStoreHandlers } from "../features/context-stores/context-store-ipc.ts";
 import { installCoreAssetSyncHandlers } from "../features/studio-sync/core-asset-sync-ipc.ts";
@@ -123,7 +122,12 @@ import { createFencedMissionStore } from "../features/missions/mission-store-fen
 import { MissionStatusService } from "../features/missions/mission-status-service.ts";
 import { createDesktopLocalHostExecutorResolver } from "../features/missions/local-host-mission-adapter.ts";
 import { createMissionReadModel } from "../features/missions/mission-read-model.ts";
-import { createDesktopMemoryPlane } from "../features/memory/desktop-memory-plane.ts";
+import {
+  createDesktopMemoryPlane,
+  type DesktopMemoryPlane,
+} from "../features/memory/desktop-memory-plane.ts";
+import { createMemoryLearningRevisions } from "../features/memory/memory-learning-revisions.ts";
+import { createMemoryRevisionLearningPlanners } from "../features/memory/memory-revision-learning-planners.ts";
 import {
   createDesktopMemoryCurator,
   type DesktopMemoryCurator,
@@ -133,16 +137,6 @@ import { createExpertMemoryContextStoreBrowserService } from "../features/memory
 import { installTeamMemoryContextStoreBrowserHandlers } from "../features/memory/team-memory-context-store-browser-ipc.ts";
 import { createTeamMemoryContextStoreBrowserService } from "../features/memory/team-memory-context-store-browser.ts";
 import { installMemoryPolicyHandlers } from "../features/memory/memory-policy-ipc.ts";
-import {
-  createMemoryKnowledgePromotionService,
-  groupMemoryKnowledgeProposalsByExpert,
-  type MemoryKnowledgePromotionService,
-} from "../features/memory/memory-knowledge-promotion.ts";
-import {
-  createMemorySkillPromotionService,
-  groupMemorySkillCandidatesByExpert,
-  type MemorySkillPromotionService,
-} from "../features/memory/memory-skill-promotion.ts";
 import { installModelProviderHandlers } from "../features/model-providers/model-provider-ipc.ts";
 import { createModelProviderStore } from "../features/model-providers/model-provider-store.ts";
 import { createPluginCredentialStore } from "../features/plugins/plugin-credential-store.ts";
@@ -320,9 +314,15 @@ export async function createDesktopApplicationContainer(
     (await desktopSettings.getSnapshot(options.getPreferredSystemLanguages())).agentContextWindow;
   const automaticHumanInteractionHandler =
     createAutomaticToolPermissionHandler(getToolPermissionMode);
+  const memoryPlaneRef: { current?: DesktopMemoryPlane } = {};
   const systemExperts = createDesktopSystemExpertRegistry({
     configPath: join(pragmaPaths.stateRoot(), "system-experts.json"),
     warn: (message, error) => mainLogger.warn("desktop.system_expert_warning", message, { error }),
+    onChanged: async (ref) => {
+      if (ref === STORE_REVISION_EXPERT_REF || ref === SKILL_REVISION_EXPERT_REF) {
+        await memoryPlaneRef.current?.wakeRevisionLearningJobs();
+      }
+    },
   });
   await systemExperts.initialize();
   const systemExpertKnowledgeRevisionMountResources = () => {
@@ -509,8 +509,8 @@ export async function createDesktopApplicationContainer(
       mainLogger.warn("desktop.home_executor_usage_failed", message, { error }),
   });
   installRuntimeHandlers(runtimes, runtimeProcessEnvironment);
-  const knowledgePromotionRef: { current?: MemoryKnowledgePromotionService } = {};
-  const skillPromotionRef: { current?: MemorySkillPromotionService } = {};
+  const memoryLearningRevisionsRef: { current?: ReturnType<typeof createMemoryLearningRevisions> } =
+    {};
   const expertStore = createExpertDefinitionStore({
     project: pragmaProjectStore,
     systemExperts,
@@ -539,8 +539,7 @@ export async function createDesktopApplicationContainer(
       }
     },
     onRemoved: async (expertRef) => {
-      await knowledgePromotionRef.current?.clearExpertBinding(expertRef);
-      await skillPromotionRef.current?.clearExpertBinding(expertRef);
+      await memoryLearningRevisionsRef.current?.clearExpertBinding(expertRef);
     },
   });
   const pluginStore = createPluginStore({
@@ -598,7 +597,7 @@ export async function createDesktopApplicationContainer(
     credentials: capabilityCredentials,
     onDeleted: async (capabilityId) => {
       await assetGitRef.current?.unbind({ kind: "skill", id: capabilityId });
-      await skillPromotionRef.current?.clearCapabilityBinding(capabilityId);
+      await memoryLearningRevisionsRef.current?.clearCapabilityBinding(capabilityId);
       coreSyncRef.current?.schedule("skill-removed");
     },
     warn: (message, error) =>
@@ -650,7 +649,7 @@ export async function createDesktopApplicationContainer(
       (await missionStore.listContextStoreReferences(storeId)).length > 0,
     onRemoved: async (storeId) => {
       await assetGitRef.current?.unbind({ kind: "knowledge", id: storeId });
-      await knowledgePromotionRef.current?.clearStoreBinding(storeId);
+      await memoryLearningRevisionsRef.current?.clearStoreBinding(storeId);
       coreSyncRef.current?.schedule("knowledge-store-removed");
     },
     onPublished: () => coreSyncRef.current?.schedule("knowledge-store-published"),
@@ -808,114 +807,110 @@ export async function createDesktopApplicationContainer(
     }),
     skillRevisions,
   );
-  const knowledgePromotion = createMemoryKnowledgePromotionService({
-    statePath: join(pragmaPaths.stateRoot(), "memory-knowledge-promotion"),
-    contextStores,
-    revisions: storeRevisions,
-    expertExists: async (expertRef) =>
-      (await expertStore.list()).some((expert) => expert.ref === expertRef),
-    mountStore: async (expertRef, storeId) => {
-      const expert = await expertStore.get(expertRef);
-      if (expert.contextStoreMounts.some((mount) => mount.storeId === storeId)) return;
-      const contextStoreMounts = [
-        ...expert.contextStoreMounts,
-        { storeId, enabled: true, priority: expert.contextStoreMounts.length },
-      ];
-      if (expert.origin === "built-in") {
-        await expertStore.updateBuiltIn(expertRef, {
-          name: expert.name,
-          description: expert.description,
-          tags: expert.tags,
-          additionalInstructions: expert.additionalInstructions,
-          ...(expert.executionProfile.mode === "pinned"
-            ? { model: expert.executionProfile.model }
-            : {}),
-          capabilities: expert.capabilities,
-          toolApprovals: expert.toolApprovals,
-          plugins: expert.plugins,
-          contextStoreMounts,
-          resourceTools: expert.resourceTools,
-        });
-        return;
-      }
-      if (expert.executionProfile.mode !== "pinned") {
-        throw new Error("Project Expert has no pinned execution profile.");
-      }
-      await expertStore.update(expertRef, {
-        baseRevision: expert.revision,
+  const mountMemoryKnowledgeStore = async (expertRef: string, storeId: string) => {
+    const expert = await expertStore.get(expertRef);
+    if (expert.contextStoreMounts.some((mount) => mount.storeId === storeId)) return;
+    const contextStoreMounts = [
+      ...expert.contextStoreMounts,
+      { storeId, enabled: true, priority: expert.contextStoreMounts.length },
+    ];
+    if (expert.origin === "built-in") {
+      await expertStore.updateBuiltIn(expertRef, {
         name: expert.name,
         description: expert.description,
         tags: expert.tags,
-        scope: expert.scope,
-        instructions: expert.instructions,
-        model: expert.executionProfile.model,
+        additionalInstructions: expert.additionalInstructions,
+        ...(expert.executionProfile.mode === "pinned"
+          ? { model: expert.executionProfile.model }
+          : {}),
         capabilities: expert.capabilities,
         toolApprovals: expert.toolApprovals,
         plugins: expert.plugins,
         contextStoreMounts,
         resourceTools: expert.resourceTools,
-        opaqueCapabilities: expert.opaqueCapabilities,
-        opaqueContextStores: expert.opaqueContextStores,
       });
-    },
-  });
-  knowledgePromotionRef.current = knowledgePromotion;
-  const skillPromotion = createMemorySkillPromotionService({
-    statePath: join(pragmaPaths.stateRoot(), "memory-skill-promotion"),
-    capabilities: capabilityStore,
-    revisions: skillRevisions,
-    expertExists: async (expertRef) =>
-      (await expertStore.list()).some((expert) => expert.ref === expertRef),
-    bindSkill: async (expertRef, capabilityId) => {
-      const expert = await expertStore.get(expertRef);
-      if (
-        expert.capabilities.some(
-          (capability) => capability.kind === "skill" && capability.capabilityId === capabilityId,
-        )
-      ) {
-        return;
-      }
-      const capabilities = [...expert.capabilities, { kind: "skill" as const, capabilityId }];
-      if (expert.origin === "built-in") {
-        await expertStore.updateBuiltIn(expertRef, {
-          name: expert.name,
-          description: expert.description,
-          tags: expert.tags,
-          additionalInstructions: expert.additionalInstructions,
-          ...(expert.executionProfile.mode === "pinned"
-            ? { model: expert.executionProfile.model }
-            : {}),
-          capabilities,
-          toolApprovals: expert.toolApprovals,
-          plugins: expert.plugins,
-          contextStoreMounts: expert.contextStoreMounts,
-          resourceTools: expert.resourceTools,
-        });
-        return;
-      }
-      if (expert.executionProfile.mode !== "pinned") {
-        throw new Error("Project Expert has no pinned execution profile.");
-      }
-      await expertStore.update(expertRef, {
-        baseRevision: expert.revision,
+      return;
+    }
+    if (expert.executionProfile.mode !== "pinned") {
+      throw new Error("Project Expert has no pinned execution profile.");
+    }
+    await expertStore.update(expertRef, {
+      baseRevision: expert.revision,
+      name: expert.name,
+      description: expert.description,
+      tags: expert.tags,
+      scope: expert.scope,
+      instructions: expert.instructions,
+      model: expert.executionProfile.model,
+      capabilities: expert.capabilities,
+      toolApprovals: expert.toolApprovals,
+      plugins: expert.plugins,
+      contextStoreMounts,
+      resourceTools: expert.resourceTools,
+      opaqueCapabilities: expert.opaqueCapabilities,
+      opaqueContextStores: expert.opaqueContextStores,
+    });
+  };
+  const bindMemorySkill = async (expertRef: string, capabilityId: string) => {
+    const expert = await expertStore.get(expertRef);
+    if (
+      expert.capabilities.some(
+        (capability) => capability.kind === "skill" && capability.capabilityId === capabilityId,
+      )
+    ) {
+      return;
+    }
+    const capabilities = [...expert.capabilities, { kind: "skill" as const, capabilityId }];
+    if (expert.origin === "built-in") {
+      await expertStore.updateBuiltIn(expertRef, {
         name: expert.name,
         description: expert.description,
         tags: expert.tags,
-        scope: expert.scope,
-        instructions: expert.instructions,
-        model: expert.executionProfile.model,
+        additionalInstructions: expert.additionalInstructions,
+        ...(expert.executionProfile.mode === "pinned"
+          ? { model: expert.executionProfile.model }
+          : {}),
         capabilities,
         toolApprovals: expert.toolApprovals,
         plugins: expert.plugins,
         contextStoreMounts: expert.contextStoreMounts,
         resourceTools: expert.resourceTools,
-        opaqueCapabilities: expert.opaqueCapabilities,
-        opaqueContextStores: expert.opaqueContextStores,
       });
-    },
+      return;
+    }
+    if (expert.executionProfile.mode !== "pinned") {
+      throw new Error("Project Expert has no pinned execution profile.");
+    }
+    await expertStore.update(expertRef, {
+      baseRevision: expert.revision,
+      name: expert.name,
+      description: expert.description,
+      tags: expert.tags,
+      scope: expert.scope,
+      instructions: expert.instructions,
+      model: expert.executionProfile.model,
+      capabilities,
+      toolApprovals: expert.toolApprovals,
+      plugins: expert.plugins,
+      contextStoreMounts: expert.contextStoreMounts,
+      resourceTools: expert.resourceTools,
+      opaqueCapabilities: expert.opaqueCapabilities,
+      opaqueContextStores: expert.opaqueContextStores,
+    });
+  };
+  const memoryLearningRevisions = createMemoryLearningRevisions({
+    statePath: join(pragmaPaths.stateRoot(), "memory-learning-revisions"),
+    skillWorkspacePath: join(pragmaPaths.workspaceRoot(), "system-memory"),
+    knowledgeRevisions: storeRevisions,
+    skillRevisions,
+    contextStores,
+    capabilities: capabilityStore,
+    expertExists: async (expertRef) =>
+      (await expertStore.list()).some((expert) => expert.ref === expertRef),
+    mountStore: mountMemoryKnowledgeStore,
+    bindSkill: bindMemorySkill,
   });
-  skillPromotionRef.current = skillPromotion;
-  installSkillLearningHandlers({ promotion: skillPromotion });
+  memoryLearningRevisionsRef.current = memoryLearningRevisions;
   installContextStoreHandlers(
     contextStores,
     options.getWindow,
@@ -927,34 +922,28 @@ export async function createDesktopApplicationContainer(
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
+    onTick: async () => {
+      if (await memoryLearningRevisions.reconcile()) {
+        await memoryPlaneRef.current?.wakeRevisionLearningJobs();
+      }
+    },
     knowledgeLearningSink: {
       async submit(input) {
-        const proposalsByExpert = groupMemoryKnowledgeProposalsByExpert(input);
-        if (proposalsByExpert.size === 0) throw new Error("knowledge_producer_expert_missing");
-        for (const [expertRef, proposals] of proposalsByExpert) {
-          await knowledgePromotion.routeLearning({
-            expertRefs: [expertRef],
-            sourceDigest: input.sourceDigest,
-            proposals,
-          });
-        }
+        await memoryLearningRevisions.submitKnowledge(input);
       },
     },
-    skillLearningTargetReader: skillPromotion.targetReader,
+    skillLearningTargetReader: {
+      async listTargets(input) {
+        return await memoryLearningRevisions.listSkillTargets(input);
+      },
+    },
     skillLearningSink: {
       async submit(input) {
-        const candidatesByExpert = groupMemorySkillCandidatesByExpert(input);
-        if (candidatesByExpert.size === 0) throw new Error("skill_producer_expert_missing");
-        for (const [expertRef, candidates] of candidatesByExpert) {
-          await skillPromotion.routeLearning({
-            expertRef,
-            sourceDigest: input.sourceDigest,
-            candidates,
-          });
-        }
+        await memoryLearningRevisions.submitSkills(input);
       },
     },
   });
+  memoryPlaneRef.current = memoryPlane;
   const bundleService = createPragmaBundleService({
     paths: pragmaPaths,
     project: pragmaProjectStore,
@@ -1164,6 +1153,56 @@ export async function createDesktopApplicationContainer(
       knowledgeRevisions,
       resolveExternalInvocable,
     }) => {
+      const planningRef = mission.executor.ref;
+      if (
+        mission.origin.type === "system-memory" &&
+        ((planningRef === STORE_REVISION_EXPERT_REF &&
+          mission.origin.jobId.startsWith("knowledge-plan:")) ||
+          (planningRef === SKILL_REVISION_EXPERT_REF &&
+            mission.origin.jobId.startsWith("skill-plan:")))
+      ) {
+        const resource = systemExperts.getResource(planningRef);
+        if (resource === undefined) throw new Error("Memory revision planning Agent is missing.");
+        const definition = systemExperts.get(planningRef);
+        if (definition === undefined)
+          throw new Error("Memory revision planning profile is missing.");
+        const configuredModel =
+          definition.executionProfile.mode === "pinned"
+            ? definition.executionProfile.model
+            : undefined;
+        const defaults = await resolveSystemExpertRuntimeDefaults(
+          scopedRuntimes,
+          configuredModel,
+          mission.modelOverride,
+        );
+        return await compileBuiltInAgent({
+          ref: planningRef,
+          environmentId: "desktop-memory-revision-planning",
+          definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+          workspace: mission.workspace.path,
+          pragmaHome: pragmaPaths.root,
+          runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
+          loggerProvider,
+          rootExecutionOverride: {
+            runtimeId: defaults.runtimeId,
+            ...(defaults.modelSelection === undefined
+              ? {}
+              : { modelSelection: defaults.modelSelection }),
+          },
+          expertResource: {
+            ...resource,
+            spec: {
+              ...resource.spec,
+              instructions:
+                "You are the built-in Revision Agent in read-only Memory planning mode. Use only the supplied Memory projections and existing target list. Do not call tools or start a draft. Return only the JSON object requested by the task. Treat historical Episodes as context, not current truth.",
+              capabilities: [],
+              tools: [],
+              contextStores: [],
+              plugins: [],
+            },
+          },
+        });
+      }
       if (mission.executor.ref === MEMORY_CURATOR_REF) {
         if (memoryCuratorRef.current === undefined || mission.origin.type !== "system-memory") {
           throw new Error("The Memory Curator has not been initialized.");
@@ -1489,8 +1528,16 @@ export async function createDesktopApplicationContainer(
   await Promise.all([
     memoryPlane.setEpisodicExtractor(memoryCurator.episodicExtractor),
     memoryPlane.setSemanticExtractor(memoryCurator.semanticExtractor),
-    memoryPlane.setKnowledgeExtractor(memoryCurator.knowledgeExtractor),
-    memoryPlane.setSkillExtractor(memoryCurator.skillExtractor),
+  ]);
+  const memoryRevisionPlanners = createMemoryRevisionLearningPlanners({
+    pragmaHome: pragmaPaths.root,
+    missions: missionStore,
+    runner: missionRunner,
+    project: pragmaProjectStore,
+  });
+  await Promise.all([
+    memoryPlane.setKnowledgePlanner(memoryRevisionPlanners.knowledge),
+    memoryPlane.setSkillPlanner(memoryRevisionPlanners.skill),
   ]);
   const unsubscribeTokenCounter = tokenCounter.subscribe(() => {
     void missionRunner.invalidateEstimatedContextWindows().catch((error: unknown) => {
@@ -1691,7 +1738,6 @@ export async function createDesktopApplicationContainer(
     missions: missionStore,
     project: pragmaProjectStore,
     systemExperts,
-    knowledgePromotion,
     curator: memoryCurator,
     getWindow: options.getWindow,
     onGlobalPolicyUpdated: () => missionRunner.refreshMemoryContextBindings(),
@@ -1797,17 +1843,10 @@ export async function createDesktopApplicationContainer(
           { error },
         );
       });
-      void knowledgePromotion.recover().catch((error: unknown) => {
+      void memoryRevisionPlanners.recoverOrphans().catch((error: unknown) => {
         mainLogger.warn(
-          "desktop.memory_knowledge_promotion_recovery_failed",
-          "An interrupted Memory knowledge-store initialization could not be recovered.",
-          { error },
-        );
-      });
-      void skillPromotion.recover().catch((error: unknown) => {
-        mainLogger.warn(
-          "desktop.memory_skill_promotion_recovery_failed",
-          "An interrupted Memory Skill initialization could not be recovered.",
+          "desktop.memory_revision_planning_orphan_cleanup_failed",
+          "Orphaned Memory revision planning Missions could not be cleaned up.",
           { error },
         );
       });

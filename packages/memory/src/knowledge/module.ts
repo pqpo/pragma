@@ -2,31 +2,25 @@ import { createHash } from "node:crypto";
 import { StaticContextStore } from "@pragma/core";
 
 import {
-  KnowledgeExtractionInputSchema,
-  KnowledgeExtractionOutputSchema,
-  type KnowledgeExtractionCandidate,
   type KnowledgeSourceSnapshot,
   type MemoryExtractionFailurePhase,
   type MemorySubjectRef,
 } from "@pragma/shared";
 
-import type { KnowledgeMemoryExtractor, KnowledgeSourceReader } from "./schema.ts";
+import type { KnowledgeSourceReader } from "./schema.ts";
 import { createKnowledgeLearningStore, type KnowledgeLearningStore } from "./store.ts";
 import { extractionFailureDiagnostic } from "../pipeline/extraction-error-code.ts";
 import type { MemoryModule } from "../pipeline/memory-module.ts";
 import { DEFAULT_MEMORY_STORAGE_POLICY } from "../storage/memory-storage-policy.ts";
+import type { KnowledgeLearningPlan } from "../learning/revision-plan.ts";
 
 const MAX_SOURCE_REVISIONS = 100;
 
-export {
-  KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
-  type KnowledgeMemoryExtractor,
-  type KnowledgeSourceReader,
-} from "./schema.ts";
+export type { KnowledgeSourceReader } from "./schema.ts";
 
 export interface KnowledgeMemoryModule extends MemoryModule {
   readonly store: KnowledgeLearningStore;
-  setExtractor(extractor: KnowledgeMemoryExtractor | undefined): Promise<void>;
+  setPlanner(planner: KnowledgeLearningPlanner | undefined): Promise<void>;
   scheduleRoot(rootRef: MemorySubjectRef): Promise<void>;
   interruptExtractionJob(input: {
     readonly id: string;
@@ -39,22 +33,33 @@ export interface KnowledgeMemoryModule extends MemoryModule {
 export interface KnowledgeLearningSink {
   submit(input: {
     readonly rootRef: MemorySubjectRef;
+    readonly expertRef: string;
     readonly sourceDigest: string;
-    readonly candidates: readonly KnowledgeExtractionCandidate[];
+    readonly plan: Extract<KnowledgeLearningPlan, { action: "apply" }>;
     readonly sources: readonly KnowledgeSourceSnapshot[];
   }): Promise<void>;
+}
+
+export interface KnowledgeLearningPlanner {
+  plan(input: {
+    readonly rootRef: MemorySubjectRef;
+    readonly expertRef: string;
+    readonly sourceDigest: string;
+    readonly sources: readonly KnowledgeSourceSnapshot[];
+    readonly signal: AbortSignal;
+  }): Promise<KnowledgeLearningPlan>;
 }
 
 export async function createKnowledgeMemoryModule(options: {
   readonly sourceReader: KnowledgeSourceReader;
   readonly pragmaHome?: string | undefined;
-  readonly extractor?: KnowledgeMemoryExtractor | undefined;
+  readonly planner?: KnowledgeLearningPlanner | undefined;
   readonly learningSink: KnowledgeLearningSink;
   readonly now?: (() => Date) | undefined;
 }): Promise<KnowledgeMemoryModule> {
   const store = await createKnowledgeLearningStore(options);
   const now = options.now ?? (() => new Date());
-  let extractor = options.extractor;
+  let planner = options.planner;
   const running = new Map<string, AbortController>();
 
   const scheduleRoot = async (rootRef: MemorySubjectRef): Promise<void> => {
@@ -82,7 +87,7 @@ export async function createKnowledgeMemoryModule(options: {
       purpose: "learning",
       contextLayers: {
         usagePrompt:
-          "Knowledge learning only proposes Studio Context Store initialization or revision tasks. It has no recallable published projection.",
+          "Knowledge learning creates managed Studio Context Store revision drafts. It has no recallable published projection.",
         summaryPath: "summary.md",
         indexPath: "index.md",
         itemsPrefix: "items/",
@@ -99,7 +104,7 @@ export async function createKnowledgeMemoryModule(options: {
       return {};
     },
     async runBackgroundOnce() {
-      if (extractor === undefined) return;
+      if (planner === undefined) return;
       const job = await store.claimDueJob(now());
       if (job === undefined) return;
       const controller = new AbortController();
@@ -125,36 +130,53 @@ export async function createKnowledgeMemoryModule(options: {
           await store.completeRejected(job, now());
           return;
         }
-        const input = KnowledgeExtractionInputSchema.parse({
-          schemaVersion: "pragma.memory-knowledge-extraction-input/v2",
-          jobId: job.id,
-          rootRef: job.rootRef,
-          sources,
-        });
-        if (!(await store.isClaimCurrent(job))) return;
-        controller.signal.throwIfAborted();
-        phase = "curator_run";
-        const result = await extractor.extract(input, { signal: controller.signal });
-        controller.signal.throwIfAborted();
-        phase = "validation";
-        const output = KnowledgeExtractionOutputSchema.parse(result.output);
-        if (!output.retain) {
-          await store.completeRejected(job, now());
-          return;
+        const expertRefs = new Set(
+          sources
+            .flatMap((source) => source.producerRefs)
+            .filter((ref) => ref.type === "pragma.expert")
+            .map((ref) => `expert:${ref.id}`),
+        );
+        if (expertRefs.size === 0 && job.rootRef.type === "pragma.expert") {
+          expertRefs.add(`expert:${job.rootRef.id}`);
         }
-        const candidates = eligibleCandidates(output.candidates, sources);
-        if (candidates.length === 0) {
-          await store.completeRejected(job, now());
-          return;
+        let submitted = false;
+        for (const expertRef of expertRefs) {
+          const producerSources = sources.filter((source) =>
+            source.producerRefs.some(
+              (ref) => ref.type === "pragma.expert" && `expert:${ref.id}` === expertRef,
+            ),
+          );
+          const expertSources = producerSources.length > 0 ? producerSources : sources;
+          if (!knowledgeSourceSelectionEligible(expertSources)) continue;
+          if (!(await store.isClaimCurrent(job))) return;
+          controller.signal.throwIfAborted();
+          const expertDigest = digest(
+            "knowledge-expert-sources",
+            expertRef,
+            ...expertSources.map(sourceDigestKey).toSorted(),
+          );
+          phase = "revision_plan";
+          const plan = await planner.plan({
+            rootRef: job.rootRef,
+            expertRef,
+            sourceDigest: expertDigest,
+            sources: expertSources,
+            signal: controller.signal,
+          });
+          controller.signal.throwIfAborted();
+          if (plan.action === "skip") continue;
+          phase = "revision_submit";
+          await options.learningSink.submit({
+            rootRef: job.rootRef,
+            expertRef,
+            sourceDigest: expertDigest,
+            plan,
+            sources: expertSources,
+          });
+          submitted = true;
         }
-        phase = "promotion";
-        await options.learningSink.submit({
-          rootRef: job.rootRef,
-          sourceDigest,
-          candidates,
-          sources,
-        });
-        await store.completeLearned(job, now());
+        if (submitted) await store.completeLearned(job, now());
+        else await store.completeRejected(job, now());
       } catch (error) {
         const failure = extractionFailureDiagnostic(error, "knowledge_extraction", {
           phase,
@@ -171,8 +193,8 @@ export async function createKnowledgeMemoryModule(options: {
         if (running.get(job.id) === controller) running.delete(job.id);
       }
     },
-    async setExtractor(next) {
-      extractor = next;
+    async setPlanner(next) {
+      planner = next;
     },
     scheduleRoot,
     async interruptExtractionJob(input) {
@@ -194,36 +216,12 @@ function boundSources(
     const next = [...selected, source];
     if (
       Buffer.byteLength(JSON.stringify(next)) >
-      DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes
-    ) {
-      break;
-    }
+      Math.min(DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes, 35_000)
+    )
+      continue;
     selected.push(source);
   }
   return selected;
-}
-
-function eligibleCandidates(
-  candidates: readonly KnowledgeExtractionCandidate[],
-  sources: readonly KnowledgeSourceSnapshot[],
-): readonly KnowledgeExtractionCandidate[] {
-  const available = new Map(sources.map((source) => [sourceKey(source), source]));
-  const normalizedKeys = new Set<string>();
-  const eligible: KnowledgeExtractionCandidate[] = [];
-  for (const candidate of candidates) {
-    const selected = candidate.sourceRefs.map((ref) =>
-      available.get(`${ref.kind}\0${ref.id}\0${ref.revision}`),
-    );
-    if (selected.some((source) => source === undefined)) continue;
-    const uniqueSources = [
-      ...new Map(selected.map((source) => [sourceKey(source!), source!] as const)).values(),
-    ];
-    if (!knowledgeSourceSelectionEligible(uniqueSources)) continue;
-    if (normalizedKeys.has(candidate.content.normalizedKey)) continue;
-    normalizedKeys.add(candidate.content.normalizedKey);
-    eligible.push(candidate);
-  }
-  return eligible;
 }
 
 export function knowledgeSourceSelectionEligible(
@@ -234,11 +232,6 @@ export function knowledgeSourceSelectionEligible(
     semantic.some((source) => source.verified) ||
     new Set(semantic.flatMap((source) => source.sourceExecutionIds)).size >= 2
   );
-}
-
-/** Distinguishes exact source revisions when validating extractor references. */
-function sourceKey(source: KnowledgeSourceSnapshot): string {
-  return `${source.ref.kind}\0${source.ref.id}\0${source.ref.revision}`;
 }
 
 /** Detects effective source-content changes while ignoring revision-only churn. */
@@ -263,6 +256,10 @@ function digest(...parts: readonly string[]): string {
 }
 
 function isConfigurationError(error: unknown): boolean {
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
   const message = error instanceof Error ? error.message : String(error);
-  return /(?:unavailable|not configured|profile|runtime|provider|model)/i.test(message);
+  return /(?:unavailable|not configured|profile|runtime|provider|model|memory_revision_pending)/iu.test(
+    `${code} ${message}`,
+  );
 }

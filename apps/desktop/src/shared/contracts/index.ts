@@ -21,7 +21,6 @@ export * from "./plugins.ts";
 export * from "./projects.ts";
 export * from "./runtime.ts";
 export * from "./settings.ts";
-export * from "./skill-learning.ts";
 export * from "./types.ts";
 export * from "./usage.ts";
 export * from "./workflow-layout.ts";

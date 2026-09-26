@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Superseded in part by [ADR 057](./057-unified-memory-revision-learning.md). Synchronous draft validation
+and human review remain; the Memory Skill candidate and promotion path are removed.
 
 ## Context
 

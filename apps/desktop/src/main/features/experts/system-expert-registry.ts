@@ -76,6 +76,7 @@ export interface DesktopSystemExpertRegistry {
 export function createDesktopSystemExpertRegistry(options?: {
   readonly configPath?: string | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
+  readonly onChanged?: ((ref: string) => Promise<void>) | undefined;
 }): DesktopSystemExpertRegistry {
   const editableRefs = [
     BUILT_IN_PRAGMA_REF,
@@ -356,6 +357,7 @@ export function createDesktopSystemExpertRegistry(options?: {
         await writeConfig(latest);
         customizations = latest;
       });
+      await options?.onChanged?.(ref);
       return definition(ref);
     },
     async validateCapabilityCompatibility(capabilityId, availableTools) {
@@ -395,6 +397,7 @@ export function createDesktopSystemExpertRegistry(options?: {
         await writeConfig(latest);
         customizations = latest;
       });
+      await options?.onChanged?.(ref);
       return definition(ref);
     },
   };

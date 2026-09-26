@@ -1,44 +1,33 @@
 import {
   DEFAULT_MEMORY_STORAGE_POLICY,
   EpisodicExtractionOutputSchema,
-  KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_PROMPT_VERSION,
   MEMORY_CURATOR_REF,
   SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION,
-  SKILL_MEMORY_CURATOR_PROMPT_VERSION,
   SemanticExtractionOutputSchema,
-  inspectSkillSourceEligibility,
   mergeMemoryEvidenceOmissionStats,
   selectBoundedMemoryEvidence,
   type EpisodicMemoryExtractor,
-  type KnowledgeMemoryExtractor,
   type MemoryExtractorProfile,
   type MemoryExtractorProfileStore,
   type SemanticMemoryExtractor,
-  type SkillMemoryExtractor,
 } from "@pragma/memory";
 import {
-  KnowledgeExtractionOutputSchema,
-  SkillExtractionOutputSchema,
   type AgentMessageUsage,
   type MemoryEvidenceEnvelope,
   type MemoryExtractionOutputDiagnostic,
-  type SkillExtractionInput,
-  type SkillExtractionOutput,
-  type SkillSourceSnapshot,
 } from "@pragma/shared";
 
 import { inspectStructuredJson } from "./structured-output.ts";
-import { z, type ZodType } from "zod";
+import { type ZodType } from "zod";
 
 export interface MemoryCuratorExecutionPort {
   run(input: {
     readonly jobId: string;
-    readonly module: "episodic" | "semantic" | "knowledge" | "skill";
+    readonly module: "episodic" | "semantic";
     readonly title: string;
     readonly prompt: string;
     readonly profile: MemoryExtractorProfile;
-    readonly skillInput?: SkillExtractionInput | undefined;
     readonly signal?: AbortSignal | undefined;
   }): Promise<{
     readonly content: string;
@@ -48,27 +37,12 @@ export interface MemoryCuratorExecutionPort {
     readonly responseModel?: string | undefined;
     readonly finishReason?: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined;
     readonly usage?: AgentMessageUsage | undefined;
-    readonly skillOutput?: SkillExtractionOutput | undefined;
   }>;
 }
-
-const SkillExtractionRejectionSchema = z
-  .object({
-    retain: z.literal(false),
-    reason: z.enum([
-      "no-reusable-skill",
-      "insufficient-independent-sources",
-      "fragmentary-pattern",
-      "sensitive",
-    ]),
-  })
-  .strict();
 
 export interface BuiltInMemoryCurator {
   readonly episodicExtractor: EpisodicMemoryExtractor;
   readonly semanticExtractor: SemanticMemoryExtractor;
-  readonly knowledgeExtractor: KnowledgeMemoryExtractor;
-  readonly skillExtractor: SkillMemoryExtractor;
 }
 
 export function createBuiltInMemoryCurator(options: {
@@ -131,52 +105,6 @@ export function createBuiltInMemoryCurator(options: {
             "semantic_extraction_output_invalid",
           ),
           provenance: provenance(profile, execution, SEMANTIC_MEMORY_CURATOR_PROMPT_VERSION),
-        };
-      },
-    },
-    knowledgeExtractor: {
-      async extract(input, extractionOptions) {
-        const profile = await options.profiles.get();
-        const execution = await options.execution.run({
-          jobId: input.jobId,
-          module: "knowledge",
-          title: `Knowledge extraction ${input.rootRef.id.slice(0, 12)}`,
-          prompt: renderKnowledgeExtractionPrompt(input),
-          profile,
-          signal: extractionOptions?.signal,
-        });
-        return {
-          output: parseCuratorOutput(
-            execution,
-            KnowledgeExtractionOutputSchema,
-            "knowledge_extraction_output_invalid",
-          ),
-          provenance: provenance(profile, execution, KNOWLEDGE_MEMORY_CURATOR_PROMPT_VERSION),
-        };
-      },
-    },
-    skillExtractor: {
-      async extract(input, extractionOptions) {
-        const profile = await options.profiles.get();
-        const execution = await options.execution.run({
-          jobId: input.jobId,
-          module: "skill",
-          title: `Skill extraction ${input.rootRef.id.slice(0, 12)}`,
-          prompt: renderSkillExtractionPrompt(input),
-          profile,
-          skillInput: input,
-          signal: extractionOptions?.signal,
-        });
-        return {
-          output:
-            execution.skillOutput === undefined
-              ? parseCuratorOutput(
-                  execution,
-                  SkillExtractionRejectionSchema,
-                  "skill_extraction_output_invalid",
-                )
-              : SkillExtractionOutputSchema.parse(execution.skillOutput),
-          provenance: provenance(profile, execution, SKILL_MEMORY_CURATOR_PROMPT_VERSION),
         };
       },
     },
@@ -273,93 +201,6 @@ export function renderSemanticExtractionPrompt(
       JSON.stringify(omissions),
     ].join("\n\n"),
   );
-}
-
-export function renderKnowledgeExtractionPrompt(
-  input: Parameters<KnowledgeMemoryExtractor["extract"]>[0],
-): string {
-  return enforcePromptLimit(
-    [
-      "Extract reusable Knowledge candidates from these already-curated Memory source revisions.",
-      "Candidates are proposals for human review, not automatically published instructions.",
-      "Each candidate must cite exact supplied sourceRefs and at least one Semantic source. It is eligible only when one cited Semantic source is verified or the cited Semantic sources collectively cover at least two distinct sourceExecutionIds.",
-      "Episodic sources are supplemental only. Use them to enrich steps, failures, and recoveries, never as independent authority or current truth.",
-      "normalizedKey must be a stable lowercase root-scoped deduplication key using only letters, numbers, dot, underscore, colon, slash, or hyphen.",
-      "Keep guidance concrete and reusable. Do not invent facts, identifiers, permissions, or provenance.",
-      "Output schema:",
-      '{"retain":true,"candidates":[{"content":{"title":"...","summary":"...","guidance":["..."],"normalizedKey":"workflow.example"},"sourceRefs":[{"kind":"episodic|semantic","id":"...","revision":1}]}]}',
-      'or {"retain":false,"reason":"no-reusable-knowledge|insufficient-sources|sensitive"}.',
-      "Root:",
-      JSON.stringify(input.rootRef),
-      "Sources:",
-      JSON.stringify(input.sources),
-    ].join("\n\n"),
-  );
-}
-
-export function renderSkillExtractionPrompt(
-  input: Parameters<SkillMemoryExtractor["extract"]>[0],
-): string {
-  const render = (sources: readonly SkillSourceSnapshot[]): string => {
-    const eligibility = inspectSkillSourceEligibility(sources);
-    return [
-      "Extract at most three complete, reusable Skill candidates from these curated Memory sources.",
-      "A Skill is a coherent executable workflow, not a fact, isolated tip, command fragment, or one-off success. Merge related steps into one Skill and return retain=false when the pattern is fragmentary.",
-      "Every candidate must cite at least three distinct high-value Episodic ids across at least two conversations; at least two must have succeeded or recovered successfully. Semantic sources may support but never satisfy this threshold.",
-      "Host-computed source eligibility is authoritative; do not try to satisfy an ineligible input by repeating the same draft request.",
-      "Source eligibility:",
-      JSON.stringify({
-        eligible: eligibility.eligible,
-        highValueEpisodicCount: eligibility.highValueEpisodicCount,
-        conversationCount: eligibility.conversationCount,
-        successfulOrRecoveredCount: eligibility.successfulOrRecoveredCount,
-        qualifyingSourceRefs: eligibility.qualifyingSourceRefs,
-      }),
-      'When eligible is false, do not call begin_skill_draft; return exactly {"retain":false,"reason":"insufficient-independent-sources"}.',
-      "Generate SKILL.md plus optional references/*.md. Scripts are optional and must be dependency-free Node 22 ESM under scripts/*.mjs with node:test coverage under tests/*.test.mjs.",
-      "For each candidate create at least three source replay expectations and one clearly non-applicable boundary case.",
-      'Compare only existingTargets. Use revise only for one clear match, ambiguous for two or more plausible matches, otherwise create. Never invent a binding id. route is always an object: use {"type":"create"}; use {"type":"revise","bindingId":"an existing binding UUID"}; or use {"type":"ambiguous","bindingIds":["existing binding UUID 1","existing binding UUID 2"]}.',
-      "For every candidate, call begin_skill_draft with metadata, sourceRefs, and route; call put_skill_file once per file; then call submit_skill_draft. Repair validation errors in the same draft and resubmit. Never place Skill file contents in the final response.",
-      "After at least one draft is submitted successfully, finish with a brief acknowledgement. The Host uses the submitted drafts as the result.",
-      'If no reusable Skill exists, do not create a draft; return exactly {"retain":false,"reason":"no-reusable-skill|insufficient-independent-sources|fragmentary-pattern|sensitive"}.',
-      "Root:",
-      JSON.stringify(input.rootRef),
-      "Existing Memory Skills:",
-      JSON.stringify(input.existingTargets),
-      "Sources:",
-      JSON.stringify(sources),
-    ].join("\n\n");
-  };
-  const selected = selectSkillPromptSources(input, render);
-  return enforcePromptLimit(render(selected));
-}
-
-function selectSkillPromptSources(
-  input: Parameters<SkillMemoryExtractor["extract"]>[0],
-  render: (sources: readonly SkillSourceSnapshot[]) => string,
-): readonly SkillSourceSnapshot[] {
-  const candidates = input.sources
-    .map((source, index) => ({ source, index }))
-    .toSorted(
-      (left, right) =>
-        skillSourcePriority(left.source) - skillSourcePriority(right.source) ||
-        left.index - right.index,
-    );
-  const selected: Array<{ readonly source: SkillSourceSnapshot; readonly index: number }> = [];
-  for (const candidate of candidates) {
-    const next = [...selected.map((item) => item.source), candidate.source];
-    if (Buffer.byteLength(render(next)) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
-      continue;
-    }
-    selected.push(candidate);
-  }
-  return selected.toSorted((left, right) => left.index - right.index).map((item) => item.source);
-}
-
-function skillSourcePriority(source: SkillSourceSnapshot): number {
-  if (source.ref.kind === "episodic" && (source.valueScore ?? 0) >= 0.85) return 0;
-  if (source.ref.kind === "episodic") return 1;
-  return 2;
 }
 
 function curatorOutputDiagnostic(
@@ -545,11 +386,4 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function enforcePromptLimit(prompt: string): string {
-  if (Buffer.byteLength(prompt) > DEFAULT_MEMORY_STORAGE_POLICY.extractionPromptMaxBytes) {
-    throw new Error("memory_curator_prompt_metadata_too_large");
-  }
-  return prompt;
 }

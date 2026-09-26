@@ -32,12 +32,7 @@ import {
   DesktopMemoryExtractionActiveTaskListSchema,
   DesktopMemoryExtractionRunRefSchema,
   DesktopMemoryExtractionRunChatUpdateSchema,
-  MemoryKnowledgeInitializationCandidateSchema,
-  ListMemoryKnowledgeInitializationCandidatesSchema,
-  MemoryKnowledgeInitializationCandidateRefSchema,
-  UpdateMemoryKnowledgeInitializationCandidateSchema,
 } from "../../shared/contracts/memory.ts";
-import { ContextStoreSchema } from "../../shared/contracts/context-stores.ts";
 import { MissionConversationSnapshotSchema } from "../../shared/contracts/missions.ts";
 import {
   ExpertMemoryContextStoreContentSchema,
@@ -196,34 +191,6 @@ export const memoryApi = {
   forgetMemoryItem: async (input) => {
     await ipcRenderer.invoke("memory-items:forget", ReviewDesktopMemoryItemSchema.parse(input));
   },
-  listMemoryKnowledgeInitializations: async (input = {}) =>
-    MemoryKnowledgeInitializationCandidateSchema.array().parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge-initializations:list",
-        ListMemoryKnowledgeInitializationCandidatesSchema.parse(input),
-      ),
-    ),
-  updateMemoryKnowledgeInitialization: async (input) =>
-    MemoryKnowledgeInitializationCandidateSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge-initializations:update",
-        UpdateMemoryKnowledgeInitializationCandidateSchema.parse(input),
-      ),
-    ),
-  rejectMemoryKnowledgeInitialization: async (input) =>
-    MemoryKnowledgeInitializationCandidateSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge-initializations:reject",
-        MemoryKnowledgeInitializationCandidateRefSchema.parse(input),
-      ),
-    ),
-  createMemoryKnowledgeStore: async (input) =>
-    ContextStoreSchema.parse(
-      await ipcRenderer.invoke(
-        "memory-knowledge-initializations:create-store",
-        MemoryKnowledgeInitializationCandidateRefSchema.parse(input),
-      ),
-    ),
   getMissionMemoryActivity: async (missionId) =>
     DesktopMissionMemoryActivitySchema.parse(
       await ipcRenderer.invoke("memory-mission:activity", { missionId }),
@@ -310,10 +277,6 @@ export const memoryApi = {
   | "tightenMemoryAccess"
   | "invalidateMemoryItem"
   | "forgetMemoryItem"
-  | "listMemoryKnowledgeInitializations"
-  | "updateMemoryKnowledgeInitialization"
-  | "rejectMemoryKnowledgeInitialization"
-  | "createMemoryKnowledgeStore"
   | "getMissionMemoryActivity"
   | "getExpertMemoryContextStore"
   | "listExpertMemoryContextStoreEntries"

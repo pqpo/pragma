@@ -223,10 +223,6 @@ import type {
   DesktopMemoryExtractionTaskDetail,
   DesktopMemoryExtractionRunRef,
   DesktopMemoryExtractionRunChatUpdate,
-  MemoryKnowledgeInitializationCandidate,
-  ListMemoryKnowledgeInitializationCandidates,
-  MemoryKnowledgeInitializationCandidateRef,
-  UpdateMemoryKnowledgeInitializationCandidate,
   GetExpertMemoryContextStore,
   ListExpertMemoryContextStoreEntries,
   ReadExpertMemoryContextStoreEntry,
@@ -259,12 +255,6 @@ import type {
   RetryAgentEvaluationTask,
   UpdateEvaluationQueueSettings,
 } from "./types.ts";
-import type {
-  MemorySkillCandidate,
-  MemorySkillCandidateRef,
-  ResolveMemorySkillTarget,
-  UpdateMemorySkillCandidate,
-} from "./skill-learning.ts";
 
 export interface PragmaDesktopAPI {
   getCoreAssetSyncOverview: () => Promise<CoreAssetSyncOverview>;
@@ -335,25 +325,6 @@ export interface PragmaDesktopAPI {
   tightenMemoryAccess: (input: TightenDesktopMemoryAccess) => Promise<DesktopMemoryItem>;
   invalidateMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<DesktopMemoryItem>;
   forgetMemoryItem: (input: ReviewDesktopMemoryItem) => Promise<void>;
-  listMemoryKnowledgeInitializations: (
-    input?: ListMemoryKnowledgeInitializationCandidates,
-  ) => Promise<MemoryKnowledgeInitializationCandidate[]>;
-  updateMemoryKnowledgeInitialization: (
-    input: UpdateMemoryKnowledgeInitializationCandidate,
-  ) => Promise<MemoryKnowledgeInitializationCandidate>;
-  rejectMemoryKnowledgeInitialization: (
-    input: MemoryKnowledgeInitializationCandidateRef,
-  ) => Promise<MemoryKnowledgeInitializationCandidate>;
-  createMemoryKnowledgeStore: (
-    input: MemoryKnowledgeInitializationCandidateRef,
-  ) => Promise<ContextStore>;
-  listMemorySkillCandidates: (input?: {
-    readonly state?: MemorySkillCandidate["state"];
-  }) => Promise<MemorySkillCandidate[]>;
-  updateMemorySkillCandidate: (input: UpdateMemorySkillCandidate) => Promise<MemorySkillCandidate>;
-  resolveMemorySkillTarget: (input: ResolveMemorySkillTarget) => Promise<MemorySkillCandidate>;
-  rejectMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
-  approveMemorySkillCandidate: (input: MemorySkillCandidateRef) => Promise<MemorySkillCandidate>;
   getMissionMemoryActivity: (missionId: string) => Promise<DesktopMissionMemoryActivity>;
   getMissionContextStore: (input: GetMissionContextStore) => Promise<MissionContextStoreDescriptor>;
   listMissionContextStoreEntries: (

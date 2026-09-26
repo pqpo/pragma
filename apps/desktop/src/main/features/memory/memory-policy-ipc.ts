@@ -31,17 +31,11 @@ import {
   DesktopMemoryExtractionActiveTaskListSchema,
   DesktopMemoryExtractionRunRefSchema,
   MissionConversationSnapshotSchema,
-  MemoryKnowledgeInitializationCandidateSchema,
-  ListMemoryKnowledgeInitializationCandidatesSchema,
-  MemoryKnowledgeInitializationCandidateRefSchema,
-  UpdateMemoryKnowledgeInitializationCandidateSchema,
-  ContextStoreSchema,
 } from "../../../shared/contracts/index.ts";
 import type { DesktopMemoryPlane } from "./desktop-memory-plane.ts";
 import type { MissionStore } from "../missions/mission-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
-import type { MemoryKnowledgePromotionService } from "./memory-knowledge-promotion.ts";
 import {
   getDesktopMemoryExtractionTaskDetail,
   listDesktopMemoryExtractionActiveTasks,
@@ -61,7 +55,6 @@ export function installMemoryPolicyHandlers(
     readonly missions: MissionStore;
     readonly project: PragmaProjectStore;
     readonly systemExperts: Pick<DesktopSystemExpertRegistry, "list">;
-    readonly knowledgePromotion: MemoryKnowledgePromotionService;
     readonly curator: DesktopMemoryCurator;
     readonly getWindow: () => BrowserWindow | null;
     readonly onGlobalPolicyUpdated?: (() => void | Promise<void>) | undefined;
@@ -284,34 +277,6 @@ export function installMemoryPolicyHandlers(
       reason: parsed.reason,
     });
   });
-  ipcMain.handle("memory-knowledge-initializations:list", async (_event, input: unknown) =>
-    MemoryKnowledgeInitializationCandidateSchema.array().parse(
-      await options.knowledgePromotion.list(
-        ListMemoryKnowledgeInitializationCandidatesSchema.parse(input ?? {}),
-      ),
-    ),
-  );
-  ipcMain.handle("memory-knowledge-initializations:update", async (_event, input: unknown) =>
-    MemoryKnowledgeInitializationCandidateSchema.parse(
-      await options.knowledgePromotion.update(
-        UpdateMemoryKnowledgeInitializationCandidateSchema.parse(input),
-      ),
-    ),
-  );
-  ipcMain.handle("memory-knowledge-initializations:reject", async (_event, input: unknown) =>
-    MemoryKnowledgeInitializationCandidateSchema.parse(
-      await options.knowledgePromotion.reject(
-        MemoryKnowledgeInitializationCandidateRefSchema.parse(input),
-      ),
-    ),
-  );
-  ipcMain.handle("memory-knowledge-initializations:create-store", async (_event, input: unknown) =>
-    ContextStoreSchema.parse(
-      await options.knowledgePromotion.createStore(
-        MemoryKnowledgeInitializationCandidateRefSchema.parse(input),
-      ),
-    ),
-  );
   ipcMain.handle("memory-mission:activity", async (_event, input: unknown) => {
     const parsed = GetDesktopMissionMemoryActivitySchema.parse(input);
     const executionIds = await missionExecutionIds(options.missions, parsed.missionId);

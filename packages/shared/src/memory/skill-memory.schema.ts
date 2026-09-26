@@ -9,8 +9,6 @@ import {
 } from "./memory-plane.schema.ts";
 
 export const SKILL_LEARNING_JOB_SCHEMA_VERSION = "pragma.memory-skill-job/v2" as const;
-export const SKILL_EXTRACTION_INPUT_SCHEMA_VERSION =
-  "pragma.memory-skill-extraction-input/v1" as const;
 export const MAX_SKILL_PACKAGE_BYTES = 25 * 1_024 * 1_024;
 export const MAX_GENERATED_SKILL_FILE_CHARACTERS = 128 * 1_024;
 
@@ -129,116 +127,6 @@ export const SkillPackageSchema = z
     }
   });
 
-export const GeneratedSkillPackageSchema = SkillPackageSchema.superRefine((value, context) => {
-  value.files.forEach((file, index) => {
-    if (file.content.length > MAX_GENERATED_SKILL_FILE_CHARACTERS) {
-      context.addIssue({
-        code: "custom",
-        path: ["files", index, "content"],
-        message: `Generated Skill files may contain at most ${MAX_GENERATED_SKILL_FILE_CHARACTERS} characters.`,
-      });
-    }
-    if (
-      file.path !== "SKILL.md" &&
-      !file.path.startsWith("references/") &&
-      !file.path.startsWith("scripts/") &&
-      !file.path.startsWith("tests/")
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["files", index, "path"],
-        message:
-          "Generated Skill files must be SKILL.md or live under references/, scripts/, or tests/.",
-      });
-    }
-    if (
-      (file.path.startsWith("scripts/") || file.path.startsWith("tests/")) &&
-      !file.path.endsWith(".mjs")
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["files", index, "path"],
-        message: "Generated executable files must be Node ESM .mjs files.",
-      });
-    }
-  });
-});
-
-export const SkillExtractionInputSchema = z
-  .object({
-    schemaVersion: z.literal(SKILL_EXTRACTION_INPUT_SCHEMA_VERSION),
-    jobId: z.string().min(1),
-    rootRef: MemorySubjectRefSchema,
-    sources: z.array(SkillSourceSnapshotSchema).min(1).max(100),
-    existingTargets: z.array(ExistingMemorySkillTargetSchema).max(100),
-  })
-  .strict();
-
-const SkillCandidateContentSchema = z
-  .object({
-    normalizedKey: z
-      .string()
-      .trim()
-      .min(1)
-      .max(300)
-      .regex(/^[a-z0-9][a-z0-9._:/-]*$/u),
-    applicability: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
-    failureModes: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
-    recoverySteps: z.array(z.string().trim().min(1).max(2_000)).min(1).max(20),
-    package: GeneratedSkillPackageSchema,
-  })
-  .strict();
-
-export const SkillExtractionCandidateSchema = z
-  .object({
-    content: SkillCandidateContentSchema,
-    sourceRefs: z.array(SkillSourceRevisionRefSchema).min(3).max(100),
-    route: z.discriminatedUnion("type", [
-      z.object({ type: z.literal("create") }).strict(),
-      z.object({ type: z.literal("revise"), bindingId: z.string().uuid() }).strict(),
-      z
-        .object({
-          type: z.literal("ambiguous"),
-          bindingIds: z.array(z.string().uuid()).min(2).max(20),
-        })
-        .strict(),
-    ]),
-  })
-  .strict();
-
-export const SkillExtractionOutputSchema = z.discriminatedUnion("retain", [
-  z
-    .object({
-      retain: z.literal(true),
-      candidates: z.array(SkillExtractionCandidateSchema).min(1).max(3),
-    })
-    .strict(),
-  z
-    .object({
-      retain: z.literal(false),
-      reason: z.enum([
-        "no-reusable-skill",
-        "insufficient-independent-sources",
-        "fragmentary-pattern",
-        "sensitive",
-      ]),
-    })
-    .strict(),
-]);
-
-export const SkillExtractorProvenanceSchema = z
-  .object({
-    curatorRef: z.string().min(1),
-    promptVersion: z.string().min(1),
-    profileRevision: z.number().int().nonnegative(),
-    runtimeId: z.string().min(1),
-    providerId: z.string().min(1),
-    modelId: z.string().min(1),
-    responseModel: z.string().min(1).optional(),
-    extractedAt: z.string().datetime(),
-  })
-  .strict();
-
 export const SkillLearningJobSchema = z
   .object({
     schemaVersion: z.literal(SKILL_LEARNING_JOB_SCHEMA_VERSION),
@@ -264,8 +152,4 @@ export type SkillSourceRevisionRef = z.infer<typeof SkillSourceRevisionRefSchema
 export type SkillSourceSnapshot = z.infer<typeof SkillSourceSnapshotSchema>;
 export type ExistingMemorySkillTarget = z.infer<typeof ExistingMemorySkillTargetSchema>;
 export type SkillPackage = z.infer<typeof SkillPackageSchema>;
-export type SkillExtractionInput = z.infer<typeof SkillExtractionInputSchema>;
-export type SkillExtractionCandidate = z.infer<typeof SkillExtractionCandidateSchema>;
-export type SkillExtractionOutput = z.infer<typeof SkillExtractionOutputSchema>;
-export type SkillExtractorProvenance = z.infer<typeof SkillExtractorProvenanceSchema>;
 export type SkillLearningJob = z.infer<typeof SkillLearningJobSchema>;

@@ -73,6 +73,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Synchronous Skill validation and manual review](./052-synchronous-skill-validation.md)
 - [Trusted Git Skill synchronization](./053-trusted-git-skill-synchronization.md)
 - [Localized Bundle asset identity](./054-localized-bundle-asset-identity.md)
+- [Unified Memory revision learning](./057-unified-memory-revision-learning.md)
 
 ## 维护规则
 

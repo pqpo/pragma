@@ -35,7 +35,6 @@ export const BUILT_IN_PRAGMA_ID = PragmaExpertIdSchema.parse(
 export const MEMORY_CURATOR_ID = PragmaExpertIdSchema.parse(
   "0000000000mem0ry",
 ) as "0000000000mem0ry";
-export const MEMORY_CURATOR_SKILL_DRAFT_CAPABILITY_ID = "0000000000skdrft" as const;
 export const PRAGMA_MANAGEMENT_CAPABILITY_ID = PragmaSemanticResourceIdSchema.parse(
   "0000000000manage",
 ) as "0000000000manage";
@@ -57,12 +56,6 @@ export const BUILT_IN_PRAGMA_REF = PragmaExpertRefSchema.parse(
 export const MEMORY_CURATOR_REF = PragmaExpertRefSchema.parse(
   `expert:${MEMORY_CURATOR_ID}`,
 ) as `expert:${typeof MEMORY_CURATOR_ID}`;
-export const MEMORY_CURATOR_SKILL_DRAFT_CAPABILITY_REF = PragmaCapabilityRefSchema.parse(
-  `capability:${MEMORY_CURATOR_SKILL_DRAFT_CAPABILITY_ID}`,
-) as `capability:${typeof MEMORY_CURATOR_SKILL_DRAFT_CAPABILITY_ID}`;
-export const MEMORY_CURATOR_SKILL_DRAFT_BINDING_REF = PragmaBindingRefSchema.parse(
-  "binding:pragma.memory-curator-skill-draft",
-) as "binding:pragma.memory-curator-skill-draft";
 export const PRAGMA_MANAGEMENT_CAPABILITY_REF = PragmaCapabilityRefSchema.parse(
   `capability:${PRAGMA_MANAGEMENT_CAPABILITY_ID}`,
 ) as `capability:${typeof PRAGMA_MANAGEMENT_CAPABILITY_ID}`;
@@ -110,10 +103,7 @@ const BUILT_IN_AGENT_DEPENDENCY_PATHS: Readonly<Record<BuiltInAgentRef, readonly
     "capabilities/0000000000manage.pragma.yaml",
     ...Object.keys(BUILT_IN_AGENT_FILES).filter((path) => path.startsWith(PRAGMA_SKILL_PREFIX)),
   ],
-  [MEMORY_CURATOR_REF]: [
-    BUILT_IN_AGENT_PATHS[MEMORY_CURATOR_REF],
-    "capabilities/0000000000skdrft.pragma.yaml",
-  ],
+  [MEMORY_CURATOR_REF]: [BUILT_IN_AGENT_PATHS[MEMORY_CURATOR_REF]],
   [STORE_REVISION_EXPERT_REF]: [
     BUILT_IN_AGENT_PATHS[STORE_REVISION_EXPERT_REF],
     "capabilities/0000000000manage.pragma.yaml",
