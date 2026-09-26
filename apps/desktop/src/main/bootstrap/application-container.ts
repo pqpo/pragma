@@ -1612,7 +1612,7 @@ export async function createDesktopApplicationContainer(
         listProjects: async () => [{ id: pragmaProjectStore.projectId }],
         getProjectRevision: async (projectId, revision) =>
           projectId === pragmaProjectStore.projectId
-            ? await pragmaProjectStore.openRevision(revision)
+            ? await pragmaProjectStore.getRevision(revision)
             : undefined,
         listExecutors: async () => await missionExecutors.list(),
       },

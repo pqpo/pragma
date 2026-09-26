@@ -276,35 +276,49 @@ export function createLocalHostProjectRevisionReader(options: {
     readFiles: sourceRepository.readFiles,
     openRevision,
     async withOpenRevision(location, operation) {
-      const viewName = basename(location.rootDir);
-      const rawSnapshot = location.snapshotHash !== undefined && viewName === location.snapshotHash;
+      let openedLocation = location;
+      let viewName = basename(openedLocation.rootDir);
       let lease: string | undefined;
-      if (rawSnapshot) {
-        const snapshotHash = location.snapshotHash!;
+      while (lease === undefined) {
+        viewName = basename(openedLocation.rootDir);
         const leaseDirectory = join(projectViewLeasesPath, viewName);
-        while (lease === undefined) {
-          lease = await withFileLock(join(projectViewLocksPath, viewName), async () => {
-            if (
-              !(await hasSnapshotMarker(join(location.rootDir, ".pragma-snapshot"), snapshotHash))
-            )
-              return undefined;
-            await mkdir(leaseDirectory, { recursive: true, mode: 0o700 });
-            const path = join(leaseDirectory, `${randomUUID()}.lease`);
-            await writeFile(path, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
-            return path;
-          });
-          if (lease === undefined) await ensureView(snapshotHash);
+        lease = await withFileLock(join(projectViewLocksPath, viewName), async () => {
+          const raw = openedLocation.snapshotHash === viewName;
+          const metadata = raw
+            ? undefined
+            : await readCompilerViewMetadata(join(openedLocation.rootDir, COMPILER_VIEW_MARKER));
+          const valid = raw
+            ? await hasSnapshotMarker(join(openedLocation.rootDir, ".pragma-snapshot"), viewName)
+            : openedLocation.compilerViewKey !== undefined &&
+              viewName === `compiler-${openedLocation.compilerViewKey}` &&
+              metadata?.cacheKey === openedLocation.compilerViewKey &&
+              metadata.sourceSnapshotHash === openedLocation.snapshotHash &&
+              metadata.derivedProjectFingerprint === openedLocation.derivedProjectFingerprint;
+          if (!valid) return undefined;
+          await mkdir(leaseDirectory, { recursive: true, mode: 0o700 });
+          const path = join(leaseDirectory, `${randomUUID()}.lease`);
+          await writeFile(path, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+          return path;
+        });
+        if (lease === undefined) {
+          const rebuilt = await toLocation(openedLocation.projectId, openedLocation.revision);
+          if (rebuilt === undefined)
+            throw new Error("Project revision disappeared during checkout.");
+          openedLocation = rebuilt;
         }
       }
       try {
-        const project = await openRevision(location);
+        const project = await openRevision(openedLocation);
         try {
           return await operation(project);
         } finally {
           await project.dispose();
         }
       } finally {
-        if (lease !== undefined) await rm(lease, { force: true });
+        if (lease !== undefined)
+          await withFileLock(join(projectViewLocksPath, viewName), async () => {
+            await rm(lease, { force: true });
+          });
       }
     },
   };
@@ -357,8 +371,37 @@ export function createLocalHostProjectRevisionReader(options: {
         const lockedExisting = await readCompilerViewMetadata(marker);
         if (isMatchingCompilerView(lockedExisting, expectedMetadata)) return;
 
+        let sourceLease: string | undefined;
+        const sourceLeaseDirectory = join(projectViewLeasesPath, location.snapshotHash!);
+        while (sourceLease === undefined) {
+          sourceLease = await withFileLock(
+            join(projectViewLocksPath, location.snapshotHash!),
+            async () => {
+              if (
+                !(await hasSnapshotMarker(
+                  join(location.rootDir, ".pragma-snapshot"),
+                  location.snapshotHash!,
+                ))
+              )
+                return undefined;
+              await mkdir(sourceLeaseDirectory, { recursive: true, mode: 0o700 });
+              const path = join(sourceLeaseDirectory, `${randomUUID()}.lease`);
+              await writeFile(path, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+              return path;
+            },
+          );
+          if (sourceLease === undefined) await ensureView(location.snapshotHash!);
+        }
+        let sourceFiles: ReadonlyMap<string, string>;
+        try {
+          sourceFiles = await readTextFiles(location.rootDir);
+        } finally {
+          await withFileLock(join(projectViewLocksPath, location.snapshotHash!), async () => {
+            await rm(sourceLease, { force: true });
+          });
+        }
         const migration = migratePragmaCompilerProjectToCurrent({
-          files: await readTextFiles(location.rootDir),
+          files: sourceFiles,
           revisionCompilerVersion: sourceCompilerVersion,
         });
         const files = await migrationRenderer.renderCompilerMigration(migration);

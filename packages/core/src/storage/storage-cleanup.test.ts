@@ -4,11 +4,14 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
 import { PragmaPaths } from "./pragma-paths.ts";
+import { withFileLock } from "./file-lock.ts";
 import {
   clearRebuildableCache,
   emptyCompletedTrash,
   inspectStorageCleanup,
+  runTransientStorageMaintenance,
 } from "./storage-maintenance.ts";
+import { DEFAULT_STORAGE_POLICY } from "./storage-policy.ts";
 
 const roots: string[] = [];
 
@@ -42,6 +45,30 @@ it("clears rebuildable cache but preserves project views with an active lease", 
   await expect(readFile(cache)).rejects.toMatchObject({ code: "ENOENT" });
   await expect(readFile(leasedView, "utf8")).resolves.toBe("active");
   await expect(readFile(compilerView, "utf8")).resolves.toBe("derived");
+});
+
+it("preserves a view leased while automatic maintenance waits for its view lock", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pragma-storage-view-race-"));
+  roots.push(root);
+  const paths = new PragmaPaths({ pragmaHome: root });
+  const hash = "c".repeat(64);
+  const view = join(paths.projectViewsCacheRoot(), hash);
+  const leaseDirectory = join(paths.cacheRoot(), "project-view-leases", hash);
+  const lock = join(paths.cacheRoot(), "project-view-locks", hash);
+  await mkdir(view, { recursive: true });
+  await writeFile(join(view, "pragma.yaml"), "active");
+
+  let maintenance: Promise<unknown> | undefined;
+  await withFileLock(lock, async () => {
+    maintenance = runTransientStorageMaintenance({
+      paths,
+      policy: { ...DEFAULT_STORAGE_POLICY, cacheTtlMs: 0, cacheLimitBytes: 0 },
+    });
+    await mkdir(leaseDirectory, { recursive: true });
+    await writeFile(join(leaseDirectory, "current.lease"), JSON.stringify({ pid: process.pid }));
+  });
+  await maintenance;
+  await expect(readFile(join(view, "pragma.yaml"), "utf8")).resolves.toBe("active");
 });
 
 it("permanently clears only Trash entries with completed valid journals", async () => {

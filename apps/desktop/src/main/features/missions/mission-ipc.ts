@@ -66,7 +66,10 @@ import {
 import { canonicalPragmaResourceRef, type PragmaExpertTeamResource } from "@pragma/interpreter/ast";
 import type { MissionCommandOutcomeNotification, MissionRunner } from "./mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "./mission-store.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  withOpenPragmaProjectRevision,
+  type PragmaProjectStore,
+} from "../projects/pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import {
   expertTeamCoordinatorMentionCandidate,
@@ -349,15 +352,13 @@ export function installMissionHandlers(options: {
     const { executorRef, missionId } = MissionModelOptionsRequestSchema.parse(input);
     if (missionId === undefined) return await options.executors.getModelOptions(executorRef);
     const mission = await getManagedMission(missionId);
-    const [runtimeBinding, project] = await Promise.all([
+    const [runtimeBinding, resources] = await Promise.all([
       options.runner.getRuntimeBinding(missionId, mission),
-      options.project.openRevision(mission.project.revision),
+      withOpenPragmaProjectRevision(options.project, mission.project.revision, async (project) =>
+        project.listResources(),
+      ),
     ]);
-    return await options.executors.getModelOptions(
-      executorRef,
-      runtimeBinding,
-      project.listResources(),
-    );
+    return await options.executors.getModelOptions(executorRef, runtimeBinding, resources);
   });
   ipcMain.handle("missions:create-defaults:get", getCreationDefaults);
   ipcMain.handle("missions:attachments:pick", async (_event, input: unknown) => {

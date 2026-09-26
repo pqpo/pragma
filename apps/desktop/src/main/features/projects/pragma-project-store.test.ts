@@ -21,7 +21,12 @@ import {
   builtInAgentResource,
   pragmaManagementCapabilityResource,
 } from "@pragma/built-in-agents";
-import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
+import {
+  ContentAddressedStore,
+  PragmaPaths,
+  clearRebuildableCache,
+  derivePragmaResourceId,
+} from "@pragma/core";
 
 import type {
   ExpertDefinition,
@@ -726,6 +731,30 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
     await expect(
       readFile(join(directory, ".cache/views", revision.snapshotHash, ".pragma-snapshot"), "utf8"),
     ).resolves.toBe(`${revision.snapshotHash}\n`);
+    await Promise.all(projects.map(async (project) => await project.dispose()));
+  });
+
+  it("retains a project view until the opened revision is disposed", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-view-lease-"));
+    directories.push(directory);
+    const paths = new PragmaPaths({ pragmaHome: directory });
+    const project = createPragmaProjectStore({
+      projectsPath: paths.projectsRoot(),
+      objectsPath: paths.contentObjectsRoot(),
+      projectViewsPath: paths.projectViewsCacheRoot(),
+    });
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert()],
+    });
+    const opened = await project.openRevision(1);
+    const marker = join(dirname(opened.entryFile), ".pragma-snapshot");
+
+    await clearRebuildableCache(paths);
+    await expect(readFile(marker, "utf8")).resolves.toMatch(/^[a-f0-9]{64}\n$/);
+    await opened.dispose();
+    await clearRebuildableCache(paths);
+    await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("publishes immutable YAML revisions containing experts, teams, and flows", async () => {

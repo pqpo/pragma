@@ -157,16 +157,20 @@ export function createMissionAgentEvaluationExecutor(options: {
     async execute({ run, evaluationCase, setPhase, signal }) {
       throwIfCancelled(signal);
       const project = await options.project.openRevision(run.projectRevision);
-      const target = project.listResources().find((resource) => {
-        if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam") return false;
-        const prefix = resource.kind === "Expert" ? "expert" : "team";
-        return `${prefix}:${resource.metadata.id}` === run.targetRef;
-      });
+      const target = await (async () => {
+        try {
+          return project.listResources().find((resource) => {
+            if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam") return false;
+            const prefix = resource.kind === "Expert" ? "expert" : "team";
+            return `${prefix}:${resource.metadata.id}` === run.targetRef;
+          });
+        } finally {
+          await project.dispose();
+        }
+      })();
       if (target === undefined || (target.kind !== "Expert" && target.kind !== "ExpertTeam")) {
-        await project.dispose();
         throw new Error(`Pinned evaluation target is unavailable: ${run.targetRef}.`);
       }
-      await project.dispose();
       const workspace = join(options.workspaceRoot, run.id, evaluationCase.id);
       await mkdir(workspace, { recursive: true, mode: 0o700 });
       if (run.executionMode === "mock") options.mocks.begin(run.id, evaluationCase);

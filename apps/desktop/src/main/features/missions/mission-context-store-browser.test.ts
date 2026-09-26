@@ -85,7 +85,10 @@ describe("MissionContextStoreBrowserService", () => {
         storagePath: () => missionRoot,
       } as unknown as MissionStore,
       project: {
-        openRevision: vi.fn(async () => ({ listResources: () => [writer, reviewer, team] })),
+        openRevision: vi.fn(async () => ({
+          listResources: () => [writer, reviewer, team],
+          dispose: async () => undefined,
+        })),
       } as unknown as PragmaProjectStore,
       systemExperts: {
         getResource: () => undefined,
@@ -237,7 +240,10 @@ describe("MissionContextStoreBrowserService", () => {
     const service = createMissionContextStoreBrowserService({
       missions: { get: vi.fn(async () => mission) } as unknown as MissionStore,
       project: {
-        openRevision: vi.fn(async () => ({ listResources: () => [writer, reviewer, team] })),
+        openRevision: vi.fn(async () => ({
+          listResources: () => [writer, reviewer, team],
+          dispose: async () => undefined,
+        })),
       } as unknown as PragmaProjectStore,
       systemExperts: {
         getResource: () => undefined,
@@ -322,7 +328,10 @@ describe("MissionContextStoreBrowserService", () => {
     const service = createMissionContextStoreBrowserService({
       missions: { get: vi.fn(async () => mission) } as unknown as MissionStore,
       project: {
-        openRevision: vi.fn(async () => ({ listResources: () => [writer, reviewer, team] })),
+        openRevision: vi.fn(async () => ({
+          listResources: () => [writer, reviewer, team],
+          dispose: async () => undefined,
+        })),
       } as unknown as PragmaProjectStore,
       systemExperts: {
         getResource: () => undefined,
@@ -350,7 +359,10 @@ describe("MissionContextStoreBrowserService", () => {
     const service = createMissionContextStoreBrowserService({
       missions: { get: vi.fn(async () => mission) } as unknown as MissionStore,
       project: {
-        openRevision: vi.fn(async () => ({ listResources: () => [writer, reviewer, team] })),
+        openRevision: vi.fn(async () => ({
+          listResources: () => [writer, reviewer, team],
+          dispose: async () => undefined,
+        })),
       } as unknown as PragmaProjectStore,
       systemExperts: {
         getResource: () => undefined,
@@ -380,7 +392,10 @@ describe("MissionContextStoreBrowserService", () => {
     const service = createMissionContextStoreBrowserService({
       missions: { get: vi.fn(async () => mismatched) } as unknown as MissionStore,
       project: {
-        openRevision: vi.fn(async () => ({ listResources: () => [writer, reviewer, team] })),
+        openRevision: vi.fn(async () => ({
+          listResources: () => [writer, reviewer, team],
+          dispose: async () => undefined,
+        })),
       } as unknown as PragmaProjectStore,
       systemExperts: {
         getResource: () => undefined,

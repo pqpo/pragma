@@ -78,7 +78,10 @@ import {
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import { listCapabilitiesWithBuiltIns } from "../capabilities/built-in-capabilities.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  withOpenPragmaProjectRevision,
+  type PragmaProjectStore,
+} from "../projects/pragma-project-store.ts";
 import { getRuntimeAvailability } from "../runtimes/runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "../runtimes/runtime-environment-service.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
@@ -3256,7 +3259,9 @@ async function withProjectDraftDiagnostics(
   const resources =
     draft.baseProjectRevision === 0
       ? []
-      : (await project.openRevision(draft.baseProjectRevision)).listResources();
+      : await withOpenPragmaProjectRevision(project, draft.baseProjectRevision, async (opened) =>
+          opened.listResources(),
+        );
   return withDraftDiagnostics(draft, resources);
 }
 

@@ -1,5 +1,5 @@
 import { readFile, readdir, rm, rmdir, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { ContentAddressedStore, type ContentObjectRef } from "./content-addressed-store.ts";
 import { withFileLock } from "./file-lock.ts";
@@ -127,18 +127,7 @@ export async function clearRebuildableCache(paths: PragmaPaths): Promise<Storage
     );
     let deletedEntries = 0;
     for (const candidate of views) {
-      const deleted = await withFileLock(
-        join(paths.cacheRoot(), "project-view-locks", basename(candidate.path)),
-        async () => {
-          const stillUnleased = (await unleasedProjectViewCandidates(paths, false)).some(
-            (view) => view.path === candidate.path,
-          );
-          if (!stillUnleased) return false;
-          await rm(candidate.path, { recursive: true, force: true });
-          return true;
-        },
-      );
-      if (deleted) deletedEntries += 1;
+      if (await evictProjectViewIfUnused(paths, candidate)) deletedEntries += 1;
     }
     const afterBytes = await directoryBytes(paths.cacheRoot());
     return {
@@ -265,11 +254,15 @@ export async function runStorageMaintenance(input: {
   return await withFileLock(input.paths.storageGcLock(), async () => {
     const before = await inspectStorage(input.paths, policy);
     const cacheCandidates = await collectCacheCandidates(input.paths);
-    const cache = await pruneCandidates(cacheCandidates, {
-      ttlMs: policy.cacheTtlMs,
-      limitBytes: policy.cacheLimitBytes,
-      now,
-    });
+    const cache = await pruneCandidates(
+      cacheCandidates,
+      {
+        ttlMs: policy.cacheTtlMs,
+        limitBytes: policy.cacheLimitBytes,
+        now,
+      },
+      async (candidate) => await removeCacheCandidate(input.paths, candidate),
+    );
     const archives = await pruneCandidates(
       await directChildren(input.paths.executionArchivesRoot()),
       {
@@ -356,11 +349,15 @@ export async function runTransientStorageMaintenance(input: {
   const now = input.now ?? Date.now();
   return await withFileLock(input.paths.storageGcLock(), async () => {
     const beforeBytes = await directoryBytes(input.paths.trashRoot());
-    const cache = await pruneCandidates(await collectCacheCandidates(input.paths), {
-      ttlMs: policy.cacheTtlMs,
-      limitBytes: policy.cacheLimitBytes,
-      now,
-    });
+    const cache = await pruneCandidates(
+      await collectCacheCandidates(input.paths),
+      {
+        ttlMs: policy.cacheTtlMs,
+        limitBytes: policy.cacheLimitBytes,
+        now,
+      },
+      async (candidate) => await removeCacheCandidate(input.paths, candidate),
+    );
     const temporary = await pruneCandidates(await directChildren(input.paths.temporaryRoot()), {
       ttlMs: policy.temporaryTtlMs,
       limitBytes: 0,
@@ -549,27 +546,73 @@ async function unleasedProjectViewCandidates(
   const candidates = await directChildren(paths.projectViewsCacheRoot());
   const leasesRoot = join(paths.cacheRoot(), "project-view-leases");
   const leasedSnapshots = new Set<string>();
-  for (const leaseDirectory of await directChildren(leasesRoot)) {
-    if ((await stat(leaseDirectory.path).catch(() => undefined))?.isDirectory() !== true) continue;
-    const leases = await directChildren(leaseDirectory.path);
-    let leased = false;
-    for (const lease of leases) {
-      let pid: unknown;
-      try {
-        pid = (JSON.parse(await readFile(lease.path, "utf8")) as { readonly pid?: unknown }).pid;
-      } catch {
-        pid = undefined;
-      }
-      if (typeof pid === "number" && isProcessAlive(pid)) {
-        leased = true;
-        continue;
-      }
-      if (cleanStaleLeases) await rm(lease.path, { force: true });
+  for (const directory of await childDirectories(leasesRoot)) {
+    const viewName = basename(directory);
+    if (
+      await withProjectViewLock(
+        paths,
+        viewName,
+        async () => await hasActiveProjectViewLease(paths, viewName, cleanStaleLeases),
+      )
+    ) {
+      leasedSnapshots.add(viewName);
     }
-    if (leased) leasedSnapshots.add(basename(leaseDirectory.path));
-    else if (cleanStaleLeases) await removeEmptyDirectory(leaseDirectory.path);
   }
   return candidates.filter((candidate) => !leasedSnapshots.has(basename(candidate.path)));
+}
+
+async function withProjectViewLock<T>(
+  paths: PragmaPaths,
+  viewName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return await withFileLock(join(paths.cacheRoot(), "project-view-locks", viewName), operation);
+}
+
+async function hasActiveProjectViewLease(
+  paths: PragmaPaths,
+  viewName: string,
+  cleanStaleLeases: boolean,
+): Promise<boolean> {
+  const directory = join(paths.cacheRoot(), "project-view-leases", viewName);
+  let active = false;
+  for (const lease of await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+    if (errorCode(error) === "ENOENT") return [];
+    throw error;
+  })) {
+    if (!lease.isFile()) continue;
+    const path = join(directory, lease.name);
+    let pid: unknown;
+    try {
+      pid = (JSON.parse(await readFile(path, "utf8")) as { readonly pid?: unknown }).pid;
+    } catch {
+      pid = undefined;
+    }
+    if (typeof pid === "number" && isProcessAlive(pid)) active = true;
+    else if (cleanStaleLeases) await rm(path, { force: true });
+  }
+  if (!active && cleanStaleLeases) await removeEmptyDirectory(directory);
+  return active;
+}
+
+async function evictProjectViewIfUnused(
+  paths: PragmaPaths,
+  candidate: Candidate,
+): Promise<boolean> {
+  const viewName = basename(candidate.path);
+  return await withProjectViewLock(paths, viewName, async () => {
+    if (await hasActiveProjectViewLease(paths, viewName, true)) return false;
+    if ((await stat(candidate.path).catch(() => undefined)) === undefined) return false;
+    await rm(candidate.path, { recursive: true, force: true });
+    return true;
+  });
+}
+
+async function removeCacheCandidate(paths: PragmaPaths, candidate: Candidate): Promise<boolean> {
+  if (dirname(candidate.path) === paths.projectViewsCacheRoot())
+    return await evictProjectViewIfUnused(paths, candidate);
+  await rm(candidate.path, { recursive: true, force: true });
+  return true;
 }
 
 async function removeEmptyDirectory(path: string): Promise<void> {
@@ -621,6 +664,10 @@ async function pruneCandidates(
     readonly now: number;
     readonly ttlOnly?: boolean | undefined;
   },
+  remove: (candidate: Candidate) => Promise<boolean> = async (candidate) => {
+    await rm(candidate.path, { recursive: true, force: true });
+    return true;
+  },
 ): Promise<{ readonly deleted: number }> {
   const ordered = [...candidates].toSorted((left, right) => left.accessedAt - right.accessedAt);
   let bytes = ordered.reduce((total, candidate) => total + candidate.bytes, 0);
@@ -629,7 +676,7 @@ async function pruneCandidates(
     const expired = input.now - candidate.accessedAt >= input.ttlMs;
     const pressured = input.ttlOnly !== true && bytes > input.limitBytes;
     if (!expired && !pressured) continue;
-    await rm(candidate.path, { recursive: true, force: true });
+    if (!(await remove(candidate))) continue;
     bytes -= candidate.bytes;
     deleted += 1;
   }

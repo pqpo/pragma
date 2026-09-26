@@ -2,7 +2,13 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clearRebuildableCache, ContentAddressedStore, PragmaPaths } from "@pragma/core";
+import {
+  clearRebuildableCache,
+  ContentAddressedStore,
+  DEFAULT_STORAGE_POLICY,
+  PragmaPaths,
+  runTransientStorageMaintenance,
+} from "@pragma/core";
 import { migratePragmaCompilerProjectToCurrent, type PragmaResource } from "@pragma/interpreter";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -142,6 +148,26 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
         "utf8",
       ),
     ).toContain("compilerVersion: pragma.dsl/v8");
+  });
+
+  it("keeps a derived compiler view leased during automatic cache maintenance", async () => {
+    const home = await createHistoricalHome();
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const reader = createReader(paths);
+    const location = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
+    if (location?.compilerViewKey === undefined || reader.withOpenRevision === undefined)
+      throw new Error("Expected a derived compiler view and scoped checkout.");
+
+    await reader.withOpenRevision(location, async (project) => {
+      expect(project.listResources().length).toBeGreaterThan(0);
+      await runTransientStorageMaintenance({
+        paths,
+        policy: { ...DEFAULT_STORAGE_POLICY, cacheTtlMs: 0, cacheLimitBytes: 0 },
+      });
+      await expect(readFile(join(location.rootDir, "pragma.lock.yaml"), "utf8")).resolves.toContain(
+        "pragma.dsl/v9",
+      );
+    });
   });
 
   it("shares one complete derived view across concurrent first reads", async () => {
