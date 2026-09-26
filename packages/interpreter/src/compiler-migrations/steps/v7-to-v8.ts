@@ -1,5 +1,5 @@
 import { canonicalPragmaResourceRef, type PragmaResource } from "../../ast/index.ts";
-import { parsePragmaYaml } from "../../compiler/pragma-project.ts";
+import { parsePragmaYaml } from "../../compiler/project-yaml.ts";
 import { sha256, stableStringify } from "../../compiler/compiler-hash.ts";
 import { migratePragmaV4ResourceToCurrent } from "../../migrations/steps/v4-to-v5.ts";
 import {

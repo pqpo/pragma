@@ -5,7 +5,7 @@ import {
 } from "../ast/pragma-dsl.schema.ts";
 import { isPragmaDslApiVersionUpgradeable } from "../ast/pragma-api-version.ts";
 import { normalizePragmaResourceName } from "../ast/resource-identity.ts";
-import { parsePragmaYaml } from "../compiler/pragma-project.ts";
+import { parsePragmaYaml } from "../compiler/project-yaml.ts";
 import { pragmaDslV2ToV3Step } from "./steps/v2-to-v3.ts";
 import { pragmaDslV3ToV4Step } from "./steps/v3-to-v4.ts";
 import { pragmaDslV4ToV5Step } from "./steps/v4-to-v5.ts";
