@@ -157,6 +157,7 @@ import { createRuntimeEnvironmentStore } from "../features/runtimes/runtime-envi
 import { installRuntimeHandlers } from "../features/runtimes/runtime-ipc.ts";
 import { createAutomaticToolPermissionHandler } from "../features/runtimes/tool-permission-policy.ts";
 import { installDesktopSettingsHandlers } from "../features/settings/desktop-settings-ipc.ts";
+import { installDesktopStorageCleanupHandlers } from "../features/settings/desktop-storage-cleanup-ipc.ts";
 import { createDesktopSettingsStore } from "../features/settings/desktop-settings-store.ts";
 import { createWorkspaceHistoryStore } from "../features/workspaces/workspace-history-store.ts";
 import { installUsageHandlers } from "../features/usage/usage-ipc.ts";
@@ -1611,7 +1612,7 @@ export async function createDesktopApplicationContainer(
         listProjects: async () => [{ id: pragmaProjectStore.projectId }],
         getProjectRevision: async (projectId, revision) =>
           projectId === pragmaProjectStore.projectId
-            ? await pragmaProjectStore.openRevision(revision)
+            ? await pragmaProjectStore.getRevision(revision)
             : undefined,
         listExecutors: async () => await missionExecutors.list(),
       },
@@ -1733,6 +1734,11 @@ export async function createDesktopApplicationContainer(
         throw new Error("The default workspace must be an accessible, writable directory.");
       }
     },
+  });
+  installDesktopStorageCleanupHandlers({
+    paths: pragmaPaths,
+    missions: missionStore,
+    runner: missionRunner,
   });
   installMemoryPolicyHandlers(memoryPlane, {
     missions: missionStore,

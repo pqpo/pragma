@@ -42,6 +42,36 @@ afterEach(async () => {
 });
 
 describe("mission store", { timeout: 30_000 }, () => {
+  it("claims cleanup only for settled completed user conversations and blocks reopening", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Review cleanup eligibility",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    await expect(store.claimCompletedTaskDeletion(created.id)).rejects.toThrow(
+      "Only completed user-created conversations",
+    );
+    const running = await store.updateExecution(created.id, {
+      id: "00000000-0000-4000-8000-000000000111",
+      inputMessageId: created.initialMessageId,
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+    await store.markComplete(created.id);
+    await expect(store.claimCompletedTaskDeletion(created.id)).rejects.toThrow(
+      "Only completed user-created conversations",
+    );
+    await store.updateExecution(created.id, { ...running.execution!, status: "succeeded" });
+    await store.claimCompletedTaskDeletion(created.id);
+    await expect(
+      readFile(join(store.storagePath!(created.id), "deletion-intent.json"), "utf8"),
+    ).resolves.toContain(created.id);
+    await expect(store.reopen(created.id)).rejects.toThrow("Mission deletion is already pending");
+  });
+
   it("migrates a legacy raw-id directory over an empty encoded board skeleton", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

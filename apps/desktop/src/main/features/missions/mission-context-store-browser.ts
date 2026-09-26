@@ -35,7 +35,10 @@ import {
   defineTeamMemoryScopes,
   inspectTeamMemoryScopes,
 } from "../memory/team-memory-scope-catalog.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  withOpenPragmaProjectRevision,
+  type PragmaProjectStore,
+} from "../projects/pragma-project-store.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
 
@@ -548,10 +551,14 @@ async function collectScopeCandidates(
   readonly candidates: readonly ScopeCandidate[];
   readonly participated: ReadonlySet<string>;
 }> {
-  const project = await options.project.openRevision(mission.project.revision);
+  const projectResources = await withOpenPragmaProjectRevision(
+    options.project,
+    mission.project.revision,
+    async (project) => project.listResources(),
+  );
   const rootSystemResource = options.systemExperts.getResource(mission.executor.ref);
   const resources = [
-    ...project.listResources(),
+    ...projectResources,
     ...(rootSystemResource === undefined ? [] : [rootSystemResource]),
     ...options.systemExperts.getAdditionalResources(mission.executor.ref),
   ];

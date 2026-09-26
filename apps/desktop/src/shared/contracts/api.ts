@@ -10,6 +10,10 @@ import type {
   SkillRevisionDraft,
 } from "@pragma/built-in-agents/contracts";
 import type { DesktopRendererLog } from "./logging.ts";
+import type {
+  DesktopStorageCleanupOverview,
+  DesktopStorageCleanupResult,
+} from "./storage-cleanup.ts";
 import type { GetDesktopRuntimeAvailabilityOptions } from "./runtime.ts";
 import type {
   DesktopRuntimeAvailability,
@@ -283,6 +287,10 @@ export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
+  inspectStorageCleanup: () => Promise<DesktopStorageCleanupOverview>;
+  clearRebuildableCache: () => Promise<DesktopStorageCleanupResult>;
+  emptyCompletedTrash: () => Promise<DesktopStorageCleanupResult>;
+  deleteCompletedTaskMission: (id: string) => Promise<void>;
   getGlobalMemoryPolicy: () => Promise<DesktopGlobalMemoryPolicySnapshot>;
   updateGlobalMemoryPolicy: (
     input: UpdateDesktopGlobalMemoryPolicy,

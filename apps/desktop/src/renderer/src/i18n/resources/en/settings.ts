@@ -1,4 +1,64 @@
 export const settings = {
+  storage: {
+    navigation: "Storage & cleanup",
+    title: "Storage & cleanup",
+    description: "Review local Pragma storage and remove content you no longer need.",
+    refresh: "Refresh usage",
+    loading: "Calculating…",
+    loadError: "Could not read storage usage. Try again.",
+    cleanupError: "Cleanup did not finish. Try again.",
+    usageTitle: "Local storage usage",
+    usageNote:
+      "Covers Pragma's local directory and built-in workspace, excluding external custom workspaces. Usage may change while Pragma runs.",
+    categories: {
+      workspace: "Built-in workspace",
+      data: "Data",
+      state: "Run state",
+      archives: "Archives",
+      cache: "Cache",
+      temporary: "Temporary files",
+      trash: "Trash",
+    },
+    missionsTitle: "Completed conversations",
+    missionsDescription:
+      "Select completed conversations you created. Their records move to Trash when deleted.",
+    noMissions: "No completed conversations are available to clean up.",
+    selectAll: "Select all {{count}} conversations",
+    lastUpdated: "Last updated: {{date}}",
+    deleteSelected: "Delete {{count}} selected",
+    deletingProgress: "Deleting {{done}} / {{total}}…",
+    missionResult: "Deleted {{deleted}} conversations; {{failed}} could not be deleted.",
+    failedMissions: "Conversations not deleted (eligible items can be retried):",
+    cacheTitle: "Rebuildable cache",
+    cacheDescription:
+      "{{size}} of project view cache can be cleared now. Other caches and views in use are retained.",
+    clearCache: "Clear cache",
+    trashTitle: "Trash",
+    trashDescription: "{{size}} can be permanently cleared now.",
+    protectedTrash: "Items with unfinished deletions or invalid records are retained.",
+    emptyTrash: "Empty Trash",
+    cleanupResult: "Cleared {{count}} items and freed {{size}}.",
+    cleaning: "Cleaning…",
+    confirm: {
+      missions: {
+        title: "Delete selected conversations?",
+        description:
+          "Delete {{count}} completed conversations and their run records, moving them to Trash.",
+        confirm: "Delete conversations",
+      },
+      cache: {
+        title: "Clear rebuildable cache?",
+        description: "The cache will be rebuilt when needed. Items in use are retained.",
+        confirm: "Clear cache",
+      },
+      trash: {
+        title: "Permanently empty Trash?",
+        description: "All completed deletions with valid records will be cleared immediately.",
+        warning: "This cannot be undone.",
+        confirm: "Empty permanently",
+      },
+    },
+  },
   coreAssetSync: {
     navigation: "Core Asset Sync",
     title: "Core Asset Sync",

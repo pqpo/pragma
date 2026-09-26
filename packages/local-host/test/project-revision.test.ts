@@ -2,7 +2,13 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ContentAddressedStore, PragmaPaths } from "@pragma/core";
+import {
+  clearRebuildableCache,
+  ContentAddressedStore,
+  DEFAULT_STORAGE_POLICY,
+  PragmaPaths,
+  runTransientStorageMaintenance,
+} from "@pragma/core";
 import { migratePragmaCompilerProjectToCurrent, type PragmaResource } from "@pragma/interpreter";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -30,6 +36,52 @@ afterEach(async () => {
 });
 
 describe("Local Host project revision reader", { timeout: 30_000 }, () => {
+  it("keeps a raw project view during a CLI checkout and allows cleanup afterward", async () => {
+    const home = await createHistoricalHome();
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const reader = createReader(paths);
+    const migrated = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
+    if (migrated === undefined || migrated.derivedProjectFingerprint === undefined) {
+      throw new Error("Expected a migrated project revision.");
+    }
+    const files = await reader.readFiles(migrated);
+    const snapshot = await new ContentAddressedStore(paths.contentObjectsRoot()).putSnapshot(
+      new Map([...files].map(([path, contents]) => [path, Buffer.from(contents)])),
+    );
+    const revisionPath = join(
+      paths.projectsRoot(),
+      HISTORICAL_V8_PROJECT_ID,
+      "revisions",
+      "1.json",
+    );
+    const manifest = JSON.parse(await readFile(revisionPath, "utf8")) as Record<string, unknown>;
+    await writeFile(
+      revisionPath,
+      JSON.stringify({
+        ...manifest,
+        snapshotHash: snapshot.root.hash,
+        projectFingerprint: migrated.derivedProjectFingerprint,
+        compilerVersion: "pragma.dsl/v9",
+      }),
+    );
+    const current = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
+    if (current === undefined || reader.withOpenRevision === undefined) {
+      throw new Error("Expected a directly readable project revision.");
+    }
+
+    await reader.withOpenRevision(current, async (project) => {
+      expect(project.listResources().length).toBeGreaterThan(0);
+      await clearRebuildableCache(paths);
+      await expect(readFile(join(current.rootDir, ".pragma-snapshot"), "utf8")).resolves.toContain(
+        snapshot.root.hash,
+      );
+    });
+    await clearRebuildableCache(paths);
+    await expect(readFile(join(current.rootDir, ".pragma-snapshot"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("removes the v8 Expert tool context policy during migration", () => {
     const migrated = migratePragmaCompilerProjectToCurrent({
       revisionCompilerVersion: "pragma.dsl/v8",
@@ -96,6 +148,26 @@ describe("Local Host project revision reader", { timeout: 30_000 }, () => {
         "utf8",
       ),
     ).toContain("compilerVersion: pragma.dsl/v8");
+  });
+
+  it("keeps a derived compiler view leased during automatic cache maintenance", async () => {
+    const home = await createHistoricalHome();
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const reader = createReader(paths);
+    const location = await reader.getRevision(HISTORICAL_V8_PROJECT_ID, 1);
+    if (location?.compilerViewKey === undefined || reader.withOpenRevision === undefined)
+      throw new Error("Expected a derived compiler view and scoped checkout.");
+
+    await reader.withOpenRevision(location, async (project) => {
+      expect(project.listResources().length).toBeGreaterThan(0);
+      await runTransientStorageMaintenance({
+        paths,
+        policy: { ...DEFAULT_STORAGE_POLICY, cacheTtlMs: 0, cacheLimitBytes: 0 },
+      });
+      await expect(readFile(join(location.rootDir, "pragma.lock.yaml"), "utf8")).resolves.toContain(
+        "pragma.dsl/v9",
+      );
+    });
   });
 
   it("shares one complete derived view across concurrent first reads", async () => {

@@ -132,7 +132,10 @@ import {
 } from "./mission-session-upgrade.ts";
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import { MissionStoreError } from "./mission-store-error.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  withOpenPragmaProjectRevision,
+  type PragmaProjectStore,
+} from "../projects/pragma-project-store.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
 import { createIntegrationError, type MissionCommand } from "@pragma/shared/integration";
@@ -876,13 +879,17 @@ export function createMissionRunner(options: {
             : {
                 preview: async (observation) => {
                   const currentMission = await options.missions.get(mission.id);
-                  const project = await options.project.openRevision(
+                  const names = await withOpenPragmaProjectRevision(
+                    options.project,
                     currentMission.project.revision,
-                  );
-                  const names = new Map(
-                    project
-                      .listResources()
-                      .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+                    async (project) =>
+                      new Map(
+                        project
+                          .listResources()
+                          .map(
+                            (resource) => [resource.metadata.id, resource.metadata.name] as const,
+                          ),
+                      ),
                   );
                   names.set(currentMission.executor.ref, currentMission.executor.name);
                   options.usage!.preview(observation, {
@@ -893,13 +900,17 @@ export function createMissionRunner(options: {
                 },
                 record: async (observation) => {
                   const currentMission = await options.missions.get(mission.id);
-                  const project = await options.project.openRevision(
+                  const names = await withOpenPragmaProjectRevision(
+                    options.project,
                     currentMission.project.revision,
-                  );
-                  const names = new Map(
-                    project
-                      .listResources()
-                      .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+                    async (project) =>
+                      new Map(
+                        project
+                          .listResources()
+                          .map(
+                            (resource) => [resource.metadata.id, resource.metadata.name] as const,
+                          ),
+                      ),
                   );
                   names.set(currentMission.executor.ref, currentMission.executor.name);
                   options.usage!.record(observation, {
@@ -1090,8 +1101,11 @@ export function createMissionRunner(options: {
   const readExecutorMetadata = async (
     mission: Pick<Mission, "project">,
   ): Promise<ExecutorMetadata> => {
-    const project = await options.project.openRevision(mission.project.revision);
-    const resources = project.listResources();
+    const resources = await withOpenPragmaProjectRevision(
+      options.project,
+      mission.project.revision,
+      async (project) => project.listResources(),
+    );
     const avatarIds = new Map<string, string>();
     for (const resource of resources) {
       if (resource.kind === "Expert") {
@@ -5105,11 +5119,15 @@ export function createMissionRunner(options: {
 
   const reconcileMissionUsage = async (mission: Mission): Promise<void> => {
     if (options.usage === undefined) return;
-    const project = await options.project.openRevision(mission.project.revision);
-    const names = new Map(
-      project
-        .listResources()
-        .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+    const names = await withOpenPragmaProjectRevision(
+      options.project,
+      mission.project.revision,
+      async (project) =>
+        new Map(
+          project
+            .listResources()
+            .map((resource) => [resource.metadata.id, resource.metadata.name] as const),
+        ),
     );
     names.set(mission.executor.ref, mission.executor.name);
     for (const executionId of await collectMissionExecutionIds(options.missions, mission.id)) {

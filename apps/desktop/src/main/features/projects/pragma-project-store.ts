@@ -170,6 +170,19 @@ export class PragmaProjectStoreError extends Error {
   }
 }
 
+export async function withOpenPragmaProjectRevision<T>(
+  store: Pick<PragmaProjectStore, "openRevision">,
+  revision: number,
+  operation: (project: PragmaProject) => Promise<T>,
+): Promise<T> {
+  const project = await store.openRevision(revision);
+  try {
+    return await operation(project);
+  } finally {
+    await project.dispose();
+  }
+}
+
 export type PragmaProjectRevisionUnavailableStage =
   "manifest" | "compiler-migration" | "validation" | "io";
 
@@ -649,24 +662,79 @@ export function createPragmaProjectStore(options: {
     },
     async openRevision(revision) {
       await ensureMigrated();
-      const location = await repository.getRevision(projectId, revision);
+      let location = await repository.getRevision(projectId, revision);
       if (location === undefined) {
         throw new PragmaProjectStoreError(
           "project_invalid",
           `Pragma project revision not found: ${projectId}@${revision}`,
         );
       }
-      return await withRepositoryCheckout(repository, location, async (checkedOut) => {
-        return await loadPragmaProject(checkedOut.entryFile, {
-          rootDir: checkedOut.rootDir,
+      if (location.snapshotHash === undefined) {
+        throw new PragmaProjectStoreError(
+          "project_invalid",
+          `Pragma project revision has no snapshot identity: ${projectId}@${revision}`,
+        );
+      }
+      let lease: string | undefined;
+      let leaseDirectory = "";
+      let viewLock = "";
+      while (lease === undefined) {
+        const viewName = basename(location.rootDir);
+        leaseDirectory = join(dirname(projectViewsPath), "project-view-leases", viewName);
+        viewLock = join(dirname(projectViewsPath), "project-view-locks", viewName);
+        const markerName =
+          viewName === location.snapshotHash ? ".pragma-snapshot" : ".pragma-compiler-view";
+        lease = await withFileLock(viewLock, async () =>
+          location !== undefined &&
+          (await hasSnapshotMarker(join(location.rootDir, markerName), location.snapshotHash ?? ""))
+            ? await createProjectViewLease(leaseDirectory)
+            : undefined,
+        );
+        if (lease === undefined) {
+          location = await repository.getRevision(projectId, revision);
+          if (location === undefined)
+            throw new PragmaProjectStoreError(
+              "project_invalid",
+              `Pragma project revision not found: ${projectId}@${revision}`,
+            );
+          if (location.snapshotHash === undefined)
+            throw new PragmaProjectStoreError(
+              "project_invalid",
+              `Pragma project revision has no snapshot identity: ${projectId}@${revision}`,
+            );
+        }
+      }
+      const release = async () =>
+        await withFileLock(viewLock, async () => {
+          await rm(lease, { force: true });
+          await removeEmptyDirectory(leaseDirectory);
+        });
+      try {
+        const project = await loadPragmaProject(location.entryFile, {
+          rootDir: location.rootDir,
           requireLock: true,
-          ...(checkedOut.compilerVersion === undefined
+          ...(location.compilerVersion === undefined
             ? {}
-            : { revisionCompilerVersion: checkedOut.compilerVersion }),
-          sourceIdentity: checkedOut.snapshotHash ?? checkedOut.projectFingerprint,
+            : { revisionCompilerVersion: location.compilerVersion }),
+          sourceIdentity: location.snapshotHash ?? location.projectFingerprint,
           blueprintCache: options.blueprintCache,
         });
-      });
+        const dispose = project.dispose.bind(project);
+        let disposed = false;
+        project.dispose = async () => {
+          if (disposed) return;
+          disposed = true;
+          try {
+            await dispose();
+          } finally {
+            await release();
+          }
+        };
+        return project;
+      } catch (error) {
+        await release();
+        throw error;
+      }
     },
     async readArtifacts(revision) {
       await ensureMigrated();
@@ -914,13 +982,26 @@ function createDesktopProjectSourceRepository(options: {
     async withCheckout(project, operation) {
       const snapshotHash = project.snapshotHash;
       if (snapshotHash === undefined) return await operation(project);
-      const leaseDirectory = join(projectViewLeasesPath, basename(project.rootDir));
-      const lease = await createProjectViewLease(leaseDirectory);
+      const viewName = basename(project.rootDir);
+      const leaseDirectory = join(projectViewLeasesPath, viewName);
+      const viewLock = join(projectViewLocksPath, viewName);
+      let lease: string | undefined;
+      while (lease === undefined) {
+        lease = await withFileLock(viewLock, async () =>
+          viewName !== snapshotHash ||
+          (await hasSnapshotMarker(join(project.rootDir, ".pragma-snapshot"), snapshotHash))
+            ? await createProjectViewLease(leaseDirectory)
+            : undefined,
+        );
+        if (lease === undefined) await ensureView(snapshotHash);
+      }
       try {
         return await operation(project);
       } finally {
-        await rm(lease, { force: true });
-        await removeEmptyDirectory(leaseDirectory);
+        await withFileLock(viewLock, async () => {
+          await rm(lease, { force: true });
+          await removeEmptyDirectory(leaseDirectory);
+        });
       }
     },
     async getHead(projectId) {
@@ -1106,7 +1187,11 @@ function createCompilerMigratingProjectSourceRepository(options: {
           let migration: PragmaCompilerProjectMigrationResult;
           try {
             migration = migratePragmaCompilerProjectToCurrent({
-              files: await options.source.readFiles(location),
+              files: await withRepositoryCheckout(
+                options.source,
+                location,
+                async (checkedOut) => await options.source.readFiles(checkedOut),
+              ),
               revisionCompilerVersion: compilerVersion,
             });
           } catch (error) {
