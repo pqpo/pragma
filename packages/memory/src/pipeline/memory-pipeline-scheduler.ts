@@ -18,7 +18,8 @@ const MAX_ATTEMPTS = 5;
 export interface MemoryPipelineScheduler {
   start(): void;
   wake(): void;
-  runOnce(): Promise<void>;
+  runOnce(input?: { readonly background?: boolean }): Promise<void>;
+  runBackgroundOnce(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -55,7 +56,25 @@ export function createMemoryPipelineScheduler(options: {
     }, delay);
   };
 
-  const runOnce = async (): Promise<void> => {
+  const runBackgroundOnce = async (): Promise<void> => {
+    await Promise.all(
+      options.registry.list().map(async (module) => {
+        try {
+          await module.runBackgroundOnce?.();
+        } catch (error) {
+          await recordUnavailableDiagnostic({
+            module,
+            registry: options.registry,
+            feed: options.feed,
+            checkpoints: options.checkpoints,
+            now,
+            error,
+          });
+        }
+      }),
+    );
+  };
+  const runOnce = async (input: { readonly background?: boolean } = {}): Promise<void> => {
     if (running !== undefined) return await running;
     running = Promise.all(
       options.registry.list().map(async (module) => {
@@ -81,7 +100,7 @@ export function createMemoryPipelineScheduler(options: {
             error,
           });
         }
-        if (module.runBackgroundOnce !== undefined) {
+        if (input.background !== false && module.runBackgroundOnce !== undefined) {
           try {
             await module.runBackgroundOnce();
           } catch (error) {
@@ -117,6 +136,7 @@ export function createMemoryPipelineScheduler(options: {
       schedule(0);
     },
     runOnce,
+    runBackgroundOnce,
     async stop() {
       stopped = true;
       if (timer !== undefined) clearTimer(timer);

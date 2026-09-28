@@ -224,6 +224,21 @@ export const settings = {
       "One slot covers both the subject run and Judge run for a case. Changes apply to the queue immediately.",
   },
   memory: {
+    attention: {
+      title: "Attention Memory",
+      description:
+        "Find relevant history as the task evolves. Jev receives bounded, sanitized task observations and eligible memory summaries. Configuration is shared with the CLI.",
+      key: "Jev API Key",
+      save: "Save and validate",
+      remove: "Remove key",
+      disabled: "Not configured",
+      ready: "Enabled",
+      degraded: "Temporarily unavailable",
+      needs_attention: "Needs attention",
+      error: "Could not validate or save the key. Check your key and connection.",
+      loadError: "Could not load Attention Memory settings.",
+      paused: "Paused while Memory is disabled",
+    },
     navigation: "Memory",
     title: "Memory",
     description:

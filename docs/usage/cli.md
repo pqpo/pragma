@@ -192,3 +192,7 @@ Node.js 20 即使 npm 发出 `EBADENGINE` 警告也不满足运行要求：boots
 加载前以退出码 2 拒绝。启用 `engine-strict` 时安装本身应失败。
 
 机器调用入口：[Pragma CLI Agent / automation guide](./cli-agent.md)。
+
+## Memory
+
+CLI 与 Desktop 共用同一 Pragma home 的 Memory 策略、RecallScope、已有记忆与可选 Attention。CLI 捕获 Evidence 并提交待提取任务；实际模型提炼由后续 Desktop 执行。CLI 不启动 Memory daemon，不提供 Jev Key 写入命令。Attention 配置和诊断见 [Memory 使用指南](./memory.md)。

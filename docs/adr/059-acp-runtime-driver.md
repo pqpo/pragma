@@ -1,4 +1,4 @@
-# ADR 058: ACP Runtime Driver and Claude Code transport
+# ADR 059: ACP Runtime Driver and Claude Code transport
 
 ## Status
 

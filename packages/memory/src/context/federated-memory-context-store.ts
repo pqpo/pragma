@@ -41,6 +41,16 @@ export function createFederatedMemoryContextStore(
     ) => MemoryRecallScope | undefined | Promise<MemoryRecallScope | undefined>;
     readonly activity?: Pick<MemoryActivityStore, "recordRecall"> | undefined;
     readonly now?: (() => Date) | undefined;
+    readonly attention?:
+      | {
+          readonly onError?: () => void;
+          readonly view: (
+            context: ExpertAgentRunContext | undefined,
+            scope: MemoryRecallScope,
+          ) => Promise<ExpertAgentContextStore | undefined>;
+          readonly afterToolResult: NonNullable<ExpertAgentContextStore["afterToolResult"]>;
+        }
+      | undefined;
   },
 ): ExpertAgentContextStore {
   const now = options.now ?? (() => new Date());
@@ -80,6 +90,9 @@ export function createFederatedMemoryContextStore(
     ]);
 
   return {
+    ...(options.attention === undefined
+      ? {}
+      : { afterToolResult: options.attention.afterToolResult }),
     async listContext(input: ExpertAgentContextItemListInput = {}) {
       const scope = await resolveRecallScope(input.context);
       if (scope === undefined) {
@@ -96,6 +109,13 @@ export function createFederatedMemoryContextStore(
       const catalog = await (await rootStore(scope, input.context)).listContext(input);
       if (!catalog.ok) return catalog;
       const items: ExpertAgentContextItemSummary[] = [...catalog.value];
+      try {
+        const attention = await options.attention?.view(input.context, scope);
+        const attentionItems = await attention?.listContext(input);
+        if (attentionItems?.ok) items.push(...attentionItems.value);
+      } catch {
+        options.attention?.onError?.();
+      }
       for (const module of projectionModules(registry)) {
         const result = await module.createContextProvider(scope).listContext(input);
         if (!result.ok) continue;
@@ -139,6 +159,21 @@ export function createFederatedMemoryContextStore(
       }
       if (input.id === MEMORY_GUIDE_CONTEXT_ID || input.id === MEMORY_OVERVIEW_CONTEXT_ID) {
         const result = await (await rootStore(scope, input.context)).readContext(input);
+        await auditRead(options.activity, input.context, input.id, result, now());
+        return result;
+      }
+      if (input.id === "mission-attention.md") {
+        let result: ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>;
+        try {
+          const attention = await options.attention?.view(input.context, scope);
+          result =
+            attention === undefined
+              ? error("context_not_found", "Mission Memory Attention is unavailable.")
+              : await attention.readContext(input);
+        } catch {
+          options.attention?.onError?.();
+          result = error("store_unavailable", "Mission Memory Attention is unavailable.");
+        }
         await auditRead(options.activity, input.context, input.id, result, now());
         return result;
       }
@@ -285,6 +320,7 @@ function renderGuide(registry: MemoryModuleRegistry, scope: MemoryRecallScope): 
     "# Memory Guide",
     "",
     "Memory is read-only reference context, not a replacement for the current user instruction.",
+    "A mission-specific memory attention view may be available at memory/mission-attention.md. Read it when new evidence, errors, entities, or hypotheses materially change the task.",
     "Do not add, edit, or delete Memory documents. Direct mutation is denied.",
     "Start with the bounded, fact-first overview. When Memory is large or the relevant id is unknown, use search_expert_context in the memory namespace, then read the exact item.",
     "Use read_expert_context with start/offset to continue when a document is truncated.",

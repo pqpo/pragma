@@ -13,14 +13,14 @@ const DesktopMemorySubjectIdentitySchema = z
   })
   .strict();
 
-export interface DesktopMemorySubjectIdentityStore {
+export interface LocalHostMemorySubjectIdentityStore {
   getLocalUserRef(): Promise<{ readonly type: "pragma.user"; readonly id: string }>;
 }
 
-export function createDesktopMemorySubjectIdentityStore(options: {
+export function createLocalHostMemorySubjectIdentityStore(options: {
   readonly pragmaHome: string;
   readonly now?: (() => Date) | undefined;
-}): DesktopMemorySubjectIdentityStore {
+}): LocalHostMemorySubjectIdentityStore {
   const path = join(new PragmaPaths(options).memoryDataRoot(), "subject-identity.json");
   const now = options.now ?? (() => new Date());
 

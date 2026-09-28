@@ -398,7 +398,9 @@ export function createMissionRunner(options: {
   readonly contextStoreRevisions?: ContextStoreRevisionService | undefined;
   readonly knowledgeRevisionMountResources?: (() => readonly PragmaResource[]) | undefined;
   readonly hostContextStores?:
-    readonly ExpertAgentContextStoreRegistrationInput[] | HostContextBindingsResolver | undefined;
+    | readonly ExpertAgentContextStoreRegistrationInput[]
+    | ((mission: Mission) => Promise<readonly ExpertAgentContextStoreRegistrationInput[]>)
+    | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
   readonly usage?: DesktopUsageStore | undefined;
@@ -833,7 +835,7 @@ export function createMissionRunner(options: {
     > => {
       if (systemMission || options.hostContextStores === undefined) return [];
       return typeof options.hostContextStores === "function"
-        ? await options.hostContextStores()
+        ? await options.hostContextStores(mission)
         : options.hostContextStores;
     };
     const resolveHostContextBindings: HostContextBindingsResolver = async () => [
@@ -3204,6 +3206,7 @@ export function createMissionRunner(options: {
       await options.onOwnerDeleting?.({ mission, executionIds: [...executionIds] });
       const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
       const sources = [
+        { label: "memory-attention", path: paths.memoryAttentionRoot(mission.id) },
         ...[...executionIds].map((executionId) => ({
           label: `executions/${executionId}`,
           path: paths.executionRoot(executionId),

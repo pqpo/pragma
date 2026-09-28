@@ -1,3 +1,4 @@
+import { resolveMemoryRecallScope } from "@pragma/local-host";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createDesktopMemoryPlane,
-  resolveDesktopMemoryRecallScope,
   resolveMemoryModuleHealthStatus,
 } from "./desktop-memory-plane.ts";
 
@@ -366,7 +366,7 @@ describe("Desktop Memory recall scope", () => {
     const now = new Date("2026-08-01T00:00:00.000Z");
 
     await expect(
-      resolveDesktopMemoryRecallScope(
+      resolveMemoryRecallScope(
         { resolveAt },
         {
           source: { type: "pragma.expert-team", id: "team-a" },
@@ -392,12 +392,10 @@ describe("Desktop Memory recall scope", () => {
       learning: "local-candidates" as const,
       appliedRevisions: [],
     }));
-    await expect(
-      resolveDesktopMemoryRecallScope({ resolveAt }, undefined),
-    ).resolves.toBeUndefined();
+    await expect(resolveMemoryRecallScope({ resolveAt }, undefined)).resolves.toBeUndefined();
     expect(resolveAt).not.toHaveBeenCalled();
     await expect(
-      resolveDesktopMemoryRecallScope(
+      resolveMemoryRecallScope(
         { resolveAt },
         {
           source: { type: "pragma.flow", id: "flow-a" },
@@ -416,7 +414,7 @@ describe("Desktop Memory recall scope", () => {
     }));
 
     await expect(
-      resolveDesktopMemoryRecallScope(
+      resolveMemoryRecallScope(
         { resolveAt },
         {
           source: { type: "pragma.flow", id: "flow-a" },

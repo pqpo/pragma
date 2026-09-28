@@ -1,3 +1,4 @@
+import { MemoryAttentionStatusSchema, UpdateMemoryAttentionSettingsSchema } from "@pragma/shared";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
@@ -54,6 +55,15 @@ import {
 } from "../../shared/contracts/context-store-browser.ts";
 
 export const memoryApi = {
+  getMemoryAttentionStatus: async () =>
+    MemoryAttentionStatusSchema.parse(await ipcRenderer.invoke("memory-attention:status")),
+  updateMemoryAttentionSettings: async (input) =>
+    MemoryAttentionStatusSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-attention:settings",
+        UpdateMemoryAttentionSettingsSchema.parse(input),
+      ),
+    ),
   getGlobalMemoryPolicy: async () =>
     DesktopGlobalMemoryPolicySnapshotSchema.parse(
       await ipcRenderer.invoke("memory-policy:global:get"),
@@ -253,6 +263,8 @@ export const memoryApi = {
     ),
 } satisfies Pick<
   PragmaDesktopAPI,
+  | "getMemoryAttentionStatus"
+  | "updateMemoryAttentionSettings"
   | "getGlobalMemoryPolicy"
   | "updateGlobalMemoryPolicy"
   | "getAssetMemoryPolicy"

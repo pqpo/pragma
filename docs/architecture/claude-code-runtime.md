@@ -4,7 +4,7 @@ Claude Code executes through Core's `defineAcpRuntimeDriver()` and the bundled `
 
 Per-turn model and effort overrides restore the configured or native session defaults on the next turn. Claude declares turn-scoped token usage, matching the pinned worker; generic ACP bindings may declare session-scoped snapshots.
 
-The adapter supplies Claude-specific model/effort configuration, system prompt metadata, isolated settings, managed plugin/Skills, HTTP MCP, compaction hooks and Host interaction callbacks. Core owns ACP transport and generic event projection. See [ADR 058](../adr/058-acp-runtime-driver.md).
+The adapter supplies Claude-specific model/effort configuration, system prompt metadata, isolated settings, managed plugin/Skills, HTTP MCP, compaction hooks and Host interaction callbacks. Core owns ACP transport and generic event projection. See [ADR 059](../adr/059-acp-runtime-driver.md).
 
 Active-turn steer requires ACP's advertised steering extension. The driver sends `_session/steering`, requests `promptRequired` when idle and waits at most 1.75 seconds for acknowledgement. Successful steer modifies the original prompt stream. Safe rejection follows Core's existing queue policy; uncertain delivery is surfaced without duplicate submission. ACP cancellation is followed by bounded process termination if the prompt does not settle. Normal close stops the worker while preserving owned native files. Configuration and compaction timeouts retire the connection before another prompt can run; continuing requires restoring the owned session. Host interaction requests inherit the active turn cancellation signal and reject delayed responses from a finished turn.
 

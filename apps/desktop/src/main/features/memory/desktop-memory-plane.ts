@@ -1,30 +1,6 @@
+import { readExecutionRunScope, type FileExecutionStore, type PragmaLogger } from "@pragma/core";
 import {
-  EXECUTION_CURRENT_EXPERT_ID_ATTR,
-  readExecutionRunScope,
-  createFileCanonicalEventFeed,
-  createFileExecutionStore,
-  type FileExecutionStore,
-  type ExpertAgentRunContext,
-  type PragmaLogger,
-} from "@pragma/core";
-import {
-  MemoryModuleRegistry,
-  createEpisodicMemoryModule,
-  createKnowledgeMemoryModule,
-  createKnowledgeSourceReader,
-  createSkillMemoryModule,
-  createSkillSourceReader,
-  createSemanticMemoryModule,
-  createFileMemoryExtractionSettingsStore,
-  createFileMemoryExtractorProfileStore,
-  createExecutionEvidenceAdapter,
   createFederatedMemoryContextStore,
-  createFileMemoryPolicyStore,
-  createFileMemoryPipelineStateStore,
-  createMemoryEvidenceFeed,
-  createMemoryEvidencePublisher,
-  createMemoryPipelineScheduler,
-  createMemoryActivityStore,
   MemoryRecallScopeSchema,
   type MemoryPolicyStore,
   type MemoryRecallScope,
@@ -46,7 +22,12 @@ import {
   EXECUTION_EVIDENCE_ADAPTER_ID,
 } from "@pragma/memory";
 
-import { createDesktopMemorySubjectIdentityStore } from "./memory-subject-identity.ts";
+import {
+  createLocalHostMemoryDataPlane,
+  createLocalHostMemorySubjectIdentityStore,
+  resolveMemoryRecallScope,
+  createLocalHostMemoryContextService,
+} from "@pragma/local-host";
 import { createMemoryCleanupJournal } from "./memory-cleanup-journal.ts";
 
 export type DesktopMemoryMutationResult =
@@ -84,6 +65,14 @@ export interface DesktopMemoryPlane {
   readonly skillLearningStore: SkillMemoryModule["store"];
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
+  readonly attentionSettings:
+    ReturnType<typeof createLocalHostMemoryContextService>["settings"] | undefined;
+  createMissionContextStore(input: {
+    missionId: string;
+    goal: string;
+    projectId?: string;
+  }): import("@pragma/core").ExpertAgentContextStore;
+  stopMissionAttention(missionId: string): Promise<void>;
   getContextStoreViewStatus(
     input: DesktopMemoryContextStoreViewInput,
   ): Promise<DesktopMemoryContextStoreViewStatus>;
@@ -175,99 +164,60 @@ export async function createDesktopMemoryPlane(options: {
   readonly logger: PragmaLogger;
   readonly pollIntervalMs?: number | undefined;
   readonly onTick?: (() => Promise<void>) | undefined;
+  readonly secrets?: import("@pragma/local-host").SecretStore | undefined;
   readonly knowledgeLearningSink?: KnowledgeLearningSink | undefined;
   readonly skillLearningSink?: SkillLearningSink | undefined;
   readonly skillLearningTargetReader?: SkillLearningTargetReader | undefined;
 }): Promise<DesktopMemoryPlane> {
-  const canonical = await createFileCanonicalEventFeed({ pragmaHome: options.pragmaHome });
-  const executionStore = createFileExecutionStore({
-    pragmaHome: options.pragmaHome,
-    canonicalEventFeed: canonical,
-    onCanonicalEventDeliveryError: (error, context) => {
-      options.logger.warn(
-        "desktop.memory_event_delivery_deferred",
-        "A canonical event handoff was preserved for background recovery.",
-        { ...context, error },
-      );
-    },
-  });
-  const state = createFileMemoryPipelineStateStore({ pragmaHome: options.pragmaHome });
-  const policies = createFileMemoryPolicyStore({ pragmaHome: options.pragmaHome });
-  const extractorProfiles = createFileMemoryExtractorProfileStore({
-    pragmaHome: options.pragmaHome,
-  });
-  const extractionSettings = createFileMemoryExtractionSettingsStore({
-    pragmaHome: options.pragmaHome,
-  });
-  const publisher = createMemoryEvidencePublisher(canonical);
-  const registry = new MemoryModuleRegistry();
-  const episodic = await createEpisodicMemoryModule({
-    pragmaHome: options.pragmaHome,
+  const data = await createLocalHostMemoryDataPlane(options);
+  const {
+    canonical,
+    executionStore,
+    state,
+    policies,
+    extractorProfiles,
     extractionSettings,
-  });
-  const knowledgeRef: { current?: KnowledgeMemoryModule } = {};
-  const semantic = await createSemanticMemoryModule({
-    pragmaHome: options.pragmaHome,
-    extractionSettings,
-    async onProjectionChanged({ rootRef }) {
-      const current = knowledgeRef.current;
-      if (current === undefined) throw new Error("knowledge_memory_module_not_ready");
-      await current.scheduleRoot(rootRef);
-    },
-  });
-  const knowledge = await createKnowledgeMemoryModule({
-    pragmaHome: options.pragmaHome,
-    sourceReader: createKnowledgeSourceReader({
-      episodic: episodic.store,
-      semantic: semantic.store,
-    }),
-    learningSink:
-      options.knowledgeLearningSink ??
-      ({
-        async submit() {
-          throw new Error("knowledge_learning_sink_unavailable");
-        },
-      } satisfies KnowledgeLearningSink),
-  });
-  knowledgeRef.current = knowledge;
-  const skill = await createSkillMemoryModule({
-    pragmaHome: options.pragmaHome,
-    sourceReader: createSkillSourceReader({ episodic: episodic.store, semantic: semantic.store }),
-    targetReader:
-      options.skillLearningTargetReader ??
-      ({
-        async listTargets() {
-          return [];
-        },
-      } satisfies SkillLearningTargetReader),
-    learningSink:
-      options.skillLearningSink ??
-      ({
-        async submit() {
-          throw new Error("skill_learning_sink_unavailable");
-        },
-      } satisfies SkillLearningSink),
-  });
-  const subjectIdentities = createDesktopMemorySubjectIdentityStore({
+    registry,
+    episodic,
+    semantic,
+    knowledge,
+    skill,
+    activity,
+    scheduler,
+    flushDelivery,
+    registerExecutionContext,
+    setConversationState,
+  } = data;
+  const attention =
+    options.secrets === undefined
+      ? undefined
+      : createLocalHostMemoryContextService({
+          pragmaHome: options.pragmaHome,
+          data,
+          secrets: options.secrets,
+          onDiagnostic: (code) => {
+            if (code !== undefined)
+              options.logger.warn("memory.attention_degraded", "Memory Attention is degraded.", {
+                subsystem: "memory.attention",
+                code,
+              });
+          },
+        });
+  const subjectIdentities = createLocalHostMemorySubjectIdentityStore({
     pragmaHome: options.pragmaHome,
   });
-  const activity = createMemoryActivityStore({ pragmaHome: options.pragmaHome });
   const cleanup = createMemoryCleanupJournal({
     pragmaHome: options.pragmaHome,
     feed: canonical,
     episodic: episodic.store,
     semantic: semantic.store,
   });
-  registry.register(episodic);
-  registry.register(knowledge);
-  registry.register(semantic);
-  registry.register(skill);
   const contextStore = createFederatedMemoryContextStore(registry, {
     resolveRecallScope: async (context) => {
       const executionId = readExecutionRunScope(context).executionId;
       const executionContext =
         executionId === undefined ? undefined : await activity.getExecutionContext(executionId);
-      return await resolveDesktopMemoryRecallScope(
+      return await resolveMemoryRecallScope(
         policies,
         context,
         new Date(),
@@ -275,22 +225,6 @@ export async function createDesktopMemoryPlane(options: {
       );
     },
     activity,
-  });
-  const adapter = createExecutionEvidenceAdapter({
-    source: canonical,
-    publisher,
-    checkpoints: state,
-    deadLetters: state,
-    policies,
-    activity,
-  });
-  const scheduler = createMemoryPipelineScheduler({
-    registry,
-    feed: createMemoryEvidenceFeed(canonical),
-    publisher,
-    checkpoints: state,
-    deadLetters: state,
-    outbox: state,
   });
   let stopped = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -419,8 +353,8 @@ export async function createDesktopMemoryPlane(options: {
       const recovery = await executionStore.recoverPendingCanonicalEvents();
       const learningEnabled = (await policies.getGlobal()).policy.enabled === "enabled";
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
-      const adapted = await adapter.runOnce();
-      await scheduler.runOnce();
+      const adapted = await flushDelivery();
+      await scheduler.runBackgroundOnce();
       await options.onTick?.();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
@@ -518,6 +452,11 @@ export async function createDesktopMemoryPlane(options: {
     skillLearningStore: skill.store,
     activity,
     contextStore,
+    attentionSettings: attention?.settings,
+    createMissionContextStore: (input) => attention?.createContextStore(input) ?? contextStore,
+    stopMissionAttention: async (missionId) => {
+      await attention?.stopMission(missionId);
+    },
     async getContextStoreViewStatus(input) {
       const resolved = await resolveContextStoreViewScope(input);
       if (!resolved.available) return "recall_disabled";
@@ -555,44 +494,12 @@ export async function createDesktopMemoryPlane(options: {
       wakePipeline();
     },
     async registerMemoryExecutionContext(input) {
-      const localUser = await subjectIdentities.getLocalUserRef();
-      const principalRefs = [localUser, { type: "pragma.project" as const, id: input.projectId }];
-      const conversationRef = { type: "pragma.mission" as const, id: input.missionId };
-      await activity.registerExecutionContext({
-        executionId: input.executionId,
-        conversationRef,
-        principalRefs,
-      });
-      const now = new Date();
-      await Promise.all([
-        semantic.registerExecutionSubjects({
-          executionId: input.executionId,
-          subjectRefs: principalRefs,
-        }),
-        episodic.bindExecutionConversation({
-          executionId: input.executionId,
-          conversationRef,
-          now,
-        }),
-        semantic.bindExecutionConversation({
-          executionId: input.executionId,
-          conversationRef,
-          now,
-        }),
-      ]);
-      await Promise.all([
-        episodic.setConversationState({ conversationRef, state: "running", now }),
-        semantic.setConversationState({ conversationRef, state: "running", now }),
-      ]);
+      await registerExecutionContext(input);
+      await setConversationState({ missionId: input.missionId, state: "running" });
       wakePipeline();
     },
     async setMemoryConversationState(input) {
-      const conversationRef = { type: "pragma.mission" as const, id: input.missionId };
-      const now = new Date();
-      await Promise.all([
-        episodic.setConversationState({ conversationRef, state: input.state, now }),
-        semantic.setConversationState({ conversationRef, state: input.state, now }),
-      ]);
+      await setConversationState(input);
       wakePipeline();
     },
     async reviseSemanticFact(input) {
@@ -780,10 +687,18 @@ export async function createDesktopMemoryPlane(options: {
           },
         });
       }
+      const attentionStatus = await attention?.settings.status().catch(() => ({
+        errorCode: "attention_state_unavailable",
+      }));
+      const attentionError =
+        attentionStatus?.errorCode === undefined
+          ? undefined
+          : { code: attentionStatus.errorCode, occurredAt: new Date().toISOString() };
+      const currentError = lastError ?? attentionError;
       return {
         state: stopped
           ? "stopped"
-          : lastError !== undefined ||
+          : currentError !== undefined ||
               delivery.quarantined > 0 ||
               blockedBytes > 0 ||
               modules.some((module) => module.status !== "healthy")
@@ -795,7 +710,7 @@ export async function createDesktopMemoryPlane(options: {
           blockedBytes,
         },
         delivery,
-        ...(lastError === undefined ? {} : { lastError }),
+        ...(currentError === undefined ? {} : { lastError: currentError }),
         modules,
         storagePolicy: desktopStoragePolicy(),
         maintenance: maintenanceDiagnostic,
@@ -808,6 +723,7 @@ export async function createDesktopMemoryPlane(options: {
     },
     async stop() {
       stopped = true;
+      await attention?.stop();
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
       await running;
@@ -820,29 +736,6 @@ export async function createDesktopMemoryPlane(options: {
       await canonical.close();
     },
   };
-}
-
-export async function resolveDesktopMemoryRecallScope(
-  policies: Pick<MemoryPolicyStore, "resolveAt">,
-  context: ExpertAgentRunContext | undefined,
-  now: Date = new Date(),
-  principalRefs: readonly import("@pragma/shared").MemorySubjectRef[] = [],
-): Promise<MemoryRecallScope | undefined> {
-  const source = context?.source;
-  const currentExpertId = context?.attributes?.[EXECUTION_CURRENT_EXPERT_ID_ATTR];
-  if (currentExpertId === undefined) return undefined;
-  const scope = MemoryRecallScopeSchema.safeParse({
-    rootRef: { type: source?.type, id: source?.id },
-    expertRef: { type: "pragma.expert", id: currentExpertId },
-    ...(principalRefs.length === 0 ? {} : { principalRefs }),
-  });
-  if (!scope.success) return undefined;
-  const policy = await policies.resolveAt({
-    rootRef: scope.data.rootRef,
-    ...(scope.data.expertRef === undefined ? {} : { producerRefs: [scope.data.expertRef] }),
-    occurredAt: now.toISOString(),
-  });
-  return policy.recall ? scope.data : undefined;
 }
 
 function desktopStoragePolicy(): Readonly<Record<string, string | number>> {

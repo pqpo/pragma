@@ -70,3 +70,28 @@
     display: grid;
   }
 }
+
+.memory-attention-settings {
+  display: grid;
+  gap: 12px;
+  padding-block: 20px;
+}
+
+.memory-attention-settings h3,
+.memory-attention-settings p {
+  margin: 0;
+}
+
+.memory-attention-settings p {
+  color: var(--ui-text-secondary);
+}
+
+.memory-attention-settings form {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-attention-actions {
+  display: flex;
+  gap: 8px;
+}

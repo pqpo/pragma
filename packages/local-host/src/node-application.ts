@@ -1,7 +1,12 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { RuntimeAdapter, RuntimeResolver } from "@pragma/core";
+import {
+  createFileExpertSessionStore,
+  type RuntimeAdapter,
+  type RuntimeResolver,
+} from "@pragma/core";
+import { createLocalHostRunMemory } from "./run-memory.ts";
 import {
   createIntegrationError,
   HumanInteractionRequestEnvelopeSchema,
@@ -305,8 +310,11 @@ export function createLocalHostNodeApplication(
     watch: missionWatch,
     ownerScope,
   } = missionLifecycle;
-  const { executions: executionStore, sessions: expertSessionStore } = createLocalHostCoreStores({
+  const runMemory = createLocalHostRunMemory({ pragmaHome: options.pragmaHome, loggerProvider });
+  const executionStore = runMemory.executionStore;
+  const expertSessionStore = createFileExpertSessionStore({
     pragmaHome: options.pragmaHome,
+    executions: executionStore,
   });
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
@@ -333,17 +341,75 @@ export function createLocalHostNodeApplication(
   const resolveExecutor = async (input: Parameters<typeof projectCatalog.resolve>[0]) =>
     (await resolveBuiltInExecutor({ ref: input.ref, workspace: input.workspace })) ??
     (await projectCatalog.resolve(input));
-  const executorPort = createCoreRunExecutorPort({
+  const rawExecutorPort = createCoreRunExecutorPort({
     pragmaHome: options.pragmaHome,
     runtimes: runtimeResolver,
     usageSink,
     loggerProvider,
     executions: executionStore,
     sessions: expertSessionStore,
-    createHostContextBindings: async ({ missionId }) =>
-      await createLocalHostMissionBoardBindings({ pragmaHome: options.pragmaHome, missionId }),
+    createHostContextBindings: async ({ missionId, request }) => [
+      ...(await createLocalHostMissionBoardBindings({ pragmaHome: options.pragmaHome, missionId })),
+      ...(await runMemory.bindings({
+        missionId,
+        goal: request.prompt ?? "",
+        ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+      })),
+    ],
     executors: resolveExecutor,
   });
+  const executorPort = {
+    ...rawExecutorPort,
+    start: async (input: Parameters<typeof rawExecutorPort.start>[0]) => {
+      let handle: Awaited<ReturnType<typeof rawExecutorPort.start>>;
+      try {
+        handle = await rawExecutorPort.start(input);
+      } catch (error) {
+        try {
+          await runMemory.complete(input.missionId);
+        } finally {
+          await runMemory.close();
+        }
+        throw error;
+      }
+      try {
+        await runMemory.register({
+          missionId: input.missionId,
+          executionId: handle.executionId,
+          ...(input.request.project === undefined
+            ? {}
+            : { projectId: input.request.project.projectId }),
+        });
+      } catch (error) {
+        await handle.cancel?.();
+        try {
+          await handle.release?.();
+        } finally {
+          try {
+            await runMemory.complete(input.missionId);
+          } finally {
+            await runMemory.close();
+          }
+        }
+        throw error;
+      }
+      return {
+        ...handle,
+        release: async () => {
+          try {
+            const terminal = await handle.result;
+            await runMemory.complete(input.missionId, terminal.status === "input_required");
+          } finally {
+            try {
+              await handle.release?.();
+            } finally {
+              await runMemory.close();
+            }
+          }
+        },
+      };
+    },
+  };
   const missionPort = createControllerRunMissionPort(missionController, { ownerScope });
   const coreControl = createLocalHostCoreMissionControlAdapter({
     pragmaHome: options.pragmaHome,
@@ -353,8 +419,14 @@ export function createLocalHostNodeApplication(
     executions: executionStore,
     sessions: expertSessionStore,
     mission: missionPort,
-    createHostContextBindings: async ({ missionId }) =>
-      await createLocalHostMissionBoardBindings({ pragmaHome: options.pragmaHome, missionId }),
+    createHostContextBindings: async ({ missionId, request }) => [
+      ...(await createLocalHostMissionBoardBindings({ pragmaHome: options.pragmaHome, missionId })),
+      ...(await runMemory.bindings({
+        missionId,
+        goal: request.prompt ?? "",
+        ...(request.project === undefined ? {} : { projectId: request.project.projectId }),
+      })),
+    ],
     executors: resolveExecutor,
     resolveActiveOwner: executorPort.resolveActiveOwner,
     resolveMissionBinding: async (missionId) =>
@@ -363,11 +435,19 @@ export function createLocalHostNodeApplication(
       (await missionController.listOperations({ missionId })).some(
         (operation) => operation.state === "queued" || operation.state === "applying",
       ),
+    onOwnerRecovering: async (missionId) => await runMemory.resume(missionId),
     releaseMissionOwner: async (missionId) => {
       const hasPending = (await missionController.listOperations({ missionId })).some(
         (operation) => operation.state === "queued" || operation.state === "applying",
       );
       if (hasPending) return;
+      const session = await expertSessionStore.get(missionId);
+      const execution = session === undefined ? await executionStore.get(missionId) : undefined;
+      await runMemory.complete(
+        missionId,
+        session?.lastStatus === "waiting" || execution?.status === "waiting",
+      );
+      await runMemory.close();
       await ownerScope.release(missionId);
     },
   });
