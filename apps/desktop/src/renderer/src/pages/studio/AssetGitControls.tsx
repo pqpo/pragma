@@ -22,19 +22,23 @@ export function AssetGitPanel(props: {
   useEffect(() => {
     let active = true;
     const api = desktopApi();
+    const applyStatus = (next: AssetGitStatus) => {
+      if (!active || next.target.kind !== props.target.kind || next.target.id !== props.target.id)
+        return;
+      setStatus(next);
+      setRemote(next.source?.remote ?? "");
+      setBranch(next.source?.branch ?? "");
+    };
+    const unsubscribe = api?.subscribeAssetGitStatusUpdates(applyStatus);
     void api
       ?.getAssetGitStatus(props.target)
-      .then((next) => {
-        if (!active) return;
-        setStatus(next);
-        setRemote(next.source?.remote ?? "");
-        setBranch(next.source?.branch ?? "");
-      })
+      .then(applyStatus)
       .catch((cause: unknown) => {
         if (active) setError(errorMessage(cause));
       });
     return () => {
       active = false;
+      unsubscribe?.();
     };
   }, [props.target.kind, props.target.id, props.revision]);
 

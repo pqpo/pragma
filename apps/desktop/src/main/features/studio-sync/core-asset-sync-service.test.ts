@@ -347,14 +347,12 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(local.name()).toBe("Shared docs");
   });
 
-  it("cancels a scheduled upload when synchronization is removed", async () => {
+  it("does not upload local changes when synchronization is removed", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");
     await local.service.configure({ remote, branch: "main", autoPush: true, pushDeletions: false });
     local.rename("Local only");
-    local.service.schedule("knowledge-store-published");
     await local.service.removeConfiguration();
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
     expect((await local.service.overview()).status).toBe("unconfigured");
     const checkout = join(root, "after-removal");
     await exec("git", ["clone", barePath(root), checkout]);

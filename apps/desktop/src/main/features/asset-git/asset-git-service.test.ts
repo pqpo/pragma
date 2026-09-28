@@ -26,7 +26,6 @@ import { createAssetGitService } from "./asset-git-service.ts";
 
 const execFileAsync = promisify(execFile);
 const roots: string[] = [];
-const services: ReturnType<typeof createAssetGitService>[] = [];
 const originalGitConfig = {
   global: process.env.GIT_CONFIG_GLOBAL,
   allow: process.env.GIT_ALLOW_PROTOCOL,
@@ -35,7 +34,6 @@ const originalGitConfig = {
 vi.setConfig({ testTimeout: 15_000 });
 
 afterEach(async () => {
-  for (const service of services.splice(0)) service.stop();
   if (originalGitConfig.global === undefined) delete process.env.GIT_CONFIG_GLOBAL;
   else process.env.GIT_CONFIG_GLOBAL = originalGitConfig.global;
   if (originalGitConfig.allow === undefined) delete process.env.GIT_ALLOW_PROTOCOL;
@@ -49,7 +47,10 @@ async function run(root: string, args: string[]): Promise<string> {
   return (await execFileAsync("git", ["-C", root, ...args])).stdout;
 }
 
-async function fixture(onAssociationChanged?: () => void) {
+async function fixture(
+  onAssociationChanged?: () => void,
+  onStatusChanged?: Parameters<typeof createAssetGitService>[0]["onStatusChanged"],
+) {
   const root = await mkdtemp(join(tmpdir(), "pragma-asset-git-test-"));
   roots.push(root);
   const bare = join(root, "asset.git");
@@ -85,8 +86,8 @@ async function fixture(onAssociationChanged?: () => void) {
     stores,
     capabilities: {} as CapabilityStore,
     onAssociationChanged,
+    onStatusChanged,
   });
-  services.push(service);
   return {
     root,
     bare,
@@ -111,6 +112,19 @@ describe("asset Git knowledge sync", () => {
     expect(changes).toBe(3);
   });
 
+  it("publishes background-visible terminal status changes", async () => {
+    const statuses: string[] = [];
+    const { service, source } = await fixture(undefined, (status) => {
+      statuses.push(status.status);
+    });
+    const target = await service.import({ kind: "knowledge", source });
+    await service.unbind(target);
+    await service.bind({ target, source });
+    await service.sync(target);
+
+    expect(statuses).toEqual(["synced", "unbound", "pending", "syncing", "synced"]);
+  });
+
   it("publishes an existing knowledge base into an empty repository", async () => {
     const { root, stores, service } = await fixture();
     const bare = join(root, "empty.git");
@@ -123,21 +137,6 @@ describe("asset Git knowledge sync", () => {
     expect((await service.sync(target)).status).toBe("synced");
     expect((await run(bare, ["show", "main:guide.md"])).trim()).toBe("# Local guide");
     expect((await service.status(target)).source?.branch).toBe("main");
-  });
-
-  it("synchronizes a scheduled local change in the background", async () => {
-    const { bare, stores, service, source } = await fixture();
-    const target = await service.import({ kind: "knowledge", source });
-    if (target.kind !== "knowledge") return;
-    await stores.createFile(target.id, "automatic.md", "# Automatic\n");
-
-    service.schedule(target);
-
-    await vi.waitFor(async () => expect((await service.status(target)).status).toBe("synced"), {
-      timeout: 5_000,
-      interval: 100,
-    });
-    expect((await run(bare, ["show", "main:automatic.md"])).trim()).toBe("# Automatic");
   });
 
   it("imports Markdown, preserves other repository files, and merges independent edits", async () => {
@@ -283,7 +282,6 @@ describe("asset Git knowledge sync", () => {
         throw new Error("simulated process interruption");
       },
     });
-    services.push(interrupted);
     expect((await interrupted.sync(target)).status).toBe("error");
     expect((await service.sync(target)).status).toBe("synced");
     await run(seed, ["pull", "--ff-only", "origin", "main"]);
@@ -385,7 +383,6 @@ describe("asset Git Skill sync", () => {
       stores,
       capabilities,
     });
-    services.push(service);
     const target = await service.import({ kind: "skill", source });
     expect(target.kind).toBe("skill");
     if (target.kind !== "skill") return;

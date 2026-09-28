@@ -67,10 +67,8 @@ export interface AssetGitService {
   import(input: z.input<typeof AssetGitImportSchema>): Promise<AssetGitTarget>;
   sync(target: AssetGitTarget): Promise<AssetGitStatus>;
   source(target: AssetGitTarget): Promise<AssetGitSource | undefined>;
+  listTargets(): Promise<readonly AssetGitTarget[]>;
   restoreSource(target: AssetGitTarget, source: AssetGitSource): Promise<void>;
-  schedule(target: AssetGitTarget): void;
-  start(): Promise<void>;
-  stop(): void;
 }
 
 export function createAssetGitService(options: {
@@ -79,10 +77,9 @@ export function createAssetGitService(options: {
   readonly capabilities: CapabilityStore;
   readonly afterPush?: (() => Promise<void>) | undefined;
   readonly onAssociationChanged?: ((target: AssetGitTarget) => void) | undefined;
+  readonly onStatusChanged?: ((status: AssetGitStatus) => void) | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): AssetGitService {
-  const scheduled = new Map<string, ReturnType<typeof setTimeout>>();
-  const targetKey = (target: AssetGitTarget) => `${target.kind}:${target.id}`;
   const recordPath = (target: AssetGitTarget) =>
     join(options.stateRoot, target.kind, `${target.id}.json`);
   const journalPath = (target: AssetGitTarget) => `${recordPath(target)}.journal`;
@@ -218,9 +215,14 @@ export function createAssetGitService(options: {
                 : "pending",
     });
   };
+  const publishStatus = async (target: AssetGitTarget): Promise<AssetGitStatus> => {
+    const next = await status(target);
+    options.onStatusChanged?.(next);
+    return next;
+  };
   const bind = async (input: z.input<typeof AssetGitBindSchema>): Promise<AssetGitStatus> => {
     const { target, source } = AssetGitBindSchema.parse(input);
-    return await withTargetLock(target, async () => {
+    const next = await withTargetLock(target, async () => {
       await assertExists(target);
       const previous = await readRecord(target);
       if (previous?.source.remote === source.remote && previous.source.branch === source.branch)
@@ -239,24 +241,24 @@ export function createAssetGitService(options: {
       options.onAssociationChanged?.(target);
       return await status(target);
     });
+    options.onStatusChanged?.(next);
+    return next;
   };
   const unbind = async (target: AssetGitTarget): Promise<void> => {
     const parsed = AssetGitTargetSchema.parse(target);
     await withTargetLock(parsed, async () => {
       const previous = await readRecord(parsed);
-      const pending = scheduled.get(targetKey(parsed));
-      if (pending !== undefined) clearTimeout(pending);
-      scheduled.delete(targetKey(parsed));
       await rm(recordPath(parsed), { force: true });
       await rm(journalPath(parsed), { force: true });
       if (previous !== undefined) options.onAssociationChanged?.(parsed);
     });
+    await publishStatus(parsed);
   };
   const importAsset = async (
     input: z.input<typeof AssetGitImportSchema>,
   ): Promise<AssetGitTarget> => {
     const parsed = AssetGitImportSchema.parse(input);
-    return await withCheckout(parsed.source, async (root, commit, branch) => {
+    const target = await withCheckout(parsed.source, async (root, commit, branch) => {
       if (commit === undefined) throw new Error("Cannot import an empty Git repository.");
       const files = await readManagedFiles(root, parsed.kind);
       if (files.size === 0)
@@ -314,10 +316,16 @@ export function createAssetGitService(options: {
         return target;
       });
     });
+    await publishStatus(target);
+    return target;
   };
   const sync = async (rawTarget: AssetGitTarget): Promise<AssetGitStatus> => {
     const target = AssetGitTargetSchema.parse(rawTarget);
-    return await withTargetLock(target, async () => {
+    const current = await status(target);
+    if (current.source !== undefined) {
+      options.onStatusChanged?.({ ...current, status: "syncing" });
+    }
+    const next = await withTargetLock(target, async () => {
       const record = await readRecord(target);
       if (record === undefined) throw new Error("Set a Git address before syncing this asset.");
       await assertExists(target);
@@ -460,34 +468,11 @@ export function createAssetGitService(options: {
       }
       throw new Error("Git sync exceeded the retry limit.");
     });
+    options.onStatusChanged?.(next);
+    return next;
   };
-  const schedule = (rawTarget: AssetGitTarget): void => {
-    const target = AssetGitTargetSchema.parse(rawTarget);
-    const key = targetKey(target);
-    const previous = scheduled.get(key);
-    if (previous !== undefined) clearTimeout(previous);
-    scheduled.set(
-      key,
-      setTimeout(() => {
-        scheduled.delete(key);
-        void readRecord(target)
-          .then(async (record) => {
-            if (record === undefined) return;
-            const result = await sync(target);
-            if (result.status === "error") {
-              options.warn?.(
-                `Automatic Git sync failed for ${key}.`,
-                new Error(result.error ?? "Unknown asset Git sync error."),
-              );
-            }
-          })
-          .catch((error: unknown) =>
-            options.warn?.(`Automatic Git sync failed for ${key}.`, error),
-          );
-      }, 1_000),
-    );
-  };
-  const start = async (): Promise<void> => {
+  const listTargets = async (): Promise<readonly AssetGitTarget[]> => {
+    const targets: AssetGitTarget[] = [];
     for (const kind of ["knowledge", "skill"] as const) {
       let names: string[];
       try {
@@ -501,16 +486,13 @@ export function createAssetGitService(options: {
           const record = RecordSchema.parse(
             JSON.parse(await readFile(join(options.stateRoot, kind, name), "utf8")),
           );
-          schedule(record.target);
+          targets.push(record.target);
         } catch (error) {
-          options.warn?.(`Could not schedule automatic Git sync for ${kind}/${name}.`, error);
+          options.warn?.(`Could not read the Git association for ${kind}/${name}.`, error);
         }
       }
     }
-  };
-  const stop = (): void => {
-    for (const timer of scheduled.values()) clearTimeout(timer);
-    scheduled.clear();
+    return targets;
   };
   return {
     status,
@@ -518,9 +500,7 @@ export function createAssetGitService(options: {
     unbind,
     import: importAsset,
     sync,
-    schedule,
-    start,
-    stop,
+    listTargets,
     source: async (target) => (await readRecord(target))?.source,
     restoreSource: async (rawTarget, rawSource) => {
       const target = AssetGitTargetSchema.parse(rawTarget);
@@ -537,8 +517,8 @@ export function createAssetGitService(options: {
           await assertUnique(target, source);
           await saveRecord({ schemaVersion: "pragma.asset-git/v1", target, source });
         });
-        schedule(target);
       });
+      await publishStatus(target);
     },
   };
 }

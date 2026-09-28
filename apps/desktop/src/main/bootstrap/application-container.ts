@@ -4,6 +4,10 @@ import {
   type AssetGitService,
 } from "../features/asset-git/asset-git-service.ts";
 import { installAssetGitHandlers } from "../features/asset-git/asset-git-ipc.ts";
+import {
+  createAssetSyncCoordinator,
+  type AssetSyncCoordinator,
+} from "../features/asset-git/asset-sync-coordinator.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -334,9 +338,9 @@ export async function createDesktopApplicationContainer(
     ];
   };
   const blueprintCache = createDesktopPragmaBlueprintCacheStore(pragmaPaths);
-  const coreSyncRef: { current?: CoreAssetSyncService } = {};
+  const assetSyncRef: { current?: AssetSyncCoordinator } = {};
   const pragmaProjectStore = createPragmaProjectStore({
-    onPublished: () => coreSyncRef.current?.schedule("project-published"),
+    onPublished: () => assetSyncRef.current?.scheduleCore("project-published"),
     projectsPath,
     objectsPath: pragmaPaths.contentObjectsRoot(),
     projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
@@ -355,7 +359,7 @@ export async function createDesktopApplicationContainer(
   });
   const workflowLayouts = createWorkflowLayoutStore({
     projectsPath,
-    onChanged: () => coreSyncRef.current?.schedule("flow-layout-changed"),
+    onChanged: () => assetSyncRef.current?.scheduleCore("flow-layout-changed"),
   });
   installWorkflowLayoutHandlers(workflowLayouts);
   const pluginCredentials = createPluginCredentialStore({
@@ -574,9 +578,13 @@ export async function createDesktopApplicationContainer(
     mutations: {
       publish: async (input) => {
         const published = await capabilityRevisionCoordinator.publish(input);
-        coreSyncRef.current?.schedule("capability-published");
         if (published.definition.kind === "skill") {
-          assetGitRef.current?.schedule({ kind: "skill", id: published.manifest.id });
+          assetSyncRef.current?.scheduleAsset(
+            { kind: "skill", id: published.manifest.id },
+            "capability-published",
+          );
+        } else {
+          assetSyncRef.current?.scheduleCore("capability-published");
         }
         return published;
       },
@@ -592,8 +600,10 @@ export async function createDesktopApplicationContainer(
       );
     },
     onSkillCreated: (capability) => {
-      coreSyncRef.current?.schedule("skill-published");
-      assetGitRef.current?.schedule({ kind: "skill", id: capability.manifest.id });
+      assetSyncRef.current?.scheduleAsset(
+        { kind: "skill", id: capability.manifest.id },
+        "skill-published",
+      );
     },
   });
   capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
@@ -605,7 +615,7 @@ export async function createDesktopApplicationContainer(
     onDeleted: async (capabilityId) => {
       await assetGitRef.current?.unbind({ kind: "skill", id: capabilityId });
       await memoryLearningRevisionsRef.current?.clearCapabilityBinding(capabilityId);
-      coreSyncRef.current?.schedule("skill-removed");
+      assetSyncRef.current?.scheduleCore("skill-removed");
     },
     warn: (message, error) =>
       mainLogger.warn("desktop.capability_revision_recovery_failed", message, { error }),
@@ -657,11 +667,13 @@ export async function createDesktopApplicationContainer(
     onRemoved: async (storeId) => {
       await assetGitRef.current?.unbind({ kind: "knowledge", id: storeId });
       await memoryLearningRevisionsRef.current?.clearStoreBinding(storeId);
-      coreSyncRef.current?.schedule("knowledge-store-removed");
+      assetSyncRef.current?.scheduleCore("knowledge-store-removed");
     },
     onPublished: (storeId) => {
-      coreSyncRef.current?.schedule("knowledge-store-published");
-      assetGitRef.current?.schedule({ kind: "knowledge", id: storeId });
+      assetSyncRef.current?.scheduleAsset(
+        { kind: "knowledge", id: storeId },
+        "knowledge-store-published",
+      );
     },
     hasUnmergedRevisionDrafts: async (storeId) =>
       (await storeRevisionsRef.current?.hasUnmergedDrafts(storeId)) ?? false,
@@ -674,7 +686,22 @@ export async function createDesktopApplicationContainer(
     stateRoot: join(pragmaPaths.stateRoot(), "asset-git"),
     stores: contextStores,
     capabilities: capabilityStore,
-    onAssociationChanged: (target) => assetGitRef.current?.schedule(target),
+    onAssociationChanged: (target) =>
+      assetSyncRef.current?.scheduleAsset(target, "association-changed"),
+    onStatusChanged: (status) => {
+      const window = options.getWindow();
+      if (window !== null && !window.isDestroyed() && !window.webContents.isDestroyed()) {
+        try {
+          window.webContents.send("asset-git:status:updated", status);
+        } catch (error) {
+          mainLogger.warn(
+            "desktop.asset_git_status_delivery_failed",
+            "An Asset Git status update could not be delivered to the renderer.",
+            { error },
+          );
+        }
+      }
+    },
     warn: (message, error) => mainLogger.warn("desktop.asset_git_sync_failed", message, { error }),
   });
   assetGitRef.current = assetGit;
@@ -692,7 +719,37 @@ export async function createDesktopApplicationContainer(
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
     warn: (message, error) => mainLogger.warn("desktop.core_asset_sync_failed", message, { error }),
   });
-  coreSyncRef.current = coreAssetSync;
+  const assetSync = createAssetSyncCoordinator({
+    core: coreAssetSync,
+    assets: assetGit,
+    concurrency: 3,
+    warn: (message, error) =>
+      mainLogger.warn("desktop.asset_sync_coordinator_failed", message, { error }),
+  });
+  assetSyncRef.current = assetSync;
+  const coordinatedAssetGit: AssetGitService = {
+    status: async (target) => await assetGit.status(target),
+    bind: async (input) => await assetSync.run(async () => await assetGit.bind(input)),
+    unbind: async (target) => await assetSync.run(async () => await assetGit.unbind(target)),
+    import: async (input) => await assetSync.run(async () => await assetGit.import(input)),
+    sync: async (target) => await assetSync.syncAsset(target),
+    source: async (target) => await assetGit.source(target),
+    listTargets: async () => await assetGit.listTargets(),
+    restoreSource: async (target, source) =>
+      await assetSync.run(async () => await assetGit.restoreSource(target, source)),
+  };
+  const coordinatedCoreAssetSync: CoreAssetSyncService = {
+    overview: async () => await coreAssetSync.overview(),
+    configure: async (input) =>
+      await assetSync.run(async () => await coreAssetSync.configure(input)),
+    removeConfiguration: async () =>
+      await assetSync.run(async () => await coreAssetSync.removeConfiguration()),
+    sync: async () => await assetSync.run(async () => await coreAssetSync.sync()),
+    refresh: async () => await assetSync.run(async () => await coreAssetSync.refresh()),
+    resolve: async (key, choice) =>
+      await assetSync.run(async () => await coreAssetSync.resolve(key, choice)),
+    restore: async (key) => await assetSync.run(async () => await coreAssetSync.restore(key)),
+  };
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};
   const revisionGenerator: ContextStoreRevisionGenerator = {
     async generate(input) {
@@ -929,8 +986,8 @@ export async function createDesktopApplicationContainer(
     storeRevisions,
     contextStoreEditorDrafts,
   );
-  installCoreAssetSyncHandlers(coreAssetSync);
-  installAssetGitHandlers(assetGit);
+  installCoreAssetSyncHandlers(coordinatedCoreAssetSync);
+  installAssetGitHandlers(coordinatedAssetGit);
   const memoryPlane = await createDesktopMemoryPlane({
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
@@ -1786,11 +1843,10 @@ export async function createDesktopApplicationContainer(
       if (backgroundTasksStarted) return;
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
-      coreAssetSync.schedule("startup");
-      void assetGit.start().catch((error: unknown) => {
+      void assetSync.start().catch((error: unknown) => {
         mainLogger.warn(
-          "desktop.asset_git_start_failed",
-          "Per-asset Git synchronization could not be initialized.",
+          "desktop.asset_sync_start_failed",
+          "Asset synchronization could not be initialized.",
           { error },
         );
       });
@@ -1898,7 +1954,7 @@ export async function createDesktopApplicationContainer(
       memoryPlane.start();
     },
     dispose: () => {
-      assetGit.stop();
+      assetSync.stop();
       evaluationService.dispose();
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();
