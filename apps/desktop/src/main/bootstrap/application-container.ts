@@ -680,6 +680,12 @@ export async function createDesktopApplicationContainer(
     capabilities: capabilityStore,
     getRuntimes: async () => await getRuntimeAvailability(runtimes),
     warn: (message, error) => mainLogger.warn("desktop.core_asset_sync_failed", message, { error }),
+    reportNameResolutionIssue: (issue) =>
+      mainLogger.warn(
+        "desktop.core_asset_sync_name_unresolved",
+        "Core asset sync resource name resolution failed.",
+        { ...issue },
+      ),
   });
   coreSyncRef.current = coreAssetSync;
   const storeRevisionAgentRef: { current?: DesktopStoreRevisionAgent } = {};

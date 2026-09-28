@@ -62,7 +62,10 @@ async function fixture() {
   await exec("git", ["-C", seed, "push", "origin", "main"]);
   await exec("git", ["-C", bare, "symbolic-ref", "HEAD", "refs/heads/main"]);
   const config = join(root, "gitconfig");
-  await writeFile(config, `[url "file://${root}/"]\n\tinsteadOf = ssh://git@pragma.test/\n`);
+  await writeFile(
+    config,
+    `[url "file://${root}/"]\n\tinsteadOf = ssh://git@pragma.test/\n[user]\n\tname = Configured User\n\temail = configured@pragma.test\n`,
+  );
   process.env.GIT_CONFIG_GLOBAL = config;
   process.env.GIT_CONFIG_NOSYSTEM = "1";
   return root;
@@ -79,6 +82,12 @@ function device(
   },
   projectOverride?: PragmaProjectStore,
   capabilitiesOverride?: CapabilityStore,
+  reportNameResolutionIssue?: (issue: {
+    code: string;
+    resourceKey: string;
+    resourceKind: string;
+    bindingId: string;
+  }) => void,
 ) {
   let value = name;
   let revision = 1;
@@ -167,6 +176,7 @@ function device(
     stores,
     capabilities,
     getRuntimes: async () => [],
+    ...(reportNameResolutionIssue === undefined ? {} : { reportNameResolutionIssue }),
   });
   return {
     service,
@@ -189,6 +199,267 @@ function device(
 }
 
 describe("core asset Git synchronization", { timeout: 30_000 }, () => {
+  it("uses the configured Git identity for core asset commits", async () => {
+    const root = await fixture();
+    const local = device(join(root, "local"), "Team docs");
+
+    expect(
+      (
+        await local.service.configure({
+          remote,
+          branch: "main",
+          autoPush: true,
+          pushDeletions: false,
+        })
+      ).status,
+    ).toBe("ready");
+
+    const { stdout } = await exec("git", [
+      "--git-dir",
+      barePath(root),
+      "log",
+      "-1",
+      "--format=%an%n%ae",
+      "main",
+    ]);
+    expect(stdout.trim().split("\n")).toEqual(["Configured User", "configured@pragma.test"]);
+  });
+
+  it("resolves bound resource names from their authoritative local assets", async () => {
+    const root = await fixture();
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const context = createDesktopContextResource({ owner: "project-expert", storeId });
+    const capability = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+    });
+    const capabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: {
+            kind: "mcp_server",
+            name: "Web Search",
+            description: "Search the web",
+            connection: {
+              transport: "stdio",
+              command: "search",
+              args: [],
+              env: {},
+              secretEnv: {},
+            },
+            timeoutMs: 30_000,
+            tools: [],
+          },
+          managedBy: "user",
+        },
+      ],
+    } as unknown as CapabilityStore;
+    const local = device(
+      join(root, "local"),
+      "Team docs",
+      undefined,
+      [context, capability],
+      undefined,
+      undefined,
+      capabilities,
+    );
+
+    const overview = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+
+    expect(
+      overview.items.find((item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`)
+        ?.name,
+    ).toBe("Team docs");
+    expect(
+      overview.items.find(
+        (item) => item.key === `capability:${canonicalPragmaResourceRef(capability)}`,
+      )?.name,
+    ).toBe("Web Search");
+  });
+
+  it("preserves authoritative local names that resemble generated binding placeholders", async () => {
+    const root = await fixture();
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const context = createDesktopContextResource({ owner: "project-expert", storeId });
+    const capability = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+    });
+    const capabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: {
+            kind: "mcp_server",
+            name: `Capability ${capabilityId}`,
+            description: "Legitimate placeholder-shaped capability name",
+            connection: {
+              transport: "stdio",
+              command: "search",
+              args: [],
+              env: {},
+              secretEnv: {},
+            },
+            timeoutMs: 30_000,
+            tools: [],
+          },
+          managedBy: "user",
+        },
+      ],
+    } as unknown as CapabilityStore;
+    const issues: { resourceKey: string }[] = [];
+    const local = device(
+      join(root, "local"),
+      `Context ${storeId}`,
+      undefined,
+      [context, capability],
+      undefined,
+      undefined,
+      capabilities,
+      (issue) => issues.push(issue),
+    );
+
+    const overview = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+    const contextItem = overview.items.find(
+      (item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`,
+    );
+    const capabilityItem = overview.items.find(
+      (item) => item.key === `capability:${canonicalPragmaResourceRef(capability)}`,
+    );
+
+    expect(contextItem).toMatchObject({ name: `Context ${storeId}`, status: "synced" });
+    expect(capabilityItem).toMatchObject({
+      name: `Capability ${capabilityId}`,
+      status: "synced",
+    });
+    expect(issues).toEqual([]);
+  });
+
+  it("uses a friendly name and logs a diagnostic for an unavailable binding", async () => {
+    const root = await fixture();
+    const context = createDesktopContextResource({ owner: "project-expert", storeId });
+    const issues: {
+      code: string;
+      resourceKey: string;
+      resourceKind: string;
+      bindingId: string;
+    }[] = [];
+    const local = device(
+      join(root, "local"),
+      undefined,
+      undefined,
+      [context],
+      undefined,
+      undefined,
+      undefined,
+      (issue) => issues.push(issue),
+    );
+
+    const overview = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+
+    expect(
+      overview.items.find((item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`)
+        ?.name,
+    ).toBe("Unavailable knowledge base");
+    expect(
+      overview.items.find((item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`)
+        ?.status,
+    ).toBe("error");
+    expect(issues).toEqual([
+      {
+        code: "core_asset_sync.name_unresolved",
+        resourceKey: `knowledge:${canonicalPragmaResourceRef(context)}`,
+        resourceKind: "context-store",
+        bindingId: storeId,
+      },
+    ]);
+    await expect(
+      exec("git", ["--git-dir", barePath(root), "show", `main:pragma-core-assets.json`]),
+    ).rejects.toThrow();
+  });
+
+  it("hides bare ids retained by historical sync state and reports both binding kinds", async () => {
+    const root = await fixture();
+    const localRoot = join(root, "local");
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const context = createDesktopContextResource({ owner: "project-expert", storeId });
+    const capability = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+    });
+    const contextKey = `knowledge:${canonicalPragmaResourceRef(context)}`;
+    const capabilityKey = `capability:${canonicalPragmaResourceRef(capability)}`;
+    const issues: { code: string; resourceKey: string }[] = [];
+    const local = device(
+      localRoot,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      (issue) => issues.push(issue),
+    );
+    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    await local.service.configure(configuration);
+    const statePath = join(localRoot, "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as {
+      remoteItems: Record<string, unknown>;
+      ignoredRemote: string[];
+    };
+    state.remoteItems = {
+      [contextKey]: {
+        kind: "knowledge",
+        name: `Context ${storeId}`,
+        fingerprint: "a".repeat(64),
+      },
+      [capabilityKey]: {
+        kind: "capability",
+        name: `Capability ${capabilityId}`,
+        fingerprint: "b".repeat(64),
+      },
+    };
+    state.ignoredRemote = [contextKey, capabilityKey];
+    await writeFile(statePath, JSON.stringify(state));
+
+    const overview = await local.service.overview();
+
+    expect(overview.items.find((item) => item.key === contextKey)?.name).toBe(
+      "Unavailable knowledge base",
+    );
+    expect(overview.items.find((item) => item.key === capabilityKey)?.name).toBe(
+      "Unavailable capability",
+    );
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "core_asset_sync.name_unresolved",
+          resourceKey: contextKey,
+        }),
+        expect.objectContaining({
+          code: "core_asset_sync.name_unresolved",
+          resourceKey: capabilityKey,
+        }),
+      ]),
+    );
+  });
+
   it("publishes one device, restores another, and flags concurrent edits", async () => {
     const root = await fixture();
     const first = device(join(root, "first"), "Team docs");

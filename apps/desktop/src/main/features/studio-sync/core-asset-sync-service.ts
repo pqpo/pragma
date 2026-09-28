@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 
 import {
   PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
@@ -43,13 +41,15 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import {
+  bindExistingDesktopCapabilityResource,
+  bindExistingDesktopContextResource,
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
   desktopCapabilityResourceId,
   desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import { assertAssetGitIdentity, runAssetGit } from "../asset-git/asset-git-command.ts";
 
-const execFileAsync = promisify(execFile);
 const ROOT_FILE = "pragma-core-assets.json";
 const MAX_REPOSITORY_BYTES = 150 * 1024 * 1024;
 const SkillFileSchema = z
@@ -109,6 +109,17 @@ const StateSchema = z
   .strict();
 type SyncState = z.infer<typeof StateSchema>;
 type ItemMap = Map<string, CoreAssetSyncItem>;
+const NAME_RESOLUTION_ERROR_CODE = "core_asset_sync.name_unresolved";
+interface CoreAssetSyncNameResolutionIssue {
+  readonly code: typeof NAME_RESOLUTION_ERROR_CODE;
+  readonly resourceKey: string;
+  readonly resourceKind: "capability" | "context-store";
+  readonly bindingId: string;
+}
+interface CollectedItems {
+  readonly items: ItemMap;
+  readonly nameResolutionIssues: ReadonlyMap<string, CoreAssetSyncNameResolutionIssue>;
+}
 
 export interface CoreAssetSyncService {
   overview(): Promise<CoreAssetSyncOverview>;
@@ -131,10 +142,28 @@ export function createCoreAssetSyncService(options: {
   readonly capabilities: CapabilityStore;
   readonly getRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly warn?: (message: string, error: unknown) => void;
+  readonly reportNameResolutionIssue?: (issue: CoreAssetSyncNameResolutionIssue) => void;
 }): CoreAssetSyncService {
   let running = false;
   let scheduled: ReturnType<typeof setTimeout> | undefined;
   let lastError: string | undefined;
+  const reportedNameResolutionFailures = new Set<string>();
+  const reportNameResolutionFailure = (
+    key: string,
+    kind: CoreAssetSyncNameResolutionIssue["resourceKind"],
+    bindingId: string,
+  ): CoreAssetSyncNameResolutionIssue => {
+    const issue = {
+      code: NAME_RESOLUTION_ERROR_CODE,
+      resourceKey: key,
+      resourceKind: kind,
+      bindingId,
+    } as const;
+    if (reportedNameResolutionFailures.has(key)) return issue;
+    reportedNameResolutionFailures.add(key);
+    options.reportNameResolutionIssue?.(issue);
+    return issue;
+  };
   const readConfig = async (): Promise<CoreAssetSyncConfiguration | undefined> => {
     try {
       return CoreAssetSyncConfigurationSchema.parse(
@@ -164,8 +193,9 @@ export function createCoreAssetSyncService(options: {
   const writeState = async (state: SyncState): Promise<void> =>
     writeAtomic(options.statePath, StateSchema.parse(state));
 
-  const collect = async (): Promise<ItemMap> => {
+  const collect = async (): Promise<CollectedItems> => {
     const result: ItemMap = new Map();
+    const nameResolutionIssues = new Map<string, CoreAssetSyncNameResolutionIssue>();
     const add = (
       kind: CoreAssetSyncItem["kind"],
       id: string,
@@ -178,7 +208,15 @@ export function createCoreAssetSyncService(options: {
         CoreAssetSyncItemSchema.parse({ key, kind, name, fingerprint: fingerprint(data), data }),
       );
     };
-    const snapshot = await options.project.get();
+    const [snapshot, stores, capabilities] = await Promise.all([
+      options.project.get(),
+      options.stores.list(),
+      options.capabilities.list(),
+    ]);
+    const storesById = new Map(stores.map((store) => [store.id, store] as const));
+    const capabilitiesById = new Map(
+      capabilities.map((capability) => [capability.manifest.id, capability] as const),
+    );
     const resources = snapshot.resources.filter((resource) => {
       if (resource.kind === "Capability") {
         const binding = classifyDesktopCapabilityResource(resource);
@@ -201,7 +239,7 @@ export function createCoreAssetSyncService(options: {
                 : resource.kind === "Capability"
                   ? "capability"
                   : "knowledge";
-      const portable =
+      let portable: PragmaResource =
         resource.kind === "Expert"
           ? {
               ...resource,
@@ -211,7 +249,43 @@ export function createCoreAssetSyncService(options: {
               },
             }
           : resource;
-      add(kind, canonicalPragmaResourceRef(resource), resource.metadata.name, portable);
+      let name = resource.metadata.name;
+      if (resource.kind === "ContextStore") {
+        const bindingId = classifyDesktopContextResource(resource);
+        const store = bindingId === undefined ? undefined : storesById.get(bindingId);
+        if (store !== undefined) {
+          name = store.name;
+          portable = bindExistingDesktopContextResource(resource, store.id, {
+            name: store.name,
+            description: store.description,
+          });
+        } else if (bindingId !== undefined) {
+          const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
+          nameResolutionIssues.set(
+            key,
+            reportNameResolutionFailure(key, "context-store", bindingId),
+          );
+        }
+      } else if (resource.kind === "Capability") {
+        const binding = classifyDesktopCapabilityResource(resource);
+        if (binding !== undefined) {
+          const capability = capabilitiesById.get(binding.id);
+          if (capability !== undefined) {
+            name = capability.definition.name;
+            portable = bindExistingDesktopCapabilityResource(resource, binding, {
+              name: capability.definition.name,
+              description: capability.definition.description,
+            });
+          } else {
+            const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
+            nameResolutionIssues.set(
+              key,
+              reportNameResolutionFailure(key, "capability", binding.id),
+            );
+          }
+        }
+      }
+      add(kind, canonicalPragmaResourceRef(resource), name, portable);
       if (resource.kind === "Flow") {
         const layout = await options.layouts.get({
           projectId: snapshot.projectId,
@@ -224,7 +298,7 @@ export function createCoreAssetSyncService(options: {
           });
       }
     }
-    for (const store of await options.stores.list()) {
+    for (const store of stores) {
       const storeSnapshot = await options.stores.getSnapshot(store.id);
       add("knowledge", store.id, store.name, {
         name: store.name,
@@ -240,7 +314,7 @@ export function createCoreAssetSyncService(options: {
         )
         .filter((id): id is string => id !== undefined),
     );
-    for (const capability of await options.capabilities.list()) {
+    for (const capability of capabilities) {
       if (capability.managedBy === "system") continue;
       const id = capability.manifest.id;
       if (capability.definition.kind !== "skill" && !referencedCapabilities.has(id)) continue;
@@ -277,7 +351,7 @@ export function createCoreAssetSyncService(options: {
         }),
       );
     }
-    return result;
+    return { items: result, nameResolutionIssues };
   };
 
   const readiness = async (items: ItemMap): Promise<Map<string, string>> => {
@@ -337,7 +411,7 @@ export function createCoreAssetSyncService(options: {
     config: CoreAssetSyncConfiguration | undefined,
     state?: SyncState,
     remote?: ItemMap,
-    collected?: ItemMap,
+    collected?: CollectedItems,
   ): Promise<CoreAssetSyncOverview> => {
     if (config === undefined) {
       const legacySyncStopped = (
@@ -356,7 +430,7 @@ export function createCoreAssetSyncService(options: {
       return { status: "unconfigured", legacySyncStopped, items: [] };
     }
     const current = state ?? (await readState(sourceKey(config)));
-    const local = collected ?? (await collect());
+    const { items: local, nameResolutionIssues } = collected ?? (await collect());
     const missing = await readiness(local);
     const keys = new Set([
       ...local.keys(),
@@ -370,27 +444,40 @@ export function createCoreAssetSyncService(options: {
       if (item === undefined) return [];
       const remoteItem = remote?.get(key) ?? current.remoteItems[key];
       const identity = logicalAssetIdentity({ ...item, key }, local, remote, current.remoteItems);
+      const localNameIssue = nameResolutionIssues.get(key);
       const status = current.conflicts.includes(key)
         ? "conflict"
-        : current.ignoredRemote.includes(key)
-          ? "ignored_remote"
-          : !local.has(key) && remoteItem !== undefined
-            ? config.pushDeletions
-              ? "pending"
-              : "ignored_remote"
-            : missing.has(key)
-              ? "needs_attention"
-              : current.bases[key] === item.fingerprint
-                ? "synced"
-                : "pending";
+        : localNameIssue !== undefined
+          ? "error"
+          : current.ignoredRemote.includes(key)
+            ? "ignored_remote"
+            : !local.has(key) && remoteItem !== undefined
+              ? config.pushDeletions
+                ? "pending"
+                : "ignored_remote"
+              : missing.has(key)
+                ? "needs_attention"
+                : current.bases[key] === item.fingerprint
+                  ? "synced"
+                  : "pending";
+      const displayItem = { key, kind: item.kind, name: item.name };
+      const unresolved = local.has(key) ? undefined : generatedBindingPlaceholder(displayItem);
+      if (unresolved !== undefined) {
+        reportNameResolutionFailure(key, unresolved.kind, unresolved.bindingId);
+      }
+      const nameIssue = localNameIssue ?? unresolved;
       return [
         {
           key,
           kind: item.kind,
-          name: item.name,
+          name: safeSyncItemName(displayItem, localNameIssue?.resourceKind ?? unresolved?.kind),
           ...identity,
           status,
-          ...(missing.has(key) ? { message: missing.get(key) } : {}),
+          ...(nameIssue !== undefined
+            ? { message: "The bound local asset is unavailable. Check the application logs." }
+            : missing.has(key)
+              ? { message: missing.get(key) }
+              : {}),
         },
       ];
     });
@@ -674,7 +761,7 @@ export function createCoreAssetSyncService(options: {
               checkout.root,
               Object.keys(state.bases).length > 0 || Object.keys(state.remoteItems).length > 0,
             );
-            const local = await collect();
+            const { items: local, nameResolutionIssues } = await collect();
             const nextRemote = new Map(remote);
             const changes: {
               key: string;
@@ -722,6 +809,7 @@ export function createCoreAssetSyncService(options: {
                   continue;
                 }
                 if (here) {
+                  if (nameResolutionIssues.has(key)) continue;
                   nextRemote.set(key, here);
                   bases[key] = here.fingerprint;
                   pushNeeded = true;
@@ -800,7 +888,7 @@ export function createCoreAssetSyncService(options: {
       if (config === undefined) return await makeOverview(undefined);
       const state = await readState(sourceKey(config));
       const local = await collect();
-      if (!needsRemoteIdentity(state, local))
+      if (!needsRemoteIdentity(state, local.items))
         return await makeOverview(config, state, undefined, local);
       let checkout: Checkout | undefined;
       try {
@@ -827,7 +915,7 @@ export function createCoreAssetSyncService(options: {
           sourceKey(previous) === sourceKey(config)
         ) {
           const state = await readState(sourceKey(config));
-          const local = await collect();
+          const { items: local } = await collect();
           const ignored = new Set(state.ignoredRemote);
           for (const key of Object.keys(state.remoteItems)) {
             if (!local.has(key)) ignored.add(key);
@@ -1031,6 +1119,33 @@ function canonical(value: unknown): string {
 function fingerprint(value: unknown): string {
   return createHash("sha256").update(canonical(value)).digest("hex");
 }
+function generatedBindingPlaceholder(item: Pick<CoreAssetSyncItem, "key" | "kind" | "name">):
+  | {
+      readonly kind: CoreAssetSyncNameResolutionIssue["resourceKind"];
+      readonly bindingId: string;
+    }
+  | undefined {
+  if (item.kind === "knowledge" && item.key.startsWith("knowledge:context-store:")) {
+    const bindingId = item.name.startsWith("Context ") ? item.name.slice("Context ".length) : "";
+    if (ContextStoreIdSchema.safeParse(bindingId).success)
+      return { kind: "context-store", bindingId };
+  }
+  if (item.kind === "capability" && item.key.startsWith("capability:capability:")) {
+    const bindingId = item.name.startsWith("Capability ")
+      ? item.name.slice("Capability ".length)
+      : "";
+    if (CapabilityIdSchema.safeParse(bindingId).success) return { kind: "capability", bindingId };
+  }
+  return undefined;
+}
+function safeSyncItemName(
+  item: Pick<CoreAssetSyncItem, "name">,
+  unresolvedKind: CoreAssetSyncNameResolutionIssue["resourceKind"] | undefined,
+): string {
+  if (unresolvedKind === "context-store") return "Unavailable knowledge base";
+  if (unresolvedKind === "capability") return "Unavailable capability";
+  return item.name;
+}
 function hashKnowledge(data: z.infer<typeof KnowledgeDataSchema>): string {
   return hashSnapshotContent(data.files, data.directories);
 }
@@ -1048,12 +1163,7 @@ async function writeAtomic(path: string, value: unknown): Promise<void> {
   }
 }
 async function git(root: string, args: readonly string[]): Promise<string> {
-  const result = await execFileAsync("git", ["-C", root, ...args], {
-    timeout: 60_000,
-    maxBuffer: 2_000_000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  });
-  return result.stdout.trim();
+  return (await runAssetGit(root, args, { maxBuffer: 2_000_000 })).trim();
 }
 type Checkout = { root: string; branch: string };
 async function checkoutRepository(config: CoreAssetSyncConfiguration): Promise<Checkout> {
@@ -1191,16 +1301,8 @@ async function publishRepository(checkout: Checkout, items: ItemMap): Promise<vo
   await writeFile(path, `${content}\n`, { mode: 0o600 });
   await git(checkout.root, ["add", "--", ROOT_FILE]);
   if ((await git(checkout.root, ["status", "--porcelain", "--", ROOT_FILE])) === "") return;
-  await git(checkout.root, [
-    "-c",
-    "user.name=Pragma",
-    "-c",
-    "user.email=sync@pragma.local",
-    "commit",
-    "-q",
-    "-m",
-    "Synchronize Pragma core assets",
-  ]);
+  await assertAssetGitIdentity(checkout.root);
+  await git(checkout.root, ["commit", "-q", "-m", "Synchronize Pragma core assets"]);
   try {
     await git(checkout.root, ["push", "origin", `HEAD:refs/heads/${checkout.branch}`]);
   } catch (error) {

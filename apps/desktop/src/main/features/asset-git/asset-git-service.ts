@@ -35,6 +35,7 @@ import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
 import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
+import { assertAssetGitIdentity, runAssetGit } from "./asset-git-command.ts";
 
 const execFileAsync = promisify(execFile);
 const CommitSchema = z.string().regex(/^[a-f0-9]{40,64}$/u);
@@ -378,7 +379,7 @@ export function createAssetGitService(options: {
             for (const path of merged.files.keys()) await git(root, ["add", "-f", "--", path]);
             if (modes) await applyModes(root, modes.merged);
             const changed = (await git(root, ["status", "--porcelain"])).trim() !== "";
-            if (changed) await assertGitIdentity(root);
+            if (changed) await assertAssetGitIdentity(root);
             await saveJournal(target, {
               schemaVersion: "pragma.asset-git-journal/v1",
               target,
@@ -480,26 +481,7 @@ export function createAssetGitService(options: {
 }
 
 async function git(root: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", ["-C", root, ...args], {
-    timeout: 60_000,
-    maxBuffer: 32 * 1024 * 1024,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
-    },
-  });
-  return stdout;
-}
-
-async function assertGitIdentity(root: string): Promise<void> {
-  const [name, email] = await Promise.all([
-    git(root, ["config", "--get", "user.name"]).catch(() => ""),
-    git(root, ["config", "--get", "user.email"]).catch(() => ""),
-  ]);
-  if (!name.trim() || !email.trim()) {
-    throw new Error("Set Git user.name and user.email before publishing this asset.");
-  }
+  return await runAssetGit(root, args);
 }
 
 function isRemoteHeadRace(error: unknown): boolean {
