@@ -16,7 +16,10 @@ import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { unavailableCoreAssetRuntimeBindings } from "./core-asset-sync-service.ts";
-import { createDesktopCapabilityResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import {
+  createDesktopCapabilityResource,
+  createDesktopContextResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import {
   canonicalPragmaResourceRef,
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -228,6 +231,33 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(local.name()).toBeUndefined();
     await local.service.restore(`knowledge:${storeId}`);
     expect(local.name()).toBe("Shared docs");
+  });
+
+  it("separates Context bindings from Knowledge while preserving the readable store name", async () => {
+    const root = await fixture();
+    const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+    const local = device(join(root, "local"), "Team docs", undefined, [binding]);
+    const overview = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+
+    expect(
+      overview.items.find(
+        (item) => item.key === `knowledge:${canonicalPragmaResourceRef(binding)}`,
+      ),
+    ).toMatchObject({
+      assetKey: `context:${storeId}`,
+      assetKind: "context",
+      assetName: "Team docs",
+    });
+    expect(overview.items.find((item) => item.key === `knowledge:${storeId}`)).toMatchObject({
+      assetKey: `knowledge:${storeId}`,
+      assetKind: "knowledge",
+      assetName: "Team docs",
+    });
   });
 
   it("warns when only retired sync settings exist", async () => {
@@ -471,7 +501,49 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       sourceCapabilities,
     );
     const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
-    expect((await source.service.configure(configuration)).status).toBe("ready");
+    const sourceOverview = await source.service.configure(configuration);
+    expect(sourceOverview.status).toBe("ready");
+    expect(
+      sourceOverview.items.filter((item) => item.assetKey === `capability:${capabilityId}`),
+    ).toHaveLength(2);
+    expect(
+      sourceOverview.items
+        .filter((item) => item.assetKey === `capability:${capabilityId}`)
+        .map((item) => item.assetName),
+    ).toEqual(["Search", "Search"]);
+    const legacyState = JSON.parse(await readFile(join(root, "source", "state.json"), "utf8")) as {
+      remoteItems: Record<string, { assetKey?: string; assetKind?: string; assetName?: string }>;
+    };
+    for (const item of Object.values(legacyState.remoteItems)) {
+      delete item.assetKey;
+      delete item.assetKind;
+      delete item.assetName;
+    }
+    const legacyRoot = join(root, "legacy-state");
+    await mkdir(legacyRoot);
+    await writeFile(
+      join(legacyRoot, "settings.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.core-asset-sync-settings/v1",
+        ...configuration,
+      }),
+    );
+    await writeFile(join(legacyRoot, "state.json"), JSON.stringify(legacyState));
+    const legacyOverview = await device(legacyRoot).service.overview();
+    expect(
+      legacyOverview.items.filter((item) => item.assetKey === `capability:${capabilityId}`),
+    ).toHaveLength(2);
+    const upgradedState = JSON.parse(
+      await readFile(join(legacyRoot, "state.json"), "utf8"),
+    ) as typeof legacyState;
+    expect(
+      Object.values(upgradedState.remoteItems).every(
+        (item) =>
+          item.assetKey !== undefined &&
+          item.assetKind !== undefined &&
+          item.assetName !== undefined,
+      ),
+    ).toBe(true);
     let targetTools = ["old", "keep"];
     const targetCapabilities = {
       list: async () => [
@@ -629,6 +701,12 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       ]),
     );
     expect(second.layout()?.nodes.finish).toEqual({ x: 2, y: 4 });
+    expect(
+      restored.items
+        .filter((item) => item.assetKey === "flow:t1e73vjvctx49gkq")
+        .map((item) => item.kind)
+        .sort(),
+    ).toEqual(["flow", "flow-layout"]);
     expect(
       restored.items.find((item) => item.key === "expert:expert:1xddvess309a6gme")?.status,
     ).toBe("needs_attention");

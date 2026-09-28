@@ -25,11 +25,13 @@ import {
   ContextStoreIdSchema,
   CoreAssetSyncConfigurationSchema,
   CoreAssetSyncItemSchema,
+  CoreAssetLogicalKindSchema,
   CoreAssetSyncOverviewSchema,
   CoreAssetSyncRepositorySchema,
   WorkflowLayoutSchema,
   type CoreAssetSyncConfiguration,
   type CoreAssetSyncItem,
+  type CoreAssetLogicalKind,
   type CoreAssetSyncOverview,
   type DesktopRuntimeAvailability,
   type UpdateCoreAssetSyncConfiguration,
@@ -96,7 +98,11 @@ const StateSchema = z
     remoteItems: z
       .record(
         z.string(),
-        CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }),
+        CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }).extend({
+          assetKey: z.string().min(1).max(300).optional(),
+          assetKind: CoreAssetLogicalKindSchema.optional(),
+          assetName: z.string().max(300).optional(),
+        }),
       )
       .default({}),
     ignoredRemote: z.array(z.string()),
@@ -365,6 +371,7 @@ export function createCoreAssetSyncService(options: {
       const item = local.get(key) ?? remote?.get(key) ?? current.remoteItems[key];
       if (item === undefined) return [];
       const remoteItem = remote?.get(key) ?? current.remoteItems[key];
+      const identity = logicalAssetIdentity({ ...item, key }, local, remote, current.remoteItems);
       const status = current.conflicts.includes(key)
         ? "conflict"
         : current.ignoredRemote.includes(key)
@@ -383,6 +390,7 @@ export function createCoreAssetSyncService(options: {
           key,
           kind: item.kind,
           name: item.name,
+          ...identity,
           status,
           ...(missing.has(key) ? { message: missing.get(key) } : {}),
         },
@@ -750,10 +758,18 @@ export function createCoreAssetSyncService(options: {
               ...state,
               bases,
               remoteItems: Object.fromEntries(
-                [...nextRemote].map(([key, item]) => [
-                  key,
-                  { kind: item.kind, name: item.name, fingerprint: item.fingerprint },
-                ]),
+                [...nextRemote].map(([key, item]) => {
+                  const identity = logicalAssetIdentity(item, local, nextRemote);
+                  return [
+                    key,
+                    {
+                      kind: item.kind,
+                      name: item.name,
+                      fingerprint: item.fingerprint,
+                      ...identity,
+                    },
+                  ];
+                }),
               ),
               ignoredRemote: [...ignored],
               conflicts,
@@ -785,7 +801,18 @@ export function createCoreAssetSyncService(options: {
     });
   };
   return {
-    overview: async () => await makeOverview(await readConfig()),
+    async overview() {
+      const config = await readConfig();
+      if (config === undefined) return await makeOverview(undefined);
+      const state = await readState(sourceKey(config));
+      const incompleteIdentity = Object.values(state.remoteItems).some(
+        (item) =>
+          item.assetKey === undefined ||
+          item.assetKind === undefined ||
+          item.assetName === undefined,
+      );
+      return incompleteIdentity ? await run("pull") : await makeOverview(config, state);
+    },
     async configure(input) {
       const config = CoreAssetSyncConfigurationSchema.parse({
         ...input,
@@ -831,6 +858,152 @@ export function createCoreAssetSyncService(options: {
       }, 1_000);
     },
   };
+}
+
+type CoreAssetSyncItemSummary = Pick<CoreAssetSyncItem, "key" | "kind" | "name" | "fingerprint"> & {
+  readonly data?: unknown;
+  readonly assetKey?: string | undefined;
+  readonly assetKind?: CoreAssetLogicalKind | undefined;
+  readonly assetName?: string | undefined;
+};
+
+function logicalAssetIdentity(
+  item: CoreAssetSyncItemSummary,
+  local: ItemMap,
+  remote?: ItemMap,
+  cached?: SyncState["remoteItems"],
+): { assetKey: string; assetKind: CoreAssetLogicalKind; assetName: string } {
+  if (item.assetKey !== undefined && item.assetKind !== undefined && item.assetName !== undefined)
+    return { assetKey: item.assetKey, assetKind: item.assetKind, assetName: item.assetName };
+
+  const parsedResource =
+    item.data === undefined
+      ? undefined
+      : PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+  const resource = parsedResource?.success === true ? parsedResource.data : undefined;
+  if (resource?.kind === "Capability") {
+    const capabilityId = classifyDesktopCapabilityResource(resource)?.id;
+    if (capabilityId !== undefined) {
+      const definition = itemSummaryAt(`capability:${capabilityId}`, local, remote, cached);
+      return {
+        assetKey: `capability:${capabilityId}`,
+        assetKind: "capability",
+        assetName: definition?.name ?? resource.metadata.name,
+      };
+    }
+  }
+  if (resource?.kind === "ContextStore") {
+    const storeId = classifyDesktopContextResource(resource);
+    if (storeId !== undefined) {
+      const store = itemSummaryAt(`knowledge:${storeId}`, local, remote, cached);
+      return {
+        assetKey: `context:${storeId}`,
+        assetKind: "context",
+        assetName: store?.name ?? resource.metadata.name,
+      };
+    }
+  }
+  if (
+    resource !== undefined &&
+    ["Expert", "ExpertTeam", "Flow", "RuntimeProfile"].includes(resource.kind)
+  ) {
+    const assetKind =
+      resource.kind === "Expert"
+        ? "expert"
+        : resource.kind === "ExpertTeam"
+          ? "team"
+          : resource.kind === "Flow"
+            ? "flow"
+            : "runtime-profile";
+    return {
+      assetKey: `${assetKind}:${resource.metadata.id}`,
+      assetKind,
+      assetName: resource.metadata.name,
+    };
+  }
+  if (item.kind === "flow-layout") {
+    const id = item.key.slice("flow-layout:".length);
+    return { assetKey: `flow:${id}`, assetKind: "flow", assetName: item.name };
+  }
+
+  const separator = item.key.indexOf(":");
+  const rawId = separator < 0 ? item.key : item.key.slice(separator + 1);
+  const nestedPrefix = `${item.kind}:`;
+  const id = rawId.startsWith(nestedPrefix) ? rawId.slice(nestedPrefix.length) : rawId;
+  if (item.kind === "capability" && rawId.startsWith("capability:")) {
+    const capabilityId = legacyBindingTargetId(
+      item,
+      "Capability ",
+      "capability",
+      CapabilityIdSchema,
+      local,
+      remote,
+      cached,
+    );
+    if (capabilityId !== undefined) {
+      const definition = itemSummaryAt(`capability:${capabilityId}`, local, remote, cached);
+      return {
+        assetKey: `capability:${capabilityId}`,
+        assetKind: "capability",
+        assetName: definition?.name ?? item.name,
+      };
+    }
+  }
+  if (item.kind === "knowledge" && rawId.startsWith("context-store:")) {
+    const storeId = legacyBindingTargetId(
+      item,
+      "Context ",
+      "knowledge",
+      ContextStoreIdSchema,
+      local,
+      remote,
+      cached,
+    );
+    if (storeId !== undefined) {
+      const store = itemSummaryAt(`knowledge:${storeId}`, local, remote, cached);
+      return {
+        assetKey: `context:${storeId}`,
+        assetKind: "context",
+        assetName: store?.name ?? item.name,
+      };
+    }
+    return { assetKey: `context:${id}`, assetKind: "context", assetName: item.name };
+  }
+  const assetKind = item.kind as CoreAssetLogicalKind;
+  return { assetKey: `${assetKind}:${id}`, assetKind, assetName: item.name };
+}
+
+function itemSummaryAt(
+  key: string,
+  local: ItemMap,
+  remote?: ItemMap,
+  cached?: SyncState["remoteItems"],
+): CoreAssetSyncItemSummary | undefined {
+  const item = local.get(key) ?? remote?.get(key) ?? cached?.[key];
+  return item === undefined ? undefined : { ...item, key };
+}
+
+function legacyBindingTargetId(
+  item: CoreAssetSyncItemSummary,
+  placeholderPrefix: string,
+  targetKind: "capability" | "knowledge",
+  idSchema: typeof CapabilityIdSchema | typeof ContextStoreIdSchema,
+  local: ItemMap,
+  remote?: ItemMap,
+  cached?: SyncState["remoteItems"],
+): string | undefined {
+  if (item.name.startsWith(placeholderPrefix)) {
+    const id = item.name.slice(placeholderPrefix.length);
+    if (idSchema.safeParse(id).success) return id;
+  }
+  const keys = new Set([...local.keys(), ...(remote?.keys() ?? []), ...Object.keys(cached ?? {})]);
+  const matches = [...keys].flatMap((key) => {
+    if (!key.startsWith(`${targetKind}:`)) return [];
+    const id = key.slice(targetKind.length + 1);
+    if (id.includes(":") || !idSchema.safeParse(id).success) return [];
+    return itemSummaryAt(key, local, remote, cached)?.name === item.name ? [id] : [];
+  });
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function sourceKey(config: CoreAssetSyncConfiguration): string {
