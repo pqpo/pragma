@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import { appendCodexExecutionMcpConfig } from "../src/execution-mcp-config.ts";
@@ -24,23 +22,5 @@ describe("Codex Execution MCP config", () => {
       "-c",
       'mcp_servers.pragma.default_tools_approval_mode="approve"',
     ]);
-  });
-
-  it("forces the current workspace to remain untrusted", () => {
-    expect(
-      appendCodexExecutionMcpConfig(
-        ["app-server", "--listen", "stdio://"],
-        {
-          id: "pragma",
-          url: "http://127.0.0.1:43127/sessions/opaque-token/mcp",
-        },
-        "/workspace/project",
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        "-c",
-        `projects.${JSON.stringify(resolve("/workspace/project"))}.trust_level="untrusted"`,
-      ]),
-    );
   });
 });

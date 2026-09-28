@@ -164,10 +164,11 @@ describe("OpenCode governance", () => {
         policies: [{ action: "permission", resource: "shell:git push *", effect: "deny" }],
       });
       expect(result.env.XDG_CONFIG_HOME).toBe(join(root, "session", "config"));
-      expect(result.env.HOME).toBe(join(root, "session", "home"));
-      expect(result.env.USERPROFILE).toBe(join(root, "session", "home"));
+      expect(result.env.HOME).toBe(root);
+      expect(result.env.USERPROFILE).toBeUndefined();
       expect(result.env.XDG_CACHE_HOME).toBe(join(root, "session", "cache"));
       expect(result.env.XDG_STATE_HOME).toBe(join(root, "session", "state"));
+      expect(result.env.OPENCODE_TEST_HOME).toBe(join(root, "session", "config-home"));
       await writeFile(
         join(workspace, "opencode.json"),
         JSON.stringify({ model: "{file:/tmp/secret}" }),
@@ -206,7 +207,8 @@ describe("OpenCode governance", () => {
         sessionDir: join(home, "session"),
         major: 1,
       });
-      expect(result.env.HOME).toBe(join(home, "session", "home"));
+      expect(result.env.HOME).toBe(home);
+      expect(result.env.OPENCODE_TEST_HOME).toBe(join(home, "session", "config-home"));
       expect(result.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
     } finally {
       await rm(home, { recursive: true, force: true });

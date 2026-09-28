@@ -31,12 +31,12 @@ export async function prepareOpenCodeConfiguration(input: {
       .filter((value): value is string => value !== undefined)
       .map((value) => resolve(value)),
   );
-  const privateHome = join(input.sessionDir, "home");
+  const privateConfigDiscoveryHome = join(input.sessionDir, "config-home");
   const privateConfigHome = join(input.sessionDir, "config");
   const privateCacheHome = join(input.sessionDir, "cache");
   const privateStateHome = join(input.sessionDir, "state");
   await Promise.all([
-    mkdir(privateHome, { recursive: true, mode: 0o700 }),
+    mkdir(privateConfigDiscoveryHome, { recursive: true, mode: 0o700 }),
     mkdir(join(privateConfigHome, "opencode"), { recursive: true, mode: 0o700 }),
     mkdir(privateCacheHome, { recursive: true, mode: 0o700 }),
     mkdir(privateStateHome, { recursive: true, mode: 0o700 }),
@@ -62,7 +62,7 @@ export async function prepareOpenCodeConfiguration(input: {
   for (const directory of ancestors) {
     // OpenCode 1.18.x may execute project plugins even when project config and
     // external plugins are disabled. The user's own ~/.opencode is outside the
-    // project boundary and is isolated by the private HOME below.
+    // project boundary and is isolated through OpenCode's config-discovery home below.
     if (!hostHomes.has(resolve(directory)) && (await exists(join(directory, ".opencode")))) {
       throw new Error(
         `OpenCode workspace customization is not governed by Pragma: ${join(directory, ".opencode")}`,
@@ -84,11 +84,13 @@ export async function prepareOpenCodeConfiguration(input: {
     deniedPermissions,
     env: {
       ...input.env,
-      HOME: privateHome,
-      USERPROFILE: privateHome,
       XDG_CONFIG_HOME: privateConfigHome,
       XDG_CACHE_HOME: privateCacheHome,
       XDG_STATE_HOME: privateStateHome,
+      // OpenCode uses this override for Global.Path.home while its shell tool
+      // continues to inherit the user's real HOME/USERPROFILE. Replacing HOME
+      // itself would break git, ssh, npm, ~/ paths, and shell permission scans.
+      OPENCODE_TEST_HOME: privateConfigDiscoveryHome,
       OPENCODE_CONFIG_DIR: join(privateConfigHome, "opencode"),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",

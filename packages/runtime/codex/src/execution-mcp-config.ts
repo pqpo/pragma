@@ -1,11 +1,8 @@
-import { resolve } from "node:path";
-
 import type { ExpertToolsMcpSessionRegistration } from "@pragma/core";
 
 export function appendCodexExecutionMcpConfig(
   baseArgs: readonly string[],
   registration: Pick<ExpertToolsMcpSessionRegistration, "id" | "url">,
-  workspace?: string | undefined,
 ): readonly string[] {
   const serverKey = `mcp_servers.${registration.id}`;
 
@@ -19,8 +16,5 @@ export function appendCodexExecutionMcpConfig(
     `${serverKey}.required=true`,
     "-c",
     `${serverKey}.default_tools_approval_mode="approve"`,
-    ...(workspace === undefined
-      ? []
-      : ["-c", `projects.${JSON.stringify(resolve(workspace))}.trust_level="untrusted"`]),
   ];
 }
