@@ -22,6 +22,8 @@ import { MAX_SKILL_PACKAGE_BYTES } from "@pragma/shared";
 import { z } from "zod";
 
 import {
+  CONTEXT_STORE_FILE_MAX_BYTES,
+  assetGitManualContentSizeIssue,
   AssetGitBindSchema,
   AssetGitConflictsSchema,
   ResolveAssetGitConflictsSchema,
@@ -361,6 +363,7 @@ export function createAssetGitService(options: {
     const conflicts = [...merged.conflicts, ...(modes?.conflicts ?? [])];
     const remoteModes = target.kind === "skill" ? await readGitModes(root) : undefined;
     const paths = [...new Set(conflicts)].toSorted();
+    const conflictingPaths = new Set(paths);
     const snapshot = createHash("sha256")
       .update(
         JSON.stringify({
@@ -376,6 +379,10 @@ export function createAssetGitService(options: {
     const preview = AssetGitConflictsSchema.parse({
       target,
       snapshot,
+      nonConflictingSizeBytes: [...merged.files].reduce(
+        (total, [path, bytes]) => total + (conflictingPaths.has(path) ? 0 : bytes.byteLength),
+        0,
+      ),
       files: await Promise.all(
         paths.map(async (path) => {
           const old = base.get(path),
@@ -397,6 +404,8 @@ export function createAssetGitService(options: {
             base: text && old !== undefined ? old.toString("utf8") : null,
             local: text && ours !== undefined ? ours.toString("utf8") : null,
             remote: text && theirs !== undefined ? theirs.toString("utf8") : null,
+            localSizeBytes: ours?.byteLength ?? 0,
+            remoteSizeBytes: theirs?.byteLength ?? 0,
             localDeleted: ours === undefined,
             remoteDeleted: theirs === undefined,
             modeConflict: modes?.conflicts.includes(path) ?? false,
@@ -538,7 +547,6 @@ export function createAssetGitService(options: {
                   }
                 }
               }
-              assertResolvedTree(merged.files, target.kind);
               conflictPaths = [];
             }
             if (conflictPaths.length > 0) {
@@ -550,6 +558,7 @@ export function createAssetGitService(options: {
               });
               return await status(target);
             }
+            assertResolvedTree(merged.files, target.kind);
             await replaceManagedFiles(root, remote, merged.files);
             await git(root, ["add", "-A"]);
             for (const path of merged.files.keys()) await git(root, ["add", "-f", "--", path]);
@@ -772,7 +781,7 @@ async function readManagedFiles(root: string, kind: AssetGitTarget["kind"]): Pro
       }
       totalBytes += info.size;
       if (
-        (kind === "knowledge" && info.size > 1_000_000) ||
+        (kind === "knowledge" && info.size > CONTEXT_STORE_FILE_MAX_BYTES) ||
         (kind === "skill" && totalBytes > MAX_SKILL_PACKAGE_BYTES)
       ) {
         throw new Error("Git asset exceeds the supported file size limit.");
@@ -1137,6 +1146,8 @@ function assertResolvedTree(files: Files, kind: AssetGitTarget["kind"]): void {
   let total = 0;
   for (const [path, bytes] of files) {
     total += bytes.length;
+    if (kind === "knowledge" && assetGitManualContentSizeIssue(kind, decodeMarkdown(bytes)))
+      throw new Error(`Knowledge file exceeds the supported size limit: ${path}`);
     const segments = path.split("/");
     for (let length = 1; length < segments.length; length += 1) {
       if (files.has(segments.slice(0, length).join("/"))) {

@@ -32,7 +32,12 @@ describe("asset Git IPC and preload boundary", () => {
       sync: async () => status,
       unbind: async () => {},
       import: async () => target,
-      conflicts: async () => ({ target, snapshot: "a".repeat(64), files: [] }),
+      conflicts: async () => ({
+        target,
+        snapshot: "a".repeat(64),
+        files: [],
+        nonConflictingSizeBytes: 0,
+      }),
       resolve: async () => status,
     } as unknown as AssetGitService;
     installAssetGitHandlers(service);
@@ -51,6 +56,19 @@ describe("asset Git IPC and preload boundary", () => {
       }),
     ).resolves.toEqual(status);
   });
+  it("rejects oversized Knowledge manual content before invoking the service", async () => {
+    const resolve = vi.fn(async () => ({ target, status: "synced" as const }));
+    installAssetGitHandlers({ resolve } as unknown as AssetGitService);
+    await expect(
+      assetGitApi.resolveAssetGitConflicts({
+        target,
+        snapshot: "a".repeat(64),
+        resolutions: [{ path: "guide.md", choice: "manual", content: "x".repeat(2_000_000) }],
+      }),
+    ).rejects.toBeDefined();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("returns structured failures and rejects unsafe resolution paths before execution", async () => {
     const resolve = vi.fn();
     installAssetGitHandlers({

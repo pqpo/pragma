@@ -296,6 +296,77 @@ describe("asset Git knowledge sync", () => {
     expect((await service.sync(target)).status).toBe("synced");
   }, 30_000);
 
+  it("rejects oversized Knowledge manual content before checkout, journal or publication", async () => {
+    const { root, bare, stores, service, source } = await fixture();
+    const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+    await stores.createFile(local.id, "guide.md", "# Local\n");
+    const target = { kind: "knowledge" as const, id: local.id };
+    await service.bind({ target, source });
+    const preview = await service.conflicts(target);
+    const revision = (await stores.getSnapshot(local.id)).revision;
+    const remoteHead = await run(bare, ["rev-parse", "main"]);
+    const publish = vi.spyOn(stores, "appendSnapshot");
+    await expect(
+      service.resolve({
+        target,
+        snapshot: preview.snapshot,
+        resolutions: [{ path: "guide.md", choice: "manual", content: "x".repeat(2_000_000) }],
+      }),
+    ).rejects.toThrow("size limit");
+    expect(publish).not.toHaveBeenCalled();
+    expect((await stores.getSnapshot(local.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(remoteHead);
+    await expect(
+      readFile(join(root, "state", "knowledge", `${target.id}.json.journal`)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [{ path: "guide.md", choice: "manual", content: "# Resolved\n" }],
+        })
+      ).status,
+    ).toBe("synced");
+  });
+
+  it("validates the fully merged Knowledge tree before automatic publication", async () => {
+    const { bare, seed, stores, service, source } = await fixture();
+    const lines = ["Header", "Separator", "x".repeat(994_000), "Separator", "Footer"];
+    const text = (values: string[]) => values.join("\n");
+    await writeFile(join(seed, "guide.md"), text(lines));
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Large base file"]);
+    await run(seed, ["push", "origin", "main"]);
+    const target = await service.import({ kind: "knowledge", source });
+    const current = await stores.getContent(target.id, "guide.md");
+    const local = [...lines];
+    local[0] = "l".repeat(4_000);
+    await stores.updateFile(
+      target.id,
+      "guide.md",
+      text(local),
+      current.metadata,
+      current.revision!,
+    );
+    const remote = [...lines];
+    remote[4] = "r".repeat(4_000);
+    await writeFile(join(seed, "guide.md"), text(remote));
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Independent remote edit"]);
+    await run(seed, ["push", "origin", "main"]);
+    const revision = (await stores.getSnapshot(target.id)).revision;
+    const remoteHead = await run(bare, ["rev-parse", "main"]);
+    const publish = vi.spyOn(stores, "appendSnapshot");
+    expect(await service.sync(target)).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("size limit"),
+    });
+    expect(publish).not.toHaveBeenCalled();
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(remoteHead);
+  });
+
   it("prepares separate conflict choices while preserving independent edits in a long file", async () => {
     const { bare, seed, stores, service, source } = await fixture();
     const base = Array.from({ length: 1200 }, (_, index) => `Unchanged line ${index}`);

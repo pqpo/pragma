@@ -85,6 +85,10 @@ export const studio = {
         "This asset is synchronized, but the overall backup failed. Retry the backup in Settings.",
     },
     errors: {
+      knowledgeSize:
+        "A Knowledge file must stay within 1,000,000 characters and 1 MB of UTF-8 text.",
+      skillSize:
+        "The merged Skill package must stay within 25 MiB, including unchanged and binary files.",
       stale: "The local or remote version changed. Reload conflicts and review your decisions.",
       identity: "Configure Git user.name and user.email, then retry.",
       authentication: "Git authentication failed. Check your SSH key or credentials, then retry.",

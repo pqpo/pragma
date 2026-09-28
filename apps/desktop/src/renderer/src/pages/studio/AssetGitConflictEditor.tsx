@@ -1,8 +1,9 @@
 import { CheckCircle, Circle, FileText, FileImage, Trash, X } from "@phosphor-icons/react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { EditorState } from "@codemirror/state";
 import { useTranslation } from "react-i18next";
 
+import { assetGitResolutionSizeIssue } from "../../../../shared/contracts/index.ts";
 import type {
   AssetGitConflicts,
   AssetGitResolution,
@@ -67,13 +68,24 @@ export function AssetGitConflictEditor(props: {
   };
   const close = () =>
     decisions.size > 0 || drafts.size > 0 ? setConfirmClose(true) : props.onClose();
+  const sizeIssue = useMemo(
+    () => (preview ? assetGitResolutionSizeIssue(preview, [...decisions.values()]) : undefined),
+    [preview, decisions],
+  );
   const isDecided = (path: string) => {
     const choice = decisions.get(path);
-    return choice !== undefined && (choice.choice !== "manual" || pendingChunks.get(path) === 0);
+    return (
+      choice !== undefined &&
+      sizeIssue?.path !== path &&
+      (choice.choice !== "manual" || pendingChunks.get(path) === 0)
+    );
   };
   const completed = preview?.files.filter((item) => isDecided(item.path)).length ?? 0;
   const ready =
-    preview !== undefined && preview.files.length > 0 && completed === preview.files.length;
+    preview !== undefined &&
+    preview.files.length > 0 &&
+    completed === preview.files.length &&
+    sizeIssue === undefined;
   const apply = async () => {
     if (!preview || !ready) return;
     setBusy(true);
@@ -143,6 +155,12 @@ export function AssetGitConflictEditor(props: {
         </>
       }
     >
+      {sizeIssue ? (
+        <p className="form-error asset-git-merge-error" role="alert">
+          {sizeIssue.path ? `${sizeIssue.path}: ` : ""}
+          {t(`assetGit.errors.${sizeIssue.key}`)}
+        </p>
+      ) : null}
       {error ? (
         <p className="form-error asset-git-merge-error" role="alert">
           {errorPath ? `${errorPath}: ` : ""}

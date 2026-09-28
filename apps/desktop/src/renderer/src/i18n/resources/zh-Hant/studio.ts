@@ -81,6 +81,9 @@ export const studio = {
       backupFailed: "此資產已同步，但整體備份失敗。請在設定頁重試整體同步。",
     },
     errors: {
+      knowledgeSize: "知識庫單檔不能超過 1,000,000 字元或 1 MB 的 UTF-8 文字，請縮短內容後提交。",
+      skillSize:
+        "合併後的技能套件不能超過 25 MiB（包含未改動檔案及二進位檔案），請調整選擇或縮短內容。",
       stale: "本機或遠端版本已變更，請重新讀取衝突並核對處理方案。",
       identity: "請設定 Git user.name 和 user.email 後重試。",
       authentication: "Git 驗證失敗，請檢查 SSH 金鑰或憑據後重試。",

@@ -30,6 +30,15 @@ application.
 Individual Knowledge Base and Skill Git associations are a separate Studio feature intended for
 sharing one asset's ordinary files with other agents.
 
+Manual resolution validation uses each asset's existing domain limits. Knowledge text follows
+the ContextStore content schema and its 1,000,000-byte UTF-8 storage budget; Skill text and the
+merged package retain the 25 MiB limit. Conflict previews include side-specific sizes, including
+binary files, and the byte total of unconflicted files so the editor can disable oversized
+submissions immediately. IPC rejects oversized manual requests before invoking synchronization.
+The final merged tree is validated before writing a journal or publishing a revision, including
+when independent edits are merged automatically. These checks do not impose an aggregate Skill
+package limit on Knowledge repositories.
+
 Individual file conflicts can be resolved from the asset's Git settings. The editor presents the
 base, local and remote text plus two Git-generated merge candidates. Both candidates already
 include non-conflicting changes from both sides; they favor local or remote only at conflict hunks.
