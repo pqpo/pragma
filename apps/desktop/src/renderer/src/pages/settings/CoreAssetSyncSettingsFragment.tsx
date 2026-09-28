@@ -97,31 +97,12 @@ export function CoreAssetSyncSettingsFragment(props: {
           />
           {t("coreAssetSync.pushDeletions")}
         </label>
-        <div className="knowledge-sync-actions">
-          <button type="submit" disabled={busy}>
-            {t("coreAssetSync.saveAndSync")}
-          </button>
-          {overview?.configuration && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(() => window.pragmaDesktop.syncCoreAssets())}
-            >
-              {t("coreAssetSync.syncNow")}
-            </button>
-          )}
-          {overview?.configuration && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                void run(() => window.pragmaDesktop.removeCoreAssetSyncConfiguration())
-              }
-            >
-              {t("coreAssetSync.remove")}
-            </button>
-          )}
-        </div>
+        <CoreAssetSyncActions
+          busy={busy}
+          configured={overview?.configuration !== undefined}
+          onSync={() => void run(() => window.pragmaDesktop.syncCoreAssets())}
+          onRemove={() => void run(() => window.pragmaDesktop.removeCoreAssetSyncConfiguration())}
+        />
       </form>
       {(error ?? overview?.error) && (
         <p role="alert" className="form-error">
@@ -188,5 +169,42 @@ export function CoreAssetSyncSettingsFragment(props: {
         ))}
       </div>
     </SettingsScreenFrame>
+  );
+}
+
+export function CoreAssetSyncActions(props: {
+  readonly busy: boolean;
+  readonly configured: boolean;
+  readonly onSync: () => void;
+  readonly onRemove: () => void;
+}) {
+  const { t } = useTranslation("settings");
+
+  return (
+    <div className="knowledge-sync-actions">
+      <button className="primary-button" type="submit" disabled={props.busy}>
+        {t("coreAssetSync.saveAndSync")}
+      </button>
+      {props.configured && (
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={props.busy}
+          onClick={props.onSync}
+        >
+          {t("coreAssetSync.syncNow")}
+        </button>
+      )}
+      {props.configured && (
+        <button
+          className="danger-button"
+          type="button"
+          disabled={props.busy}
+          onClick={props.onRemove}
+        >
+          {t("coreAssetSync.remove")}
+        </button>
+      )}
+    </div>
   );
 }

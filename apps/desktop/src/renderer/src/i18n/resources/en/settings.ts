@@ -60,13 +60,14 @@ export const settings = {
     },
   },
   coreAssetSync: {
-    navigation: "Core Asset Sync",
-    title: "Core Asset Sync",
+    navigation: "Sync",
+    title: "Sync",
     description:
       "Restore Experts, Teams, Flows, Knowledge Bases, and Skills from one Git repository.",
     legacyStopped:
       "The old environment sync has stopped. Configure Core Asset Sync to keep backing up these assets.",
-    configureNew: "Configure Core Asset Sync",
+    configureNew: "Configure",
+    dismissLegacyNotice: "Dismiss sync notice",
     remote: "Git remote",
     branch: "Branch (optional)",
     autoPush: "Automatically upload published changes",
