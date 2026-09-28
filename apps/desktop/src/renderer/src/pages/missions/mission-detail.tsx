@@ -1408,7 +1408,6 @@ export function MissionDetailFragment(props: {
           >
             {t("missionBoard", { ns: "missions" })}
           </button>
-          {missionDetailActionMenu}
           {memoryEnabled ? (
             <button
               className={activeTab === "memory" ? "is-active" : ""}
@@ -1420,6 +1419,7 @@ export function MissionDetailFragment(props: {
               {t("memory", { ns: "missions" })}
             </button>
           ) : null}
+          {missionDetailActionMenu}
         </div>
       </div>
       <div className="mission-detail-body">
