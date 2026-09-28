@@ -1,5 +1,5 @@
 .asset-git-panel,
-.asset-git-import form {
+.asset-git-import-form {
   display: grid;
   gap: 0.75rem;
   padding: 1rem;
@@ -14,22 +14,18 @@
 }
 
 .asset-git-panel label,
-.asset-git-import label {
+.asset-git-import-form label {
   display: grid;
   gap: 0.3rem;
   min-width: 0;
 }
 
 .asset-git-panel input,
-.asset-git-import input {
+.asset-git-import-form input {
   width: 100%;
   min-width: 0;
 }
 
-.asset-git-import {
-  margin-bottom: 1rem;
-}
-
-.asset-git-import form {
-  margin-top: 0.5rem;
+.asset-git-dialog.ui-dialog {
+  width: min(34rem, calc(100vw - 2rem));
 }

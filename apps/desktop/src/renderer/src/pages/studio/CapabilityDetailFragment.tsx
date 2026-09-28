@@ -6,6 +6,7 @@ import {
   Code,
   DownloadSimple,
   GitBranch,
+  GearSix,
   Globe,
   PaperPlaneTilt,
   Play,
@@ -42,6 +43,7 @@ export function CapabilityDetailFragment(props: {
   readonly onDeleted?: (capabilityId: string) => void;
   readonly onExport?: (() => Promise<void>) | undefined;
   readonly onPublish?: (() => Promise<void>) | undefined;
+  readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
@@ -64,9 +66,14 @@ export function CapabilityDetailFragment(props: {
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [gitSettingsOpen, setGitSettingsOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const tools = useMemo(() => capabilityTools(capability), [capability]);
+
+  useEffect(() => {
+    if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
+  }, [props.openGitSettingsRequest]);
 
   useEffect(() => {
     if (definition.kind !== "skill") {
@@ -280,16 +287,6 @@ export function CapabilityDetailFragment(props: {
         </button>
       }
     >
-      {definition.kind === "skill" && !isBuiltIn ? (
-        <AssetGitPanel
-          target={{ kind: "skill", id: capability.manifest.id }}
-          revision={capability.manifest.latestRevision}
-          onSynced={async () => {
-            const api = desktopApi();
-            if (api) props.onChanged(await api.getCapability(capability.manifest.id));
-          }}
-        />
-      ) : null}
       <div className="capability-detail-overview">
         <header className="capability-detail-header">
           <span className="expert-avatar" aria-hidden="true">
@@ -348,6 +345,12 @@ export function CapabilityDetailFragment(props: {
                   setRevisionError(null);
                   setRevisionDialogOpen(true);
                 }}
+              />
+              <StudioActionButton
+                label={t("assetGit.settings")}
+                icon={<GearSix size={18} aria-hidden="true" />}
+                disabled={busy || deleting}
+                onClick={() => setGitSettingsOpen(true)}
               />
               <StudioActionButton
                 label={t("deleteCapabilityAction")}
@@ -620,6 +623,32 @@ export function CapabilityDetailFragment(props: {
               </p>
             ) : null}
           </form>
+        </Dialog>
+      ) : null}
+      {gitSettingsOpen && definition.kind === "skill" && !isBuiltIn ? (
+        <Dialog
+          title={t("assetGit.settingsTitle")}
+          description={t("assetGit.description")}
+          className="asset-git-dialog"
+          onCancel={() => setGitSettingsOpen(false)}
+          footer={
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setGitSettingsOpen(false)}
+            >
+              {t("close")}
+            </button>
+          }
+        >
+          <AssetGitPanel
+            target={{ kind: "skill", id: capability.manifest.id }}
+            showHeading={false}
+            onSynced={async () => {
+              const api = desktopApi();
+              if (api) props.onChanged(await api.getCapability(capability.manifest.id));
+            }}
+          />
         </Dialog>
       ) : null}
       {deleteDialogOpen ? (

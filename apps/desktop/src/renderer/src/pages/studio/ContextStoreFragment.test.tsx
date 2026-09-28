@@ -114,11 +114,11 @@ describe("knowledge base UI", () => {
     expect(html).not.toContain("/Users/");
   });
 
-  it("links the knowledge directory to core asset sync", () => {
+  it("keeps global sync and Git import out of the knowledge directory", () => {
     const html = renderToStaticMarkup(
       <ContextStoreDirectoryFragment
         stores={[]}
-        onConfigureSync={() => undefined}
+        onGitImported={async () => undefined}
         onCreate={async () => store}
         onInspectImport={async (sourcePath) => ({
           sourcePath,
@@ -131,7 +131,9 @@ describe("knowledge base UI", () => {
       />,
     );
 
-    expect(html).toContain("Core asset sync");
+    expect(html).not.toContain("Core Asset Sync");
+    expect(html).not.toContain("Import from Git");
+    expect(html).toContain("Create knowledge base");
   });
 
   it("keeps mount options compact and exposes selection state without per-file loading copy", () => {
@@ -223,8 +225,9 @@ describe("knowledge base UI", () => {
     expect(html).toContain('class="knowledge-base-editor-actions"');
     expect(html).toContain("Revision history");
     expect(html).toContain("Submit revision");
-    expect(html.match(/class="studio-action-button"/g)).toHaveLength(6);
-    expect(html.match(/role="tooltip"/g)).toHaveLength(6);
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(7);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(7);
+    expect(html).toContain('aria-label="Settings"');
     expect(html).toContain('aria-label="Save"');
     expect(html).toContain("No changes to save");
     expect(html.indexOf('aria-label="Save"')).toBeLessThan(

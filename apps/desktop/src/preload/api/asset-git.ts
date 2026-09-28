@@ -1,4 +1,4 @@
-import { ipcRenderer } from "electron";
+import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   AssetGitBindSchema,
@@ -29,7 +29,19 @@ export const assetGitApi = {
     AssetGitStatusSchema.parse(
       await invokeMutation("asset-git:sync", AssetGitTargetSchema.parse(target)),
     ),
+  subscribeAssetGitStatusUpdates: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(AssetGitStatusSchema.parse(value));
+    };
+    ipcRenderer.on("asset-git:status:updated", handler);
+    return () => ipcRenderer.removeListener("asset-git:status:updated", handler);
+  },
 } satisfies Pick<
   PragmaDesktopAPI,
-  "getAssetGitStatus" | "bindAssetGit" | "unbindAssetGit" | "importAssetGit" | "syncAssetGit"
+  | "getAssetGitStatus"
+  | "bindAssetGit"
+  | "unbindAssetGit"
+  | "importAssetGit"
+  | "syncAssetGit"
+  | "subscribeAssetGitStatusUpdates"
 >;

@@ -226,19 +226,19 @@ describe("capability row actions", () => {
     expect(html).not.toContain("Skill revisions");
   });
 
-  it("keeps asset Git import and the core sync settings link available together", () => {
+  it("keeps global sync and Git import out of the Skill directory", () => {
     const html = renderToStaticMarkup(
       <CapabilityDirectoryFragment
         kind="skills"
         capabilities={[]}
-        onConfigureSync={() => undefined}
         onOpen={() => undefined}
         onChanged={() => undefined}
       />,
     );
 
-    expect(html).toContain("Import from Git");
-    expect(html).toContain("Core asset sync");
+    expect(html).not.toContain("Import from Git");
+    expect(html).not.toContain("Core Asset Sync");
+    expect(html).toContain("Add skill");
   });
 
   it("lists system capabilities as built-in without mutation actions", () => {

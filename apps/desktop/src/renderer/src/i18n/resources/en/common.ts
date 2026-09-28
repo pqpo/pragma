@@ -55,6 +55,18 @@ export const common = {
   errors: {
     generic: "The change could not be saved.",
   },
+  assetGitNotice: {
+    asset: {
+      knowledge: "Knowledge Base",
+      skill: "Skill",
+    },
+    conflict: "{{asset}} Git sync needs attention because conflicting changes were found.",
+    error: "{{asset}} Git sync failed and needs attention.",
+    additional_one: "One more asset also needs attention.",
+    additional_other: "{{count}} more assets also need attention.",
+    openSettings: "Open Git settings",
+    dismiss: "Dismiss Git sync notice",
+  },
   startupFailure: {
     eyebrow: "Startup problem",
     bridge: {

@@ -17,7 +17,12 @@ import { EvaluationsPage } from "./pages/evaluations/EvaluationsPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
 import { UsagePage } from "./pages/usage/UsagePage.tsx";
 import { MemoryPage } from "./pages/memory/MemoryPage.tsx";
-import type { HomeMissionExecutorOption, Mission } from "../../shared/contracts/index.ts";
+import type {
+  AssetGitStatus,
+  AssetGitTarget,
+  HomeMissionExecutorOption,
+  Mission,
+} from "../../shared/contracts/index.ts";
 
 export function App() {
   const { t } = useTranslation("common");
@@ -35,12 +40,18 @@ export function App() {
   const [studioExpertStep, setStudioExpertStep] = useState<"capabilities" | undefined>();
   const [studioResourceRef, setStudioResourceRef] = useState<string>();
   const [studioRevisionStoreId, setStudioRevisionStoreId] = useState<string>();
+  const [studioAssetGitTarget, setStudioAssetGitTarget] = useState<{
+    readonly target: AssetGitTarget;
+    readonly requestId: number;
+  }>();
   const [studioMemoryState, setStudioMemoryState] = useState<StudioPageMemoryState>();
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
   const [legacySyncStopped, setLegacySyncStopped] = useState(false);
   const [legacySyncNoticeDismissed, setLegacySyncNoticeDismissed] = useState(false);
+  const [assetGitIssues, setAssetGitIssues] = useState<readonly AssetGitStatus[]>([]);
+  const assetGitNavigationSequence = useRef(0);
   const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
 
   useEffect(() => {
@@ -74,6 +85,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
+    if (api === undefined) return;
+    return api.subscribeAssetGitStatusUpdates((status) => {
+      setAssetGitIssues((current) => updateAssetGitIssues(current, status));
+    });
+  }, []);
+
+  useEffect(() => {
     const sync = () => {
       void window.pragmaDesktop.refreshCoreAssets().catch(() => undefined);
     };
@@ -103,6 +122,7 @@ export function App() {
       setStudioExpertStep(undefined);
       setStudioResourceRef(undefined);
       setStudioRevisionStoreId(undefined);
+      setStudioAssetGitTarget(undefined);
       if (view === "missions") setMissionToOpen(undefined);
       if (view === "settings") setSettingsView("general");
       setActiveView(view);
@@ -136,6 +156,7 @@ export function App() {
     setStudioExpertStep(undefined);
     setStudioResourceRef(undefined);
     setStudioRevisionStoreId(undefined);
+    setStudioAssetGitTarget(undefined);
     setStudioMemoryState({ activeView: "context-stores" });
     setActiveView("studio");
   };
@@ -145,6 +166,7 @@ export function App() {
     setStudioExpertStep(executor.kind === "expert" ? "capabilities" : undefined);
     setStudioResourceRef(executor.kind === "team" ? executor.ref : undefined);
     setStudioRevisionStoreId(undefined);
+    setStudioAssetGitTarget(undefined);
     setActiveView("studio");
   };
 
@@ -156,6 +178,28 @@ export function App() {
   const openCoreAssetSyncSettings = () => {
     setSettingsView("core-asset-sync");
     setActiveView("settings");
+  };
+
+  const openAssetGitIssue = (status: AssetGitStatus) => {
+    const perform = () => {
+      assetGitNavigationSequence.current += 1;
+      setStudioExpertRef(undefined);
+      setStudioExpertStep(undefined);
+      setStudioResourceRef(undefined);
+      setStudioRevisionStoreId(undefined);
+      setStudioMemoryState({
+        activeView: status.target.kind === "knowledge" ? "context-stores" : "skills",
+      });
+      setStudioAssetGitTarget({
+        target: status.target,
+        requestId: assetGitNavigationSequence.current,
+      });
+      setAssetGitIssues((current) => removeAssetGitIssue(current, status.target));
+      setActiveView("studio");
+    };
+    const guard = leaveGuardRef.current;
+    if (guard === null) perform();
+    else guard(perform);
   };
 
   return (
@@ -233,10 +277,10 @@ export function App() {
           initialExpertStep={studioExpertStep}
           initialResourceRef={studioResourceRef}
           initialRevisionStoreId={studioRevisionStoreId}
+          initialAssetGitTarget={studioAssetGitTarget}
           initialMemoryState={studioMemoryState}
           memoryEnabled={memoryEnabled === true}
           onMemoryStateChange={setStudioMemoryState}
-          onConfigureCoreAssetSync={openCoreAssetSyncSettings}
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}
@@ -273,13 +317,82 @@ export function App() {
           onLegacySyncStoppedChange={setLegacySyncStopped}
         />
       )}
-      {shouldShowCoreSyncCutoverNotice(legacySyncStopped, legacySyncNoticeDismissed) && (
-        <CoreSyncCutoverNotice
-          onConfigure={openCoreAssetSyncSettings}
-          onDismiss={() => setLegacySyncNoticeDismissed(true)}
-        />
-      )}
+      <div className="application-notices">
+        {assetGitIssues[0] === undefined ? null : (
+          <AssetGitIssueNotice
+            status={assetGitIssues[0]}
+            additionalCount={assetGitIssues.length - 1}
+            onOpen={() => openAssetGitIssue(assetGitIssues[0]!)}
+            onDismiss={() =>
+              setAssetGitIssues((current) =>
+                removeAssetGitIssue(current, assetGitIssues[0]!.target),
+              )
+            }
+          />
+        )}
+        {shouldShowCoreSyncCutoverNotice(legacySyncStopped, legacySyncNoticeDismissed) && (
+          <CoreSyncCutoverNotice
+            onConfigure={openCoreAssetSyncSettings}
+            onDismiss={() => setLegacySyncNoticeDismissed(true)}
+          />
+        )}
+      </div>
     </main>
+  );
+}
+
+export function updateAssetGitIssues(
+  current: readonly AssetGitStatus[],
+  status: AssetGitStatus,
+): readonly AssetGitStatus[] {
+  const remaining = removeAssetGitIssue(current, status.target);
+  return status.status === "conflict" || status.status === "error"
+    ? [...remaining, status]
+    : remaining;
+}
+
+export function removeAssetGitIssue(
+  current: readonly AssetGitStatus[],
+  target: AssetGitTarget,
+): readonly AssetGitStatus[] {
+  return current.filter(
+    (status) => status.target.kind !== target.kind || status.target.id !== target.id,
+  );
+}
+
+export function AssetGitIssueNotice(props: {
+  readonly status: AssetGitStatus;
+  readonly additionalCount: number;
+  readonly onOpen: () => void;
+  readonly onDismiss: () => void;
+}) {
+  const { t } = useTranslation("common");
+  const asset = t(`assetGitNotice.asset.${props.status.target.kind}`);
+  const message = t(`assetGitNotice.${props.status.status === "conflict" ? "conflict" : "error"}`, {
+    asset,
+  });
+
+  return (
+    <aside className="asset-git-issue-notice" role="alert">
+      <span>
+        {message}
+        {props.additionalCount > 0
+          ? ` ${t("assetGitNotice.additional", { count: props.additionalCount })}`
+          : ""}
+      </span>
+      <button className="primary-button" type="button" onClick={props.onOpen}>
+        {t("assetGitNotice.openSettings")}
+      </button>
+      <button
+        className="icon-button asset-git-issue-dismiss"
+        type="button"
+        aria-label={t("assetGitNotice.dismiss")}
+        title={t("assetGitNotice.dismiss")}
+        onClick={props.onDismiss}
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
+    </aside>
   );
 }
 

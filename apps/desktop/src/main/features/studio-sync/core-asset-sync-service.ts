@@ -129,7 +129,6 @@ export interface CoreAssetSyncService {
   refresh(): Promise<CoreAssetSyncOverview>;
   resolve(key: string, choice: "local" | "remote"): Promise<CoreAssetSyncOverview>;
   restore(key: string): Promise<CoreAssetSyncOverview>;
-  schedule(reason: string): void;
 }
 
 export function createCoreAssetSyncService(options: {
@@ -145,7 +144,6 @@ export function createCoreAssetSyncService(options: {
   readonly reportNameResolutionIssue?: (issue: CoreAssetSyncNameResolutionIssue) => void;
 }): CoreAssetSyncService {
   let running = false;
-  let scheduled: ReturnType<typeof setTimeout> | undefined;
   let lastError: string | undefined;
   const reportedNameResolutionFailures = new Set<string>();
   const reportNameResolutionFailure = (
@@ -927,8 +925,6 @@ export function createCoreAssetSyncService(options: {
       return await run("full");
     },
     async removeConfiguration() {
-      if (scheduled) clearTimeout(scheduled);
-      scheduled = undefined;
       await withFileLock(`${options.statePath}.lock`, async () =>
         rm(options.configurationPath, { force: true }),
       );
@@ -937,15 +933,6 @@ export function createCoreAssetSyncService(options: {
     refresh: async () => await run("pull"),
     resolve: async (key, choice) => await run("full", { key, choice }),
     restore: async (key) => await run("pull", { key, choice: "remote" }),
-    schedule(reason) {
-      if (scheduled) clearTimeout(scheduled);
-      scheduled = setTimeout(() => {
-        scheduled = undefined;
-        void run(
-          reason === "startup" || reason === "focus" || reason === "online" ? "pull" : "automatic",
-        ).catch((error: unknown) => options.warn?.("Core asset sync scheduling failed.", error));
-      }, 1_000);
-    },
   };
 }
 

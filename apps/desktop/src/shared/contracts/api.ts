@@ -283,6 +283,7 @@ export interface PragmaDesktopAPI {
     source: AssetGitSource;
   }) => Promise<AssetGitTarget>;
   syncAssetGit: (target: AssetGitTarget) => Promise<AssetGitStatus>;
+  subscribeAssetGitStatusUpdates: (listener: (status: AssetGitStatus) => void) => () => void;
   reportRendererLog: (input: DesktopRendererLog) => void;
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;

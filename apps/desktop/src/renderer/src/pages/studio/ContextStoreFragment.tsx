@@ -13,6 +13,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  GearSix,
   GitBranch,
   ListBullets,
   MagnifyingGlass,
@@ -63,7 +64,7 @@ import {
 import { StudioConfirmationDialog, StudioTextInputDialog } from "./StudioDialog.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
-import { AssetGitImportButton, AssetGitPanel } from "./AssetGitControls.tsx";
+import { AssetGitImportForm, AssetGitPanel } from "./AssetGitControls.tsx";
 import type { AssetGitTarget } from "../../../../shared/contracts/index.ts";
 
 type CreateStep = "intro" | "configure" | "review";
@@ -230,7 +231,6 @@ export function ContextStoreDirectoryFragment(props: {
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly onOpen: (store: ContextStore) => void;
   readonly onGitImported?: ((target: AssetGitTarget) => Promise<void>) | undefined;
-  readonly onConfigureSync?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
@@ -254,11 +254,6 @@ export function ContextStoreDirectoryFragment(props: {
             <p>{t("knowledgeBasesDescription")}</p>
           </div>
           <div className="knowledge-directory-actions">
-            {props.onConfigureSync !== undefined ? (
-              <button className="secondary-button" type="button" onClick={props.onConfigureSync}>
-                <ArrowClockwise size={17} /> {t("configureCoreAssetSync")}
-              </button>
-            ) : null}
             {props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
                 <ClockCounterClockwise size={17} aria-hidden="true" />
@@ -276,9 +271,6 @@ export function ContextStoreDirectoryFragment(props: {
         </header>
       }
     >
-      {props.onGitImported ? (
-        <AssetGitImportButton kind="knowledge" onImported={props.onGitImported} />
-      ) : null}
       <label className="directory-search store-search">
         <MagnifyingGlass size={18} aria-hidden="true" />
         <span className="sr-only">{t("searchKnowledgeBases")}</span>
@@ -353,6 +345,7 @@ export function ContextStoreDirectoryFragment(props: {
           onCreate={props.onCreate}
           onInspectImport={props.onInspectImport}
           onPickFolder={props.onPickFolder}
+          onGitImported={props.onGitImported}
           onCreated={(store) => {
             setCreating(false);
             props.onOpen(store);
@@ -409,6 +402,7 @@ export function ContextStoreDetailFragment(props: {
   readonly onDiscardEditorDraft: (storeId: string, expectedRevision: number) => Promise<void>;
   readonly onStoreChanged: (store: ContextStore) => void;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
+  readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [entries, setEntries] = useState<readonly ContextStoreEntry[]>([]);
@@ -446,6 +440,7 @@ export function ContextStoreDetailFragment(props: {
     props.store.id,
   );
   const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
+  const [gitSettingsOpen, setGitSettingsOpen] = useState(false);
   const [revisionPrompt, setRevisionPrompt] = useState("");
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
@@ -460,6 +455,10 @@ export function ContextStoreDetailFragment(props: {
   const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles,
   );
+
+  useEffect(() => {
+    if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
+  }, [props.openGitSettingsRequest]);
 
   useEffect(() => {
     if (!confirmOpen) return;
@@ -1165,6 +1164,11 @@ export function ContextStoreDetailFragment(props: {
               />
             ) : null}
             <StudioActionButton
+              label={t("assetGit.settings")}
+              icon={<GearSix size={18} aria-hidden="true" />}
+              onClick={() => requestLeave(() => setGitSettingsOpen(true))}
+            />
+            <StudioActionButton
               label={t("deleteKnowledgeBaseAction")}
               tone="danger"
               icon={<Trash size={18} aria-hidden="true" />}
@@ -1174,29 +1178,6 @@ export function ContextStoreDetailFragment(props: {
         </div>
       }
     >
-      <AssetGitPanel
-        target={{ kind: "knowledge", id: props.store.id }}
-        revision={props.store.contentRevision}
-        beforeSync={async () => {
-          if (!(await commitDraft())) throw new Error(t("assetGit.saveFailed"));
-        }}
-        onSynced={async () => {
-          const api = desktopApi();
-          if (!api) return;
-          const next = (await api.listContextStores()).find((item) => item.id === props.store.id);
-          if (next) props.onStoreChanged(next);
-          await loadEntries();
-          const selected = currentRef.current.selectedEntry;
-          if (
-            selected?.kind === "file" &&
-            (await props.onListEntries(props.store.id)).some(
-              (entry) => entry.kind === "file" && entry.id === selected.id,
-            )
-          ) {
-            await loadFile(selected, { discardChanges: true, preservePreview: true });
-          }
-        }}
-      />
       <div
         className="knowledge-base-workspace"
         style={{ "--sidebar-width": `${filePanelWidth}px` } as CSSProperties}
@@ -1628,6 +1609,49 @@ export function ContextStoreDetailFragment(props: {
           }
         />
       ) : null}
+      {gitSettingsOpen ? (
+        <Dialog
+          title={t("assetGit.settingsTitle")}
+          description={t("assetGit.description")}
+          className="asset-git-dialog"
+          onCancel={() => setGitSettingsOpen(false)}
+          footer={
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setGitSettingsOpen(false)}
+            >
+              {t("close")}
+            </button>
+          }
+        >
+          <AssetGitPanel
+            target={{ kind: "knowledge", id: props.store.id }}
+            showHeading={false}
+            beforeSync={async () => {
+              if (!(await commitDraft())) throw new Error(t("assetGit.saveFailed"));
+            }}
+            onSynced={async () => {
+              const api = desktopApi();
+              if (!api) return;
+              const next = (await api.listContextStores()).find(
+                (item) => item.id === props.store.id,
+              );
+              if (next) props.onStoreChanged(next);
+              await loadEntries();
+              const selected = currentRef.current.selectedEntry;
+              if (
+                selected?.kind === "file" &&
+                (await props.onListEntries(props.store.id)).some(
+                  (entry) => entry.kind === "file" && entry.id === selected.id,
+                )
+              ) {
+                await loadFile(selected, { discardChanges: true, preservePreview: true });
+              }
+            }}
+          />
+        </Dialog>
+      ) : null}
       {entryConfirmation !== null ? (
         <StudioConfirmationDialog
           title={entryConfirmation.kind === "delete" ? t("deleteEntryTitle") : t("moveEntryTitle")}
@@ -1758,10 +1782,12 @@ export function ContextStoreCreatorDrawer(props: {
   readonly onInspectImport: (sourcePath: string) => Promise<ContextStoreImportInspection>;
   readonly onCreated: (store: ContextStore) => void;
   readonly onPickFolder: () => Promise<string | undefined>;
+  readonly onGitImported?: ((target: AssetGitTarget) => Promise<void>) | undefined;
   readonly mountExpertName?: string;
 }) {
   const { t } = useTranslation("studio");
   const [step, setStep] = useState<CreateStep>("intro");
+  const [creationSource, setCreationSource] = useState<"local" | "git">("local");
   const [mode, setMode] = useState<CreateMode>("blank");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -1793,6 +1819,7 @@ export function ContextStoreCreatorDrawer(props: {
   };
 
   const continueFromConfigure = () => {
+    if (creationSource === "git") return;
     if (!name.trim() || (mode === "import" && inspection === null)) {
       setError(mode === "import" ? t("nameAndImportRequired") : t("knowledgeBaseNameRequired"));
       return;
@@ -1872,94 +1899,132 @@ export function ContextStoreCreatorDrawer(props: {
               </div>
               <div className="knowledge-create-modes">
                 <button
-                  className={mode === "blank" ? "is-selected" : ""}
+                  className={creationSource === "local" ? "is-selected" : ""}
                   type="button"
-                  onClick={() => setMode("blank")}
+                  onClick={() => setCreationSource("local")}
                 >
                   <FilePlus size={23} />
                   <span>
-                    <strong>{t("blankKnowledgeBase")}</strong>
-                    <small>{t("blankKnowledgeBaseDescription")}</small>
+                    <strong>{t("assetGit.localCreate")}</strong>
+                    <small>{t("createKnowledgeBaseDescription")}</small>
                   </span>
                 </button>
-                <button
-                  className={mode === "import" ? "is-selected" : ""}
-                  type="button"
-                  onClick={() => setMode("import")}
-                >
-                  <FolderPlus size={23} />
-                  <span>
-                    <strong>{t("importKnowledgeBase")}</strong>
-                    <small>{t("importKnowledgeBaseDescription")}</small>
-                  </span>
-                </button>
+                {props.onGitImported ? (
+                  <button
+                    className={creationSource === "git" ? "is-selected" : ""}
+                    type="button"
+                    onClick={() => setCreationSource("git")}
+                  >
+                    <GitBranch size={23} />
+                    <span>
+                      <strong>{t("assetGit.import")}</strong>
+                      <small>{t("assetGit.importDescription")}</small>
+                    </span>
+                  </button>
+                ) : null}
               </div>
-              <div className="store-config-form">
-                <label>
-                  {t("name")}
-                  <input
-                    value={name}
-                    maxLength={PRAGMA_TEXT_LIMITS.contextStore.name * 2}
-                    onChange={(event) =>
-                      setName(
-                        truncatePragmaTrimmedUnicode(
-                          event.target.value,
-                          PRAGMA_TEXT_LIMITS.contextStore.name,
-                        ),
-                      )
-                    }
-                    autoFocus
-                  />
-                  <CharacterCount value={name} max={PRAGMA_TEXT_LIMITS.contextStore.name} />
-                </label>
-                <label>
-                  {t("description")}
-                  <textarea
-                    value={description}
-                    maxLength={PRAGMA_TEXT_LIMITS.contextStore.description * 2}
-                    onChange={(event) =>
-                      setDescription(
-                        truncatePragmaTrimmedUnicode(
-                          event.target.value,
-                          PRAGMA_TEXT_LIMITS.contextStore.description,
-                        ),
-                      )
-                    }
-                  />
-                  <CharacterCount
-                    value={description}
-                    max={PRAGMA_TEXT_LIMITS.contextStore.description}
-                  />
-                </label>
-                {mode === "import" ? (
-                  <div className="knowledge-import-source">
+              {creationSource === "git" && props.onGitImported ? (
+                <AssetGitImportForm
+                  kind="knowledge"
+                  onImported={async (target) => {
+                    await props.onGitImported?.(target);
+                    props.onClose();
+                  }}
+                />
+              ) : (
+                <>
+                  <div className="knowledge-create-modes">
                     <button
-                      className="secondary-button"
+                      className={mode === "blank" ? "is-selected" : ""}
                       type="button"
-                      disabled={inspecting}
-                      onClick={() => void chooseSource()}
+                      onClick={() => setMode("blank")}
                     >
-                      {inspecting ? t("inspecting") : t("chooseSourceFolder")}
+                      <FilePlus size={23} />
+                      <span>
+                        <strong>{t("blankKnowledgeBase")}</strong>
+                        <small>{t("blankKnowledgeBaseDescription")}</small>
+                      </span>
                     </button>
-                    {inspection ? (
-                      <div className="knowledge-import-summary">
-                        <Check size={18} />
-                        <div>
-                          <strong>{fileName(inspection.sourcePath)}</strong>
-                          <p>
-                            {t("importScanSummary", {
-                              markdown: inspection.markdownFiles,
-                              ignored: inspection.ignoredFiles,
-                            })}
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
+                    <button
+                      className={mode === "import" ? "is-selected" : ""}
+                      type="button"
+                      onClick={() => setMode("import")}
+                    >
+                      <FolderPlus size={23} />
+                      <span>
+                        <strong>{t("importKnowledgeBase")}</strong>
+                        <small>{t("importKnowledgeBaseDescription")}</small>
+                      </span>
+                    </button>
                   </div>
-                ) : (
-                  <p className="store-availability-note">{t("managedLocationNote")}</p>
-                )}
-              </div>
+                  <div className="store-config-form">
+                    <label>
+                      {t("name")}
+                      <input
+                        value={name}
+                        maxLength={PRAGMA_TEXT_LIMITS.contextStore.name * 2}
+                        onChange={(event) =>
+                          setName(
+                            truncatePragmaTrimmedUnicode(
+                              event.target.value,
+                              PRAGMA_TEXT_LIMITS.contextStore.name,
+                            ),
+                          )
+                        }
+                        autoFocus
+                      />
+                      <CharacterCount value={name} max={PRAGMA_TEXT_LIMITS.contextStore.name} />
+                    </label>
+                    <label>
+                      {t("description")}
+                      <textarea
+                        value={description}
+                        maxLength={PRAGMA_TEXT_LIMITS.contextStore.description * 2}
+                        onChange={(event) =>
+                          setDescription(
+                            truncatePragmaTrimmedUnicode(
+                              event.target.value,
+                              PRAGMA_TEXT_LIMITS.contextStore.description,
+                            ),
+                          )
+                        }
+                      />
+                      <CharacterCount
+                        value={description}
+                        max={PRAGMA_TEXT_LIMITS.contextStore.description}
+                      />
+                    </label>
+                    {mode === "import" ? (
+                      <div className="knowledge-import-source">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={inspecting}
+                          onClick={() => void chooseSource()}
+                        >
+                          {inspecting ? t("inspecting") : t("chooseSourceFolder")}
+                        </button>
+                        {inspection ? (
+                          <div className="knowledge-import-summary">
+                            <Check size={18} />
+                            <div>
+                              <strong>{fileName(inspection.sourcePath)}</strong>
+                              <p>
+                                {t("importScanSummary", {
+                                  markdown: inspection.markdownFiles,
+                                  ignored: inspection.ignoredFiles,
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="store-availability-note">{t("managedLocationNote")}</p>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           ) : null}
 
@@ -2021,24 +2086,26 @@ export function ContextStoreCreatorDrawer(props: {
           >
             {step === "intro" ? t("cancel") : t("back")}
           </button>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={saving}
-            onClick={() => {
-              if (step === "intro") setStep("configure");
-              else if (step === "configure") continueFromConfigure();
-              else void submit();
-            }}
-          >
-            {saving
-              ? t("creating")
-              : step === "review"
-                ? props.mountExpertName
-                  ? t("createAndMount")
-                  : t("createKnowledgeBase")
-                : t("continue")}
-          </button>
+          {creationSource === "git" && step === "configure" ? null : (
+            <button
+              className="primary-button"
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                if (step === "intro") setStep("configure");
+                else if (step === "configure") continueFromConfigure();
+                else void submit();
+              }}
+            >
+              {saving
+                ? t("creating")
+                : step === "review"
+                  ? props.mountExpertName
+                    ? t("createAndMount")
+                    : t("createKnowledgeBase")
+                  : t("continue")}
+            </button>
+          )}
         </footer>
       </aside>
     </div>

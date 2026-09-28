@@ -55,6 +55,18 @@ export const common = {
   errors: {
     generic: "無法儲存此變更。",
   },
+  assetGitNotice: {
+    asset: {
+      knowledge: "知識庫",
+      skill: "Skill",
+    },
+    conflict: "{{asset}} Git 同步發現衝突，需要處理。",
+    error: "{{asset}} Git 同步失敗，需要處理。",
+    additional_one: "另有 1 個資產需要處理。",
+    additional_other: "另有 {{count}} 個資產需要處理。",
+    openSettings: "開啟 Git 設定",
+    dismiss: "關閉 Git 同步提示",
+  },
   startupFailure: {
     eyebrow: "啟動異常",
     bridge: {

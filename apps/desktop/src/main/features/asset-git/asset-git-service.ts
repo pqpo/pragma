@@ -68,6 +68,7 @@ export interface AssetGitService {
   import(input: z.input<typeof AssetGitImportSchema>): Promise<AssetGitTarget>;
   sync(target: AssetGitTarget): Promise<AssetGitStatus>;
   source(target: AssetGitTarget): Promise<AssetGitSource | undefined>;
+  listTargets(): Promise<readonly AssetGitTarget[]>;
   restoreSource(target: AssetGitTarget, source: AssetGitSource): Promise<void>;
 }
 
@@ -77,6 +78,8 @@ export function createAssetGitService(options: {
   readonly capabilities: CapabilityStore;
   readonly afterPush?: (() => Promise<void>) | undefined;
   readonly onAssociationChanged?: ((target: AssetGitTarget) => void) | undefined;
+  readonly onStatusChanged?: ((status: AssetGitStatus) => void) | undefined;
+  readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): AssetGitService {
   const recordPath = (target: AssetGitTarget) =>
     join(options.stateRoot, target.kind, `${target.id}.json`);
@@ -213,9 +216,14 @@ export function createAssetGitService(options: {
                 : "pending",
     });
   };
+  const publishStatus = async (target: AssetGitTarget): Promise<AssetGitStatus> => {
+    const next = await status(target);
+    options.onStatusChanged?.(next);
+    return next;
+  };
   const bind = async (input: z.input<typeof AssetGitBindSchema>): Promise<AssetGitStatus> => {
     const { target, source } = AssetGitBindSchema.parse(input);
-    return await withTargetLock(target, async () => {
+    const next = await withTargetLock(target, async () => {
       await assertExists(target);
       const previous = await readRecord(target);
       if (previous?.source.remote === source.remote && previous.source.branch === source.branch)
@@ -234,6 +242,8 @@ export function createAssetGitService(options: {
       options.onAssociationChanged?.(target);
       return await status(target);
     });
+    options.onStatusChanged?.(next);
+    return next;
   };
   const unbind = async (target: AssetGitTarget): Promise<void> => {
     const parsed = AssetGitTargetSchema.parse(target);
@@ -243,12 +253,13 @@ export function createAssetGitService(options: {
       await rm(journalPath(parsed), { force: true });
       if (previous !== undefined) options.onAssociationChanged?.(parsed);
     });
+    await publishStatus(parsed);
   };
   const importAsset = async (
     input: z.input<typeof AssetGitImportSchema>,
   ): Promise<AssetGitTarget> => {
     const parsed = AssetGitImportSchema.parse(input);
-    return await withCheckout(parsed.source, async (root, commit, branch) => {
+    const target = await withCheckout(parsed.source, async (root, commit, branch) => {
       if (commit === undefined) throw new Error("Cannot import an empty Git repository.");
       const files = await readManagedFiles(root, parsed.kind);
       if (files.size === 0)
@@ -306,10 +317,16 @@ export function createAssetGitService(options: {
         return target;
       });
     });
+    await publishStatus(target);
+    return target;
   };
   const sync = async (rawTarget: AssetGitTarget): Promise<AssetGitStatus> => {
     const target = AssetGitTargetSchema.parse(rawTarget);
-    return await withTargetLock(target, async () => {
+    const current = await status(target);
+    if (current.source !== undefined) {
+      options.onStatusChanged?.({ ...current, status: "syncing" });
+    }
+    const next = await withTargetLock(target, async () => {
       const record = await readRecord(target);
       if (record === undefined) throw new Error("Set a Git address before syncing this asset.");
       await assertExists(target);
@@ -452,6 +469,31 @@ export function createAssetGitService(options: {
       }
       throw new Error("Git sync exceeded the retry limit.");
     });
+    options.onStatusChanged?.(next);
+    return next;
+  };
+  const listTargets = async (): Promise<readonly AssetGitTarget[]> => {
+    const targets: AssetGitTarget[] = [];
+    for (const kind of ["knowledge", "skill"] as const) {
+      let names: string[];
+      try {
+        names = await readdir(join(options.stateRoot, kind));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      for (const name of names.filter((item) => item.endsWith(".json"))) {
+        try {
+          const record = RecordSchema.parse(
+            JSON.parse(await readFile(join(options.stateRoot, kind, name), "utf8")),
+          );
+          targets.push(record.target);
+        } catch (error) {
+          options.warn?.(`Could not read the Git association for ${kind}/${name}.`, error);
+        }
+      }
+    }
+    return targets;
   };
   return {
     status,
@@ -459,6 +501,7 @@ export function createAssetGitService(options: {
     unbind,
     import: importAsset,
     sync,
+    listTargets,
     source: async (target) => (await readRecord(target))?.source,
     restoreSource: async (rawTarget, rawSource) => {
       const target = AssetGitTargetSchema.parse(rawTarget);
@@ -476,6 +519,7 @@ export function createAssetGitService(options: {
           await saveRecord({ schemaVersion: "pragma.asset-git/v1", target, source });
         });
       });
+      await publishStatus(target);
     },
   };
 }

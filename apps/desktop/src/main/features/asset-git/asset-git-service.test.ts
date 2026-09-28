@@ -47,7 +47,10 @@ async function run(root: string, args: string[]): Promise<string> {
   return (await execFileAsync("git", ["-C", root, ...args])).stdout;
 }
 
-async function fixture(onAssociationChanged?: () => void) {
+async function fixture(
+  onAssociationChanged?: () => void,
+  onStatusChanged?: Parameters<typeof createAssetGitService>[0]["onStatusChanged"],
+) {
   const root = await mkdtemp(join(tmpdir(), "pragma-asset-git-test-"));
   roots.push(root);
   const bare = join(root, "asset.git");
@@ -83,6 +86,7 @@ async function fixture(onAssociationChanged?: () => void) {
     stores,
     capabilities: {} as CapabilityStore,
     onAssociationChanged,
+    onStatusChanged,
   });
   return {
     root,
@@ -106,6 +110,19 @@ describe("asset Git knowledge sync", () => {
     expect(changes).toBe(2);
     await service.bind({ target, source });
     expect(changes).toBe(3);
+  });
+
+  it("publishes background-visible terminal status changes", async () => {
+    const statuses: string[] = [];
+    const { service, source } = await fixture(undefined, (status) => {
+      statuses.push(status.status);
+    });
+    const target = await service.import({ kind: "knowledge", source });
+    await service.unbind(target);
+    await service.bind({ target, source });
+    await service.sync(target);
+
+    expect(statuses).toEqual(["synced", "unbound", "pending", "syncing", "synced"]);
   });
 
   it("publishes an existing knowledge base into an empty repository", async () => {
