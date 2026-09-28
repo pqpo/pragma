@@ -109,6 +109,14 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
     try {
       expect((await desktop.episodic.store.inspect()).pending).toBeGreaterThan(0);
       expect(await desktop.episodic.store.list()).toHaveLength(0);
+      // A resumed CLI owner must protect persisted extraction work even after
+      // the checkpoint's six-hour idle window has expired in another Host.
+      await memory.resume(missionId);
+      const afterIdleDeadline = new Date(Date.now() + 7 * 60 * 60_000);
+      expect(await desktop.episodic.store.claimDueJob(afterIdleDeadline)).toBeUndefined();
+      expect(await desktop.semantic.store.claimDueJob(afterIdleDeadline)).toBeUndefined();
+      await memory.complete(missionId);
+      await memory.close();
       const extract = vi.fn(async (input: import("@pragma/memory").EpisodicExtractionInput) => {
         const ref = input.evidence.at(-1)!.messageId;
         return {
@@ -293,7 +301,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
       desktop.skill.close();
       await desktop.canonical.close();
     }
-  });
+  }, 30_000);
 
   it("runs a stable Expert through the Mission vertical slice", async () => {
     const { home, run, sessions } = await createRunFixture();
@@ -427,7 +435,11 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
 
       const ownerScope = createMissionOwnerScope({ controller });
       const mission = createControllerRunMissionPort(controller, { ownerScope });
+      const onOwnerRecovering = vi.fn(async (missionId: string) => {
+        expect((await executions.get(missionId))?.status).toBe("waiting");
+      });
       const coreControl = createLocalHostCoreMissionControlAdapter({
+        onOwnerRecovering,
         pragmaHome: home,
         runtimes,
         executions,
@@ -508,6 +520,7 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
           result: { answers: { "Review this run.": "approved" } },
         },
       });
+      expect(onOwnerRecovering).toHaveBeenCalledExactlyOnceWith(human.missionId);
       expect((await executions.get(human.missionId))?.status).toBe("succeeded");
       expect(completedSnapshot.snapshot.lease).toBeUndefined();
       await expect(watchPromise).resolves.toMatchObject({

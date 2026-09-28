@@ -105,6 +105,17 @@ export function createLocalHostRunMemory(options: {
         }
       });
     },
+    async resume(missionId: string) {
+      return serialize(async () => {
+        owners.add(missionId);
+        try {
+          const { data } = await get();
+          await data.setConversationState({ missionId, state: "running" });
+        } catch {
+          degraded();
+        }
+      });
+    },
     async complete(missionId: string, waiting = false) {
       return serialize(async () => {
         try {

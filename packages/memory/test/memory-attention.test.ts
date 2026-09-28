@@ -284,6 +284,102 @@ describe("Mission Memory Attention", () => {
     );
     await f.controller.stop();
   });
+  it.each(["read", "hint", "both"] as const)(
+    "commits a decision while %s acknowledgement changes the state revision",
+    async (ack) => {
+      const f = await fixture();
+      f.controller.observe(delta, scope);
+      await f.controller.flush();
+      let release!: () => void;
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      f.provider.assessCandidates.mockImplementationOnce(async () => {
+        enter();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return [{ key: "episodic:episode-a", relevance: 0.1, novelty: 0.1 }];
+      });
+      f.controller.observe(
+        { ...delta, latestObservation: "This episode no longer applies" },
+        scope,
+      );
+      const assessing = f.controller.flush();
+      await entered;
+      if (ack !== "read") expect(await f.controller.consumeHint({ ...delta, scope })).toBeDefined();
+      if (ack !== "hint") {
+        const view = await f.controller.createContextView({ ...delta, scope });
+        expect(await view?.readContext({ id: "mission-attention.md" })).toMatchObject({ ok: true });
+      }
+      release();
+      await assessing;
+      const result = await f.store.read(delta.missionId, delta.contextId);
+      expect(result).toMatchObject({
+        version: 2,
+        active: [],
+        lastReadVersion: ack === "hint" ? 0 : 1,
+        lastHintedVersion: ack === "read" ? 0 : 1,
+      });
+      expect(result!.revision).toBeGreaterThan(2);
+      await f.controller.stop();
+    },
+  );
+  it("rejects an obsolete decision after another content update", async () => {
+    const f = await fixture();
+    f.controller.observe(delta, scope);
+    await f.controller.flush();
+    let release!: () => void;
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    f.provider.assessCandidates.mockImplementationOnce(async () => {
+      enter();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [{ key: "episodic:episode-a", relevance: 0.1, novelty: 0.1 }];
+    });
+    f.controller.observe({ ...delta, latestObservation: "Older pending assessment" }, scope);
+    const assessing = f.controller.flush();
+    await entered;
+    await f.store.update(delta.missionId, delta.contextId, (current) => ({
+      ...current!,
+      revision: current!.revision + 1,
+      lastDeltaDigest: "newer-content-decision",
+    }));
+    release();
+    await assessing;
+    expect(await f.store.read(delta.missionId, delta.contextId)).toMatchObject({
+      lastDeltaDigest: "newer-content-decision",
+      active: [{ memoryId: candidate.memoryId }],
+    });
+    await f.controller.stop();
+  });
+  it("keeps Lens content and version stable when only an internal relevance score changes", async () => {
+    const f = await fixture();
+    f.controller.observe(delta, scope);
+    await f.controller.flush();
+    const view = await f.controller.createContextView({ ...delta, scope });
+    const before = await view?.readContext({ id: "mission-attention.md" });
+    f.provider.assessCandidates.mockResolvedValueOnce([
+      { key: "episodic:episode-a", relevance: 0.8, novelty: 0.9 },
+    ]);
+    f.controller.observe(
+      { ...delta, latestObservation: "Same precedent with a different confidence" },
+      scope,
+    );
+    await f.controller.flush();
+    const after = await view?.readContext({ id: "mission-attention.md" });
+    expect(after?.ok && after.value.content).toBe(before?.ok && before.value.content);
+    expect(await f.store.read(delta.missionId, delta.contextId)).toMatchObject({
+      version: 1,
+      active: [{ relevance: 0.8 }],
+    });
+    await f.controller.stop();
+  });
   it("rejects future state versions without rewriting their bytes", async () => {
     const f = await fixture();
     f.controller.observe(delta, scope);

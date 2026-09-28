@@ -263,17 +263,25 @@ export function createMemoryAttentionController(options: {
     next = readable.filter((entry): entry is MemoryAttentionEntry => entry !== undefined);
     if (signal.aborted || !(await sameBinding(binding.generation, input, scope))) return;
     await options.store.update(input.missionId, input.contextId, (current) => {
-      if ((current?.revision ?? 0) !== (stored?.revision ?? 0)) return undefined;
+      // Acknowledgements do not change decision inputs. Only another content
+      // update invalidates this result; merge the latest read/hint cursors below.
+      if (attentionContentDigest(current) !== attentionContentDigest(stored)) return undefined;
+      const acknowledged =
+        current?.generation === state.generation && current.scopeDigest === state.scopeDigest
+          ? current
+          : state;
       const changed =
         attentionDigest(visibleEntries(state.active)) !== attentionDigest(visibleEntries(next));
       return {
         ...state,
-        revision: (stored?.revision ?? 0) + 1,
+        revision: (current?.revision ?? 0) + 1,
         version: state.version + (changed ? 1 : 0),
         active: next,
         lastDeltaDigest: outcome === "failed" ? state.lastDeltaDigest : digest,
         // Non-significant updates are visible when read but do not generate a hint.
-        lastHintedVersion: changed && !significant ? state.version + 1 : state.lastHintedVersion,
+        lastReadVersion: acknowledged.lastReadVersion,
+        lastHintedVersion:
+          changed && !significant ? state.version + 1 : acknowledged.lastHintedVersion,
         audit: [
           ...state.audit.filter(
             (entry) => Date.parse(entry.occurredAt) >= now().getTime() - policy.auditRetentionMs,
@@ -464,7 +472,7 @@ export function createMemoryAttentionController(options: {
                 "",
                 ...(visible?.candidates.map(
                   ({ entry, candidate }) =>
-                    `- [${escapeMarkdownLinkLabel(candidate.title)}](${entry.module}/items/${entry.memoryId}.md)\n  relevance: ${entry.relevance.toFixed(2)}; reason: ${reasonLabel(entry.reason)}`,
+                    `- [${escapeMarkdownLinkLabel(candidate.title)}](${entry.module}/items/${entry.memoryId}.md)\n  reason: ${reasonLabel(entry.reason)}`,
                 ) ?? []),
                 "",
               ].join("\n"),
@@ -556,4 +564,13 @@ function reasonLabel(reason: MemoryAttentionEntry["reason"]): string {
     goal_changed: "Relevant to the current goal",
     historical_precedent: "Related historical precedent",
   }[reason];
+}
+
+function attentionContentDigest(state: MemoryAttentionState | undefined): string {
+  if (state === undefined) return attentionDigest(null);
+  const { revision, lastReadVersion, lastHintedVersion, ...content } = state;
+  void revision;
+  void lastReadVersion;
+  void lastHintedVersion;
+  return attentionDigest(content);
 }

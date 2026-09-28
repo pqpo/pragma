@@ -435,6 +435,7 @@ export function createLocalHostNodeApplication(
       (await missionController.listOperations({ missionId })).some(
         (operation) => operation.state === "queued" || operation.state === "applying",
       ),
+    onOwnerRecovering: async (missionId) => await runMemory.resume(missionId),
     releaseMissionOwner: async (missionId) => {
       const hasPending = (await missionController.listOperations({ missionId })).some(
         (operation) => operation.state === "queued" || operation.state === "applying",

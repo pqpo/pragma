@@ -18,14 +18,15 @@ Episodic/Semantic 既有 search → 相关性与新颖性判断 → 每批请求
 - 250 ms debounce、每 Context 最小间隔 5 秒；Host 并发 2，跨进程文件账本每分钟最多 60 请求。
 - 召回/新颖性阈值 0.65，激活相关度 0.7，淘汰阈值 0.35；30 分钟半衰期，只在新事件时维护。
 - 每次 HTTP 请求超时 3 秒，瞬时故障至多重试一次；连续 3 次失败冷却 60 秒。
-- 审计最多 100 项/7 天。状态锁内 CAS；跨进程冲突丢弃过时结果，下次观察可继续。
+- 审计最多 100 项/7 天。状态锁内按内容快照 CAS；read/hint 游标与决策合并，确认读取不使在途决策失效。其他内容更新会丢弃过时结果，下次观察可继续。
+- Lens version 对应可见引用、排序、修订和原因；相关度只用于内部判断与排序，不展示未计入版本的评分。
 
 旧版本读写边界保持不变；新状态与配置严格拒绝未知版本。后续升级需要相邻迁移与真实历史 fixture。
 Mission 删除复用 owner journal；恢复窗口内既有 Attention 可继续手动读取。重新绑定 scope 或配置 generation 时重新判断。
 
 ## 配置与诊断
 
-Desktop Memory 设置中验证并保存/替换/移除 Jev API Key。CLI 读取同一个 Pragma home，不能写配置。
+Desktop Memory 设置中验证并保存/替换/移除 Jev API Key。CLI 读取同一个 Pragma home，不能写配置。CLI 恢复 owner 前通过显式生命周期 hook 将 conversation 标记为 running，阻止恢复期间的空闲提炼；普通 recall scope resolve 不承担该状态转换。
 全局 Memory 禁用或当前资产 recall 禁用时不判断、不暴露 Lens；已有配置可以移除。
 401 和不合法响应要求重新配置；临时错误保留可见引用。Memory health 展示稳定错误码，不记录上游错误正文。Attention 配置或状态损坏仅使该可选视图不可用，普通 Memory 和 Execution 继续工作；未来版本仍保持拒绝读取、不改写原数据。
 

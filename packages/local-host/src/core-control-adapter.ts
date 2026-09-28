@@ -128,6 +128,8 @@ export function createLocalHostCoreMissionControlAdapter(options: {
   readonly resolveActiveOwner?:
     ((missionId: string) => Promise<LocalHostCoreActiveOwner | undefined>) | undefined;
   readonly resolveMissionBinding: (missionId: string) => Promise<MissionPinnedBinding | undefined>;
+  /** Host lifecycle before recovering an owner that may resume Runtime work. */
+  readonly onOwnerRecovering?: ((missionId: string) => Promise<void>) | undefined;
   /** Release the Mission lease after a recovered lower-level owner settles. */
   readonly releaseMissionOwner?: ((missionId: string) => Promise<void>) | undefined;
   /** Used to avoid releasing a lease while a newer Inbox item is arriving. */
@@ -231,6 +233,7 @@ export function createLocalHostCoreMissionControlAdapter(options: {
       missionId,
       createApp,
     });
+    await options.onOwnerRecovering?.(missionId);
     const owner = await recoverOwner({
       app,
       sessions,
