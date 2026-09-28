@@ -644,7 +644,7 @@ export function MissionDetailFragment(props: {
     persistedToolPermissionMode: props.mission.toolPermissionMode,
     persistedModelOverride: props.mission.modelOverride,
     saving: optionsSaving,
-    controlsDisabled,
+    controlsDisabled: clientOperationBusy || compactingContext,
     api: desktopApi(),
     beginSave: () => beginClientOperation("saving_options"),
     finishSave: finishClientOperation,
@@ -1888,15 +1888,22 @@ export function MissionDetailFragment(props: {
                             onChange={(value) => void saveOptions(value, modelOverride)}
                           />
                           {!isFlow ? (
-                            <MissionModelOverrideControls
-                              models={models}
-                              loading={modelsLoading}
-                              disabled={controlsDisabled}
-                              keepOpenWhenDisabled={optionsSaving}
-                              value={modelOverride}
-                              defaultValue={defaultModelSelection}
-                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
-                            />
+                            <div className="mission-model-options">
+                              <MissionModelOverrideControls
+                                models={models}
+                                loading={modelsLoading}
+                                disabled={clientOperationBusy || compactingContext}
+                                keepOpenWhenDisabled={optionsSaving}
+                                value={modelOverride}
+                                defaultValue={defaultModelSelection}
+                                onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                              />
+                              {executionActive ? (
+                                <small role="status">
+                                  {t("modelAvailableNextTurn", { ns: "missions" })}
+                                </small>
+                              ) : null}
+                            </div>
                           ) : null}
                         </>
                       }

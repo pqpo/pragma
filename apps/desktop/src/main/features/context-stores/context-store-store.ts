@@ -22,6 +22,7 @@ import { ContentAddressedStore, withFileLock, type ExpertAgentContextStore } fro
 import { pragmaKnowledgeBaseEntryNameIssue } from "@pragma/shared";
 
 import {
+  CONTEXT_STORE_FILE_MAX_BYTES,
   ContextStoreContentMetadataSchema,
   ContextStoreChangeSetSchema,
   ContextStoreRevisionRecordSchema,
@@ -40,7 +41,6 @@ import {
 } from "../../../shared/contracts/index.ts";
 import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
 
-const FILE_CONTENT_MAX_BYTES = 1_000_000;
 const MIGRATION_READY_FILE = ".pragma-migration-ready.json";
 const SNAPSHOT_STORAGE_MARKER = "snapshot-storage.json";
 const REVISION_LIST_STATE_FILE = "revision-list-state.json";
@@ -359,7 +359,7 @@ export function createContextStoreStore(options: {
   const fileStoreAt = (rootDir: string) =>
     new FileSystemContextStore({
       rootDir,
-      maxContextBytes: FILE_CONTENT_MAX_BYTES,
+      maxContextBytes: CONTEXT_STORE_FILE_MAX_BYTES,
     });
   const fileStore = (id: string) => fileStoreAt(contentRoot(id));
   const withRevisionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> => {
@@ -546,7 +546,7 @@ export function createContextStoreStore(options: {
   ): Promise<ContextStoreSnapshot> => {
     const adapter = new FileSystemContextStore({
       rootDir: root,
-      maxContextBytes: FILE_CONTENT_MAX_BYTES,
+      maxContextBytes: CONTEXT_STORE_FILE_MAX_BYTES,
       allowGitMetadataPaths: true,
     });
     const listed = await adapter.listContext();
@@ -557,7 +557,10 @@ export function createContextStoreStore(options: {
       listed.value
         .toSorted((left, right) => left.id.localeCompare(right.id))
         .map(async (item) => {
-          const read = await adapter.readContext({ id: item.id, offset: FILE_CONTENT_MAX_BYTES });
+          const read = await adapter.readContext({
+            id: item.id,
+            offset: CONTEXT_STORE_FILE_MAX_BYTES,
+          });
           if (!read.ok || read.value.contentRange.truncated) {
             throw new ContextStoreStoreError(
               "source_unavailable",
@@ -1473,7 +1476,7 @@ export function createContextStoreStore(options: {
       await readStore(storeId);
       const result = await fileStore(storeId).readContext({
         id: contentId,
-        offset: FILE_CONTENT_MAX_BYTES,
+        offset: CONTEXT_STORE_FILE_MAX_BYTES,
       });
       if (!result.ok) {
         throw new ContextStoreStoreError(
@@ -2010,7 +2013,7 @@ async function copyMarkdownTree(sourcePath: string, targetPath: string): Promise
     }
     if (!entry.isFile() || extname(entry.name).toLowerCase() !== ".md") return;
     const content = await readFile(path);
-    if (content.byteLength > FILE_CONTENT_MAX_BYTES) {
+    if (content.byteLength > CONTEXT_STORE_FILE_MAX_BYTES) {
       throw new ContextStoreStoreError(
         "source_unavailable",
         `Markdown file exceeds 1 MB: ${relative(sourceRoot, path)}`,
@@ -2091,7 +2094,7 @@ async function materializeSnapshot(
   }
   const adapter = new FileSystemContextStore({
     rootDir: root,
-    maxContextBytes: FILE_CONTENT_MAX_BYTES,
+    maxContextBytes: CONTEXT_STORE_FILE_MAX_BYTES,
     allowGitMetadataPaths: true,
   });
   for (const file of snapshot.files) {

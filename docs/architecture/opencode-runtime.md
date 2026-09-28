@@ -24,6 +24,13 @@ The adapter handles model discovery and selection, system prompts, resumed sessi
 
 Both major versions have an isolated executable smoke test for server startup, session creation/restoration, model listing, and MCP config isolation. A second test connects the real CLI to a local OpenAI-compatible mock model and verifies a completed prompt with a text delta. The tests are enabled with `PRAGMA_OPENCODE_V1_PATH` and `PRAGMA_OPENCODE_V2_PATH` while running `pnpm --filter @pragma/runtime-opencode test`. They do not use a real provider credential.
 
+Desktop permits model and thinking-level changes while a Mission is running. The choice is saved
+for newly accepted root messages; it does not replace the active native session or alter the active
+turn. Queued messages retain the selection captured when accepted, and clearing the override
+restores the Expert's default selection. Permission changes still require the current execution to
+finish. Host tests cover these boundaries with a gated Runtime; they do not replace the executable
+OpenCode acceptance tests above.
+
 ## Feature acceptance record
 
 The following statuses use the [Runtime integration checklist](../conventions/runtime-adapter-integration-checklist.md). All implementation paths are in `packages/runtime/opencode/src/`; the executable smoke is `test/process.integration.test.ts`. The smoke used OpenCode 1.18.32 and 2.0.16 on macOS on 2026-09-24 with temporary, unauthenticated homes. `Degraded` means the code path exists but the required provider-backed behavior has not been proven. The model turn used a local simulated provider; it did not execute an MCP tool.

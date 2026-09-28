@@ -739,6 +739,9 @@ export async function createDesktopApplicationContainer(
     unbind: async (target) => await assetSync.run(async () => await assetGit.unbind(target)),
     import: async (input) => await assetSync.run(async () => await assetGit.import(input)),
     sync: async (target) => await assetSync.syncAsset(target),
+    conflicts: async (target) => await assetSync.run(async () => await assetGit.conflicts(target)),
+    resolve: async (input) =>
+      await assetSync.syncAsset(input.target, async () => await assetGit.resolve(input)),
     source: async (target) => await assetGit.source(target),
     listTargets: async () => await assetGit.listTargets(),
     restoreSource: async (target, source) =>

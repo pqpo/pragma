@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { CoreAssetSyncOverview } from "../../../../shared/contracts/index.ts";
-import { errorMessage } from "../../lib/errors.ts";
+import { gitFailureKey } from "../../lib/git-feedback.ts";
 import { aggregateCoreAssetSyncItems, coreAssetOverallHealth } from "./core-asset-sync-summary.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -34,7 +34,7 @@ export function CoreAssetSyncSettingsFragment(props: {
     void window.pragmaDesktop
       .getCoreAssetSyncOverview()
       .then(apply)
-      .catch((cause: unknown) => setError(errorMessage(cause)));
+      .catch((cause: unknown) => setError(gitFailureKey(cause)));
   }, []);
   const run = async (action: () => Promise<CoreAssetSyncOverview | void>) => {
     setBusy(true);
@@ -42,7 +42,7 @@ export function CoreAssetSyncSettingsFragment(props: {
     try {
       apply((await action()) ?? (await window.pragmaDesktop.getCoreAssetSyncOverview()));
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(gitFailureKey(cause));
     } finally {
       setBusy(false);
     }
@@ -110,7 +110,7 @@ export function CoreAssetSyncSettingsFragment(props: {
       </form>
       {(error ?? overview?.error) && (
         <p role="alert" className="form-error">
-          {error ?? overview?.error}
+          {t(`assetGit.errors.${error ?? gitFailureKey(overview?.error)}`, { ns: "studio" })}
         </p>
       )}
       {overview?.syncedAt && (

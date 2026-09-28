@@ -211,6 +211,304 @@ describe("asset Git knowledge sync", () => {
     expect(await readFile(join(seed, "guide.md"), "utf8")).toContain("# Guide");
   });
 
+  it.each(["local", "remote", "manual", "delete"] as const)(
+    "resolves a first-bind conflict with %s and continues syncing",
+    async (choice) => {
+      const { bare, stores, service, source } = await fixture();
+      const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+      await stores.createFile(local.id, "guide.md", "# Local version\n");
+      await stores.createFile(local.id, "local.md", "# Independent\n");
+      const target = { kind: "knowledge" as const, id: local.id };
+      await service.bind({ target, source });
+      expect((await service.sync(target)).status).toBe("conflict");
+      const preview = await service.conflicts(target);
+      expect(preview.files).toEqual([
+        expect.objectContaining({
+          path: "guide.md",
+          kind: "text",
+          local: "# Local version\n",
+          base: null,
+        }),
+      ]);
+      expect(preview.files[0]?.mergeRemote).toContain("# Guide");
+      const result = await service.resolve({
+        target,
+        snapshot: preview.snapshot,
+        resolutions: [
+          choice === "manual"
+            ? { path: "guide.md", choice, content: "# Combined\n" }
+            : { path: "guide.md", choice },
+        ],
+      });
+      expect(result.status).toBe("synced");
+      const files = (await stores.getSnapshot(local.id)).files;
+      if (choice === "delete") {
+        expect(files.some((file) => file.id === "guide.md")).toBe(false);
+        await expect(run(bare, ["show", "main:guide.md"])).rejects.toThrow();
+      } else {
+        const expected =
+          choice === "manual"
+            ? "# Combined\n"
+            : choice === "local"
+              ? "# Local version\n"
+              : "# Guide\nFirst line\nSecond line\n";
+        expect(files.find((file) => file.id === "guide.md")?.content).toBe(expected);
+        expect(await run(bare, ["show", "main:guide.md"])).toBe(expected);
+      }
+      expect(await run(bare, ["show", "main:local.md"])).toBe("# Independent\n");
+      expect(await run(bare, ["show", "main:image.txt"])).toContain("Not managed");
+      expect((await service.sync(target)).status).toBe("synced");
+    },
+  );
+
+  it("resolves a knowledge base larger than the Skill package limit", async () => {
+    const { seed, stores, service, source } = await fixture();
+    // Each file is supported; the Skill-only aggregate limit must not apply.
+    for (let index = 0; index < 27; index += 1) {
+      await writeFile(join(seed, `large-${index}.md`), "x".repeat(1_000_000));
+    }
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Large knowledge base"]);
+    await run(seed, ["push", "origin", "main"]);
+    const target = await service.import({ kind: "knowledge", source });
+    const current = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(
+      target.id,
+      "guide.md",
+      "# Local\n",
+      current.metadata,
+      current.revision!,
+    );
+    await writeFile(join(seed, "guide.md"), "# Remote\n");
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Conflicting guide"]);
+    await run(seed, ["push", "origin", "main"]);
+    const preview = await service.conflicts(target);
+    expect(preview.files.map((file) => file.path)).toEqual(["guide.md"]);
+    expect(
+      await service.resolve({
+        target,
+        snapshot: preview.snapshot,
+        resolutions: [{ path: "guide.md", choice: "manual", content: "# Combined\n" }],
+      }),
+    ).toMatchObject({ status: "synced" });
+    expect((await stores.getSnapshot(target.id)).files).toHaveLength(28);
+    expect((await service.sync(target)).status).toBe("synced");
+  }, 30_000);
+
+  it("rejects oversized Knowledge manual content before checkout, journal or publication", async () => {
+    const { root, bare, stores, service, source } = await fixture();
+    const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+    await stores.createFile(local.id, "guide.md", "# Local\n");
+    const target = { kind: "knowledge" as const, id: local.id };
+    await service.bind({ target, source });
+    const preview = await service.conflicts(target);
+    const revision = (await stores.getSnapshot(local.id)).revision;
+    const remoteHead = await run(bare, ["rev-parse", "main"]);
+    const publish = vi.spyOn(stores, "appendSnapshot");
+    await expect(
+      service.resolve({
+        target,
+        snapshot: preview.snapshot,
+        resolutions: [{ path: "guide.md", choice: "manual", content: "x".repeat(2_000_000) }],
+      }),
+    ).rejects.toThrow("size limit");
+    expect(publish).not.toHaveBeenCalled();
+    expect((await stores.getSnapshot(local.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(remoteHead);
+    await expect(
+      readFile(join(root, "state", "knowledge", `${target.id}.json.journal`)),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [{ path: "guide.md", choice: "manual", content: "# Resolved\n" }],
+        })
+      ).status,
+    ).toBe("synced");
+  });
+
+  it("validates the fully merged Knowledge tree before automatic publication", async () => {
+    const { bare, seed, stores, service, source } = await fixture();
+    const lines = ["Header", "Separator", "x".repeat(994_000), "Separator", "Footer"];
+    const text = (values: string[]) => values.join("\n");
+    await writeFile(join(seed, "guide.md"), text(lines));
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Large base file"]);
+    await run(seed, ["push", "origin", "main"]);
+    const target = await service.import({ kind: "knowledge", source });
+    const current = await stores.getContent(target.id, "guide.md");
+    const local = [...lines];
+    local[0] = "l".repeat(4_000);
+    await stores.updateFile(
+      target.id,
+      "guide.md",
+      text(local),
+      current.metadata,
+      current.revision!,
+    );
+    const remote = [...lines];
+    remote[4] = "r".repeat(4_000);
+    await writeFile(join(seed, "guide.md"), text(remote));
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Independent remote edit"]);
+    await run(seed, ["push", "origin", "main"]);
+    const revision = (await stores.getSnapshot(target.id)).revision;
+    const remoteHead = await run(bare, ["rev-parse", "main"]);
+    const publish = vi.spyOn(stores, "appendSnapshot");
+    expect(await service.sync(target)).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("size limit"),
+    });
+    expect(publish).not.toHaveBeenCalled();
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(remoteHead);
+  });
+
+  it("prepares separate conflict choices while preserving independent edits in a long file", async () => {
+    const { bare, seed, stores, service, source } = await fixture();
+    const base = Array.from({ length: 1200 }, (_, index) => `Unchanged line ${index}`);
+    const content = (lines: string[]) => `${lines.join("\n")}\n`;
+    await writeFile(join(seed, "guide.md"), content(base));
+    await run(seed, ["add", "guide.md"]);
+    await run(seed, ["commit", "-m", "long base"]);
+    await run(seed, ["push", "origin", "main"]);
+    const target = await service.import({ kind: "knowledge", source });
+    const local = [...base];
+    local[10] = "Local conflict one";
+    local[500] = "Local conflict two";
+    local[800] = "Independent local edit";
+    const file = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(target.id, "guide.md", content(local), file.metadata, file.revision!);
+    const remote = [...base];
+    remote[10] = "Remote conflict one";
+    remote[500] = "Remote conflict two";
+    remote[1100] = "Independent remote edit";
+    await writeFile(join(seed, "guide.md"), content(remote));
+    await run(seed, ["add", "guide.md"]);
+    await run(seed, ["commit", "-m", "two conflicts and independent remote edit"]);
+    await run(seed, ["push", "origin", "main"]);
+    expect((await service.sync(target)).status).toBe("conflict");
+    const preview = await service.conflicts(target);
+    const candidateLocal = [...local];
+    candidateLocal[1100] = remote[1100]!;
+    const candidateRemote = [...remote];
+    candidateRemote[800] = local[800]!;
+    expect(preview.files).toHaveLength(1);
+    expect(preview.files[0]?.mergeLocal).toBe(content(candidateLocal));
+    expect(preview.files[0]?.mergeRemote).toBe(content(candidateRemote));
+    const result = [...candidateLocal];
+    result[500] = remote[500]!;
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [{ path: "guide.md", choice: "manual", content: content(result) }],
+        })
+      ).status,
+    ).toBe("synced");
+    expect(await run(bare, ["show", "main:guide.md"])).toBe(content(result));
+    expect((await stores.getSnapshot(target.id)).files[0]?.content).toBe(content(result));
+  });
+
+  it("replays a manual merge published locally before an interrupted push", async () => {
+    const { bare, stores, service, source } = await fixture();
+    const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+    await stores.createFile(local.id, "guide.md", "# Local\n");
+    const target = { kind: "knowledge" as const, id: local.id };
+    await service.bind({ target, source });
+    const preview = await service.conflicts(target);
+    const hook = join(bare, "hooks", "pre-receive");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n");
+    await chmod(hook, 0o755);
+    const result = await service.resolve({
+      target,
+      snapshot: preview.snapshot,
+      resolutions: [{ path: "guide.md", choice: "manual", content: "# Manual resolution\n" }],
+    });
+    expect(result.status).toBe("error");
+    const published = await stores.getSnapshot(target.id);
+    expect(published.files[0]?.content).toBe("# Manual resolution\n");
+    expect(await run(bare, ["show", "main:guide.md"])).toContain("# Guide");
+    await rm(hook);
+    expect((await service.sync(target)).status).toBe("synced");
+    expect(await run(bare, ["show", "main:guide.md"])).toBe("# Manual resolution\n");
+    expect((await stores.getSnapshot(target.id)).revision).toBe(published.revision);
+  });
+
+  it("rejects stale local and remote decisions without overwriting either side", async () => {
+    const { bare, seed, stores, service, source } = await fixture();
+    const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+    await stores.createFile(local.id, "guide.md", "# Local\n");
+    const target = { kind: "knowledge" as const, id: local.id };
+    await service.bind({ target, source });
+    const preview = await service.conflicts(target);
+    await stores.createFile(local.id, "new.md", "# New local\n");
+    const resolve = (snapshot: string) =>
+      service.resolve({ target, snapshot, resolutions: [{ path: "guide.md", choice: "remote" }] });
+    await expect(resolve(preview.snapshot)).rejects.toMatchObject({
+      code: "asset_git_stale_conflict",
+    });
+    const next = await service.conflicts(target);
+    await writeFile(join(seed, "guide.md"), "# New remote\n");
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Change remote"]);
+    await run(seed, ["push", "origin", "main"]);
+    await expect(resolve(next.snapshot)).rejects.toMatchObject({
+      code: "asset_git_stale_conflict",
+    });
+    expect(
+      (await stores.getSnapshot(local.id)).files.find((file) => file.id === "guide.md")?.content,
+    ).toBe("# Local\n");
+    expect(await run(bare, ["show", "main:guide.md"])).toBe("# New remote\n");
+  });
+
+  it("keeps conflicts retryable after invalid decisions or unresolved markers", async () => {
+    const { stores, service, source } = await fixture();
+    const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+    await stores.createFile(local.id, "guide.md", "# Local\n");
+    const target = { kind: "knowledge" as const, id: local.id };
+    await service.bind({ target, source });
+    const preview = await service.conflicts(target);
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [{ path: "other.md", choice: "local" }],
+        })
+      ).status,
+    ).toBe("error");
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [
+            {
+              path: "guide.md",
+              choice: "manual",
+              content: "<<<<<<< ours\ncontent\n=======\nother\n>>>>>>> theirs\n",
+            },
+          ],
+        })
+      ).status,
+    ).toBe("error");
+    expect((await stores.getSnapshot(local.id)).revision).toBe(2);
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [{ path: "guide.md", choice: "local" }],
+        })
+      ).status,
+    ).toBe("synced");
+  });
+
   it("automatically merges different lines of the same Markdown file", async () => {
     const { seed, stores, service, source } = await fixture();
     const target = await service.import({ kind: "knowledge", source });
@@ -336,10 +634,132 @@ describe("asset Git knowledge sync", () => {
     const target = { kind: "knowledge" as const, id: local.id };
     await service.bind({ target, source });
     expect((await service.sync(target)).conflictPaths).toEqual(["docs.md", "docs.md/nested.md"]);
+    const preview = await service.conflicts(target);
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [
+            { path: "docs.md", choice: "remote" },
+            { path: "docs.md/nested.md", choice: "delete" },
+          ],
+        })
+      ).status,
+    ).toBe("synced");
+    expect((await stores.getSnapshot(target.id)).files.some((file) => file.id === "docs.md")).toBe(
+      true,
+    );
+  });
+
+  it("replaces an empty nested remote directory with the chosen local file", async () => {
+    const { bare, seed, stores, service, source } = await fixture();
+    await mkdir(join(seed, "docs.md", "nested"), { recursive: true });
+    await writeFile(join(seed, "docs.md", "nested", "guide.md"), "# Remote\n");
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Nested remote files"]);
+    await run(seed, ["push", "origin", "main"]);
+    const local = await stores.create({ mode: "blank", name: "Local", description: "" });
+    await stores.createFile(local.id, "docs.md", "# Local\n");
+    const target = { kind: "knowledge" as const, id: local.id };
+    await service.bind({ target, source });
+    const preview = await service.conflicts(target);
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [
+            { path: "docs.md", choice: "local" },
+            { path: "docs.md/nested/guide.md", choice: "delete" },
+          ],
+        })
+      ).status,
+    ).toBe("synced");
+    expect(await run(bare, ["show", "main:docs.md"])).toBe("# Local\n");
+    expect(await run(bare, ["show", "main:image.txt"])).toBe(
+      "Not managed by the knowledge base.\n",
+    );
   });
 });
 
 describe("asset Git Skill sync", () => {
+  it("validates manual Skill merges and resolves binary and executable choices", async () => {
+    const { root, bare, seed, stores, source } = await fixture();
+    await run(seed, ["rm", "guide.md", "image.txt"]);
+    const skill = "---\nname: repo-review\ndescription: Review a repository.\n---\n\n# Review\n";
+    await writeFile(join(seed, "SKILL.md"), skill);
+    await writeFile(join(seed, "image.bin"), Buffer.from([0, 1, 2]));
+    await writeFile(join(seed, "run.sh"), "#!/bin/sh\nexit 0\n");
+    await run(seed, ["add", "."]);
+    await run(seed, ["commit", "-m", "Remote Skill"]);
+    await run(seed, ["push", "origin", "main"]);
+    const mutations = {
+      publish: async (input: { commit: () => Promise<unknown> }) => await input.commit(),
+    } as unknown as Parameters<typeof createCapabilityStore>[0]["mutations"];
+    const capabilities = createCapabilityStore({
+      capabilitiesPath: join(root, "capabilities"),
+      credentials: {} as Parameters<typeof createCapabilityStore>[0]["credentials"],
+      mutations,
+      verify: async (definition) => ({
+        definition,
+        health: { status: "ready", checkedAt: new Date().toISOString() },
+      }),
+      isReferenced: async () => false,
+    });
+    const stage = join(root, "local-skill");
+    await mkdir(stage);
+    await writeFile(join(stage, "SKILL.md"), skill.replace("# Review", "# Local review"));
+    await writeFile(join(stage, "image.bin"), Buffer.from([0, 3, 4]));
+    await writeFile(join(stage, "run.sh"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(stage, "run.sh"), 0o755);
+    const local = await capabilities.importSkill({ sourcePath: stage });
+    const target = { kind: "skill" as const, id: local.manifest.id };
+    const service = createAssetGitService({ stateRoot: join(root, "state"), stores, capabilities });
+    await service.bind({ target, source });
+    expect((await service.sync(target)).status).toBe("conflict");
+    const preview = await service.conflicts(target);
+    expect(preview.files.map((file) => file.path)).toEqual(["SKILL.md", "image.bin", "run.sh"]);
+    expect(preview.files.find((file) => file.path === "image.bin")).toMatchObject({
+      kind: "binary",
+      local: null,
+      remote: null,
+    });
+    expect(preview.files.find((file) => file.path === "run.sh")).toMatchObject({
+      modeConflict: true,
+      localExecutable: true,
+      remoteExecutable: false,
+    });
+    const decisions = [
+      {
+        path: "SKILL.md",
+        choice: "manual" as const,
+        content: `---\nname: ${"x".repeat(2000)}\ndescription: Invalid name length\n---\n`,
+      },
+      { path: "image.bin", choice: "remote" as const },
+      { path: "run.sh", choice: "local" as const },
+    ];
+    expect(
+      (await service.resolve({ target, snapshot: preview.snapshot, resolutions: decisions }))
+        .status,
+    ).toBe("error");
+    expect((await capabilities.get(target.id)).manifest.latestRevision).toBe(1);
+    expect(await run(bare, ["show", "main:SKILL.md"])).toBe(skill);
+    decisions[0]!.content = skill.replace("# Review", "# Merged review");
+    expect(
+      (await service.resolve({ target, snapshot: preview.snapshot, resolutions: decisions }))
+        .status,
+    ).toBe("synced");
+    expect(await run(bare, ["show", "main:SKILL.md"])).toContain("# Merged review");
+    expect(await run(bare, ["ls-tree", "main", "run.sh"])).toContain("100755");
+    const path = await capabilities.skillFilesPath(
+      target.id,
+      (await capabilities.get(target.id)).manifest.latestRevision,
+    );
+    expect(await readFile(join(path, "image.bin"))).toEqual(Buffer.from([0, 1, 2]));
+    expect((await service.sync(target)).status).toBe("synced");
+  }, 30_000);
+
   it("imports a plain Skill repository and publishes a local revision", async () => {
     const { root, bare, seed, stores, source } = await fixture();
     await run(seed, ["rm", "guide.md", "image.txt"]);

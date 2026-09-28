@@ -95,6 +95,37 @@ describe("asset sync coordinator", () => {
     vi.useRealTimers();
   });
 
+  it("reports partial success when the overall backup fails and skips backup on conflicts", async () => {
+    const backup = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    const sync = vi.fn(async (target: AssetGitTarget): Promise<AssetGitStatus> => synced(target));
+    const coordinator = createAssetSyncCoordinator({
+      core: { refresh: async () => ({}) as never, sync: backup },
+      assets: { listTargets: async () => [], source: async () => ({}), sync },
+    });
+    expect(await coordinator.syncAsset(targets[0]!)).toMatchObject({
+      status: "synced",
+      backupFailed: true,
+    });
+    sync.mockImplementation(async (target) => ({
+      target,
+      status: "conflict",
+      conflictPaths: ["SKILL.md"],
+    }));
+    expect((await coordinator.syncAsset(targets[0]!)).status).toBe("conflict");
+    expect(backup).toHaveBeenCalledOnce();
+    const resolve = vi.fn(async () => synced(targets[0]!));
+    expect(await coordinator.syncAsset(targets[0]!, resolve)).toMatchObject({
+      status: "synced",
+      backupFailed: true,
+    });
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(backup).toHaveBeenCalledTimes(2);
+    coordinator.stop();
+  });
+
   it("ignores new schedules after stop", async () => {
     vi.useFakeTimers();
     const sync = vi.fn(async (target: AssetGitTarget) => synced(target));

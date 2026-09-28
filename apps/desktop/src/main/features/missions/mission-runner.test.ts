@@ -4800,6 +4800,147 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     );
   });
 
+  it("saves the next model during an active turn while retaining queued models and restoring defaults", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-model-switch-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "First turn",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expertFixture()),
+      modelOverride: { providerId: "provider", modelId: "model", thinkingLevel: "high" },
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const selections: (RuntimeModelSelection | undefined)[] = [];
+    const startTurn = vi.fn(async (_session, turn) => {
+      selections.push(turn.modelSelection);
+      if (turn.rawQuery === "First turn") await gate;
+      return { outputText: turn.rawQuery, runtimeSessionId: "model-switch-session" };
+    });
+    const closeSession = vi.fn();
+    const createSession = vi.fn(() => ({ id: "model-switch-session" }));
+    const runtime = defineRuntimeTestDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession,
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn,
+      mapEvent: () => ({ events: [] }),
+      closeSession,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    try {
+      await runner.run(mission.id);
+      await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce(), {
+        timeout: settlementTimeoutMs,
+      });
+      const firstSession = (await missions.get(mission.id)).execution?.sessionId;
+      await runner.sendMessage({
+        id: mission.id,
+        content: "Queued before switch",
+        requestId: "00000000-0000-4000-8000-000000000021",
+      });
+      const updated = await runner.updateOptions({
+        id: mission.id,
+        toolPermissionMode: mission.toolPermissionMode,
+        modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "low" },
+      });
+      expect(updated.modelOverride?.modelId).toBe("next-model");
+      expect(startTurn).toHaveBeenCalledOnce();
+      expect(closeSession).not.toHaveBeenCalled();
+      await expect(
+        runner.updateOptions({
+          id: mission.id,
+          toolPermissionMode: "full-access",
+          modelOverride: updated.modelOverride!,
+        }),
+      ).rejects.toThrow("mission permissions");
+      await runner.sendMessage({
+        id: mission.id,
+        content: "Queued after switch",
+        requestId: "00000000-0000-4000-8000-000000000022",
+      });
+      await runner.updateOptions({
+        id: mission.id,
+        toolPermissionMode: mission.toolPermissionMode,
+        modelOverride: null,
+      });
+      for (const [index, content] of ["First queued default", "Cached queued default"].entries()) {
+        await runner.sendMessage({
+          id: mission.id,
+          content,
+          requestId: `00000000-0000-4000-8000-00000000002${index + 4}`,
+        });
+      }
+      const sessionStore = createFileExpertSessionStore({
+        executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+        pragmaHome: join(root, "state"),
+      });
+      const queuedDefaults = (await sessionStore.listPrompts(firstSession!)).filter((prompt) =>
+        prompt.content.includes("queued default"),
+      );
+      expect(queuedDefaults).toHaveLength(2);
+      expect(queuedDefaults.map((prompt) => prompt.modelSelection?.model)).toEqual([
+        { providerId: "test", modelId: "test-model" },
+        { providerId: "test", modelId: "test-model" },
+      ]);
+      release();
+      await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(5), {
+        timeout: 30_000,
+      });
+      await vi.waitFor(
+        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        { timeout: settlementTimeoutMs },
+      );
+      expect(selections[1]).toMatchObject({ model: { modelId: "model" }, thinkingLevel: "high" });
+      expect(selections[2]).toMatchObject({
+        model: { modelId: "next-model" },
+        thinkingLevel: "low",
+      });
+      expect(selections[3]?.model).toEqual({ providerId: "test", modelId: "test-model" });
+      expect(selections[4]?.model).toEqual({ providerId: "test", modelId: "test-model" });
+      expect(createSession).toHaveBeenCalledOnce();
+      expect((await missions.get(mission.id)).execution?.sessionId).toBe(firstSession);
+      await runner.updateOptions({
+        id: mission.id,
+        toolPermissionMode: mission.toolPermissionMode,
+        modelOverride: null,
+      });
+      await runner.sendMessage({
+        id: mission.id,
+        content: "Use default",
+        requestId: "00000000-0000-4000-8000-000000000023",
+      });
+      await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(6), {
+        timeout: settlementTimeoutMs,
+      });
+      expect(selections[5]?.model).toEqual({ providerId: "test", modelId: "test-model" });
+      await vi.waitFor(
+        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        { timeout: settlementTimeoutMs },
+      );
+      await runner.delete(mission.id);
+    } finally {
+      release();
+    }
+  }, 60_000);
+
   it("compiles and runs the resource pinned by a Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);

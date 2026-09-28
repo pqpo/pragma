@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AssetGitStatus, AssetGitTarget } from "../../../../shared/contracts/index.ts";
-import { errorMessage } from "../../lib/errors.ts";
+import { gitFailureKey } from "../../lib/git-feedback.ts";
+import { AssetGitConflictEditor } from "./AssetGitConflictEditor.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 export function AssetGitPanel(props: {
@@ -16,7 +17,11 @@ export function AssetGitPanel(props: {
   const [remote, setRemote] = useState("");
   const [branch, setBranch] = useState("");
   const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<"save" | "sync" | "unbind" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -26,6 +31,8 @@ export function AssetGitPanel(props: {
     const applyBackgroundStatus = (next: AssetGitStatus) => {
       if (!active || !appliesToTarget(next)) return;
       setStatus(next);
+      setError(null);
+      setNotice(null);
     };
     const applyLoadedStatus = (next: AssetGitStatus) => {
       if (!active || !appliesToTarget(next)) return;
@@ -38,7 +45,7 @@ export function AssetGitPanel(props: {
       ?.getAssetGitStatus(props.target)
       .then(applyLoadedStatus)
       .catch((cause: unknown) => {
-        if (active) setError(errorMessage(cause));
+        if (active) setError(gitFailureKey(cause));
       });
     return () => {
       active = false;
@@ -46,20 +53,34 @@ export function AssetGitPanel(props: {
     };
   }, [props.target.kind, props.target.id]);
 
-  const run = async (action: () => Promise<AssetGitStatus>): Promise<void> => {
+  const run = async (
+    kind: "save" | "sync" | "unbind",
+    action: () => Promise<AssetGitStatus>,
+  ): Promise<void> => {
     setBusy(true);
+    setOperation(kind);
+    setNotice(null);
     setError(null);
     try {
       const next = await action();
       setStatus(next);
       setRemote(next.source?.remote ?? "");
       setBranch(next.source?.branch ?? "");
+      if (next.error) setError(gitFailureKey(next.error));
+      else if (next.backupFailed) setNotice("backupFailed");
+      else if (kind !== "sync" || next.status === "synced")
+        setNotice(kind === "save" ? "saved" : kind === "unbind" ? "unbound" : "synced");
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(gitFailureKey(cause));
     } finally {
       setBusy(false);
+      setOperation(null);
     }
   };
+  const dirty =
+    status?.source === undefined ||
+    remote.trim() !== status.source.remote ||
+    branch.trim() !== (status.source.branch ?? "");
   return (
     <section className="asset-git-panel" aria-label={t("assetGit.title")}>
       {props.showHeading === false ? null : (
@@ -68,31 +89,32 @@ export function AssetGitPanel(props: {
           <p>{t("assetGit.description")}</p>
         </>
       )}
-      <label>
+      <label className="asset-git-field">
         {t("assetGit.remote")}
         <input
           type="text"
+          disabled={busy}
           value={remote}
           onChange={(event) => setRemote(event.target.value)}
           placeholder="https://github.com/team/asset.git"
-          disabled={busy}
         />
       </label>
-      <label>
+      <label className="asset-git-field">
         {t("assetGit.branch")}
         <input
+          disabled={busy}
           value={branch}
           onChange={(event) => setBranch(event.target.value)}
           placeholder={t("assetGit.defaultBranch")}
-          disabled={busy}
         />
       </label>
-      <div className="knowledge-sync-actions">
+      <div className="asset-git-actions">
         <button
           type="button"
-          disabled={busy || remote.trim() === ""}
+          className={dirty ? "primary-button" : "text-button"}
+          disabled={busy || remote.trim() === "" || !dirty}
           onClick={() =>
-            void run(async () => {
+            void run("save", async () => {
               const api = desktopApi();
               if (!api) throw new Error("Desktop bridge is unavailable.");
               return await api.bindAssetGit({
@@ -105,10 +127,11 @@ export function AssetGitPanel(props: {
             })
           }
         >
-          {t("assetGit.save")}
+          {t(operation === "save" ? "assetGit.saving" : "assetGit.save")}
         </button>
         <button
           type="button"
+          className={dirty ? "text-button" : "primary-button"}
           disabled={
             busy ||
             status?.status === "unbound" ||
@@ -117,7 +140,7 @@ export function AssetGitPanel(props: {
             branch.trim() !== (status.source?.branch ?? "")
           }
           onClick={() =>
-            void run(async () => {
+            void run("sync", async () => {
               const api = desktopApi();
               if (!api) throw new Error("Desktop bridge is unavailable.");
               await props.beforeSync?.();
@@ -127,14 +150,15 @@ export function AssetGitPanel(props: {
             })
           }
         >
-          {busy ? t("assetGit.syncing") : t("assetGit.sync")}
+          {operation === "sync" ? t("assetGit.syncing") : t("assetGit.sync")}
         </button>
         {status?.source ? (
           <button
+            className="text-button"
             type="button"
             disabled={busy}
             onClick={() =>
-              void run(async () => {
+              void run("unbind", async () => {
                 const api = desktopApi();
                 if (!api) throw new Error("Desktop bridge is unavailable.");
                 await api.unbindAssetGit(props.target);
@@ -142,23 +166,64 @@ export function AssetGitPanel(props: {
               })
             }
           >
-            {t("assetGit.unbind")}
+            {t(operation === "unbind" ? "assetGit.unbinding" : "assetGit.unbind")}
           </button>
         ) : null}
       </div>
-      {status ? <p aria-live="polite">{t(`assetGit.status.${status.status}`)}</p> : null}
+      {status && error === null && notice === null ? (
+        <p className="asset-git-status" aria-live="polite">
+          {t(`assetGit.status.${status.status}`)}
+        </p>
+      ) : null}
       {status?.syncedAt ? (
-        <p>
+        <p className="asset-git-status">
           {t("assetGit.lastSync")}: {new Date(status.syncedAt).toLocaleString()}
         </p>
       ) : null}
       {status?.conflictPaths?.length ? (
-        <p role="alert">
-          {t("assetGit.conflict")}: {status.conflictPaths.join(", ")}
+        <div className="asset-git-conflict-summary">
+          <p role="alert">{t("assetGit.conflictCount", { count: status.conflictPaths.length })}</p>
+          <ul>
+            {status.conflictPaths.map((path) => (
+              <li key={path}>{path}</li>
+            ))}
+          </ul>
+          <button
+            className="text-button"
+            type="button"
+            disabled={busy || dirty}
+            onClick={() => setResolving(true)}
+          >
+            {t("assetGit.resolve")}
+          </button>
+        </div>
+      ) : null}
+      {notice ? (
+        <p className="asset-git-status" role="status">
+          {t(`assetGit.notices.${notice}`)}
         </p>
       ) : null}
-      {status?.error ? <p role="alert">{status.error}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {error || status?.error ? (
+        <p className="form-error" role="alert">
+          {t(`assetGit.errors.${error ?? gitFailureKey(status?.error)}`)}
+        </p>
+      ) : null}
+      {resolving ? (
+        <AssetGitConflictEditor
+          target={props.target}
+          beforeApply={props.beforeSync}
+          onClose={() => setResolving(false)}
+          onResolved={async (next) => {
+            setStatus(next);
+            setError(next.error ? gitFailureKey(next.error) : null);
+            if (next.status === "synced") {
+              setResolving(false);
+              setNotice(next.backupFailed ? "backupFailed" : "synced");
+              await props.onSynced();
+            }
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -175,6 +240,10 @@ export function AssetGitImportForm(props: {
   return (
     <form
       className="asset-git-import-form"
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229))
+          event.preventDefault();
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         const api = desktopApi();
@@ -192,30 +261,36 @@ export function AssetGitImportForm(props: {
           .then(async (target) => {
             await props.onImported(target);
           })
-          .catch((cause: unknown) => setError(errorMessage(cause)))
+          .catch((cause: unknown) => setError(gitFailureKey(cause)))
           .finally(() => setBusy(false));
       }}
     >
-      <label>
+      <label className="asset-git-field">
         {t("assetGit.remote")}
         <input
+          disabled={busy}
           value={remote}
           onChange={(event) => setRemote(event.target.value)}
           placeholder="https://github.com/team/asset.git"
         />
       </label>
-      <label>
+      <label className="asset-git-field">
         {t("assetGit.branch")}
         <input
+          disabled={busy}
           value={branch}
           onChange={(event) => setBranch(event.target.value)}
           placeholder={t("assetGit.defaultBranch")}
         />
       </label>
-      <button type="submit" disabled={busy || remote.trim() === ""}>
-        {busy ? t("assetGit.syncing") : t("assetGit.import")}
+      <button className="primary-button" type="submit" disabled={busy || remote.trim() === ""}>
+        {busy ? t("assetGit.importing") : t("assetGit.import")}
       </button>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          {t(`assetGit.errors.${error}`)}
+        </p>
+      ) : null}
     </form>
   );
 }

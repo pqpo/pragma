@@ -7,6 +7,8 @@ import {
 import { ContextStoreDraftOverlaySchema } from "@pragma/built-in-agents/contracts";
 import { z } from "zod";
 
+export const CONTEXT_STORE_FILE_MAX_BYTES = 1_000_000;
+
 export const ContextStoreIdSchema = z.string().uuid();
 
 const KnowledgeBaseNameSchema = z
