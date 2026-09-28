@@ -12,6 +12,16 @@ export const CoreAssetSyncKindSchema = z.enum([
   "capability",
   "flow-layout",
 ]);
+export const CoreAssetLogicalKindSchema = z.enum([
+  "expert",
+  "team",
+  "flow",
+  "runtime-profile",
+  "knowledge",
+  "context",
+  "skill",
+  "capability",
+]);
 export const CoreAssetSyncKeySchema = z.string().min(1).max(300);
 export const CoreAssetSyncConfigurationSchema = AssetGitSourceSchema.extend({
   schemaVersion: z.literal("pragma.core-asset-sync-settings/v1"),
@@ -53,6 +63,9 @@ export const CoreAssetSyncItemStatusSchema = CoreAssetSyncItemSchema.pick({
   kind: true,
   name: true,
 }).extend({
+  assetKey: CoreAssetSyncKeySchema,
+  assetKind: CoreAssetLogicalKindSchema,
+  assetName: z.string().max(300),
   status: z.enum(["synced", "pending", "conflict", "ignored_remote", "needs_attention", "error"]),
   message: z.string().max(2_000).optional(),
 });
@@ -78,5 +91,7 @@ export type UpdateCoreAssetSyncConfiguration = z.infer<
   typeof UpdateCoreAssetSyncConfigurationSchema
 >;
 export type CoreAssetSyncItem = z.infer<typeof CoreAssetSyncItemSchema>;
+export type CoreAssetLogicalKind = z.infer<typeof CoreAssetLogicalKindSchema>;
+export type CoreAssetSyncItemStatus = z.infer<typeof CoreAssetSyncItemStatusSchema>;
 export type CoreAssetSyncOverview = z.infer<typeof CoreAssetSyncOverviewSchema>;
 export type ResolveCoreAssetSyncConflict = z.infer<typeof ResolveCoreAssetSyncConflictSchema>;

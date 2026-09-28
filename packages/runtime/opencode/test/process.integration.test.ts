@@ -34,6 +34,12 @@ for (const [major, variable] of [
         await mkdir(join(root, "config", "opencode"), { recursive: true });
         await mkdir(join(root, "config", "opencode", "plugins"));
         const pluginMarker = join(root, "unmanaged-plugin-loaded");
+        const homePluginMarker = join(root, "home-plugin-loaded");
+        await mkdir(join(root, ".opencode", "plugins"), { recursive: true });
+        await writeFile(
+          join(root, ".opencode", "plugins", "marker.js"),
+          `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(homePluginMarker)}, "loaded"); export default async () => ({});`,
+        );
         await writeFile(
           join(root, "config", "opencode", "plugins", "marker.js"),
           `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(pluginMarker)}, "loaded"); export default async () => ({});`,
@@ -72,6 +78,7 @@ for (const [major, variable] of [
           `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(projectProviderMarker)}, "loaded"); export default {};`,
         );
         const sessionDir = join(root, "pragma-session");
+        const shellHomeMarker = join(root, "shell-home");
         const dataEnv = await prepareOpenCodeDataHome(env, sessionDir);
         const configured = await prepareOpenCodeConfiguration({
           env: dataEnv,
@@ -80,6 +87,8 @@ for (const [major, variable] of [
           major,
         });
         const sessionEnv = configured.env;
+        expect(sessionEnv["HOME"]).toBe(root);
+        expect(sessionEnv["OPENCODE_TEST_HOME"]).toBe(join(sessionDir, "config-home"));
         expect(sessionEnv["XDG_DATA_HOME"]).toBe(join(root, "pragma-session", "data"));
         const native = await startOpenCodeProcess({
           executablePath: executablePath!,
@@ -168,6 +177,25 @@ for (const [major, variable] of [
           expect(
             await restoredClient.createSession(sessionId, "Pragma integration test", rules),
           ).toBe(sessionId);
+          const shellCommand = writeHomeMarkerCommand(shellHomeMarker);
+          if (major === 1) {
+            await createOpencodeClient({
+              baseUrl: resumed.url,
+              directory: root,
+              headers: { ...resumed.headers },
+              throwOnError: true,
+            }).session.shell({
+              path: { id: sessionId },
+              query: { directory: root },
+              body: { agent: "build", command: shellCommand },
+            });
+          } else {
+            await OpenCode.make({
+              baseUrl: resumed.url,
+              headers: { ...resumed.headers },
+            }).session.shell({ sessionID: sessionId, command: shellCommand });
+          }
+          expect(await readFile(shellHomeMarker, "utf8")).toBe(root);
           const otherDirectory = join(root, "other");
           await mkdir(otherDirectory);
           await expect(
@@ -180,12 +208,23 @@ for (const [major, variable] of [
         const configPath = join(root, "config", "opencode", "opencode.jsonc");
         expect(await readFile(configPath, "utf8").catch(() => "")).not.toContain("pragma_tools");
         expect(await readFile(pluginMarker, "utf8").catch(() => "")).toBe("");
+        expect(await readFile(homePluginMarker, "utf8").catch(() => "")).toBe("");
         expect(await readFile(projectProviderMarker, "utf8").catch(() => "")).toBe("");
       } finally {
         await rm(root, { recursive: true, force: true });
       }
     }, 30_000);
   });
+}
+
+function writeHomeMarkerCommand(marker: string): string {
+  const script =
+    'require("node:fs").writeFileSync(process.argv[1], process.env.HOME ?? process.env.USERPROFILE ?? "")';
+  return [process.execPath, "-e", script, marker].map(shellArgument).join(" ");
+}
+
+function shellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 describe("OpenCode process startup", () => {
