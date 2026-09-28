@@ -368,3 +368,9 @@ function workspaceError(
     details: { requestedPath, reason },
   });
 }
+
+export * from "./memory-data-plane.ts";
+export * from "./memory-recall-scope.ts";
+export * from "./memory-subject-identity.ts";
+export * from "./memory-attention-settings.ts";
+export * from "./memory-context.ts";

@@ -214,6 +214,21 @@ export const settings = {
     slotDescription: "一個並行槽涵蓋同一案例的受測執行與 Judge 執行；修改後會立即套用到佇列。",
   },
   memory: {
+    attention: {
+      title: "Attention Memory",
+      description:
+        "隨任務變化發現相關歷史。Jev 接收有界、脫敏的任務觀察和目前權限內的記憶摘要。CLI 共用此設定。",
+      key: "Jev API Key",
+      save: "驗證並儲存",
+      remove: "移除金鑰",
+      disabled: "未設定",
+      ready: "已啟用",
+      degraded: "暫時無法使用",
+      needs_attention: "需要處理",
+      error: "無法驗證或儲存金鑰，請檢查金鑰與網路連線。",
+      loadError: "無法讀取 Attention Memory 設定。",
+      paused: "Memory 關閉時暫停",
+    },
     navigation: "記憶",
     title: "記憶",
     description: "管理內建記憶平面；有價值的動態記憶可逐步沉澱為團隊知識或技能。",

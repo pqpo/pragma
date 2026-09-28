@@ -1,6 +1,7 @@
 # ADR 035: Agent-driven Memory Recall and Host Governance
 
-- Status: Accepted
+- Status: Superseded in part
+- Successor: [ADR 058](./058-mission-memory-attention.md) 对显式启用的 Mission Attention 允许 Host 有界检索；权限、手动读取、治理与 Evidence 边界继续适用。
 - Date: 2026-08-03
 - Extends: [ADR 031](./031-extensible-memory-plane.md)、[ADR 033](./033-layered-episodic-memory.md)、[ADR 034](./034-conservative-semantic-memory.md)
 

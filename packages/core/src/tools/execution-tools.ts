@@ -126,6 +126,21 @@ export async function executeExecutionTool(options: {
       durationMs,
       isError: result.isError ?? false,
     });
+    try {
+      const hint = await options.agent.contextSystem.afterToolResult({
+        toolName: options.tool.name,
+        toolCallId: options.toolCallId,
+        args: executeArgs,
+        result,
+        context: options.runContext,
+      });
+      if (hint !== undefined) return { ...result, text: `${result.text}\n\n${hint}` };
+    } catch {
+      options.logger.warn(
+        "tool.host_result_hint_failed",
+        "Host tool result observation is unavailable.",
+      );
+    }
     return result;
   } catch (error) {
     const durationMs = Date.now() - startedAt;

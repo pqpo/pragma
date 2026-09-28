@@ -1,7 +1,6 @@
 # Memory 使用指南
 
-Pragma 的新 Memory Plane 是 Desktop 内置能力，随应用启动，不需要环境变量，也不需要给 Expert 安装
-插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)。
+Pragma 的 Memory Plane 由 Desktop 与 CLI 共用。Desktop 启动后台提炼；CLI 捕获 Evidence、提交待提取任务并读取已有记忆，不需要给 Expert 安装插件。架构决策见 [ADR 031](../adr/031-extensible-memory-plane.md)。
 
 > [ADR 039](../adr/039-promoted-knowledge-stores-and-agent-revision.md) 与
 > [ADR 044](../adr/044-sparse-context-store-revision-drafts.md) 已调整并落实 Knowledge 最终边界：
@@ -29,8 +28,7 @@ Store/Skill Revision Agent 托管的 Knowledge 与 Skill 学习闭环：
 - Semantic 默认召回排除过期、失效和 superseded 投影，验证、更正和失效通过 revision CAS 保存历史；
 - Semantic subject 只来自可验证 allowlist：安装级 local User、Pragma Project、根资产和 producer Expert。
   当前不发现 Repository subject，普通 Agent 任务不依赖代码仓库。
-- Agent 自己决定是否需要记忆，并通过通用 ContextStore 逐层 list/search/read；Host 不根据当前 prompt
-  生成隐藏 query，不自动注入匹配项，也没有 `recall_memory` 专用工具；
+- Agent 通过通用 ContextStore 逐层 list/search/read；可选 Attention 为执行途中提供手动历史线索，不自动注入记忆正文，也没有 `recall_memory` 专用工具；
 - Desktop 一级 Memory 页面可以查看 Episode/Fact、来源、binding、冲突、历史、精确 Evidence 和 Module
   health，并执行收紧、修正、验证、失效或忘记；
 - 提炼任务页把 Episodic、Semantic 与 Knowledge job 按等待空闲、需要处理、处理中、已完成分列展示；
@@ -232,3 +230,13 @@ Memory 数据不写 Agent workspace。正常启动不会扫描全部 Mission、E
 - [ADR 039: Promoted Knowledge Stores and Agent-driven Store Revision](../adr/039-promoted-knowledge-stores-and-agent-revision.md)
 - [ADR 057: Unified Memory revision learning](../adr/057-unified-memory-revision-learning.md)
 - [ADR 索引](../adr/README.md)
+
+## 可选 Attention Memory
+
+在“设置 → Memory”填写 Jev API Key，验证并保存后启用。任务增量与许可范围内的记忆摘要会经过脱敏和大小限制发送到 TypeSafe。未配置 Key 时不会发出判断请求；全局 Memory 关闭时暂停。
+
+Agent 遇到新错误、观察或子任务结果后，Host 查询已有 Episodic/Semantic 记忆（包括可召回的归档 Episode），维护 `memory/mission-attention.md`。该文件按需读取；显著变化最多提示一次，不插入用户消息、不 steer、不改写系统提示词。
+
+CLI 使用同一个 Pragma home 下的配置与记忆。CLI 完成运行会提交待提取任务，后续 Desktop 消费；CLI 本身不调用提炼模型。Key 只能在 Desktop 配置，移除后停止新的判断。认证错误显示 needs_attention；网络失败显示 degraded，保留有效历史线索并重试。
+
+边界与预算见 [Memory Attention](../architecture/memory-attention.md)。

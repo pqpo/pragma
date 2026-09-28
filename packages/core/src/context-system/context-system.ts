@@ -378,6 +378,20 @@ export interface ContextIndex {
 }
 
 export interface ExpertAgentContextStore {
+  /** Host-only observation and small result hints; never changes tool definitions or prompts. */
+  readonly afterToolResult?:
+    | ((input: {
+        readonly toolName: string;
+        readonly toolCallId?: string | undefined;
+        readonly args: unknown;
+        readonly result: {
+          readonly text: string;
+          readonly isError?: boolean;
+          readonly details?: unknown;
+        };
+        readonly context: ExpertAgentRunContext | undefined;
+      }) => Promise<string | undefined>)
+    | undefined;
   readonly listContext: (
     input: ExpertAgentContextItemListInput,
   ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>>;
@@ -409,6 +423,16 @@ export interface ContextSystemOptions {
 }
 
 export class ContextSystem {
+  async afterToolResult(
+    input: Parameters<NonNullable<ExpertAgentContextStore["afterToolResult"]>>[0],
+  ): Promise<string | undefined> {
+    const hints: string[] = [];
+    for (const binding of this.stores.values()) {
+      const hint = await binding.store.afterToolResult?.(input);
+      if (hint !== undefined) hints.push(hint);
+    }
+    return hints.length === 0 ? undefined : hints.join("\n");
+  }
   private readonly stores = new Map<
     string,
     {

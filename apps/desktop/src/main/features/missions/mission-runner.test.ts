@@ -2554,7 +2554,13 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       onStorageTrashed,
     });
 
+    const attentionPaths = new PragmaPaths({ pragmaHome: join(root, "state") });
+    const attentionRoot = attentionPaths.memoryAttentionRoot(target.id);
+    await mkdir(attentionRoot, { recursive: true });
+    const attentionFile = attentionPaths.memoryAttentionState(target.id, "context");
+    await writeFile(attentionFile, "attention deletion fixture");
     await expect(runner.delete(target.id)).resolves.toBeUndefined();
+    await expect(readFile(attentionFile)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(missions.get(target.id)).rejects.toThrow();
     expect(openRevision).toHaveBeenCalledTimes(1);
     expect(markSubjectDeleted).toHaveBeenCalledWith("mission", target.id);

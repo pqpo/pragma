@@ -157,6 +157,22 @@ export class PragmaPaths {
     return join(this.stateRoot(), "memory");
   }
 
+  memoryAttentionSettings(): string {
+    return join(this.memoryDataRoot(), "attention-settings.json");
+  }
+
+  memoryAttentionRoot(missionId: string): string {
+    return join(this.memoryStateRoot(), "attention", encodePragmaPathSegment(missionId));
+  }
+
+  memoryAttentionState(missionId: string, contextId: string): string {
+    return join(this.memoryAttentionRoot(missionId), `${encodePragmaPathSegment(contextId)}.json`);
+  }
+
+  memoryAttentionRateLimit(): string {
+    return join(this.memoryStateRoot(), "attention-rate-limit.json");
+  }
+
   memoryCleanupJournalRoot(): string {
     return join(this.memoryStateRoot(), "cleanup-journal");
   }

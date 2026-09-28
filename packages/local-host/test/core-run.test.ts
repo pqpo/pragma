@@ -1,10 +1,18 @@
+import { createFileMemoryPolicyStore, MEMORY_CURATOR_REF } from "@pragma/memory";
+import { createLocalHostRunMemory } from "../src/run-memory.ts";
+import { createLocalHostMemoryDataPlane } from "../src/memory-data-plane.ts";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   createFileExecutionStore,
+  createPragma,
+  createPragmaLogger,
+  createExpertAgentRunContext,
+  withExecutionRunScope,
+  EXECUTION_CURRENT_EXPERT_ID_ATTR,
   createFileExpertSessionStore,
   createStaticRuntimeResolver,
   defineExpert,
@@ -20,7 +28,7 @@ import {
   type ExecutorDescriptor,
   type WorkspaceSelection,
 } from "@pragma/shared/integration";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createControllerRunMissionPort,
@@ -38,15 +46,255 @@ import {
   type MissionWatchEvent,
 } from "../src/index.ts";
 
+import { createSecretStore, type OsKeychain } from "../src/secrets/secret-store.ts";
+import { createLocalHostMemoryContextService } from "../src/memory-context.ts";
+
 const tempDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+    tempDirectories
+      .splice(0)
+      .map((directory) =>
+        rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }),
+      ),
   );
 });
 
 describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
+  it("publishes CLI Evidence and pending work which a subsequent Desktop pump can extract", async () => {
+    const { home, runtimes, executors } = await createRunFixture();
+    const policies = createFileMemoryPolicyStore({ pragmaHome: home });
+    await policies.updateGlobal({
+      expectedRevision: 0,
+      policy: {
+        enabled: "enabled",
+        capture: "enabled",
+        recall: "enabled",
+        learning: "local-candidates",
+      },
+    });
+    const memory = createLocalHostRunMemory({ pragmaHome: home });
+    const missionId = randomUUID();
+    const bindings = await memory.bindings({
+      missionId,
+      goal: "Repair the askUserQuestion checkpoint strict steer lifecycle and verify that resumed messages are synchronized correctly.",
+    });
+    expect(bindings).toHaveLength(1);
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes,
+      executionStore: memory.executionStore,
+      hostContextBindings: bindings,
+    });
+    const session = await app.experts.createSession(
+      executors[0]!.definition as Awaited<ReturnType<typeof defineExpert>>,
+      { sessionId: missionId },
+    );
+    try {
+      const turn = await session.prompt(
+        "Repair askUserQuestion checkpoint strict steer. Check the lifecycle, implement the fix, and verify message synchronization after human resume.",
+      );
+      await turn.result;
+      await memory.register({ missionId, executionId: turn.executionId });
+      await memory.complete(missionId);
+    } finally {
+      await session.releaseAfterTerminal();
+      await memory.close();
+    }
+    const desktop = await createLocalHostMemoryDataPlane({
+      pragmaHome: home,
+      logger: createPragmaLogger(undefined, { component: "memory.integration-test" }),
+    });
+    try {
+      expect((await desktop.episodic.store.inspect()).pending).toBeGreaterThan(0);
+      expect(await desktop.episodic.store.list()).toHaveLength(0);
+      const extract = vi.fn(async (input: import("@pragma/memory").EpisodicExtractionInput) => {
+        const ref = input.evidence.at(-1)!.messageId;
+        return {
+          output: {
+            retain: true as const,
+            language: "en",
+            goal: { text: "askUserQuestion checkpoint recovery", evidenceRefs: [ref] },
+            summary: {
+              text: "Preserve strict steer lifecycle after human resume",
+              evidenceRefs: [ref],
+            },
+            attempts: [],
+            failuresAndRecoveries: [],
+            outcome: {
+              status: "succeeded" as const,
+              summary: "Verified synchronization",
+              evidenceRefs: [ref],
+            },
+            valueScore: 0.9,
+          },
+          provenance: {
+            curatorRef: MEMORY_CURATOR_REF,
+            promptVersion: "pragma.memory-curator/v1",
+            profileRevision: 0,
+            runtimeId: "fixture",
+            providerId: "fixture",
+            modelId: "fixture",
+            extractedAt: new Date().toISOString(),
+          },
+        };
+      });
+      await desktop.episodic.setExtractor({ extract });
+      await desktop.episodic.runBackgroundOnce?.();
+      expect(extract).toHaveBeenCalledOnce();
+      const episodes = await desktop.episodic.store.list();
+      expect(episodes).toHaveLength(1);
+      const values = new Map<string, Uint8Array>();
+      const keychain: OsKeychain = {
+        inspect: async () => ({ status: "ready", backend: "macos-keychain" }),
+        get: async (service, account) => values.get(`${service}:${account}`) ?? null,
+        set: async (service, account, value) => {
+          values.set(`${service}:${account}`, value);
+        },
+        delete: async (service, account) => {
+          values.delete(`${service}:${account}`);
+        },
+      };
+      const paths = new PragmaPaths({ pragmaHome: home });
+      const secrets = createSecretStore({
+        root: paths.secretStoreRoot(),
+        dataRoot: paths.dataRoot(),
+        keychain,
+      });
+      const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as {
+          questions: Record<string, { type: string }>;
+        };
+        return Response.json({
+          model: "jev-latest",
+          answers: Object.fromEntries(
+            Object.entries(body.questions).map(([key, value]) => [
+              key,
+              value.type === "score"
+                ? { type: "score", score: 4, confidence: 1 }
+                : { type: "noul", noul: key === "semantic" ? 0 : 1 },
+            ]),
+          ),
+          usage: { input_tokens: 20, output_tokens: 4 },
+        });
+      });
+      const contexts = createLocalHostMemoryContextService({
+        pragmaHome: home,
+        data: desktop,
+        secrets,
+        fetch: fetcher,
+      });
+      try {
+        const mission = {
+          missionId: "attention-followup",
+          goal: "Repair askUserQuestion checkpoint",
+        };
+        const store = contexts.createContextStore(mission);
+        const context = withExecutionRunScope(
+          createExpertAgentRunContext({
+            source: episodes[0]!.rootRefs[0]!,
+            attributes: { [EXECUTION_CURRENT_EXPERT_ID_ATTR]: executors[0]!.descriptor.ref.id },
+          }),
+          { contextId: "attention-context", invocationId: "attention-invocation" },
+        );
+        await store.afterToolResult?.({
+          toolName: "shell",
+          toolCallId: "first",
+          args: {},
+          result: { text: "askUserQuestion checkpoint failed", isError: true },
+          context,
+        });
+        await contexts.controller.flush();
+        expect(fetcher).not.toHaveBeenCalled();
+        await contexts.settings.update({ expectedRevision: 0, apiKey: "fixture-only-key" });
+        await store.afterToolResult?.({
+          toolName: "shell",
+          toolCallId: "second",
+          args: {},
+          result: { text: "askUserQuestion checkpoint failed fixture-only-key", isError: true },
+          context,
+        });
+        await contexts.controller.flush();
+        for (const [, init] of fetcher.mock.calls)
+          expect(String(init?.body)).not.toContain("fixture-only-key");
+        const lens = await store.readContext({ id: "mission-attention.md", context });
+        expect(lens.ok && lens.value.content).toContain(episodes[0]!.id);
+        expect(
+          await store.afterToolResult?.({
+            toolName: "shell",
+            toolCallId: "third",
+            args: {},
+            result: { text: "same observation" },
+            context,
+          }),
+        ).toBeUndefined();
+        const attentionStatePath = paths.memoryAttentionState(
+          mission.missionId,
+          "attention-context",
+        );
+        const validAttentionState = await readFile(attentionStatePath, "utf8");
+        await writeFile(
+          attentionStatePath,
+          JSON.stringify({ schemaVersion: "pragma.memory-attention/v99" }),
+        );
+        expect(await store.listContext({ context })).toMatchObject({ ok: true });
+        expect(await store.readContext({ id: "guide.md", context })).toMatchObject({ ok: true });
+        expect(await store.readContext({ id: "mission-attention.md", context })).toMatchObject({
+          ok: false,
+        });
+        await writeFile(attentionStatePath, validAttentionState);
+        await contexts.settings.recordDiagnostic("attention_auth_invalid", 1);
+        expect(await contexts.settings.status()).toMatchObject({
+          state: "needs_attention",
+          errorCode: "attention_auth_invalid",
+        });
+        const configPath = paths.memoryAttentionSettings();
+        const validConfig = await readFile(configPath, "utf8");
+        await writeFile(configPath, "corrupted configuration");
+        expect(await store.listContext({ context })).toMatchObject({ ok: true });
+        expect(await store.readContext({ id: "overview.md", context })).toMatchObject({ ok: true });
+        expect(
+          await store.afterToolResult?.({
+            toolName: "shell",
+            toolCallId: "corrupt-config",
+            args: {},
+            result: { text: "still usable" },
+            context,
+          }),
+        ).toBeUndefined();
+        await writeFile(configPath, validConfig);
+        await contexts.stopMission(mission.missionId);
+        const register = vi.spyOn(desktop, "registerExecutionContext");
+        await store.afterToolResult?.({
+          toolName: "shell",
+          toolCallId: "late",
+          args: {},
+          result: { text: "late completion" },
+          context: withExecutionRunScope(context, {
+            contextId: "late",
+            invocationId: "late",
+            executionId: "deleted-execution",
+          }),
+        });
+        expect(register).not.toHaveBeenCalled();
+        await contexts.settings.update({ expectedRevision: 1, apiKey: null });
+        expect(await store.readContext({ id: "mission-attention.md", context })).toMatchObject({
+          ok: false,
+        });
+      } finally {
+        await contexts.stop();
+      }
+    } finally {
+      await desktop.scheduler.stop();
+      desktop.episodic.close();
+      desktop.semantic.close();
+      desktop.knowledge.close();
+      desktop.skill.close();
+      await desktop.canonical.close();
+    }
+  });
+
   it("runs a stable Expert through the Mission vertical slice", async () => {
     const { home, run, sessions } = await createRunFixture();
     const expert = await run.start(createRequest(home, "expert", "a".repeat(16), "hello expert"));
@@ -348,7 +596,7 @@ async function createExecutorDefinitions(
   home: string,
 ): Promise<readonly LocalHostCoreExecutorDefinition[]> {
   const expert = await defineExpert({
-    id: "expert-definition",
+    id: "a".repeat(16),
     name: "Fixture Expert",
     description: "Fixture Expert",
     tags: [],
