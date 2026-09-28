@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  airCapabilityMeta,
+  AIR_SESSION_FAILURE_CAPABILITY,
+} from "@agentclientprotocol/claude-agent-acp/dist/air-extension.js";
+import {
   CreateElicitationRequest,
   type CreateElicitationResponse,
   type RequestPermissionRequest,
@@ -21,11 +25,15 @@ import type { ManagedClaudeCodeConfig } from "./claude-config.ts";
 import type { ClaudeCompactionHookRelay } from "./compaction-hooks.ts";
 import { resolveClaudeAcpWorkerPath } from "./acp-executable.ts";
 import { assertClaudeCodeModelSelection } from "./models.ts";
+import { claudePromptError, normalizeClaudeAcpError } from "./acp-errors.ts";
 
 const sdkMessageSchema = z.object({
   sessionId: z.string(),
   message: z.looseObject({
     type: z.string(),
+    subtype: z.string().optional(),
+    session_id: z.string().optional(),
+    compact_metadata: z.looseObject({ trigger: z.enum(["auto", "manual"]) }).optional(),
     usage: z
       .object({
         input_tokens: z.number().nonnegative(),
@@ -61,6 +69,8 @@ export function createClaudeAcpBinding(input: {
   extraArgs["strict-mcp-config"] = null;
   let initialModel: string | undefined;
   let initialThinking: string | undefined;
+  let terminalFailure: Error | undefined;
+  let compacting = false;
   return {
     promptUsageScope: "turn",
     command: {
@@ -76,14 +86,23 @@ export function createClaudeAcpBinding(input: {
     spawn: options.spawn,
     tokenCounter: options.tokenCounter,
     tokenContext: input.systemPrompt,
-    clientCapabilities: { elicitation: { form: {} } },
+    clientCapabilities: {
+      elicitation: { form: {} },
+      _meta: airCapabilityMeta(AIR_SESSION_FAILURE_CAPABILITY),
+    },
+    promptError: (response) => claudePromptError(response._meta),
+    normalizeError: (error, stderr) => terminalFailure ?? normalizeClaudeAcpError(error, stderr),
+    onUpdate(session, update) {
+      if (session.active !== undefined)
+        terminalFailure = claudePromptError(update._meta) ?? terminalFailure;
+    },
     session: {
       cwd: input.workspace,
       mcpServers: [{ type: "http", name: "pragma", url: input.mcpServerUrl, headers: [] }],
       _meta: {
         systemPrompt: { append: input.systemPrompt },
         claudeCode: {
-          emitRawSDKMessages: [{ type: "result" }],
+          emitRawSDKMessages: [{ type: "result" }, { type: "system", subtype: "compact_boundary" }],
           options: {
             settingSources: [],
             strictMcpConfig: true,
@@ -112,19 +131,39 @@ export function createClaudeAcpBinding(input: {
     steer: steerAcpSession,
     onTurnSettled() {
       input.relay.failPending("Claude Code ended before context compaction completed.");
+      terminalFailure = undefined;
     },
     async compact(session) {
+      const completion = input.relay.waitForCompaction(session.sessionId);
+      compacting = true;
       try {
-        const result = await session.connection.agent.request("session/prompt", {
-          sessionId: session.sessionId,
-          prompt: [{ type: "text", text: "/compact" }],
-        });
-        if (result.usage != null) session.recordReportedUsage(result.usage);
-        if (result.stopReason !== "end_turn")
-          throw new Error(`Claude ACP compaction ended with ${result.stopReason}`);
+        await Promise.all([
+          session.connection.agent
+            .request("session/prompt", {
+              sessionId: session.sessionId,
+              prompt: [{ type: "text", text: "/compact" }],
+            })
+            .then(
+              (result) => {
+                if (result.usage != null) session.recordReportedUsage(result.usage);
+                const failure = claudePromptError(result._meta);
+                if (failure !== undefined) throw failure;
+                if (result.stopReason !== "end_turn")
+                  throw new Error(`Claude ACP compaction ended with ${result.stopReason}`);
+              },
+              (error: unknown) => {
+                throw session.normalizeError(error);
+              },
+            ),
+          completion.completed,
+        ]);
       } catch (error) {
         input.relay.failPending("Claude ACP compaction failed");
+        await session.close().catch(() => {});
         throw error;
+      } finally {
+        compacting = false;
+        completion.dispose();
       }
     },
     subscribe(session) {
@@ -158,6 +197,14 @@ export function createClaudeAcpBinding(input: {
         const result = sdkMessageSchema.safeParse(value);
         if (!result.success || result.data.sessionId !== session.sessionId) return;
         const message = result.data.message;
+        if (
+          (compacting || session.active !== undefined) &&
+          message.type === "system" &&
+          message.subtype === "compact_boundary" &&
+          message.session_id === session.sessionId &&
+          message.compact_metadata !== undefined
+        )
+          input.relay.observeNativeBoundary(session.sessionId, message.compact_metadata.trigger);
         if (message.type !== "result") return;
         if (message.usage !== undefined && session.active !== undefined) {
           const usage = message.usage;

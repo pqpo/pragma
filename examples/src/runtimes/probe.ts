@@ -332,12 +332,28 @@ async function runSessionProbe(
       const eventStart = liveEvents.length;
       if (operation === "compaction") {
         const initial = await session.prompt(
-          "Remember COMPACTION_MEMORY_2054. Reply only RECORDED.",
+          [
+            "Remember COMPACTION_MEMORY_2054. Reply only RECORDED.",
+            // A tiny conversation may make /compact a no-op. Give the native
+            // runtime enough context to exercise a real compaction boundary.
+            ...Array.from(
+              { length: 256 },
+              (_, index) =>
+                `Background note ${index}: this runtime acceptance probe verifies context retention after manual compaction. Preserve the marker above; these repetitive notes can be summarized.`,
+            ),
+          ].join("\n"),
           {
             requestId: `probe-compact-initial-${Date.now()}`,
           },
         );
         await initial.result;
+        for (let turn = 0; turn < 3; turn += 1) {
+          const followup = await session.prompt(
+            `Background check ${turn}: reply only RECORDED and keep the original marker in memory.`,
+            { requestId: `probe-compact-background-${turn}-${Date.now()}` },
+          );
+          await followup.result;
+        }
         const canCompact = await session.canCompactRootContext();
         if (canCompact !== true) {
           paths.assertions.push(

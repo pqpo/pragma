@@ -31,6 +31,20 @@ afterEach(async () => {
 });
 
 describe("Runtime always-on startup messages", () => {
+  it("does not rearm startup when manual compaction fails", async () => {
+    const fixture = await createFixture();
+    try {
+      await submit(fixture.session, "first");
+      fixture.stats.compact.mockImplementationOnce(() => {
+        throw new Error("compaction did not complete");
+      });
+      await expect(fixture.session.contextWindow!.compact!()).rejects.toThrow("did not complete");
+      await submit(fixture.session, "after-failed-manual");
+      expect(fixture.stats.turns.at(-1)?.startupMessages).toHaveLength(0);
+    } finally {
+      await fixture.session.close();
+    }
+  });
   it.each([false, true])(
     "retains startup after turn preparation fails (reinjection: %s)",
     async (reinjection) => {

@@ -207,20 +207,11 @@ function createClaudeCodeRuntimeCanUse(
     return options.canUse;
   }
 
-  if (options.spawn !== undefined) {
-    return () => ({
-      usable: true,
-      details: {
-        probe: "skipped",
-        reason: "Custom Claude Code spawn was provided.",
-      },
-    });
-  }
-
   return async () =>
     await canUseClaudeCodeRuntime({
       ...(options.acpWorkerPath === undefined ? {} : { acpWorkerPath: options.acpWorkerPath }),
       ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
       ...(options.env === undefined ? {} : { env: options.env }),
+      ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
     });
 }

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { build } from "esbuild";
 
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "electron-vite";
@@ -17,6 +19,36 @@ const workspaceDependencies = Object.entries(desktopPackageManifest.dependencies
 
 export default defineConfig({
   main: {
+    plugins: [
+      {
+        name: "bundle-claude-acp-worker",
+        async writeBundle(output) {
+          if (output.dir === undefined)
+            throw new Error("Desktop main output directory is missing.");
+          // A self-contained worker requires only this file outside ASAR, without
+          // changing the packaging policy for main or its shared chunks.
+          await build({
+            entryPoints: [
+              fileURLToPath(
+                new URL(
+                  "../../packages/runtime/claude-code/src/claude-acp-worker.ts",
+                  import.meta.url,
+                ),
+              ),
+            ],
+            outfile: join(output.dir, "claude-acp-worker.js"),
+            bundle: true,
+            platform: "node",
+            target: "node22",
+            format: "esm",
+            external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
+            banner: {
+              js: 'import { createRequire as __pragmaCreateRequire } from "node:module"; const require = __pragmaCreateRequire(import.meta.url);',
+            },
+          });
+        },
+      },
+    ],
     build: {
       externalizeDeps: {
         exclude: workspaceDependencies,
@@ -26,9 +58,6 @@ export default defineConfig({
         // require at runtime. Keep that fallback intact when Vite bundles ws.
         external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
         input: {
-          "claude-acp-worker": fileURLToPath(
-            new URL("../../packages/runtime/claude-code/src/claude-acp-worker.ts", import.meta.url),
-          ),
           index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
           "code-service-worker": fileURLToPath(
             new URL("../../packages/core/src/code-service-worker.ts", import.meta.url),

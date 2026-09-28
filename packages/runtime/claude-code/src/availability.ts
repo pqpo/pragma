@@ -36,8 +36,7 @@ export async function canUseClaudeCodeRuntime(
 ): Promise<RuntimeCanUseResult> {
   try {
     const worker = resolveClaudeAcpWorkerPath(options.acpWorkerPath);
-    if (options.spawn === undefined && !statSync(worker).isFile())
-      throw new Error("Claude ACP worker path must point to a file");
+    if (!statSync(worker).isFile()) throw new Error("Claude ACP worker path must point to a file");
   } catch (error) {
     return {
       usable: false,
@@ -45,14 +44,12 @@ export async function canUseClaudeCodeRuntime(
       details: { code: "claude_acp_worker_missing" },
     };
   }
-  const command =
-    options.spawn === undefined
-      ? resolveClaudeCodeCommand(options)
-      : {
-          executablePath: options.executablePath ?? "claude",
-          launcherArgs: [] as readonly string[],
-          sourcePath: options.executablePath ?? "claude",
-        };
+  if (options.spawn !== undefined)
+    return {
+      usable: true,
+      details: { probe: "skipped", reason: "Custom Claude Code spawn was provided." },
+    };
+  const command = resolveClaudeCodeCommand(options);
   const cacheKey = availabilityCacheKey(command, options);
   if (options.forceRefresh) {
     availabilityCache.delete(cacheKey);

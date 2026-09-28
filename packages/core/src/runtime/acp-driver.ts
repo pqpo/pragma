@@ -96,6 +96,9 @@ export interface AcpRuntimeBinding {
   readonly subscribe?: ((session: AcpRuntimeSession) => () => void) | undefined;
   /** Settle provider lifecycle events while the originating turn is still available. */
   readonly onTurnSettled?: ((session: AcpRuntimeSession) => void) | undefined;
+  readonly onUpdate?: ((session: AcpRuntimeSession, update: SessionUpdate) => void) | undefined;
+  readonly promptError?: ((response: PromptResponse) => Error | undefined) | undefined;
+  readonly normalizeError?: ((error: unknown, stderr: string) => Error) | undefined;
 }
 
 type DriverBase<F extends RuntimeFeatureSet> = Pick<
@@ -142,7 +145,16 @@ export class AcpRuntimeSession {
     readonly connection: ClientConnection,
     readonly supervisor: RuntimeProcessSupervisor,
     readonly binding: AcpRuntimeBinding,
+    private readonly readStderr: () => string = () => "",
+    private readonly resetDiagnostics: () => void = () => {},
   ) {}
+
+  normalizeError(error: unknown): Error {
+    return (
+      this.binding.normalizeError?.(error, this.readStderr()) ??
+      (error instanceof Error ? error : new Error(String(error)))
+    );
+  }
 
   get isClosing(): boolean {
     return this.closing;
@@ -232,6 +244,7 @@ export class AcpRuntimeSession {
         measurement: "reported",
       });
     }
+    this.binding.onUpdate?.(this, update);
     const active = this.active;
     if (this.controlPrompt) return;
     if (active !== undefined || this.replaying) {
@@ -338,6 +351,7 @@ export class AcpRuntimeSession {
       if (this.preparing || this.active !== undefined || this.controlPrompt)
         throw new Error("An ACP operation is already active");
       this.preparing = true;
+      this.resetDiagnostics();
       reserved = true;
       return await this.promptTurn(turn, () => {
         dispatched = true;
@@ -409,6 +423,8 @@ export class AcpRuntimeSession {
         response.usage == null ? active.usage : this.recordReportedUsage(response.usage);
       active.usage = exactUsage;
       terminalUsageRecorded = response.usage != null;
+      const providerError = this.binding.promptError?.(response);
+      if (providerError !== undefined) throw providerError;
       if (!terminalUsageRecorded && exactUsage?.measurement === "reported") {
         this.recordFallbackUsage(exactUsage);
         terminalUsageRecorded = true;
@@ -459,7 +475,7 @@ export class AcpRuntimeSession {
           this.recordFallbackUsage(active.usage);
         this.emit({ usage: active.usage });
       }
-      throw error;
+      throw this.normalizeError(error);
     } finally {
       try {
         this.binding.onTurnSettled?.(this);
@@ -528,6 +544,7 @@ export class AcpRuntimeSession {
     if (this.preparing || this.active !== undefined || this.controlPrompt)
       throw new Error("Cannot compact an active ACP operation");
     if (this.binding.compact === undefined) throw new Error("ACP agent cannot compact context");
+    this.resetDiagnostics();
     this.controlPrompt = true;
     try {
       await this.mutationWithDeadline(
@@ -638,7 +655,7 @@ export function defineAcpRuntimeDriver<F extends RuntimeFeatureSet>(
           env: binding.command.env,
         });
         const supervisor = new RuntimeProcessSupervisor(child);
-        const stderr = new BoundedRuntimeOutputBuffer(8_192);
+        let stderr = new BoundedRuntimeOutputBuffer(8_192);
         child.stderr.on("data", (chunk: Buffer) => stderr.append(chunk));
         // Assigned before the transport dispatches its first notification.
         // eslint-disable-next-line prefer-const
@@ -679,7 +696,15 @@ export function defineAcpRuntimeDriver<F extends RuntimeFeatureSet>(
         const connection = app.connect(
           ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout)),
         );
-        session = new AcpRuntimeSession(connection, supervisor, binding);
+        session = new AcpRuntimeSession(
+          connection,
+          supervisor,
+          binding,
+          () => stderr.text(),
+          () => {
+            stderr = new BoundedRuntimeOutputBuffer(8_192);
+          },
+        );
         void supervisor.exit.then(
           (exit) => {
             if (!session.isClosing)
@@ -688,17 +713,20 @@ export function defineAcpRuntimeDriver<F extends RuntimeFeatureSet>(
                 signal: exit.signal,
                 stderr: stderr.text(),
               });
-            connection.close(new Error(`ACP process exited (${exit.code ?? exit.signal})`));
+            connection.close(
+              session.normalizeError(new Error(`ACP process exited (${exit.code ?? exit.signal})`)),
+            );
           },
-          (error: unknown) => connection.close(error),
+          (error: unknown) => connection.close(session.normalizeError(error)),
         );
         try {
           await session.open(
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id,
           );
         } catch (error) {
+          const failure = session.normalizeError(error);
           await session.close().catch(() => {});
-          throw error;
+          throw failure;
         }
         // A loaded conversation may contain older or compacted Context bodies.
         // Bootstrap every newly opened connection with the current assembly.

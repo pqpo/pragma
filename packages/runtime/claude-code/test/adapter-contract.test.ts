@@ -9,6 +9,7 @@ import type {
 } from "@pragma/core";
 import { describeRuntimeConformance } from "@pragma/core/testing/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { supportsAirSessionFailures } from "@agentclientprotocol/claude-agent-acp/dist/session-failure-extension.js";
 
 const captured = vi.hoisted(() => ({
   options: undefined as DefineAcpRuntimeDriverOptions<RuntimeFeatureSet> | undefined,
@@ -30,6 +31,16 @@ afterEach(async () => {
 });
 describeRuntimeConformance("Claude Code ACP", { createRuntime: createClaudeCodeRuntime });
 describe("Claude Code ACP contract", () => {
+  it("does not report custom spawn as available with a missing worker", async () => {
+    const runtime = createClaudeCodeRuntime({
+      spawn: vi.fn(),
+      acpWorkerPath: `/missing/${crypto.randomUUID()}.js`,
+    });
+    await expect(runtime.canUse()).resolves.toMatchObject({
+      usable: false,
+      details: { code: "claude_acp_worker_missing" },
+    });
+  });
   it("retains runtime identity and enables steering", () => {
     const runtime = createClaudeCodeRuntime();
     expect(runtime.descriptor).toMatchObject({
@@ -96,6 +107,7 @@ describe("Claude Code ACP contract", () => {
       acpWorkerPath: "/pragma/claude-acp-worker.js",
     });
     const binding = await captured.options!.prepare(context(root));
+    expect(supportsAirSessionFailures(binding.clientCapabilities)).toBe(true);
     expect(binding.command.args).toEqual(["/pragma/claude-acp-worker.js"]);
     expect(binding.command.env).toMatchObject({
       CLAUDE_CODE_EXECUTABLE: "/opt/claude",
