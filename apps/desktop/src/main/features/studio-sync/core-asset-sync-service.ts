@@ -25,7 +25,6 @@ import {
   ContextStoreIdSchema,
   CoreAssetSyncConfigurationSchema,
   CoreAssetSyncItemSchema,
-  CoreAssetLogicalKindSchema,
   CoreAssetSyncOverviewSchema,
   CoreAssetSyncRepositorySchema,
   WorkflowLayoutSchema,
@@ -46,6 +45,8 @@ import { referencedPragmaResourceRefs } from "../projects/pragma-resource-refere
 import {
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
+  desktopCapabilityResourceId,
+  desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 const execFileAsync = promisify(execFile);
@@ -98,11 +99,7 @@ const StateSchema = z
     remoteItems: z
       .record(
         z.string(),
-        CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }).extend({
-          assetKey: z.string().min(1).max(300).optional(),
-          assetKind: CoreAssetLogicalKindSchema.optional(),
-          assetName: z.string().max(300).optional(),
-        }),
+        CoreAssetSyncItemSchema.pick({ kind: true, name: true, fingerprint: true }),
       )
       .default({}),
     ignoredRemote: z.array(z.string()),
@@ -340,6 +337,7 @@ export function createCoreAssetSyncService(options: {
     config: CoreAssetSyncConfiguration | undefined,
     state?: SyncState,
     remote?: ItemMap,
+    collected?: ItemMap,
   ): Promise<CoreAssetSyncOverview> => {
     if (config === undefined) {
       const legacySyncStopped = (
@@ -358,7 +356,7 @@ export function createCoreAssetSyncService(options: {
       return { status: "unconfigured", legacySyncStopped, items: [] };
     }
     const current = state ?? (await readState(sourceKey(config)));
-    const local = await collect();
+    const local = collected ?? (await collect());
     const missing = await readiness(local);
     const keys = new Set([
       ...local.keys(),
@@ -758,18 +756,14 @@ export function createCoreAssetSyncService(options: {
               ...state,
               bases,
               remoteItems: Object.fromEntries(
-                [...nextRemote].map(([key, item]) => {
-                  const identity = logicalAssetIdentity(item, local, nextRemote);
-                  return [
-                    key,
-                    {
-                      kind: item.kind,
-                      name: item.name,
-                      fingerprint: item.fingerprint,
-                      ...identity,
-                    },
-                  ];
-                }),
+                [...nextRemote].map(([key, item]) => [
+                  key,
+                  {
+                    kind: item.kind,
+                    name: item.name,
+                    fingerprint: item.fingerprint,
+                  },
+                ]),
               ),
               ignoredRemote: [...ignored],
               conflicts,
@@ -805,13 +799,20 @@ export function createCoreAssetSyncService(options: {
       const config = await readConfig();
       if (config === undefined) return await makeOverview(undefined);
       const state = await readState(sourceKey(config));
-      const incompleteIdentity = Object.values(state.remoteItems).some(
-        (item) =>
-          item.assetKey === undefined ||
-          item.assetKind === undefined ||
-          item.assetName === undefined,
-      );
-      return incompleteIdentity ? await run("pull") : await makeOverview(config, state);
+      const local = await collect();
+      if (!needsRemoteIdentity(state, local))
+        return await makeOverview(config, state, undefined, local);
+      let checkout: Checkout | undefined;
+      try {
+        checkout = await checkoutRepository(config);
+        const remote = await readRepository(checkout.root, true);
+        return await makeOverview(config, state, remote, local);
+      } catch (error) {
+        options.warn?.("Core asset sync overview could not read remote identity metadata.", error);
+        return await makeOverview(config, state, undefined, local);
+      } finally {
+        if (checkout !== undefined) await rm(checkout.root, { recursive: true, force: true });
+      }
     },
     async configure(input) {
       const config = CoreAssetSyncConfigurationSchema.parse({
@@ -862,9 +863,6 @@ export function createCoreAssetSyncService(options: {
 
 type CoreAssetSyncItemSummary = Pick<CoreAssetSyncItem, "key" | "kind" | "name" | "fingerprint"> & {
   readonly data?: unknown;
-  readonly assetKey?: string | undefined;
-  readonly assetKind?: CoreAssetLogicalKind | undefined;
-  readonly assetName?: string | undefined;
 };
 
 function logicalAssetIdentity(
@@ -873,9 +871,6 @@ function logicalAssetIdentity(
   remote?: ItemMap,
   cached?: SyncState["remoteItems"],
 ): { assetKey: string; assetKind: CoreAssetLogicalKind; assetName: string } {
-  if (item.assetKey !== undefined && item.assetKind !== undefined && item.assetName !== undefined)
-    return { assetKey: item.assetKey, assetKind: item.assetKind, assetName: item.assetName };
-
   const parsedResource =
     item.data === undefined
       ? undefined
@@ -923,7 +918,13 @@ function logicalAssetIdentity(
   }
   if (item.kind === "flow-layout") {
     const id = item.key.slice("flow-layout:".length);
-    return { assetKey: `flow:${id}`, assetKind: "flow", assetName: item.name };
+    const flowKey = `flow:flow:${id}`;
+    const flow = remote?.get(flowKey) ?? local.get(flowKey) ?? cached?.[flowKey];
+    return {
+      assetKey: `flow:${id}`,
+      assetKind: "flow",
+      assetName: flow?.name ?? item.name,
+    };
   }
 
   const separator = item.key.indexOf(":");
@@ -931,9 +932,8 @@ function logicalAssetIdentity(
   const nestedPrefix = `${item.kind}:`;
   const id = rawId.startsWith(nestedPrefix) ? rawId.slice(nestedPrefix.length) : rawId;
   if (item.kind === "capability" && rawId.startsWith("capability:")) {
-    const capabilityId = legacyBindingTargetId(
-      item,
-      "Capability ",
+    const capabilityId = canonicalBindingTargetId(
+      rawId.slice("capability:".length),
       "capability",
       CapabilityIdSchema,
       local,
@@ -950,9 +950,8 @@ function logicalAssetIdentity(
     }
   }
   if (item.kind === "knowledge" && rawId.startsWith("context-store:")) {
-    const storeId = legacyBindingTargetId(
-      item,
-      "Context ",
+    const storeId = canonicalBindingTargetId(
+      rawId.slice("context-store:".length),
       "knowledge",
       ContextStoreIdSchema,
       local,
@@ -983,27 +982,37 @@ function itemSummaryAt(
   return item === undefined ? undefined : { ...item, key };
 }
 
-function legacyBindingTargetId(
-  item: CoreAssetSyncItemSummary,
-  placeholderPrefix: string,
+function canonicalBindingTargetId(
+  resourceId: string,
   targetKind: "capability" | "knowledge",
   idSchema: typeof CapabilityIdSchema | typeof ContextStoreIdSchema,
   local: ItemMap,
   remote?: ItemMap,
   cached?: SyncState["remoteItems"],
 ): string | undefined {
-  if (item.name.startsWith(placeholderPrefix)) {
-    const id = item.name.slice(placeholderPrefix.length);
-    if (idSchema.safeParse(id).success) return id;
-  }
   const keys = new Set([...local.keys(), ...(remote?.keys() ?? []), ...Object.keys(cached ?? {})]);
-  const matches = [...keys].flatMap((key) => {
+  return [...keys].flatMap((key) => {
     if (!key.startsWith(`${targetKind}:`)) return [];
     const id = key.slice(targetKind.length + 1);
     if (id.includes(":") || !idSchema.safeParse(id).success) return [];
-    return itemSummaryAt(key, local, remote, cached)?.name === item.name ? [id] : [];
-  });
-  return matches.length === 1 ? matches[0] : undefined;
+    const matchesResource =
+      targetKind === "capability"
+        ? (["project-expert", "system-expert-customization", "default-agent-option"] as const).some(
+            (owner) => desktopCapabilityResourceId(owner, id) === resourceId,
+          )
+        : (["project-expert", "system-expert-customization"] as const).some(
+            (owner) => desktopContextResourceId(owner, id) === resourceId,
+          );
+    return matchesResource ? [id] : [];
+  })[0];
+}
+
+function needsRemoteIdentity(state: SyncState, local: ItemMap): boolean {
+  return Object.keys(state.remoteItems).some(
+    (key) =>
+      !local.has(key) &&
+      (key.startsWith("capability:capability:") || key.startsWith("knowledge:context-store:")),
+  );
 }
 
 function sourceKey(config: CoreAssetSyncConfiguration): string {

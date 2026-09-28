@@ -34,8 +34,9 @@ The Settings overview distinguishes synchronization records from user-visible lo
 Every record carries a logical asset key, kind, and readable name. Multiple records that implement
 one asset, such as a Flow and its layout or a Capability binding and definition, contribute one
 asset to the overview. Context bindings and Knowledge content remain separate asset categories.
-The UI groups these logical assets by kind, summarizes synchronized, pending, and failed counts,
+The UI groups these logical assets by kind, summarizes synchronized, attention, and failed counts,
 and keeps record-level conflict and restore actions inside collapsed attention details. States
-written before logical identity summaries existed are enriched from a pull on first overview access;
-the pull preserves ignored remote assets while replacing ambiguous legacy name matching with the
-authoritative repository payload.
+remain on the v1 wire format. Overview reads authoritative remote payload only when a remote-only
+binding needs identity metadata; this read never reconciles assets, mutates local stores, or updates
+sync state. Offline fallback resolves canonical Desktop-managed binding IDs through the centralized
+binding policy and never guesses identity from mutable display names.
