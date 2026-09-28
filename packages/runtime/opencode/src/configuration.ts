@@ -25,10 +25,24 @@ export async function prepareOpenCodeConfiguration(input: {
   env: NodeJS.ProcessEnv;
   deniedPermissions: readonly { action: string; resource: string; effect: "deny" }[];
 }> {
+  const hostHome = resolve(requiredHome(input.env));
+  const hostHomes = new Set(
+    [input.env["HOME"], input.env["USERPROFILE"]]
+      .filter((value): value is string => value !== undefined)
+      .map((value) => resolve(value)),
+  );
+  const privateConfigDiscoveryHome = join(input.sessionDir, "config-home");
   const privateConfigHome = join(input.sessionDir, "config");
-  await mkdir(join(privateConfigHome, "opencode"), { recursive: true, mode: 0o700 });
+  const privateCacheHome = join(input.sessionDir, "cache");
+  const privateStateHome = join(input.sessionDir, "state");
+  await Promise.all([
+    mkdir(privateConfigDiscoveryHome, { recursive: true, mode: 0o700 }),
+    mkdir(join(privateConfigHome, "opencode"), { recursive: true, mode: 0o700 }),
+    mkdir(privateCacheHome, { recursive: true, mode: 0o700 }),
+    mkdir(privateStateHome, { recursive: true, mode: 0o700 }),
+  ]);
   const config: Record<string, unknown> = {};
-  const hostConfigHome = input.env["XDG_CONFIG_HOME"] ?? join(requiredHome(input.env), ".config");
+  const hostConfigHome = input.env["XDG_CONFIG_HOME"] ?? join(hostHome, ".config");
   const trustedCandidates = [
     join(hostConfigHome, "opencode", "opencode.json"),
     join(hostConfigHome, "opencode", "opencode.jsonc"),
@@ -46,7 +60,10 @@ export async function prepareOpenCodeConfiguration(input: {
   }
   const ancestors = workspaceAncestors(input.workspace);
   for (const directory of ancestors) {
-    if (await exists(join(directory, ".opencode"))) {
+    // OpenCode 1.18.x may execute project plugins even when project config and
+    // external plugins are disabled. The user's own ~/.opencode is outside the
+    // project boundary and is isolated through OpenCode's config-discovery home below.
+    if (!hostHomes.has(resolve(directory)) && (await exists(join(directory, ".opencode")))) {
       throw new Error(
         `OpenCode workspace customization is not governed by Pragma: ${join(directory, ".opencode")}`,
       );
@@ -68,6 +85,12 @@ export async function prepareOpenCodeConfiguration(input: {
     env: {
       ...input.env,
       XDG_CONFIG_HOME: privateConfigHome,
+      XDG_CACHE_HOME: privateCacheHome,
+      XDG_STATE_HOME: privateStateHome,
+      // OpenCode uses this override for Global.Path.home while its shell tool
+      // continues to inherit the user's real HOME/USERPROFILE. Replacing HOME
+      // itself would break git, ssh, npm, ~/ paths, and shell permission scans.
+      OPENCODE_TEST_HOME: privateConfigDiscoveryHome,
       OPENCODE_CONFIG_DIR: join(privateConfigHome, "opencode"),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
       OPENCODE_DISABLE_PROJECT_CONFIG: "1",
