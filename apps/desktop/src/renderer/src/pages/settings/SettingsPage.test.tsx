@@ -79,6 +79,8 @@ describe("SettingsPage", () => {
     const html = renderToStaticMarkup(<SettingsPage initialView="core-asset-sync" />);
 
     expect(html).toContain('id="core-asset-sync-panel"');
+    expect(html).toContain(">Sync</button>");
+    expect(html).toContain(">Sync</h2>");
     expect(html).toContain("Restore Experts, Teams, Flows, Knowledge Bases, and Skills");
     expect(html).toContain("Automatically upload published changes");
   });

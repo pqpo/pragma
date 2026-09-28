@@ -60,8 +60,8 @@ export const settings = {
     },
   },
   coreAssetSync: {
-    navigation: "Core Asset Sync",
-    title: "Core Asset Sync",
+    navigation: "Sync",
+    title: "Sync",
     description:
       "Restore Experts, Teams, Flows, Knowledge Bases, and Skills from one Git repository.",
     legacyStopped:

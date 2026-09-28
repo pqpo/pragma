@@ -11,6 +11,10 @@ export const studio = {
     syncing: "Syncing…",
     unbind: "Remove Git address",
     import: "Import from Git",
+    importDescription: "Import and keep this asset connected to a Git repository.",
+    localCreate: "Create locally",
+    settings: "Settings",
+    settingsTitle: "Git settings",
     lastSync: "Last synced",
     conflict: "Resolve these file conflicts before syncing again",
     status: {
@@ -684,7 +688,6 @@ export const studio = {
   },
   knowledgeBases: "Knowledge bases",
   knowledgeBasesDescription: "Managed Markdown knowledge that experts can use in real time.",
-  configureCoreAssetSync: "Core asset sync",
   knowledgeBase: "Knowledge base",
   knowledgeBaseCount_one: "{{count}} knowledge base",
   knowledgeBaseCount_other: "{{count}} knowledge bases",

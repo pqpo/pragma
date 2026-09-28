@@ -235,7 +235,6 @@ export function App() {
           initialMemoryState={studioMemoryState}
           memoryEnabled={memoryEnabled === true}
           onMemoryStateChange={setStudioMemoryState}
-          onConfigureCoreAssetSync={openCoreAssetSyncSettings}
           onLeaveGuardChange={(guard) => {
             leaveGuardRef.current = guard;
           }}

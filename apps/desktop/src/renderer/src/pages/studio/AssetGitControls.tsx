@@ -8,6 +8,7 @@ import { desktopApi } from "./studio-model.ts";
 export function AssetGitPanel(props: {
   readonly target: AssetGitTarget;
   readonly revision: number;
+  readonly showHeading?: boolean | undefined;
   readonly beforeSync?: (() => Promise<void>) | undefined;
   readonly onSynced: () => Promise<void>;
 }) {
@@ -53,8 +54,12 @@ export function AssetGitPanel(props: {
   };
   return (
     <section className="asset-git-panel" aria-label={t("assetGit.title")}>
-      <h2>{t("assetGit.title")}</h2>
-      <p>{t("assetGit.description")}</p>
+      {props.showHeading === false ? null : (
+        <>
+          <h2>{t("assetGit.title")}</h2>
+          <p>{t("assetGit.description")}</p>
+        </>
+      )}
       <label>
         {t("assetGit.remote")}
         <input
@@ -150,67 +155,59 @@ export function AssetGitPanel(props: {
   );
 }
 
-export function AssetGitImportButton(props: {
+export function AssetGitImportForm(props: {
   readonly kind: AssetGitTarget["kind"];
   readonly onImported: (target: AssetGitTarget) => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
-  const [open, setOpen] = useState(false);
   const [remote, setRemote] = useState("");
   const [branch, setBranch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
-    <div className="asset-git-import">
-      <button type="button" className="secondary-button" onClick={() => setOpen(!open)}>
-        {t("assetGit.import")}
+    <form
+      className="asset-git-import-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const api = desktopApi();
+        if (!api) return;
+        setBusy(true);
+        setError(null);
+        void api
+          .importAssetGit({
+            kind: props.kind,
+            source: {
+              remote: remote.trim(),
+              ...(branch.trim() ? { branch: branch.trim() } : {}),
+            },
+          })
+          .then(async (target) => {
+            await props.onImported(target);
+          })
+          .catch((cause: unknown) => setError(errorMessage(cause)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      <label>
+        {t("assetGit.remote")}
+        <input
+          value={remote}
+          onChange={(event) => setRemote(event.target.value)}
+          placeholder="https://github.com/team/asset.git"
+        />
+      </label>
+      <label>
+        {t("assetGit.branch")}
+        <input
+          value={branch}
+          onChange={(event) => setBranch(event.target.value)}
+          placeholder={t("assetGit.defaultBranch")}
+        />
+      </label>
+      <button type="submit" disabled={busy || remote.trim() === ""}>
+        {busy ? t("assetGit.syncing") : t("assetGit.import")}
       </button>
-      {open ? (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const api = desktopApi();
-            if (!api) return;
-            setBusy(true);
-            setError(null);
-            void api
-              .importAssetGit({
-                kind: props.kind,
-                source: {
-                  remote: remote.trim(),
-                  ...(branch.trim() ? { branch: branch.trim() } : {}),
-                },
-              })
-              .then(async (target) => {
-                await props.onImported(target);
-                setOpen(false);
-              })
-              .catch((cause: unknown) => setError(errorMessage(cause)))
-              .finally(() => setBusy(false));
-          }}
-        >
-          <label>
-            {t("assetGit.remote")}
-            <input
-              value={remote}
-              onChange={(event) => setRemote(event.target.value)}
-              placeholder="https://github.com/team/asset.git"
-            />
-          </label>
-          <label>
-            {t("assetGit.branch")}
-            <input
-              value={branch}
-              onChange={(event) => setBranch(event.target.value)}
-              placeholder={t("assetGit.defaultBranch")}
-            />
-          </label>
-          <button type="submit" disabled={busy || remote.trim() === ""}>
-            {busy ? t("assetGit.syncing") : t("assetGit.import")}
-          </button>
-          {error ? <p role="alert">{error}</p> : null}
-        </form>
-      ) : null}
-    </div>
+      {error ? <p role="alert">{error}</p> : null}
+    </form>
   );
 }

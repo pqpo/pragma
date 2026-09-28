@@ -5,6 +5,7 @@ import {
   Code,
   DotsThree,
   Globe,
+  GitBranch,
   MagnifyingGlass,
   PencilSimple,
   Plug,
@@ -36,7 +37,7 @@ import {
 
 export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
 import { desktopApi } from "./studio-model.ts";
-import { AssetGitImportButton } from "./AssetGitControls.tsx";
+import { AssetGitImportForm } from "./AssetGitControls.tsx";
 
 type Filter = "mcp" | "http" | "function";
 type CapabilityMode = "skill" | "mcp" | "http" | "code";
@@ -126,7 +127,6 @@ const emptyCode = {
 export function CapabilityDirectoryFragment(props: {
   readonly kind: "connectors" | "skills";
   readonly capabilities: readonly Capability[];
-  readonly onConfigureSync?: (() => void) | undefined;
   readonly onOpen: (capability: Capability) => void;
   readonly onOpenRevisions?: (() => void) | undefined;
   readonly revisionTaskCount?: number | undefined;
@@ -141,6 +141,7 @@ export function CapabilityDirectoryFragment(props: {
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [mode, setMode] = useState<CapabilityMode | null>(null);
+  const [skillSource, setSkillSource] = useState<"local" | "git">("local");
   const [editingCapability, setEditingCapability] = useState<Capability | null>(null);
   const [mcp, setMcp] = useState(emptyMcp);
   const [http, setHttp] = useState(emptyHttp);
@@ -184,6 +185,7 @@ export function CapabilityDirectoryFragment(props: {
     if (nextMode === "mcp") setMcp(emptyMcp);
     if (nextMode === "http") setHttp(emptyHttp);
     if (nextMode === "code") setCode(emptyCode);
+    if (nextMode === "skill") setSkillSource("local");
     setMode(nextMode);
     setMenuOpen(false);
   };
@@ -426,23 +428,6 @@ export function CapabilityDirectoryFragment(props: {
             <p>{t(props.kind === "skills" ? "skillsDescription" : "connectorsDescription")}</p>
           </div>
           <div className="studio-create-wrap">
-            {props.kind === "skills" ? (
-              <AssetGitImportButton
-                kind="skill"
-                onImported={async (target) => {
-                  const api = desktopApi();
-                  if (!api || target.kind !== "skill") return;
-                  const capability = await api.getCapability(target.id);
-                  props.onChanged(capability);
-                  props.onOpen(capability);
-                }}
-              />
-            ) : null}
-            {props.kind === "skills" && props.onConfigureSync ? (
-              <button className="secondary-button" type="button" onClick={props.onConfigureSync}>
-                {t("configureCoreAssetSync")}
-              </button>
-            ) : null}
             {props.kind === "skills" && props.onOpenRevisions !== undefined ? (
               <button className="secondary-button" type="button" onClick={props.onOpenRevisions}>
                 <ClockCounterClockwise size={17} aria-hidden="true" />
@@ -614,18 +599,58 @@ export function CapabilityDirectoryFragment(props: {
               </button>
             </header>
             {mode === "skill" ? (
-              <div className="capability-upload">
-                <Archive size={34} />
-                <p>{t("selectSkillSource")}</p>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={saving}
-                  onClick={() => void importSkill()}
-                >
-                  {saving ? t("importing") : t("choosePackage")}
-                </button>
-              </div>
+              <>
+                <div className="knowledge-create-modes">
+                  <button
+                    className={skillSource === "local" ? "is-selected" : ""}
+                    type="button"
+                    onClick={() => setSkillSource("local")}
+                  >
+                    <Archive size={23} />
+                    <span>
+                      <strong>{t("assetGit.localCreate")}</strong>
+                      <small>{t("uploadSkillDescription")}</small>
+                    </span>
+                  </button>
+                  <button
+                    className={skillSource === "git" ? "is-selected" : ""}
+                    type="button"
+                    onClick={() => setSkillSource("git")}
+                  >
+                    <GitBranch size={23} />
+                    <span>
+                      <strong>{t("assetGit.import")}</strong>
+                      <small>{t("assetGit.importDescription")}</small>
+                    </span>
+                  </button>
+                </div>
+                {skillSource === "local" ? (
+                  <div className="capability-upload">
+                    <Archive size={34} />
+                    <p>{t("selectSkillSource")}</p>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void importSkill()}
+                    >
+                      {saving ? t("importing") : t("choosePackage")}
+                    </button>
+                  </div>
+                ) : (
+                  <AssetGitImportForm
+                    kind="skill"
+                    onImported={async (target) => {
+                      const api = desktopApi();
+                      if (!api || target.kind !== "skill") return;
+                      const capability = await api.getCapability(target.id);
+                      props.onChanged(capability);
+                      closeDrawer();
+                      props.onOpen(capability);
+                    }}
+                  />
+                )}
+              </>
             ) : null}
             {mode === "mcp" ? <McpForm value={mcp} onChange={setMcp} /> : null}
             {mode === "http" ? <HttpForm value={http} onChange={setHttp} /> : null}

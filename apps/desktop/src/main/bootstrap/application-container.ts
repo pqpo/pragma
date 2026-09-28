@@ -575,6 +575,9 @@ export async function createDesktopApplicationContainer(
       publish: async (input) => {
         const published = await capabilityRevisionCoordinator.publish(input);
         coreSyncRef.current?.schedule("capability-published");
+        if (published.definition.kind === "skill") {
+          assetGitRef.current?.schedule({ kind: "skill", id: published.manifest.id });
+        }
         return published;
       },
       publishHealth: async (input) => await capabilityRevisionCoordinator.publishHealth(input),
@@ -588,7 +591,10 @@ export async function createDesktopApplicationContainer(
         expert.capabilities.some((reference) => reference.capabilityId === capabilityId),
       );
     },
-    onSkillCreated: () => coreSyncRef.current?.schedule("skill-published"),
+    onSkillCreated: (capability) => {
+      coreSyncRef.current?.schedule("skill-published");
+      assetGitRef.current?.schedule({ kind: "skill", id: capability.manifest.id });
+    },
   });
   capabilityRevisionCoordinator = createCapabilityRevisionCoordinator({
     journalRoot: join(pragmaPaths.stateRoot(), "capability-revision-propagation"),
@@ -653,7 +659,10 @@ export async function createDesktopApplicationContainer(
       await memoryLearningRevisionsRef.current?.clearStoreBinding(storeId);
       coreSyncRef.current?.schedule("knowledge-store-removed");
     },
-    onPublished: () => coreSyncRef.current?.schedule("knowledge-store-published"),
+    onPublished: (storeId) => {
+      coreSyncRef.current?.schedule("knowledge-store-published");
+      assetGitRef.current?.schedule({ kind: "knowledge", id: storeId });
+    },
     hasUnmergedRevisionDrafts: async (storeId) =>
       (await storeRevisionsRef.current?.hasUnmergedDrafts(storeId)) ?? false,
   });
@@ -665,6 +674,8 @@ export async function createDesktopApplicationContainer(
     stateRoot: join(pragmaPaths.stateRoot(), "asset-git"),
     stores: contextStores,
     capabilities: capabilityStore,
+    onAssociationChanged: (target) => assetGitRef.current?.schedule(target),
+    warn: (message, error) => mainLogger.warn("desktop.asset_git_sync_failed", message, { error }),
   });
   assetGitRef.current = assetGit;
   const coreAssetSync = createCoreAssetSyncService({
@@ -1776,6 +1787,13 @@ export async function createDesktopApplicationContainer(
       backgroundTasksStarted = true;
       trashMaintenance.schedule("startup");
       coreAssetSync.schedule("startup");
+      void assetGit.start().catch((error: unknown) => {
+        mainLogger.warn(
+          "desktop.asset_git_start_failed",
+          "Per-asset Git synchronization could not be initialized.",
+          { error },
+        );
+      });
       runtimeProcessEnvironment.warmUp();
       // This starts only after the first window is available.  The three fixed
       // credential aggregates are targeted explicitly; it never scans Projects,
@@ -1880,6 +1898,7 @@ export async function createDesktopApplicationContainer(
       memoryPlane.start();
     },
     dispose: () => {
+      assetGit.stop();
       evaluationService.dispose();
       unsubscribeUsageUpdates();
       unsubscribeTokenCounter();

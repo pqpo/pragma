@@ -57,8 +57,8 @@ export const settings = {
     },
   },
   coreAssetSync: {
-    navigation: "核心資產同步",
-    title: "核心資產同步",
+    navigation: "同步",
+    title: "同步",
     description: "透過一個 Git 儲存庫恢復專家、專家團、流程、知識庫和技能。",
     legacyStopped: "舊環境同步已停止。請設定新的核心資產同步 Git 位址，才能繼續備份這些資產。",
     configureNew: "設定核心資產同步",

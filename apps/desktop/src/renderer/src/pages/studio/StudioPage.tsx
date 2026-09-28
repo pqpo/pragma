@@ -135,7 +135,6 @@ export function StudioPage(props: {
   readonly onTryExpert: (expert: ExpertRecord) => void;
   readonly onOpenMission?: ((missionId: string, composerDraft?: string) => void) | undefined;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
-  readonly onConfigureCoreAssetSync?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [navigationWidth, setNavigationWidth] = usePersistentSidebarWidth(
@@ -914,7 +913,6 @@ export function StudioPage(props: {
         {screen === "directory" && activeView === "context-stores" ? (
           <ContextStoreDirectoryFragment
             stores={contextStores}
-            onConfigureSync={props.onConfigureCoreAssetSync}
             onGitImported={async (target) => {
               if (target.kind !== "knowledge") return;
               const stores = await window.pragmaDesktop.listContextStores();
@@ -1144,7 +1142,6 @@ export function StudioPage(props: {
           <CapabilityDirectoryFragment
             kind={activeView}
             capabilities={capabilities}
-            onConfigureSync={props.onConfigureCoreAssetSync}
             revisionTaskCount={skillRevisionTaskCount}
             onOpenRevisions={() => {
               setSelectedCapabilityId(null);

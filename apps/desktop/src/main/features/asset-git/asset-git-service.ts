@@ -68,6 +68,9 @@ export interface AssetGitService {
   sync(target: AssetGitTarget): Promise<AssetGitStatus>;
   source(target: AssetGitTarget): Promise<AssetGitSource | undefined>;
   restoreSource(target: AssetGitTarget, source: AssetGitSource): Promise<void>;
+  schedule(target: AssetGitTarget): void;
+  start(): Promise<void>;
+  stop(): void;
 }
 
 export function createAssetGitService(options: {
@@ -76,7 +79,10 @@ export function createAssetGitService(options: {
   readonly capabilities: CapabilityStore;
   readonly afterPush?: (() => Promise<void>) | undefined;
   readonly onAssociationChanged?: ((target: AssetGitTarget) => void) | undefined;
+  readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): AssetGitService {
+  const scheduled = new Map<string, ReturnType<typeof setTimeout>>();
+  const targetKey = (target: AssetGitTarget) => `${target.kind}:${target.id}`;
   const recordPath = (target: AssetGitTarget) =>
     join(options.stateRoot, target.kind, `${target.id}.json`);
   const journalPath = (target: AssetGitTarget) => `${recordPath(target)}.journal`;
@@ -238,6 +244,9 @@ export function createAssetGitService(options: {
     const parsed = AssetGitTargetSchema.parse(target);
     await withTargetLock(parsed, async () => {
       const previous = await readRecord(parsed);
+      const pending = scheduled.get(targetKey(parsed));
+      if (pending !== undefined) clearTimeout(pending);
+      scheduled.delete(targetKey(parsed));
       await rm(recordPath(parsed), { force: true });
       await rm(journalPath(parsed), { force: true });
       if (previous !== undefined) options.onAssociationChanged?.(parsed);
@@ -452,12 +461,66 @@ export function createAssetGitService(options: {
       throw new Error("Git sync exceeded the retry limit.");
     });
   };
+  const schedule = (rawTarget: AssetGitTarget): void => {
+    const target = AssetGitTargetSchema.parse(rawTarget);
+    const key = targetKey(target);
+    const previous = scheduled.get(key);
+    if (previous !== undefined) clearTimeout(previous);
+    scheduled.set(
+      key,
+      setTimeout(() => {
+        scheduled.delete(key);
+        void readRecord(target)
+          .then(async (record) => {
+            if (record === undefined) return;
+            const result = await sync(target);
+            if (result.status === "error") {
+              options.warn?.(
+                `Automatic Git sync failed for ${key}.`,
+                new Error(result.error ?? "Unknown asset Git sync error."),
+              );
+            }
+          })
+          .catch((error: unknown) =>
+            options.warn?.(`Automatic Git sync failed for ${key}.`, error),
+          );
+      }, 1_000),
+    );
+  };
+  const start = async (): Promise<void> => {
+    for (const kind of ["knowledge", "skill"] as const) {
+      let names: string[];
+      try {
+        names = await readdir(join(options.stateRoot, kind));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      for (const name of names.filter((item) => item.endsWith(".json"))) {
+        try {
+          const record = RecordSchema.parse(
+            JSON.parse(await readFile(join(options.stateRoot, kind, name), "utf8")),
+          );
+          schedule(record.target);
+        } catch (error) {
+          options.warn?.(`Could not schedule automatic Git sync for ${kind}/${name}.`, error);
+        }
+      }
+    }
+  };
+  const stop = (): void => {
+    for (const timer of scheduled.values()) clearTimeout(timer);
+    scheduled.clear();
+  };
   return {
     status,
     bind,
     unbind,
     import: importAsset,
     sync,
+    schedule,
+    start,
+    stop,
     source: async (target) => (await readRecord(target))?.source,
     restoreSource: async (rawTarget, rawSource) => {
       const target = AssetGitTargetSchema.parse(rawTarget);
@@ -474,6 +537,7 @@ export function createAssetGitService(options: {
           await assertUnique(target, source);
           await saveRecord({ schemaVersion: "pragma.asset-git/v1", target, source });
         });
+        schedule(target);
       });
     },
   };

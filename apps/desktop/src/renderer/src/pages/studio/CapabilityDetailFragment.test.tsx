@@ -132,6 +132,7 @@ describe("CapabilityDetailFragment", () => {
     expect(html).toContain('role="tooltip">Submit revision</span>');
     expect(html).toContain('aria-label="Update from package"');
     expect(html).toContain('role="tooltip">Revision tasks</span>');
+    expect(html).toContain('aria-label="Settings"');
     expect(html).toContain('aria-label="Delete capability"');
     expect(html).toContain('aria-label="Export skill"');
     expect(html).toContain('aria-label="Publish to source"');

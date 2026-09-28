@@ -11,6 +11,10 @@ export const studio = {
     syncing: "同步中…",
     unbind: "移除 Git 位址",
     import: "從 Git 匯入",
+    importDescription: "從 Git 倉庫匯入，並持續同步此資產。",
+    localCreate: "本機建立",
+    settings: "設定",
+    settingsTitle: "Git 設定",
     lastSync: "上次同步",
     conflict: "請先處理這些檔案衝突再同步",
     status: {
@@ -645,7 +649,6 @@ export const studio = {
   },
   knowledgeBases: "知識庫",
   knowledgeBasesDescription: "由 Pragma 代管、可供專家即時使用的 Markdown 知識。",
-  configureCoreAssetSync: "核心資產同步",
   knowledgeBase: "知識庫",
   knowledgeBaseCount_one: "{{count}} 個知識庫",
   knowledgeBaseCount_other: "{{count}} 個知識庫",
