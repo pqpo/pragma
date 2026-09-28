@@ -30,6 +30,26 @@ application.
 Individual Knowledge Base and Skill Git associations are a separate Studio feature intended for
 sharing one asset's ordinary files with other agents.
 
+Individual file conflicts can be resolved from the asset's Git settings. The editor presents the
+base, local and remote text plus two Git-generated merge candidates. Both candidates already
+include non-conflicting changes from both sides; they favor local or remote only at conflict hunks.
+The renderer lazily loads CodeMirror 6 and its open-source unified merge view for a single editable
+result, collapsed unchanged regions, viewport rendering, search, undo and per-hunk choices. Editor
+state and accepted hunks survive file navigation; binary files use whole-file choices.
+No language services, umbrella editor setup or remote scripts are loaded. Each conflicting path
+requires an explicit local, remote, manual or deletion decision. Binary files require a version or deletion choice. Skill
+resolutions retain executable modes and pass the existing Skill validation before publication.
+Decisions apply to a snapshot of the binding, local revision and remote head. A changed snapshot
+requires fresh decisions; edits remain available in the editor. Resolution uses the ordinary
+publication journal and never forces a push. A locally published merge survives an interrupted
+push and can be retried through synchronization.
+
+Asset synchronization and the overall backup are reported separately. If asset synchronization
+succeeds but the overall backup fails, the asset remains synchronized and the UI offers a readable
+backup retry notice. IPC mutations use the common Desktop mutation envelope. Empty user-facing
+asset descriptions remain empty in their asset payload; the centralized binding policy retains a
+valid nonempty DSL binding description instead of rejecting synchronization.
+
 The Settings overview distinguishes synchronization records from user-visible logical assets.
 Every record carries a logical asset key, kind, and readable name. Multiple records that implement
 one asset, such as a Flow and its layout or a Capability binding and definition, contribute one

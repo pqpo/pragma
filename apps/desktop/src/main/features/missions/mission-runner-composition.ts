@@ -2760,16 +2760,12 @@ export function createMissionRunner(options: {
         : isExpertTeam(compiledExpert)
           ? compiledExpert.coordinator
           : compiledExpert;
-    const desiredModelSelection =
-      mission.execution?.sessionId === undefined
-        ? (modelSelection ?? rootExpert?.models?.default)
-        : modelSelection;
-    const promptModelSelection = matchesBoundModel(
-      desiredModelSelection,
-      rootContext?.modelSelection,
-    )
-      ? undefined
-      : desiredModelSelection;
+    // Capture the model on acceptance, even when it equals the current Context.
+    // Queued prompts must not inherit a model selected by a later prompt.
+    const promptModelSelection =
+      input.mode === "steer"
+        ? undefined
+        : (modelSelection ?? rootExpert?.models?.default ?? rootContext?.modelSelection);
     let definitionChanged = false;
     const memoryBindingsChanged = sessionService.memoryBindingsChanged(mission.id);
     const contextStoresChanged =
@@ -2935,8 +2931,11 @@ export function createMissionRunner(options: {
       await settlementOutcomeWithin(activeExecution.settlement, 5_000);
       lifecycleService.deleteActiveIfCurrent(mission.id, activeExecution);
     }
-    if (lifecycleService.hasActive(mission.id) || projectedExecutionActive) {
-      throw new Error("Wait for the current execution before changing mission options.");
+    if (
+      (lifecycleService.hasActive(mission.id) || projectedExecutionActive) &&
+      input.toolPermissionMode !== mission.toolPermissionMode
+    ) {
+      throw new Error("Wait for the current execution before changing mission permissions.");
     }
     if (mission.executor.kind === "flow" && input.modelOverride !== null) {
       throw new Error("Flow missions do not support a model override.");
@@ -2951,6 +2950,12 @@ export function createMissionRunner(options: {
       runtimes,
     );
     const { compiled } = stableCompilation;
+    if (prospective.modelOverride !== undefined) {
+      await runtimes.bind({
+        runtimeId: requireRootRuntimeId(compiled),
+        modelSelection: toRuntimeModelSelection(prospective.modelOverride),
+      });
+    }
     if (input.toolPermissionMode !== mission.toolPermissionMode) {
       await sessionService.session(mission.id)?.refreshRuntimeSessions();
     }
@@ -2963,9 +2968,9 @@ export function createMissionRunner(options: {
     (await sessionService.executionContext(mission.id))?.setToolPermissionMode(
       input.toolPermissionMode,
     );
-    if (sessionService.session(mission.id) !== undefined) {
-      rememberSessionCompilation(mission.id, stableCompilation.identity, compiled);
-    }
+    // Validation must not mark the live Session as compiled with its next model.
+    // Recompile on the next accepted prompt, retaining the current definition fingerprint.
+    sessionService.setCompilationIdentity(mission.id, "");
     return updated;
   };
 

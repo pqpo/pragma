@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rmdir,
   rename,
   rm,
   stat,
@@ -22,6 +23,10 @@ import { z } from "zod";
 
 import {
   AssetGitBindSchema,
+  AssetGitConflictsSchema,
+  ResolveAssetGitConflictsSchema,
+  type AssetGitConflicts,
+  type ResolveAssetGitConflicts,
   AssetGitImportSchema,
   AssetGitSourceSchema,
   AssetGitStatusSchema,
@@ -66,6 +71,8 @@ export interface AssetGitService {
   bind(input: z.input<typeof AssetGitBindSchema>): Promise<AssetGitStatus>;
   unbind(target: AssetGitTarget): Promise<void>;
   import(input: z.input<typeof AssetGitImportSchema>): Promise<AssetGitTarget>;
+  conflicts(target: AssetGitTarget): Promise<AssetGitConflicts>;
+  resolve(input: ResolveAssetGitConflicts): Promise<AssetGitStatus>;
   sync(target: AssetGitTarget): Promise<AssetGitStatus>;
   source(target: AssetGitTarget): Promise<AssetGitSource | undefined>;
   listTargets(): Promise<readonly AssetGitTarget[]>;
@@ -320,7 +327,103 @@ export function createAssetGitService(options: {
     await publishStatus(target);
     return target;
   };
-  const sync = async (rawTarget: AssetGitTarget): Promise<AssetGitStatus> => {
+  const inspect = async (
+    target: AssetGitTarget,
+    record: Record,
+    root: string,
+    head: string | undefined,
+  ) => {
+    const current = await readLocalFiles(target, options.stores, options.capabilities);
+    const remote = await readManagedFiles(root, target.kind);
+    const baseSnapshot =
+      record.baseRevision === undefined
+        ? undefined
+        : await readLocalFiles(target, options.stores, options.capabilities, record.baseRevision);
+    const base = baseSnapshot?.files ?? new Map<string, Buffer>();
+    const merged = await mergeFiles(base, current.files, remote);
+    const modes =
+      target.kind === "skill"
+        ? await mergeSkillModes({
+            base:
+              record.baseRevision === undefined
+                ? undefined
+                : await options.capabilities.skillFilesPath(target.id, record.baseRevision),
+            local: await options.capabilities.skillFilesPath(target.id, current.revision),
+            remote: root,
+            baseFiles: base,
+            localFiles: current.files,
+            remoteFiles: remote,
+            mergedFiles: merged.files,
+            baseModes: baseSnapshot?.modes,
+            localModes: current.modes,
+          })
+        : undefined;
+    const conflicts = [...merged.conflicts, ...(modes?.conflicts ?? [])];
+    const remoteModes = target.kind === "skill" ? await readGitModes(root) : undefined;
+    const paths = [...new Set(conflicts)].toSorted();
+    const snapshot = createHash("sha256")
+      .update(
+        JSON.stringify({
+          target,
+          source: record.source,
+          baseRevision: record.baseRevision,
+          remoteCommit: record.remoteCommit,
+          localRevision: current.revision,
+          head,
+        }),
+      )
+      .digest("hex");
+    const preview = AssetGitConflictsSchema.parse({
+      target,
+      snapshot,
+      files: await Promise.all(
+        paths.map(async (path) => {
+          const old = base.get(path),
+            ours = current.files.get(path),
+            theirs = remote.get(path);
+          const text = [old, ours, theirs].every((bytes) => bytes === undefined || isText(bytes));
+          const [mergeLocal, mergeRemote] =
+            text && old !== undefined && ours !== undefined && theirs !== undefined
+              ? await Promise.all([
+                  mergeText(old, ours, theirs, "ours"),
+                  mergeText(old, ours, theirs, "theirs"),
+                ])
+              : [ours, theirs];
+          return {
+            path,
+            kind: text ? "text" : "binary",
+            mergeLocal: text && mergeLocal !== undefined ? mergeLocal.toString("utf8") : null,
+            mergeRemote: text && mergeRemote !== undefined ? mergeRemote.toString("utf8") : null,
+            base: text && old !== undefined ? old.toString("utf8") : null,
+            local: text && ours !== undefined ? ours.toString("utf8") : null,
+            remote: text && theirs !== undefined ? theirs.toString("utf8") : null,
+            localDeleted: ours === undefined,
+            remoteDeleted: theirs === undefined,
+            modeConflict: modes?.conflicts.includes(path) ?? false,
+            localExecutable: modes?.local.get(path),
+            remoteExecutable: remoteModes?.get(path),
+          };
+        }),
+      ),
+    });
+    return { current, remote, merged, modes, remoteModes, preview };
+  };
+  const conflicts = async (rawTarget: AssetGitTarget): Promise<AssetGitConflicts> => {
+    const target = AssetGitTargetSchema.parse(rawTarget);
+    return await withTargetLock(target, async () => {
+      const record = await readRecord(target);
+      if (record === undefined) throw new Error("Set a Git address before syncing this asset.");
+      await assertExists(target);
+      return await withCheckout(record.source, async (root, head) => {
+        const { preview } = await inspect(target, record, root, head);
+        return preview;
+      });
+    });
+  };
+  const sync = async (
+    rawTarget: AssetGitTarget,
+    resolution?: ResolveAssetGitConflicts,
+  ): Promise<AssetGitStatus> => {
     const target = AssetGitTargetSchema.parse(rawTarget);
     const current = await status(target);
     if (current.source !== undefined) {
@@ -351,42 +454,98 @@ export function createAssetGitService(options: {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           return await withCheckout(record.source, async (root, head, branch) => {
-            const current = await readLocalFiles(target, options.stores, options.capabilities);
-            const remote = await readManagedFiles(root, target.kind);
-            const baseSnapshot =
-              record.baseRevision === undefined
-                ? undefined
-                : await readLocalFiles(
-                    target,
-                    options.stores,
-                    options.capabilities,
-                    record.baseRevision,
-                  );
-            const base = baseSnapshot?.files ?? new Map<string, Buffer>();
-            const merged = await mergeFiles(base, current.files, remote);
-            const modes =
-              target.kind === "skill"
-                ? await mergeSkillModes({
-                    base:
-                      record.baseRevision === undefined
-                        ? undefined
-                        : await options.capabilities.skillFilesPath(target.id, record.baseRevision),
-                    local: await options.capabilities.skillFilesPath(target.id, current.revision),
-                    remote: root,
-                    baseFiles: base,
-                    localFiles: current.files,
-                    remoteFiles: remote,
-                    mergedFiles: merged.files,
-                    baseModes: baseSnapshot?.modes,
-                    localModes: current.modes,
-                  })
-                : undefined;
-            const conflicts = [...merged.conflicts, ...(modes?.conflicts ?? [])];
-            if (conflicts.length > 0) {
+            const { current, remote, merged, modes, remoteModes, preview } = await inspect(
+              target,
+              record,
+              root,
+              head,
+            );
+            let conflictPaths = preview.files.map((file) => file.path);
+            // A published local revision is the durable merge result. Resume it
+            // only while both sides still match the journal's exact snapshot.
+            if (
+              resolution === undefined &&
+              journal?.publishedRevision === current.revision &&
+              journal.remoteCommit === head &&
+              (journal.phase === "local_published" || journal.phase === "pushed")
+            ) {
+              merged.files.clear();
+              for (const [path, bytes] of current.files) merged.files.set(path, bytes);
+              if (modes) {
+                modes.merged.clear();
+                for (const [path, executable] of modes.local) modes.merged.set(path, executable);
+              }
+              conflictPaths = [];
+            }
+            if (resolution !== undefined) {
+              if (resolution.snapshot !== preview.snapshot) {
+                throw Object.assign(
+                  new Error("Git conflict snapshot changed. Reload conflicts before applying."),
+                  { code: "asset_git_stale_conflict" },
+                );
+              }
+              const decisions = new Map(resolution.resolutions.map((item) => [item.path, item]));
+              if (
+                decisions.size !== resolution.resolutions.length ||
+                decisions.size !== conflictPaths.length ||
+                conflictPaths.some((path) => !decisions.has(path))
+              ) {
+                throw new Error("Resolve every conflicting file exactly once.");
+              }
+              for (const file of preview.files) {
+                const decision = decisions.get(file.path)!;
+                const bytes =
+                  decision.choice === "manual"
+                    ? Buffer.from(decision.content, "utf8")
+                    : decision.choice === "delete"
+                      ? undefined
+                      : decision.choice === "local"
+                        ? current.files.get(file.path)
+                        : remote.get(file.path);
+                if (decision.choice === "manual" && (file.kind !== "text" || !isText(bytes!))) {
+                  throw new Error(`Manual merging requires a UTF-8 text file: ${file.path}`);
+                }
+                if (
+                  decision.choice === "manual" &&
+                  /^(?:<{7}|={7}|>{7})(?: |$)/mu.test(decision.content)
+                ) {
+                  throw new Error(`Remove conflict markers before applying: ${file.path}`);
+                }
+                if (bytes === undefined) {
+                  merged.files.delete(file.path);
+                  modes?.merged.delete(file.path);
+                } else {
+                  merged.files.set(file.path, bytes);
+                  if (modes) {
+                    if (
+                      decision.choice === "manual" &&
+                      file.modeConflict &&
+                      decision.executable === undefined
+                    ) {
+                      throw new Error(`Choose the executable flag for: ${file.path}`);
+                    }
+                    const executable =
+                      decision.choice === "manual"
+                        ? (decision.executable ??
+                          modes.merged.get(file.path) ??
+                          modes.local.get(file.path) ??
+                          remoteModes?.get(file.path) ??
+                          false)
+                        : decision.choice === "local"
+                          ? modes.local.get(file.path)
+                          : remoteModes?.get(file.path);
+                    modes.merged.set(file.path, executable ?? false);
+                  }
+                }
+              }
+              assertResolvedTree(merged.files, target.kind);
+              conflictPaths = [];
+            }
+            if (conflictPaths.length > 0) {
               await saveRecord({
                 ...record,
                 source: { ...record.source, branch },
-                conflictPaths: [...new Set(conflicts)].toSorted(),
+                conflictPaths,
                 error: undefined,
               });
               return await status(target);
@@ -458,13 +617,34 @@ export function createAssetGitService(options: {
             return await status(target);
           });
         } catch (error) {
+          if (
+            resolution !== undefined &&
+            (isRemoteHeadRace(error) ||
+              (error as { code?: string }).code === "asset_git_stale_conflict")
+          ) {
+            await saveRecord({ ...record, conflictPaths: undefined, error: undefined });
+            await publishStatus(target);
+            throw Object.assign(
+              new Error("Git conflict snapshot changed. Reload conflicts before applying."),
+              { code: "asset_git_stale_conflict" },
+            );
+          }
           if (attempt < 2 && isRemoteHeadRace(error)) continue;
+          options.warn?.(`Git synchronization failed for ${target.kind}/${target.id}.`, error);
           await saveRecord({
             ...record,
             error: error instanceof Error ? error.message : String(error),
             conflictPaths: undefined,
           });
-          return await status(target);
+          const failure = await status(target);
+          if (resolution === undefined) return failure;
+          const message = error instanceof Error ? error.message : String(error);
+          const errorPath =
+            resolution.resolutions.find((item) => message.includes(item.path))?.path ??
+            (target.kind === "skill" && (error instanceof z.ZodError || /skill/i.test(message))
+              ? "SKILL.md"
+              : undefined);
+          return { ...failure, ...(errorPath === undefined ? {} : { errorPath }) };
         }
       }
       throw new Error("Git sync exceeded the retry limit.");
@@ -501,6 +681,11 @@ export function createAssetGitService(options: {
     unbind,
     import: importAsset,
     sync,
+    conflicts,
+    resolve: async (input) => {
+      const parsed = ResolveAssetGitConflictsSchema.parse(input);
+      return await sync(parsed.target, parsed);
+    },
     listTargets,
     source: async (target) => (await readRecord(target))?.source,
     restoreSource: async (rawTarget, rawSource) => {
@@ -530,7 +715,7 @@ async function git(root: string, args: string[]): Promise<string> {
 
 function isRemoteHeadRace(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /non-fast-forward|fetch first|failed to push some refs|stale info/iu.test(message);
+  return /non-fast-forward|fetch first|stale info/iu.test(message);
 }
 
 async function withCheckout<T>(
@@ -691,7 +876,12 @@ function isText(bytes: Buffer): boolean {
     return false;
   }
 }
-async function mergeText(base: Buffer, ours: Buffer, theirs: Buffer): Promise<Buffer | undefined> {
+async function mergeText(
+  base: Buffer,
+  ours: Buffer,
+  theirs: Buffer,
+  favor?: "ours" | "theirs",
+): Promise<Buffer | undefined> {
   const root = await mkdtemp(join(tmpdir(), "pragma-merge-"));
   try {
     await Promise.all(
@@ -704,7 +894,14 @@ async function mergeText(base: Buffer, ours: Buffer, theirs: Buffer): Promise<Bu
     try {
       const { stdout } = await execFileAsync(
         "git",
-        ["merge-file", "-p", "ours", "base", "theirs"],
+        [
+          "merge-file",
+          "-p",
+          ...(favor === undefined ? [] : [`--${favor}`]),
+          "ours",
+          "base",
+          "theirs",
+        ],
         {
           cwd: root,
           encoding: "buffer",
@@ -714,7 +911,9 @@ async function mergeText(base: Buffer, ours: Buffer, theirs: Buffer): Promise<Bu
       );
       return Buffer.from(stdout);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException & { code?: number }).code === 1) return undefined;
+      const code = (error as { code?: number }).code;
+      // merge-file returns the number of conflicts (capped at 127), not just 1.
+      if (typeof code === "number" && code > 0 && code <= 127) return undefined;
       throw error;
     }
   } finally {
@@ -722,11 +921,30 @@ async function mergeText(base: Buffer, ours: Buffer, theirs: Buffer): Promise<Bu
   }
 }
 async function replaceManagedFiles(root: string, before: Files, after: Files): Promise<void> {
-  for (const path of before.keys()) if (!after.has(path)) await rm(join(root, ...path.split("/")));
+  for (const path of before.keys()) {
+    if (after.has(path)) continue;
+    const target = join(root, ...path.split("/"));
+    await rm(target);
+    // Remove only empty managed parents; unrelated files must never be deleted.
+    for (let parent = dirname(target); parent !== root; parent = dirname(parent)) {
+      try {
+        await rmdir(parent);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOTEMPTY" || code === "EEXIST") break;
+        if (code !== "ENOENT") throw error;
+      }
+    }
+  }
   for (const [path, bytes] of after) {
     await assertSafeWritePath(root, path);
     const target = join(root, ...path.split("/"));
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    const existing = await lstat(target).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (existing?.isDirectory()) await rmdir(target);
     await writeFile(target, bytes);
   }
 }
@@ -858,7 +1076,14 @@ async function publishLocal(
       content: decodeMarkdown(bytes),
       metadata: metadata.get(id) ?? { trigger: "manual", priority: "normal" },
     }));
-    const directories = new Set(current.directories);
+    const directories = new Set(
+      current.directories.filter((path) => {
+        const segments = path.split("/");
+        return !segments.some((_segment, index) =>
+          files.has(segments.slice(0, index + 1).join("/")),
+        );
+      }),
+    );
     for (const file of nextFiles) {
       const segments = file.id.split("/");
       for (let length = 1; length < segments.length; length += 1) {
@@ -906,4 +1131,19 @@ async function publishLocal(
 }
 function repositoryName(remote: string): string {
   return basename(remote.replace(/\.git$/u, "").replace(/\/$/u, "")) || "Git knowledge base";
+}
+
+function assertResolvedTree(files: Files, kind: AssetGitTarget["kind"]): void {
+  let total = 0;
+  for (const [path, bytes] of files) {
+    total += bytes.length;
+    const segments = path.split("/");
+    for (let length = 1; length < segments.length; length += 1) {
+      if (files.has(segments.slice(0, length).join("/"))) {
+        throw new Error(`Choose between the file and its child files: ${path}`);
+      }
+    }
+  }
+  if (kind === "skill" && total > MAX_SKILL_PACKAGE_BYTES)
+    throw new Error("The merged asset exceeds the size limit.");
 }

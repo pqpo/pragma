@@ -1452,12 +1452,13 @@ export function createMissionStore(options: {
     async updateOptions(id, input) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
         if (
+          input.toolPermissionMode !== current.toolPermissionMode &&
           current.execution !== undefined &&
           ["queued", "running", "waiting"].includes(current.execution.status)
         ) {
           throw new MissionStoreError(
             "mission_active",
-            "Wait for the current execution before changing mission options.",
+            "Wait for the current execution before changing mission permissions.",
           );
         }
         const next = {

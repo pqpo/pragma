@@ -52,12 +52,14 @@ export function Dialog(props: {
         aria-labelledby={props.hideHeader ? undefined : titleId}
         aria-describedby={!props.hideHeader && props.description ? descriptionId : undefined}
         onKeyDown={(event) => {
-          if (event.key === "Escape" && !props.busy) {
+          if (event.key === "Escape") {
+            event.stopPropagation();
             event.preventDefault();
-            props.onCancel();
+            if (!props.busy) props.onCancel();
             return;
           }
           if (event.key !== "Tab") return;
+          event.stopPropagation();
           const focusable = focusableElements(surfaceRef.current);
           if (focusable.length === 0) return;
           const first = focusable[0]!;
@@ -157,6 +159,8 @@ export function ConfirmationDialog(props: {
 function focusableElements(root: HTMLElement | null): HTMLElement[] {
   if (root === null) return [];
   return [
-    ...root.querySelectorAll<HTMLElement>("button, input, textarea, [role=combobox], [tabindex]"),
+    ...root.querySelectorAll<HTMLElement>(
+      'button, input, textarea, [role=combobox], [tabindex], [contenteditable="true"]',
+    ),
   ].filter((element) => !element.hasAttribute("disabled") && element.tabIndex >= 0);
 }

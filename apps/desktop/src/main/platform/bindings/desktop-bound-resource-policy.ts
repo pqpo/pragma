@@ -120,7 +120,7 @@ export function createDesktopCapabilityResource(input: {
       id: desktopCapabilityResourceId(input.owner, input.capabilityId),
       name: input.name ?? `Capability ${input.capabilityId}`,
       description:
-        input.description ??
+        input.description?.trim() ||
         (system
           ? "Desktop-managed optional capability binding."
           : "Desktop-managed capability binding."),
@@ -147,7 +147,12 @@ export function bindExistingDesktopCapabilityResource(
     ...resource,
     metadata: {
       ...resource.metadata,
-      ...(metadata ?? {}),
+      ...(metadata === undefined
+        ? {}
+        : {
+            name: metadata.name,
+            description: metadata.description.trim() || resource.metadata.description,
+          }),
       tags: unique([...resource.metadata.tags, "desktop-managed"]),
     },
     spec: {
@@ -224,7 +229,12 @@ export function bindExistingDesktopContextResource(
     ...resource,
     metadata: {
       ...resource.metadata,
-      ...(metadata ?? {}),
+      ...(metadata === undefined
+        ? {}
+        : {
+            name: metadata.name,
+            description: metadata.description.trim() || resource.metadata.description,
+          }),
       tags: unique([...resource.metadata.tags, "desktop-managed"]),
     },
     spec: {

@@ -10,7 +10,10 @@ export interface AssetSyncCoordinator {
   start(): Promise<void>;
   stop(): void;
   run<T>(operation: () => Promise<T>): Promise<T>;
-  syncAsset(target: AssetGitTarget): Promise<AssetGitStatus>;
+  syncAsset(
+    target: AssetGitTarget,
+    synchronize?: () => Promise<AssetGitStatus>,
+  ): Promise<AssetGitStatus>;
 }
 
 export function createAssetSyncCoordinator(options: {
@@ -147,20 +150,27 @@ export function createAssetSyncCoordinator(options: {
       pendingCore = false;
     },
     run: queue,
-    async syncAsset(target) {
+    async syncAsset(target, synchronize = () => options.assets.sync(target)) {
       return await queue(async () => {
         const key = keyOf(target);
         activeTargets.add(key);
         let status: AssetGitStatus;
         try {
-          status = await options.assets.sync(target);
+          status = await synchronize();
         } finally {
           activeTargets.delete(key);
         }
         if (status.status === "pending") pendingTargets.set(key, target);
-        if (!stopped) {
+        if (!stopped && status.status === "synced") {
           pendingCore = false;
-          await options.core.sync();
+          try {
+            const backup = await options.core.sync();
+            if (backup.status === "error" || backup.status === "conflict")
+              return { ...status, backupFailed: true };
+          } catch (error) {
+            options.warn?.("Asset synchronized, but core backup failed.", error);
+            return { ...status, backupFailed: true };
+          }
         }
         return status;
       });

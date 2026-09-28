@@ -1,5 +1,11 @@
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
-import type { AssetGitSource, AssetGitStatus, AssetGitTarget } from "./asset-git.ts";
+import type {
+  AssetGitConflicts,
+  ResolveAssetGitConflicts,
+  AssetGitSource,
+  AssetGitStatus,
+  AssetGitTarget,
+} from "./asset-git.ts";
 import type {
   CoreAssetSyncOverview,
   ResolveCoreAssetSyncConflict,
@@ -282,6 +288,8 @@ export interface PragmaDesktopAPI {
     kind: AssetGitTarget["kind"];
     source: AssetGitSource;
   }) => Promise<AssetGitTarget>;
+  getAssetGitConflicts: (target: AssetGitTarget) => Promise<AssetGitConflicts>;
+  resolveAssetGitConflicts: (input: ResolveAssetGitConflicts) => Promise<AssetGitStatus>;
   syncAssetGit: (target: AssetGitTarget) => Promise<AssetGitStatus>;
   subscribeAssetGitStatusUpdates: (listener: (status: AssetGitStatus) => void) => () => void;
   reportRendererLog: (input: DesktopRendererLog) => void;

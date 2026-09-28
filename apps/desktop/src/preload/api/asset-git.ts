@@ -2,6 +2,8 @@ import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   AssetGitBindSchema,
+  AssetGitConflictsSchema,
+  ResolveAssetGitConflictsSchema,
   AssetGitImportSchema,
   AssetGitStatusSchema,
   AssetGitTargetSchema,
@@ -25,6 +27,14 @@ export const assetGitApi = {
     AssetGitTargetSchema.parse(
       await invokeMutation("asset-git:import", AssetGitImportSchema.parse(input)),
     ),
+  getAssetGitConflicts: async (target) =>
+    AssetGitConflictsSchema.parse(
+      await ipcRenderer.invoke("asset-git:conflicts", AssetGitTargetSchema.parse(target)),
+    ),
+  resolveAssetGitConflicts: async (input) =>
+    AssetGitStatusSchema.parse(
+      await invokeMutation("asset-git:resolve", ResolveAssetGitConflictsSchema.parse(input)),
+    ),
   syncAssetGit: async (target) =>
     AssetGitStatusSchema.parse(
       await invokeMutation("asset-git:sync", AssetGitTargetSchema.parse(target)),
@@ -43,5 +53,7 @@ export const assetGitApi = {
   | "unbindAssetGit"
   | "importAssetGit"
   | "syncAssetGit"
+  | "getAssetGitConflicts"
+  | "resolveAssetGitConflicts"
   | "subscribeAssetGitStatusUpdates"
 >;

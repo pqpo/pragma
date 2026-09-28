@@ -1257,6 +1257,12 @@ describe("mission store", { timeout: 30_000 }, () => {
       }),
     ).rejects.toThrow("Wait for the current execution");
 
+    const duringRun = await store.updateOptions(created.id, {
+      toolPermissionMode: created.toolPermissionMode,
+      modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
+    });
+    expect(duringRun.execution).toEqual(execution);
+    expect(duringRun.modelOverride?.modelId).toBe("next-model");
     await store.updateExecution(created.id, { ...execution, status: "succeeded" });
     const updated = await store.updateOptions(created.id, {
       toolPermissionMode: "auto-approve",

@@ -1,31 +1,542 @@
 .asset-git-panel,
 .asset-git-import-form {
   display: grid;
-  gap: 0.75rem;
-  padding: 1rem;
-  border: 1px solid var(--border-subtle, #d9dedb);
-  border-radius: 0.75rem;
-  background: var(--surface-raised, #fff);
+  gap: 16px;
+  min-width: 0;
 }
 
 .asset-git-panel h2,
-.asset-git-panel p {
+.asset-git-panel p,
+.asset-git-merge-content > p {
   margin: 0;
 }
 
-.asset-git-panel label,
-.asset-git-import-form label {
-  display: grid;
-  gap: 0.3rem;
-  min-width: 0;
+.asset-git-merge-content h3 {
+  margin: 0;
 }
 
-.asset-git-panel input,
-.asset-git-import-form input {
+.asset-git-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.asset-git-field > input {
   width: 100%;
   min-width: 0;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+  font-weight: 400;
 }
 
-.asset-git-dialog.ui-dialog {
-  width: min(34rem, calc(100vw - 2rem));
+.asset-git-field > input:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.asset-git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.asset-git-panel button,
+.asset-git-import-form button,
+.asset-git-merge-dialog button {
+  min-height: 36px;
+  border-radius: var(--ui-radius-md);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.asset-git-panel .text-button,
+.asset-git-merge-dialog .text-button {
+  padding: 8px 12px;
+}
+
+.asset-git-panel button:disabled,
+.asset-git-import-form button:disabled,
+.asset-git-merge-dialog button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.asset-git-status,
+.asset-git-mode {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.asset-git-conflict-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.asset-git-conflict-summary ul {
+  margin: 0;
+  padding-left: 24px;
+  overflow-wrap: anywhere;
+}
+
+.asset-git-dialog.ui-dialog,
+.asset-git-merge-backdrop {
+  padding: 32px;
+}
+
+.asset-git-merge-dialog.ui-dialog {
+  width: min(80rem, calc(100vw - 64px));
+  height: min(820px, calc(100dvh - 64px));
+  max-height: calc(100dvh - 64px);
+  border: 0;
+}
+
+.asset-git-merge-dialog .ui-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+}
+
+.asset-git-merge-dialog .ui-dialog-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.asset-git-merge-dialog .ui-dialog-footer {
+  align-items: center;
+  padding: 16px 24px;
+  border: 0;
+}
+
+.asset-git-merge-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.asset-git-merge-hint {
+  margin-left: 16px;
+}
+
+.asset-git-merge-error {
+  margin: 0;
+  padding: 12px 24px;
+}
+
+.asset-git-merge-layout {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.asset-git-merge-files {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 12px;
+  background: var(--ui-rail);
+}
+
+.asset-git-files-heading {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 12px 16px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.asset-git-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+}
+
+.asset-git-merge-files button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  text-align: left;
+}
+
+.asset-git-file-label {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.asset-git-file-label > span,
+.asset-git-file-label > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-git-file-label > small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ui-text-secondary);
+}
+
+.asset-git-file-state {
+  display: flex;
+  color: var(--ui-text-secondary);
+}
+
+.asset-git-file-state.is-complete {
+  color: var(--ui-accent-strong);
+}
+
+.asset-git-merge-files .is-active {
+  background: var(--ui-selection);
+  color: var(--ui-text);
+}
+
+.asset-git-merge-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 24px;
+}
+
+.asset-git-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0 8px;
+}
+
+.asset-git-file-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asset-git-merge-content h3 {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.asset-git-file-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.asset-git-version-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 12px;
+}
+
+.asset-git-version-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.asset-git-version-options button[aria-pressed="true"] {
+  background: var(--ui-selection);
+  color: var(--ui-accent-strong);
+}
+
+.asset-git-source-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--ui-text-secondary);
+}
+
+.asset-git-source-legend .is-remote {
+  color: var(--ui-danger);
+}
+
+.asset-git-source-legend .is-local {
+  color: var(--ui-accent-strong);
+}
+
+.asset-git-merge-dialog .asset-git-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.asset-git-delete-button:hover,
+.asset-git-delete-button[aria-pressed="true"] {
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+}
+
+.asset-git-binary-state {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  flex: 1;
+  gap: 16px;
+  color: var(--ui-text-secondary);
+  text-align: center;
+}
+
+.asset-git-editor-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.asset-git-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--ui-text-secondary);
+}
+
+.asset-git-editor-toolbar > [role="status"] {
+  margin-right: 8px;
+}
+
+.asset-git-editor-toolbar .asset-git-mark-resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.asset-git-code-editor {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  background: var(--ui-surface);
+}
+
+.asset-git-code-editor:focus-within {
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.asset-git-code-editor .cm-editor {
+  height: 100%;
+  color: var(--ui-text);
+  font-size: 14px;
+}
+
+.asset-git-code-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.asset-git-code-editor .cm-scroller {
+  overflow: auto;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  line-height: 1.55;
+}
+
+.asset-git-code-editor .cm-gutters {
+  border: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text-secondary);
+}
+
+.asset-git-code-editor .cm-changedLine,
+.asset-git-code-editor .cm-changedText {
+  background: var(--ui-selection);
+}
+
+.asset-git-code-editor .cm-deletedChunk,
+.asset-git-code-editor .cm-deletedText {
+  background: var(--ui-danger-subtle);
+  color: var(--ui-danger);
+}
+
+.asset-git-code-editor .cm-deletedChunk {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.asset-git-code-editor .cm-editor .cm-deletedChunk .cm-chunkButtons {
+  position: static;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 6px 8px;
+}
+
+.asset-git-chunk-choice {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+}
+
+.asset-git-chunk-label {
+  margin-right: auto;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.asset-git-code-editor .cm-editor .cm-chunkButtons button {
+  min-height: 28px;
+  padding: 4px 10px;
+  margin: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.asset-git-code-editor .cm-editor .cm-chunkButtons button:hover {
+  background: var(--ui-selection);
+}
+
+.asset-git-code-editor .cm-editor .cm-collapsedLines {
+  padding: 10px 12px;
+  background: var(--ui-surface-subtle);
+  color: var(--ui-text-secondary);
+}
+
+.asset-git-code-editor .cm-editor .cm-collapsedLines::before,
+.asset-git-code-editor .cm-editor .cm-collapsedLines::after {
+  content: none;
+}
+
+.asset-git-code-editor .cm-panels {
+  border: 0;
+  background: var(--ui-rail);
+  color: var(--ui-text);
+}
+
+.asset-git-code-editor .cm-button {
+  border: 0;
+  background: var(--ui-selection);
+  color: var(--ui-text);
+}
+
+.asset-git-code-editor .cm-textfield {
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+
+.asset-git-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+@media (max-width: 1100px) {
+  .asset-git-merge-layout {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .asset-git-merge-content {
+    padding: 0 16px;
+  }
+
+  .asset-git-merge-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 800px) {
+  .asset-git-merge-backdrop {
+    padding: 16px;
+  }
+
+  .asset-git-merge-dialog.ui-dialog {
+    width: calc(100vw - 32px);
+    height: calc(100dvh - 32px);
+    max-height: calc(100dvh - 32px);
+  }
+
+  .asset-git-merge-dialog .ui-dialog-header {
+    padding: 16px;
+  }
+
+  .asset-git-merge-dialog .ui-dialog-header p {
+    display: none;
+  }
+
+  .asset-git-merge-dialog .ui-dialog-footer {
+    padding: 12px 16px;
+  }
+
+  .asset-git-merge-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .asset-git-merge-files {
+    flex-shrink: 0;
+    padding: 8px 16px;
+  }
+
+  .asset-git-files-heading {
+    display: none;
+  }
+
+  .asset-git-file-list {
+    flex-direction: row;
+  }
+
+  .asset-git-merge-files button {
+    flex: 0 0 auto;
+    min-height: 36px;
+    max-width: 240px;
+  }
+
+  .asset-git-file-label > small {
+    display: none;
+  }
+
+  .asset-git-merge-content {
+    flex: 1;
+    overflow: auto;
+  }
+
+  .asset-git-code-editor {
+    min-height: 120px;
+  }
+
+  .asset-git-source-legend {
+    display: none;
+  }
 }

@@ -89,6 +89,7 @@ function device(
     bindingId: string;
   }) => void,
 ) {
+  let description = "Docs";
   let value = name;
   let revision = 1;
   let skillRoot = initialSkillRoot;
@@ -114,7 +115,7 @@ function device(
             {
               id: storeId,
               name: value,
-              description: "Docs",
+              description,
               contentRevision: revision,
               snapshotHash: hashSnapshotContent([], []),
             },
@@ -181,6 +182,9 @@ function device(
   return {
     service,
     name: () => value,
+    setDescription: (next: string) => {
+      description = next;
+    },
     rename: (next: string) => {
       value = next;
       revision += 1;
@@ -199,6 +203,48 @@ function device(
 }
 
 describe("core asset Git synchronization", { timeout: 30_000 }, () => {
+  it.each(["", "   "])(
+    "synchronizes empty knowledge descriptions through the DSL binding boundary (%j)",
+    async (description) => {
+      const root = await fixture();
+      const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+      const local = device(join(root, "local"), "Team docs", undefined, [binding]);
+      local.setDescription(description);
+      await expect(local.service.overview()).resolves.toBeDefined();
+      await local.service.configure({
+        remote,
+        branch: "main",
+        autoPush: false,
+        pushDeletions: false,
+      });
+      expect((await local.service.sync()).status).toBe("ready");
+      const data = JSON.parse(
+        (
+          await exec("git", [
+            "-C",
+            join(root, "assets.git"),
+            "show",
+            "main:pragma-core-assets.json",
+          ])
+        ).stdout,
+      ) as {
+        items: {
+          kind: string;
+          data: { metadata?: { description: string }; description?: string };
+        }[];
+      };
+      expect(
+        data.items.find((item) => item.kind === "knowledge" && item.data.metadata !== undefined)
+          ?.data.metadata?.description,
+      ).toBe(binding.metadata.description);
+      expect(
+        data.items.find((item) => item.kind === "knowledge" && item.data.metadata === undefined)
+          ?.data.description,
+      ).toBe(description);
+      expect((await local.service.sync()).status).toBe("ready");
+    },
+  );
+
   it("uses the configured Git identity for core asset commits", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Team docs");

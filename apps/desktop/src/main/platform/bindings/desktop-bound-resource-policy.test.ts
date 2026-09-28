@@ -84,6 +84,25 @@ describe("desktop bound resource policy", () => {
     ).toThrow(/ambiguous/);
   });
 
+  it.each(["", "   "])(
+    "keeps stable DSL binding descriptions when user descriptions are %j",
+    (description) => {
+      const original = capability("ceq0qxcgdv75wg6b", []);
+      const rebound = bindExistingDesktopCapabilityResource(
+        original,
+        { id: CAPABILITY_ID },
+        { name: "Search", description },
+      );
+      expect(rebound.metadata.description).toBe(original.metadata.description);
+      const created = createDesktopCapabilityResource({
+        owner: "project-expert",
+        capabilityId: CAPABILITY_ID,
+        description,
+      });
+      expect(created.metadata.description).not.toBe("");
+    },
+  );
+
   it("preserves imported metadata while adding host bindings", () => {
     const importedCapability = capability("ceq0qxcgdv75wg6b", []);
     const rebound = bindExistingDesktopCapabilityResource(importedCapability, {
