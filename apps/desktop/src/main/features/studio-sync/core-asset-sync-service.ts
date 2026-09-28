@@ -41,6 +41,8 @@ import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import {
+  bindExistingDesktopCapabilityResource,
+  bindExistingDesktopContextResource,
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
   desktopCapabilityResourceId,
@@ -253,10 +255,10 @@ export function createCoreAssetSyncService(options: {
         const store = bindingId === undefined ? undefined : storesById.get(bindingId);
         if (store !== undefined) {
           name = store.name;
-          portable = {
-            ...resource,
-            metadata: { ...resource.metadata, name: store.name, description: store.description },
-          };
+          portable = bindExistingDesktopContextResource(resource, store.id, {
+            name: store.name,
+            description: store.description,
+          });
         } else if (bindingId !== undefined) {
           const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
           nameResolutionIssues.set(
@@ -266,20 +268,21 @@ export function createCoreAssetSyncService(options: {
         }
       } else if (resource.kind === "Capability") {
         const binding = classifyDesktopCapabilityResource(resource);
-        const capability = binding === undefined ? undefined : capabilitiesById.get(binding.id);
-        if (capability !== undefined) {
-          name = capability.definition.name;
-          portable = {
-            ...resource,
-            metadata: {
-              ...resource.metadata,
+        if (binding !== undefined) {
+          const capability = capabilitiesById.get(binding.id);
+          if (capability !== undefined) {
+            name = capability.definition.name;
+            portable = bindExistingDesktopCapabilityResource(resource, binding, {
               name: capability.definition.name,
               description: capability.definition.description,
-            },
-          };
-        } else if (binding !== undefined) {
-          const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
-          nameResolutionIssues.set(key, reportNameResolutionFailure(key, "capability", binding.id));
+            });
+          } else {
+            const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
+            nameResolutionIssues.set(
+              key,
+              reportNameResolutionFailure(key, "capability", binding.id),
+            );
+          }
         }
       }
       add(kind, canonicalPragmaResourceRef(resource), name, portable);
@@ -458,7 +461,7 @@ export function createCoreAssetSyncService(options: {
                   ? "synced"
                   : "pending";
       const displayItem = { key, kind: item.kind, name: item.name };
-      const unresolved = generatedBindingPlaceholder(displayItem);
+      const unresolved = local.has(key) ? undefined : generatedBindingPlaceholder(displayItem);
       if (unresolved !== undefined) {
         reportNameResolutionFailure(key, unresolved.kind, unresolved.bindingId);
       }
@@ -467,7 +470,7 @@ export function createCoreAssetSyncService(options: {
         {
           key,
           kind: item.kind,
-          name: safeSyncItemName(displayItem),
+          name: safeSyncItemName(displayItem, localNameIssue?.resourceKind ?? unresolved?.kind),
           ...identity,
           status,
           ...(nameIssue !== undefined
@@ -1135,10 +1138,12 @@ function generatedBindingPlaceholder(item: Pick<CoreAssetSyncItem, "key" | "kind
   }
   return undefined;
 }
-function safeSyncItemName(item: Pick<CoreAssetSyncItem, "key" | "kind" | "name">): string {
-  const unresolved = generatedBindingPlaceholder(item);
-  if (unresolved?.kind === "context-store") return "Unavailable knowledge base";
-  if (unresolved?.kind === "capability") return "Unavailable capability";
+function safeSyncItemName(
+  item: Pick<CoreAssetSyncItem, "name">,
+  unresolvedKind: CoreAssetSyncNameResolutionIssue["resourceKind"] | undefined,
+): string {
+  if (unresolvedKind === "context-store") return "Unavailable knowledge base";
+  if (unresolvedKind === "capability") return "Unavailable capability";
   return item.name;
 }
 function hashKnowledge(data: z.infer<typeof KnowledgeDataSchema>): string {

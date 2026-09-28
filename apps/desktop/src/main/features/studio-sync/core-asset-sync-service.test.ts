@@ -283,6 +283,69 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     ).toBe("Web Search");
   });
 
+  it("preserves authoritative local names that resemble generated binding placeholders", async () => {
+    const root = await fixture();
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const context = createDesktopContextResource({ owner: "project-expert", storeId });
+    const capability = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+    });
+    const capabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: {
+            kind: "mcp_server",
+            name: `Capability ${capabilityId}`,
+            description: "Legitimate placeholder-shaped capability name",
+            connection: {
+              transport: "stdio",
+              command: "search",
+              args: [],
+              env: {},
+              secretEnv: {},
+            },
+            timeoutMs: 30_000,
+            tools: [],
+          },
+          managedBy: "user",
+        },
+      ],
+    } as unknown as CapabilityStore;
+    const issues: { resourceKey: string }[] = [];
+    const local = device(
+      join(root, "local"),
+      `Context ${storeId}`,
+      undefined,
+      [context, capability],
+      undefined,
+      undefined,
+      capabilities,
+      (issue) => issues.push(issue),
+    );
+
+    const overview = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+    const contextItem = overview.items.find(
+      (item) => item.key === `knowledge:${canonicalPragmaResourceRef(context)}`,
+    );
+    const capabilityItem = overview.items.find(
+      (item) => item.key === `capability:${canonicalPragmaResourceRef(capability)}`,
+    );
+
+    expect(contextItem).toMatchObject({ name: `Context ${storeId}`, status: "synced" });
+    expect(capabilityItem).toMatchObject({
+      name: `Capability ${capabilityId}`,
+      status: "synced",
+    });
+    expect(issues).toEqual([]);
+  });
+
   it("uses a friendly name and logs a diagnostic for an unavailable binding", async () => {
     const root = await fixture();
     const context = createDesktopContextResource({ owner: "project-expert", storeId });

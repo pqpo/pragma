@@ -14,7 +14,6 @@ export async function runAssetGit(
     env: {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
     },
   });
   return stdout;
