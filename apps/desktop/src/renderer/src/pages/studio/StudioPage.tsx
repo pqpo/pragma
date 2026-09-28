@@ -18,6 +18,7 @@ import type {
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
   AutomationSummary,
+  AssetGitTarget,
   PragmaProjectSnapshot,
   DesktopPragmaContextStoreBinding,
   ExpertDefinition,
@@ -129,6 +130,8 @@ export function StudioPage(props: {
   readonly initialExpertStep?: ExpertEditorStep | undefined;
   readonly initialResourceRef?: string | undefined;
   readonly initialRevisionStoreId?: string | undefined;
+  readonly initialAssetGitTarget?:
+    { readonly target: AssetGitTarget; readonly requestId: number } | undefined;
   readonly initialMemoryState?: StudioPageMemoryState | undefined;
   readonly memoryEnabled: boolean;
   readonly onMemoryStateChange?: ((state: StudioPageMemoryState) => void) | undefined;
@@ -214,6 +217,7 @@ export function StudioPage(props: {
   const [publicationRootRef, setPublicationRootRef] = useState<string | null>(null);
   const openedInitialExpertRef = useRef<string | undefined>(undefined);
   const openedInitialResourceRef = useRef<string | undefined>(undefined);
+  const openedAssetGitRequest = useRef<number | undefined>(undefined);
   const resourceSaveCompletedRef = useRef(false);
 
   useEffect(() => {
@@ -392,6 +396,24 @@ export function StudioPage(props: {
     setResourceEditor({ kind: "team", mode: "edit" });
     setScreen("resource-edit");
   }, [project, props.initialResourceRef]);
+
+  useEffect(() => {
+    const request = props.initialAssetGitTarget;
+    if (request === undefined || openedAssetGitRequest.current === request.requestId) return;
+    if (request.target.kind === "knowledge") {
+      if (!contextStores.some((store) => store.id === request.target.id)) return;
+      setActiveView("context-stores");
+      setSelectedContextStoreId(request.target.id);
+      setContextStoreDetailReturn(null);
+      setScreen("context-store-detail");
+    } else {
+      if (!capabilities.some((capability) => capability.manifest.id === request.target.id)) return;
+      setActiveView("skills");
+      setSelectedCapabilityId(request.target.id);
+      setScreen("capability-detail");
+    }
+    openedAssetGitRequest.current = request.requestId;
+  }, [capabilities, contextStores, props.initialAssetGitTarget]);
   const saveExpert = async (expert: ExpertRecord, mode: ExpertEditorMode = "edit") => {
     const api = desktopApi();
     let saved = expert;
@@ -957,6 +979,12 @@ export function StudioPage(props: {
         {screen === "context-store-detail" && selectedContextStore !== null ? (
           <ContextStoreDetailFragment
             store={selectedContextStore}
+            openGitSettingsRequest={
+              props.initialAssetGitTarget?.target.kind === "knowledge" &&
+              props.initialAssetGitTarget.target.id === selectedContextStore.id
+                ? props.initialAssetGitTarget.requestId
+                : undefined
+            }
             onExport={async () => {
               let binding = contextStoreBindings.find(
                 (candidate) => candidate.storeId === selectedContextStore.id,
@@ -1080,6 +1108,12 @@ export function StudioPage(props: {
         {screen === "capability-detail" && selectedCapability !== null ? (
           <CapabilityDetailFragment
             capability={selectedCapability}
+            openGitSettingsRequest={
+              props.initialAssetGitTarget?.target.kind === "skill" &&
+              props.initialAssetGitTarget.target.id === selectedCapability.manifest.id
+                ? props.initialAssetGitTarget.requestId
+                : undefined
+            }
             onExport={
               selectedCapability.definition.kind === "skill" &&
               selectedCapability.managedBy !== "system"

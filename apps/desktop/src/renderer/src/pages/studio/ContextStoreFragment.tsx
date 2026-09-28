@@ -402,6 +402,7 @@ export function ContextStoreDetailFragment(props: {
   readonly onDiscardEditorDraft: (storeId: string, expectedRevision: number) => Promise<void>;
   readonly onStoreChanged: (store: ContextStore) => void;
   readonly onLeaveGuardChange?: ((guard: ContextStoreLeaveGuard | null) => void) | undefined;
+  readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
   const [entries, setEntries] = useState<readonly ContextStoreEntry[]>([]);
@@ -454,6 +455,10 @@ export function ContextStoreDetailFragment(props: {
   const [filePanelWidth, setFilePanelWidth] = usePersistentSidebarWidth(
     SIDEBAR_WIDTH_PREFERENCES.knowledgeBaseFiles,
   );
+
+  useEffect(() => {
+    if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
+  }, [props.openGitSettingsRequest]);
 
   useEffect(() => {
     if (!confirmOpen) return;
@@ -1622,7 +1627,6 @@ export function ContextStoreDetailFragment(props: {
         >
           <AssetGitPanel
             target={{ kind: "knowledge", id: props.store.id }}
-            revision={props.store.contentRevision}
             showHeading={false}
             beforeSync={async () => {
               if (!(await commitDraft())) throw new Error(t("assetGit.saveFailed"));

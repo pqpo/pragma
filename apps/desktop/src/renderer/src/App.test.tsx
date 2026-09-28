@@ -1,7 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { App, CoreSyncCutoverNotice, shouldShowCoreSyncCutoverNotice } from "./App.tsx";
+import {
+  App,
+  AssetGitIssueNotice,
+  CoreSyncCutoverNotice,
+  shouldShowCoreSyncCutoverNotice,
+  updateAssetGitIssues,
+} from "./App.tsx";
 import { i18n } from "./i18n/index.ts";
 
 afterEach(async () => {
@@ -107,5 +113,37 @@ describe("App", () => {
     expect(shouldShowCoreSyncCutoverNotice(true, false)).toBe(true);
     expect(shouldShowCoreSyncCutoverNotice(true, true)).toBe(false);
     expect(shouldShowCoreSyncCutoverNotice(false, false)).toBe(false);
+  });
+
+  it("keeps unresolved Asset Git failures visible until their target recovers", () => {
+    const target = { kind: "knowledge" as const, id: "00000000-0000-4000-8000-000000000001" };
+    const conflict = { target, status: "conflict" as const, conflictPaths: ["guide.md"] };
+    const failed = { target, status: "error" as const, error: "fetch failed" };
+
+    expect(updateAssetGitIssues([], conflict)).toEqual([conflict]);
+    expect(updateAssetGitIssues([conflict], failed)).toEqual([failed]);
+    expect(updateAssetGitIssues([failed], { target, status: "synced" })).toEqual([]);
+  });
+
+  it("renders an actionable and dismissible Asset Git issue notice", async () => {
+    await i18n.changeLanguage("zh-Hans");
+    const html = renderToStaticMarkup(
+      <AssetGitIssueNotice
+        status={{
+          target: { kind: "knowledge", id: "00000000-0000-4000-8000-000000000001" },
+          status: "conflict",
+          conflictPaths: ["guide.md"],
+        }}
+        additionalCount={2}
+        onOpen={() => undefined}
+        onDismiss={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="asset-git-issue-notice"');
+    expect(html).toContain("知识库 Git 同步发现冲突，需要处理。");
+    expect(html).toContain("另有 2 个资产需要处理。");
+    expect(html).toContain(">打开 Git 设置</button>");
+    expect(html).toContain('aria-label="关闭 Git 同步提示"');
   });
 });

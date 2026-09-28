@@ -1,12 +1,18 @@
-.core-sync-cutover-notice {
+.application-notices {
   position: fixed;
   z-index: 50;
   right: 24px;
   bottom: 24px;
+  display: grid;
+  gap: 10px;
+  width: min(560px, calc(100vw - 48px));
+}
+
+.core-sync-cutover-notice,
+.asset-git-issue-notice {
   display: flex;
   align-items: center;
   gap: 12px;
-  max-width: min(560px, calc(100vw - 48px));
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-large);
@@ -14,15 +20,18 @@
   box-shadow: var(--shadow-panel);
 }
 
-.core-sync-cutover-notice button {
+.core-sync-cutover-notice button,
+.asset-git-issue-notice button {
   flex: none;
 }
 
-.core-sync-cutover-notice > span {
+.core-sync-cutover-notice > span,
+.asset-git-issue-notice > span {
   flex: 1;
 }
 
-.core-sync-cutover-dismiss {
+.core-sync-cutover-dismiss,
+.asset-git-issue-dismiss {
   min-height: 36px;
 }
 

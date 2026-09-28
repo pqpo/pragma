@@ -43,6 +43,7 @@ export function CapabilityDetailFragment(props: {
   readonly onDeleted?: (capabilityId: string) => void;
   readonly onExport?: (() => Promise<void>) | undefined;
   readonly onPublish?: (() => Promise<void>) | undefined;
+  readonly openGitSettingsRequest?: number | undefined;
 }) {
   const { t } = useTranslation("studio");
   const { capability } = props;
@@ -69,6 +70,10 @@ export function CapabilityDetailFragment(props: {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const tools = useMemo(() => capabilityTools(capability), [capability]);
+
+  useEffect(() => {
+    if (props.openGitSettingsRequest !== undefined) setGitSettingsOpen(true);
+  }, [props.openGitSettingsRequest]);
 
   useEffect(() => {
     if (definition.kind !== "skill") {
@@ -638,7 +643,6 @@ export function CapabilityDetailFragment(props: {
         >
           <AssetGitPanel
             target={{ kind: "skill", id: capability.manifest.id }}
-            revision={capability.manifest.latestRevision}
             showHeading={false}
             onSynced={async () => {
               const api = desktopApi();

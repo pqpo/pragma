@@ -7,7 +7,6 @@ import { desktopApi } from "./studio-model.ts";
 
 export function AssetGitPanel(props: {
   readonly target: AssetGitTarget;
-  readonly revision: number;
   readonly showHeading?: boolean | undefined;
   readonly beforeSync?: (() => Promise<void>) | undefined;
   readonly onSynced: () => Promise<void>;
@@ -22,17 +21,22 @@ export function AssetGitPanel(props: {
   useEffect(() => {
     let active = true;
     const api = desktopApi();
-    const applyStatus = (next: AssetGitStatus) => {
-      if (!active || next.target.kind !== props.target.kind || next.target.id !== props.target.id)
-        return;
+    const appliesToTarget = (next: AssetGitStatus) =>
+      next.target.kind === props.target.kind && next.target.id === props.target.id;
+    const applyBackgroundStatus = (next: AssetGitStatus) => {
+      if (!active || !appliesToTarget(next)) return;
+      setStatus(next);
+    };
+    const applyLoadedStatus = (next: AssetGitStatus) => {
+      if (!active || !appliesToTarget(next)) return;
       setStatus(next);
       setRemote(next.source?.remote ?? "");
       setBranch(next.source?.branch ?? "");
     };
-    const unsubscribe = api?.subscribeAssetGitStatusUpdates(applyStatus);
+    const unsubscribe = api?.subscribeAssetGitStatusUpdates(applyBackgroundStatus);
     void api
       ?.getAssetGitStatus(props.target)
-      .then(applyStatus)
+      .then(applyLoadedStatus)
       .catch((cause: unknown) => {
         if (active) setError(errorMessage(cause));
       });
@@ -40,7 +44,7 @@ export function AssetGitPanel(props: {
       active = false;
       unsubscribe?.();
     };
-  }, [props.target.kind, props.target.id, props.revision]);
+  }, [props.target.kind, props.target.id]);
 
   const run = async (action: () => Promise<AssetGitStatus>): Promise<void> => {
     setBusy(true);
