@@ -1,0 +1,9 @@
+{
+  "writer": "Claude Code 2.1.195",
+  "transport": "legacy stream-json flags used by the main-branch Claude runtime",
+  "sessionId": "719b0278-a54a-4da4-b30a-f3b9e664b7b2",
+  "workspace": "<LEGACY_ROOT>/workspace",
+  "platform": "darwin",
+  "capturedAt": "2026-09-28",
+  "sanitization": "Replaced temporary root and home paths; native records and versions preserved."
+}

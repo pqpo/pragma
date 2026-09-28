@@ -1,6 +1,8 @@
+import { statSync } from "node:fs";
 import { canUseRuntimeBinary } from "@pragma/core/runtime/process-probe";
 import type { RuntimeCanUseResult } from "@pragma/core/runtime/runtime-adapter";
 import { BoundedLruCache } from "@pragma/shared";
+import { resolveClaudeAcpWorkerPath } from "./acp-executable.ts";
 import { resolveClaudeCodeCommand } from "./executable.ts";
 import type { ClaudeCodeRuntimeSpawn } from "./types.ts";
 
@@ -20,6 +22,7 @@ const environmentIds = new WeakMap<NodeJS.ProcessEnv, number>();
 let nextIdentity = 1;
 
 export interface ClaudeCodeRuntimeAvailabilityOptions {
+  readonly acpWorkerPath?: string | undefined;
   readonly executablePath?: string | undefined;
   readonly cwd?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
@@ -31,14 +34,22 @@ export interface ClaudeCodeRuntimeAvailabilityOptions {
 export async function canUseClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAvailabilityOptions = {},
 ): Promise<RuntimeCanUseResult> {
-  const command =
-    options.spawn === undefined
-      ? resolveClaudeCodeCommand(options)
-      : {
-          executablePath: options.executablePath ?? "claude",
-          launcherArgs: [] as readonly string[],
-          sourcePath: options.executablePath ?? "claude",
-        };
+  try {
+    const worker = resolveClaudeAcpWorkerPath(options.acpWorkerPath);
+    if (!statSync(worker).isFile()) throw new Error("Claude ACP worker path must point to a file");
+  } catch (error) {
+    return {
+      usable: false,
+      reason: error instanceof Error ? error.message : String(error),
+      details: { code: "claude_acp_worker_missing" },
+    };
+  }
+  if (options.spawn !== undefined)
+    return {
+      usable: true,
+      details: { probe: "skipped", reason: "Custom Claude Code spawn was provided." },
+    };
+  const command = resolveClaudeCodeCommand(options);
   const cacheKey = availabilityCacheKey(command, options);
   if (options.forceRefresh) {
     availabilityCache.delete(cacheKey);

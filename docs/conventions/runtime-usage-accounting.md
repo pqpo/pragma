@@ -13,19 +13,9 @@ Runtime adapters must treat model usage emitted during a single runtime turn as 
 
 ## Claude Code
 
-Verified against `claude 2.1.195` using:
+Claude Code uses `claude-agent-acp` 0.81.2, whose prompt activation resets its token accumulator. Its terminal `session/prompt` usage covers the current turn, including results produced by steering. The Claude binding explicitly selects turn-scoped accounting; Core uses that terminal total directly and never adds raw SDK observations to it. Other ACP bindings can select session-scoped snapshots, which Core differences into turn observations. Manual compaction does not charge its usage to the next user prompt.
 
-```bash
-claude -p --output-format stream-json --input-format stream-json --verbose
-```
-
-Claude Code stdout can emit usage on intermediate `assistant` events and then on the final `result` event. These usage objects are snapshots. The final `result.usage` matches the final local transcript usage stored under:
-
-```text
-CLAUDE_CONFIG_DIR/projects/**/<sessionId>.jsonl
-```
-
-Therefore the Claude Code adapter should keep the latest usage snapshot. It must not add intermediate assistant usage to final result usage.
+If ACP omits terminal usage, the Claude-specific sum of the raw SDK `result.usage` observations for the active prompt is used. If neither is available, Core's `RuntimeTokenCounter` estimates the serialized system context, prior messages, prompt/attachments and output. `usage_update.used/size` measures context occupancy and never supplies billing usage.
 
 Claude/Anthropic reports uncached input, cache reads, and cache writes as separate token categories:
 

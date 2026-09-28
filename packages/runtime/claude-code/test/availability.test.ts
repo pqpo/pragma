@@ -16,6 +16,23 @@ describe("Claude Code Runtime availability cache", () => {
     mocks.canUseRuntimeBinary.mockReset();
   });
 
+  it.each([false, true])("rejects a missing explicit worker (custom spawn: %s)", async (custom) => {
+    mocks.canUseRuntimeBinary.mockResolvedValue(usable("claude"));
+    await expect(
+      canUseClaudeCodeRuntime({
+        acpWorkerPath: `/missing/worker-${crypto.randomUUID()}.js`,
+        ...(custom ? { spawn: vi.fn() } : {}),
+      }),
+    ).resolves.toMatchObject({ usable: false, details: { code: "claude_acp_worker_missing" } });
+    expect(mocks.canUseRuntimeBinary).not.toHaveBeenCalled();
+  });
+  it("skips the native probe for custom spawn only after finding the worker", async () => {
+    await expect(canUseClaudeCodeRuntime({ spawn: vi.fn() })).resolves.toMatchObject({
+      usable: true,
+    });
+    expect(mocks.canUseRuntimeBinary).not.toHaveBeenCalled();
+  });
+
   it("shares a fresh availability result", async () => {
     mocks.canUseRuntimeBinary.mockResolvedValue(usable("claude 1"));
     const executablePath = `/claude/availability-${crypto.randomUUID()}`;

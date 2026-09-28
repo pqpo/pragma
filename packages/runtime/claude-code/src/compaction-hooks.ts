@@ -7,10 +7,12 @@ import { RUNTIME_CONTEXT_COMPACTION_STAGES } from "@pragma/core";
 const MAX_HOOK_BODY_BYTES = 64 * 1024;
 
 export interface ClaudeCompactionNativeEvent extends Record<string, unknown> {
+  readonly sessionId: string;
   readonly type: "pragma_context_compaction";
   readonly operationId: string;
   readonly stage: RuntimeContextCompactionStage;
   readonly trigger: RuntimeContextCompactionTrigger;
+  readonly nativeBoundary?: true;
   readonly errorMessage?: string | undefined;
 }
 
@@ -19,6 +21,17 @@ export interface ClaudeCompactionHookRelay {
   readonly authorization: string;
   readonly subscribe: (subscriber: (event: ClaudeCompactionNativeEvent) => void) => () => void;
   readonly failPending: (message: string) => void;
+  readonly observeNativeBoundary: (
+    sessionId: string,
+    trigger: RuntimeContextCompactionTrigger,
+  ) => void;
+  readonly waitForCompaction: (
+    sessionId: string,
+    timeoutMs?: number,
+  ) => {
+    readonly completed: Promise<void>;
+    readonly dispose: () => void;
+  };
   readonly close: () => Promise<void>;
 }
 
@@ -26,6 +39,7 @@ export async function createClaudeCompactionHookRelay(): Promise<ClaudeCompactio
   const token = randomBytes(32).toString("base64url");
   const authorization = `Bearer ${token}`;
   const subscribers = new Set<(event: ClaudeCompactionNativeEvent) => void>();
+  const cancelWaiters = new Set<() => void>();
   const pending = new Map<
     string,
     { readonly operationId: string; readonly trigger: RuntimeContextCompactionTrigger }
@@ -62,9 +76,70 @@ export async function createClaudeCompactionHookRelay(): Promise<ClaudeCompactio
       subscribers.add(subscriber);
       return () => subscribers.delete(subscriber);
     },
+    observeNativeBoundary(sessionId, trigger) {
+      const current = pending.get(sessionId);
+      pending.delete(sessionId);
+      publish({
+        sessionId,
+        type: "pragma_context_compaction",
+        operationId: current?.operationId ?? randomUUID(),
+        stage: RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
+        trigger,
+        nativeBoundary: true,
+      });
+    },
+    waitForCompaction(sessionId, timeoutMs = 50_000) {
+      let operationId: string | undefined;
+      let timer: NodeJS.Timeout;
+      let finished = false;
+      let rejectCompletion: (error: Error) => void;
+      let subscriber: (event: ClaudeCompactionNativeEvent) => void;
+      const completed = new Promise<void>((resolve, reject) => {
+        rejectCompletion = reject;
+        subscriber = (event) => {
+          if (event.sessionId !== sessionId || event.trigger !== "manual") return;
+          if (event.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.started) {
+            operationId = event.operationId;
+          } else if (
+            event.nativeBoundary === true ||
+            (operationId !== undefined && event.operationId === operationId)
+          ) {
+            finished = true;
+            clearTimeout(timer);
+            subscribers.delete(subscriber);
+            if (event.stage === RUNTIME_CONTEXT_COMPACTION_STAGES.completed) resolve();
+            else reject(new Error(event.errorMessage ?? "Claude compaction failed."));
+          }
+        };
+        subscribers.add(subscriber);
+        timer = setTimeout(() => {
+          finished = true;
+          subscribers.delete(subscriber);
+          reject(
+            new Error(
+              "Claude compaction did not receive a native boundary or matching PreCompact/PostCompact hooks.",
+            ),
+          );
+        }, timeoutMs);
+        timer.unref();
+      });
+      const dispose = () => {
+        clearTimeout(timer);
+        subscribers.delete(subscriber);
+        cancelWaiters.delete(dispose);
+        if (!finished) {
+          finished = true;
+          rejectCompletion(new Error("Claude compaction wait was cancelled."));
+        }
+      };
+      cancelWaiters.add(dispose);
+      void completed.then(dispose, dispose);
+      return { completed, dispose };
+    },
     failPending(message) {
-      for (const { operationId, trigger } of pending.values()) {
+      for (const [sessionId, { operationId, trigger }] of pending) {
         publish({
+          sessionId,
           type: "pragma_context_compaction",
           operationId,
           stage: RUNTIME_CONTEXT_COMPACTION_STAGES.failed,
@@ -75,6 +150,7 @@ export async function createClaudeCompactionHookRelay(): Promise<ClaudeCompactio
       pending.clear();
     },
     async close() {
+      for (const cancel of cancelWaiters) cancel();
       subscribers.clear();
       pending.clear();
       await closeServer(server);
@@ -117,6 +193,7 @@ async function handleHookRequest(options: {
       const operationId = randomUUID();
       options.pending.set(sessionId, { operationId, trigger });
       options.publish({
+        sessionId,
         type: "pragma_context_compaction",
         operationId,
         stage: RUNTIME_CONTEXT_COMPACTION_STAGES.started,
@@ -129,6 +206,7 @@ async function handleHookRequest(options: {
       };
       options.pending.delete(sessionId);
       options.publish({
+        sessionId,
         type: "pragma_context_compaction",
         operationId: current.operationId,
         stage: RUNTIME_CONTEXT_COMPACTION_STAGES.completed,

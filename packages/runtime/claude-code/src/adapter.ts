@@ -1,12 +1,9 @@
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-
-import type { RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
+import type { RuntimeAdapter, RuntimeCanUseResult, RuntimeModelSelection } from "@pragma/core";
 import {
   createExpertToolsHttpMcpFeature,
   createMcpToolRegistryPool,
   defineRuntimeFeatures,
-  defineRuntimeDriver,
+  defineAcpRuntimeDriver,
   runtimeFeature,
   type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
@@ -15,20 +12,8 @@ import { canUseClaudeCodeRuntime } from "./availability.ts";
 import { resolveClaudeCodeCommand } from "./executable.ts";
 import { materializeClaudeCodePlugin } from "./skills.ts";
 import { createClaudeCompactionHookRelay } from "./compaction-hooks.ts";
-import {
-  cancelClaudeCodeTurn,
-  collectClaudeCodeUsage,
-  compactClaudeCodeContextWindow,
-  consumeClaudeCodeStartupMessages,
-  createClaudeCodeNativeSession,
-  filterClaudeRuntimeEnv,
-  listClaudeCodeMessages,
-  mapClaudeCodeNativeEvent,
-  readClaudeCodeContextWindow,
-  startClaudeCodeTurn,
-  type ClaudeCodeNativeSession,
-} from "./session.ts";
-import type { ClaudeCodeRuntimeAdapterOptions, ClaudeCodeRuntimeSessionState } from "./types.ts";
+import { createClaudeAcpBinding, filterClaudeRuntimeEnv } from "./session.ts";
+import type { ClaudeCodeRuntimeAdapterOptions } from "./types.ts";
 import { assertClaudeCodeModelSelection, createClaudeCodeModelDiscovery } from "./models.ts";
 
 const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
@@ -41,11 +26,8 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
   },
 };
 
-const CLAUDE_CODE_EVIDENCE_PENDING =
-  "Implemented in the adapter; an executed Runtime probe evidence bundle is not recorded yet.";
-const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "bypassPermissions" as const;
-
-type ClaudeCodeDriverSession = ClaudeCodeNativeSession;
+const CLAUDE_CODE_ACCEPTANCE_PENDING =
+  "ACP implementation is available; the complete platform/provider acceptance matrix is pending. See docs/architecture/claude-code-runtime.md.";
 
 export function createClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAdapterOptions = {},
@@ -69,15 +51,15 @@ export function createClaudeCodeRuntime(
   };
   const listModels = options.listModels ?? createClaudeCodeModelDiscovery(options);
   const implemented = () =>
-    runtimeFeature.native(runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING));
+    runtimeFeature.native(runtimeFeature.degraded(CLAUDE_CODE_ACCEPTANCE_PENDING));
   const mcp = createExpertToolsHttpMcpFeature({
-    readiness: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING),
+    readiness: runtimeFeature.degraded(CLAUDE_CODE_ACCEPTANCE_PENDING),
     pool: mcpToolRegistries,
     resourcePrefix: "claude-code",
   });
   const skills = runtimeFeature.session({
     id: "claude-code.skills",
-    readiness: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING),
+    readiness: runtimeFeature.degraded(CLAUDE_CODE_ACCEPTANCE_PENDING),
     async prepare(ctx) {
       const relay = await ctx.resources.acquire(
         "claude-code.compaction-relay",
@@ -96,9 +78,9 @@ export function createClaudeCodeRuntime(
   });
   const permissions = runtimeFeature.session({
     id: "claude-code.permissions",
-    readiness: runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING),
+    readiness: runtimeFeature.degraded(CLAUDE_CODE_ACCEPTANCE_PENDING),
     prepare() {
-      return { mode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE };
+      return { mode: options.permissionMode ?? "bypassPermissions" };
     },
   });
   const features = defineRuntimeFeatures({
@@ -124,21 +106,17 @@ export function createClaudeCodeRuntime(
     usage: implemented(),
     contextWindow: implemented(),
     compaction: runtimeFeature.native(
-      runtimeFeature.degraded(CLAUDE_CODE_EVIDENCE_PENDING, {
+      runtimeFeature.degraded(CLAUDE_CODE_ACCEPTANCE_PENDING, {
         compactionModes: ["manual", "events"],
       }),
     ),
     cancellation: implemented(),
-    steering: runtimeFeature.native(
-      runtimeFeature.unsupported(
-        "Claude Code stream-json mode exposes no safe active-turn steering API.",
-      ),
-    ),
+    steering: implemented(),
     close: implemented(),
     cleanup: implemented(),
   });
 
-  return defineRuntimeDriver(
+  return defineAcpRuntimeDriver(
     {
       descriptor,
       features,
@@ -158,114 +136,60 @@ export function createClaudeCodeRuntime(
             "session.destroyed",
             "files.changed",
           ],
-          metadata: {
-            format: "claude-code-session-dir",
-          },
+          metadata: { format: "claude-code-session-dir" },
         };
       },
-      async createSession(ctx): Promise<ClaudeCodeDriverSession> {
-        const defaultProviderId = ctx.request.modelSelection?.model.providerId;
-        const defaultModelName =
-          ctx.request.modelSelection?.model.modelId ?? options.defaultModelName;
-        const defaultThinkingLevel =
-          ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel;
-        if (
-          defaultProviderId !== undefined ||
-          defaultModelName !== undefined ||
-          defaultThinkingLevel !== undefined
-        ) {
-          assertClaudeCodeModelSelection(
-            await listModels(),
-            defaultModelName,
-            defaultThinkingLevel,
-            defaultProviderId,
-          );
-        }
+      async prepare(ctx) {
         const sessionDir =
           ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("claude-code");
-        const state: ClaudeCodeRuntimeSessionState = {
-          sessionId:
-            ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
-        };
-        const mcp = ctx.features.mcp;
-        const skills = ctx.features.skills;
         const managedConfig = await prepareManagedClaudeCodeConfig({
           sessionDir,
           env: ctx.processEnvironment,
           logger: ctx.logger,
         });
-        if (state.sessionId !== "") {
-          const exists = await nativeSessionFileExists(
-            join(managedConfig.configDir, "projects"),
-            state.sessionId,
+        let defaultSelection: RuntimeModelSelection | undefined = ctx.request.modelSelection;
+        if (
+          defaultSelection === undefined &&
+          (options.defaultModelName !== undefined || options.defaultThinkingLevel !== undefined)
+        ) {
+          const models = await listModels();
+          assertClaudeCodeModelSelection(
+            models,
+            options.defaultModelName,
+            options.defaultThinkingLevel,
           );
-          if (!exists) {
-            throw new Error(`Claude Code runtime session file was not found: ${state.sessionId}.`);
-          }
+          const model =
+            options.defaultModelName === undefined
+              ? models.find((candidate) => candidate.default)
+              : models.find((candidate) => candidate.id === options.defaultModelName);
+          if (model === undefined) throw new Error("Claude model selection has no default model");
+          defaultSelection = {
+            model: { providerId: model.provider.id, modelId: model.id },
+            ...(options.defaultThinkingLevel === undefined
+              ? {}
+              : { thinkingLevel: options.defaultThinkingLevel }),
+          };
         }
-        ctx.logger.info(
-          "runtime.claude_code_session_ready",
-          "Claude Code Session preparation completed",
-          {
-            systemPromptCharacters: ctx.agentContext.systemPrompt.length,
-            toolCount: mcp.registry.tools.length,
-            mcpOpenedConnections: mcp.lease.stats.openedConnections,
-            mcpReusedConnections: mcp.lease.stats.reusedConnections,
-            mcpCoalescedConnections: mcp.lease.stats.coalescedConnections,
-          },
-        );
-
-        return createClaudeCodeNativeSession({
-          agent: ctx.agent,
-          executablePath: command.executablePath,
-          launcherArgs: command.launcherArgs,
-          additionalArgs: options.additionalArgs ?? [],
-          defaultProviderId,
-          defaultModelName,
-          defaultThinkingLevel,
-          env: ctx.processEnvironment,
+        if (defaultSelection !== undefined)
+          assertClaudeCodeModelSelection(
+            await listModels(),
+            defaultSelection.model.modelId,
+            defaultSelection.thinkingLevel,
+            defaultSelection.model.providerId,
+          );
+        return createClaudeAcpBinding({
+          options: { ...options, listModels },
+          workspace: ctx.workspace,
           humanInteractionHandler: ctx.request.humanInteractionHandler,
-          logger: ctx.logger,
-          managedConfig,
-          mcpServerUrl: mcp.registration.url,
-          permissionMode: ctx.features.permissions.mode,
-          pluginDir: skills.pluginDir,
-          compactionHookRelay: skills.relay,
-          sessionDir,
-          spawn: options.spawn,
-          startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
-          state,
           systemPrompt: ctx.agentContext.systemPrompt,
-          tokenCounter: options.tokenCounter,
+          managedConfig,
+          cli: command,
+          processEnvironment: ctx.processEnvironment,
+          pluginDir: ctx.features.skills.pluginDir,
+          mcpServerUrl: ctx.features.mcp.registration.url,
+          relay: ctx.features.skills.relay,
+          defaultSelection,
         });
-      },
-      readSession(session) {
-        return {
-          runtimeSessionId: session.state.sessionId,
-        };
-      },
-      listMessages: listClaudeCodeMessages,
-      consumeStartupMessages: consumeClaudeCodeStartupMessages,
-      async startTurn(session, turn) {
-        const providerId = turn.modelSelection?.model.providerId ?? session.defaultProviderId;
-        const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
-        const thinkingLevel = turn.modelSelection?.thinkingLevel ?? session.defaultThinkingLevel;
-        if (providerId !== undefined || modelName !== undefined || thinkingLevel !== undefined) {
-          assertClaudeCodeModelSelection(await listModels(), modelName, thinkingLevel, providerId);
-        }
-        return await startClaudeCodeTurn(session, turn);
-      },
-      mapEvent: mapClaudeCodeNativeEvent,
-      async collectUsage(session, ctx) {
-        return await collectClaudeCodeUsage(session, ctx.startedAt, ctx.usage);
-      },
-      readContextWindow: readClaudeCodeContextWindow,
-      compactContext: compactClaudeCodeContextWindow,
-      cancelTurn(session) {
-        cancelClaudeCodeTurn(session);
-      },
-      closeSession(session) {
-        cancelClaudeCodeTurn(session);
       },
     },
     {
@@ -276,21 +200,6 @@ export function createClaudeCodeRuntime(
   );
 }
 
-async function nativeSessionFileExists(root: string, runtimeSessionId: string): Promise<boolean> {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) {
-      if (await nativeSessionFileExists(path, runtimeSessionId)) {
-        return true;
-      }
-    } else if (entry.isFile() && entry.name === `${runtimeSessionId}.jsonl`) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function createClaudeCodeRuntimeCanUse(
   options: ClaudeCodeRuntimeAdapterOptions,
 ): () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult {
@@ -298,19 +207,11 @@ function createClaudeCodeRuntimeCanUse(
     return options.canUse;
   }
 
-  if (options.spawn !== undefined) {
-    return () => ({
-      usable: true,
-      details: {
-        probe: "skipped",
-        reason: "Custom Claude Code spawn was provided.",
-      },
-    });
-  }
-
   return async () =>
     await canUseClaudeCodeRuntime({
+      ...(options.acpWorkerPath === undefined ? {} : { acpWorkerPath: options.acpWorkerPath }),
       ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
       ...(options.env === undefined ? {} : { env: options.env }),
+      ...(options.spawn === undefined ? {} : { spawn: options.spawn }),
     });
 }

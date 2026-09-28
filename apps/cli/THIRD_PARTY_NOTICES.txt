@@ -6,3 +6,9 @@ is installed through npm and retains its own package license and notices.
 
 Pragma itself is distributed under the GNU Affero General Public License v3.0 only
 (AGPL-3.0-only); see LICENSE in this package.
+
+The bundled Claude ACP worker includes @agentclientprotocol/claude-agent-acp
+0.81.2 and @agentclientprotocol/sdk 1.5.0, distributed under Apache-2.0.
+The worker's retained license comments and upstream notices apply to these
+components and their bundled dependencies. Claude Code itself is a separately
+installed product and is not included in this package.

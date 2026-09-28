@@ -17,18 +17,18 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 ## Layers
 
-| Layer             | Responsibility                                                                                       |
-| ----------------- | ---------------------------------------------------------------------------------------------------- |
-| `shared`          | Runtime-neutral contracts, domain types, and pure utilities                                          |
-| `core`            | Expert Agent execution abstractions and Runtime Adapter contracts                                    |
-| `evaluation`      | Independent Run Dry and Agent Judge dataset contracts, assertions, sampling, and results             |
-| `interpreter`     | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump                           |
-| `built-in-agents` | Six DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts |
-| `runtime-*`       | Concrete Runtime Adapter implementations                                                             |
-| `local-host`      | Node-only device-local application services and Mission Board shared by Desktop Main and the CLI     |
-| `plugins/*`       | Expert extensions built on the core plugin API                                                       |
+| Layer             | Responsibility                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `shared`          | Runtime-neutral contracts, domain types, and pure utilities                                           |
+| `core`            | Expert Agent execution abstractions and Runtime Adapter contracts                                     |
+| `evaluation`      | Independent Run Dry and Agent Judge dataset contracts, assertions, sampling, and results              |
+| `interpreter`     | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump                            |
+| `built-in-agents` | Six DSL-defined built-in Agents, their independent host ports, portable product logic, and contracts  |
+| `runtime-*`       | Concrete Runtime Adapter implementations                                                              |
+| `local-host`      | Node-only device-local application services and Mission Board shared by Desktop Main and the CLI      |
+| `plugins/*`       | Expert extensions built on the core plugin API                                                        |
 | `apps`            | Current process entry points: Desktop and CLI; future Hosts require an explicit architecture decision |
-| `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                        |
+| `examples`        | Runnable demonstrations that may compose core, plugins, and concrete runtimes                         |
 
 ## Dependency Matrix
 
@@ -146,3 +146,7 @@ apps/desktop
 packages/core/src/local-agent-bridge
 apps/server/src/runtime-gateway
 ```
+
+## ACP transport
+
+Core's `defineAcpRuntimeDriver()` composes the existing private Session factory with the vendor-neutral ACP SDK. Concrete `runtime-*` adapters provide agent executables, session metadata and provider extensions. Claude-specific ACP code and its bundled worker stay in `@pragma/runtime-claude-code`; Core does not import `claude-agent-acp`. See [ADR 059](../adr/059-acp-runtime-driver.md).

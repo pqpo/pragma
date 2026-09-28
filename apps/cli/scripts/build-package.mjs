@@ -66,6 +66,12 @@ const canonicalEventFeedWorkerBundle = await build({
   outfile: join(distDirectory, "canonical-event-feed-worker.js"),
 });
 
+const claudeAcpWorkerBundle = await build({
+  ...commonBuildOptions,
+  entryPoints: [join(repositoryDirectory, "packages/runtime/claude-code/src/claude-acp-worker.ts")],
+  outfile: join(distDirectory, "claude-acp-worker.js"),
+});
+
 await build({
   absWorkingDir: repositoryDirectory,
   bundle: false,
@@ -96,7 +102,17 @@ await writeFile(
   "utf8",
 );
 
+await writeFile(
+  join(releaseDirectory, "claude-acp-worker.metafile.json"),
+  `${JSON.stringify(claudeAcpWorkerBundle.metafile, null, 2)}\n`,
+  "utf8",
+);
+
 await Promise.all([
+  cp(
+    join(distDirectory, "claude-acp-worker.js"),
+    join(stagingDirectory, "dist/claude-acp-worker.js"),
+  ),
   cp(join(distDirectory, "pragma.js"), join(stagingDirectory, "dist/pragma.js")),
   cp(join(distDirectory, "cli.js"), join(stagingDirectory, "dist/cli.js")),
   cp(

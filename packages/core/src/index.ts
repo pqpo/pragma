@@ -74,6 +74,7 @@ export * from "./plugins/plugin-loader.ts";
 export * from "./runtime/agent-lifecycle.ts";
 export * from "./runtime/async-push-queue.ts";
 export * from "./runtime/driver.ts";
+export * from "./runtime/acp-driver.ts";
 export * from "./runtime/features.ts";
 export * from "./runtime/mcp-feature.ts";
 export * from "./runtime/output.ts";

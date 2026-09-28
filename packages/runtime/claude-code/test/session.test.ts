@@ -1,292 +1,250 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { describe, expect, it, vi } from "vitest";
-import type { RuntimeEventMappingContext } from "@pragma/core";
-
+import type { CreateElicitationRequest, RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import {
-  consumeClaudeCodeStartupMessages,
-  createClaudeCodeUserInput,
-  mapClaudeCodeNativeEvent,
-  normalizeClaudeToolRuntimeEvents,
-  readAssistantMessageEvent,
-  readClaudeCodeContextWindow,
-  readClaudeCodeContextWindowUsage,
-  writeClaudeCodeMcpConfig,
-  type ClaudeToolStreamState,
-  type ClaudeCodeNativeSession,
+  askUserQuestionsToCreateRequest,
+  applyAskElicitationResponse,
+} from "@agentclientprotocol/claude-agent-acp/dist/elicitation.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  approveClaudeAcpTool,
+  answerClaudeAcpForm,
+  claudeAdditionalArgs,
+  filterClaudeRuntimeEnv,
 } from "../src/session.ts";
 
-describe("Claude Code startup messages", () => {
-  it("consumes mounted messages once without recording them before a turn", () => {
-    const session = {
-      pendingStartupMessages: [{ role: "user", content: "always-on context" }],
-      messages: [],
-    } as unknown as ClaudeCodeNativeSession;
-
-    expect(consumeClaudeCodeStartupMessages(session)).toEqual([
-      { role: "user", content: "always-on context" },
-    ]);
-    expect(consumeClaudeCodeStartupMessages(session)).toEqual([]);
-    expect(session.messages).toEqual([]);
-  });
-});
-
-describe("Claude Code multimodal input", () => {
-  it("encodes image attachments as stream-json image blocks", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "pragma-claude-image-"));
-    const path = join(directory, "screen.png");
-    await writeFile(path, "image-bytes");
-    try {
-      await expect(
-        createClaudeCodeUserInput(
-          ["inspect this image"],
-          [
-            {
-              id: "00000000-0000-4000-8000-000000000001",
-              kind: "image",
-              name: "screen.png",
-              path,
-              mimeType: "image/png",
-            },
-          ],
-        ),
-      ).resolves.toEqual({
-        type: "user",
-        message: {
-          role: "user",
-          content: [
-            { type: "text", text: "inspect this image" },
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/png",
-                data: Buffer.from("image-bytes").toString("base64"),
-              },
-            },
-          ],
-        },
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("Claude Code context window", () => {
-  it("pairs the latest assistant-step usage with the selected model context window", () => {
-    expect(
-      readClaudeCodeContextWindowUsage(
-        {
-          modelUsage: {
-            "claude-sonnet": {
-              inputTokens: 60_000,
-              outputTokens: 2_000,
-              contextWindow: 200_000,
-            },
-          },
-        },
-        {
-          measurement: "reported",
-          input: 41_000,
-          output: 1_000,
-          cacheRead: 8_000,
-          cacheWrite: 0,
-          totalTokens: 50_000,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        "claude-sonnet",
-      ),
-    ).toMatchObject({
-      usedTokens: 50_000,
-      contextWindowTokens: 200_000,
-      percent: 25,
-      measurement: "derived",
-    });
-  });
-
-  it("uses the shared counter only when the reported context count is unavailable", () => {
-    const countText = vi.fn(() => ({ tokens: 41, source: "heuristic" as const }));
-    const session = {
-      contextWindowUsage: {
-        usedTokens: null,
-        contextWindowTokens: 200_000,
-        percent: null,
-        measurement: "derived",
-        observedAt: "2026-07-29T00:00:00.000Z",
-      },
-      systemPrompt: "system",
-      messages: [{ role: "user", content: "hello", timestamp: 0 }],
-      tokenCounter: { countText },
-      tokenModelIdentity: { providerCatalogId: "anthropic", modelId: "claude-test" },
-    } as unknown as ClaudeCodeNativeSession;
-
-    expect(readClaudeCodeContextWindow(session)).toMatchObject({
-      usedTokens: 41,
-      measurement: "estimated",
-    });
-    expect(countText).toHaveBeenCalledOnce();
-
-    session.contextWindowUsage = {
-      ...session.contextWindowUsage!,
-      usedTokens: 60,
-      percent: 0.03,
-    };
-    expect(readClaudeCodeContextWindow(session)?.usedTokens).toBe(60);
-    expect(countText).toHaveBeenCalledOnce();
-  });
-});
-
-describe("Claude Code Execution MCP config", () => {
-  it("writes the isolated registration URL", async () => {
-    const sessionDir = await mkdtemp(join(tmpdir(), "pragma-claude-mcp-"));
-    const url = "http://127.0.0.1:43127/sessions/opaque-token/mcp";
-
-    try {
-      const path = await writeClaudeCodeMcpConfig(sessionDir, url);
-      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
-        mcpServers: {
-          pragma: {
-            type: "http",
-            url,
-          },
-        },
-      });
-    } finally {
-      await rm(sessionDir, { recursive: true, force: true });
-    }
-  });
-});
-
-const context = {
-  runId: "run-1",
-  source: {
-    kind: "agent" as const,
-    runId: "run-1",
-    agentId: "expert-1",
-    path: [],
+const permission: RequestPermissionRequest = {
+  sessionId: "owned",
+  toolCall: {
+    toolCallId: "tool",
+    title: "Shell",
+    rawInput: { command: "echo original" },
+    _meta: { claudeCode: { toolName: "Bash" } },
   },
-  events: {} as RuntimeEventMappingContext["events"],
-} satisfies RuntimeEventMappingContext;
-
-describe("Claude Code stream mapping", () => {
-  it("does not expose internal system and thinking-token accounting events", () => {
-    expect(
-      mapClaudeCodeNativeEvent(
-        { type: "system", subtype: "thinking_tokens", token_count: 1 },
-        context,
-      ).events,
-    ).toEqual([]);
-    expect(
-      mapClaudeCodeNativeEvent({ type: "system", subtype: "status", status: "requesting" }, context)
-        .events,
-    ).toEqual([]);
+  options: [
+    { optionId: "once", name: "Allow", kind: "allow_once" },
+    { optionId: "deny", name: "Deny", kind: "reject_once" },
+  ],
+};
+describe("Claude ACP interactions and isolation", () => {
+  it("returns Host-approved edits without creating durable permission rules", async () => {
+    const handler = vi.fn(async () => ({
+      kind: "tool_approval" as const,
+      approved: true,
+      updatedInput: { command: "echo edited" },
+    }));
+    await expect(
+      approveClaudeAcpTool(permission, handler, new AbortController().signal),
+    ).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "once" },
+      _meta: { "pragma.updatedInput": { command: "echo edited" } },
+    });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "Bash", input: { command: "echo original" } }),
+    );
   });
-
-  it("keeps SDK thinking deltas as thought events", () => {
-    expect(
-      mapClaudeCodeNativeEvent(
-        {
-          type: "stream_event",
-          event: {
-            type: "content_block_delta",
-            delta: { type: "thinking_delta", thinking: "Checking context" },
+  it("rejects missing handlers and respects cancellation after an approval", async () => {
+    const controller = new AbortController();
+    await expect(
+      approveClaudeAcpTool(permission, undefined, controller.signal),
+    ).resolves.toMatchObject({ outcome: { outcome: "cancelled" } });
+    await expect(
+      approveClaudeAcpTool(
+        permission,
+        async () => {
+          controller.abort();
+          return { kind: "tool_approval", approved: true };
+        },
+        controller.signal,
+      ),
+    ).resolves.toMatchObject({ outcome: { outcome: "cancelled" } });
+  });
+  it("sends a denied option for a rejected approval", async () => {
+    await expect(
+      approveClaudeAcpTool(
+        permission,
+        async () => ({ kind: "tool_approval", approved: false }),
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ outcome: { outcome: "selected", optionId: "deny" } });
+  });
+  it("maps ACP forms into Host questions and maps their keyed answers back", async () => {
+    const params: CreateElicitationRequest = {
+      mode: "form",
+      sessionId: "owned",
+      message: "Choose",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          question_0: {
+            type: "string",
+            title: "Direction",
+            oneOf: [
+              { const: "A", title: "Alpha" },
+              { const: "B", title: "Beta" },
+            ],
           },
         },
-        context,
-      ),
-    ).toMatchObject({
-      events: [
-        {
-          type: "thought.delta",
-          payload: { contentType: "text", delta: "Checking context" },
+        required: ["question_0"],
+      },
+    };
+    const handler = vi.fn(async () => ({
+      kind: "user_question" as const,
+      answered: true,
+      answers: { question_0: "A" },
+    }));
+    await expect(
+      answerClaudeAcpForm(params, handler, new AbortController().signal),
+    ).resolves.toEqual({ action: "accept", content: { question_0: "A" } });
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        questions: [expect.objectContaining({ kind: "single_choice", header: "Direction" })],
+      }),
+    );
+  });
+  it("round trips upstream native questions with scoped custom answers", async () => {
+    const nativeQuestions: Parameters<typeof askUserQuestionsToCreateRequest>[0] = [
+      {
+        question: "Which storage?",
+        header: "Storage",
+        multiSelect: false,
+        options: [
+          { label: "SQLite", description: "Local" },
+          { label: "Postgres", description: "Remote" },
+        ],
+      },
+      {
+        question: "Which features?",
+        header: "Features",
+        multiSelect: true,
+        options: [
+          { label: "Search", description: "Search" },
+          { label: "Sync", description: "Sync" },
+        ],
+      },
+    ];
+    const params = askUserQuestionsToCreateRequest(nativeQuestions, "owned", "ask-1");
+    const handler = vi
+      .fn<import("@pragma/core").ExpertAgentHumanInteractionHandler>()
+      .mockResolvedValue({
+        kind: "user_question" as const,
+        answered: true,
+        answers: {
+          "Which storage?": "Redis",
+          "Which features?": ["Search", "Offline"],
         },
+      });
+    const response = await answerClaudeAcpForm(params, handler, new AbortController().signal);
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      questions: [
+        { question: "Which storage?", kind: "single_choice" },
+        { question: "Which features?", kind: "multiple_choice" },
       ],
-      thinkingDelta: "Checking context",
+    });
+    expect(response).toEqual({
+      action: "accept",
+      content: {
+        question_0_custom: "Redis",
+        question_1: ["Search"],
+        question_1_custom: "Offline",
+      },
+    });
+    expect(
+      applyAskElicitationResponse(response, { questions: nativeQuestions }, nativeQuestions),
+    ).toMatchObject({
+      action: "answered",
+      updatedInput: {
+        answers: { "Which storage?": "Redis", "Which features?": "Search, Offline" },
+      },
     });
   });
-
-  it("emits only the new suffix from cumulative assistant thinking snapshots", () => {
-    const first = readAssistantMessageEvent(
-      { content: [{ type: "thinking", thinking: "The" }] },
-      context.runId,
-      context.source,
-    );
-    const second = readAssistantMessageEvent(
-      { content: [{ type: "thinking", thinking: "The user" }] },
-      context.runId,
-      context.source,
-      { thinkingPrefix: first.thinkingDelta },
-    );
-    const final = readAssistantMessageEvent(
-      { content: [{ type: "thinking", thinking: "The user" }] },
-      context.runId,
-      context.source,
-      { thinkingPrefix: `${first.thinkingDelta}${second.thinkingDelta}` },
-    );
-
-    expect(first.thinkingDelta).toBe("The");
-    expect(second.thinkingDelta).toBe(" user");
-    expect(final.events).toEqual([]);
-    expect(final.thinkingDelta).toBeUndefined();
-  });
-
-  it("does not replay assistant snapshots after SDK text and thinking deltas", () => {
-    expect(
-      readAssistantMessageEvent(
-        {
-          content: [
-            { type: "thinking", thinking: "Reformatted thinking snapshot" },
-            { type: "text", text: "Reformatted answer snapshot" },
-          ],
-        },
-        context.runId,
-        context.source,
-        { skipText: true, skipThinking: true },
-      ),
-    ).toMatchObject({ events: [] });
-  });
-
-  it("deduplicates tool starts and restores the tool name on results", () => {
-    const state: ClaudeToolStreamState = {
-      startedToolCallIds: new Set(),
-      toolNames: new Map(),
-    };
-    const started = {
-      runId: context.runId,
-      source: context.source,
-      type: "tool.started" as const,
-      payload: {
-        toolCallId: "tool-1",
-        toolName: "mcp__pragma__list_expert_context",
-        kind: "tool" as const,
-        inputPreview: {},
-      },
-    };
-    const completed = {
-      runId: context.runId,
-      source: context.source,
-      type: "tool.completed" as const,
-      payload: {
-        toolCallId: "tool-1",
-        toolName: "claude_tool",
-        kind: "tool" as const,
-        outputPreview: { context: [] },
-      },
-    };
-
-    expect(normalizeClaudeToolRuntimeEvents([started], state)).toEqual([started]);
-    expect(normalizeClaudeToolRuntimeEvents([started], state)).toEqual([]);
-    expect(normalizeClaudeToolRuntimeEvents([completed], state)).toEqual([
+  it("preserves native selected answers with Host notes", async () => {
+    const nativeQuestions: Parameters<typeof askUserQuestionsToCreateRequest>[0] = [
       {
-        ...completed,
-        payload: {
-          ...completed.payload,
-          toolName: "mcp__pragma__list_expert_context",
-        },
+        question: "Which storage?",
+        header: "Storage",
+        multiSelect: false,
+        options: [
+          { label: "SQLite", description: "Local" },
+          { label: "Postgres", description: "Remote" },
+        ],
       },
-    ]);
+    ];
+    const params = askUserQuestionsToCreateRequest(nativeQuestions, "owned", "ask-1");
+    const response = await answerClaudeAcpForm(
+      params,
+      async () => ({
+        kind: "user_question",
+        answered: true,
+        answers: { "Which storage?": "SQLite" },
+        notes: "Use WAL",
+      }),
+      new AbortController().signal,
+    );
+    expect(applyAskElicitationResponse(response, {}, nativeQuestions)).toMatchObject({
+      updatedInput: {
+        answers: { "Which storage?": "SQLite" },
+        annotations: { "Which storage?": { notes: "Use WAL" } },
+      },
+    });
+  });
+  it("maps plain ACP enums and refuses ill-typed or unknown answers", async () => {
+    const params: CreateElicitationRequest = {
+      mode: "form",
+      sessionId: "owned",
+      message: "Choose",
+      requestedSchema: {
+        type: "object",
+        properties: { names: { type: "array", items: { type: "string", enum: ["A", "B"] } } },
+        required: ["names"],
+      },
+    };
+    const handler = vi
+      .fn<import("@pragma/core").ExpertAgentHumanInteractionHandler>()
+      .mockResolvedValue({
+        kind: "user_question" as const,
+        answered: true,
+        answers: { Choose: ["B"] },
+      });
+    await expect(
+      answerClaudeAcpForm(params, handler, new AbortController().signal),
+    ).resolves.toEqual({ action: "accept", content: { names: ["B"] } });
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      questions: [{ kind: "multiple_choice", options: [{ value: "A" }, { value: "B" }] }],
+    });
+    await expect(
+      answerClaudeAcpForm(
+        params,
+        async () => ({ kind: "user_question", answered: true, answers: { names: ["unknown"] } }),
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ action: "cancel" });
+  });
+  it("cannot override protocol, permission, session or repo-isolation settings", () => {
+    for (const flag of [
+      "--resume",
+      "--settings=host.json",
+      "--mcp-config",
+      "--bare",
+      "--permission-mode",
+      "--allowedTools",
+      "--add-dir",
+      "--system-prompt",
+    ])
+      expect(() => claudeAdditionalArgs([flag])).toThrow("controlled by Pragma");
+    expect(claudeAdditionalArgs(["--max-turns", "3", "--debug"])).toEqual({
+      "max-turns": "3",
+      debug: null,
+    });
+  });
+  it("removes inherited nested-Claude markers", () => {
+    expect(
+      filterClaudeRuntimeEnv({
+        CLAUDECODE: "1",
+        CLAUDECODE_INTERNAL_TOKEN: "private",
+        CLAUDECODE_SESSION_ID: "parent-session",
+        CLAUDE_CODE_INTERNAL_SECRET: "secret",
+        ANTHROPIC_API_KEY: "key",
+        PATH: "/bin",
+      }),
+    ).toEqual({ ANTHROPIC_API_KEY: "key", PATH: "/bin" });
   });
 });

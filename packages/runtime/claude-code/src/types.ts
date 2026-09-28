@@ -17,6 +17,7 @@ export type ClaudeCodeRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface ClaudeCodeRuntimeAdapterOptions {
   readonly descriptor?: RuntimeDriverDescriptorOverride | undefined;
+  readonly acpWorkerPath?: string | undefined;
   readonly executablePath?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly defaultModelName?: string | undefined;
@@ -34,22 +35,4 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
-}
-
-export interface ClaudeCodeRuntimeMessage {
-  readonly role: "user" | "assistant" | "runtime";
-  readonly content: string;
-  readonly timestamp: number;
-  readonly details?: unknown;
-}
-
-export interface ClaudeCodeRuntimeSessionState {
-  sessionId: string;
-}
-
-export interface ClaudeCodeTokenUsage {
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadInputTokens: number;
-  readonly cacheCreationInputTokens: number;
 }

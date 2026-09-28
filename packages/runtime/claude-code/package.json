@@ -22,12 +22,15 @@
     "lint": "eslint src test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts",
+    "test:core": "vitest run --passWithNoTests test/adapter-contract.test.ts test/models.test.ts test/session.test.ts test/acp-permissions.test.ts test/acp-errors.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.81.2",
+    "@agentclientprotocol/sdk": "1.5.0",
     "@pragma/core": "workspace:*",
-    "@pragma/shared": "workspace:*"
+    "@pragma/shared": "workspace:*",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
