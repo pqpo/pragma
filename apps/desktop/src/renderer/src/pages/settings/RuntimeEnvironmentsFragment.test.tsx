@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/contracts/index.ts";
 import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
-import { RuntimeCard, RuntimeProcessEnvironmentSummary } from "./RuntimeEnvironmentsFragment.tsx";
+import {
+  RuntimeCard,
+  RuntimeEnvironmentsFragment,
+  RuntimeProcessEnvironmentSummary,
+} from "./RuntimeEnvironmentsFragment.tsx";
 
 const runtime: DesktopRuntimeAvailability = {
   id: "pragma.runtime.codex",
@@ -39,6 +43,23 @@ const runtime: DesktopRuntimeAvailability = {
 };
 
 describe("Runtime Environment settings", () => {
+  it("shows all six built-in runtimes as checking before availability detection completes", () => {
+    const html = renderToStaticMarkup(
+      <RuntimeEnvironmentsFragment onNavigateToModels={() => undefined} />,
+    );
+
+    expect([...html.matchAll(/<h3>(.*?)<\/h3>/gu)].map((match) => match[1])).toEqual([
+      "Built-in Runtime",
+      "Codex",
+      "OpenCode",
+      "Claude Code",
+      "Qoder CLI",
+      "Antigravity CLI",
+    ]);
+    expect(html.match(/class="status-badge is-probing"/gu)).toHaveLength(6);
+    expect(html).not.toContain('class="status-badge-button');
+  });
+
   it("shows the captured shell environment state without exposing PATH contents", () => {
     const html = renderToStaticMarkup(
       <RuntimeProcessEnvironmentSummary

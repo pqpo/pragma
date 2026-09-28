@@ -87,7 +87,16 @@
   overflow-wrap: anywhere;
 }
 
-.asset-git-dialog.ui-dialog,
+.asset-git-dialog.ui-dialog {
+  padding: 0;
+}
+
+.asset-git-dialog .ui-dialog-footer {
+  padding-top: 8px;
+  padding-bottom: 24px;
+  border-top: 0;
+}
+
 .asset-git-merge-backdrop {
   padding: 32px;
 }

@@ -5,6 +5,7 @@ import {
   Check,
   ClockCounterClockwise,
   Database,
+  DownloadSimple,
   Eye,
   File,
   FilePlus,
@@ -15,7 +16,6 @@ import {
   FolderPlus,
   GearSix,
   GitBranch,
-  ListBullets,
   MagnifyingGlass,
   PaperPlaneTilt,
   PencilSimple,
@@ -23,7 +23,6 @@ import {
   SpinnerGap,
   TextAa,
   Trash,
-  UploadSimple,
   X,
 } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -1132,17 +1131,10 @@ export function ContextStoreDetailFragment(props: {
                 }
               />
             ) : null}
-            {props.onOpenRevisions !== undefined ? (
-              <StudioActionButton
-                label={t("viewStoreRevisions")}
-                icon={<ListBullets size={18} aria-hidden="true" />}
-                onClick={() => requestLeave(props.onOpenRevisions!)}
-              />
-            ) : null}
             {props.onExport !== undefined ? (
               <StudioActionButton
-                label={t("exportKnowledgeBase")}
-                icon={<UploadSimple size={18} aria-hidden="true" />}
+                label={t("exportBundle")}
+                icon={<DownloadSimple size={18} aria-hidden="true" />}
                 onClick={() => {
                   setError(null);
                   void props.onExport!().catch((cause: unknown) => setError(errorMessage(cause)));
@@ -1169,7 +1161,7 @@ export function ContextStoreDetailFragment(props: {
               onClick={() => requestLeave(() => setGitSettingsOpen(true))}
             />
             <StudioActionButton
-              label={t("deleteKnowledgeBaseAction")}
+              label={t("delete")}
               tone="danger"
               icon={<Trash size={18} aria-hidden="true" />}
               onClick={openDeleteConfirmation}

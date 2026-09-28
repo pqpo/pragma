@@ -21,6 +21,7 @@ import {
   readyPendingQueuedRequestIds,
   reconcileMissionChatRefresh,
   startMissionContextOperation,
+  shouldQueueMissionSend,
   teamCoordinatorChatEntries,
   touchMissionConversationCache,
   visiblePatchExecutionIds,
@@ -53,6 +54,57 @@ describe("mission conversation model", () => {
     ],
     page: {},
     pendingInteractions: [],
+  });
+
+  it("queues sends while an accepted root prompt has no Execution projection or first token", () => {
+    const waiting = {
+      chat: { ...streamingSnapshot(), entries: [] },
+      executionActive: false,
+      awaitingRequestId: "submitted-root",
+      pendingQueuedCount: 0,
+    };
+    expect(shouldQueueMissionSend(waiting)).toBe(true);
+    expect(shouldQueueMissionSend({ ...waiting, chat: null })).toBe(true);
+    expect(
+      shouldQueueMissionSend({
+        ...waiting,
+        chat: {
+          ...waiting.chat,
+          entries: [
+            {
+              id: "submitted-root",
+              kind: "user",
+              content: "Start",
+              createdAt: "2026-09-28T00:00:00.000Z",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("queues sends from pending and paused queue state even when Execution state is delayed", () => {
+    const idle = {
+      chat: null,
+      executionActive: false,
+      awaitingRequestId: null,
+      pendingQueuedCount: 0,
+    };
+    expect(shouldQueueMissionSend(idle)).toBe(false);
+    expect(shouldQueueMissionSend({ ...idle, executionActive: true })).toBe(true);
+    expect(shouldQueueMissionSend({ ...idle, pendingQueuedCount: 1 })).toBe(true);
+    for (const state of ["running", "paused"] as const) {
+      expect(
+        shouldQueueMissionSend({
+          ...idle,
+          chat: {
+            ...streamingSnapshot(),
+            entries: [],
+            queue: { state, pendingCount: 0, supportsSteer: false, items: [] },
+          },
+        }),
+      ).toBe(true);
+    }
   });
 
   it("keeps the coordinator stream and removes entries owned by teammates", () => {

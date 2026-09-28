@@ -184,7 +184,6 @@ export const missions = {
   missionOptions: "任务选项",
   permissionOverride: "覆盖此任务的默认工作权限",
   permissionTaskLocked: "权限已固定到此任务",
-  modelAvailableNextTurn: "模型修改将用于新提交的消息，当前轮次和已排队消息继续使用原模型。",
   optionsAvailableNextTurn: "当前轮次结束后可修改选项",
   starting: "正在启动…",
   startMission: "开始任务",

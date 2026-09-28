@@ -1165,19 +1165,43 @@ export function createMissionRunner(options: {
       );
     });
 
+  // A controller lease fences other processes; it does not serialize callers
+  // inside this Host. Reserve admission before any async startup work so Inbox
+  // sends cannot open a competing Session while the initial run is preparing.
+  const promptAdmissions = new Map<string, Promise<void>>();
+  const withMissionPromptAdmission = async <T>(
+    missionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const previous = promptAdmissions.get(missionId) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    promptAdmissions.set(missionId, settled);
+    try {
+      return await result;
+    } finally {
+      if (promptAdmissions.get(missionId) === settled) promptAdmissions.delete(missionId);
+    }
+  };
+
   const startMission = (id: string): Promise<Mission> => {
     return lifecycleService.startRun(id, (generation) =>
-      withMissionController(id, async () => {
-        if (!lifecycleService.isRunGenerationCurrent(id, generation)) {
-          throw createIntegrationError({
-            code: "MISSION_FENCING_REJECTED",
-            category: "conflict",
-            message: "This Mission run was superseded before it acquired its controller lease.",
-            details: { missionId: id, runGeneration: generation },
-          });
-        }
-        return await runMission(id, generation);
-      }),
+      withMissionPromptAdmission(id, () =>
+        withMissionController(id, async () => {
+          if (!lifecycleService.isRunGenerationCurrent(id, generation)) {
+            throw createIntegrationError({
+              code: "MISSION_FENCING_REJECTED",
+              category: "conflict",
+              message: "This Mission run was superseded before it acquired its controller lease.",
+              details: { missionId: id, runGeneration: generation },
+            });
+          }
+          return await runMission(id, generation);
+        }),
+      ),
     );
   };
 
@@ -2654,7 +2678,7 @@ export function createMissionRunner(options: {
     return running;
   };
 
-  const sendMissionMessage = async (input: {
+  const applyMissionMessage = async (input: {
     readonly id: string;
     readonly content: string;
     readonly requestId: string;
@@ -2922,6 +2946,27 @@ export function createMissionRunner(options: {
       ...(turn.fallbackReason === undefined ? {} : { fallbackReason: turn.fallbackReason }),
     };
   };
+
+  const sendMissionMessage: typeof applyMissionMessage = async (input) =>
+    await withMissionPromptAdmission(input.id, () =>
+      withMissionController(input.id, async () => {
+        const mission = await options.missions.get(input.id);
+        // Inbox sends can precede Desktop's attached-run preparation. Establish
+        // the persisted initial prompt inside this same admission, without
+        // waiting for a startRun reservation that may be queued behind us.
+        // Branches deliberately start with the user's new message instead.
+        if (
+          input.mode !== "steer" &&
+          mission.lifecycleStatus === "active" &&
+          mission.executor.kind !== "flow" &&
+          mission.execution === undefined &&
+          mission.branch === undefined
+        ) {
+          await runMission(mission.id, lifecycleService.runGeneration(mission.id));
+        }
+        return await applyMissionMessage(input);
+      }),
+    );
 
   const updateMissionOptions = async (input: UpdateMissionOptions): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
@@ -5261,7 +5306,7 @@ export function createMissionRunner(options: {
       await invalidateContextBindings(id);
     },
     async sendMessage(input) {
-      return await withMissionController(input.id, async () => await sendMissionMessage(input));
+      return await sendMissionMessage(input);
     },
     async steerQueuedMessage(input) {
       return await withMissionController(

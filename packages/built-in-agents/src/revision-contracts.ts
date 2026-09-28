@@ -36,15 +36,6 @@ function validateProfile(
   }
 }
 
-export const UpdateBuiltInAgentProfileSchema = z
-  .object({
-    expectedRevision: z.number().int().nonnegative(),
-    mode: z.enum(["inherit-default", "pinned"]),
-    model: BuiltInAgentModelConfigSchema.optional(),
-  })
-  .strict()
-  .superRefine(validateProfile);
-
 export const ContextStoreRevisionProfileSchema = z
   .object({
     schemaVersion: z.literal("pragma.context-store-revision-profile/v1"),
@@ -52,8 +43,6 @@ export const ContextStoreRevisionProfileSchema = z
   })
   .strict()
   .superRefine(validateProfile);
-
-export const UpdateContextStoreRevisionProfileSchema = UpdateBuiltInAgentProfileSchema;
 
 export const ContextStoreRevisionRequestSchema = z
   .object({
@@ -728,9 +717,6 @@ export type ContextStoreDraftRebaseResolution = z.infer<
 export type RebaseContextStoreDraft = z.infer<typeof RebaseContextStoreDraftSchema>;
 export type ContextStoreChangeSet = z.infer<typeof ContextStoreChangeSetSchema>;
 export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
-export type UpdateContextStoreRevisionProfile = z.infer<
-  typeof UpdateContextStoreRevisionProfileSchema
->;
 export type SkillRevisionChangeSet = z.infer<typeof SkillRevisionChangeSetSchema>;
 export type SkillRevisionRequestV4 = z.infer<typeof SkillRevisionRequestV4Schema>;
 export type SkillRevisionDraft = z.infer<typeof SkillRevisionDraftSchema>;

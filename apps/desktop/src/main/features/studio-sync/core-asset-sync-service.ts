@@ -133,7 +133,6 @@ export interface CoreAssetSyncService {
 
 export function createCoreAssetSyncService(options: {
   readonly configurationPath: string;
-  readonly legacyConfigurationPaths?: readonly string[];
   readonly statePath: string;
   readonly project: PragmaProjectStore;
   readonly layouts: WorkflowLayoutStore;
@@ -412,20 +411,7 @@ export function createCoreAssetSyncService(options: {
     collected?: CollectedItems,
   ): Promise<CoreAssetSyncOverview> => {
     if (config === undefined) {
-      const legacySyncStopped = (
-        await Promise.all(
-          (options.legacyConfigurationPaths ?? []).map(async (path) => {
-            try {
-              await lstat(path);
-              return true;
-            } catch (error) {
-              if (isMissing(error)) return false;
-              throw error;
-            }
-          }),
-        )
-      ).some(Boolean);
-      return { status: "unconfigured", legacySyncStopped, items: [] };
+      return { status: "unconfigured", items: [] };
     }
     const current = state ?? (await readState(sourceKey(config)));
     const { items: local, nameResolutionIssues } = collected ?? (await collect());

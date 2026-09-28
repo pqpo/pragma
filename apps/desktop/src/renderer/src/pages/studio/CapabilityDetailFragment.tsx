@@ -2,7 +2,6 @@ import {
   ArrowLeft,
   ArrowsClockwise,
   Archive,
-  ClockCounterClockwise,
   Code,
   DownloadSimple,
   GitBranch,
@@ -309,9 +308,23 @@ export function CapabilityDetailFragment(props: {
           </div>
           {isBuiltIn ? null : definition.kind === "skill" ? (
             <div className="capability-detail-actions">
+              <StudioActionButton
+                label={t("updateSkillFromPackage")}
+                icon={<Archive size={18} aria-hidden="true" />}
+                disabled={busy || deleting}
+                onClick={() => void importSkillRevision()}
+              />
+              <StudioActionButton
+                label={t("submitSkillRevision")}
+                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
+                onClick={() => {
+                  setRevisionError(null);
+                  setRevisionDialogOpen(true);
+                }}
+              />
               {props.onExport === undefined ? null : (
                 <StudioActionButton
-                  label={t("exportSkill")}
+                  label={t("exportBundle")}
                   icon={<DownloadSimple size={18} aria-hidden="true" />}
                   disabled={busy || deleting}
                   onClick={() => void runTransferAction(props.onExport)}
@@ -326,34 +339,13 @@ export function CapabilityDetailFragment(props: {
                 />
               )}
               <StudioActionButton
-                label={t("updateSkillFromPackage")}
-                icon={<Archive size={18} aria-hidden="true" />}
-                disabled={busy || deleting}
-                onClick={() => void importSkillRevision()}
-              />
-              {props.onOpenRevisions !== undefined ? (
-                <StudioActionButton
-                  label={t("revisionTasks")}
-                  icon={<ClockCounterClockwise size={18} aria-hidden="true" />}
-                  onClick={props.onOpenRevisions}
-                />
-              ) : null}
-              <StudioActionButton
-                label={t("submitSkillRevision")}
-                icon={<PaperPlaneTilt size={18} aria-hidden="true" />}
-                onClick={() => {
-                  setRevisionError(null);
-                  setRevisionDialogOpen(true);
-                }}
-              />
-              <StudioActionButton
                 label={t("assetGit.settings")}
                 icon={<GearSix size={18} aria-hidden="true" />}
                 disabled={busy || deleting}
                 onClick={() => setGitSettingsOpen(true)}
               />
               <StudioActionButton
-                label={t("deleteCapabilityAction")}
+                label={t("delete")}
                 icon={<Trash size={18} aria-hidden="true" />}
                 tone="danger"
                 disabled={busy || deleting}

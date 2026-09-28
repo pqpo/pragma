@@ -79,8 +79,6 @@ import type {
   ContextStoreRevisionJob,
   ListContextStoreRevisionJobs,
   ContextStoreRevisionJobRef,
-  ContextStoreRevisionProfile,
-  UpdateContextStoreRevisionProfile,
   DesktopPlugin,
   PluginZipInspection,
   ImportPluginZip,
@@ -446,10 +444,6 @@ export interface PragmaDesktopAPI {
   discardContextStoreDraft: (input: ContextStoreDraftRef) => Promise<void>;
   inspectContextStoreDraftRebase: (draftId: string) => Promise<ContextStoreDraftRebaseInspection>;
   rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraft>;
-  getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
-  updateContextStoreRevisionProfile: (
-    input: UpdateContextStoreRevisionProfile,
-  ) => Promise<ContextStoreRevisionProfile>;
   subscribeContextStoreChanges: (storeId: string, listener: () => void) => () => void;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;

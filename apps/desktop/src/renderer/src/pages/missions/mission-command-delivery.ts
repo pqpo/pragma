@@ -63,7 +63,9 @@ export function useMissionCommandDelivery(options: {
       if (outcome.missionId !== options.missionId) return;
       if (outcome.state === "applied") {
         submittedMessagesRef.current.delete(outcome.requestId);
-        setAwaitingRequestId((current) => (current === outcome.requestId ? null : current));
+        // Applied means Core accepted the prompt, not that its Execution has
+        // reached the renderer. Keep the reservation until conversation state
+        // confirms output or settlement, including the pre-first-token window.
         callbacksRef.current.onApplied(outcome);
         return;
       }

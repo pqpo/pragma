@@ -1,3 +1,4 @@
+import { migrateLegacyRevisionProfile } from "../features/experts/legacy-revision-profile-migration.ts";
 import { createHomeProjectStore } from "../features/missions/home-project-store.ts";
 import {
   createAssetGitService,
@@ -9,8 +10,8 @@ import {
   type AssetSyncCoordinator,
 } from "../features/asset-git/asset-sync-coordinator.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 import type { BrowserWindow } from "electron";
 import {
@@ -103,10 +104,7 @@ import {
 import { createEvaluationService } from "../features/evaluations/evaluation-service.ts";
 import { createEvaluationStore } from "../features/evaluations/evaluation-store.ts";
 import { createExpertDefinitionStore } from "../features/experts/expert-definition-store.ts";
-import {
-  createDesktopSystemExpertRegistry,
-  type DesktopSystemExpertRegistry,
-} from "../features/experts/system-expert-registry.ts";
+import { createDesktopSystemExpertRegistry } from "../features/experts/system-expert-registry.ts";
 import {
   resolveSystemExpertRuntimeDefaults,
   withRuntimeDefaults,
@@ -179,59 +177,6 @@ import { createDesktopTrashMaintenance } from "../platform/storage/trash-mainten
 export interface DesktopApplicationContainer {
   readonly startBackgroundTasks: () => void;
   readonly dispose: () => void;
-}
-
-async function migrateLegacyStoreRevisionProfile(options: {
-  readonly stateRoot: string;
-  readonly revisions: ContextStoreRevisionService;
-  readonly systemExperts: DesktopSystemExpertRegistry;
-}): Promise<void> {
-  const profile = await options.revisions.getProfile();
-  if (profile.mode !== "pinned") return;
-  const current = options.systemExperts.get(STORE_REVISION_EXPERT_REF);
-  if (current === undefined) throw new Error("The Store Revision Agent definition is missing.");
-  const journalPath = join(options.stateRoot, "migrations", "store-revision-profile-split.json");
-  if (current.customized) {
-    await rm(journalPath, { force: true });
-    return;
-  }
-  const backupPath = join(
-    options.stateRoot,
-    "migration-backups",
-    "context-store-revision-profile-v1.json",
-  );
-  await writeBootstrapJson(backupPath, profile);
-  await writeBootstrapJson(journalPath, {
-    schemaVersion: "pragma.store-revision-profile-split/v1",
-    sourceProfile: backupPath,
-    targets: [STORE_REVISION_EXPERT_REF, "skill-revision-profile"],
-  });
-  await options.systemExperts.update(STORE_REVISION_EXPERT_REF, {
-    ...(current.avatarId === undefined ? {} : { avatarId: current.avatarId }),
-    name: current.name,
-    description: current.description,
-    tags: current.tags,
-    additionalInstructions: current.additionalInstructions,
-    model: profile.model,
-    capabilities: current.capabilities,
-    toolApprovals: current.toolApprovals,
-    plugins: current.plugins,
-    contextStoreMounts: current.contextStoreMounts,
-    resourceTools: current.resourceTools,
-  });
-  await rm(journalPath, { force: true });
-}
-
-async function writeBootstrapJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, path);
-  } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }
 
 export interface DesktopApplicationContainerOptions {
@@ -707,10 +652,6 @@ export async function createDesktopApplicationContainer(
   assetGitRef.current = assetGit;
   const coreAssetSync = createCoreAssetSyncService({
     configurationPath: join(pragmaPaths.stateRoot(), "core-asset-sync-settings.json"),
-    legacyConfigurationPaths: [
-      join(pragmaPaths.stateRoot(), "knowledge-sync-settings.json"),
-      join(pragmaPaths.stateRoot(), "skill-sync-settings.json"),
-    ],
     statePath: join(pragmaPaths.stateRoot(), "core-asset-sync-state.json"),
     project: pragmaProjectStore,
     layouts: workflowLayouts,
@@ -800,9 +741,8 @@ export async function createDesktopApplicationContainer(
     warn: (message, error) =>
       mainLogger.warn("desktop.context_store_revision_processing_failed", message, { error }),
   });
-  await migrateLegacyStoreRevisionProfile({
+  await migrateLegacyRevisionProfile({
     stateRoot: pragmaPaths.stateRoot(),
-    revisions: storeRevisions,
     systemExperts,
   });
   storeRevisionsRef.current = storeRevisions;
@@ -1586,7 +1526,7 @@ export async function createDesktopApplicationContainer(
     isDraftSubmitted: async (jobId) => (await storeRevisions.get(jobId)).state === "pending_review",
   });
   skillAgentsRef.current = createDesktopSkillAgents({
-    revisionProfiles: storeRevisions,
+    systemExperts,
     missions: missionStore,
     runner: missionRunner,
     project: pragmaProjectStore,

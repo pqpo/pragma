@@ -577,29 +577,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     });
   });
 
-  it("warns when only retired sync settings exist", async () => {
-    const root = await fixture();
-    const local = device(join(root, "legacy"));
-    const legacyPath = join(root, "legacy", "knowledge-sync-settings.json");
-    await mkdir(join(root, "legacy"), { recursive: true });
-    await writeFile(legacyPath, "{}");
-    const service = createCoreAssetSyncService({
-      configurationPath: join(root, "legacy", "settings.json"),
-      legacyConfigurationPaths: [legacyPath],
-      statePath: join(root, "legacy", "state.json"),
-      project: {
-        projectId: "studio",
-        get: async () => ({ projectId: "studio", revision: 1, resources: [] }),
-      } as unknown as PragmaProjectStore,
-      layouts: {} as WorkflowLayoutStore,
-      stores: {} as ContextStoreStore,
-      capabilities: {} as CapabilityStore,
-      getRuntimes: async () => [],
-    });
-    expect((await service.overview()).legacySyncStopped).toBe(true);
-    expect((await local.service.overview()).legacySyncStopped).toBe(false);
-  });
-
   it("shows a locally deleted asset as restorable after a pull-only refresh", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");

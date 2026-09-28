@@ -630,6 +630,21 @@ export function shouldClearMissionThinkingPlaceholder(
   );
 }
 
+/** Submission reservations cover the gap before authoritative Execution state arrives. */
+export function shouldQueueMissionSend(input: {
+  readonly chat: MissionConversationSnapshot | null;
+  readonly executionActive: boolean;
+  readonly awaitingRequestId: string | null;
+  readonly pendingQueuedCount: number;
+}): boolean {
+  return (
+    input.executionActive ||
+    shouldShowMissionThinkingPlaceholder(input.chat, input.awaitingRequestId) ||
+    input.pendingQueuedCount > 0 ||
+    (input.chat?.queue?.state !== undefined && input.chat.queue.state !== "idle")
+  );
+}
+
 export function shouldShowMissionThinkingPlaceholder(
   chat: MissionConversationSnapshot | null,
   requestId: string | null,

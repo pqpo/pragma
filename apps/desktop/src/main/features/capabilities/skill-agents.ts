@@ -17,10 +17,7 @@ import type {
 } from "@pragma/interpreter";
 import { z } from "zod";
 
-import {
-  ContextStoreRevisionProfileSchema,
-  type ContextStoreRevisionProfile,
-} from "../../../shared/contracts/index.ts";
+import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import { resolveSystemExpertRuntimeDefaults } from "../experts/system-expert-runtime.ts";
 import type { MissionRunner } from "../missions/mission-runner.ts";
 import { MissionStoreError, type MissionStore } from "../missions/mission-store.ts";
@@ -42,7 +39,7 @@ export interface DesktopSkillAgents {
 }
 
 export function createDesktopSkillAgents(options: {
-  readonly revisionProfiles: { getProfile(): Promise<ContextStoreRevisionProfile> };
+  readonly systemExperts: DesktopSystemExpertRegistry;
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly project: PragmaProjectStore;
@@ -57,14 +54,13 @@ export function createDesktopSkillAgents(options: {
   const workspace = join(options.pragmaHome, "tmp", "skill-agents");
   const registryPath = join(options.pragmaHome, "state", "skill-agents", "missions.json");
 
-  const resolveRuntime = async (
-    profile: ContextStoreRevisionProfile,
-    resolver = options.runtimes,
-  ) => {
-    const parsed = ContextStoreRevisionProfileSchema.parse(profile);
+  const resolveRuntime = async (resolver = options.runtimes) => {
+    const definition = options.systemExperts.get(SKILL_REVISION_EXPERT_REF);
+    if (definition === undefined)
+      throw new Error("The Skill Revision Agent definition is missing.");
     const defaults = await resolveSystemExpertRuntimeDefaults(
       resolver,
-      parsed.mode === "pinned" ? parsed.model : undefined,
+      definition.executionProfile.mode === "pinned" ? definition.executionProfile.model : undefined,
       undefined,
     );
     await resolver.bind({
@@ -78,10 +74,8 @@ export function createDesktopSkillAgents(options: {
     readonly jobId: string;
     readonly draftId: string;
     readonly goal: string;
-    readonly profile: ContextStoreRevisionProfile;
     readonly capabilityId?: string | undefined;
   }) => {
-    const runtime = await resolveRuntime(input.profile);
     const project = await options.project.ensurePublished();
     const missionWorkspace = await options.resolveDraftWorkspace(input.draftId);
     const mission = await options.missions.create({
@@ -108,17 +102,6 @@ export function createDesktopSkillAgents(options: {
           capabilityId: input.capabilityId!,
         },
       ],
-      ...(runtime.modelSelection === undefined
-        ? {}
-        : {
-            modelOverride: {
-              providerId: runtime.modelSelection.model.providerId,
-              modelId: runtime.modelSelection.model.modelId,
-              ...(runtime.modelSelection.thinkingLevel === undefined
-                ? {}
-                : { thinkingLevel: runtime.modelSelection.thinkingLevel }),
-            },
-          }),
     });
     await options.onMissionCreated?.({ jobId: input.jobId, missionId: mission.id });
     await options.runner.run(mission.id);
@@ -136,7 +119,6 @@ export function createDesktopSkillAgents(options: {
   const api: DesktopSkillAgents = {
     revisionGenerator: {
       async generate(input) {
-        const profile = await options.revisionProfiles.getProfile();
         await run({
           jobId: input.jobId,
           draftId: input.draftId,
@@ -145,15 +127,13 @@ export function createDesktopSkillAgents(options: {
             `The managed Skill draft ${input.draftId} is already mounted and writable.`,
             "Inspect and edit this draft directly. Submit it for review, repair every synchronous validation diagnostic in this same Mission, and resubmit until it passes.",
           ].join("\n\n"),
-          profile,
           capabilityId: input.request.capabilityId,
         });
         return undefined;
       },
     },
     async compile(input) {
-      const profile = await options.revisionProfiles.getProfile();
-      const runtime = await resolveRuntime(profile, input.runtimes);
+      const runtime = await resolveRuntime(input.runtimes);
       return await compileBuiltInAgent({
         ref: SKILL_REVISION_EXPERT_REF,
         environmentId: "desktop",
@@ -182,13 +162,12 @@ export function createDesktopSkillAgents(options: {
       });
     },
     async fingerprint() {
-      const profile = await options.revisionProfiles.getProfile();
       return createHash("sha256")
         .update(
           JSON.stringify({
-            version: 2,
+            version: 3,
             kind: "revision",
-            profile,
+            expert: options.systemExperts.fingerprint(SKILL_REVISION_EXPERT_REF),
             definition: builtInAgentFingerprint(SKILL_REVISION_EXPERT_REF),
           }),
         )

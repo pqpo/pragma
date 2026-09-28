@@ -52,6 +52,7 @@ import {
   orderMissionConversationEntries,
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
+  shouldQueueMissionSend,
   shouldShowMissionThinkingPlaceholder,
   teamCoordinatorChatEntries,
 } from "./mission-conversation-model.ts";
@@ -771,7 +772,12 @@ export function MissionDetailFragment(props: {
     });
     const requestId = optimistic.id;
     recordSubmission(optimistic, retry?.retryMode === "new-request" ? retry.id : undefined);
-    const shouldPrepareQueuedMessage = executionActive;
+    const shouldPrepareQueuedMessage = shouldQueueMissionSend({
+      chat,
+      executionActive,
+      awaitingRequestId: awaitingRequestId ?? props.initialThinkingRequestId ?? null,
+      pendingQueuedCount: pendingQueuedMessages.length,
+    });
     const sentAttachmentIds = optimistic.attachments.map((attachment) => attachment.id);
     let discardSentDrafts = false;
     if (retry === undefined) composerRef.current?.clear();
@@ -1888,22 +1894,15 @@ export function MissionDetailFragment(props: {
                             onChange={(value) => void saveOptions(value, modelOverride)}
                           />
                           {!isFlow ? (
-                            <div className="mission-model-options">
-                              <MissionModelOverrideControls
-                                models={models}
-                                loading={modelsLoading}
-                                disabled={clientOperationBusy || compactingContext}
-                                keepOpenWhenDisabled={optionsSaving}
-                                value={modelOverride}
-                                defaultValue={defaultModelSelection}
-                                onChange={(value) => void saveOptions(toolPermissionMode, value)}
-                              />
-                              {executionActive ? (
-                                <small role="status">
-                                  {t("modelAvailableNextTurn", { ns: "missions" })}
-                                </small>
-                              ) : null}
-                            </div>
+                            <MissionModelOverrideControls
+                              models={models}
+                              loading={modelsLoading}
+                              disabled={clientOperationBusy || compactingContext}
+                              keepOpenWhenDisabled={optionsSaving}
+                              value={modelOverride}
+                              defaultValue={defaultModelSelection}
+                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                            />
                           ) : null}
                         </>
                       }

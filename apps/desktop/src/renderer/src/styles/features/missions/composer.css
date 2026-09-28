@@ -860,15 +860,3 @@
 .mission-chat-composer:has(.mission-attachment-list:not(.is-empty)) > textarea {
   padding-top: 9px;
 }
-
-.mission-model-options {
-  display: grid;
-  gap: 4px;
-}
-
-.mission-model-options small {
-  max-width: 320px;
-  color: var(--ui-text-secondary);
-  font-size: 12px;
-  font-weight: 400;
-}

@@ -28,7 +28,6 @@ import {
   ListContextStoreDraftsSchema,
   RebaseContextStoreDraftSchema,
   SubmitContextStoreDraftSchema,
-  UpdateContextStoreRevisionProfileSchema,
   UpdateContextStoreDraftFileSchema,
   GetContextStoreEditorDraftSchema,
   CommitContextStoreEditorDraftSchema,
@@ -220,14 +219,6 @@ export function installContextStoreHandlers(
     ipcMain.handle("context-store-drafts:rebase", (_event, input: unknown) =>
       revisions.rebase(RebaseContextStoreDraftSchema.parse(input)),
     );
-    ipcMain.handle("context-store-revisions:get-profile", () => revisions.getProfile());
-    ipcMain.handle("context-store-revisions:update-profile", async (_event, input: unknown) => {
-      const profile = await revisions.updateProfile(
-        UpdateContextStoreRevisionProfileSchema.parse(input),
-      );
-      revisions.scheduleProcessing();
-      return profile;
-    });
   }
   ipcMain.on("context-stores:watch", (event, input: unknown) => {
     const parsed = SubscribeContextStoreChangesSchema.parse(input);

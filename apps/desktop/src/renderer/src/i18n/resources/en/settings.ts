@@ -64,10 +64,6 @@ export const settings = {
     title: "Sync",
     description:
       "Restore Experts, Teams, Flows, Knowledge Bases, and Skills from one Git repository.",
-    legacyStopped:
-      "The old environment sync has stopped. Configure Core Asset Sync to keep backing up these assets.",
-    configureNew: "Configure",
-    dismissLegacyNotice: "Dismiss sync notice",
     remote: "Git remote",
     branch: "Branch (optional)",
     autoPush: "Automatically upload published changes",
@@ -195,18 +191,6 @@ export const settings = {
       "Used when Home starts a mission without a task-specific workspace.",
     chooseWorkspace: "Choose folder",
     restoreDefaultWorkspace: "Restore built-in default workspace",
-    revisionAgent: "Skill Revision Agent",
-    revisionAgentDescription:
-      "Choose the Runtime and model that prepares reviewable Skill changes. Knowledge revisions use the editable Store Revision expert configuration.",
-    revisionAgentInherit: "Inherit system default",
-    revisionAgentPinned: "Pinned Runtime and model",
-    revisionAgentRuntime: "Revision Runtime",
-    revisionAgentRuntimeDescription: "Runtime used for Skill revision tasks.",
-    revisionAgentModel: "Revision model",
-    revisionAgentModelDescription: "Model used to prepare structured Skill changes.",
-    revisionAgentChooseModel: "Choose a model",
-    revisionAgentSave: "Save revision model",
-    revisionAgentSaveDescription: "New revision tasks will use this Runtime and model.",
     saveError: "The general setting could not be saved.",
   },
   evaluations: {
@@ -225,19 +209,12 @@ export const settings = {
   },
   memory: {
     attention: {
-      title: "Attention Memory",
-      description:
-        "Find relevant history as the task evolves. Jev receives bounded, sanitized task observations and eligible memory summaries. Configuration is shared with the CLI.",
+      description: "Indexes memories to improve recall performance and accuracy.",
       key: "Jev API Key",
-      save: "Save and validate",
-      remove: "Remove key",
-      disabled: "Not configured",
-      ready: "Enabled",
       degraded: "Temporarily unavailable",
       needs_attention: "Needs attention",
       error: "Could not validate or save the key. Check your key and connection.",
-      loadError: "Could not load Attention Memory settings.",
-      paused: "Paused while Memory is disabled",
+      loadError: "Could not load Jev API Key settings.",
     },
     navigation: "Memory",
     title: "Memory",
@@ -270,8 +247,6 @@ export const settings = {
     extractorRuntimeDescription: "Runtime used only for background Memory extraction.",
     extractorModel: "Memory model",
     extractorModelDescription: "Model used to create structured Episodic Memory.",
-    saveExtractor: "Save extraction model",
-    saveExtractorDescription: "Changing this setting wakes extraction jobs that need attention.",
     assetTitle: "Memory policy",
     assetDescription:
       "This team asset may only narrow the global policy. Runtime restrictions are intersected with this setting.",

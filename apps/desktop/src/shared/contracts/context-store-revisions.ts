@@ -15,5 +15,4 @@ export {
   RebaseContextStoreDraftSchema,
   SubmitContextStoreDraftSchema,
   UpdateContextStoreDraftFileSchema,
-  UpdateContextStoreRevisionProfileSchema,
 } from "@pragma/built-in-agents/contracts";

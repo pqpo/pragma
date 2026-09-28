@@ -184,7 +184,6 @@ export const missions = {
   missionOptions: "任務選項",
   permissionOverride: "覆蓋此任務的預設工作權限",
   permissionTaskLocked: "權限已固定到此任務",
-  modelAvailableNextTurn: "模型修改將用於新提交的訊息，目前輪次和已排隊訊息繼續使用原模型。",
   optionsAvailableNextTurn: "目前輪次結束後可修改選項",
   starting: "正在啟動…",
   startMission: "開始任務",

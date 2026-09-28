@@ -272,7 +272,6 @@
   align-items: center;
   gap: 17px;
   padding-bottom: 26px;
-  border-bottom: 1px solid var(--border);
 }
 
 .runtime-detail-icon {
@@ -320,7 +319,6 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 24px 18px;
   padding: 24px 0;
-  border-bottom: 1px solid var(--border);
 }
 
 .runtime-detail-meta > div {

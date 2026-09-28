@@ -110,8 +110,11 @@ runtime packages depend on `@pragma/core` and are assembled by application entry
 Desktop and CLI. The default runtime selection is an application-layer decision; Desktop currently registers
 PI, Codex, Claude Code, Qoder CLI, and Antigravity CLI runtimes and uses PI by default.
 
-`@pragma/built-in-agents` owns the five portable DSL-defined Agents: the general-purpose Pragma and
-Store Revision Agents plus the internal Memory Curator, Skill Revision, and Evaluation Judge Agents.
+`@pragma/built-in-agents` owns the five portable DSL-defined Agents: the editable Pragma, Store
+Revision, and Skill Revision Agents plus the internal Memory Curator and Evaluation Judge Agents.
+Desktop exposes Pragma, Store Revision, and Skill Revision in Studio; each uses its System Expert
+Registry execution profile for Runtime, model, and thinking level. The retired shared revision preference
+is backed up and migrated once into uncustomized revision Experts with a replayable journal.
 It also owns their independent application-neutral host ports and reusable product logic.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.
 Applications compose the package with their own DSL project persistence and task implementations;

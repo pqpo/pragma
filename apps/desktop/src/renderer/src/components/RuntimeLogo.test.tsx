@@ -7,6 +7,7 @@ describe("RuntimeLogo", () => {
   it.each([
     { id: "pi", kind: "cloud-pi-agent" },
     { id: "codex", kind: "codex-local" },
+    { id: "opencode", kind: "opencode-local" },
     { id: "claude-code", kind: "claude-code-local" },
     { id: "qodercli", kind: "qodercli-local" },
     { id: "antigravity", kind: "antigravity-local" },

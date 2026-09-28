@@ -1077,6 +1077,168 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     unsubscribeWork();
   });
 
+  it.each(["direct", "inbox", "direct-rejection", "before-run"] as const)(
+    "queues %s sends during initial admission and before the first Runtime token",
+    async (entry) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-startup-queue-"));
+      temporaryPaths.push(root);
+      const pragmaHome = join(root, "state");
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Initial message",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(
+          snapshot.resources.find((resource) => resource.kind === "Expert")!,
+        ),
+      });
+      let releaseAdmission!: () => void;
+      let markAdmissionStarted!: () => void;
+      let releaseFirstTurn!: () => void;
+      const admissionStarted = new Promise<void>((resolve) => {
+        markAdmissionStarted = resolve;
+      });
+      const admissionGate = new Promise<void>((resolve) => {
+        releaseAdmission = resolve;
+      });
+      const firstTurnGate = new Promise<void>((resolve) => {
+        releaseFirstTurn = resolve;
+      });
+      const queries: string[] = [];
+      const createSession = vi.fn(() => ({ id: "runtime" }));
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession,
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        async startTurn(_session, turn) {
+          queries.push(turn.rawQuery);
+          if (turn.rawQuery === mission.goal) await firstTurnGate;
+          return { outputText: `answer:${turn.rawQuery}`, runtimeSessionId: "runtime" };
+        },
+        mapEvent: () => ({ events: [] }),
+      });
+      const capacityCheck = vi
+        .fn(async () => undefined)
+        .mockImplementationOnce(async () => {
+          markAdmissionStarted();
+          await admissionGate;
+        });
+      if (entry === "direct-rejection") {
+        capacityCheck.mockImplementationOnce(async () => {
+          throw new Error("One rejected send");
+        });
+      }
+      const runner = createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        assertStorageWriteAllowed: capacityCheck,
+      });
+      const control = createTestMissionControl({
+        missionsPath: join(root, "missions"),
+        missions,
+        runner,
+      });
+      const messages = [1, 2, 3].map((number) => ({
+        id: mission.id,
+        requestId: `00000000-0000-4000-8000-00000000000${number}`,
+        content: `Followup ${number}`,
+      }));
+      const earlySend = entry === "before-run" ? runner.sendMessage(messages[0]!) : undefined;
+      // In before-run, the followup reaches the Host before Desktop finishes
+      // resolving and starting the attached initial run.
+      const initialRun = entry === "before-run" ? undefined : runner.run(mission.id);
+      await admissionStarted;
+      const initial = initialRun ?? runner.run(mission.id);
+      const submissions = messages.map(async (message, index) => {
+        if (index === 0 && earlySend !== undefined) return await earlySend;
+        if (entry !== "inbox") return await runner.sendMessage(message);
+        await control.submit({
+          missionId: mission.id,
+          requestId: message.requestId,
+          kind: "send",
+          payload: { kind: "send", input: { prompt: message.content, attachments: [] } },
+        });
+        return await control.waitForTerminal({
+          missionId: mission.id,
+          requestId: message.requestId,
+        });
+      });
+      // Observe every rejection immediately while the initial admission is blocked.
+      const outcomes = Promise.allSettled(submissions);
+      try {
+        if (entry === "inbox") {
+          await expect(
+            control.waitForAcceptance({ missionId: mission.id, requestId: messages[0]!.requestId }),
+          ).resolves.toMatchObject({ state: "applying" });
+        }
+        // Give concurrent file-backed callers time to reach the startup gate.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(capacityCheck).toHaveBeenCalledTimes(1);
+        expect((await missions.get(mission.id)).execution).toBeUndefined();
+        releaseAdmission();
+        const running = await initial;
+        const accepted = await outcomes;
+        const expectedMessages = entry === "direct-rejection" ? messages.slice(1) : messages;
+        expect(accepted.map((outcome) => outcome.status)).toEqual(
+          entry === "direct-rejection"
+            ? ["rejected", "fulfilled", "fulfilled"]
+            : ["fulfilled", "fulfilled", "fulfilled"],
+        );
+        if (entry === "inbox") {
+          for (const outcome of accepted) {
+            expect(outcome).toMatchObject({ status: "fulfilled", value: { state: "applied" } });
+          }
+        }
+        await vi.waitFor(() => expect(queries).toEqual([mission.goal]));
+        const queue = await runner.listPromptQueue!(mission.id);
+        expect(
+          queue.items.filter((item) => item.status === "queued").map((item) => item.requestId),
+        ).toEqual(expectedMessages.map((message) => message.requestId));
+        expect((await missions.get(mission.id)).execution?.id).toBe(running.execution?.id);
+        releaseFirstTurn();
+        await vi.waitFor(
+          async () => {
+            const sessions = createFileExpertSessionStore({
+              pragmaHome,
+              executions: createFileExecutionStore({ pragmaHome }),
+            });
+            expect(
+              (await sessions.listPrompts(running.execution!.sessionId!)).map(
+                (prompt) => prompt.status,
+              ),
+            ).toEqual([mission.goal, ...expectedMessages].map(() => "succeeded"));
+            expect((await missions.get(mission.id)).execution).toMatchObject({
+              inputMessageId: expectedMessages.at(-1)!.requestId,
+              status: "succeeded",
+            });
+          },
+          { timeout: 30_000 },
+        );
+        expect(queries).toEqual([
+          mission.goal,
+          ...expectedMessages.map((message) => message.content),
+        ]);
+        expect(createSession).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseAdmission();
+        releaseFirstTurn();
+        await Promise.allSettled([initial, ...submissions]);
+        await control.stopOwner(mission.id);
+      }
+    },
+    60_000,
+  );
+
   it("skips compilation for a follow-up on the live Mission Session", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-followup-fast-path-"));
     temporaryPaths.push(root);

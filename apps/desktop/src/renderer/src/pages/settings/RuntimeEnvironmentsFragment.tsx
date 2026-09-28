@@ -30,6 +30,14 @@ const INITIAL_RUNTIMES: readonly DesktopRuntimeAvailability[] = [
     origin: "built-in",
   },
   {
+    id: "opencode",
+    displayName: "OpenCode",
+    isDefault: false,
+    kind: "opencode-local",
+    status: "unavailable",
+    origin: "built-in",
+  },
+  {
     id: "claude-code",
     displayName: "Claude Code",
     isDefault: false,

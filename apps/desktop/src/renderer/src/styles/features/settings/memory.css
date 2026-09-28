@@ -71,27 +71,68 @@
   }
 }
 
-.memory-attention-settings {
-  display: grid;
-  gap: 12px;
-  padding-block: 20px;
+.memory-model-setting {
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-block: 16px;
 }
 
-.memory-attention-settings h3,
-.memory-attention-settings p {
+.memory-model-setting > .setting-copy {
+  flex: 1 1 240px;
+}
+
+.memory-model-select {
+  flex: 0 1 480px;
+  width: min(480px, 100%);
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.memory-model-select .ui-select-trigger {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 8px;
+}
+
+.memory-model-select .ui-select-value,
+.memory-model-menu .ui-select-option-copy > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.memory-model-menu {
+  max-width: calc(100vw - 24px);
+}
+
+.memory-model-menu .ui-select-option {
+  padding-block: 8px;
+}
+
+.memory-attention-input {
+  display: grid;
+  flex: 0 0 240px;
+  width: 240px;
+  gap: 8px;
+}
+
+.memory-attention-input input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  outline: 0;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font: inherit;
+}
+
+.memory-attention-input input:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-focus);
+}
+
+.memory-attention-input p {
   margin: 0;
-}
-
-.memory-attention-settings p {
   color: var(--ui-text-secondary);
-}
-
-.memory-attention-settings form {
-  display: grid;
-  gap: 8px;
-}
-
-.memory-attention-actions {
-  display: flex;
-  gap: 8px;
+  font-size: 12px;
 }

@@ -35,13 +35,11 @@ import {
   CreateContextStoreDraftSchema,
   GetContextStoreDraftFileSchema,
   ContextStoreRevisionJobSchema,
-  ContextStoreRevisionProfileSchema,
   ContextStoreRevisionRequestSchema,
   ListContextStoreRevisionJobsSchema,
   ListContextStoreDraftsSchema,
   RebaseContextStoreDraftSchema,
   SubmitContextStoreDraftSchema,
-  UpdateContextStoreRevisionProfileSchema,
   UpdateContextStoreDraftFileSchema,
 } from "../../shared/contracts/context-store-revisions.ts";
 import { PickWorkspaceResultSchema } from "../../shared/contracts/settings.ts";
@@ -253,17 +251,6 @@ export const contextStoresApi = {
         RebaseContextStoreDraftSchema.parse(input),
       ),
     ),
-  getContextStoreRevisionProfile: async () =>
-    ContextStoreRevisionProfileSchema.parse(
-      await ipcRenderer.invoke("context-store-revisions:get-profile"),
-    ),
-  updateContextStoreRevisionProfile: async (input) =>
-    ContextStoreRevisionProfileSchema.parse(
-      await ipcRenderer.invoke(
-        "context-store-revisions:update-profile",
-        UpdateContextStoreRevisionProfileSchema.parse(input),
-      ),
-    ),
   subscribeContextStoreChanges: (storeId, listener) => {
     const input = SubscribeContextStoreChangesSchema.parse({ storeId });
     const handler = (_event: IpcRendererEvent, payload: unknown) => {
@@ -315,8 +302,6 @@ export const contextStoresApi = {
   | "discardContextStoreDraft"
   | "inspectContextStoreDraftRebase"
   | "rebaseContextStoreDraft"
-  | "getContextStoreRevisionProfile"
-  | "updateContextStoreRevisionProfile"
   | "subscribeContextStoreChanges"
   | "pickContextStoreFolder"
 >;

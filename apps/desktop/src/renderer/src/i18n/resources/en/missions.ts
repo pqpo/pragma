@@ -197,8 +197,6 @@ export const missions = {
   missionOptions: "Mission options",
   permissionOverride: "Override the default permission for this mission",
   permissionTaskLocked: "Permission is fixed for this mission",
-  modelAvailableNextTurn:
-    "Model changes apply to newly submitted messages. The current turn and queued messages keep their model.",
   optionsAvailableNextTurn: "Options can be changed after the current turn finishes",
   starting: "Starting…",
   startMission: "Start mission",
