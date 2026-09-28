@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { X } from "@phosphor-icons/react";
 
 import { Sidebar, type AppView } from "./components/Sidebar.tsx";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle.tsx";
@@ -20,7 +21,6 @@ import type { HomeMissionExecutorOption, Mission } from "../../shared/contracts/
 
 export function App() {
   const { t } = useTranslation("common");
-  const { t: settingsT } = useTranslation("settings");
   const [activeView, setActiveView] = useState<AppView>("home");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readSidebarCollapsed(typeof window === "undefined" ? undefined : window.localStorage),
@@ -40,6 +40,7 @@ export function App() {
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
   const [legacySyncStopped, setLegacySyncStopped] = useState(false);
+  const [legacySyncNoticeDismissed, setLegacySyncNoticeDismissed] = useState(false);
   const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
 
   useEffect(() => {
@@ -271,14 +272,44 @@ export function App() {
           onLegacySyncStoppedChange={setLegacySyncStopped}
         />
       )}
-      {legacySyncStopped && (
-        <aside className="core-sync-cutover-notice" role="alert">
-          <span>{settingsT("coreAssetSync.legacyStopped")}</span>
-          <button type="button" onClick={openCoreAssetSyncSettings}>
-            {settingsT("coreAssetSync.configureNew")}
-          </button>
-        </aside>
+      {shouldShowCoreSyncCutoverNotice(legacySyncStopped, legacySyncNoticeDismissed) && (
+        <CoreSyncCutoverNotice
+          onConfigure={openCoreAssetSyncSettings}
+          onDismiss={() => setLegacySyncNoticeDismissed(true)}
+        />
       )}
     </main>
+  );
+}
+
+export function shouldShowCoreSyncCutoverNotice(
+  legacySyncStopped: boolean,
+  dismissed: boolean,
+): boolean {
+  return legacySyncStopped && !dismissed;
+}
+
+export function CoreSyncCutoverNotice(props: {
+  readonly onConfigure: () => void;
+  readonly onDismiss: () => void;
+}) {
+  const { t } = useTranslation("settings");
+
+  return (
+    <aside className="core-sync-cutover-notice" role="alert">
+      <span>{t("coreAssetSync.legacyStopped")}</span>
+      <button className="primary-button" type="button" onClick={props.onConfigure}>
+        {t("coreAssetSync.configureNew")}
+      </button>
+      <button
+        className="icon-button core-sync-cutover-dismiss"
+        type="button"
+        aria-label={t("coreAssetSync.dismissLegacyNotice")}
+        title={t("coreAssetSync.dismissLegacyNotice")}
+        onClick={props.onDismiss}
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
+    </aside>
   );
 }

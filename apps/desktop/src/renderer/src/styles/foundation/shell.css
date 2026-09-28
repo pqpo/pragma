@@ -18,6 +18,14 @@
   flex: none;
 }
 
+.core-sync-cutover-notice > span {
+  flex: 1;
+}
+
+.core-sync-cutover-dismiss {
+  min-height: 36px;
+}
+
 .desktop-fatal-error {
   display: grid;
   width: 100%;

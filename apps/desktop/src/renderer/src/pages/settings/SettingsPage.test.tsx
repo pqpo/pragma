@@ -81,8 +81,19 @@ describe("SettingsPage", () => {
     expect(html).toContain('id="core-asset-sync-panel"');
     expect(html).toContain(">Sync</button>");
     expect(html).toContain(">Sync</h2>");
+    expect(html).not.toContain("Core Asset Sync");
     expect(html).toContain("Restore Experts, Teams, Flows, Knowledge Bases, and Skills");
     expect(html).toContain("Automatically upload published changes");
+  });
+
+  it("uses the concise sync name in Simplified Chinese", async () => {
+    await i18n.changeLanguage("zh-Hans");
+
+    const html = renderToStaticMarkup(<SettingsPage initialView="core-asset-sync" />);
+
+    expect(html).toContain(">同步</button>");
+    expect(html).toContain('<h2 id="core-asset-sync-heading">同步</h2>');
+    expect(html).not.toContain("核心资产同步");
   });
 
   it("exposes the built-in memory plane as a first-class settings section", () => {
