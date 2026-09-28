@@ -145,6 +145,14 @@ async function runtimeOperationWithinDeadline<T>(
   });
 }
 
+/** The native session exists, but this turn failed before its prompt was sent. */
+export class RuntimeTurnNotDispatchedError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "RuntimeTurnNotDispatchedError";
+  }
+}
+
 export interface DefineRuntimeDriverOptions {
   readonly outputRetryLimit?: number | undefined;
   readonly persistenceProvider?: RuntimeSessionPersistenceProvider | undefined;
@@ -1588,7 +1596,6 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
     observeUsage: (usage: AgentMessageUsage | undefined) => void,
     resources: RuntimeResourceScope,
   ): Promise<RuntimeRunResult<TOutput>> {
-    const startupMessages = this.takeStartupMessages();
     const attachmentPlan = await resolveRuntimeAttachmentPlan({
       attachments: submission.attachments ?? [],
       listModels: this.options.driver.listModels,
@@ -1626,6 +1633,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
     let outputText = "";
     let usage: AgentMessageUsage | undefined;
     const startedAt = new Date();
+    // Preparation can fail before the native driver gets a turn. Keep startup
+    // delivery state untouched until those prerequisites have succeeded.
+    const startupMessages = this.takeStartupMessages();
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const prompt =
@@ -1686,9 +1696,13 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
               observedRuntimeSessionId,
               "runtimeSessionId.changed",
             );
-          } else if (this.info().runtimeSession.id === "" && attemptStartupMessages.length > 0) {
-            // A fresh native process that failed before allocating a resumable
-            // identity did not establish a durable recipient for startup context.
+          }
+          if (
+            attemptStartupMessages.length > 0 &&
+            (error instanceof RuntimeTurnNotDispatchedError ||
+              (observedRuntimeSessionId === undefined && this.info().runtimeSession.id === ""))
+          ) {
+            // A session identity alone does not prove the prompt reached the agent.
             // Preserve the exact consumed messages for the next submission.
             this.startupMessagesRetryPending = attemptStartupMessages;
           }

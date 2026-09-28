@@ -9,8 +9,6 @@ import {
   defineExpert,
   inspectRuntimeObservationConformance,
   writeRuntimeProbeEvidence,
-  ExpertAgentStreamEventSchema,
-  type ExecutionEvent,
   type IExpertAgentModelsConfig,
   type RuntimeAdapter,
   type RuntimeFeatureName,
@@ -25,8 +23,7 @@ import { createQoderCliRuntime } from "@pragma/runtime-qodercli";
 
 import { createExampleModelsConfig, createExamplePiRuntime } from "../support/example-kit.ts";
 
-const runtimeName = process.argv[2];
-const probeName = process.argv[3];
+const [runtimeName, probeName] = process.argv.slice(2).filter((argument) => argument !== "--");
 const runtimeNames = ["pi", "codex", "claude-code", "qodercli", "antigravity"] as const;
 const probeNames = [
   "availability",
@@ -39,6 +36,7 @@ const probeNames = [
   "resume",
   "compaction",
   "cancellation",
+  "steering",
   "full",
 ] as const;
 
@@ -288,7 +286,13 @@ async function runSessionProbe(
     readonly models?: IExpertAgentModelsConfig | undefined;
   },
 ): Promise<void> {
+  const liveEvents: RuntimeStreamEvent[] = [];
   const expert = await defineExpert({
+    hooks: {
+      onStreamEvent: ({ event }) => {
+        liveEvents.push(event);
+      },
+    },
     id: "pr0bexpt00000001",
     name: "Runtime Probe",
     description: "Exercises Runtime conformance features.",
@@ -321,11 +325,19 @@ async function runSessionProbe(
   const session = await app.experts.createSession(expert, { runtime: runtime.descriptor.id });
   const operations =
     probe === "full"
-      ? (["stream", "native-tool", "mcp", "skills", "attachments", "resume"] as const)
+      ? (["stream", "native-tool", "mcp", "skills", "attachments", "resume", "steering"] as const)
       : [probe];
   try {
     for (const operation of operations) {
+      const eventStart = liveEvents.length;
       if (operation === "compaction") {
+        const initial = await session.prompt(
+          "Remember COMPACTION_MEMORY_2054. Reply only RECORDED.",
+          {
+            requestId: `probe-compact-initial-${Date.now()}`,
+          },
+        );
+        await initial.result;
         const canCompact = await session.canCompactRootContext();
         if (canCompact !== true) {
           paths.assertions.push(
@@ -340,6 +352,14 @@ async function runSessionProbe(
           continue;
         }
         await session.compactRootContext();
+        const after = await session.prompt(
+          "Reply with the exact COMPACTION_MEMORY marker I asked you to remember.",
+          {
+            requestId: `probe-compact-recall-${Date.now()}`,
+          },
+        );
+        if (!String(await after.result).includes("COMPACTION_MEMORY_2054"))
+          throw new Error("Compacted context did not preserve the remembered marker.");
         paths.assertions.push(
           assertion(
             "compaction.executed",
@@ -351,19 +371,91 @@ async function runSessionProbe(
         );
         continue;
       }
+      if (operation === "steering") {
+        if (!runtime.descriptor.capabilities?.supportsSteer) {
+          paths.assertions.push(
+            assertion(
+              "steering.executed",
+              "steering",
+              "executed",
+              "skipped",
+              "Runtime does not support active-turn steering.",
+            ),
+          );
+          continue;
+        }
+        const turn = await session.prompt(
+          "Use your shell tool to wait 8 seconds, then answer ORIGINAL_STEERING_OUTPUT.",
+          { requestId: `probe-steering-${Date.now()}` },
+        );
+        let observedActive = false;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const items = liveEvents.slice(eventStart);
+          if (
+            items.some((event) => event.type === "tool.started" || event.type === "message.delta")
+          ) {
+            observedActive = true;
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        }
+        if (!observedActive)
+          throw new Error("Steering probe did not observe an active Runtime turn.");
+        await session.prompt("Change your answer now: reply with exactly STEERING_PROBE_OK_8172.", {
+          requestId: `probe-steer-${Date.now()}`,
+          mode: "steer",
+        });
+        const result = String(await turn.result);
+        const passed = result.includes("STEERING_PROBE_OK_8172");
+        recordObservation(paths.observations, {
+          operation,
+          output: result,
+          events: liveEvents.slice(eventStart),
+        });
+        paths.assertions.push(
+          assertion(
+            "steering.executed",
+            "steering",
+            "executed",
+            passed ? "passed" : "failed",
+            passed
+              ? "The original turn completed with the injected steering marker."
+              : "The original turn did not include the steering marker.",
+          ),
+        );
+        if (!passed) throw new Error("Steering did not affect the original turn output.");
+        continue;
+      }
       if (operation === "cancellation") {
         const turn = await session.prompt(
-          "Do a long-running analysis for at least two minutes before answering.",
+          "Use your shell tool to wait 120 seconds before answering.",
           { requestId: `probe-cancel-${Date.now()}` },
         );
-        setTimeout(() => void session.abort("Runtime cancellation probe"), 500).unref();
-        await turn.result.then(
+        const settled = turn.result.then(
           () => {
             throw new Error("Cancellation probe completed instead of being cancelled.");
           },
           () => undefined,
         );
-        const events = readRuntimeEvents((await turn.listEvents()).items);
+        for (let attempt = 0; attempt < 150; attempt++) {
+          if (
+            liveEvents
+              .slice(eventStart)
+              .some(
+                (event) =>
+                  event.type === "tool.started" ||
+                  event.type === "thought.delta" ||
+                  event.type === "message.delta",
+              )
+          )
+            break;
+          if (attempt === 149)
+            throw new Error("Cancellation probe did not observe an active Runtime turn.");
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        }
+        await session.abort("Runtime cancellation probe");
+        await settled;
+        const events = liveEvents.slice(eventStart);
         const passed = events.some((event) => event.type === "run.cancelled");
         paths.assertions.push(
           assertion(
@@ -378,13 +470,13 @@ async function runSessionProbe(
         continue;
       }
 
-      const request = createProbePrompt(operation, paths);
+      const request = createProbePrompt(operation, paths, runtime.descriptor.kind);
       const turn = await session.prompt(request.prompt, {
         requestId: `probe-${operation}-${Date.now()}`,
         ...(request.attachments === undefined ? {} : { attachments: request.attachments }),
       });
       const output = String(await turn.result);
-      const events = readRuntimeEvents((await turn.listEvents()).items);
+      const events = liveEvents.slice(eventStart);
       const sessionState = await session.getState();
       const rootContext = sessionState.contexts[sessionState.rootContextId];
       const ownerPersistenceValidated =
@@ -400,7 +492,7 @@ async function runSessionProbe(
       });
       const expectedToolNames =
         operation === "native-tool"
-          ? ["list_dir"]
+          ? [runtime.descriptor.kind === "claude-code-local" ? "Bash" : "list_dir"]
           : operation === "mcp"
             ? ["list_expert_context"]
             : [];
@@ -480,6 +572,7 @@ async function runSessionProbe(
 function createProbePrompt(
   operation: string,
   paths: { readonly workspace: string; readonly filePath: string; readonly imagePath: string },
+  runtimeKind: string,
 ): {
   readonly prompt: string;
   readonly marker?: string | undefined;
@@ -500,7 +593,9 @@ function createProbePrompt(
     case "native-tool":
       return {
         prompt:
-          "Use the native list_dir tool on the current workspace, then reply NATIVE_TOOL_PROBE_OK_8821.",
+          runtimeKind === "claude-code-local"
+            ? "Use your native Bash tool to list files in the current workspace, then reply NATIVE_TOOL_PROBE_OK_8821."
+            : "Use the native list_dir tool on the current workspace, then reply NATIVE_TOOL_PROBE_OK_8821.",
         marker: "NATIVE_TOOL_PROBE_OK_8821",
       };
     case "mcp":
@@ -550,14 +645,6 @@ function createProbePrompt(
   }
 }
 
-function readRuntimeEvents(events: readonly ExecutionEvent[]): readonly RuntimeStreamEvent[] {
-  return events.flatMap((event) => {
-    if (event.type !== "runtime.event") return [];
-    const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
-    return parsed.success ? [parsed.data] : [];
-  });
-}
-
 function assertion(
   id: string,
   feature: RuntimeFeatureName,
@@ -590,6 +677,8 @@ function probeFeature(probe: (typeof probeNames)[number] | string): RuntimeFeatu
       return "compaction";
     case "cancellation":
       return "cancellation";
+    case "steering":
+      return "steering";
     default:
       return "cleanup";
   }

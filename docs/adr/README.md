@@ -75,6 +75,8 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Localized Bundle asset identity](./054-localized-bundle-asset-identity.md)
 - [Unified Memory revision learning](./057-unified-memory-revision-learning.md)
 
+- [ACP Runtime Driver and Claude Code transport](./058-acp-runtime-driver.md)
+
 ## 维护规则
 
 - 新决策使用下一个未使用编号，不复用既有编号；

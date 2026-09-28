@@ -2,6 +2,9 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 import { gunzipSync } from "node:zlib";
 
 import {
@@ -29,6 +32,7 @@ const expectedFiles = new Set([
   "package/THIRD_PARTY_NOTICES.txt",
   "package/dist/pragma.js",
   "package/dist/cli.js",
+  "package/dist/claude-acp-worker.js",
   "package/dist/code-service-worker.js",
   "package/dist/canonical-event-feed-worker.js",
 ]);
@@ -87,7 +91,8 @@ for (const entry of entries) {
   const isBundle =
     entry.name.endsWith("/cli.js") ||
     entry.name.endsWith("/code-service-worker.js") ||
-    entry.name.endsWith("/canonical-event-feed-worker.js");
+    entry.name.endsWith("/canonical-event-feed-worker.js") ||
+    entry.name.endsWith("/claude-acp-worker.js");
   assertSafeText(text, entry.name, {
     repositoryDirectory,
     checkDependencyProtocols: true,
@@ -123,6 +128,7 @@ assertBootstrapOrder(bootstrap.data.toString("utf8"));
 const metafiles = await readMetafiles();
 for (const [label, metafile] of metafiles) assertMetafile(label, metafile);
 await verifyWorker(entryMap.get("package/dist/code-service-worker.js"));
+await verifyClaudeAcpWorker(entryMap.get("package/dist/claude-acp-worker.js"));
 
 console.log(
   JSON.stringify(
@@ -271,6 +277,7 @@ function assertManifest(manifest) {
 async function readMetafiles() {
   const paths = [
     ["cli bundle", join(releaseDirectory, "cli.metafile.json")],
+    ["claude ACP worker", join(releaseDirectory, "claude-acp-worker.metafile.json")],
     ["code service worker", join(releaseDirectory, "code-service-worker.metafile.json")],
     [
       "canonical event feed worker",
@@ -332,6 +339,27 @@ function assertMetafile(label, metafile) {
     !outputPaths.some((path) => path.endsWith("/canonical-event-feed-worker.js"))
   ) {
     throw new Error("Worker metafile is missing canonical-event-feed-worker.js output.");
+  }
+}
+
+async function verifyClaudeAcpWorker(workerEntry) {
+  const extractionDirectory = await mkdtemp(join(tmpdir(), "pragma-acp-audit-"));
+  try {
+    const path = join(extractionDirectory, "worker.mjs");
+    await writeFile(path, workerEntry.data);
+    const { stdout } = await promisify(execFile)(process.execPath, [path, "--version"], {
+      timeout: 10_000,
+    });
+    const manifest = JSON.parse(
+      await readFile(
+        join(repositoryDirectory, "packages/runtime/claude-code/package.json"),
+        "utf8",
+      ),
+    );
+    if (stdout.trim() !== manifest.dependencies["@agentclientprotocol/claude-agent-acp"])
+      throw new Error("Packaged Claude ACP worker version differs from the pinned dependency.");
+  } finally {
+    await rm(extractionDirectory, { recursive: true, force: true });
   }
 }
 

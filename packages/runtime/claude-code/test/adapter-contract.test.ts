@@ -1,206 +1,157 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import type {
-  DefineRuntimeDriverOptions,
-  RuntimeDriver,
+  AcpRuntimeSession,
+  DefineAcpRuntimeDriverOptions,
+  RuntimeFeatureSet,
   RuntimeNativeSessionContext,
-  RuntimeModel,
-  RuntimeModelSelection,
-  RuntimeTurnContext,
 } from "@pragma/core";
-import { RuntimeResourceScope } from "@pragma/core";
 import { describeRuntimeConformance } from "@pragma/core/testing/vitest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ClaudeCodeNativeSession } from "../src/session.ts";
-
-const runtimeMocks = vi.hoisted(() => ({
-  driver: undefined as unknown,
-  startClaudeCodeTurn: vi.fn(async () => ({ outputText: "ok" })),
+const captured = vi.hoisted(() => ({
+  options: undefined as DefineAcpRuntimeDriverOptions<RuntimeFeatureSet> | undefined,
 }));
-
 vi.mock("@pragma/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pragma/core")>();
   return {
     ...actual,
-    defineRuntimeDriver(
-      driver: RuntimeDriver<unknown, unknown>,
-      options?: DefineRuntimeDriverOptions,
-    ) {
-      runtimeMocks.driver = driver;
-      return actual.defineRuntimeDriver(driver, options);
+    defineAcpRuntimeDriver(...args: Parameters<typeof actual.defineAcpRuntimeDriver>) {
+      captured.options = args[0];
+      return actual.defineAcpRuntimeDriver(...args);
     },
   };
 });
-
-vi.mock("../src/session.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/session.ts")>();
-  return { ...actual, startClaudeCodeTurn: runtimeMocks.startClaudeCodeTurn };
-});
-
 import { createClaudeCodeRuntime } from "../src/index.ts";
-
 const roots: string[] = [];
-
-beforeEach(() => {
-  runtimeMocks.startClaudeCodeTurn.mockClear();
-});
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
-
-describeRuntimeConformance("Claude Code", { createRuntime: createClaudeCodeRuntime });
-
-describe("Claude Code Runtime contract", () => {
-  it("declares split Session lifecycle capabilities without unsafe steer", () => {
+describeRuntimeConformance("Claude Code ACP", { createRuntime: createClaudeCodeRuntime });
+describe("Claude Code ACP contract", () => {
+  it("retains runtime identity and enables steering", () => {
     const runtime = createClaudeCodeRuntime();
-    expect(runtime.descriptor.capabilities).toMatchObject({
-      supportsResume: true,
-      supportsCancel: true,
-      supportsClose: true,
-      supportsSteer: false,
-      supportsContextWindowInspection: true,
-      supportsManualCompaction: true,
-      supportsContextCompactionEvents: true,
-    });
-  });
-
-  it.each([
-    ["Anthropic", "anthropic", "claude-sonnet-4-6"],
-    ["CC Switch", "anthropic-compatible", "opus"],
-  ])("starts sessions and turns with %s catalog selections", async (_name, providerId, modelId) => {
-    const root = await temporaryRoot();
-    const selection = {
-      model: { providerId, modelId },
-      thinkingLevel: "high",
-    } satisfies RuntimeModelSelection;
-    const driver = createCapturedDriver(modelCatalog());
-    const session = await driver.createSession(createSessionContext(root, selection));
-    const turn = { modelSelection: selection } as RuntimeTurnContext<unknown>;
-
-    await expect(driver.startTurn(session, turn)).resolves.toEqual({ outputText: "ok" });
-
-    expect(session.defaultProviderId).toBe(providerId);
-    expect(session.tokenModelIdentity.providerId).toBe(providerId);
-    expect(runtimeMocks.startClaudeCodeTurn).toHaveBeenCalledWith(session, turn);
-  });
-
-  it("rejects selections outside the Claude Code model catalog", async () => {
-    const root = await temporaryRoot();
-    const driver = createCapturedDriver(modelCatalog());
-    const selection = {
-      model: { providerId: "openai", modelId: "opus" },
-      thinkingLevel: "high",
-    } satisfies RuntimeModelSelection;
-
-    await expect(driver.createSession(createSessionContext(root, selection))).rejects.toThrow(
-      'Unsupported Claude Code model "openai/opus".',
-    );
-  });
-});
-
-function createCapturedDriver(
-  models: readonly RuntimeModel[],
-): RuntimeDriver<unknown, ClaudeCodeNativeSession> {
-  createClaudeCodeRuntime({
-    executablePath: "/opt/claude",
-    spawn: vi.fn(),
-    canUse: () => ({ usable: true }),
-    listModels: async () => models,
-  });
-  return runtimeMocks.driver as RuntimeDriver<unknown, ClaudeCodeNativeSession>;
-}
-
-function modelCatalog(): readonly RuntimeModel[] {
-  return [
-    {
-      id: "claude-sonnet-4-6",
-      displayName: "Claude Sonnet 4.6",
-      provider: { kind: "runtime-managed", id: "anthropic", displayName: "Anthropic" },
-      thinking: { supportedLevels: [{ value: "high", label: "High" }] },
-    },
-    {
-      id: "opus",
-      displayName: "Opus → CC Switch local route",
-      provider: {
-        kind: "runtime-managed",
-        id: "anthropic-compatible",
-        displayName: "Anthropic-compatible",
-      },
-      thinking: { supportedLevels: [{ value: "high", label: "High" }] },
-    },
-  ];
-}
-
-function createSessionContext(
-  root: string,
-  modelSelection: RuntimeModelSelection,
-): RuntimeNativeSessionContext {
-  const sessionDir = join(root, "session");
-  const agent = { id: "expert-1", workspace: "/workspace" };
-  const owner = { type: "expert-session" as const, ownerId: "owner-1", contextId: "context-1" };
-  return {
-    agent,
-    request: { agent, owner, modelSelection },
-    descriptor: {
+    expect(runtime.descriptor).toMatchObject({
       id: "claude-code-local",
       kind: "claude-code-local",
-      displayName: "Claude Code Local",
-      capabilities: { targets: ["agent"], executionLocations: ["local"] },
+      capabilities: {
+        supportsResume: true,
+        supportsCancel: true,
+        supportsClose: true,
+        supportsSteer: true,
+        supportsManualCompaction: true,
+        supportsContextCompactionEvents: true,
+      },
+    });
+    expect(runtime.features.steering.status).toBe("degraded");
+  });
+  it.each([false, true])(
+    "restores model and effort defaults after turn overrides (explicit default: %s)",
+    async (explicit) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-claude-acp-model-"));
+      roots.push(root);
+      const catalog = ["sonnet", "opus"].map((id) => ({
+        id,
+        displayName: id,
+        provider: { id: "anthropic", kind: "runtime-managed" as const, displayName: "Claude" },
+        thinking: { supportedLevels: ["low", "high"].map((value) => ({ value, label: value })) },
+        default: id === "sonnet",
+      }));
+      createClaudeCodeRuntime({
+        spawn: vi.fn(),
+        acpWorkerPath: "/pragma/worker.js",
+        listModels: async () => catalog,
+        ...(explicit ? { defaultModelName: "sonnet", defaultThinkingLevel: "low" } : {}),
+      });
+      const binding = await captured.options!.prepare(context(root));
+      expect(binding.promptUsageScope).toBe("turn");
+      const session = {
+        configOptions: [
+          { id: "model", category: "model", type: "select", currentValue: "default" },
+          { id: "effort", category: "thought_level", type: "select", currentValue: "default" },
+        ],
+        setConfig: vi.fn(async () => {}),
+      } as unknown as AcpRuntimeSession;
+      await binding.onReady?.(session);
+      await binding.selectModel?.(session, {
+        model: { providerId: "anthropic", modelId: "opus" },
+        thinkingLevel: "high",
+      });
+      vi.mocked(session.setConfig).mockClear();
+      await binding.selectModel?.(session, undefined);
+      expect(session.setConfig).toHaveBeenCalledWith("model", explicit ? "sonnet" : "default");
+      expect(session.setConfig).toHaveBeenCalledWith("thought_level", explicit ? "low" : "default");
+      vi.mocked(session.setConfig).mockClear();
+      await binding.selectModel?.(session, { model: { providerId: "anthropic", modelId: "opus" } });
+      expect(session.setConfig).toHaveBeenCalledWith("thought_level", explicit ? "low" : "default");
     },
-    systemSessionId: "system-session-1",
-    owner,
-    runContext: {},
-    workspace: "/workspace",
-    logger: { info: vi.fn(), warn: vi.fn() },
-    paths: {
-      systemSessionDir: sessionDir,
-      runtimeSessionDir: () => sessionDir,
-    },
-    processEnvironment: { CLAUDE_CONFIG_DIR: join(root, "shared-config") },
-    agentContext: {
-      systemPrompt: "system prompt",
-      startupMessages: [],
-      context: [],
-      snapshot: {},
-    },
-    lifecycle: { currentContext: undefined },
-    persistence: {
-      spec: { mode: "checkpoint", sessionDir },
-      checkpoint: vi.fn(async () => undefined),
-    },
-    resources: new RuntimeResourceScope("claude-code-adapter-contract-test"),
-    features: {
-      mcp: {
-        registry: { tools: [] },
-        lease: {
-          registry: { tools: [] },
-          stats: { openedConnections: 0, reusedConnections: 0, coalescedConnections: 0 },
-          release: vi.fn(async () => undefined),
-        },
-        registration: {
-          id: "registration",
-          name: "pragma",
-          url: "http://127.0.0.1:43127/private/mcp",
-          dispose: vi.fn(async () => undefined),
+  );
+  it("projects only managed config, plugin and MCP into ACP", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-claude-acp-contract-"));
+    roots.push(root);
+    createClaudeCodeRuntime({
+      executablePath: "/opt/claude",
+      spawn: vi.fn(),
+      acpWorkerPath: "/pragma/claude-acp-worker.js",
+    });
+    const binding = await captured.options!.prepare(context(root));
+    expect(binding.command.args).toEqual(["/pragma/claude-acp-worker.js"]);
+    expect(binding.command.env).toMatchObject({
+      CLAUDE_CODE_EXECUTABLE: "/opt/claude",
+      CLAUDE_CONFIG_DIR: join(root, "session/config"),
+    });
+    expect(binding.session).toMatchObject({
+      cwd: root,
+      mcpServers: [{ type: "http", name: "pragma", url: "http://127.0.0.1/private/mcp" }],
+      _meta: {
+        systemPrompt: { append: "managed system" },
+        claudeCode: {
+          options: {
+            settingSources: [],
+            strictMcpConfig: true,
+            extraArgs: { bare: null, "strict-mcp-config": null },
+            plugins: [{ type: "local", path: join(root, "session/plugin") }],
+          },
         },
       },
+    });
+    const active = { usage: undefined };
+    const session = { sessionId: "owned", active } as unknown as AcpRuntimeSession;
+    for (let index = 0; index < 2; index++)
+      binding.extensionNotifications?.["_claude/sdkMessage"]?.(
+        {
+          sessionId: "owned",
+          message: {
+            type: "result",
+            usage: { input_tokens: 2, output_tokens: 3, cache_read_input_tokens: 1 },
+          },
+        },
+        session,
+      );
+    expect(active.usage).toMatchObject({
+      measurement: "reported",
+      input: 4,
+      output: 6,
+      cacheRead: 2,
+    });
+  });
+});
+function context(root: string): RuntimeNativeSessionContext {
+  return {
+    workspace: root,
+    processEnvironment: { CLAUDE_CONFIG_DIR: join(root, "host-config") },
+    persistence: { spec: { sessionDir: join(root, "session") } },
+    paths: { runtimeSessionDir: () => join(root, "session") },
+    request: {},
+    logger: { warn: vi.fn() },
+    agentContext: { systemPrompt: "managed system" },
+    features: {
       skills: {
-        pluginDir: join(sessionDir, "plugin"),
+        pluginDir: join(root, "session/plugin"),
         relay: { subscribe: vi.fn(() => vi.fn()) },
       },
-      permissions: { mode: "default" },
-    } as never,
-    steps: { get: () => undefined } as never,
-    sessionInfo: {},
+      mcp: { registration: { url: "http://127.0.0.1/private/mcp" } },
+    },
   } as unknown as RuntimeNativeSessionContext;
-}
-
-async function temporaryRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "pragma-claude-adapter-contract-"));
-  roots.push(root);
-  return root;
 }

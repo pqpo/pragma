@@ -16,6 +16,14 @@ describe("Claude Code Runtime availability cache", () => {
     mocks.canUseRuntimeBinary.mockReset();
   });
 
+  it("rejects a missing explicit worker before probing the native CLI", async () => {
+    mocks.canUseRuntimeBinary.mockResolvedValue(usable("claude"));
+    await expect(
+      canUseClaudeCodeRuntime({ acpWorkerPath: `/missing/worker-${crypto.randomUUID()}.js` }),
+    ).resolves.toMatchObject({ usable: false, details: { code: "claude_acp_worker_missing" } });
+    expect(mocks.canUseRuntimeBinary).not.toHaveBeenCalled();
+  });
+
   it("shares a fresh availability result", async () => {
     mocks.canUseRuntimeBinary.mockResolvedValue(usable("claude 1"));
     const executablePath = `/claude/availability-${crypto.randomUUID()}`;

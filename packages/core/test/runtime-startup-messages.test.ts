@@ -14,6 +14,7 @@ import {
   defineRuntimeDriver,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
   RUNTIME_STARTUP_MESSAGE_STAGES,
+  runtimeStep,
   StaticContextStore,
   type ExpertAgentStartupMessage,
   type RuntimeContextWindowUsage,
@@ -30,6 +31,26 @@ afterEach(async () => {
 });
 
 describe("Runtime always-on startup messages", () => {
+  it.each([false, true])(
+    "retains startup after turn preparation fails (reinjection: %s)",
+    async (reinjection) => {
+      const fixture = await createFixture();
+      try {
+        if (reinjection) {
+          await submit(fixture.session, "first");
+          await fixture.session.contextWindow?.compact?.();
+        }
+        const failed = fixture.session.submit({ query: "preparation-failure", execution: {} });
+        await expect(failed.result).rejects.toThrow("turn preparation failed");
+        await submit(fixture.session, "after-preparation-failure");
+        expect(fixture.stats.turns.at(-1)?.startupMessages).toHaveLength(1);
+        await submit(fixture.session, "steady");
+        expect(fixture.stats.turns.at(-1)?.startupMessages).toHaveLength(0);
+      } finally {
+        await fixture.session.close();
+      }
+    },
+  );
   it("keeps native images for vision models and degrades text-only models to path context", async () => {
     const image: ExpertPromptAttachment = {
       id: "00000000-0000-4000-8000-000000000001",
@@ -277,6 +298,14 @@ async function createFixture(inputModalities?: readonly string[], modelCatalogUn
     contextSystem,
   });
   const runtime = defineRuntimeDriver<TestNativeEvent, TestNativeSession>({
+    turnSteps: [
+      runtimeStep.turn({
+        id: "startup.preparation",
+        prepare(context) {
+          if (context.query === "preparation-failure") throw new Error("turn preparation failed");
+        },
+      }),
+    ],
     features: createRuntimeTestFeatures({
       enabled: [
         "contextWindow",

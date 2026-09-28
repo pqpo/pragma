@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AcpRuntimeSession } from "@pragma/core";
 
 import { createClaudeCompactionHookRelay } from "../src/compaction-hooks.ts";
+import { createClaudeAcpBinding } from "../src/session.ts";
 
 describe("Claude Code compaction hook relay", () => {
   it("correlates authenticated PreCompact and PostCompact hooks", async () => {
@@ -87,7 +89,20 @@ describe("Claude Code compaction hook relay", () => {
       });
       expect(response.status).toBe(204);
 
-      relay.failPending("Claude Code ended before context compaction completed.");
+      const binding = createClaudeAcpBinding({
+        options: { acpWorkerPath: "/pragma/worker.js" },
+        workspace: "/pragma/workspace",
+        systemPrompt: "managed system",
+        managedConfig: { configDir: "/pragma/config" },
+        cli: { executablePath: "/pragma/claude", launcherArgs: [] },
+        processEnvironment: {},
+        pluginDir: "/pragma/plugin",
+        mcpServerUrl: "http://127.0.0.1/mcp",
+        relay,
+        humanInteractionHandler: undefined,
+        defaultSelection: undefined,
+      });
+      binding.onTurnSettled?.({} as AcpRuntimeSession);
 
       const started = received.mock.calls[0]?.[0];
       expect(received).toHaveBeenLastCalledWith({
@@ -97,6 +112,8 @@ describe("Claude Code compaction hook relay", () => {
         trigger: "auto",
         errorMessage: "Claude Code ended before context compaction completed.",
       });
+      binding.onTurnSettled?.({} as AcpRuntimeSession);
+      expect(received).toHaveBeenCalledTimes(2);
     } finally {
       unsubscribe();
       await relay.close();

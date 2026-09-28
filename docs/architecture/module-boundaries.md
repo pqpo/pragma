@@ -146,3 +146,7 @@ apps/desktop
 packages/core/src/local-agent-bridge
 apps/server/src/runtime-gateway
 ```
+
+## ACP transport
+
+Core's `defineAcpRuntimeDriver()` composes the existing private Session factory with the vendor-neutral ACP SDK. Concrete `runtime-*` adapters provide agent executables, session metadata and provider extensions. Claude-specific ACP code and its bundled worker stay in `@pragma/runtime-claude-code`; Core does not import `claude-agent-acp`. See [ADR 058](../adr/058-acp-runtime-driver.md).

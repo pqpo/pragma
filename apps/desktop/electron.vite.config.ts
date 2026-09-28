@@ -26,6 +26,9 @@ export default defineConfig({
         // require at runtime. Keep that fallback intact when Vite bundles ws.
         external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
         input: {
+          "claude-acp-worker": fileURLToPath(
+            new URL("../../packages/runtime/claude-code/src/claude-acp-worker.ts", import.meta.url),
+          ),
           index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
           "code-service-worker": fileURLToPath(
             new URL("../../packages/core/src/code-service-worker.ts", import.meta.url),

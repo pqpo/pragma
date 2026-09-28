@@ -1,6 +1,8 @@
 appId: com.pqpo.pragma
 productName: Pragma
 asar: true
+asarUnpack:
+  - out/main/**/*
 
 directories:
   buildResources: build
