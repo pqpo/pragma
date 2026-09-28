@@ -16,7 +16,10 @@ import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { unavailableCoreAssetRuntimeBindings } from "./core-asset-sync-service.ts";
-import { createDesktopCapabilityResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import {
+  createDesktopCapabilityResource,
+  createDesktopContextResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import {
   canonicalPragmaResourceRef,
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -230,6 +233,33 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(local.name()).toBe("Shared docs");
   });
 
+  it("separates Context bindings from Knowledge while preserving the readable store name", async () => {
+    const root = await fixture();
+    const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+    const local = device(join(root, "local"), "Team docs", undefined, [binding]);
+    const overview = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+
+    expect(
+      overview.items.find(
+        (item) => item.key === `knowledge:${canonicalPragmaResourceRef(binding)}`,
+      ),
+    ).toMatchObject({
+      assetKey: `context:${storeId}`,
+      assetKind: "context",
+      assetName: "Team docs",
+    });
+    expect(overview.items.find((item) => item.key === `knowledge:${storeId}`)).toMatchObject({
+      assetKey: `knowledge:${storeId}`,
+      assetKind: "knowledge",
+      assetName: "Team docs",
+    });
+  });
+
   it("warns when only retired sync settings exist", async () => {
     const root = await fixture();
     const local = device(join(root, "legacy"));
@@ -407,6 +437,142 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect(restored.name()).toBe("Shared docs");
   });
 
+  it("reads remote identity metadata for overview without reconciling or rewriting v1 state", async () => {
+    const root = await fixture();
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+      name: "Search binding",
+    });
+    let description = "Initial definition";
+    const capabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: {
+            kind: "mcp_server" as const,
+            name: "Search definition",
+            description,
+            connection: {
+              transport: "stdio" as const,
+              command: "search",
+              args: [],
+              env: {},
+              secretEnv: {},
+            },
+            timeoutMs: 30_000,
+            tools: [],
+          },
+          managedBy: "user",
+        },
+      ],
+    } as unknown as CapabilityStore;
+    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    const source = device(
+      join(root, "source"),
+      undefined,
+      undefined,
+      [binding],
+      undefined,
+      undefined,
+      capabilities,
+    );
+    await source.service.configure(configuration);
+
+    const observerRoot = join(root, "observer");
+    await mkdir(observerRoot);
+    await writeFile(
+      join(observerRoot, "settings.json"),
+      JSON.stringify({ schemaVersion: "pragma.core-asset-sync-settings/v1", ...configuration }),
+    );
+    await cp(join(root, "source", "state.json"), join(observerRoot, "state.json"));
+    const observer = device(observerRoot);
+    const stateBefore = await readFile(join(observerRoot, "state.json"), "utf8");
+
+    description = "Changed remotely";
+    await source.service.sync();
+    const overview = await observer.service.overview();
+
+    expect(
+      overview.items.filter((item) => item.assetKey === `capability:${capabilityId}`),
+    ).toHaveLength(2);
+    expect(observer.resources()).toEqual([]);
+    expect(await readFile(join(observerRoot, "state.json"), "utf8")).toBe(stateBefore);
+    const stored = JSON.parse(stateBefore) as {
+      remoteItems: Record<string, Record<string, unknown>>;
+    };
+    expect(
+      Object.values(stored.remoteItems).every(
+        (item) => Object.keys(item).sort().join(",") === "fingerprint,kind,name",
+      ),
+    ).toBe(true);
+  });
+
+  it("resolves offline canonical binding identity without matching display names", async () => {
+    const root = await fixture();
+    const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId,
+      name: "Binding alias",
+    });
+    const capabilities = {
+      list: async () => [
+        {
+          manifest: { id: capabilityId, latestRevision: 1 },
+          definition: {
+            kind: "mcp_server" as const,
+            name: "Different definition name",
+            description: "Search",
+            connection: {
+              transport: "stdio" as const,
+              command: "search",
+              args: [],
+              env: {},
+              secretEnv: {},
+            },
+            timeoutMs: 30_000,
+            tools: [],
+          },
+          managedBy: "user",
+        },
+      ],
+    } as unknown as CapabilityStore;
+    const source = device(
+      join(root, "source"),
+      undefined,
+      undefined,
+      [binding],
+      undefined,
+      undefined,
+      capabilities,
+    );
+    const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
+    await source.service.configure(configuration);
+    const offlineRoot = join(root, "offline");
+    await mkdir(offlineRoot);
+    const unavailableRemote = "ssh://git@pragma.test/missing-assets.git";
+    await writeFile(
+      join(offlineRoot, "settings.json"),
+      JSON.stringify({
+        schemaVersion: "pragma.core-asset-sync-settings/v1",
+        ...configuration,
+        remote: unavailableRemote,
+      }),
+    );
+    const state = JSON.parse(await readFile(join(root, "source", "state.json"), "utf8")) as {
+      source: string;
+    };
+    state.source = JSON.stringify([unavailableRemote, "main"]);
+    await writeFile(join(offlineRoot, "state.json"), JSON.stringify(state));
+
+    const overview = await device(offlineRoot).service.overview();
+    expect(
+      overview.items.filter((item) => item.assetKey === `capability:${capabilityId}`),
+    ).toHaveLength(2);
+  });
+
   it("updates the incoming Expert graph before removing a selected Capability tool", async () => {
     const root = await fixture();
     const capabilityId = "5c98c888-e972-4b7c-a92c-00461dd41e3e";
@@ -471,7 +637,16 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       sourceCapabilities,
     );
     const configuration = { remote, branch: "main", autoPush: true, pushDeletions: false };
-    expect((await source.service.configure(configuration)).status).toBe("ready");
+    const sourceOverview = await source.service.configure(configuration);
+    expect(sourceOverview.status).toBe("ready");
+    expect(
+      sourceOverview.items.filter((item) => item.assetKey === `capability:${capabilityId}`),
+    ).toHaveLength(2);
+    expect(
+      sourceOverview.items
+        .filter((item) => item.assetKey === `capability:${capabilityId}`)
+        .map((item) => item.assetName),
+    ).toEqual(["Search", "Search"]);
     let targetTools = ["old", "keep"];
     const targetCapabilities = {
       list: async () => [
@@ -630,8 +805,29 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     );
     expect(second.layout()?.nodes.finish).toEqual({ x: 2, y: 4 });
     expect(
+      restored.items
+        .filter((item) => item.assetKey === "flow:t1e73vjvctx49gkq")
+        .map((item) => item.kind)
+        .sort(),
+    ).toEqual(["flow", "flow-layout"]);
+    expect(
       restored.items.find((item) => item.key === "expert:expert:1xddvess309a6gme")?.status,
     ).toBe("needs_attention");
+
+    const current = await firstProject.get();
+    const renamedFlow = {
+      ...flow,
+      metadata: { ...flow.metadata, name: "Deploy" },
+    } as PragmaResource;
+    await firstProject.publish({
+      expectedRevision: current.revision,
+      resources: [runtime, expert, team, renamedFlow],
+    });
+    await first.service.sync();
+    const refreshed = await second.service.refresh();
+    expect(
+      refreshed.items.find((item) => item.key === "flow-layout:t1e73vjvctx49gkq")?.assetName,
+    ).toBe("Deploy");
   });
 
   it("finds an unavailable harness through an Expert's RuntimeProfile", () => {

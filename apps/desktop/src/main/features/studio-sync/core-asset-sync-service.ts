@@ -30,6 +30,7 @@ import {
   WorkflowLayoutSchema,
   type CoreAssetSyncConfiguration,
   type CoreAssetSyncItem,
+  type CoreAssetLogicalKind,
   type CoreAssetSyncOverview,
   type DesktopRuntimeAvailability,
   type UpdateCoreAssetSyncConfiguration,
@@ -44,6 +45,8 @@ import { referencedPragmaResourceRefs } from "../projects/pragma-resource-refere
 import {
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
+  desktopCapabilityResourceId,
+  desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 
 const execFileAsync = promisify(execFile);
@@ -334,6 +337,7 @@ export function createCoreAssetSyncService(options: {
     config: CoreAssetSyncConfiguration | undefined,
     state?: SyncState,
     remote?: ItemMap,
+    collected?: ItemMap,
   ): Promise<CoreAssetSyncOverview> => {
     if (config === undefined) {
       const legacySyncStopped = (
@@ -352,7 +356,7 @@ export function createCoreAssetSyncService(options: {
       return { status: "unconfigured", legacySyncStopped, items: [] };
     }
     const current = state ?? (await readState(sourceKey(config)));
-    const local = await collect();
+    const local = collected ?? (await collect());
     const missing = await readiness(local);
     const keys = new Set([
       ...local.keys(),
@@ -365,6 +369,7 @@ export function createCoreAssetSyncService(options: {
       const item = local.get(key) ?? remote?.get(key) ?? current.remoteItems[key];
       if (item === undefined) return [];
       const remoteItem = remote?.get(key) ?? current.remoteItems[key];
+      const identity = logicalAssetIdentity({ ...item, key }, local, remote, current.remoteItems);
       const status = current.conflicts.includes(key)
         ? "conflict"
         : current.ignoredRemote.includes(key)
@@ -383,6 +388,7 @@ export function createCoreAssetSyncService(options: {
           key,
           kind: item.kind,
           name: item.name,
+          ...identity,
           status,
           ...(missing.has(key) ? { message: missing.get(key) } : {}),
         },
@@ -752,7 +758,11 @@ export function createCoreAssetSyncService(options: {
               remoteItems: Object.fromEntries(
                 [...nextRemote].map(([key, item]) => [
                   key,
-                  { kind: item.kind, name: item.name, fingerprint: item.fingerprint },
+                  {
+                    kind: item.kind,
+                    name: item.name,
+                    fingerprint: item.fingerprint,
+                  },
                 ]),
               ),
               ignoredRemote: [...ignored],
@@ -785,7 +795,25 @@ export function createCoreAssetSyncService(options: {
     });
   };
   return {
-    overview: async () => await makeOverview(await readConfig()),
+    async overview() {
+      const config = await readConfig();
+      if (config === undefined) return await makeOverview(undefined);
+      const state = await readState(sourceKey(config));
+      const local = await collect();
+      if (!needsRemoteIdentity(state, local))
+        return await makeOverview(config, state, undefined, local);
+      let checkout: Checkout | undefined;
+      try {
+        checkout = await checkoutRepository(config);
+        const remote = await readRepository(checkout.root, true);
+        return await makeOverview(config, state, remote, local);
+      } catch (error) {
+        options.warn?.("Core asset sync overview could not read remote identity metadata.", error);
+        return await makeOverview(config, state, undefined, local);
+      } finally {
+        if (checkout !== undefined) await rm(checkout.root, { recursive: true, force: true });
+      }
+    },
     async configure(input) {
       const config = CoreAssetSyncConfigurationSchema.parse({
         ...input,
@@ -831,6 +859,160 @@ export function createCoreAssetSyncService(options: {
       }, 1_000);
     },
   };
+}
+
+type CoreAssetSyncItemSummary = Pick<CoreAssetSyncItem, "key" | "kind" | "name" | "fingerprint"> & {
+  readonly data?: unknown;
+};
+
+function logicalAssetIdentity(
+  item: CoreAssetSyncItemSummary,
+  local: ItemMap,
+  remote?: ItemMap,
+  cached?: SyncState["remoteItems"],
+): { assetKey: string; assetKind: CoreAssetLogicalKind; assetName: string } {
+  const parsedResource =
+    item.data === undefined
+      ? undefined
+      : PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+  const resource = parsedResource?.success === true ? parsedResource.data : undefined;
+  if (resource?.kind === "Capability") {
+    const capabilityId = classifyDesktopCapabilityResource(resource)?.id;
+    if (capabilityId !== undefined) {
+      const definition = itemSummaryAt(`capability:${capabilityId}`, local, remote, cached);
+      return {
+        assetKey: `capability:${capabilityId}`,
+        assetKind: "capability",
+        assetName: definition?.name ?? resource.metadata.name,
+      };
+    }
+  }
+  if (resource?.kind === "ContextStore") {
+    const storeId = classifyDesktopContextResource(resource);
+    if (storeId !== undefined) {
+      const store = itemSummaryAt(`knowledge:${storeId}`, local, remote, cached);
+      return {
+        assetKey: `context:${storeId}`,
+        assetKind: "context",
+        assetName: store?.name ?? resource.metadata.name,
+      };
+    }
+  }
+  if (
+    resource !== undefined &&
+    ["Expert", "ExpertTeam", "Flow", "RuntimeProfile"].includes(resource.kind)
+  ) {
+    const assetKind =
+      resource.kind === "Expert"
+        ? "expert"
+        : resource.kind === "ExpertTeam"
+          ? "team"
+          : resource.kind === "Flow"
+            ? "flow"
+            : "runtime-profile";
+    return {
+      assetKey: `${assetKind}:${resource.metadata.id}`,
+      assetKind,
+      assetName: resource.metadata.name,
+    };
+  }
+  if (item.kind === "flow-layout") {
+    const id = item.key.slice("flow-layout:".length);
+    const flowKey = `flow:flow:${id}`;
+    const flow = remote?.get(flowKey) ?? local.get(flowKey) ?? cached?.[flowKey];
+    return {
+      assetKey: `flow:${id}`,
+      assetKind: "flow",
+      assetName: flow?.name ?? item.name,
+    };
+  }
+
+  const separator = item.key.indexOf(":");
+  const rawId = separator < 0 ? item.key : item.key.slice(separator + 1);
+  const nestedPrefix = `${item.kind}:`;
+  const id = rawId.startsWith(nestedPrefix) ? rawId.slice(nestedPrefix.length) : rawId;
+  if (item.kind === "capability" && rawId.startsWith("capability:")) {
+    const capabilityId = canonicalBindingTargetId(
+      rawId.slice("capability:".length),
+      "capability",
+      CapabilityIdSchema,
+      local,
+      remote,
+      cached,
+    );
+    if (capabilityId !== undefined) {
+      const definition = itemSummaryAt(`capability:${capabilityId}`, local, remote, cached);
+      return {
+        assetKey: `capability:${capabilityId}`,
+        assetKind: "capability",
+        assetName: definition?.name ?? item.name,
+      };
+    }
+  }
+  if (item.kind === "knowledge" && rawId.startsWith("context-store:")) {
+    const storeId = canonicalBindingTargetId(
+      rawId.slice("context-store:".length),
+      "knowledge",
+      ContextStoreIdSchema,
+      local,
+      remote,
+      cached,
+    );
+    if (storeId !== undefined) {
+      const store = itemSummaryAt(`knowledge:${storeId}`, local, remote, cached);
+      return {
+        assetKey: `context:${storeId}`,
+        assetKind: "context",
+        assetName: store?.name ?? item.name,
+      };
+    }
+    return { assetKey: `context:${id}`, assetKind: "context", assetName: item.name };
+  }
+  const assetKind = item.kind as CoreAssetLogicalKind;
+  return { assetKey: `${assetKind}:${id}`, assetKind, assetName: item.name };
+}
+
+function itemSummaryAt(
+  key: string,
+  local: ItemMap,
+  remote?: ItemMap,
+  cached?: SyncState["remoteItems"],
+): CoreAssetSyncItemSummary | undefined {
+  const item = local.get(key) ?? remote?.get(key) ?? cached?.[key];
+  return item === undefined ? undefined : { ...item, key };
+}
+
+function canonicalBindingTargetId(
+  resourceId: string,
+  targetKind: "capability" | "knowledge",
+  idSchema: typeof CapabilityIdSchema | typeof ContextStoreIdSchema,
+  local: ItemMap,
+  remote?: ItemMap,
+  cached?: SyncState["remoteItems"],
+): string | undefined {
+  const keys = new Set([...local.keys(), ...(remote?.keys() ?? []), ...Object.keys(cached ?? {})]);
+  return [...keys].flatMap((key) => {
+    if (!key.startsWith(`${targetKind}:`)) return [];
+    const id = key.slice(targetKind.length + 1);
+    if (id.includes(":") || !idSchema.safeParse(id).success) return [];
+    const matchesResource =
+      targetKind === "capability"
+        ? (["project-expert", "system-expert-customization", "default-agent-option"] as const).some(
+            (owner) => desktopCapabilityResourceId(owner, id) === resourceId,
+          )
+        : (["project-expert", "system-expert-customization"] as const).some(
+            (owner) => desktopContextResourceId(owner, id) === resourceId,
+          );
+    return matchesResource ? [id] : [];
+  })[0];
+}
+
+function needsRemoteIdentity(state: SyncState, local: ItemMap): boolean {
+  return Object.keys(state.remoteItems).some(
+    (key) =>
+      !local.has(key) &&
+      (key.startsWith("capability:capability:") || key.startsWith("knowledge:context-store:")),
+  );
 }
 
 function sourceKey(config: CoreAssetSyncConfiguration): string {

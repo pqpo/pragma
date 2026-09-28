@@ -29,3 +29,14 @@ application.
 
 Individual Knowledge Base and Skill Git associations are a separate Studio feature intended for
 sharing one asset's ordinary files with other agents.
+
+The Settings overview distinguishes synchronization records from user-visible logical assets.
+Every record carries a logical asset key, kind, and readable name. Multiple records that implement
+one asset, such as a Flow and its layout or a Capability binding and definition, contribute one
+asset to the overview. Context bindings and Knowledge content remain separate asset categories.
+The UI groups these logical assets by kind, summarizes synchronized, attention, and failed counts,
+and keeps record-level conflict and restore actions inside collapsed attention details. States
+remain on the v1 wire format. Overview reads authoritative remote payload only when a remote-only
+binding needs identity metadata; this read never reconciles assets, mutates local stores, or updates
+sync state. Offline fallback resolves canonical Desktop-managed binding IDs through the centralized
+binding policy and never guesses identity from mutable display names.
