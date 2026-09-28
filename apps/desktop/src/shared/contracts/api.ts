@@ -1,3 +1,4 @@
+import type { MemoryAttentionStatus, UpdateMemoryAttentionSettings } from "@pragma/shared";
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
 import type { AssetGitSource, AssetGitStatus, AssetGitTarget } from "./asset-git.ts";
 import type {
@@ -317,6 +318,10 @@ export interface PragmaDesktopAPI {
   subscribeMemoryExtractionRunChat: (
     listener: (update: DesktopMemoryExtractionRunChatUpdate) => void,
   ) => () => void;
+  getMemoryAttentionStatus: () => Promise<MemoryAttentionStatus>;
+  updateMemoryAttentionSettings: (
+    input: UpdateMemoryAttentionSettings,
+  ) => Promise<MemoryAttentionStatus>;
   getMemoryExtractorProfile: () => Promise<DesktopMemoryExtractorProfile>;
   updateMemoryExtractorProfile: (
     input: UpdateDesktopMemoryExtractorProfile,

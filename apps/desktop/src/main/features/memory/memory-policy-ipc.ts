@@ -1,3 +1,4 @@
+import { MemoryAttentionStatusSchema, UpdateMemoryAttentionSettingsSchema } from "@pragma/shared";
 import { ipcMain, type BrowserWindow } from "electron";
 
 import {
@@ -88,6 +89,16 @@ export function installMemoryPolicyHandlers(
     });
   };
 
+  ipcMain.handle("memory-attention:status", async () =>
+    plane.attentionSettings === undefined
+      ? MemoryAttentionStatusSchema.parse({ configured: false, revision: 0, state: "disabled" })
+      : await plane.attentionSettings.status(),
+  );
+  ipcMain.handle("memory-attention:settings", async (_event, input: unknown) => {
+    if (plane.attentionSettings === undefined) throw new Error("attention_settings_unavailable");
+    await plane.attentionSettings.update(UpdateMemoryAttentionSettingsSchema.parse(input));
+    return await plane.attentionSettings.status();
+  });
   ipcMain.handle("memory-policy:global:get", globalSnapshot);
   ipcMain.handle("memory-policy:global:update", async (_event, input: unknown) => {
     const parsed = UpdateDesktopGlobalMemoryPolicySchema.parse(input);

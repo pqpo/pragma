@@ -995,6 +995,7 @@ export async function createDesktopApplicationContainer(
   installCoreAssetSyncHandlers(coordinatedCoreAssetSync);
   installAssetGitHandlers(coordinatedAssetGit);
   const memoryPlane = await createDesktopMemoryPlane({
+    secrets: secretStore,
     pragmaHome: pragmaPaths.root,
     logger: mainLogger,
     onTick: async () => {
@@ -1117,10 +1118,19 @@ export async function createDesktopApplicationContainer(
     contextStores,
     contextStoreRevisions: storeRevisions,
     knowledgeRevisionMountResources: systemExpertKnowledgeRevisionMountResources,
-    hostContextStores: async () => {
+    hostContextStores: async (mission) => {
       const globalPolicy = await memoryPlane.policies.getGlobal();
       return globalPolicy.policy.enabled === "enabled"
-        ? [{ namespace: "memory", store: memoryPlane.contextStore }]
+        ? [
+            {
+              namespace: "memory",
+              store: memoryPlane.createMissionContextStore({
+                missionId: mission.id,
+                goal: mission.goal,
+                projectId: mission.project.id,
+              }),
+            },
+          ]
         : [];
     },
     plugins: pluginStore,
@@ -1142,6 +1152,7 @@ export async function createDesktopApplicationContainer(
     },
     onStorageTrashed: () => trashMaintenance.schedule("mission-storage-trashed"),
     onOwnerDeleting: async ({ mission, executionIds }) => {
+      await memoryPlane.stopMissionAttention(mission.id);
       let cursor: string | undefined;
       const draftIds: string[] = [];
       do {
@@ -1195,6 +1206,7 @@ export async function createDesktopApplicationContainer(
       await executionEventProjector.terminal({ mission, executionId, status, result, error });
       if (!isUserFacingMissionOrigin(mission.origin)) return;
       try {
+        await memoryPlane.stopMissionAttention(mission.id);
         await memoryPlane.setMemoryConversationState({
           missionId: mission.id,
           state: mission.lifecycleStatus === "completed" ? "completed" : "active",

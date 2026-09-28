@@ -479,6 +479,9 @@ importers:
       '@pragma/interpreter':
         specifier: workspace:*
         version: link:../interpreter
+      '@pragma/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@pragma/shared':
         specifier: workspace:*
         version: link:../shared
