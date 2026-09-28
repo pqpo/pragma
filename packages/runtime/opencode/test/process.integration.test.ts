@@ -34,6 +34,12 @@ for (const [major, variable] of [
         await mkdir(join(root, "config", "opencode"), { recursive: true });
         await mkdir(join(root, "config", "opencode", "plugins"));
         const pluginMarker = join(root, "unmanaged-plugin-loaded");
+        const homePluginMarker = join(root, "home-plugin-loaded");
+        await mkdir(join(root, ".opencode", "plugins"), { recursive: true });
+        await writeFile(
+          join(root, ".opencode", "plugins", "marker.js"),
+          `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(homePluginMarker)}, "loaded"); export default async () => ({});`,
+        );
         await writeFile(
           join(root, "config", "opencode", "plugins", "marker.js"),
           `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(pluginMarker)}, "loaded"); export default async () => ({});`,
@@ -180,6 +186,7 @@ for (const [major, variable] of [
         const configPath = join(root, "config", "opencode", "opencode.jsonc");
         expect(await readFile(configPath, "utf8").catch(() => "")).not.toContain("pragma_tools");
         expect(await readFile(pluginMarker, "utf8").catch(() => "")).toBe("");
+        expect(await readFile(homePluginMarker, "utf8").catch(() => "")).toBe("");
         expect(await readFile(projectProviderMarker, "utf8").catch(() => "")).toBe("");
       } finally {
         await rm(root, { recursive: true, force: true });

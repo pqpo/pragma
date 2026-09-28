@@ -205,6 +205,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             args: appendCodexExecutionMcpConfig(
               options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
               mcp.registration,
+              ctx.workspace,
             ),
             cwd: ctx.workspace,
             env: {

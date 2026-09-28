@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -17,7 +14,6 @@ import {
   type RuntimeDriverDescriptorOverride,
   type RuntimeEventMappingContext,
   type RuntimeEventMappingResult,
-  type RuntimeModel,
   type RuntimeSessionPersistenceSpec,
   type RuntimeSessionRestoreHandler,
   type RuntimeSessionSyncCallback,
@@ -34,8 +30,10 @@ import {
   type OpenCodeModelRef,
   type OpenCodeWireEvent,
 } from "./client.ts";
+import { canUseOpenCodeRuntime } from "./availability.ts";
 import { prepareOpenCodeDataHome } from "./data-home.ts";
 import { prepareOpenCodeConfiguration } from "./configuration.ts";
+import { createOpenCodeModelDiscovery } from "./models.ts";
 import { v2PermissionRules, type OpenCodePermissionMode } from "./permissions.ts";
 import { probeOpenCode, startOpenCodeProcess } from "./process.ts";
 
@@ -46,6 +44,8 @@ export interface OpenCodeRuntimeOptions {
   readonly executablePath?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly permissionMode?: OpenCodePermissionMode | undefined;
+  readonly modelCatalogCacheRoot?: string | undefined;
+  readonly onModelCatalogUpdated?: (() => void) | undefined;
   readonly tokenCounter?: RuntimeTokenCounter | undefined;
   readonly mcpToolRegistryPool?: McpToolRegistryPool | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
@@ -135,68 +135,22 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
     close: enabled(),
     cleanup: enabled(),
   });
-  const listModels = async (): Promise<readonly RuntimeModel[]> => {
-    const discoveryRoot = await mkdtemp(join(tmpdir(), "pragma-opencode-discovery-"));
-    try {
-      const detected = await probeOpenCode(executablePath, env);
-      const discoveryDataEnv = await prepareOpenCodeDataHome(env, discoveryRoot);
-      const discovery = await prepareOpenCodeConfiguration({
-        env: discoveryDataEnv,
-        workspace: discoveryRoot,
-        sessionDir: discoveryRoot,
-        major: detected.major,
-      });
-      const nativeProcess = await startOpenCodeProcess({
-        executablePath,
-        env: discovery.env,
-        cwd: discoveryRoot,
-        ...detected,
-      });
-      const client = connectOpenCode(nativeProcess, discoveryRoot);
-      try {
-        return (await client.listModels()).map((model) => ({
-          id: model.modelId,
-          displayName: model.displayName,
-          provider: {
-            kind: "runtime-managed" as const,
-            id: model.providerId,
-            displayName: model.providerName,
-          },
-          ...(model.isDefault === undefined ? {} : { default: model.isDefault }),
-          ...(model.inputModalities === undefined
-            ? {}
-            : { inputModalities: model.inputModalities }),
-          ...(model.variants === undefined || model.variants.length === 0
-            ? {}
-            : {
-                thinking: {
-                  supportedLevels: model.variants.map((value) => ({ value, label: value })),
-                },
-              }),
-        }));
-      } finally {
-        await client.close();
-      }
-    } finally {
-      await rm(discoveryRoot, { recursive: true, force: true });
-    }
-  };
+  const listModels = createOpenCodeModelDiscovery({
+    executablePath,
+    env,
+    modelCatalogCacheRoot: options.modelCatalogCacheRoot,
+    onModelCatalogUpdated: options.onModelCatalogUpdated,
+  });
   return defineRuntimeDriver(
     {
       descriptor,
       features,
-      async canUse(): Promise<RuntimeCanUseResult> {
-        try {
-          const { version } = await probeOpenCode(executablePath, env);
-          const models = await listModels();
-          return { usable: true, details: { executablePath, version, modelCount: models.length } };
-        } catch (error) {
-          return {
-            usable: false,
-            reason: error instanceof Error ? error.message : String(error),
-            details: { executablePath },
-          };
-        }
+      async canUse(request?: { readonly forceRefresh?: boolean }): Promise<RuntimeCanUseResult> {
+        return await canUseOpenCodeRuntime({
+          executablePath,
+          env,
+          forceRefresh: request?.forceRefresh,
+        });
       },
       listModels,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {

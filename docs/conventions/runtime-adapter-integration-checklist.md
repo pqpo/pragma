@@ -80,6 +80,24 @@ Runtime 时先建立证据，再实现能力：
 6. 先保存真实 wire fixture，再写归一化代码。未知事件必须经过脱敏后可观察；不能因为 parser 忽略未知
    payload 而让协议漂移表现为“成功但没有正文/工具卡片”。
 
+### 配置发现与 workspace 定制治理
+
+所有 Runtime 遵守同一行为边界，而不是强求相同的目录检查实现：用户级配置只能经过白名单投影进入
+Session 私有状态；repo 级可执行定制必须被可靠禁用。有供应商原生隔离且经过真实版本验证时，允许配置目录
+存在但忽略其内容；没有可靠隔离时必须在启动前 fail closed。
+
+| Runtime     | 用户配置边界                                           | repo 定制边界                                                                                            |
+| ----------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| PI          | 只使用 Pragma 显式 provider、工具与资源                | 不运行外部 Harness 的 repo 定制                                                                          |
+| Codex       | 最小私有 `CODEX_HOME` 投影认证与允许的配置             | Session 强制当前 workspace 为 `untrusted`，忽略项目 `.codex` 配置、hooks 与 rules                        |
+| Claude Code | 私有 config snapshot，显式传入受管 settings/plugin/MCP | `--bare --strict-mcp-config` 禁止自动发现 `.claude`、`CLAUDE.md`、plugins、MCP 与 hooks                  |
+| Qoder CLI   | 私有 `QODER_CONFIG_DIR`，只快照认证和模型目录          | `settingSources: []`、strict MCP，只传入受管 plugin/skills/hooks                                         |
+| Antigravity | ADC 使用私有 HOME；host-keyring 是已披露兼容模式       | 原生 CLI 无可靠禁用能力，拒绝 `.agents/.agent/_agents/_agent`                                            |
+| OpenCode    | 私有 HOME/XDG roots，白名单导入 provider/model 与 deny | 1.18.x 禁用开关仍可能执行 plugin，拒绝 repo/ancestor `.opencode`；原用户 Home `.opencode` 被隔离而不拒绝 |
+
+新增 Runtime 或升级供应商版本时必须用 marker hook/plugin 做可执行 smoke；仅看到环境变量、CLI flag 或生成
+文件不能证明 repo 定制已被禁用。
+
 ### Antigravity 1.1.11 复盘
 
 本次修复最初表现为“长时间 loading 后一次性出现正文”，但真实根因横跨多个独立契约：

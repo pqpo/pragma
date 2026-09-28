@@ -348,6 +348,9 @@ export function createBuiltInRuntimeFactories(
         ]);
         return createOpenCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
+          ...(onModelCatalogUpdated === undefined
+            ? {}
+            : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode,
           env: {
             ...env,
@@ -357,6 +360,7 @@ export function createBuiltInRuntimeFactories(
                   OPENCODE_CONFIG_CONTENT: process.env["OPENCODE_CONFIG_CONTENT"],
                 }),
           },
+          modelCatalogCacheRoot: options.modelCatalogCacheRoot,
           tokenCounter: options.tokenCounter,
           ...(options.mcpToolRegistryPool === undefined
             ? {}
