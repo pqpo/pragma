@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,12 +12,15 @@ const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 const originalSshCommand = process.env.GIT_SSH_COMMAND;
 const originalSsh = process.env.GIT_SSH;
+const originalPath = process.env.PATH;
 
 afterEach(async () => {
   if (originalSshCommand === undefined) delete process.env.GIT_SSH_COMMAND;
   else process.env.GIT_SSH_COMMAND = originalSshCommand;
   if (originalSsh === undefined) delete process.env.GIT_SSH;
   else process.env.GIT_SSH = originalSsh;
+  if (originalPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalPath;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -34,7 +37,9 @@ async function fixture(): Promise<{ root: string; ssh: string; marker: string }>
     "ssh://git@example.test/repo",
   ]);
   const marker = join(root, "ssh-invoked");
-  const ssh = join(root, "ssh-probe");
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  const ssh = join(bin, "ssh");
   await writeFile(ssh, `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(marker)}\nexit 1\n`);
   await chmod(ssh, 0o700);
   return { root, ssh, marker };
@@ -69,5 +74,15 @@ describe("asset Git command", () => {
     await execFileAsync("git", ["-C", root, "config", "core.sshCommand", ssh]);
 
     await expectConfiguredTransport(root, marker);
+  });
+
+  it("uses BatchMode for the default SSH transport", async () => {
+    const { root, marker } = await fixture();
+    delete process.env.GIT_SSH_COMMAND;
+    delete process.env.GIT_SSH;
+    process.env.PATH = `${join(root, "bin")}:${originalPath ?? ""}`;
+
+    await expectConfiguredTransport(root, marker);
+    await expect(readFile(marker, "utf8")).resolves.toContain("BatchMode=yes");
   });
 });
