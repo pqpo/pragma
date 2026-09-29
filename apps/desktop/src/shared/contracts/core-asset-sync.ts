@@ -24,7 +24,7 @@ export const CoreAssetLogicalKindSchema = z.enum([
 ]);
 export const CoreAssetSyncKeySchema = z.string().min(1).max(300);
 export const CoreAssetSyncConfigurationSchema = AssetGitSourceSchema.extend({
-  schemaVersion: z.literal("pragma.core-asset-sync-settings/v1"),
+  schemaVersion: z.literal("pragma.asset-sync-settings/v1"),
   autoPush: z.boolean().default(true),
   pushDeletions: z.boolean().default(false),
 }).strict();
@@ -40,24 +40,6 @@ export const CoreAssetSyncItemSchema = z
     data: z.unknown(),
   })
   .strict();
-export const CoreAssetSyncRepositorySchema = z
-  .object({
-    schemaVersion: z.literal("pragma.core-asset-sync/v1"),
-    items: z.array(CoreAssetSyncItemSchema).max(5_000),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const keys = new Set<string>();
-    for (const [index, item] of value.items.entries()) {
-      if (keys.has(item.key))
-        context.addIssue({
-          code: "custom",
-          path: ["items", index, "key"],
-          message: "Duplicate asset key.",
-        });
-      keys.add(item.key);
-    }
-  });
 export const CoreAssetSyncItemStatusSchema = CoreAssetSyncItemSchema.pick({
   key: true,
   kind: true,
@@ -72,7 +54,6 @@ export const CoreAssetSyncItemStatusSchema = CoreAssetSyncItemSchema.pick({
 export const CoreAssetSyncOverviewSchema = z
   .object({
     configuration: CoreAssetSyncConfigurationSchema.optional(),
-    legacySyncStopped: z.boolean().optional(),
     status: z.enum(["unconfigured", "ready", "syncing", "conflict", "error"]),
     syncedAt: z.string().datetime().optional(),
     error: z.string().max(2_000).optional(),

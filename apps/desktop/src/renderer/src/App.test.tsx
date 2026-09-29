@@ -1,13 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  App,
-  AssetGitIssueNotice,
-  CoreSyncCutoverNotice,
-  shouldShowCoreSyncCutoverNotice,
-  updateAssetGitIssues,
-} from "./App.tsx";
+import { App, AssetGitIssueNotice, updateAssetGitIssues } from "./App.tsx";
 import { i18n } from "./i18n/index.ts";
 
 afterEach(async () => {
@@ -93,26 +87,6 @@ describe("App", () => {
     expect(html).toContain('class="brand-mark"');
     expect(html).toContain('src="/src/renderer/src/assets/pragma-icon.png"');
     expect(html).not.toContain(">P</span>");
-  });
-
-  it("renders a styled and dismissible legacy sync notice", async () => {
-    await i18n.changeLanguage("zh-Hans");
-
-    const html = renderToStaticMarkup(
-      <CoreSyncCutoverNotice onConfigure={() => undefined} onDismiss={() => undefined} />,
-    );
-
-    expect(html).toContain('class="primary-button"');
-    expect(html).toContain(">配置</button>");
-    expect(html).toContain('class="icon-button core-sync-cutover-dismiss"');
-    expect(html).toContain('aria-label="关闭同步提示"');
-    expect(html).not.toContain("配置核心资产同步");
-  });
-
-  it("temporarily hides the legacy sync notice without changing its source status", () => {
-    expect(shouldShowCoreSyncCutoverNotice(true, false)).toBe(true);
-    expect(shouldShowCoreSyncCutoverNotice(true, true)).toBe(false);
-    expect(shouldShowCoreSyncCutoverNotice(false, false)).toBe(false);
   });
 
   it("keeps unresolved Asset Git failures visible until their target recovers", () => {

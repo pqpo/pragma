@@ -1069,7 +1069,7 @@ describe("M6 parser and read-only command surface", () => {
       {
         shell: "bash",
         marker: '            resume) candidates="--request-id',
-        allowed: ["--request-id", "--ack-timeout"],
+        allowed: ["--request-id", "--ack-timeout", "--abandon-uncertain"],
         forbidden: [
           "--request",
           "--expected-execution",
@@ -1082,7 +1082,7 @@ describe("M6 parser and read-only command surface", () => {
       {
         shell: "zsh",
         marker: "                    resume) _describe option '--request-id --ack-timeout",
-        allowed: ["--request-id", "--ack-timeout"],
+        allowed: ["--request-id", "--ack-timeout", "--abandon-uncertain"],
         forbidden: [
           "--request",
           "--expected-execution",
@@ -1095,7 +1095,7 @@ describe("M6 parser and read-only command surface", () => {
       {
         shell: "fish",
         marker: "__pragma_queue_resume' -a",
-        allowed: ["--request-id", "--ack-timeout"],
+        allowed: ["--request-id", "--ack-timeout", "--abandon-uncertain"],
         forbidden: [
           "--request",
           "--expected-execution",
@@ -1108,7 +1108,7 @@ describe("M6 parser and read-only command surface", () => {
       {
         shell: "powershell",
         marker: "$candidates = $globalOptions + @('--request-id','--ack-timeout'",
-        allowed: ["--request-id", "--ack-timeout"],
+        allowed: ["--request-id", "--ack-timeout", "--abandon-uncertain"],
         forbidden: [
           "--request",
           "--expected-execution",

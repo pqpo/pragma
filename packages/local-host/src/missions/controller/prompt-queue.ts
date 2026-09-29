@@ -1,3 +1,4 @@
+import { hasUncertainSteerDelivery } from "@pragma/core";
 import type { ExpertSessionStore } from "@pragma/core";
 import type { PromptRequest } from "@pragma/shared";
 
@@ -20,6 +21,8 @@ export interface PromptQueueProjection {
   readonly pendingCount: number;
   readonly pausedAfterRequestId?: string | undefined;
   readonly supportsSteer: boolean;
+  readonly deliveryUncertain?: boolean | undefined;
+  readonly steeringRecovery?: "receipt" | "terminal" | undefined;
   readonly items: readonly PromptQueueProjectionItem[];
 }
 
@@ -36,6 +39,11 @@ export function createExpertSessionPromptQueueProjection(options: {
   readonly sessions: Pick<ExpertSessionStore, "get" | "listPrompts" | "listEvents">;
   readonly resolveSessionId: (missionId: string) => Promise<string | undefined>;
   readonly supportsSteer?: ((sessionId: string) => Promise<boolean> | boolean) | undefined;
+  readonly steeringRecovery?:
+    | ((
+        sessionId: string,
+      ) => Promise<"receipt" | "terminal" | undefined> | "receipt" | "terminal" | undefined)
+    | undefined;
   readonly resolvePromptMetadata?:
     ((prompt: PromptRequest) => Promise<{ readonly hasAttachments: boolean }>) | undefined;
 }): PromptQueueProjectionPort {
@@ -62,15 +70,22 @@ export function createExpertSessionPromptQueueProjection(options: {
             event.type,
           ),
         );
+      const deliveryUncertain = hasUncertainSteerDelivery(prompts);
+      const uncertain = pending.find(
+        (prompt) => prompt.status === "queued" && prompt.deliveryAttempt?.state === "uncertain",
+      );
       const paused =
-        lastControl?.type === "prompt.queue-paused" &&
-        pending.some((prompt) => prompt.status === "queued");
+        deliveryUncertain ||
+        (lastControl?.type === "prompt.queue-paused" &&
+          pending.some((prompt) => prompt.status === "queued"));
       const pausedAfterRequestId =
-        paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
+        uncertain?.requestId ??
+        (paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
           ? lastControl.data.requestId
-          : undefined;
+          : undefined);
       const supportsSteer =
         options.supportsSteer === undefined ? false : await options.supportsSteer(sessionId);
+      const steeringRecovery = await options.steeringRecovery?.(sessionId);
       const items = await Promise.all(
         pending.map(async (prompt, index) => {
           const metadata = await options.resolvePromptMetadata?.(prompt);
@@ -87,7 +102,8 @@ export function createExpertSessionPromptQueueProjection(options: {
             // Only a queued item can be promoted to the active turn.  A
             // running item is the active turn itself and is therefore not a
             // queue.steer target.
-            steerable: prompt.status === "queued" && supportsSteer && !hasAttachments,
+            steerable:
+              prompt.status === "queued" && supportsSteer && !hasAttachments && !deliveryUncertain,
           };
         }),
       );
@@ -103,6 +119,8 @@ export function createExpertSessionPromptQueueProjection(options: {
         pendingCount: pending.length,
         ...(pausedAfterRequestId === undefined ? {} : { pausedAfterRequestId }),
         supportsSteer,
+        deliveryUncertain,
+        steeringRecovery,
         items,
       };
     },

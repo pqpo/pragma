@@ -611,39 +611,6 @@
   }
 }
 
-/* The knowledge revision Agent is a device-level preference, not page-local state. */
-.revision-agent-settings-select {
-  flex: 0 0 min(304px, 44%);
-}
-
-.revision-agent-pinned-settings {
-  padding-left: 18px;
-  border-left: 2px solid var(--ui-selection);
-}
-
-.revision-agent-pinned-settings > .setting-row:first-child {
-  border-top: 1px solid var(--ui-line);
-}
-
-@media (max-width: 900px) {
-  .revision-agent-mode-setting,
-  .revision-agent-runtime-setting,
-  .revision-agent-model-setting,
-  .revision-agent-save-setting {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .revision-agent-settings-select {
-    width: 100%;
-    flex-basis: auto;
-  }
-
-  .revision-agent-save-setting .secondary-button {
-    align-self: flex-start;
-  }
-}
-
 .evaluation-settings-list {
   display: grid;
 }

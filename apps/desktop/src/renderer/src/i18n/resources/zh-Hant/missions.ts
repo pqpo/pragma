@@ -1,4 +1,9 @@
 export const missions = {
+  memoryAttentionSelection: "記憶注意力選擇",
+  memoryAttentionAssessed: "已由 Jev 評估",
+  memoryAttentionUnassessed: "向量相似度 · 未評估",
+  memoryAttentionBrowse: "查看來源記憶",
+
   deliveryMode: "訊息傳送方式",
   deliveryEnqueue: "排隊",
   deliverySteer: "引導",
@@ -7,7 +12,14 @@ export const missions = {
   queuedMessage: "排隊",
   preparingQueuedSteer: "正在準備引導",
   removeQueuedMessage: "移出佇列並編輯",
+  steerRetained: "未投遞 Steer，訊息保留在佇列中，等待下一輪執行。",
+  steerDeliveryUncertain: "Steer 投遞結果不確定，佇列已暫停，避免重複執行。",
+  checkSteerDelivery: "檢查投遞並恢復",
+  abandonSteerDelivery: "跳過不確定訊息，重新開始",
+  abandonSteerDeliveryHint:
+    "停止舊對話，捨棄不確定訊息且不重播。先前操作可能已經執行。其他排隊訊息將在新對話中繼續。",
   queuePaused: "佇列已在失敗訊息後暫停。",
+  deliveryUncertain: "投遞不確定",
   resumeQueue: "略過失敗項並繼續",
   title: "任務",
   newMission: "新增任務",
@@ -184,7 +196,6 @@ export const missions = {
   missionOptions: "任務選項",
   permissionOverride: "覆蓋此任務的預設工作權限",
   permissionTaskLocked: "權限已固定到此任務",
-  modelAvailableNextTurn: "模型修改將用於新提交的訊息，目前輪次和已排隊訊息繼續使用原模型。",
   optionsAvailableNextTurn: "目前輪次結束後可修改選項",
   starting: "正在啟動…",
   startMission: "開始任務",

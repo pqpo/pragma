@@ -13,7 +13,28 @@ import type {
 import { findModelProviderPreset } from "../../../shared/model-provider-presets.ts";
 import { normalizeModelProviderBaseUrl } from "./model-provider-store.ts";
 
-const directory = createPiModelProviderDirectory();
+const generationDirectory = createPiModelProviderDirectory();
+const embeddingModels = [
+  "text-embedding-3-small",
+  "text-embedding-3-large",
+  "text-embedding-ada-002",
+].map((id) => ({
+  kind: "embedding" as const,
+  id,
+  name: id,
+  api: "openai-embeddings" as const,
+  maxInputTokens: 8192,
+  maxInputTokensSource: "catalog" as const,
+  maxBatchInputs: 32,
+  maxBatchTokens: 300000,
+  cost: { input: 0 },
+}));
+const directory = {
+  listModels: (catalogId: string) => [
+    ...generationDirectory.listModels(catalogId),
+    ...(catalogId === "openai" ? embeddingModels : []),
+  ],
+};
 const drivers = createBuiltInModelProviderDriverRegistry();
 
 export async function discoverProviderModels(options: {

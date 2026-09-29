@@ -14,23 +14,19 @@ import {
   ContextStoreDraftRebaseInspectionSchema,
   ContextStoreDraftSchema,
   ContextStoreRevisionJobSchema,
-  ContextStoreRevisionProfileSchema,
   ContextStoreRevisionRequestSchema,
   RebaseContextStoreDraftSchema,
-  UpdateContextStoreRevisionProfileSchema,
   type ContextStoreChangeSet,
   type ContextStoreDraft,
   type ContextStoreDraftOverlay,
   type ContextStoreDraftRebaseInspection,
   type ContextStoreRevisionJob,
-  type ContextStoreRevisionProfile,
   type ContextStoreRevisionRequest,
   type GetContextStoreDraftFile,
   type ListContextStoreDrafts,
   type ListContextStoreRevisionJobs,
   type RebaseContextStoreDraft,
   type UpdateContextStoreDraftFile,
-  type UpdateContextStoreRevisionProfile,
 } from "@pragma/built-in-agents/contracts";
 import { z } from "zod";
 
@@ -135,8 +131,6 @@ export interface ContextStoreRevisionService {
   processPending(): Promise<void>;
   scheduleProcessing(): void;
   hasUnmergedDrafts(storeId: string): Promise<boolean>;
-  getProfile(): Promise<ContextStoreRevisionProfile>;
-  updateProfile(input: UpdateContextStoreRevisionProfile): Promise<ContextStoreRevisionProfile>;
 }
 
 export class ContextStoreRevisionServiceError extends Error {
@@ -146,7 +140,6 @@ export class ContextStoreRevisionServiceError extends Error {
       | "draft_not_found"
       | "revision_conflict"
       | "invalid_state"
-      | "profile_conflict"
       | "rebase_conflict"
       | "validation_failed",
     message: string,
@@ -227,7 +220,6 @@ export function createContextStoreRevisionService(options: {
   const draftsTrashPath = options.draftsTrashPath ?? join(options.statePath, "trash", "drafts");
   const claimReleaseJournalsPath = join(options.statePath, "claim-releases");
   const missionClaimsPath = join(options.statePath, "mission-claims");
-  const profilePath = join(options.statePath, "profile.json");
   const jobsLockPath = join(options.statePath, ".jobs.lock");
   const jobPath = (id: string) => join(jobsPath, `${id}.json`);
   const draftRoot = (id: string) => join(draftsPath, id);
@@ -1308,10 +1300,7 @@ export function createContextStoreRevisionService(options: {
           const candidate = materializeDraftSnapshot(current, base);
           if (current.operation === "create") assertKnowledgeStoreSnapshot(candidate);
           else
-            assertKnowledgeStoreStructure(
-              base,
-              changeSetFromDraft({ ...current, summary }, base),
-            );
+            assertKnowledgeStoreStructure(base, changeSetFromDraft({ ...current, summary }, base));
         } catch (error) {
           if (error instanceof KnowledgeDraftValidationError) {
             throw new ContextStoreRevisionServiceError("validation_failed", error.message, {
@@ -1690,44 +1679,6 @@ export function createContextStoreRevisionService(options: {
         }
       }
       return false;
-    },
-
-    async getProfile() {
-      try {
-        return ContextStoreRevisionProfileSchema.parse(
-          JSON.parse(await readFile(profilePath, "utf8")),
-        );
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        return ContextStoreRevisionProfileSchema.parse({
-          schemaVersion: "pragma.context-store-revision-profile/v1",
-          revision: 0,
-          mode: "inherit-default",
-          updatedAt: new Date(0).toISOString(),
-        });
-      }
-    },
-
-    async updateProfile(input) {
-      const parsed = UpdateContextStoreRevisionProfileSchema.parse(input);
-      return await withFileLock(`${profilePath}.lock`, async () => {
-        const current = await api.getProfile();
-        if (current.revision !== parsed.expectedRevision) {
-          throw new ContextStoreRevisionServiceError(
-            "profile_conflict",
-            "The revision Agent profile changed.",
-          );
-        }
-        const next = ContextStoreRevisionProfileSchema.parse({
-          schemaVersion: "pragma.context-store-revision-profile/v1",
-          revision: current.revision + 1,
-          mode: parsed.mode,
-          ...(parsed.model === undefined ? {} : { model: parsed.model }),
-          updatedAt: new Date().toISOString(),
-        });
-        await writeJsonAtomic(profilePath, next);
-        return next;
-      });
     },
   };
 

@@ -1,3 +1,8 @@
+import {
+  initializeMemoryIndexOutbox,
+  memoryIndexOutbox,
+  type MemoryIndexChange,
+} from "../retrieval/outbox.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -120,6 +125,21 @@ export interface SemanticGovernanceInput {
 }
 
 export interface SemanticMemoryStore {
+  readIndexRemovals(limit: number): Promise<readonly MemoryIndexChange[]>;
+  readIndexChanges(limit: number): Promise<readonly MemoryIndexChange[]>;
+  acknowledgeIndexChange(change: MemoryIndexChange): Promise<void>;
+  indexWatermark(): Promise<number>;
+  countIndexableRecords(): Promise<number>;
+  scanForIndex(afterId: string | undefined, limit: number): Promise<readonly SemanticFact[]>;
+  peekForRecall(
+    scope: MemoryRecallScope,
+    id: string,
+    now?: Date,
+  ): Promise<SemanticFact | undefined>;
+  listRecallIdentities(
+    scope: MemoryRecallScope,
+    now?: Date,
+  ): Promise<readonly { id: string; revision: number }[]>;
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
   registerSubjectContext(context: SemanticExecutionSubjectContext): Promise<void>;
   getSubjectContext(executionId: string): Promise<SemanticExecutionSubjectContext | undefined>;
@@ -203,6 +223,12 @@ export interface SemanticMemoryStore {
     limit: number,
     now: Date,
   ): Promise<readonly SemanticFact[]>;
+  searchCandidatesForRecall(
+    scope: MemoryRecallScope,
+    query: string,
+    limit: number,
+    now: Date,
+  ): Promise<readonly SemanticFact[]>;
   getForRecall(scope: MemoryRecallScope, id: string, now: Date): Promise<SemanticFact | undefined>;
   getEvidenceForRecall(
     scope: MemoryRecallScope,
@@ -260,7 +286,7 @@ export async function createSemanticMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-semantic-store",
-          targetVersion: 5,
+          targetVersion: 6,
           migrations: SEMANTIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -381,6 +407,41 @@ export async function createSemanticMemoryStore(
   };
 
   return {
+    ...memoryIndexOutbox(data, "current_facts"),
+    async countIndexableRecords() {
+      return (
+        data
+          .prepare(
+            "SELECT count(*) AS n FROM current_facts WHERE status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted' AND (json_extract(record_json,'$.expiresAt') IS NULL OR json_extract(record_json,'$.expiresAt') > ?)",
+          )
+          .get(new Date().toISOString()) as { n: number }
+      ).n;
+    },
+    async scanForIndex(afterId, limit) {
+      const rows = data
+        .prepare(
+          "SELECT record_json AS recordJson FROM current_facts WHERE id > ? ORDER BY id LIMIT ?",
+        )
+        .all(afterId ?? "", Math.max(1, Math.min(limit, 200))) as { recordJson: string }[];
+      return rows.map((row) => SemanticFactSchema.parse(JSON.parse(row.recordJson)));
+    },
+    async peekForRecall(scope, id, now = new Date()) {
+      const access = recallPredicate("current_facts", scope, now);
+      const row = data
+        .prepare(
+          `SELECT record_json AS recordJson FROM current_facts WHERE id = ? AND ${access.sql}`,
+        )
+        .get(id, ...access.parameters) as { recordJson: string } | undefined;
+      return row === undefined ? undefined : SemanticFactSchema.parse(JSON.parse(row.recordJson));
+    },
+    async listRecallIdentities(scope, now = new Date()) {
+      const access = recallPredicate("current_facts", scope, now);
+      return data
+        .prepare(
+          `SELECT id,revision FROM current_facts WHERE json_extract(record_json,'$.sensitivity') <> 'restricted' AND ${access.sql}`,
+        )
+        .all(...access.parameters) as { id: string; revision: number }[];
+    },
     async ingest(envelopes) {
       if (envelopes.length === 0) return;
       const insertEvidence = state.prepare(
@@ -1107,6 +1168,11 @@ export async function createSemanticMemoryStore(
       return records;
     },
 
+    async searchCandidatesForRecall(scope, query, limit, now) {
+      const records = searchFacts(data, scope, query, limit, now);
+      return records;
+    },
+
     async getForRecall(scope, id, now) {
       const access = recallPredicate("current_facts", scope, now);
       const row = data
@@ -1442,7 +1508,7 @@ function conversationKey(ref: MemorySubjectRef): string {
 
 function initializeData(database: DatabaseSync): void {
   const version = readDatabaseVersion(database);
-  if (version > 5) {
+  if (version > 6) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-semantic-store/v${version}`);
   }
@@ -1521,10 +1587,11 @@ function initializeData(database: DatabaseSync): void {
       learning_eligible INTEGER NOT NULL CHECK (learning_eligible IN (0, 1))
     );
   `);
-  if (version !== 0 && version !== 5) {
+  if (version !== 0 && version !== 6) {
     throw new Error(`missing-adjacent-migration:pragma.memory-semantic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 5;");
+  initializeMemoryIndexOutbox(database, "current_facts");
+  database.exec("PRAGMA user_version = 6;");
 }
 
 function initializeState(database: DatabaseSync): void {

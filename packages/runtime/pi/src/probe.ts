@@ -13,7 +13,7 @@ export async function probePiModelProvider(options: {
 }): Promise<ModelProviderProbeResult> {
   const converter = createPiModelProviderConverter();
   const configuredModel = options.provider.models.find((model) => model.id === options.modelId);
-  if (configuredModel === undefined) {
+  if (configuredModel === undefined || configuredModel.kind !== "generation") {
     return {
       ok: false,
       code: "model_unavailable",

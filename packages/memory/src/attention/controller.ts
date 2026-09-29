@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { error, StaticContextStore, type ExpertAgentContextStore } from "@pragma/core";
+import {
+  error,
+  StaticContextStore,
+  defaultRuntimeTokenCounter,
+  type ExpertAgentContextStore,
+} from "@pragma/core";
 import type { MemoryRecallScope } from "../pipeline/memory-module.ts";
-import { trimUtf8ToByteLimit } from "../storage/utf8.ts";
 import { escapeMarkdownLinkLabel } from "../context/markdown.ts";
 import {
   MemoryAttentionInputSchema,
@@ -14,6 +18,7 @@ import {
 } from "./decision-provider.ts";
 import {
   MEMORY_ATTENTION_POLICY as policy,
+  MEMORY_ATTENTION_VERSION,
   MEMORY_ATTENTION_CONTEXT_ID,
   MEMORY_ATTENTION_HINT,
   type MemoryAttentionEntry,
@@ -23,7 +28,8 @@ import {
 
 export interface MemoryAttentionBinding {
   readonly generation: number;
-  readonly provider: MemoryDecisionProvider;
+  readonly providerRevision?: number;
+  readonly provider: MemoryDecisionProvider | undefined;
   readonly available?: boolean;
 }
 export interface MemoryAttentionController {
@@ -52,10 +58,17 @@ export function createMemoryAttentionController(options: {
     scope: MemoryRecallScope,
     queries: readonly string[],
     modules: readonly ("episodic" | "semantic")[],
+    signal?: AbortSignal,
   ) => Promise<readonly MemoryAttentionCandidate[]>;
   readonly read: (
     scope: MemoryRecallScope,
-    entry: Pick<MemoryAttentionEntry, "module" | "memoryId">,
+    entry: Pick<MemoryAttentionEntry, "module" | "memoryId"> & {
+      selectedPaths?: MemoryAttentionEntry["selectedPaths"] | undefined;
+    },
+  ) => Promise<MemoryAttentionCandidate | undefined>;
+  readonly detail?: (
+    scope: MemoryRecallScope,
+    candidate: MemoryAttentionCandidate,
   ) => Promise<MemoryAttentionCandidate | undefined>;
   readonly isCurrent: (input: MemoryAttentionInput, scope: MemoryRecallScope) => Promise<boolean>;
   readonly onDiagnostic: (code: string | undefined, generation: number) => Promise<void>;
@@ -73,7 +86,8 @@ export function createMemoryAttentionController(options: {
     scope: MemoryRecallScope,
     generation: number,
   ): MemoryAttentionState => ({
-    schemaVersion: "pragma.memory-attention/v1",
+    schemaVersion: MEMORY_ATTENTION_VERSION,
+    taskVersion: input.taskVersion,
     missionId: input.missionId,
     contextId: input.contextId,
     scopeDigest: memoryAttentionScopeDigest(scope),
@@ -107,7 +121,8 @@ export function createMemoryAttentionController(options: {
     )
       return;
     const digest = attentionDigest({
-      goal: input.missionGoal,
+      goal: input.currentGoal ?? input.missionGoal,
+      taskVersion: input.taskVersion,
       observation: input.latestObservation,
       action: input.lastAction,
       concepts: input.concepts,
@@ -137,6 +152,7 @@ export function createMemoryAttentionController(options: {
     let code: string | undefined;
     let outcome: "updated" | "unchanged" | "skipped" | "failed" = "skipped";
     try {
+      if (binding.provider === undefined) throw new Error("attention_provider_unconfigured");
       const decision = RecallDecisionSchema.parse(
         await binding.provider.assessRecall(input, signal, guard),
       );
@@ -158,12 +174,18 @@ export function createMemoryAttentionController(options: {
         const modules: ("episodic" | "semantic")[] = [];
         if (decision.episodic >= policy.recallThreshold) modules.push("episodic");
         if (decision.semantic >= policy.recallThreshold) modules.push("semantic");
-        const queries = input.concepts.slice(0, policy.maxQueries);
+        const queries = [
+          input.currentGoal ?? input.missionGoal,
+          input.latestObservation,
+          ...input.concepts,
+        ]
+          .filter(Boolean)
+          .slice(0, policy.maxQueries);
         const found =
           modules.length === 0 || queries.length === 0
             ? []
-            : await options.search(scope, queries, modules);
-        const candidates = [
+            : await options.search(scope, queries, modules, signal);
+        let candidates = [
           ...new Map(
             [...existing, ...found.slice(0, policy.maxCandidates)].map((candidate) => [
               attentionCandidateKey(candidate),
@@ -171,47 +193,130 @@ export function createMemoryAttentionController(options: {
             ]),
           ).values(),
         ];
+        candidates = candidates.slice(0, policy.maxCandidates);
         assessedCandidates = candidates;
         await guard(candidates);
-        const assessments = CandidateDecisionSchema.parse(
-          await binding.provider.assessCandidates(
-            { delta: input, candidates, active: next },
+        const visited = new Set(candidates.map(attentionCandidateKey));
+        const actionsUsed = new Set<string>();
+        let detailReads = 0;
+        for (let round = 0; round < policy.maxRounds; round++) {
+          const snapshot = structuredClone(candidates);
+          const candidateSetDigest = attentionDigest(snapshot);
+          const response = await binding.provider.assessCandidates(
+            { delta: input, candidates: snapshot, active: next },
+            signal,
+            () => guard(snapshot),
+          );
+          // Bind the entire response to this round, including source revisions.
+          // Recheck after the final batch before selecting or expanding anything.
+          await guard(snapshot);
+          if (
+            attentionDigest(snapshot) !== candidateSetDigest ||
+            attentionDigest(candidates) !== candidateSetDigest
+          )
+            throw new Error("attention_response_invalid");
+          const assessments = CandidateDecisionSchema.safeParse(response);
+          const expectedKeys = new Set(snapshot.map(attentionCandidateKey));
+          if (
+            !assessments.success ||
+            expectedKeys.size !== snapshot.length ||
+            assessments.data.length !== expectedKeys.size ||
+            assessments.data.some((value) => !expectedKeys.has(value.key))
+          )
+            throw new Error("attention_response_invalid");
+          const values = new Map(assessments.data.map((value) => [value.key, value]));
+          for (const candidate of candidates) {
+            const key = attentionCandidateKey(candidate);
+            const value = values.get(key)!;
+            const old = next.find((entry) => attentionCandidateKey(entry) === key);
+            if (old !== undefined && value.relevance < policy.relevanceThreshold) {
+              next = next.filter((entry) => attentionCandidateKey(entry) !== key);
+              if (value.relevance >= policy.evictionThreshold) {
+                next.push({ ...old, relevance: value.relevance });
+              }
+              continue;
+            }
+            if (
+              value.relevance < policy.relevanceThreshold ||
+              (old === undefined && value.novelty < policy.recallThreshold)
+            )
+              continue;
+            next = next.filter((entry) => attentionCandidateKey(entry) !== key);
+            next.push({
+              module: candidate.module,
+              memoryId: candidate.memoryId,
+              revision: candidate.revision,
+              relevance: value.relevance,
+              decisionMode: "provider",
+              pinned: false,
+              selectedPaths: candidate.selectedPaths ?? [],
+              ...(candidate.similarity === undefined ? {} : { similarity: candidate.similarity }),
+              ...(value.confidence === undefined ? {} : { confidence: value.confidence }),
+              reason: old?.reason ?? input.trigger,
+              firstActivatedAt: old?.firstActivatedAt ?? timestamp,
+              lastRelevantAt: timestamp,
+            });
+          }
+          if (binding.provider.chooseExpansion === undefined || round + 1 >= policy.maxRounds)
+            break;
+          const actions = candidates.flatMap((candidate) => {
+            const key = attentionCandidateKey(candidate);
+            return [
+              { id: `detail_${key}`, kind: "detail" as const, candidateKey: key },
+              { id: `expand_${key}`, kind: "expand" as const, candidateKey: key },
+            ].filter((action) => !actionsUsed.has(action.id));
+          });
+          const selected = await binding.provider.chooseExpansion(
+            { delta: input, candidates, actions },
             signal,
             () => guard(candidates),
-          ),
-        );
-        const values = new Map(assessments.map((value) => [value.key, value]));
-        for (const candidate of candidates) {
-          const key = attentionCandidateKey(candidate);
-          const value = values.get(key);
-          const old = next.find((entry) => attentionCandidateKey(entry) === key);
-          if (
-            old !== undefined &&
-            value !== undefined &&
-            value.relevance < policy.relevanceThreshold
-          ) {
-            next = next.filter((entry) => attentionCandidateKey(entry) !== key);
-            if (value.relevance >= policy.evictionThreshold) {
-              next.push({ ...old, relevance: value.relevance });
-            }
-            continue;
+          );
+          await guard(candidates);
+          if (selected === undefined) break;
+          const action = actions.find((action) => action.id === selected);
+          if (action === undefined) throw new Error("attention_response_invalid");
+          actionsUsed.add(selected);
+          const chosen = candidates.find(
+            (candidate) => attentionCandidateKey(candidate) === action.candidateKey,
+          )!;
+          if (action.kind === "detail") {
+            if (++detailReads > policy.maxDetails || options.detail === undefined) break;
+            const detailed = await options.detail(scope, chosen);
+            if (detailed === undefined || detailed.revision !== chosen.revision)
+              throw new Error("attention_cancelled");
+            candidates = [detailed];
+            assessedCandidates = [
+              ...assessedCandidates.filter(
+                (candidate) => attentionCandidateKey(candidate) !== action.candidateKey,
+              ),
+              detailed,
+            ];
+          } else {
+            const refs = (chosen.relations ?? []).slice(
+              0,
+              Math.max(0, policy.maxDetails - detailReads),
+            );
+            detailReads += refs.length;
+            const relations = await Promise.all(refs.map((ref) => options.read(scope, ref)));
+            const related = relations.filter(
+              (value): value is MemoryAttentionCandidate => value !== undefined,
+            );
+            const expanded = await options.search(scope, [chosen.summary], [chosen.module], signal);
+            candidates = [
+              ...new Map(
+                [...related, ...expanded].map((candidate) => [
+                  attentionCandidateKey(candidate),
+                  candidate,
+                ]),
+              ).values(),
+            ]
+              .filter((candidate) => !visited.has(attentionCandidateKey(candidate)))
+              .slice(0, Math.max(0, policy.maxCandidates - visited.size));
+            for (const candidate of candidates) visited.add(attentionCandidateKey(candidate));
+            assessedCandidates = [...assessedCandidates, ...candidates];
+            if (candidates.length === 0) break;
           }
-          if (
-            value === undefined ||
-            value.relevance < policy.relevanceThreshold ||
-            (old === undefined && value.novelty < policy.recallThreshold)
-          )
-            continue;
-          next = next.filter((entry) => attentionCandidateKey(entry) !== key);
-          next.push({
-            module: candidate.module,
-            memoryId: candidate.memoryId,
-            revision: candidate.revision,
-            relevance: value.relevance,
-            reason: old?.reason ?? input.trigger,
-            firstActivatedAt: old?.firstActivatedAt ?? timestamp,
-            lastRelevantAt: timestamp,
-          });
+          await guard(candidates);
         }
       }
       const rank = (entry: MemoryAttentionEntry) =>
@@ -250,6 +355,44 @@ export function createMemoryAttentionController(options: {
       // Unknown errors are not copied to persistent diagnostics.
       if (!/^attention_[a-z_]+$/.test(code)) code = "attention_assessment_failed";
       next = state.active;
+      // Conservative fallback uses calibrated engineering similarity, never a probability of relevance.
+      try {
+        const found = await options.search(
+          scope,
+          [input.currentGoal ?? input.missionGoal, input.latestObservation].filter(Boolean),
+          ["episodic", "semantic"],
+          signal,
+        );
+        await guard(found);
+        const unassessed = found
+          .filter((candidate) => (candidate.similarity ?? -1) >= 0.8)
+          .slice(0, 3);
+        if (unassessed.length > 0)
+          next = state.active.filter((entry) => entry.decisionMode === "provider").slice(0, 5);
+        for (const candidate of unassessed)
+          if (
+            !next.some((entry) => attentionCandidateKey(entry) === attentionCandidateKey(candidate))
+          )
+            next = [
+              ...next,
+              {
+                module: candidate.module,
+                memoryId: candidate.memoryId,
+                revision: candidate.revision,
+                relevance: 0.7,
+                decisionMode: "vector_unassessed",
+                similarity: candidate.similarity,
+                pinned: false,
+                selectedPaths: candidate.selectedPaths ?? [],
+                reason: input.trigger,
+                firstActivatedAt: timestamp,
+                lastRelevantAt: timestamp,
+              },
+            ];
+        next = next.slice(0, policy.maxItems);
+      } catch {
+        /* Preserve previous validated attention when the fallback is unavailable. */
+      }
       outcome = "failed";
     }
     if (signal.aborted || !(await sameBinding(binding.generation, input, scope))) return;
@@ -274,6 +417,7 @@ export function createMemoryAttentionController(options: {
         attentionDigest(visibleEntries(state.active)) !== attentionDigest(visibleEntries(next));
       return {
         ...state,
+        taskVersion: input.taskVersion,
         revision: (current?.revision ?? 0) + 1,
         version: state.version + (changed ? 1 : 0),
         active: next,
@@ -296,7 +440,7 @@ export function createMemoryAttentionController(options: {
         ].slice(-policy.auditMaxEntries),
       };
     });
-    await options.onDiagnostic(code, binding.generation);
+    await options.onDiagnostic(code, binding.providerRevision ?? binding.generation);
   };
   const start = (key: string): void => {
     if (stopped || running.has(key)) return;
@@ -314,12 +458,19 @@ export function createMemoryAttentionController(options: {
       }
     }
     const abort = new AbortController();
-    const promise = assess(value.input, value.scope, abort.signal)
+    const promise = assess(
+      value.input,
+      value.scope,
+      AbortSignal.any([abort.signal, AbortSignal.timeout(20_000)]),
+    )
       .catch(async () => {
         try {
           const binding = await options.getBinding();
           if (binding !== undefined)
-            await options.onDiagnostic("attention_state_unavailable", binding.generation);
+            await options.onDiagnostic(
+              "attention_state_unavailable",
+              binding.providerRevision ?? binding.generation,
+            );
         } catch {
           // An unavailable settings store must not reject a detached background task.
         }
@@ -393,6 +544,7 @@ export function createMemoryAttentionController(options: {
           lastAction: "",
           trigger: "new_observation",
           concepts: [],
+          taskVersion: state.taskVersion,
         },
         input.scope,
       ))
@@ -432,9 +584,25 @@ export function createMemoryAttentionController(options: {
       const key = `${input.missionId}\0${input.contextId}`;
       if (!pending.has(key) && pending.size >= 128) return;
       const previous = pending.get(key);
-      // Preserve a new failure until it has been assessed, even if a routine tool completes next.
-      if (previous?.input.trigger !== "new_error" || input.trigger === "new_error")
-        pending.set(key, { input, scope });
+      // A routine observation may advance taskVersion without resolving a
+      // failure. Keep that failure, but assess it against the latest task version.
+      const preserveFailure =
+        previous?.input.trigger === "new_error" &&
+        input.trigger === "new_observation" &&
+        input.currentGoal === previous.input.currentGoal &&
+        input.missionGoal === previous.input.missionGoal &&
+        JSON.stringify(scope) === JSON.stringify(previous.scope);
+      pending.set(key, {
+        input: preserveFailure
+          ? {
+              ...input,
+              trigger: "new_error",
+              latestObservation: previous.input.latestObservation,
+              concepts: previous.input.concepts,
+            }
+          : input,
+        scope,
+      });
       schedule(key);
     },
     getState: (missionId, contextId) => options.store.read(missionId, contextId),
@@ -464,18 +632,12 @@ export function createMemoryAttentionController(options: {
         const store = new StaticContextStore([
           {
             id: MEMORY_ATTENTION_CONTEXT_ID,
-            content: trimUtf8ToByteLimit(
-              [
-                "# Mission Memory Attention",
-                "",
-                `Version: ${visible?.state.version ?? 0}`,
-                "",
-                ...(visible?.candidates.map(
-                  ({ entry, candidate }) =>
-                    `- [${escapeMarkdownLinkLabel(candidate.title)}](${entry.module}/items/${entry.memoryId}.md)\n  reason: ${reasonLabel(entry.reason)}`,
-                ) ?? []),
-                "",
-              ].join("\n"),
+            content: trimLens(
+              `# Mission Memory Attention\n\nVersion: ${visible?.state.version ?? 0}\n`,
+              visible?.candidates.map(({ entry, candidate }) => ({
+                source: `- [${escapeMarkdownLinkLabel(candidate.title)}](${entry.module}/items/${entry.memoryId}.md)\n  reason: ${reasonLabel(entry.reason)}; assessment: ${entry.decisionMode}\n`,
+                summary: candidate.summary,
+              })) ?? [],
               policy.maxLensBytes,
             ),
             metadata: {
@@ -550,11 +712,13 @@ export function attentionDigest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function visibleEntries(entries: readonly MemoryAttentionEntry[]) {
-  return entries.map(({ module, memoryId, revision, reason }) => ({
+  return entries.map(({ module, memoryId, revision, reason, decisionMode, selectedPaths }) => ({
     module,
     memoryId,
     revision,
     reason,
+    decisionMode,
+    selectedPaths,
   }));
 }
 function reasonLabel(reason: MemoryAttentionEntry["reason"]): string {
@@ -573,4 +737,41 @@ function attentionContentDigest(state: MemoryAttentionState | undefined): string
   void lastReadVersion;
   void lastHintedVersion;
   return attentionDigest(content);
+}
+
+function trimLens(
+  header: string,
+  items: readonly { source: string; summary: string }[],
+  maxBytes: number,
+): string {
+  let value = header;
+  const fits = (text: string) =>
+    Buffer.byteLength(text) <= maxBytes &&
+    defaultRuntimeTokenCounter.countText(text).tokens <= policy.maxLensTokens;
+  for (const item of items) {
+    const prefix = `${value}\n${item.source}`;
+    if (!fits(prefix)) break;
+    const candidate = `${prefix}${item.summary}`;
+    if (fits(candidate)) {
+      value = candidate;
+      continue;
+    }
+    // Consume the remaining budget in rank order without splitting Unicode.
+    const points = Array.from(item.summary);
+    const suffix = "\n[truncated; read source for full details]";
+    if (!fits(prefix + suffix)) break;
+    let lo = 0;
+    let hi = points.length;
+    let end = 0;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (fits(prefix + points.slice(0, mid).join("") + suffix)) {
+        end = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    value = prefix + points.slice(0, end).join("") + suffix;
+    break;
+  }
+  return value;
 }

@@ -1,4 +1,9 @@
 export const missions = {
+  memoryAttentionSelection: "Memory attention selection",
+  memoryAttentionAssessed: "Jev assessed",
+  memoryAttentionUnassessed: "Vector similarity · unassessed",
+  memoryAttentionBrowse: "Browse source memory",
+
   deliveryMode: "Message delivery mode",
   deliveryEnqueue: "Queue",
   deliverySteer: "Steer",
@@ -7,7 +12,15 @@ export const missions = {
   queuedMessage: "Queued",
   preparingQueuedSteer: "Preparing steer",
   removeQueuedMessage: "Remove from queue and edit",
+  steerRetained: "Steer was not delivered; the message remains queued for the next turn.",
+  steerDeliveryUncertain:
+    "Steer delivery is uncertain. The queue is paused to prevent duplicate execution.",
+  checkSteerDelivery: "Check delivery and resume",
+  abandonSteerDelivery: "Skip uncertain messages and start fresh",
+  abandonSteerDeliveryHint:
+    "Stop the old conversation and discard uncertain messages without replaying them. Prior operations may already have executed. Other queued messages continue in a new conversation.",
   queuePaused: "The queue paused after a failed message.",
+  deliveryUncertain: "Delivery uncertain",
   resumeQueue: "Skip failure and continue",
   title: "Missions",
   newMission: "New mission",
@@ -197,8 +210,6 @@ export const missions = {
   missionOptions: "Mission options",
   permissionOverride: "Override the default permission for this mission",
   permissionTaskLocked: "Permission is fixed for this mission",
-  modelAvailableNextTurn:
-    "Model changes apply to newly submitted messages. The current turn and queued messages keep their model.",
   optionsAvailableNextTurn: "Options can be changed after the current turn finishes",
   starting: "Starting…",
   startMission: "Start mission",

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "pragma.context-store-revision-profile/v1",
+  "revision": 1,
+  "mode": "pinned",
+  "model": {
+    "runtimeId": "codex",
+    "providerId": "openai",
+    "modelId": "gpt-test",
+    "thinkingLevel": "high"
+  },
+  "updatedAt": "2026-09-28T14:21:22.711Z"
+}

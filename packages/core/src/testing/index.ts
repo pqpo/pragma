@@ -18,6 +18,8 @@ import {
   type RuntimeDriver,
 } from "../runtime/driver.ts";
 
+export { openRuntimeSession } from "../runtime/session-factory.ts";
+
 export interface RuntimeConformanceCase {
   readonly name: string;
   readonly run: () => Promise<void>;
@@ -76,16 +78,16 @@ export function createRuntimeTestFeatures(
             prepare: () => undefined,
           })
         : enabled.has(name)
-        ? runtimeFeature.native(
-            runtimeFeature.degraded("Enabled by an in-memory Runtime test fixture.", {
-              ...(name === "compaction"
-                ? { compactionModes: options.compactionModes ?? ["manual"] }
-                : {}),
-            }),
-          )
-        : runtimeFeature.native(
-            runtimeFeature.notApplicable("Not exercised by this Runtime test fixture."),
-          ),
+          ? runtimeFeature.native(
+              runtimeFeature.degraded("Enabled by an in-memory Runtime test fixture.", {
+                ...(name === "compaction"
+                  ? { compactionModes: options.compactionModes ?? ["manual"] }
+                  : {}),
+              }),
+            )
+          : runtimeFeature.native(
+              runtimeFeature.notApplicable("Not exercised by this Runtime test fixture."),
+            ),
     ]),
   ) as RuntimeFeatureSet;
   return defineRuntimeFeatures({ ...features, ...options.overrides });

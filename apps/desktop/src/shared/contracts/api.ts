@@ -1,4 +1,9 @@
-import type { MemoryAttentionStatus, UpdateMemoryAttentionSettings } from "@pragma/shared";
+import type {
+  MemoryRetrievalStatus,
+  UpdateMemoryRetrievalSettings,
+  MemoryAttentionStatus,
+  UpdateMemoryAttentionSettings,
+} from "@pragma/shared";
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
 import type {
   AssetGitConflicts,
@@ -79,8 +84,6 @@ import type {
   ContextStoreRevisionJob,
   ListContextStoreRevisionJobs,
   ContextStoreRevisionJobRef,
-  ContextStoreRevisionProfile,
-  UpdateContextStoreRevisionProfile,
   DesktopPlugin,
   PluginZipInspection,
   ImportPluginZip,
@@ -326,6 +329,13 @@ export interface PragmaDesktopAPI {
   subscribeMemoryExtractionRunChat: (
     listener: (update: DesktopMemoryExtractionRunChatUpdate) => void,
   ) => () => void;
+  getMemoryRetrievalStatus: () => Promise<MemoryRetrievalStatus>;
+  updateMemoryRetrievalSettings: (
+    input: UpdateMemoryRetrievalSettings,
+  ) => Promise<MemoryRetrievalStatus>;
+  testMemoryEmbedding: () => Promise<{ dimensions: number; model: string }>;
+  retryMemoryIndex: () => Promise<void>;
+  rebuildMemoryIndex: () => Promise<void>;
   getMemoryAttentionStatus: () => Promise<MemoryAttentionStatus>;
   updateMemoryAttentionSettings: (
     input: UpdateMemoryAttentionSettings,
@@ -446,10 +456,6 @@ export interface PragmaDesktopAPI {
   discardContextStoreDraft: (input: ContextStoreDraftRef) => Promise<void>;
   inspectContextStoreDraftRebase: (draftId: string) => Promise<ContextStoreDraftRebaseInspection>;
   rebaseContextStoreDraft: (input: RebaseContextStoreDraft) => Promise<ContextStoreDraft>;
-  getContextStoreRevisionProfile: () => Promise<ContextStoreRevisionProfile>;
-  updateContextStoreRevisionProfile: (
-    input: UpdateContextStoreRevisionProfile,
-  ) => Promise<ContextStoreRevisionProfile>;
   subscribeContextStoreChanges: (storeId: string, listener: () => void) => () => void;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;
@@ -599,7 +605,7 @@ export interface PragmaDesktopAPI {
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (input: MissionExecutionAction) => Promise<Mission>;
   forceInterruptMission: (input: MissionExecutionAction) => Promise<Mission>;
-  resumeMissionQueue: (id: string) => Promise<Mission>;
+  resumeMissionQueue: (id: string, recovery?: "abandon") => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;
   getMissionWorkConversation: (
     input: GetMissionWorkConversation,

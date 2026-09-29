@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ExecutionOutputItem } from "@pragma/core";
+import {
+  AgentMessageSchema,
+  createRuntimeStreamEventFactory,
+  type AgentMessageRecord,
+  type ExecutionOutputItem,
+} from "@pragma/core";
+import { ExpertAgentStreamEventSchema } from "@pragma/shared";
+import { mapOpenCodeEvent } from "@pragma/runtime-opencode";
 import {
   consumeLiveChatOutput,
   isRootMissionRuntimeOutput,
@@ -7,10 +14,261 @@ import {
 } from "./mission-chat-live.ts";
 import {
   finalizeHistoricalChatEntries,
+  ensureTerminalExecutionResultEntry,
   mergeMissionChatEntriesWithLive,
+  messageRecordsToChatEntries,
 } from "./mission-chat-history.ts";
 
 describe("Mission chat projection", () => {
+  it("keeps OpenCode text and tools ordered live and after reload with one final answer", () => {
+    const chat: LiveMissionChat = {
+      executionId: "opencode-stream",
+      entries: [],
+      messageOrdinals: new Map(),
+      close: async () => undefined,
+    };
+    const base = {
+      executionId: chat.executionId,
+      invocationId: "root",
+      contextId: "context",
+      runId: "run",
+      source: { kind: "runtime" as const, runId: "run", path: [] },
+      occurredAt: "2026-09-29T10:00:00.000Z",
+    };
+    const events = createRuntimeStreamEventFactory(base.runId, base.source);
+    const records: AgentMessageRecord[] = [];
+    let sequence = 0;
+    const record = (message: AgentMessageRecord["message"]) =>
+      records.push({ ...base, sessionId: "session", sequence: records.length, message });
+    const emit = (native: Parameters<typeof mapOpenCodeEvent>[0]) => {
+      for (const mapped of mapOpenCodeEvent(native, {
+        runId: base.runId,
+        source: base.source,
+        events,
+      }).events ?? []) {
+        const event = ExpertAgentStreamEventSchema.parse({
+          ...mapped,
+          schemaVersion: "pragma.stream/v1",
+          sequence,
+          eventId: `event-${sequence}`,
+          emittedAt: base.occurredAt,
+        });
+        const item = { ...base, source: event.source, sourceEventId: `output-${sequence++}` };
+        if (event.type === "message.delta")
+          consumeLiveChatOutput(chat, { ...item, channel: "message", delta: event.payload.delta });
+        else if (event.type === "thought.delta")
+          consumeLiveChatOutput(chat, { ...item, channel: "thought", delta: event.payload.delta });
+        else if (event.type === "message.completed") {
+          const message = AgentMessageSchema.parse(event.payload.message);
+          record(message);
+          consumeLiveChatOutput(chat, { ...item, channel: "message", value: message });
+        } else if (event.type === "tool.started") {
+          record(
+            AgentMessageSchema.parse({
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: event.payload.toolCallId,
+                  name: event.payload.toolName,
+                  arguments: {},
+                },
+              ],
+              api: "opencode",
+              provider: "opencode",
+              model: "default",
+              stopReason: "toolUse",
+              timestamp: Date.parse(base.occurredAt),
+              usage: {
+                measurement: "unknown",
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+            }),
+          );
+          consumeLiveChatOutput(chat, { ...item, channel: "tool", value: event.payload });
+        } else if (event.type === "tool.completed") {
+          record(
+            AgentMessageSchema.parse({
+              role: "toolResult",
+              toolCallId: event.payload.toolCallId,
+              toolName: event.payload.toolName,
+              content: [{ type: "text", text: "Tool result" }],
+              isError: false,
+              timestamp: Date.parse(base.occurredAt),
+            }),
+          );
+          consumeLiveChatOutput(chat, { ...item, channel: "tool", value: event.payload });
+        }
+      }
+    };
+    emit({ kind: "thought-delta", text: "Think before." });
+    emit({ kind: "message-delta", text: "Before tool." });
+    emit({
+      kind: "message-completed",
+      text: "Before tool.",
+      thinking: "Think before.",
+      final: false,
+    });
+    emit({ kind: "tool-started", id: "probe", name: "stream_probe", value: {} });
+    emit({ kind: "tool-completed", id: "probe", name: "stream_probe", value: "Tool result" });
+    emit({ kind: "thought-delta", text: "Think after." });
+    emit({ kind: "message-delta", text: "Final answer once." });
+    emit({
+      kind: "message-completed",
+      text: "Final answer once.",
+      thinking: "Think after.",
+      final: true,
+    });
+    const history = messageRecordsToChatEntries(records);
+    const summarize = (entries: typeof history) =>
+      entries.map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        ...(entry.kind === "assistant" || entry.kind === "thinking"
+          ? { content: entry.content, streaming: entry.streaming }
+          : {}),
+        ...(entry.kind === "assistant" ? { finalAnswer: entry.finalAnswer } : {}),
+      }));
+    expect(summarize(chat.entries)).toEqual(summarize(history));
+    expect(chat.entries.map((entry) => entry.kind)).toEqual([
+      "thinking",
+      "assistant",
+      "tool",
+      "thinking",
+      "assistant",
+    ]);
+    expect(
+      chat.entries.filter((entry) => entry.kind === "assistant").map((entry) => entry.content),
+    ).toEqual(["Before tool.", "Final answer once."]);
+    const terminal = {
+      executionId: chat.executionId,
+      rootInvocationId: base.invocationId,
+      status: "succeeded",
+      output: { type: "inline", value: "Final answer once." },
+      updatedAt: base.occurredAt,
+    };
+    expect(
+      ensureTerminalExecutionResultEntry(chat.entries, terminal, "Final answer once."),
+    ).toEqual(chat.entries);
+    expect(ensureTerminalExecutionResultEntry(history, terminal, "Final answer once.")).toEqual(
+      history,
+    );
+  });
+  it.each([false, true])(
+    "keeps ACP segments identical live and after reload (empty tool segment: %s)",
+    (emptyToolSegment) => {
+      const chat: LiveMissionChat = {
+        executionId: "execution-1",
+        entries: [],
+        messageOrdinals: new Map(),
+        close: async () => undefined,
+      };
+      const records: AgentMessageRecord[] = [];
+      const base = {
+        executionId: chat.executionId,
+        invocationId: "invocation-a",
+        contextId: "context-a",
+        runId: "run-a",
+        source: { kind: "runtime" as const, runId: "run-a", path: [] },
+        occurredAt: "2026-09-28T15:29:00.000Z",
+      };
+      const emit = (channel: ExecutionOutputItem["channel"], delta?: string, value?: unknown) =>
+        consumeLiveChatOutput(chat, {
+          ...base,
+          sourceEventId: `${chat.entries.length}:${channel}`,
+          channel,
+          ...(delta === undefined ? {} : { delta }),
+          ...(value === undefined ? {} : { value }),
+        });
+      const texts = [
+        "List namespaces.",
+        emptyToolSegment ? "" : "Read a small window.",
+        "Stopped testing.",
+      ];
+      for (const [index, text] of texts.entries()) {
+        const thought = text === "" ? "" : `Reasoning ${index}`;
+        if (thought !== "") emit("thought", thought);
+        if (text !== "") emit("message", text);
+        const message = AgentMessageSchema.parse({
+          role: "assistant",
+          api: "acp",
+          provider: "runtime-managed",
+          model: "sonnet",
+          timestamp: Date.parse(base.occurredAt),
+          stopReason: index < 2 ? "toolUse" : "stop",
+          usage: {
+            measurement: "reported",
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          content: [
+            { type: "thinking", thinking: thought },
+            { type: "text", text },
+            ...(index < 2
+              ? [{ type: "toolCall", id: `tool-${index}`, name: "context", arguments: {} }]
+              : []),
+          ],
+        });
+        records.push({ ...base, sequence: records.length, sessionId: "session-a", message });
+        emit("message", undefined, message);
+        if (index < 2)
+          emit("tool", undefined, {
+            toolCallId: `tool-${index}`,
+            toolName: "context",
+            inputPreview: {},
+          });
+      }
+      const summarize = (entries: typeof chat.entries) =>
+        entries.map((entry) => ({
+          id: entry.id,
+          kind: entry.kind,
+          ...(entry.kind === "assistant" || entry.kind === "thinking"
+            ? { content: entry.content, streaming: entry.streaming }
+            : {}),
+          ...(entry.kind === "assistant" ? { finalAnswer: entry.finalAnswer } : {}),
+        }));
+      expect(summarize(chat.entries)).toEqual(summarize(messageRecordsToChatEntries(records)));
+      expect(
+        chat.entries.filter((entry) => entry.kind === "assistant").map((entry) => entry.content),
+      ).toEqual(texts.filter((text) => text !== ""));
+      expect(chat.entries.at(-2)).toMatchObject({ kind: "thinking", content: "Reasoning 2" });
+      expect(chat.entries.at(-1)).toMatchObject({
+        kind: "assistant",
+        content: "Stopped testing.",
+        finalAnswer: true,
+      });
+      const terminal = {
+        executionId: chat.executionId,
+        rootInvocationId: base.invocationId,
+        status: "succeeded",
+        output: { type: "inline", value: texts.join("") },
+        updatedAt: base.occurredAt,
+      };
+      const durable = messageRecordsToChatEntries(records);
+      expect(ensureTerminalExecutionResultEntry(durable, terminal, "Stopped testing.")).toEqual(
+        durable,
+      );
+      expect(
+        ensureTerminalExecutionResultEntry(chat.entries, terminal, "Stopped testing."),
+      ).toEqual(chat.entries);
+      expect(
+        ensureTerminalExecutionResultEntry(durable.slice(0, -1), terminal).at(-1),
+      ).toMatchObject({
+        kind: "assistant",
+        finalAnswer: true,
+        content: texts.join(""),
+      });
+    },
+  );
   it("keeps interleaved expert token streams grouped by invocation", () => {
     const chat: LiveMissionChat = {
       executionId: "execution-1",

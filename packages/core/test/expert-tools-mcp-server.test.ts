@@ -43,6 +43,12 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
       betaClient.listTools(),
     ]);
 
+    expect(alpha.toolCatalog.map((tool) => tool.name)).toEqual(
+      alphaTools.tools.map((tool) => tool.name),
+    );
+    expect(alpha.toolCatalog.find((tool) => tool.name === "read_alpha")?.inputSchema).toEqual(
+      alphaTools.tools.find((tool) => tool.name === "read_alpha")?.inputSchema,
+    );
     expect(alphaTools.tools.map((tool) => tool.name)).toContain("read_alpha");
     expect(alphaTools.tools.map((tool) => tool.name)).toContain("list_expert_context");
     expect(alphaTools.tools.map((tool) => tool.name)).not.toContain("read_beta");
@@ -173,6 +179,30 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
     expect((await restoredClient.listTools()).tools.map((tool) => tool.name)).toContain(firstName);
   });
 
+  it("uses the Runtime name budget for discovery, calls, and re-registration", async () => {
+    const nativePrefix = "mcp_pragma-0123456789abcdef_p_";
+    const budget = 64 - nativePrefix.length;
+    const original = `read_${"x".repeat(80)}`;
+    const names: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const registration = await registerTestSession("agy", original, budget);
+      const client = await connectClient(registration.url, `agy-${i}`);
+      const tools = (await client.listTools()).tools;
+      expect(tools.every((tool) => /^[a-zA-Z0-9_-]{1,64}$/.test(nativePrefix + tool.name))).toBe(
+        true,
+      );
+      const name = tools.find((tool) => tool.name.startsWith("read_x"))!.name;
+      names.push(name);
+      expect(nativePrefix + name).toHaveLength(64);
+      await expect(client.callTool({ name, arguments: {} })).resolves.toMatchObject({
+        content: [{ type: "text", text: "agy" }],
+      });
+      await expect(client.callTool({ name: original, arguments: {} })).rejects.toThrow(/not found/);
+    }
+    expect(names[0]).toBe(names[1]);
+    await expect(registerTestSession("invalid_budget", original, 11)).rejects.toThrow(/name limit/);
+  });
+
   it("removes only redundant constraints beside local JSON Schema references", async () => {
     const expert = await defineExpert({
       id: "runtime-schema-normalization",
@@ -295,6 +325,7 @@ describe("Expert tools MCP Gateway", { concurrent: false }, () => {
 async function registerTestSession(
   label: string,
   toolName = `read_${label}`,
+  maxToolNameLength?: number,
 ): Promise<ExpertToolsMcpSessionRegistration> {
   const expert = await defineExpert({
     id: `runtime-${label}`,
@@ -360,6 +391,7 @@ async function registerTestSession(
   });
   const registration = await registerExpertToolsMcpSession({
     agent: expert,
+    maxToolNameLength,
     getContext: () => undefined,
     logger: createPragmaLogger(undefined, {
       component: "runtime.adapter",

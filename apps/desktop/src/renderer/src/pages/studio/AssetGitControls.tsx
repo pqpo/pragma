@@ -205,6 +205,7 @@ export function AssetGitPanel(props: {
       ) : null}
       {error || status?.error ? (
         <p className="form-error" role="alert">
+          {status?.errorPath ? `${status.errorPath}: ` : ""}
           {t(`assetGit.errors.${error ?? gitFailureKey(status?.error)}`)}
         </p>
       ) : null}

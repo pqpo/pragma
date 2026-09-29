@@ -164,6 +164,8 @@ Episodic 与 Semantic Module 都使用各自的共享物理 Store，并在查询
 - Fact：进入 Semantic/Fact Memory，记录当前相信什么是真的；
 - Skill：由 Skill Revision Agent 创建或修订托管草稿，人工批准后成为正式 Skill Capability。
 
+Store Revision 与 Skill Revision 的 Runtime、模型和思考深度统一在「工作室 → 专家」的对应内置专家中配置。常规设置不再提供独立的技能修订 Agent 配置。旧版共享修订模型首次升级时会备份并迁入尚未自定义的内置专家；已有工作室配置优先，迁移完成后重置专家不会重新导入旧设置。
+
 Knowledge 学习来源于 Memory，但用户批准后的 Knowledge 是 Studio 托管 Context Store，
 不再是 Memory type，也不再依赖 Memory Evidence。可选 CodeGraph 仍可作为独立 Memory Module。
 

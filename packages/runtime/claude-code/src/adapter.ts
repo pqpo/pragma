@@ -33,13 +33,6 @@ export function createClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
   const mcpToolRegistries = options.mcpToolRegistryPool ?? createMcpToolRegistryPool();
-  const command =
-    options.spawn === undefined
-      ? resolveClaudeCodeCommand(options)
-      : {
-          executablePath: options.executablePath ?? "claude",
-          launcherArgs: [] as readonly string[],
-        };
   const descriptor = {
     ...CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -140,6 +133,16 @@ export function createClaudeCodeRuntime(
         };
       },
       async prepare(ctx) {
+        // Resolve at session creation so an invalid CLI cannot break Host composition,
+        // and a newly installed/reconfigured CLI is used by the next session.
+        const command =
+          options.spawn === undefined
+            ? resolveClaudeCodeCommand(options)
+            : {
+                executablePath: options.executablePath ?? "claude",
+                launcherArgs: [] as readonly string[],
+              };
+
         const sessionDir =
           ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("claude-code");
         const managedConfig = await prepareManagedClaudeCodeConfig({

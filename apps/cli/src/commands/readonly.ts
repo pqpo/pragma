@@ -671,7 +671,7 @@ _pragma_complete() {
           case "__PRAGMA_DOLLAR__{COMP_WORDS[3]}" in
             list) candidates="--limit --cursor --format --json --stream-json --color --interactive --help" ;;
             remove) candidates="--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help" ;;
-            resume) candidates="--request-id --ack-timeout --format --json --stream-json --color --interactive --help" ;;
+            resume) candidates="--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --interactive --help" ;;
             steer) candidates="--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help" ;;
             *) candidates="list remove resume steer --format --json --stream-json --color --interactive --help" ;;
           esac
@@ -738,7 +738,7 @@ _pragma() {
                   case __PRAGMA_DOLLAR__words[4] in
                     list) _describe option '--limit --cursor --format --json --stream-json --color --interactive --help' ;;
                     remove) _describe option '--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help' ;;
-                    resume) _describe option '--request-id --ack-timeout --format --json --stream-json --color --interactive --help' ;;
+                    resume) _describe option '--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --interactive --help' ;;
                     steer) _describe option '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help' ;;
                   esac
                 fi
@@ -938,7 +938,7 @@ complete -c pragma -f -n '__pragma_mission_respond' -a '--interaction --answer -
 complete -c pragma -f -n '__pragma_mission_interrupt' -a '--expected-execution --reason --request-id --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
 complete -c pragma -f -n '__pragma_queue_list' -a '--limit --cursor --format --json --stream-json --color --interactive --help'
 complete -c pragma -f -n '__pragma_queue_remove' -a '--request --request-id --ack-timeout --format --json --stream-json --color --interactive --help'
-complete -c pragma -f -n '__pragma_queue_resume' -a '--request-id --ack-timeout --format --json --stream-json --color --interactive --help'
+complete -c pragma -f -n '__pragma_queue_resume' -a '--request-id --ack-timeout --abandon-uncertain --format --json --stream-json --color --interactive --help'
 complete -c pragma -f -n '__pragma_queue_steer' -a '--request --request-id --expected-execution --wait --detach --ack-timeout --format --json --stream-json --color --interactive --help'
 complete -c pragma -f -n '__pragma_global_options' -a '--format --json --stream-json --color --interactive --help'
 `,
@@ -978,7 +978,7 @@ function completionPowerShellScript(): string {
         if (__PRAGMA_DOLLAR__tokens -contains 'queue') {
           if (__PRAGMA_DOLLAR__tokens -contains 'list') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--limit','--cursor') }
           elseif (__PRAGMA_DOLLAR__tokens -contains 'remove') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--ack-timeout') }
-          elseif (__PRAGMA_DOLLAR__tokens -contains 'resume') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request-id','--ack-timeout') }
+          elseif (__PRAGMA_DOLLAR__tokens -contains 'resume') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request-id','--ack-timeout','--abandon-uncertain') }
           elseif (__PRAGMA_DOLLAR__tokens -contains 'steer') { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('--request','--request-id','--expected-execution','--wait','--detach','--ack-timeout') }
           else { __PRAGMA_DOLLAR__candidates = __PRAGMA_DOLLAR__globalOptions + @('list','remove','resume','steer') }
         }

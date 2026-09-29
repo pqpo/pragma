@@ -45,6 +45,7 @@ import {
 } from "./mission-command-delivery.ts";
 import {
   groupMissionConversationEntries,
+  isMissionCoordinatorChatEntry,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
   mergeLatestChatPage,
@@ -52,9 +53,11 @@ import {
   orderMissionConversationEntries,
   readyPendingQueuedRequestIds,
   shouldClearMissionThinkingPlaceholder,
+  shouldQueueMissionSend,
   shouldShowMissionThinkingPlaceholder,
   teamCoordinatorChatEntries,
 } from "./mission-conversation-model.ts";
+import { canShowMissionStreamWaiting } from "./mission-stream-idle-store.ts";
 import { useMissionClientOperation } from "./mission-client-operation.ts";
 import {
   MissionChatComposer,
@@ -85,7 +88,7 @@ import {
   LocalMissionUserMessageView,
   MissionChatEntryView,
   MissionContextOperationEntry,
-  MissionThinkingPlaceholder,
+  MissionStreamWaitingIndicator,
   MissionToolCallBlock,
   MissionUserMessageContent,
 } from "./mission-chat-presentation.tsx";
@@ -220,6 +223,7 @@ export function MissionDetailFragment(props: {
   const activeTab = !memoryEnabled && tab === "memory" ? "chat" : tab;
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
+  const [memoryInitialEntryId, setMemoryInitialEntryId] = useState<string>();
   const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [memoryActivity, setMemoryActivity] = useState<DesktopMissionMemoryActivity>();
@@ -306,6 +310,13 @@ export function MissionDetailFragment(props: {
       if (outcome.error !== undefined) setOptionsError(missionError(outcome.error));
     },
   });
+  const coordinatorId =
+    (teamCoordinator === undefined ? undefined : expertIdFromRef(teamCoordinator.ref)) ??
+    workRecords.find((record) => record.kind === "root")?.executorId;
+  const isChatOutputVisible = useCallback(
+    (entry: MissionChatEntry) => !isTeam || isMissionCoordinatorChatEntry(entry, coordinatorId),
+    [isTeam, coordinatorId],
+  );
   const {
     chat,
     initialLoading: chatInitialLoading,
@@ -313,12 +324,14 @@ export function MissionDetailFragment(props: {
     historyError,
     syncError: chatSyncError,
     liveEntryStore,
+    streamIdleStore,
     update: updateChat,
     loadEarlier: loadEarlierChat,
     observeFirstTokenPaint,
   } = useMissionConversation({
     missionId: props.mission.id,
     navigationId: props.navigationId,
+    isOutputVisible: isChatOutputVisible,
     api: desktopApi(),
     cache: props.chatCache,
     prefetchedConversation: props.prefetchedConversation,
@@ -771,7 +784,12 @@ export function MissionDetailFragment(props: {
     });
     const requestId = optimistic.id;
     recordSubmission(optimistic, retry?.retryMode === "new-request" ? retry.id : undefined);
-    const shouldPrepareQueuedMessage = executionActive;
+    const shouldPrepareQueuedMessage = shouldQueueMissionSend({
+      chat,
+      executionActive,
+      awaitingRequestId: awaitingRequestId ?? props.initialThinkingRequestId ?? null,
+      pendingQueuedCount: pendingQueuedMessages.length,
+    });
     const sentAttachmentIds = optimistic.attachments.map((attachment) => attachment.id);
     let discardSentDrafts = false;
     if (retry === undefined) composerRef.current?.clear();
@@ -909,11 +927,21 @@ export function MissionDetailFragment(props: {
         queueItemRequestId,
       });
       if (result.queueSteer.outcome === "steered") {
+        setDeliveryNotice(undefined);
         followLatestRef.current = true;
         setShowJumpToLatest(false);
       }
       await refreshLatestChat();
       if (result.queueSteer.outcome === "steered") scheduleFollowLatest();
+      else
+        setDeliveryNotice(
+          t(
+            result.queueSteer.reason === "delivery_uncertain"
+              ? "steerDeliveryUncertain"
+              : "steerRetained",
+            { ns: "missions" },
+          ),
+        );
     } catch (steerError) {
       setOptionsError(missionError(steerError));
     } finally {
@@ -979,6 +1007,9 @@ export function MissionDetailFragment(props: {
     [chat?.queue?.items, pendingQueuedMessages],
   );
   const visibleQueuedMessages = queuedMessages;
+  const queueDeliveryUncertain =
+    chat?.queue?.deliveryUncertain === true ||
+    queuedMessages.some((message) => message.deliveryUncertain);
   const visibleQueuedRequestIds = useMemo(
     () => new Set(queuedMessages.map((message) => message.requestId)),
     [queuedMessages],
@@ -990,9 +1021,6 @@ export function MissionDetailFragment(props: {
       ),
     [chat?.entries, visibleQueuedRequestIds],
   );
-  const coordinatorId =
-    (teamCoordinator === undefined ? undefined : expertIdFromRef(teamCoordinator.ref)) ??
-    workRecords.find((record) => record.kind === "root")?.executorId;
   const displayEntries = useMemo(
     () =>
       isTeam
@@ -1072,6 +1100,23 @@ export function MissionDetailFragment(props: {
       : `${lastContextOperation.id}:${lastContextOperation.status}`;
   const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
   const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
+  const streamWaitingActive = canShowMissionStreamWaiting(
+    chat,
+    showThinkingPlaceholder || executionActive,
+    interactions.length > 0,
+    props.mission.lifecycleStatus === "completed",
+  );
+  const streamWaitingExecutionId = executionActive
+    ? (chat?.execution?.id ?? props.mission.execution?.id)
+    : undefined;
+  // Mission owns the timer even when the virtual footer or chat tab is unmounted.
+  useLayoutEffect(() => {
+    streamIdleStore.configure(
+      streamWaitingActive,
+      streamWaitingExecutionId,
+      showThinkingPlaceholder,
+    );
+  }, [streamIdleStore, streamWaitingActive, streamWaitingExecutionId, showThinkingPlaceholder]);
   const backendRecoveryAvailable =
     chat?.controlHealth !== undefined &&
     ["orphaned", "interrupt_uncertain", "recovery_failed", "deletion_pending"].includes(
@@ -1507,11 +1552,13 @@ export function MissionDetailFragment(props: {
                         </div>
                       ) : index === conversationBlocks.length + 1 ? (
                         <div className="mission-chat-virtual-footer">
-                          {showThinkingPlaceholder ? (
-                            <MissionThinkingPlaceholder
-                              executorName={props.mission.executor.name}
-                            />
-                          ) : null}
+                          <MissionStreamWaitingIndicator
+                            store={streamIdleStore}
+                            active={streamWaitingActive}
+                            immediate={showThinkingPlaceholder}
+                            executorName={props.mission.executor.name}
+                            onVisibilityChange={scheduleFollowLatest}
+                          />
                           {participantWorkRecords.length === 0 ? null : (
                             <MissionTeamParticipantList
                               records={participantWorkRecords}
@@ -1632,25 +1679,56 @@ export function MissionDetailFragment(props: {
                 </small>
               )}
               {chat?.queue?.state === "paused" ? (
-                <small className="mission-chat-footer-tip" role="status">
-                  <span>{t("queuePaused", { ns: "missions" })}</span>{" "}
-                  <button
-                    className="text-button"
-                    type="button"
-                    disabled={clientOperationBusy}
-                    onClick={() => {
-                      const api = desktopApi();
-                      if (api === undefined) return;
-                      void api
-                        .resumeMissionQueue(props.mission.id)
-                        .then(async () => await refreshLatestChat())
-                        .catch((resumeError: unknown) =>
-                          setOptionsError(missionError(resumeError)),
-                        );
-                    }}
-                  >
-                    {t("resumeQueue", { ns: "missions" })}
-                  </button>
+                <small className="mission-chat-footer-tip mission-queue-paused-tip" role="status">
+                  <span>
+                    {t(queueDeliveryUncertain ? "steerDeliveryUncertain" : "queuePaused", {
+                      ns: "missions",
+                    })}
+                  </span>{" "}
+                  {!queueDeliveryUncertain || chat.queue.steeringRecovery === "receipt" ? (
+                    <button
+                      className="text-button"
+                      type="button"
+                      disabled={clientOperationBusy}
+                      onClick={() => {
+                        const api = desktopApi();
+                        if (api === undefined) return;
+                        void api
+                          .resumeMissionQueue(props.mission.id)
+                          .then(async () => await refreshLatestChat())
+                          .catch((resumeError: unknown) =>
+                            setOptionsError(missionError(resumeError)),
+                          );
+                      }}
+                    >
+                      {t(queueDeliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
+                        ns: "missions",
+                      })}
+                    </button>
+                  ) : null}
+                  {queueDeliveryUncertain ? (
+                    <>
+                      {" "}
+                      <button
+                        className="text-button"
+                        type="button"
+                        disabled={clientOperationBusy}
+                        title={t("abandonSteerDeliveryHint", { ns: "missions" })}
+                        onClick={() => {
+                          const api = desktopApi();
+                          if (api === undefined) return;
+                          void api
+                            .resumeMissionQueue(props.mission.id, "abandon")
+                            .then(async () => await refreshLatestChat())
+                            .catch((resumeError: unknown) =>
+                              setOptionsError(missionError(resumeError)),
+                            );
+                        }}
+                      >
+                        {t("abandonSteerDelivery", { ns: "missions" })}
+                      </button>
+                    </>
+                  ) : null}
                 </small>
               ) : null}
               {modelResetRequired ? (
@@ -1746,13 +1824,19 @@ export function MissionDetailFragment(props: {
                           const canSteer =
                             chat?.queue?.supportsSteer === true &&
                             interruptible &&
-                            !item.hasAttachments;
+                            !item.hasAttachments &&
+                            !queueDeliveryUncertain &&
+                            !item.deliveryUncertain;
                           return (
                             <div className="mission-prompt-queue-item" key={item.requestId}>
                               <span className="mission-prompt-queue-marker" aria-hidden="true">
                                 <ArrowBendUpLeft size={16} />
                               </span>
-                              <strong>{t("queuedMessage", { ns: "missions" })}</strong>
+                              <strong>
+                                {t(item.deliveryUncertain ? "deliveryUncertain" : "queuedMessage", {
+                                  ns: "missions",
+                                })}
+                              </strong>
                               <MissionUserMessageContent
                                 source={item.content}
                                 mentionCandidates={mentionCandidates}
@@ -1774,7 +1858,11 @@ export function MissionDetailFragment(props: {
                                         : undefined
                                     }
                                     aria-busy={steering || undefined}
-                                    disabled={!item.persisted || action !== undefined}
+                                    disabled={
+                                      !item.persisted ||
+                                      action !== undefined ||
+                                      queueDeliveryUncertain
+                                    }
                                     onClick={() => void steerQueuedMessage(item.requestId)}
                                   >
                                     {steering ? (
@@ -1792,7 +1880,11 @@ export function MissionDetailFragment(props: {
                                   type="button"
                                   aria-label={t("removeQueuedMessage", { ns: "missions" })}
                                   title={t("removeQueuedMessage", { ns: "missions" })}
-                                  disabled={!item.persisted || action !== undefined}
+                                  disabled={
+                                    !item.persisted ||
+                                    action !== undefined ||
+                                    queueDeliveryUncertain
+                                  }
                                   onClick={() =>
                                     void removeQueuedMessage(item.requestId, item.content)
                                   }
@@ -1888,22 +1980,15 @@ export function MissionDetailFragment(props: {
                             onChange={(value) => void saveOptions(value, modelOverride)}
                           />
                           {!isFlow ? (
-                            <div className="mission-model-options">
-                              <MissionModelOverrideControls
-                                models={models}
-                                loading={modelsLoading}
-                                disabled={clientOperationBusy || compactingContext}
-                                keepOpenWhenDisabled={optionsSaving}
-                                value={modelOverride}
-                                defaultValue={defaultModelSelection}
-                                onChange={(value) => void saveOptions(toolPermissionMode, value)}
-                              />
-                              {executionActive ? (
-                                <small role="status">
-                                  {t("modelAvailableNextTurn", { ns: "missions" })}
-                                </small>
-                              ) : null}
-                            </div>
+                            <MissionModelOverrideControls
+                              models={models}
+                              loading={modelsLoading}
+                              disabled={clientOperationBusy || compactingContext}
+                              keepOpenWhenDisabled={optionsSaving}
+                              value={modelOverride}
+                              defaultValue={defaultModelSelection}
+                              onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                            />
                           ) : null}
                         </>
                       }
@@ -1932,6 +2017,7 @@ export function MissionDetailFragment(props: {
               <MemoryStoreBrowser
                 className="mission-memory-store"
                 source={memoryStoreSource}
+                initialEntryId={memoryInitialEntryId}
                 onBack={() => setMemoryView("activity")}
                 backLabel={t("backToMemoryActivity")}
               />
@@ -1940,7 +2026,14 @@ export function MissionDetailFragment(props: {
                 activity={memoryActivity}
                 error={memoryActivityError}
                 loading={memoryActivityLoading}
-                onBrowseStore={() => setMemoryView("store")}
+                onBrowseStore={() => {
+                  setMemoryInitialEntryId(undefined);
+                  setMemoryView("store");
+                }}
+                onBrowseSource={(path) => {
+                  setMemoryInitialEntryId(path);
+                  setMemoryView("store");
+                }}
               />
             )}
           </div>

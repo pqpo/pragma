@@ -366,10 +366,14 @@ export function ProviderEditor(props: {
                       ...draft,
                       protocol: value,
                       compatibilityProfileId: "",
-                      models: draft.models.map((model) => ({
-                        ...model,
-                        compatibilityProfileId: undefined,
-                      })),
+                      models: draft.models.map((model) =>
+                        model.kind === "embedding"
+                          ? model
+                          : {
+                              ...model,
+                              compatibilityProfileId: undefined,
+                            },
+                      ),
                     })
                   }
                 />
@@ -455,10 +459,10 @@ export function ProviderEditor(props: {
                       <small>{model.id}</small>
                     </span>
                     <span className="capability-tags">
-                      {model.input.includes("image") ? (
+                      {model.kind === "generation" && model.input.includes("image") ? (
                         <em>{t("models.imageInput", { ns: "settings" })}</em>
                       ) : null}
-                      {model.reasoning ? (
+                      {model.kind === "generation" && model.reasoning ? (
                         <em>{t("models.reasoning", { ns: "settings" })}</em>
                       ) : null}
                     </span>
@@ -664,6 +668,139 @@ function ModelCapabilityEditor(props: {
   readonly onRemove: () => void;
 }) {
   const { t } = useTranslation("settings");
+  const changeKind = (kind: string) => {
+    if (kind === props.model.kind) return;
+    props.onChange(
+      kind === "embedding"
+        ? {
+            kind: "embedding",
+            id: props.model.id,
+            name: props.model.name,
+            api: "openai-embeddings",
+            maxBatchInputs: 32,
+            cost: { input: 0 },
+            capabilitiesSource: "manual",
+          }
+        : {
+            kind: "generation",
+            id: props.model.id,
+            name: props.model.name,
+            api: "openai-completions",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 16384,
+            contextWindowSource: "default",
+            maxTokensSource: "default",
+            capabilitiesSource: "manual",
+          },
+    );
+  };
+  return (
+    <div className="model-capability-editor">
+      <div className="model-kind-row">
+        <span>{t("models.kind")}</span>
+        <SelectMenu
+          ariaLabel={t("models.kind")}
+          value={props.model.kind}
+          options={[
+            { value: "generation", label: t("models.generation") },
+            { value: "embedding", label: t("models.embedding") },
+          ]}
+          onChange={changeKind}
+        />
+      </div>
+      {props.model.kind === "generation" ? (
+        <GenerationModelCapabilityEditor {...props} model={props.model} />
+      ) : (
+        <article className="selected-model-row selected-model-card">
+          <header className="selected-model-card-header">
+            <div className="model-identity-copy">
+              <strong>{props.model.name}</strong>
+              <small>{props.model.id}</small>
+            </div>
+            <button
+              className="model-remove-button"
+              type="button"
+              onClick={props.onRemove}
+              aria-label={t("models.removeModel", { model: props.model.id })}
+            >
+              <X size={16} weight="bold" />
+            </button>
+          </header>
+          <div className="model-card-body">
+            <div className="model-token-grid">
+              <label className="model-token-limit-field">
+                <span>{t("models.maxInputTokens")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={props.model.maxInputTokens ?? ""}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (value > 0 && Number.isInteger(value) && props.model.kind === "embedding")
+                      props.onChange({
+                        ...props.model,
+                        maxInputTokens: value,
+                        maxInputTokensSource: "manual" as const,
+                      });
+                  }}
+                />
+              </label>
+
+              <label className="model-token-limit-field">
+                <span>{t("models.maxBatchInputs")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={2048}
+                  value={props.model.maxBatchInputs}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (
+                      value > 0 &&
+                      value <= 2048 &&
+                      Number.isInteger(value) &&
+                      props.model.kind === "embedding"
+                    )
+                      props.onChange({ ...props.model, maxBatchInputs: value });
+                  }}
+                />
+              </label>
+              <label className="model-token-limit-field">
+                <span>{t("models.maxBatchTokens")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={props.model.maxBatchTokens ?? ""}
+                  onChange={(event) => {
+                    if (props.model.kind !== "embedding") return;
+                    const value = Number(event.target.value);
+                    if (event.target.value === "")
+                      props.onChange({ ...props.model, maxBatchTokens: undefined });
+                    else if (value > 0 && Number.isInteger(value))
+                      props.onChange({ ...props.model, maxBatchTokens: value });
+                  }}
+                />
+              </label>
+            </div>
+            <small className="embedding-limit-description">
+              {t("models.embeddingLimitDescription")}
+            </small>
+          </div>
+        </article>
+      )}
+    </div>
+  );
+}
+function GenerationModelCapabilityEditor(props: {
+  readonly model: Extract<ModelProviderModel, { kind: "generation" }>;
+  readonly compatibilityProfiles: readonly ModelCompatibilityProfileDescriptor[];
+  readonly onChange: (model: ModelProviderModel) => void;
+  readonly onRemove: () => void;
+}) {
+  const { t } = useTranslation("settings");
   const supported = supportedThinkingLevels(props.model);
   const setReasoning = (reasoning: boolean) =>
     props.onChange({
@@ -677,7 +814,9 @@ function ModelCapabilityEditor(props: {
       thinking: adjustable ? { supportedLevels: ["off", "high"], defaultLevel: "high" } : undefined,
     });
   const setImageInput = (enabled: boolean) => {
-    const input: ModelProviderModel["input"] = enabled ? ["text", "image"] : ["text"];
+    const input: Extract<ModelProviderModel, { kind: "generation" }>["input"] = enabled
+      ? ["text", "image"]
+      : ["text"];
     props.onChange({
       ...props.model,
       input,
@@ -969,7 +1108,7 @@ function ProviderCard(props: {
         {props.provider.models.slice(0, 8).map((model) => (
           <span key={model.id}>
             {model.name}
-            {model.reasoning ? " · R" : ""}
+            {model.kind === "generation" && model.reasoning ? " · R" : ""}
           </span>
         ))}
         {props.provider.models.length > 8 ? <span>+{props.provider.models.length - 8}</span> : null}
@@ -1207,7 +1346,8 @@ export function reconcileDiscoveredModels(
   let changed = false;
   const reconciled = current.map((model) => {
     const fresh = discoveredById.get(model.id);
-    if (fresh === undefined) return model;
+    if (fresh === undefined || model.kind !== "generation" || fresh.kind !== "generation")
+      return model;
     const input = model.inputOverride ?? fresh.input;
     const contextWindowIsManual = model.contextWindowSource === "manual";
     const maxTokensIsManual = model.maxTokensSource === "manual";
@@ -1240,7 +1380,7 @@ export function reconcileDiscoveredModels(
 export function supportedThinkingLevels(
   model: ModelProviderModel,
 ): (typeof THINKING_LEVELS)[number][] {
-  if (!model.reasoning) return [];
+  if (model.kind !== "generation" || !model.reasoning) return [];
   return model.thinking?.supportedLevels.filter((level) => THINKING_LEVELS.includes(level)) ?? [];
 }
 function addManualModel(
@@ -1253,6 +1393,7 @@ function addManualModel(
   const id = idValue.trim();
   if (id === "" || draft.models.some((model) => model.id === id)) return;
   const model: ModelProviderModel = {
+    kind: "generation",
     id,
     name: id,
     api: draft.protocol,

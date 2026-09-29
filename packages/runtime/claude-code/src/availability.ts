@@ -49,7 +49,16 @@ export async function canUseClaudeCodeRuntime(
       usable: true,
       details: { probe: "skipped", reason: "Custom Claude Code spawn was provided." },
     };
-  const command = resolveClaudeCodeCommand(options);
+  let command: ReturnType<typeof resolveClaudeCodeCommand>;
+  try {
+    command = resolveClaudeCodeCommand(options);
+  } catch (error) {
+    return {
+      usable: false,
+      reason: `${error instanceof Error ? error.message : String(error)} Install Claude Code yourself or correct the configured executable path.`,
+      details: { code: "claude_cli_unavailable" },
+    };
+  }
   const cacheKey = availabilityCacheKey(command, options);
   if (options.forceRefresh) {
     availabilityCache.delete(cacheKey);
@@ -90,8 +99,14 @@ function refreshAvailability(
   }).then((result) => {
     const normalized = {
       ...result,
+      ...(!result.usable
+        ? {
+            reason: `${result.reason ?? "Claude Code CLI is unavailable."} Install Claude Code yourself or correct the configured executable path.`,
+          }
+        : {}),
       details: {
         ...result.details,
+        ...(!result.usable ? { code: "claude_cli_unavailable" } : {}),
         executablePath: command.sourcePath,
         ...(command.executablePath === command.sourcePath
           ? {}

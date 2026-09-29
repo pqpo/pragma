@@ -35,6 +35,7 @@ const expectedFiles = new Set([
   "package/dist/claude-acp-worker.js",
   "package/dist/code-service-worker.js",
   "package/dist/canonical-event-feed-worker.js",
+  "package/dist/vector-worker.js",
 ]);
 const expectedDirectories = new Set(["package", "package/dist"]);
 const maxTarballBytes = 32 * 1024 * 1024;
@@ -128,6 +129,7 @@ assertBootstrapOrder(bootstrap.data.toString("utf8"));
 const metafiles = await readMetafiles();
 for (const [label, metafile] of metafiles) assertMetafile(label, metafile);
 await verifyWorker(entryMap.get("package/dist/code-service-worker.js"));
+await verifyVectorWorker(entryMap.get("package/dist/vector-worker.js"));
 await verifyClaudeAcpWorker(entryMap.get("package/dist/claude-acp-worker.js"));
 
 console.log(
@@ -279,6 +281,7 @@ async function readMetafiles() {
     ["cli bundle", join(releaseDirectory, "cli.metafile.json")],
     ["claude ACP worker", join(releaseDirectory, "claude-acp-worker.metafile.json")],
     ["code service worker", join(releaseDirectory, "code-service-worker.metafile.json")],
+    ["memory vector worker", join(releaseDirectory, "vector-worker.metafile.json")],
     [
       "canonical event feed worker",
       join(releaseDirectory, "canonical-event-feed-worker.metafile.json"),
@@ -396,6 +399,55 @@ async function verifyWorker(workerEntry) {
     });
   } finally {
     await rm(extractionDirectory, { recursive: true, force: true });
+  }
+}
+
+async function verifyVectorWorker(workerEntry) {
+  const directory = await mkdtemp(join(packageDirectory, ".vector-worker-audit-"));
+  const workerPath = join(directory, "vector-worker.js");
+  try {
+    await writeFile(workerPath, workerEntry.data, { mode: workerEntry.mode });
+    for (const readOnly of [false, true]) {
+      await new Promise((resolvePromise, reject) => {
+        const worker = new Worker(pathToFileURL(workerPath), {
+          workerData: { path: join(directory, "vectors.sqlite"), readOnly },
+        });
+        let settled = false;
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          void worker
+            .terminate()
+            .finally(() => (error === undefined ? resolvePromise() : reject(error)));
+        };
+        const timer = setTimeout(
+          () => finish(new Error("Packaged memory vector worker did not respond.")),
+          30_000,
+        );
+        worker.once("error", finish);
+        worker.once("exit", (code) => {
+          if (!settled) finish(new Error(`Memory vector worker exited with ${code}.`));
+        });
+        worker.on("message", (message) => {
+          if (message?.ready)
+            worker.postMessage({
+              id: 1,
+              operation: "binding",
+              payload: {},
+              cancel: new SharedArrayBuffer(4),
+            });
+          else if (message?.id === 1)
+            finish(
+              message.ok && message.value === null
+                ? undefined
+                : new Error("Packaged memory vector binding is invalid."),
+            );
+        });
+      });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 }
 

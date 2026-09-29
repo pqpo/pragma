@@ -1,0 +1,38 @@
+{
+  "node": "v24.18.0",
+  "platform": "darwin",
+  "architecture": "x64",
+  "mode": "synthetic normalized vectors; real SQLite worker; authorization before top-K; 12 searches per scale",
+  "results": [
+    {
+      "memories": 1000,
+      "segments": 1000,
+      "dimensions": 1536,
+      "vectorMiB": 5.859375,
+      "p50Ms": 20,
+      "p95Ms": 71,
+      "mainLoopMaxMs": 12,
+      "rssMiB": 170
+    },
+    {
+      "memories": 10000,
+      "segments": 10000,
+      "dimensions": 1536,
+      "vectorMiB": 58.59375,
+      "p50Ms": 190,
+      "p95Ms": 231,
+      "mainLoopMaxMs": 13,
+      "rssMiB": 289
+    },
+    {
+      "memories": 50000,
+      "segments": 50000,
+      "dimensions": 1536,
+      "vectorMiB": 292.96875,
+      "p50Ms": 988,
+      "p95Ms": 1061,
+      "mainLoopMaxMs": 22,
+      "rssMiB": 355
+    }
+  ]
+}

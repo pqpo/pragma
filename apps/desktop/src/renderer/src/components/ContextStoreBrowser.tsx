@@ -51,6 +51,7 @@ export interface ContextStoreBrowserSource {
 
 export function ContextStoreBrowser(props: {
   readonly source: ContextStoreBrowserSource;
+  readonly initialEntryId?: string | undefined;
   readonly variant?: "memory" | "mission-board" | undefined;
 }) {
   const { t } = useTranslation("missions");
@@ -155,7 +156,8 @@ export function ContextStoreBrowser(props: {
           next.find((entry) => entry.id === "overview.md") ??
           next.find((entry) => entry.id === "guide.md") ??
           next[0];
-        if (initial !== undefined) void readEntry(initial.id);
+        if (props.initialEntryId !== undefined) void readEntry(props.initialEntryId);
+        else if (initial !== undefined) void readEntry(initial.id);
         setError(undefined);
       })
       .catch((cause: unknown) => {
@@ -167,7 +169,7 @@ export function ContextStoreBrowser(props: {
     return () => {
       cancelled = true;
     };
-  }, [descriptor, props.source, readEntry, scopeId]);
+  }, [descriptor, props.source, props.initialEntryId, readEntry, scopeId]);
 
   useEffect(() => {
     const normalized = query.trim();

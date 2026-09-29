@@ -1,3 +1,8 @@
+import {
+  initializeMemoryIndexOutbox,
+  memoryIndexOutbox,
+  type MemoryIndexChange,
+} from "../retrieval/outbox.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -82,6 +87,29 @@ export type EpisodicRejectionReason =
   "low-value" | "insufficient-evidence" | "sensitive" | "policy";
 
 export interface EpisodicMemoryStore {
+  readIndexRemovals(limit: number): Promise<readonly MemoryIndexChange[]>;
+  readIndexChanges(limit: number): Promise<readonly MemoryIndexChange[]>;
+  acknowledgeIndexChange(change: MemoryIndexChange): Promise<void>;
+  indexWatermark(): Promise<number>;
+  relatedForRecall(
+    scope: MemoryRecallScope,
+    id: string,
+    limit: number,
+  ): Promise<readonly { id: string; revision: number }[]>;
+  countIndexableRecords(): Promise<number>;
+  scanForIndex(
+    afterId: string | undefined,
+    limit: number,
+  ): Promise<readonly EpisodicMemoryRecord[]>;
+  peekForRecall(
+    scope: MemoryRecallScope,
+    id: string,
+    now?: Date,
+  ): Promise<EpisodicMemoryRecord | undefined>;
+  listRecallIdentities(
+    scope: MemoryRecallScope,
+    now?: Date,
+  ): Promise<readonly { id: string; revision: number }[]>;
   ingest(envelopes: readonly MemoryEvidenceEnvelope[]): Promise<void>;
   claimDueJob(now: Date): Promise<EpisodicExtractionJob | undefined>;
   isClaimCurrent(job: EpisodicExtractionJob): Promise<boolean>;
@@ -106,6 +134,12 @@ export interface EpisodicMemoryStore {
   list(): Promise<readonly EpisodicMemoryRecord[]>;
   listForRecall(scope: MemoryRecallScope, now?: Date): Promise<readonly EpisodicMemoryRecord[]>;
   searchForRecall(
+    scope: MemoryRecallScope,
+    query: string,
+    limit: number,
+    now?: Date,
+  ): Promise<readonly EpisodicMemoryRecord[]>;
+  searchCandidatesForRecall(
     scope: MemoryRecallScope,
     query: string,
     limit: number,
@@ -201,7 +235,7 @@ export async function createEpisodicMemoryStore(
           database: data,
           databasePath: dataPath,
           family: "pragma.memory-episodic-store",
-          targetVersion: 4,
+          targetVersion: 5,
           migrations: EPISODIC_DATA_STORAGE_MIGRATIONS,
         });
       }
@@ -254,6 +288,58 @@ export async function createEpisodicMemoryStore(
   };
 
   return {
+    ...memoryIndexOutbox(data, "episodes"),
+    async relatedForRecall(scope, id, limit) {
+      const access = recallPredicate("episodes", scope);
+      if (
+        data
+          .prepare(`SELECT 1 FROM episodes WHERE id=? AND status='active' AND ${access.sql}`)
+          .get(id, ...access.parameters) === undefined
+      )
+        return [];
+      return data
+        .prepare(
+          `SELECT id,revision FROM episodes WHERE id<>? AND status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted' AND (conversation_key=(SELECT conversation_key FROM episodes WHERE id=?) OR execution_id=(SELECT execution_id FROM episodes WHERE id=?)) AND ${access.sql} ORDER BY id LIMIT ?`,
+        )
+        .all(id, id, id, ...access.parameters, Math.max(1, Math.min(12, limit))) as {
+        id: string;
+        revision: number;
+      }[];
+    },
+    async countIndexableRecords() {
+      return (
+        data
+          .prepare(
+            "SELECT count(*) AS n FROM episodes WHERE status='active' AND json_extract(record_json,'$.sensitivity') <> 'restricted'",
+          )
+          .get() as { n: number }
+      ).n;
+    },
+    async scanForIndex(afterId, limit) {
+      const rows = data
+        .prepare("SELECT record_json AS recordJson FROM episodes WHERE id > ? ORDER BY id LIMIT ?")
+        .all(afterId ?? "", Math.max(1, Math.min(limit, 200))) as { recordJson: string }[];
+      return rows.map((row) => EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson)));
+    },
+    async peekForRecall(scope, id) {
+      const access = recallPredicate("episodes", scope);
+      const row = data
+        .prepare(
+          `SELECT record_json AS recordJson FROM episodes WHERE id = ? AND status='active' AND ${access.sql}`,
+        )
+        .get(id, ...access.parameters) as { recordJson: string } | undefined;
+      return row === undefined
+        ? undefined
+        : EpisodicMemoryRecordSchema.parse(JSON.parse(row.recordJson));
+    },
+    async listRecallIdentities(scope) {
+      const access = recallPredicate("episodes", scope);
+      return data
+        .prepare(
+          `SELECT id,revision FROM episodes WHERE json_extract(record_json,'$.sensitivity') <> 'restricted' AND status='active' AND ${access.sql}`,
+        )
+        .all(...access.parameters) as { id: string; revision: number }[];
+    },
     async ingest(envelopes) {
       if (envelopes.length === 0) return;
       const insertEvidence = state.prepare(
@@ -510,6 +596,25 @@ export async function createEpisodicMemoryStore(
         .all(`%${escapedQuery}%`, ...access.parameters, normalizedLimit);
       const records = readEpisodeRows(rows);
       for (const record of records) recordMemoryRecall(data, record.id, scope, now);
+      return records;
+    },
+
+    async searchCandidatesForRecall(scope, query, limit) {
+      const normalizedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+      const escapedQuery = query
+        .replaceAll("\\", "\\\\")
+        .replaceAll("%", "\\%")
+        .replaceAll("_", "\\_");
+      const access = recallPredicate("episodes", scope);
+      const rows = data
+        .prepare(
+          `SELECT record_json AS recordJson FROM episodes
+           WHERE status = 'active' AND lower(record_json) LIKE lower(?) ESCAPE '\\'
+             AND ${access.sql}
+           ORDER BY updated_at DESC, id LIMIT ?`,
+        )
+        .all(`%${escapedQuery}%`, ...access.parameters, normalizedLimit);
+      const records = readEpisodeRows(rows);
       return records;
     },
 
@@ -1028,7 +1133,7 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function initializeData(database: DatabaseSync): void {
   const version = readVersion(database);
-  if (version > 4) {
+  if (version > 5) {
     database.close();
     throw new Error(`unsupported-state-version:pragma.memory-episodic-store/v${version}`);
   }
@@ -1099,10 +1204,11 @@ function initializeData(database: DatabaseSync): void {
       pruned_at TEXT NOT NULL
     );
   `);
-  if (version !== 0 && version !== 4) {
+  if (version !== 0 && version !== 5) {
     throw new Error(`missing-adjacent-migration:pragma.memory-episodic-store/v${version}`);
   }
-  database.exec("PRAGMA user_version = 4;");
+  initializeMemoryIndexOutbox(database, "episodes");
+  database.exec("PRAGMA user_version = 5;");
 }
 
 function initializeState(database: DatabaseSync): void {

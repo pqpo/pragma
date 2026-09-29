@@ -56,7 +56,7 @@ import type {
   PreparedCapabilityCredentials,
 } from "./capability-credential-store.ts";
 import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
-import type { CapabilityVerifier } from "./capability-verification.ts";
+import type { CapabilityVerifier, CapabilityVerifierResult } from "./capability-verification.ts";
 import { copySkillTree, scanSkillWorkingTree } from "./skill-revision-draft-store.ts";
 
 const MAX_SKILL_BYTES = MAX_SKILL_PACKAGE_BYTES;
@@ -152,6 +152,8 @@ export interface CapabilityRepository {
 
 export interface CapabilityStore extends CapabilityRepository {
   list(): Promise<Capability[]>;
+  /** Includes persisted assets that cannot currently be read or verified. */
+  exists(id: string): Promise<boolean>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
   listSkillFiles(input: ListSkillFiles): Promise<SkillFileEntry[]>;
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
@@ -180,8 +182,14 @@ export interface CapabilityStore extends CapabilityRepository {
     readonly package: SkillPackage;
     readonly id?: string;
   }): Promise<Capability>;
-  create(input: CreateCapability, options?: { readonly id?: string }): Promise<Capability>;
-  update(input: UpdateCapability): Promise<Capability>;
+  create(
+    input: CreateCapability,
+    options?: { readonly id?: string; readonly preserveDefinition?: boolean },
+  ): Promise<Capability>;
+  update(
+    input: UpdateCapability,
+    options?: { readonly preserveDefinition?: boolean },
+  ): Promise<Capability>;
   retry(id: string, expectedRevision: number): Promise<Capability>;
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
   previewCode(input: PreviewCodeServiceRequest): Promise<PreviewCodeServiceResult>;
@@ -688,6 +696,15 @@ export function createCapabilityStore(options: {
         throw error;
       }
     },
+    async exists(id) {
+      try {
+        await lstat(capabilityPath(CapabilityIdSchema.parse(id)));
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    },
     get: readCapability,
     async getSkillDocument(input) {
       const capability = await readCapability(input.id, input.revision);
@@ -1118,10 +1135,15 @@ export function createCapabilityStore(options: {
       const id =
         createOptions?.id === undefined ? randomUUID() : CapabilityIdSchema.parse(createOptions.id);
       const timestamp = new Date().toISOString();
-      const verified = await options.verify(
+      const observed = await options.verify(
         validateDefinition(input.definition),
         id,
         options.credentials.overlay(id, input.credentials),
+      );
+      const verified = preserveTransferredDefinition(
+        input.definition,
+        observed,
+        createOptions?.preserveDefinition,
       );
       assertCodeServiceReady(input.definition, verified.health);
       const manifest = CapabilityManifestSchema.parse({
@@ -1166,7 +1188,7 @@ export function createCapabilityStore(options: {
         throw error;
       }
     },
-    async update(rawInput) {
+    async update(rawInput, updateOptions) {
       const input = UpdateCapabilitySchema.parse(rawInput);
       const current = await readManifest(input.id);
       if (current.latestRevision !== input.baseRevision) {
@@ -1179,10 +1201,15 @@ export function createCapabilityStore(options: {
         throw new CapabilityStoreError("config_invalid", "Capability kind cannot be changed.");
       }
       const validateCredentialSnapshot = await credentialSnapshot(input.id);
-      const verified = await options.verify(
+      const observed = await options.verify(
         validateDefinition(input.definition),
         input.id,
         options.credentials.overlay(input.id, input.credentials),
+      );
+      const verified = preserveTransferredDefinition(
+        input.definition,
+        observed,
+        updateOptions?.preserveDefinition,
       );
       assertCodeServiceReady(input.definition, verified.health);
       const timestamp = new Date().toISOString();
@@ -2033,4 +2060,27 @@ function sameHealthState(left: CapabilityHealth, right: CapabilityHealth): boole
     left.status === right.status &&
     stableStringify(left.diagnostic ?? null) === stableStringify(right.diagnostic ?? null)
   );
+}
+
+function preserveTransferredDefinition(
+  definition: CapabilityDefinition,
+  observed: CapabilityVerifierResult,
+  preserve: boolean | undefined,
+): CapabilityVerifierResult {
+  if (!preserve) return observed;
+  if (stableStringify(definition) === stableStringify(observed.definition))
+    return { ...observed, definition };
+  return {
+    definition,
+    health: {
+      ...observed.health,
+      status: "needs_attention",
+      diagnostic: {
+        code: "imported_definition_changed",
+        message:
+          "The available tools differ from the imported definition. Review and retry the capability in Studio.",
+        retryable: true,
+      },
+    },
+  };
 }

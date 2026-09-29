@@ -2,7 +2,7 @@ import {
   ModelApiSchema as SharedModelApiSchema,
   ModelCompatibilityProfileIdSchema,
   ModelThinkingLevelSchema,
-  ProviderModelDefinitionSchema,
+  ConfiguredProviderModelSchema,
 } from "@pragma/shared";
 import { z } from "zod";
 
@@ -19,18 +19,7 @@ export const ModelCompatibilityProfileDescriptorSchema = z.object({
   api: z.enum(["openai-completions", "openai-responses"]),
 });
 
-export const ModelProviderModelSchema = ProviderModelDefinitionSchema.extend({
-  capabilitiesSource: z.enum(["preset", "provider", "manual"]),
-  inputOverride: ProviderModelDefinitionSchema.shape.input.optional(),
-}).superRefine((model, context) => {
-  if (model.inputOverride !== undefined && !model.inputOverride.includes("text")) {
-    context.addIssue({
-      code: "custom",
-      path: ["inputOverride"],
-      message: "Model input overrides must retain text input.",
-    });
-  }
-});
+export const ModelProviderModelSchema = ConfiguredProviderModelSchema;
 
 export const ModelProviderVerificationSchema = z.object({
   status: z.enum(["unverified", "verified", "failed"]),

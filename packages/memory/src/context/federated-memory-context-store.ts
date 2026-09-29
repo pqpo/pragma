@@ -40,6 +40,10 @@ export function createFederatedMemoryContextStore(
       context: ExpertAgentRunContext | undefined,
     ) => MemoryRecallScope | undefined | Promise<MemoryRecallScope | undefined>;
     readonly activity?: Pick<MemoryActivityStore, "recordRecall"> | undefined;
+    readonly vectorSearch?: (
+      scope: MemoryRecallScope,
+      input: ExpertAgentStoredContextItemSearchInput,
+    ) => Promise<readonly ExpertAgentContextItemSearchMatch[]>;
     readonly now?: (() => Date) | undefined;
     readonly attention?:
       | {
@@ -204,6 +208,9 @@ export function createFederatedMemoryContextStore(
         });
         return recallDenied("search");
       }
+      // Network retrieval can outlive a forget or revision change. Build the lexical
+      // projection afterwards so excerpts come from current authority records.
+      const vectors = (await options.vectorSearch?.(scope, input).catch(() => [])) ?? [];
       const groups: ExpertAgentContextItemSearchMatch[][] = [];
       const catalog = await (await rootStore(scope, input.context)).searchContext(input);
       if (catalog.ok && catalog.value.length > 0) groups.push([...catalog.value]);
@@ -218,7 +225,37 @@ export function createFederatedMemoryContextStore(
           }));
         if (matches.length > 0) groups.push(matches);
       }
-      const matches = roundRobin(groups, input.maxResults);
+      const lexical = roundRobin(groups, Math.max(input.maxResults ?? 20, 30));
+      const currentScope = await resolveRecallScope(input.context);
+      if (currentScope === undefined || JSON.stringify(currentScope) !== JSON.stringify(scope)) {
+        await recordRecall(options.activity, input.context, {
+          operation: "search",
+          target: "memory",
+          queryDigest: memoryQueryDigest(input.query),
+          queryLength: input.query.length,
+          resultRefs: [],
+          outcome: "denied",
+          reason: "recall_scope_changed",
+          occurredAt: now().toISOString(),
+        });
+        return recallDenied("search");
+      }
+      const combined = new Map<
+        string,
+        { value: ExpertAgentContextItemSearchMatch; score: number }
+      >();
+      for (const ranked of [lexical, vectors])
+        ranked.forEach((value, i) => {
+          const previous = combined.get(value.id);
+          combined.set(value.id, {
+            value: previous?.value ?? value,
+            score: (previous?.score ?? 0) + 1 / (60 + i + 1),
+          });
+        });
+      const matches = [...combined.values()]
+        .toSorted((a, b) => b.score - a.score || a.value.id.localeCompare(b.value.id))
+        .slice(0, input.maxResults ?? 20)
+        .map((value) => value.value);
       await recordRecall(options.activity, input.context, {
         operation: "search",
         target: "memory",

@@ -131,11 +131,23 @@ describe("CapabilityDetailFragment", () => {
     expect(html).toContain('aria-label="Submit revision"');
     expect(html).toContain('role="tooltip">Submit revision</span>');
     expect(html).toContain('aria-label="Update from package"');
-    expect(html).toContain('role="tooltip">Revision tasks</span>');
+    expect(html).not.toContain("Revision tasks");
     expect(html).toContain('aria-label="Settings"');
-    expect(html).toContain('aria-label="Delete capability"');
-    expect(html).toContain('aria-label="Export skill"');
+    expect(html).toContain('aria-label="Delete"');
+    expect(html).toContain('aria-label="Export"');
     expect(html).toContain('aria-label="Publish to source"');
+    const actions = Array.from(
+      html.matchAll(/class="studio-action-button"[^>]*aria-label="([^"]+)"/g),
+      (match) => match[1],
+    );
+    expect(actions).toEqual([
+      "Update from package",
+      "Submit revision",
+      "Export",
+      "Publish to source",
+      "Settings",
+      "Delete",
+    ]);
     expect(html).not.toContain("Update Skill");
     expect(html).not.toContain("Prepare revision");
     expect(html).not.toContain("skill-revisions-heading");

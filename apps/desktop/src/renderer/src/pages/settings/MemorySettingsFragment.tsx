@@ -1,3 +1,4 @@
+import { MemoryRetrievalSettingsSection } from "./MemoryRetrievalSettingsSection.tsx";
 import { MemoryAttentionSettingsSection } from "./MemoryAttentionSettingsSection.tsx";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -91,12 +92,15 @@ export function MemorySettingsFragment(
     setSaving(true);
     setError(undefined);
     try {
-      setExtractor(
-        await window.pragmaDesktop.updateMemoryExtractorProfile({
-          expectedRevision: extractor.revision,
-          profile,
-        }),
-      );
+      const nextExtractor = await window.pragmaDesktop.updateMemoryExtractorProfile({
+        expectedRevision: extractor.revision,
+        profile,
+      });
+      setExtractor(nextExtractor);
+      if (profile.mode === "pinned") {
+        setRuntimeId(profile.runtimeId);
+        setModelKey(`${profile.providerId}\0${profile.modelId}`);
+      }
     } catch {
       setError(t("memory.saveError"));
     } finally {
@@ -152,7 +156,6 @@ export function MemorySettingsFragment(
             })
           }
         />
-        <MemoryAttentionSettingsSection enabled={memoryEnabled} />
         {memoryEnabled ? (
           <>
             <MemoryGlobalSwitch
@@ -208,10 +211,23 @@ export function MemorySettingsFragment(
               ]}
               onChange={(mode) => {
                 if (mode === "inherit-default") void updateExtractor({ mode });
-                else
+                else {
+                  const model = models.find(
+                    (candidate) => `${candidate.provider.id}\0${candidate.id}` === modelKey,
+                  );
+                  if (selectedRuntime?.status === "available" && model !== undefined) {
+                    void updateExtractor({
+                      mode,
+                      runtimeId,
+                      providerId: model.provider.id,
+                      modelId: model.id,
+                    });
+                    return;
+                  }
                   setExtractor((current) =>
                     current === undefined ? current : { ...current, mode: "pinned" },
                   );
+                }
               }}
             />
             {extractor?.mode !== "pinned" ? null : (
@@ -232,6 +248,7 @@ export function MemorySettingsFragment(
                 <MemorySelectRow
                   label={t("memory.extractorModel")}
                   description={t("memory.extractorModelDescription")}
+                  showFullLabel
                   value={modelKey}
                   disabled={saving || runtimeId === ""}
                   options={models.map(
@@ -241,29 +258,23 @@ export function MemorySettingsFragment(
                         `${model.provider.displayName} · ${model.displayName}`,
                       ] as const,
                   )}
-                  onChange={setModelKey}
+                  onChange={(value) => {
+                    const model = models.find(
+                      (candidate) => `${candidate.provider.id}\0${candidate.id}` === value,
+                    );
+                    if (model === undefined) return;
+                    void updateExtractor({
+                      mode: "pinned",
+                      runtimeId,
+                      providerId: model.provider.id,
+                      modelId: model.id,
+                    });
+                  }}
                 />
-                <div className="setting-row">
-                  <span className="setting-copy">
-                    <strong>{t("memory.saveExtractor")}</strong>
-                    <span>{t("memory.saveExtractorDescription")}</span>
-                  </span>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={saving || runtimeId === "" || modelKey === ""}
-                    onClick={() => {
-                      const [providerId, modelId] = modelKey.split("\0");
-                      if (providerId !== undefined && modelId !== undefined) {
-                        void updateExtractor({ mode: "pinned", runtimeId, providerId, modelId });
-                      }
-                    }}
-                  >
-                    {t("memory.saveExtractor")}
-                  </button>
-                </div>
               </>
             )}
+            <MemoryRetrievalSettingsSection />
+            <MemoryAttentionSettingsSection />
           </>
         ) : null}
       </div>
@@ -319,18 +330,24 @@ function MemorySelectRow<T extends string>(props: {
   readonly description: string;
   readonly value: T;
   readonly disabled: boolean;
+  readonly showFullLabel?: boolean;
   readonly options: readonly (readonly [T, string])[];
   readonly onChange: (value: T) => void;
 }) {
   return (
-    <div className="setting-row general-language-setting">
+    <div
+      className={`setting-row general-language-setting${props.showFullLabel ? " memory-model-setting" : ""}`}
+    >
       <span className="setting-copy">
         <strong>{props.label}</strong>
         <span>{props.description}</span>
       </span>
       <SelectMenu<T>
         ariaLabel={props.label}
-        className="settings-select language-settings-select"
+        className={`settings-select ${props.showFullLabel ? "memory-model-select" : "language-settings-select"}`}
+        menuClassName={props.showFullLabel ? "memory-model-menu" : undefined}
+        menuMinWidth={props.showFullLabel ? 480 : undefined}
+        align={props.showFullLabel ? "end" : undefined}
         value={props.value}
         disabled={props.disabled}
         placement="bottom"

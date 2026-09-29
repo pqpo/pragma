@@ -201,7 +201,10 @@ export function createExpertDefinitionStore(options: {
         ),
         definitions,
       );
-      const nextReferencedRefs = referencedPragmaResourceRefs(nextResources);
+      const nextReferencedRefs = referencedPragmaResourceRefs([
+        ...nextResources,
+        ...options.systemExperts.listResources(),
+      ]);
       const updated = await options.project.apply({
         baseRevision,
         upserts: definitions,
@@ -266,6 +269,7 @@ export function createExpertDefinitionStore(options: {
           (candidate) =>
             canonicalPragmaResourceRef(candidate) !== canonicalPragmaResourceRef(resource),
         ),
+        options.systemExperts.listResources(),
       );
       const retainedRefs = new Set(retainedResources.map(canonicalPragmaResourceRef));
       await options.project.apply({
@@ -384,10 +388,13 @@ function mergeResources(
   return [...byRef.values()];
 }
 
-function pruneUnreferencedDesktopResources(resources: readonly PragmaResource[]): PragmaResource[] {
+function pruneUnreferencedDesktopResources(
+  resources: readonly PragmaResource[],
+  externalResources: readonly PragmaResource[],
+): PragmaResource[] {
   let remaining = [...resources];
   for (;;) {
-    const referenced = referencedPragmaResourceRefs(remaining);
+    const referenced = referencedPragmaResourceRefs([...remaining, ...externalResources]);
     const next = remaining.filter(
       (resource) =>
         !(

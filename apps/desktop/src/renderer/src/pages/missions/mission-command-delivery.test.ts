@@ -95,4 +95,28 @@ describe("Mission command delivery state", () => {
       ).map((message) => message.requestId),
     ).toEqual(["persisted-1", "persisted-2", "pending-3"]);
   });
+
+  it("preserves delivery uncertainty when reconciling the persisted queue", () => {
+    expect(
+      mergeMissionQueuedMessages(
+        [
+          {
+            requestId: failed.id,
+            content: failed.content,
+            hasAttachments: false,
+            deliveryUncertain: true,
+          },
+        ],
+        [{ requestId: failed.id, content: failed.content, attachments: [] }],
+      ),
+    ).toEqual([
+      {
+        requestId: failed.id,
+        content: failed.content,
+        hasAttachments: false,
+        persisted: true,
+        deliveryUncertain: true,
+      },
+    ]);
+  });
 });

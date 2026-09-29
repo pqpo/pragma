@@ -19,7 +19,7 @@ export interface AssetSyncCoordinator {
 export function createAssetSyncCoordinator(options: {
   readonly core: {
     refresh(): Promise<CoreAssetSyncOverview>;
-    sync(): Promise<CoreAssetSyncOverview>;
+    automatic(): Promise<CoreAssetSyncOverview>;
   };
   readonly assets: {
     listTargets(): Promise<readonly AssetGitTarget[]>;
@@ -101,7 +101,7 @@ export function createAssetSyncCoordinator(options: {
       await syncTargets(targets);
       if (syncCore && !stopped) {
         pendingCore = false;
-        await options.core.sync();
+        await options.core.automatic();
       }
     }).catch((error: unknown) => options.warn?.("Asset synchronization failed.", error));
   };
@@ -138,7 +138,7 @@ export function createAssetSyncCoordinator(options: {
         await syncTargets(targets);
         if (!stopped) {
           pendingCore = false;
-          await options.core.sync();
+          await options.core.automatic();
         }
       });
     },
@@ -164,7 +164,7 @@ export function createAssetSyncCoordinator(options: {
         if (!stopped && status.status === "synced") {
           pendingCore = false;
           try {
-            const backup = await options.core.sync();
+            const backup = await options.core.automatic();
             if (backup.status === "error" || backup.status === "conflict")
               return { ...status, backupFailed: true };
           } catch (error) {

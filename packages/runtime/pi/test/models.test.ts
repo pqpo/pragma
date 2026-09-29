@@ -17,6 +17,34 @@ import {
 } from "../src/context-window.ts";
 
 describe("PI runtime model resolution", () => {
+  it("excludes embedding models from runtime listing and native registration", () => {
+    const converter = createPiModelProviderConverter();
+    const provider: ModelProviderDefinition = {
+      id: "provider",
+      catalogId: "custom-openai",
+      displayName: "Mixed",
+      api: "openai-completions",
+      baseUrl: "https://models.example.com/v1",
+      models: [
+        testModel("generation"),
+        {
+          kind: "embedding",
+          id: "embedding",
+          name: "Embedding",
+          api: "openai-embeddings",
+          maxInputTokens: 8192,
+          maxBatchInputs: 32,
+          cost: { input: 0 },
+        },
+      ],
+    };
+    expect(converter.toRuntimeModels(provider).map((model) => model.id)).toEqual(["generation"]);
+    expect(
+      converter
+        .convertProvider({ ...provider, apiKey: "key", credentialFingerprint: "fixture" })
+        .models.map((model) => model.id),
+    ).toEqual(["generation"]);
+  });
   it("exposes the one-million-token Qwen Max catalog limits", () => {
     const models = createPiModelProviderDirectory().listModels("qwen-token-plan-cn");
 
@@ -51,7 +79,9 @@ describe("PI runtime model resolution", () => {
       credentialFingerprint: "fingerprint",
     });
 
-    expect(provider.models[0]?.contextWindow).toBe(1_000_000);
+    expect(
+      provider.models[0]?.kind === "generation" ? provider.models[0].contextWindow : undefined,
+    ).toBe(1_000_000);
     expect(native.models[0]?.contextWindow).toBe(258_000);
   });
 
@@ -218,6 +248,7 @@ describe("PI runtime model resolution", () => {
 
 function testModel(id: string) {
   return {
+    kind: "generation" as const,
     id,
     name: id,
     reasoning: false,

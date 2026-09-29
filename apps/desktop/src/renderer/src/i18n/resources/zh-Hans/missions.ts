@@ -1,4 +1,9 @@
 export const missions = {
+  memoryAttentionSelection: "记忆注意力选择",
+  memoryAttentionAssessed: "已由 Jev 评估",
+  memoryAttentionUnassessed: "向量相似度 · 未评估",
+  memoryAttentionBrowse: "查看来源记忆",
+
   deliveryMode: "消息发送方式",
   deliveryEnqueue: "排队",
   deliverySteer: "引导",
@@ -7,7 +12,14 @@ export const missions = {
   queuedMessage: "排队",
   preparingQueuedSteer: "正在准备引导",
   removeQueuedMessage: "移出队列并编辑",
+  steerRetained: "未投递 Steer，消息保留在队列中，等待下一轮执行。",
+  steerDeliveryUncertain: "Steer 投递结果不确定，队列已暂停，避免重复执行。",
+  checkSteerDelivery: "检查投递并恢复",
+  abandonSteerDelivery: "跳过不确定消息，重新开始",
+  abandonSteerDeliveryHint:
+    "停止旧对话，丢弃不确定消息且不重放。先前操作可能已经执行。其他排队消息将在新对话中继续。",
   queuePaused: "队列已在失败消息后暂停。",
+  deliveryUncertain: "投递不确定",
   resumeQueue: "跳过失败项继续",
   title: "任务",
   newMission: "新建任务",
@@ -184,7 +196,6 @@ export const missions = {
   missionOptions: "任务选项",
   permissionOverride: "覆盖此任务的默认工作权限",
   permissionTaskLocked: "权限已固定到此任务",
-  modelAvailableNextTurn: "模型修改将用于新提交的消息，当前轮次和已排队消息继续使用原模型。",
   optionsAvailableNextTurn: "当前轮次结束后可修改选项",
   starting: "正在启动…",
   startMission: "开始任务",

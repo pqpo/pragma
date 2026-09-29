@@ -129,8 +129,10 @@ export class AcpRuntimeSession {
   active:
     | {
         readonly turn: RuntimeTurnContext<AcpRuntimeEvent>;
-        text: string;
-        thought: string;
+        usageText: string;
+        usageThought: string;
+        segmentText: string;
+        segmentThought: string;
         usage: AgentMessageUsage | undefined;
         input: string;
       }
@@ -281,10 +283,14 @@ export class AcpRuntimeSession {
       }
       return;
     }
-    if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text")
-      active.text += update.content.text;
-    if (update.sessionUpdate === "agent_thought_chunk" && update.content.type === "text")
-      active.thought += update.content.text;
+    if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+      active.usageText += update.content.text;
+      active.segmentText += update.content.text;
+    }
+    if (update.sessionUpdate === "agent_thought_chunk" && update.content.type === "text") {
+      active.usageThought += update.content.text;
+      active.segmentThought += update.content.text;
+    }
     let toolName: string | undefined;
     let toolStarted = false;
     let toolTerminal = false;
@@ -312,6 +318,34 @@ export class AcpRuntimeSession {
         terminal: previous?.terminal === true || toolTerminal,
         content,
       });
+      if (toolStarted) {
+        // ACP chunks belong to the current assistant segment. The turn totals are
+        // retained for token accounting, but must not be replayed in
+        // the final message after Core has already persisted the tool segments.
+        this.appendMessage("assistant", active.segmentText);
+        const message = this.messages.at(-1)!;
+        if (message.role === "assistant") {
+          message.stopReason = "toolUse";
+          if (active.segmentThought !== "")
+            message.content.unshift({ type: "thinking", thinking: active.segmentThought });
+          message.content.push({
+            type: "toolCall",
+            id: update.toolCallId,
+            name: toolName,
+            arguments:
+              typeof update.rawInput === "object" &&
+              update.rawInput !== null &&
+              !Array.isArray(update.rawInput)
+                ? (update.rawInput as Record<string, unknown>)
+                : update.rawInput === undefined
+                  ? {}
+                  : { input: update.rawInput },
+          });
+        }
+        active.turn.stream.writeNative({ completedMessage: message });
+        active.segmentText = "";
+        active.segmentThought = "";
+      }
     }
     active.turn.stream.writeNative({ update, toolName, toolStarted, toolTerminal, toolDelta });
   }
@@ -403,8 +437,10 @@ export class AcpRuntimeSession {
     this.tokenTools.clear();
     const active = {
       turn,
-      text: "",
-      thought: "",
+      usageText: "",
+      usageThought: "",
+      segmentText: "",
+      segmentThought: "",
       usage: undefined as AgentMessageUsage | undefined,
       input: (this.binding.tokenContext ?? "") + JSON.stringify([...this.tokenHistory, ...prompt]),
     };
@@ -447,27 +483,27 @@ export class AcpRuntimeSession {
           measurement: "estimated",
           inputTokens: counter.countText(active.input, identity).tokens,
           inputTokensIncludeCacheRead: false,
-          outputTokens: counter.countText(active.text + active.thought, identity).tokens,
+          outputTokens: counter.countText(active.usageText + active.usageThought, identity).tokens,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
         });
-      this.appendMessage("assistant", active.text, false, usage);
+      this.appendMessage("assistant", active.segmentText, false, usage);
       const message = this.messages.at(-1)!;
       if (message.role === "assistant") {
         message.stopReason =
           response.stopReason === "max_tokens" || response.stopReason === "max_turn_requests"
             ? "length"
             : "stop";
-        if (active.thought !== "")
-          message.content.unshift({ type: "thinking", thinking: active.thought });
+        if (active.segmentThought !== "")
+          message.content.unshift({ type: "thinking", thinking: active.segmentThought });
         message.model = turn.modelSelection?.model.modelId ?? "runtime-managed";
         message.provider = turn.modelSelection?.model.providerId ?? "runtime-managed";
       }
       turn.stream.writeNative({
-        completedText: active.text,
+        completedText: active.segmentText,
         completedMessage: this.messages.at(-1)!,
       });
-      return { outputText: active.text, usage, runtimeSessionId: this.sessionId };
+      return { outputText: active.segmentText, usage, runtimeSessionId: this.sessionId };
     } catch (error) {
       // A provider result may precede an RPC error or disconnect. Keep its exact usage.
       if (active.usage !== undefined) {

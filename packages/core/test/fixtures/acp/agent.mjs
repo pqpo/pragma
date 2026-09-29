@@ -102,17 +102,38 @@ for await (const line of createInterface({ input: process.stdin })) {
         process.exit(7);
       }
       active = request.id;
-      update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking" } });
-      text("working");
+      if (!input.includes("empty-prelude")) {
+        update({
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "thinking" },
+        });
+        text("working");
+      }
       update({
         sessionUpdate: "tool_call",
         toolCallId: "tool-1",
         name: "Read",
         title: "Read file",
         status: "pending",
-        rawInput: { path: "/file" },
+        rawInput: input.includes("string-input")
+          ? "/file"
+          : input.includes("array-input")
+            ? ["/file", "/other"]
+            : input.includes("null-input")
+              ? null
+              : { path: "/file" },
         content: [{ type: "content", content: { type: "text", text: "half" } }],
       });
+      if (input.includes("parallel-tools")) {
+        update({
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-2",
+          name: "Search",
+          title: "Search context",
+          status: "pending",
+          rawInput: { query: "test" },
+        });
+      }
       update({
         sessionUpdate: "tool_call_update",
         toolCallId: "tool-1",
@@ -126,6 +147,14 @@ for await (const line of createInterface({ input: process.stdin })) {
         status: "completed",
         content: [{ type: "content", content: { type: "text", text: "half done" } }],
       });
+      if (input.includes("parallel-tools")) {
+        update({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-2",
+          status: "completed",
+          rawOutput: "found",
+        });
+      }
       if (input.includes("human")) {
         send({
           id: "approval-1",
@@ -137,7 +166,31 @@ for await (const line of createInterface({ input: process.stdin })) {
           },
         });
       }
+      if (input.includes("multi-tool")) {
+        update({
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "searching" },
+        });
+        text("checking");
+        update({
+          sessionUpdate: "tool_call",
+          toolCallId: "tool-2",
+          name: "Search",
+          title: "Search context",
+          status: "pending",
+          rawInput: { query: "test" },
+        });
+        update({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-2",
+          status: "completed",
+          rawOutput: "found",
+        });
+      }
       if (!input.includes("hold")) {
+        if (!input.includes("no-final")) {
+          text(input.includes("json-final") ? '{"answer":"done"}' : "answer");
+        }
         result(active, {
           stopReason: input.includes("limited") ? "max_tokens" : "end_turn",
           ...(input.includes("estimated")
@@ -162,6 +215,7 @@ for await (const line of createInterface({ input: process.stdin })) {
         break;
       }
       result(request.id, { outcome: "injected" });
+      update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "steered" } });
       text(params.prompt[0].text);
       if (!params.prompt[0].text.includes("keep running")) {
         result(active, {

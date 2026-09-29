@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "pragma.memory-semantic/v1",
+  "id": "fact-280b8ea267ebcca3909d813e",
+  "revision": 1,
+  "statement": "The user prefers concise Chinese answers.",
+  "subjectRefs": [
+    {
+      "type": "pragma.user",
+      "id": "local-user"
+    }
+  ],
+  "predicate": "user.preference.response-language",
+  "normalizedValue": "zh-Hans:concise",
+  "conflictMode": "exclusive",
+  "confidence": 0.8,
+  "observedAt": "2026-08-03T10:00:00.000Z",
+  "evidenceRefs": [
+    "historical-execution-message"
+  ],
+  "conflictsWith": [],
+  "supersedes": [],
+  "status": "active",
+  "visibility": {
+    "mode": "host-private"
+  },
+  "sensitivity": "confidential",
+  "bindings": [
+    {
+      "consumerRef": {
+        "type": "pragma.expert",
+        "id": "expert-a"
+      },
+      "recall": "allow",
+      "export": "deny",
+      "permissionRevision": 1
+    }
+  ],
+  "rootRefs": [
+    {
+      "type": "pragma.expert",
+      "id": "expert-a"
+    }
+  ],
+  "producerRefs": [
+    {
+      "type": "pragma.expert",
+      "id": "expert-a"
+    }
+  ],
+  "extractor": {
+    "curatorRef": "expert:0000000000mem0ry",
+    "promptVersion": "pragma.memory-curator.semantic/v1",
+    "profileRevision": 0,
+    "runtimeId": "runtime",
+    "providerId": "provider",
+    "modelId": "model",
+    "extractedAt": "2026-08-03T12:00:00.000Z"
+  },
+  "createdAt": "2026-09-29T09:26:22.764Z",
+  "updatedAt": "2026-09-29T09:26:22.764Z"
+}

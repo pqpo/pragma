@@ -11,7 +11,7 @@ import type {
   ModelApi,
   ModelThinkingCapability,
   ModelThinkingLevel,
-  ProviderModelDefinition,
+  GenerationModelDefinition,
 } from "@pragma/shared";
 
 import { findPiBuiltinModel } from "./catalog.ts";
@@ -145,6 +145,7 @@ export function createPiModelProviderConverter(
     supports: (api) => SUPPORTED_APIS.has(api),
     toRuntimeModels(provider) {
       return provider.models.flatMap((model) => {
+        if (model.kind !== "generation") return [];
         const api = model.api ?? provider.api;
         if (!SUPPORTED_APIS.has(api)) return [];
         const piModel = resolvePiModel(
@@ -182,7 +183,10 @@ export function createPiModelProviderConverter(
     },
     convertProvider(provider) {
       const models = provider.models
-        .filter((model) => SUPPORTED_APIS.has(model.api ?? provider.api))
+        .filter(
+          (model): model is GenerationModelDefinition =>
+            model.kind === "generation" && SUPPORTED_APIS.has(model.api ?? provider.api),
+        )
         .map((model) => toPiProviderModel(model, options.agentContextWindow));
       if (models.length === 0) {
         throw new Error(
@@ -208,7 +212,7 @@ export function createPiModelProviderConverter(
 }
 
 function toPiProviderModel(
-  model: ProviderModelDefinition,
+  model: GenerationModelDefinition,
   agentContextWindow: number | undefined,
 ): PiProviderModelConfig {
   return {
@@ -355,7 +359,7 @@ function cloneThinking(value: ModelThinkingCapability): ModelThinkingCapability 
   };
 }
 
-function toPiModelCost(cost: ProviderModelDefinition["cost"]): Model<Api>["cost"] {
+function toPiModelCost(cost: GenerationModelDefinition["cost"]): Model<Api>["cost"] {
   const rates = {
     input: cost.input,
     output: cost.output,

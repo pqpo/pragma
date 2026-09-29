@@ -44,7 +44,7 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
   async closeLiveIfCurrent(missionId: string, expected: TLiveChat): Promise<void> {
     if (this.#liveChats.get(missionId) !== expected) return;
     await expected.close();
-    this.#liveChats.delete(missionId);
+    if (this.#liveChats.get(missionId) === expected) this.#liveChats.delete(missionId);
   }
 
   contextWindow(missionId: string): RuntimeContextWindowUsage | undefined {

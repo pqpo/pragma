@@ -161,6 +161,18 @@ export class PragmaPaths {
     return join(this.memoryDataRoot(), "attention-settings.json");
   }
 
+  memoryRetrievalSettings(): string {
+    return join(this.memoryDataRoot(), "retrieval-settings.json");
+  }
+
+  memoryVectorIndex(): string {
+    return join(this.memoryCacheRoot(), "retrieval", "vectors.sqlite");
+  }
+
+  modelProviders(): string {
+    return join(this.dataRoot(), "model-providers.json");
+  }
+
   memoryAttentionRoot(missionId: string): string {
     return join(this.memoryStateRoot(), "attention", encodePragmaPathSegment(missionId));
   }

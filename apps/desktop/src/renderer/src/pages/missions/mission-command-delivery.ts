@@ -26,6 +26,7 @@ export interface MissionQueuedMessageView {
   readonly content: string;
   readonly hasAttachments: boolean;
   readonly persisted: boolean;
+  readonly deliveryUncertain?: boolean | undefined;
 }
 
 export interface MissionCommandDeliveryState {
@@ -63,7 +64,9 @@ export function useMissionCommandDelivery(options: {
       if (outcome.missionId !== options.missionId) return;
       if (outcome.state === "applied") {
         submittedMessagesRef.current.delete(outcome.requestId);
-        setAwaitingRequestId((current) => (current === outcome.requestId ? null : current));
+        // Applied means Core accepted the prompt, not that its Execution has
+        // reached the renderer. Keep the reservation until conversation state
+        // confirms output or settlement, including the pre-first-token window.
         callbacksRef.current.onApplied(outcome);
         return;
       }
@@ -152,6 +155,7 @@ export function mergeMissionQueuedMessages(
     readonly requestId: string;
     readonly content: string;
     readonly hasAttachments: boolean;
+    readonly deliveryUncertain?: boolean | undefined;
   }[],
   pending: readonly PendingMissionQueuedMessage[],
 ): MissionQueuedMessageView[] {
@@ -164,6 +168,7 @@ export function mergeMissionQueuedMessages(
       content: message.content,
       hasAttachments: message.hasAttachments || (local?.attachments.length ?? 0) > 0,
       persisted: true,
+      ...(message.deliveryUncertain ? { deliveryUncertain: true } : {}),
     };
   });
   for (const message of pending) {

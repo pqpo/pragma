@@ -835,14 +835,38 @@
 }
 
 .mission-thinking-placeholder p {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
+  color: var(--ui-text-secondary);
 }
 
-.mission-thinking-placeholder p svg {
-  animation: mission-thinking-spin 900ms linear infinite;
+.mission-thinking-placeholder p span {
+  background: linear-gradient(
+    110deg,
+    var(--ui-text-secondary) 44%,
+    var(--ui-surface) 49%,
+    var(--ui-surface) 51%,
+    var(--ui-text-secondary) 56%
+  );
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: mission-thinking-sweep 1.8s linear infinite;
+}
+
+@keyframes mission-thinking-sweep {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-thinking-placeholder p span {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
 }
 
 .mission-human-composer {

@@ -341,6 +341,7 @@ describe("RuntimeEnvironmentService", () => {
       credentialFingerprint: "fingerprint",
       models: [
         {
+          kind: "generation",
           id: "qwen3.8-max",
           name: "Qwen 3.8 Max",
           reasoning: false,

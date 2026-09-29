@@ -15,6 +15,20 @@ import {
 } from "../src/session.ts";
 
 describe("Codex context window", () => {
+  it("reports no injection when the native turn already ended locally", async () => {
+    const client = { steerTurn: vi.fn() } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus: createCodexNotificationBus(),
+      state: { threadId: "thread-1" },
+    });
+
+    await expect(
+      steerCodexTurn(session, { requestId: "request-1", content: "redirect" }),
+    ).rejects.toMatchObject({ name: "SteerNotDispatchedError", reason: "no_active_turn" });
+    expect(client.steerTurn).not.toHaveBeenCalled();
+  });
+
   it("steers the currently active app-server turn", async () => {
     const client = { steerTurn: vi.fn(async () => undefined) } as unknown as CodexAppServerClient;
     const session = createCodexNativeSession({

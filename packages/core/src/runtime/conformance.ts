@@ -30,6 +30,17 @@ export function inspectRuntimeDeclarationConformance(
   runtime: RuntimeAdapter,
 ): readonly RuntimeConformanceFailure[] {
   const failures: RuntimeConformanceFailure[] = [];
+  if (
+    runtime.features.steering !== undefined &&
+    isRuntimeFeatureEnabled(runtime.features.steering) &&
+    runtime.features.steering.steeringRecovery === undefined
+  ) {
+    failures.push({
+      code: "steering.recovery_missing",
+      feature: "steering",
+      message: "Steer-capable Runtime must declare receipt or terminal recovery.",
+    });
+  }
   for (const { name } of RUNTIME_FEATURE_CATALOG) {
     const feature = runtime.features[name];
     if (feature === undefined) {
@@ -148,7 +159,9 @@ export function inspectRuntimeObservationConformance(
       (event) =>
         event.type === "message.completed" &&
         event.payload.role === "assistant" &&
-        event.payload.contentType === "text",
+        event.payload.contentType === "text" &&
+        // Tool-only assistant segments complete without producing text deltas.
+        completedAssistantText(event) !== "",
     );
     if (deltaIndex < 0 || completedIndex <= deltaIndex) {
       failures.push({
@@ -233,7 +246,7 @@ function inspectTextSnapshotConsistency(
     ) {
       continue;
     }
-    const completedText = event.payload.text;
+    const completedText = completedAssistantText(event);
     if (streamed !== "" && completedText !== undefined && completedText !== streamed) {
       failures.push({
         code: "stream.snapshot_mismatch",
@@ -256,6 +269,15 @@ function inspectTextSnapshotConsistency(
       message: "The Runtime result differs from the final completed text snapshot.",
     });
   }
+}
+
+function completedAssistantText(event: RuntimeStreamEvent): string | undefined {
+  if (event.type !== "message.completed") return undefined;
+  if (event.payload.text !== undefined) return event.payload.text;
+  const message = event.payload.message;
+  return message?.role === "assistant"
+    ? message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+    : undefined;
 }
 
 export function inspectRuntimeProbeEvidenceConformance(

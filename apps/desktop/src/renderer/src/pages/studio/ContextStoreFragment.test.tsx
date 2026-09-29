@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { GitBranch, UploadSimple } from "@phosphor-icons/react";
+import { GitBranch, DownloadSimple } from "@phosphor-icons/react";
 import { describe, expect, it } from "vitest";
 
 import type { ContextStore } from "../../../../shared/contracts/index.ts";
@@ -223,29 +223,26 @@ describe("knowledge base UI", () => {
     expect(html).toContain("Loading settings");
     expect(html).toContain("Select a Markdown file");
     expect(html).toContain('class="knowledge-base-editor-actions"');
-    expect(html).toContain("Revision history");
+    expect(html).not.toContain("Revision history");
     expect(html).toContain("Submit revision");
-    expect(html.match(/class="studio-action-button"/g)).toHaveLength(7);
-    expect(html.match(/role="tooltip"/g)).toHaveLength(7);
+    expect(html.match(/class="studio-action-button"/g)).toHaveLength(6);
+    expect(html.match(/role="tooltip"/g)).toHaveLength(6);
     expect(html).toContain('aria-label="Settings"');
     expect(html).toContain('aria-label="Save"');
     expect(html).toContain("No changes to save");
-    expect(html.indexOf('aria-label="Save"')).toBeLessThan(
-      html.indexOf('aria-label="Submit revision"'),
+    const actions = Array.from(
+      html.matchAll(/class="studio-action-button"[^>]*aria-label="([^"]+)"/g),
+      (match) => match[1],
     );
-    expect(html.indexOf('aria-label="Submit revision"')).toBeLessThan(
-      html.indexOf('aria-label="Revision history"'),
-    );
-    expect(html.indexOf('aria-label="Revision history"')).toBeLessThan(
-      html.indexOf('aria-label="Export knowledge base"'),
-    );
-    expect(html.indexOf('aria-label="Export knowledge base"')).toBeLessThan(
-      html.indexOf('aria-label="Publish to source"'),
-    );
-    expect(html.indexOf('aria-label="Publish to source"')).toBeLessThan(
-      html.indexOf('aria-label="Delete knowledge base"'),
-    );
-    expect(html).toContain(renderToStaticMarkup(<UploadSimple size={18} aria-hidden="true" />));
+    expect(actions).toEqual([
+      "Save",
+      "Submit revision",
+      "Export",
+      "Publish to source",
+      "Settings",
+      "Delete",
+    ]);
+    expect(html).toContain(renderToStaticMarkup(<DownloadSimple size={18} aria-hidden="true" />));
     expect(html).toContain(renderToStaticMarkup(<GitBranch size={18} aria-hidden="true" />));
     expect(html).toContain('aria-label="Resize file list"');
     expect(html).toContain('aria-valuemin="180"');

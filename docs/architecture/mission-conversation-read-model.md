@@ -30,6 +30,18 @@ Desktop product metadata ─────────────┴──▶ Des
    UI 展示，禁止把有损归档伪装成完整历史。
 7. Renderer 按权威条目顺序合并，且只挂载可视区域附近的会话块。
 
+## 消息接入与首 token 前的排队
+
+- Mission controller lease 保证跨进程归属；同一 Host 内，初始运行与后续消息必须共用按 Mission
+  串行的 prompt admission。接入从启动准备前开始，直到 Session、Core prompt 和 Execution 引用完成
+  安装后释放，不等待首 token 或整个 Runtime turn。不同 Mission 独立接入，失败也必须释放后续请求。
+- Desktop 直接发送与 Local Host Inbox 消费共用该入口，避免初始运行准备时创建竞争的 ExpertSession。
+  若 Inbox 比 Desktop attached-run 准备更早到达，新 Mission 必须先建立已持久化的 initial prompt；
+  branch Mission 仍从用户的新消息开始。已安装 Session 的消息由 Core 持久 prompt queue 调度。
+- Renderer 在请求已提交、Execution 投影尚未到达时保留本地等待标记；这段时间发送的后续消息立即
+  展示为待排队消息。`command.applied` 只证明命令已应用，不能单独释放等待标记；会话输出、终态
+  或命令拒绝负责结束等待。已有 pending 和 paused queue 状态也参与排队展示判定。
+
 ## 删除的后台修复
 
 以下机制已经删除：

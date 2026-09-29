@@ -1699,3 +1699,20 @@
     transform: none;
   }
 }
+
+.model-capability-editor {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.model-kind-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.embedding-limit-description {
+  color: var(--text-muted);
+  line-height: 1.5;
+}

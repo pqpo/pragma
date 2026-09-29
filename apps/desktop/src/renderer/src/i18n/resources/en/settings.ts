@@ -63,11 +63,7 @@ export const settings = {
     navigation: "Sync",
     title: "Sync",
     description:
-      "Restore Experts, Teams, Flows, Knowledge Bases, and Skills from one Git repository.",
-    legacyStopped:
-      "The old environment sync has stopped. Configure Core Asset Sync to keep backing up these assets.",
-    configureNew: "Configure",
-    dismissLegacyNotice: "Dismiss sync notice",
+      "Sync Experts, Teams, Flows, runtime profiles, context bindings, Knowledge Bases, and all user capabilities as YAML and native files in one Git repository.",
     remote: "Git remote",
     branch: "Branch (optional)",
     autoPush: "Automatically upload published changes",
@@ -195,18 +191,6 @@ export const settings = {
       "Used when Home starts a mission without a task-specific workspace.",
     chooseWorkspace: "Choose folder",
     restoreDefaultWorkspace: "Restore built-in default workspace",
-    revisionAgent: "Skill Revision Agent",
-    revisionAgentDescription:
-      "Choose the Runtime and model that prepares reviewable Skill changes. Knowledge revisions use the editable Store Revision expert configuration.",
-    revisionAgentInherit: "Inherit system default",
-    revisionAgentPinned: "Pinned Runtime and model",
-    revisionAgentRuntime: "Revision Runtime",
-    revisionAgentRuntimeDescription: "Runtime used for Skill revision tasks.",
-    revisionAgentModel: "Revision model",
-    revisionAgentModelDescription: "Model used to prepare structured Skill changes.",
-    revisionAgentChooseModel: "Choose a model",
-    revisionAgentSave: "Save revision model",
-    revisionAgentSaveDescription: "New revision tasks will use this Runtime and model.",
     saveError: "The general setting could not be saved.",
   },
   evaluations: {
@@ -224,20 +208,37 @@ export const settings = {
       "One slot covers both the subject run and Judge run for a case. Changes apply to the queue immediately.",
   },
   memory: {
-    attention: {
-      title: "Attention Memory",
+    retrieval: {
+      title: "Memory vector retrieval",
       description:
-        "Find relevant history as the task evolves. Jev receives bounded, sanitized task observations and eligible memory summaries. Configuration is shared with the CLI.",
+        "Send redacted memory excerpts and search queries to the selected embedding provider. Text search remains available while indexing or if the provider is unavailable.",
+      enable: "Enable vector retrieval",
+      model: "Embedding model",
+      choose: "Choose an embedding model",
+      configure: "Add an embedding model and confirm its input limit in Model Providers.",
+      loadError: "Could not load retrieval settings.",
+      operationError:
+        "The retrieval operation failed. Check the diagnostic code and provider configuration.",
+      coverage: "{{indexed}} / {{total}} memories · {{segments}} segments · {{failed}} failed",
+      testPassed: "Connection passed: {{model}}, {{dimensions}} dimensions",
+      test: "Test connection",
+      retry: "Retry indexing",
+      rebuild: "Rebuild cache",
+      state: {
+        disabled: "Disabled",
+        building: "Indexing",
+        ready: "Ready",
+        degraded: "Degraded",
+        needs_attention: "Needs attention",
+      },
+    },
+    attention: {
+      description: "Indexes memories to improve recall performance and accuracy.",
       key: "Jev API Key",
-      save: "Save and validate",
-      remove: "Remove key",
-      disabled: "Not configured",
-      ready: "Enabled",
       degraded: "Temporarily unavailable",
       needs_attention: "Needs attention",
       error: "Could not validate or save the key. Check your key and connection.",
-      loadError: "Could not load Attention Memory settings.",
-      paused: "Paused while Memory is disabled",
+      loadError: "Could not load Jev API Key settings.",
     },
     navigation: "Memory",
     title: "Memory",
@@ -270,8 +271,6 @@ export const settings = {
     extractorRuntimeDescription: "Runtime used only for background Memory extraction.",
     extractorModel: "Memory model",
     extractorModelDescription: "Model used to create structured Episodic Memory.",
-    saveExtractor: "Save extraction model",
-    saveExtractorDescription: "Changing this setting wakes extraction jobs that need attention.",
     assetTitle: "Memory policy",
     assetDescription:
       "This team asset may only narrow the global policy. Runtime restrictions are intersected with this setting.",
@@ -294,6 +293,15 @@ export const settings = {
     },
   },
   models: {
+    kind: "Model type",
+    generation: "Generation",
+    embedding: "Embedding",
+    maxInputTokens: "Maximum input tokens",
+    maxBatchTokens: "Tokens per batch (optional)",
+    maxBatchInputs: "Inputs per batch",
+    embeddingLimitDescription:
+      "Confirm the provider input limit before using this model for Memory retrieval.",
+
     navigation: "Models & Providers",
     title: "Models & Providers",
     description: "Connect mainstream model providers, gateways, and local model servers.",

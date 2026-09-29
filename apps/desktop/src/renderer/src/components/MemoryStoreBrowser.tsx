@@ -6,6 +6,7 @@ export type { ContextStoreBrowserSource } from "./ContextStoreBrowser.tsx";
 
 export function MemoryStoreBrowser(props: {
   readonly source: ContextStoreBrowserSource;
+  readonly initialEntryId?: string | undefined;
   readonly className?: string | undefined;
   readonly onBack?: (() => void) | undefined;
   readonly backLabel?: string | undefined;
@@ -18,7 +19,7 @@ export function MemoryStoreBrowser(props: {
           {props.backLabel}
         </button>
       ) : null}
-      <ContextStoreBrowser source={props.source} />
+      <ContextStoreBrowser source={props.source} initialEntryId={props.initialEntryId} />
     </div>
   );
 }

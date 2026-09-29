@@ -7,6 +7,7 @@ describeRuntimeConformance("PI", { createRuntime: createPiRuntime });
 describe("PI Runtime contract", () => {
   it("declares split Session lifecycle capabilities with safe steer", () => {
     const runtime = createPiRuntime();
+    expect(runtime.features.steering.steeringRecovery).toBe("terminal");
     expect(runtime.descriptor.capabilities).toMatchObject({
       supportsResume: true,
       supportsCancel: true,
@@ -45,6 +46,7 @@ describe("PI Runtime contract", () => {
             baseUrl: "https://models.example.com/v1",
             models: [
               {
+                kind: "generation",
                 id: "gpt-test",
                 name: "GPT Test",
                 reasoning: true,
@@ -63,6 +65,7 @@ describe("PI Runtime contract", () => {
           displayName: "Provider",
           models: [
             {
+              kind: "generation",
               id: "gpt-test",
               name: "GPT Test",
               reasoning: true,

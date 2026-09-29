@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import type { ExpertAgentHumanInteractionHandler } from "@pragma/core";
+import { SteerNotDispatchedError, type ExpertAgentHumanInteractionHandler } from "@pragma/core";
 import type { CodexRuntimeClientInfo, CodexRuntimeSpawn, CodexUserInput } from "./types.ts";
 
 export interface CodexAppServerClientOptions {
@@ -52,6 +52,19 @@ interface PendingRequest {
   readonly method: string;
   readonly resolve: (result: unknown) => void;
   readonly reject: (error: Error) => void;
+}
+
+class CodexRpcError extends Error {
+  constructor(
+    readonly method: string,
+    readonly code: unknown,
+    readonly rpcMessage: string,
+    readonly data: unknown,
+  ) {
+    const suffix = typeof code === "number" || typeof code === "string" ? ` (code=${code})` : "";
+    super(`${method}: ${rpcMessage}${suffix}`);
+    this.name = "CodexRpcError";
+  }
 }
 
 export class CodexAppServerClient {
@@ -179,12 +192,37 @@ export class CodexAppServerClient {
     readonly requestId: string;
     readonly input: readonly CodexUserInput[];
   }): Promise<void> {
-    await this.request("turn/steer", {
-      threadId: options.threadId,
-      expectedTurnId: options.expectedTurnId,
-      clientUserMessageId: options.requestId,
-      input: options.input,
-    });
+    try {
+      const result = readRecord(
+        await this.request("turn/steer", {
+          threadId: options.threadId,
+          expectedTurnId: options.expectedTurnId,
+          clientUserMessageId: options.requestId,
+          input: options.input,
+        }),
+      );
+      if (result?.["turnId"] !== options.expectedTurnId) {
+        throw new Error("Codex turn/steer returned an unconfirmed turn id.");
+      }
+    } catch (error) {
+      // These invalid-request responses come from Codex's NotSubmitted path.
+      // Other RPC errors and transport failures do not prove non-delivery.
+      if (error instanceof CodexRpcError && error.code === -32600) {
+        const reason =
+          error.rpcMessage === "no active turn to steer"
+            ? "no_active_turn"
+            : /^expected active turn id `[^`]+` but found `[^`]+`$/.test(error.rpcMessage)
+              ? "target_changed"
+              : error.rpcMessage === "cannot steer a review turn" ||
+                  error.rpcMessage === "cannot steer a compact turn"
+                ? "runtime_unsupported"
+                : undefined;
+        if (reason !== undefined) {
+          throw new SteerNotDispatchedError(reason, error.message, { cause: error });
+        }
+      }
+      throw error;
+    }
   }
 
   async compactThread(threadId: string): Promise<void> {
@@ -441,9 +479,7 @@ function createRpcError(method: string, error: unknown): Error {
     typeof record?.["message"] === "string"
       ? record["message"]
       : "Codex app-server request failed.";
-  const code = record?.["code"];
-  const suffix = typeof code === "number" || typeof code === "string" ? ` (code=${code})` : "";
-  return new Error(`${method}: ${message}${suffix}`);
+  return new CodexRpcError(method, record?.["code"], message, record?.["data"]);
 }
 
 function toJsonObject(value: unknown): JsonObject {

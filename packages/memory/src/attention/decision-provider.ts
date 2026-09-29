@@ -5,6 +5,8 @@ export const MemoryAttentionInputSchema = z
   .object({
     missionId: z.string().min(1),
     contextId: z.string().min(1),
+    taskVersion: z.number().int().nonnegative().optional(),
+    currentGoal: z.string().max(2_000).optional(),
     missionGoal: z.string().max(2_000),
     latestObservation: z.string().max(4_096),
     lastAction: z.string().max(200),
@@ -19,6 +21,10 @@ export interface MemoryAttentionCandidate {
   readonly revision: number;
   readonly title: string;
   readonly summary: string;
+  readonly similarity?: number;
+  readonly confidence?: number;
+  readonly selectedPaths?: MemoryAttentionEntry["selectedPaths"] | undefined;
+  readonly relations?: readonly { module: "episodic" | "semantic"; memoryId: string }[];
 }
 export const RecallDecisionSchema = z
   .object({
@@ -34,16 +40,41 @@ export const CandidateDecisionSchema = z
         key: z.string(),
         relevance: z.number().min(0).max(1),
         novelty: z.number().min(0).max(1),
+        confidence: z.number().min(0).max(1).optional(),
       })
       .strict(),
   )
-  .max(16);
+  .max(30)
+  .superRefine((values, context) => {
+    const keys = new Set<string>();
+    values.forEach((value, index) => {
+      if (keys.has(value.key))
+        context.addIssue({
+          code: "custom",
+          message: "Duplicate candidate key",
+          path: [index, "key"],
+        });
+      keys.add(value.key);
+    });
+  });
 export interface MemoryDecisionProvider {
+  chooseExpansion?(
+    input: {
+      delta: MemoryAttentionInput;
+      candidates: readonly MemoryAttentionCandidate[];
+      actions: readonly { id: string; kind: "detail" | "expand"; candidateKey: string }[];
+    },
+    signal: AbortSignal,
+    beforeRequest?: () => Promise<void>,
+  ): Promise<string | undefined>;
   assessRecall(
     input: MemoryAttentionInput,
     signal: AbortSignal,
     beforeRequest?: () => Promise<void>,
   ): Promise<z.infer<typeof RecallDecisionSchema>>;
+  /** Return exactly one decision for each input candidate, with no additional keys.
+   * Decisions apply only to this request's candidate snapshots and revisions.
+   */
   assessCandidates(
     input: {
       delta: MemoryAttentionInput;

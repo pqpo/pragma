@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 
 import type {
+  MissionChatEntry,
   MissionChatPage,
   MissionChatUpdate,
   MissionContextWindowSnapshot,
@@ -16,6 +17,11 @@ import {
   prependChatPage,
   reconcileMissionChatRefresh,
 } from "./mission-conversation-model.ts";
+import {
+  MissionStreamIdleStore,
+  missionEntryOutputChanged,
+  missionRefreshOutputCandidates,
+} from "./mission-stream-idle-store.ts";
 import { MissionLiveEntryStore } from "./mission-live-entry-store.ts";
 import {
   enqueueMissionChatUpdate,
@@ -29,6 +35,7 @@ export function useMissionConversation(input: {
   readonly api: PragmaDesktopAPI | undefined;
   readonly cache?: Map<string, MissionConversationSnapshot> | undefined;
   readonly prefetchedConversation?: Promise<MissionConversationPrefetch | undefined> | undefined;
+  readonly isOutputVisible?: ((entry: MissionChatEntry) => boolean) | undefined;
   readonly refreshRevision: number;
   readonly syncUnavailableMessage: string;
   readonly formatError: (error: unknown) => string;
@@ -43,6 +50,11 @@ export function useMissionConversation(input: {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const liveEntryStore = useMemo(() => new MissionLiveEntryStore(), [input.missionId]);
+  const streamIdleStore = useMemo(() => new MissionStreamIdleStore(), [input.missionId]);
+  useEffect(() => () => streamIdleStore.stop(), [streamIdleStore]);
+  // Team identity can resolve after subscription setup; do not reopen the stream for it.
+  const outputVisibleRef = useRef(input.isOutputVisible);
+  outputVisibleRef.current = input.isOutputVisible;
   const chatRef = useRef<MissionConversationSnapshot | null>(null);
   const receivedFirstTokensRef = useRef(new Set<string>());
   const paintedFirstTokensRef = useRef(new Set<string>());
@@ -51,7 +63,7 @@ export function useMissionConversation(input: {
   const navigationIdRef = useRef(input.navigationId ?? crypto.randomUUID());
 
   const update = useCallback(
-    (value: SetStateAction<MissionConversationSnapshot | null>) => {
+    (value: SetStateAction<MissionConversationSnapshot | null>, observeOutput = false) => {
       const current =
         chatRef.current === null
           ? null
@@ -59,6 +71,14 @@ export function useMissionConversation(input: {
               liveEntryStore.get(entryId),
             );
       const next = typeof value === "function" ? value(current) : value;
+      const outputEntries =
+        observeOutput && next !== null
+          ? missionRefreshOutputCandidates(current, next).filter(
+              (entry) =>
+                (outputVisibleRef.current?.(entry) ?? true) &&
+                missionEntryOutputChanged(liveEntryStore.get(entry.id), entry),
+            )
+          : [];
       chatRef.current = next;
       if (next === null) liveEntryStore.clear();
       else liveEntryStore.reset(next.entries);
@@ -66,8 +86,17 @@ export function useMissionConversation(input: {
         cacheMissionConversationSnapshot(input.cache, input.missionId, next);
       }
       setChat(next);
+      for (const entry of outputEntries)
+        streamIdleStore.output(entry.executionId, next?.execution?.id);
     },
-    [input.cache, input.missionId, liveEntryStore],
+    [input.cache, input.missionId, liveEntryStore, streamIdleStore],
+  );
+
+  // Host operation refreshes can paint output before the corresponding IPC patch arrives.
+  // Internal initialization and historical paging use update() without observing output.
+  const updateLatest = useCallback(
+    (value: SetStateAction<MissionConversationSnapshot | null>) => update(value, true),
+    [update],
   );
 
   const advanceLive = useCallback(
@@ -81,6 +110,25 @@ export function useMissionConversation(input: {
       // representation hook-private; shared cache writes always materialize from the live store.
     },
     [liveEntryStore],
+  );
+
+  const commitStream = useCallback(
+    (
+      next: MissionConversationSnapshot,
+      changedEntries: ReadonlyMap<string, MissionConversationSnapshot["entries"][number]>,
+      requiresRender: boolean,
+    ) => {
+      const outputEntries = [...changedEntries.values()].filter(
+        (entry) =>
+          (outputVisibleRef.current?.(entry) ?? true) &&
+          missionEntryOutputChanged(liveEntryStore.get(entry.id), entry),
+      );
+      if (requiresRender) update(next);
+      else advanceLive(next, changedEntries);
+      for (const entry of outputEntries)
+        streamIdleStore.output(entry.executionId ?? next.execution?.id, next.execution?.id);
+    },
+    [advanceLive, liveEntryStore, streamIdleStore, update],
   );
 
   useEffect(() => {
@@ -222,10 +270,30 @@ export function useMissionConversation(input: {
           // recordFirstTokens de-duplicates executions also found by the contiguous replay.
           recordFirstTokens(includedPendingFirstTokenExecutionIds(snapshot, pending));
           resetFirstTokenUpdates(firstTokenBase ?? snapshot, pending);
+          // Retain pending entry updates, including those covered by the fetched revision.
+          const pendingEntryIds = new Set(
+            pending.flatMap((value) =>
+              value.kind === "patch"
+                ? value.patches.flatMap((patch) =>
+                    patch.type === "entry.upsert"
+                      ? [patch.entry.id]
+                      : patch.type === "entry.append"
+                        ? [patch.entryId]
+                        : [],
+                  )
+                : [],
+            ),
+          );
           const drained = reconcileMissionChatRefresh(current, snapshot, pending);
           pending = [...drained.remaining];
           pendingBytes = estimateMissionChatUpdatesBytes(pending);
-          update(drained.snapshot);
+          const committedEntries = new Map(
+            [
+              ...missionRefreshOutputCandidates(current, drained.snapshot),
+              ...drained.snapshot.entries.filter((entry) => pendingEntryIds.has(entry.id)),
+            ].map((entry) => [entry.id, entry]),
+          );
+          commitStream(drained.snapshot, committedEntries, true);
           resetFirstTokenUpdates(drained.snapshot, pending);
           setSyncError(
             drained.snapshot.syncIssues === undefined ? null : input.syncUnavailableMessage,
@@ -323,8 +391,7 @@ export function useMissionConversation(input: {
       flushCount += 1;
       const startedAt = performance.now();
       const drained = drainPending(chatRef.current);
-      if (drained.requiresRender) update(drained.snapshot);
-      else advanceLive(drained.snapshot, drained.changedEntries);
+      commitStream(drained.snapshot, drained.changedEntries, drained.requiresRender);
       const finishedAt = performance.now();
       if (finishedAt - lastPerformanceLogAt >= 5_000) {
         lastPerformanceLogAt = finishedAt;
@@ -416,7 +483,7 @@ export function useMissionConversation(input: {
       longTaskObserver?.disconnect();
     };
   }, [
-    advanceLive,
+    commitStream,
     input.api,
     input.cache,
     input.formatError,
@@ -501,7 +568,8 @@ export function useMissionConversation(input: {
     historyError,
     syncError,
     liveEntryStore,
-    update,
+    streamIdleStore,
+    update: updateLatest,
     loadEarlier,
     observeFirstTokenPaint,
   };

@@ -10,6 +10,8 @@ import {
 } from "@pragma/built-in-agents";
 import {
   createPragma,
+  runtimeSupportsSteer,
+  hasUncertainSteerDelivery,
   AgentLifecycleQuiescenceError,
   createPragmaLogger,
   createFileExecutionStore,
@@ -42,6 +44,7 @@ import {
   readExecutionRunScope,
   type HostContextBindingsResolver,
   type ExpertSession,
+  type ExpertTurn,
   type MutableExecution,
   type McpToolRegistryPool,
   type PragmaLogger,
@@ -154,6 +157,7 @@ import {
 } from "@pragma/local-host";
 import { createMissionBranchContext } from "./mission-branch-context.ts";
 import { observeMissionExecution } from "./mission-execution-observer.ts";
+import { observeMissionQueuedTurn } from "./mission-queued-turn-observer.ts";
 import { createDesktopAdapterHost } from "./mission-adapter-host.ts";
 import { MissionChatService } from "./mission-chat-service.ts";
 import { MissionWorkService } from "./mission-work-service.ts";
@@ -523,6 +527,14 @@ export function createMissionRunner(options: {
     pragmaHome: options.pragmaHome,
   });
   const sessionService = new MissionSessionService<MissionExecutionContext, ExecutorMetadata>();
+  const resolveSessionRuntimeForQueue = async (sessionId: string) => {
+    const session = await expertSessionStore.get(sessionId);
+    const rootContext = session?.contexts[session.rootContextId];
+    if (rootContext === undefined) return undefined;
+    return await options.runtimes
+      .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
+      .catch(() => undefined);
+  };
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
     resolveSessionId: async (missionId) => {
@@ -532,15 +544,11 @@ export function createMissionRunner(options: {
       return mission.execution?.sessionId;
     },
     supportsSteer: async (sessionId) => {
-      const session = await expertSessionStore.get(sessionId);
-      if (session === undefined) return false;
-      const rootContext = session.contexts[session.rootContextId];
-      if (rootContext === undefined) return false;
-      const resolved = await options.runtimes
-        .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
-        .catch(() => undefined);
-      return resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+      const resolved = await resolveSessionRuntimeForQueue(sessionId);
+      return resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter);
     },
+    steeringRecovery: async (sessionId) =>
+      (await resolveSessionRuntimeForQueue(sessionId))?.adapter.features.steering.steeringRecovery,
     resolvePromptMetadata: async (prompt) => ({
       hasAttachments: hasPromptAttachments(
         (await executionStore.getInvocation(prompt.executionId, prompt.executionId))?.input,
@@ -1165,19 +1173,43 @@ export function createMissionRunner(options: {
       );
     });
 
+  // A controller lease fences other processes; it does not serialize callers
+  // inside this Host. Reserve admission before any async startup work so Inbox
+  // sends cannot open a competing Session while the initial run is preparing.
+  const promptAdmissions = new Map<string, Promise<void>>();
+  const withMissionPromptAdmission = async <T>(
+    missionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const previous = promptAdmissions.get(missionId) ?? Promise.resolve();
+    const result = previous.then(operation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    promptAdmissions.set(missionId, settled);
+    try {
+      return await result;
+    } finally {
+      if (promptAdmissions.get(missionId) === settled) promptAdmissions.delete(missionId);
+    }
+  };
+
   const startMission = (id: string): Promise<Mission> => {
     return lifecycleService.startRun(id, (generation) =>
-      withMissionController(id, async () => {
-        if (!lifecycleService.isRunGenerationCurrent(id, generation)) {
-          throw createIntegrationError({
-            code: "MISSION_FENCING_REJECTED",
-            category: "conflict",
-            message: "This Mission run was superseded before it acquired its controller lease.",
-            details: { missionId: id, runGeneration: generation },
-          });
-        }
-        return await runMission(id, generation);
-      }),
+      withMissionPromptAdmission(id, () =>
+        withMissionController(id, async () => {
+          if (!lifecycleService.isRunGenerationCurrent(id, generation)) {
+            throw createIntegrationError({
+              code: "MISSION_FENCING_REJECTED",
+              category: "conflict",
+              message: "This Mission run was superseded before it acquired its controller lease.",
+              details: { missionId: id, runGeneration: generation },
+            });
+          }
+          return await runMission(id, generation);
+        }),
+      ),
     );
   };
 
@@ -1273,13 +1305,18 @@ export function createMissionRunner(options: {
         if (turn !== undefined) {
           const startedAt =
             nextPrompt.status === "running" ? nextPrompt.updatedAt : nextPrompt.createdAt;
-          await options.missions.updateExecution(id, {
-            id: turn.executionId,
-            inputMessageId: nextPrompt.requestId,
-            sessionId: session.sessionId,
-            status: "running",
-            startedAt,
-          });
+          const linked = await options.missions.updateExecution(
+            id,
+            {
+              id: turn.executionId,
+              inputMessageId: nextPrompt.requestId,
+              sessionId: session.sessionId,
+              status: "running",
+              startedAt,
+            },
+            { executionId: mission.execution?.id },
+          );
+          if (linked.execution?.id !== turn.executionId || lifecycleService.hasActive(id)) break;
           trackExecution({
             mission,
             handle: turn,
@@ -1307,9 +1344,15 @@ export function createMissionRunner(options: {
     attachNextTurn = true,
     userVisibleOutput = false,
   ): Promise<void> => {
-    if (lifecycleService.active(id)?.handle === handle) lifecycleService.deleteActive(id);
     clearHumanInteractionProjection(id, handle.executionId);
+    if (lifecycleService.active(id)?.handle !== handle) {
+      await expectedLive.close();
+      return;
+    }
+    lifecycleService.deleteActive(id);
     await chatService.closeLiveIfCurrent(id, expectedLive);
+    // A queued turn can install its projection while the old subscriptions close.
+    if (lifecycleService.hasActive(id) || chatService.live(id) !== undefined) return;
     workService.clearLive(id);
     chatService.clearContextWindow(id);
     invalidateChat(id, audience, userVisibleOutput ? { userVisibleOutput: true } : {});
@@ -2044,6 +2087,8 @@ export function createMissionRunner(options: {
       sessionId: input.sessionId,
       logger,
       onInteractionsChanged: (interactions) => {
+        if (lifecycleService.active(missionId)?.handle.executionId !== input.handle.executionId)
+          return;
         pendingHumanInteractionsByMission.set(missionId, {
           executionId: input.handle.executionId,
           interactions: excludeRespondedHumanInteractions(
@@ -2196,10 +2241,12 @@ export function createMissionRunner(options: {
         // The Core terminal record is already committed. Publish that canonical
         // fact even when the secondary Local Host event projection is degraded;
         // otherwise one failed projection can leave the rail visibly running.
-        statusService.publish(missionId, audience, {
-          id: input.handle.executionId,
-          status: terminal.status,
-        });
+        if ((await options.missions.get(missionId)).execution?.id === input.handle.executionId) {
+          statusService.publish(missionId, audience, {
+            id: input.handle.executionId,
+            status: terminal.status,
+          });
+        }
         if (canonicalProjectionFailure !== undefined) throw canonicalProjectionFailure;
       },
       checkpoint,
@@ -2324,6 +2371,15 @@ export function createMissionRunner(options: {
       void live.close().catch(() => undefined);
       return;
     }
+    const session = sessionService.session(missionId);
+    if (session !== undefined && session.sessionId === input.sessionId) {
+      void watchPendingSessionTurns(input.mission, session, input.executorMetadata).catch(
+        (error: unknown) => {
+          if (sessionService.session(missionId) === session)
+            reportQueuedTurnObserverFailure(missionId, audience, error);
+        },
+      );
+    }
     invalidateChat(missionId, audience);
     invalidateWork(missionId, audience);
     void settlement.catch((error: unknown) => {
@@ -2334,6 +2390,127 @@ export function createMissionRunner(options: {
         { missionId, executionId: input.handle.executionId },
       );
     });
+  };
+
+  const queuedTurnObservers = new Map<
+    string,
+    { readonly session: ExpertSession; readonly controller: AbortController }
+  >();
+  const reportQueuedTurnObserverFailure = (
+    missionId: string,
+    audience: MissionSurfaceAudience,
+    error: unknown,
+  ): void => {
+    chatService.markSyncDegraded(missionId);
+    logger.warn(
+      "mission.queued_turn_observer_failed",
+      "Queued Mission execution needs projection recovery.",
+      {
+        error,
+        missionId,
+        errorCode: "MISSION_QUEUED_TURN_OBSERVER_FAILED",
+        retryable: true,
+      },
+    );
+    invalidateChat(missionId, audience);
+  };
+
+  const watchQueuedSessionTurn = (
+    mission: Mission,
+    session: ExpertSession,
+    turn: ExpertTurn,
+    executorMetadata: ExecutorMetadata,
+  ): void => {
+    if (
+      queuedTurnObservers.get(turn.executionId)?.session === session ||
+      lifecycleService.active(mission.id)?.handle.executionId === turn.executionId
+    )
+      return;
+    queuedTurnObservers.get(turn.executionId)?.controller.abort();
+    const observer = { session, controller: new AbortController() };
+    queuedTurnObservers.set(turn.executionId, observer);
+    const observing = observeMissionQueuedTurn(
+      turn,
+      async () => {
+        await withMissionPromptAdmission(mission.id, async () => {
+          if (sessionService.session(mission.id) !== session) return;
+          const current = await options.missions.get(mission.id);
+          if (current.lifecycleStatus !== "active") return;
+          const queue = await session.getPromptQueue();
+          const promptIndex = queue.findIndex((prompt) => prompt.executionId === turn.executionId);
+          const prompt = queue[promptIndex];
+          const currentIndex = queue.findIndex(
+            (candidate) => candidate.executionId === current.execution?.id,
+          );
+          if (
+            prompt === undefined ||
+            prompt.status === "cancelled" ||
+            prompt.deliveryAttempt?.kind === "queue_steer" ||
+            promptIndex < currentIndex
+          )
+            return;
+          if (lifecycleService.active(mission.id)?.handle.executionId === turn.executionId) return;
+          const startedAt = prompt.updatedAt;
+          const linked = await options.missions.updateExecution(
+            mission.id,
+            {
+              id: turn.executionId,
+              inputMessageId: prompt.requestId,
+              sessionId: session.sessionId,
+              status: "running",
+              startedAt,
+            },
+            { executionId: current.execution?.id },
+          );
+          if (linked.execution?.id !== turn.executionId) return;
+          trackExecution({
+            mission: current,
+            handle: turn,
+            executorMetadata,
+            startedAt,
+            inputMessageId: prompt.requestId,
+            sessionId: session.sessionId,
+            onFinished: async () => await waitForExpertTurnSettlement(session, prompt.requestId),
+          });
+          statusService.publish(mission.id, missionSurfaceAudience(current), {
+            id: turn.executionId,
+            status: "running",
+          });
+        });
+      },
+      observer.controller.signal,
+    );
+    void observing
+      .catch((error: unknown) => {
+        if (sessionService.session(mission.id) === session) {
+          reportQueuedTurnObserverFailure(mission.id, missionSurfaceAudience(mission), error);
+        }
+      })
+      .finally(() => {
+        if (queuedTurnObservers.get(turn.executionId) === observer)
+          queuedTurnObservers.delete(turn.executionId);
+      });
+  };
+
+  const watchPendingSessionTurns = async (
+    mission: Mission,
+    session: ExpertSession,
+    executorMetadata: ExecutorMetadata,
+  ): Promise<void> => {
+    const pending = (await session.getPromptQueue()).filter(
+      (prompt) =>
+        prompt.mode === "enqueue" &&
+        ["queued", "running"].includes(prompt.status) &&
+        queuedTurnObservers.get(prompt.executionId)?.session !== session &&
+        lifecycleService.active(mission.id)?.handle.executionId !== prompt.executionId,
+    );
+    if (pending.length === 0) return;
+    const turns = await session.listTurns();
+    if (sessionService.session(mission.id) !== session) return;
+    for (const prompt of pending) {
+      const turn = turns.find((candidate) => candidate.executionId === prompt.executionId);
+      if (turn !== undefined) watchQueuedSessionTurn(mission, session, turn, executorMetadata);
+    }
   };
 
   const runMission = async (id: string, runGeneration: number): Promise<Mission> => {
@@ -2654,7 +2831,7 @@ export function createMissionRunner(options: {
     return running;
   };
 
-  const sendMissionMessage = async (input: {
+  const applyMissionMessage = async (input: {
     readonly id: string;
     readonly content: string;
     readonly requestId: string;
@@ -2912,6 +3089,8 @@ export function createMissionRunner(options: {
         acceptedAt,
         onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
       });
+    } else {
+      watchQueuedSessionTurn(mission, session, turn, executorMetadata);
     }
     invalidateChat(mission.id, missionSurfaceAudience(mission));
     return {
@@ -2922,6 +3101,27 @@ export function createMissionRunner(options: {
       ...(turn.fallbackReason === undefined ? {} : { fallbackReason: turn.fallbackReason }),
     };
   };
+
+  const sendMissionMessage: typeof applyMissionMessage = async (input) =>
+    await withMissionPromptAdmission(input.id, () =>
+      withMissionController(input.id, async () => {
+        const mission = await options.missions.get(input.id);
+        // Inbox sends can precede Desktop's attached-run preparation. Establish
+        // the persisted initial prompt inside this same admission, without
+        // waiting for a startRun reservation that may be queued behind us.
+        // Branches deliberately start with the user's new message instead.
+        if (
+          input.mode !== "steer" &&
+          mission.lifecycleStatus === "active" &&
+          mission.executor.kind !== "flow" &&
+          mission.execution === undefined &&
+          mission.branch === undefined
+        ) {
+          await runMission(mission.id, lifecycleService.runGeneration(mission.id));
+        }
+        return await applyMissionMessage(input);
+      }),
+    );
 
   const updateMissionOptions = async (input: UpdateMissionOptions): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
@@ -3625,31 +3825,41 @@ export function createMissionRunner(options: {
           event.type,
         ),
       );
+    const deliveryUncertain = hasUncertainSteerDelivery(promptQueue);
+    const uncertainQueuedPrompt = pendingPrompts.find(
+      (prompt) => prompt.status === "queued" && prompt.deliveryAttempt?.state === "uncertain",
+    );
     const queuePaused =
-      lastQueueControl?.type === "prompt.queue-paused" &&
-      pendingPrompts.some((prompt) => prompt.status === "queued");
+      deliveryUncertain ||
+      (lastQueueControl?.type === "prompt.queue-paused" &&
+        pendingPrompts.some((prompt) => prompt.status === "queued"));
+    const lastPausedRequestId = (lastQueueControl?.data as { requestId?: unknown } | undefined)
+      ?.requestId;
     const pausedAfterRequestId =
-      queuePaused &&
-      typeof (lastQueueControl.data as { requestId?: unknown }).requestId === "string"
-        ? ((lastQueueControl.data as { requestId: string }).requestId ?? undefined)
-        : undefined;
+      uncertainQueuedPrompt?.requestId ??
+      (queuePaused && typeof lastPausedRequestId === "string" ? lastPausedRequestId : undefined);
     const rootRuntimeContext =
       sessionRecord === undefined ? undefined : sessionRecord.contexts[sessionRecord.rootContextId];
-    const supportsSteer =
+    const resolvedRootRuntime =
       rootRuntimeContext === undefined
-        ? false
+        ? undefined
         : await options.runtimes
             .resolve({
               binding: rootRuntimeContext.runtime,
               modelSelection: rootRuntimeContext.modelSelection,
             })
-            .then((resolved) => resolved.adapter.descriptor.capabilities?.supportsSteer === true)
-            .catch(() => false);
+            .catch(() => undefined);
+    const supportsSteer =
+      resolvedRootRuntime === undefined
+        ? false
+        : await runtimeSupportsSteer(resolvedRootRuntime.adapter).catch(() => false);
+    const steeringRecovery = resolvedRootRuntime?.adapter.features.steering.steeringRecovery;
     const queueItems = await Promise.all(
       pendingPrompts.map(async (prompt) => ({
         requestId: prompt.requestId,
         content: prompt.content,
         status: prompt.status,
+        deliveryUncertain: prompt.deliveryAttempt?.state === "uncertain",
         hasAttachments: hasPromptAttachments(
           (await executionStore.getInvocation(prompt.executionId, prompt.executionId))?.input,
         ),
@@ -3804,12 +4014,15 @@ export function createMissionRunner(options: {
             : "idle",
         pendingCount: pendingPrompts.length,
         supportsSteer,
+        deliveryUncertain,
+        steeringRecovery,
         items: queueItems
           .filter((item) => item.status === "queued")
           .map((item) => ({
             requestId: item.requestId,
             content: item.content,
             hasAttachments: item.hasAttachments,
+            ...(item.deliveryUncertain ? { deliveryUncertain: true } : {}),
           })),
         ...(pausedAfterRequestId === undefined ? {} : { pausedAfterRequestId }),
       },
@@ -4104,7 +4317,7 @@ export function createMissionRunner(options: {
     );
   };
 
-  const resumeMissionQueue = async (id: string): Promise<Mission> => {
+  const resumeMissionQueue = async (id: string, recovery?: "abandon"): Promise<Mission> => {
     const mission = await options.missions.get(id);
     let session = sessionService.session(id);
     if (session === undefined) {
@@ -4130,7 +4343,7 @@ export function createMissionRunner(options: {
       sessionService.setSession(id, session);
       rememberSessionCompilation(id, stableCompilation.identity, compiled);
     }
-    await session.resumePromptQueue();
+    await session.resumePromptQueue({ recovery });
     await attachNextSessionTurn(id, missionSurfaceAudience(mission));
     invalidateChat(id, missionSurfaceAudience(mission));
     return await options.missions.get(id);
@@ -4551,7 +4764,7 @@ export function createMissionRunner(options: {
         },
         async "queue.resume"(command) {
           const before = await promptQueueProjection.list(command.missionId);
-          const mission = await resumeMissionQueue(command.missionId);
+          const mission = await resumeMissionQueue(command.missionId, command.payload.recovery);
           return {
             missionId: mission.id,
             changed: before.state === "paused",
@@ -5261,7 +5474,7 @@ export function createMissionRunner(options: {
       await invalidateContextBindings(id);
     },
     async sendMessage(input) {
-      return await withMissionController(input.id, async () => await sendMissionMessage(input));
+      return await sendMissionMessage(input);
     },
     async steerQueuedMessage(input) {
       return await withMissionController(
@@ -5811,10 +6024,20 @@ async function persistMissionExecutionProjection(
     );
     for (const entry of interruptedProjection) projected.set(entry.id, entry);
     const source = await executionStore.get(executionId);
+    const canonicalAnswer = history.entries.findLast(
+      (entry) =>
+        entry.kind === "assistant" &&
+        entry.invocationId === source?.rootInvocationId &&
+        entry.finalAnswer === true,
+    );
     const completeProjection =
       source === undefined
         ? [...projected.values()]
-        : ensureTerminalExecutionResultEntry([...projected.values()], source);
+        : ensureTerminalExecutionResultEntry(
+            [...projected.values()],
+            source,
+            canonicalAnswer?.kind === "assistant" ? canonicalAnswer.content : undefined,
+          );
     await retryMissionProjectionWrite(
       missions,
       missionId,

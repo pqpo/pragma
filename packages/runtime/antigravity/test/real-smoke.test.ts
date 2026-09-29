@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  ContextSystem,
+  InMemoryContextStore,
   createLoggerProvider,
   createPragma,
   createStaticRuntimeResolver,
@@ -29,6 +31,148 @@ afterAll(async () => {
 });
 
 describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
+  it.concurrent.each(["auto-approve", "request-approval", "full-access"] as const)(
+    "executes Context MCP and an independent tool in %s, then restores with a new Runtime",
+    async (permissionMode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-antigravity-262-"));
+      roots.push(root);
+      const workspace = join(root, "workspace");
+      const pragmaHome = join(root, "pragma-home");
+      await mkdir(workspace, { recursive: true });
+      const records: PragmaLogRecord[] = [];
+      const loggerProvider = createLoggerProvider({
+        minimumLevel: "debug",
+        handler: {
+          write(record) {
+            records.push(record);
+          },
+        },
+        host: { kind: "antigravity-262-smoke" },
+      });
+      const contextSystem = new ContextSystem();
+      expect(
+        contextSystem.register({
+          namespace: "mission-board",
+          store: new InMemoryContextStore(),
+          mutationApproval: "none",
+        }).ok,
+      ).toBe(true);
+      let calls = 0;
+      const probeName =
+        permissionMode === "full-access" ? `probe_gateway_${"x".repeat(70)}` : "probe_gateway";
+      const expert = await defineExpert({
+        id: "01h8z8e7m6p5t4r3",
+        name: "MCP roundtrip",
+        description: "Verify managed tools",
+        scope: "test",
+        tags: [],
+        workspace,
+        pragmaHome,
+        loggerProvider,
+        contextSystem,
+        tools: [
+          {
+            name: probeName,
+            description: "Return an independent verification marker.",
+            inputSchema: { type: "object", properties: {} },
+            async call() {
+              calls++;
+              return { text: "GATEWAY_OK_262" };
+            },
+          },
+        ],
+      });
+      const createApp = () => {
+        const runtime = createAntigravityRuntime({
+          authenticationMode: readAuthenticationMode(),
+          permissionMode,
+          defaultModelName: process.env["PRAGMA_ANTIGRAVITY_SMOKE_MODEL"] ?? "gemini-3.8-flash-low",
+        });
+        return createPragma({
+          pragmaHome,
+          loggerProvider,
+          runtimes: createStaticRuntimeResolver({
+            runtimes: [runtime],
+            defaultRuntimeId: runtime.descriptor.id,
+          }),
+        });
+      };
+      let session = await createApp().experts.createSession(expert);
+      try {
+        const first = await session.prompt(
+          'Use managed MCP tools directly: add_expert_context(namespace="mission-board", id="test/262.md", content="ROUNDTRIP_262"), read_expert_context on that item, then the tool described as "Return an independent verification marker." Use the exact exposed name in your tool catalog. Reply with both returned markers.',
+        );
+        const result = await first.result;
+        expect(result).toContain("ROUNDTRIP_262");
+        expect(result).toContain("GATEWAY_OK_262");
+        expect(calls).toBe(1);
+        await expect(
+          contextSystem.read({ namespace: "mission-board", id: "test/262.md" }),
+        ).resolves.toMatchObject({ ok: true, value: { content: "ROUNDTRIP_262" } });
+        const completed = records.filter((record) => record.event === "tool.call_completed");
+        for (const toolName of ["add_expert_context", "read_expert_context", probeName])
+          expect(
+            completed.some(
+              (record) =>
+                record.attributes?.["toolName"] === toolName &&
+                record.attributes?.["isError"] === false,
+            ),
+          ).toBe(true);
+        await session.releaseAfterTerminal();
+        expect(
+          (
+            await contextSystem.edit({
+              namespace: "mission-board",
+              id: "test/262.md",
+              mode: "replace",
+              content: "ROUNDTRIP_RESTORED_262",
+            })
+          ).ok,
+        ).toBe(true);
+        session = await createApp().experts.resumeSession(expert, { sessionId: session.sessionId });
+        const resumeLogStart = records.length;
+        const restored = await session.prompt(
+          'Use read_expert_context to read mission-board item test/262.md again; it may have changed. Then call the tool described as "Return an independent verification marker." Reply RESTORED plus both returned markers.',
+        );
+        const restoredResult = await restored.result;
+        expect(restoredResult).toContain("RESTORED");
+        expect(restoredResult).toContain("ROUNDTRIP_RESTORED_262");
+        expect(restoredResult).toContain("GATEWAY_OK_262");
+        expect(calls).toBe(2);
+        for (const toolName of ["read_expert_context", probeName])
+          expect(
+            records
+              .slice(resumeLogStart)
+              .some(
+                (record) =>
+                  record.event === "tool.call_completed" &&
+                  record.attributes?.["toolName"] === toolName &&
+                  record.attributes?.["isError"] === false,
+              ),
+          ).toBe(true);
+      } finally {
+        await session.close("MCP roundtrip complete");
+        if (process.env["PRAGMA_ANTIGRAVITY_SMOKE_KEEP"] === "1")
+          await writeFile(
+            join(root, "evidence.json"),
+            JSON.stringify(
+              records.filter((record) =>
+                [
+                  "runtime.antigravity_session_ready",
+                  "runtime.antigravity_hook_decision",
+                  "tool.call_started",
+                  "tool.call_completed",
+                ].includes(record.event),
+              ),
+              null,
+              2,
+            ),
+          );
+      }
+    },
+    180_000,
+  );
+
   it("verifies streaming, native tools, managed MCP, plugin Skills, image fallback, and resume", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-antigravity-real-smoke-"));
     roots.push(root);
@@ -42,7 +186,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       mkdir(skillDir, { recursive: true }),
     ]);
     await Promise.all([
-      writeFile(join(workspace, "SMOKE_FILE.txt"), "native list_dir smoke\n"),
+      writeFile(join(workspace, "SMOKE_FILE.txt"), "native view_file smoke\n"),
       writeFile(imagePath, "not-a-real-image; path fallback only\n"),
       writeFile(
         join(skillDir, "SKILL.md"),
@@ -109,7 +253,7 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
         [
           "/pragma-antigravity-smoke",
           "Perform every step before answering:",
-          "1. Use the native list_dir tool on the current workspace.",
+          "1. Use the native view_file tool to read SMOKE_FILE.txt in the current workspace.",
           "2. Use the managed list_expert_context MCP tool once.",
           "3. Apply the invoked pragma-antigravity-smoke Skill.",
           "4. Write at least 120 words, include the exact marker required by that Skill, and include the exact image path from the attachment context.",
@@ -168,7 +312,8 @@ describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
       expect(records).toContainEqual(
         expect.objectContaining({ event: "runtime.image_input_degraded" }),
       );
-      expect(hasCompletedTool(firstEvents, "list_dir")).toBe(true);
+      expect(hasCompletedTool(firstEvents, "view_file")).toBe(true);
+      expect(hasCompletedTool(firstEvents, "SMOKE_FILE.txt")).toBe(true);
       expect(
         hasCompletedTool(firstEvents, "list_expert_context"),
         JSON.stringify({ root, firstResult, firstEvents }, null, 2),

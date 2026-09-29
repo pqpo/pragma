@@ -185,6 +185,7 @@ export function createFileExpertSessionStore(options: {
             duplicate.content === prompt.content &&
             duplicate.mode === "steer" &&
             duplicate.status === "failed" &&
+            duplicate.deliveryAttempt?.state === "not_dispatched" &&
             prompt.mode === "enqueue";
           if (
             !replacesFailedSteer &&

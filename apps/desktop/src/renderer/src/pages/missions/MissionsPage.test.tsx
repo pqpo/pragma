@@ -1657,6 +1657,44 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("Execution running");
   });
 
+  it.each(["receipt", "terminal", undefined] as const)(
+    "shows uncertain delivery with %s recovery and prevents steer and take-back",
+    (recovery) => {
+      const mission = missionFixture("expert");
+      const chat: MissionConversationSnapshot = {
+        missionId: mission.id,
+        revision: 1,
+        entries: [],
+        page: {},
+        pendingInteractions: [],
+        queue: {
+          state: "paused",
+          deliveryUncertain: true,
+          steeringRecovery: recovery,
+          pendingCount: 1,
+          supportsSteer: true,
+          items: [
+            {
+              requestId: "00000000-0000-4000-8000-000000000012",
+              content: "Uncertain guidance",
+              hasAttachments: false,
+            },
+          ],
+        },
+      };
+      const html = renderToStaticMarkup(
+        <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+      );
+      expect(html).toContain("Steer delivery is uncertain");
+      if (recovery === "receipt") expect(html).toContain("Check delivery and resume");
+      else expect(html).not.toContain("Check delivery and resume");
+      expect(html).toContain("Skip uncertain messages and start fresh");
+      expect(html).toContain("Prior operations may already have executed");
+      expect(html).not.toContain(">Steer<");
+      expect(html).toMatch(/class="mission-queue-remove"[^>]*disabled=""/);
+    },
+  );
+
   it("hides queued steer when the Runtime does not support it", () => {
     const mission = missionFixture("expert");
     const chat: MissionConversationSnapshot = {
@@ -1686,6 +1724,55 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain(">Steer<");
     expect(html).toContain('aria-label="Remove from queue and edit"');
   });
+
+  it.each(["en", "zh-Hans", "zh-Hant"])(
+    "keeps an uncertain queued steer visible after refresh in %s",
+    (language) => {
+      const previousLanguage = i18n.language;
+      void i18n.changeLanguage(language);
+      try {
+        const mission = missionFixture("expert");
+        const chat: MissionConversationSnapshot = {
+          missionId: mission.id,
+          revision: 1,
+          entries: [],
+          page: {},
+          pendingInteractions: [],
+          queue: {
+            state: "paused",
+            pendingCount: 1,
+            supportsSteer: true,
+            steeringRecovery: "receipt",
+            items: [
+              {
+                requestId: "00000000-0000-4000-8000-000000000012",
+                content: "Retained redirect",
+                hasAttachments: false,
+                deliveryUncertain: true,
+              },
+            ],
+          },
+          execution: {
+            id: "00000000-0000-4000-8000-000000000010",
+            status: "running",
+            interruptible: true,
+          },
+        };
+        const html = renderToStaticMarkup(
+          <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+        );
+
+        expect(html).toContain("Retained redirect");
+        expect(html).toContain(i18n.t("deliveryUncertain", { ns: "missions" }));
+        expect(html).toContain(i18n.t("checkSteerDelivery", { ns: "missions" }));
+        expect(html).toContain(i18n.t("abandonSteerDelivery", { ns: "missions" }));
+        expect(html).not.toContain(">Steer<");
+        expect(html).not.toContain(i18n.t("queuePaused", { ns: "missions" }));
+      } finally {
+        void i18n.changeLanguage(previousLanguage);
+      }
+    },
+  );
 
   it("places dismissible errors above the composer", () => {
     const html = renderToStaticMarkup(

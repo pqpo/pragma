@@ -1,16 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
+import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
 import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+  readTransferredSkill,
+  readTransferredKnowledge,
+  publishTransferredSkill,
+  appendTransferredKnowledge,
+} from "../asset-transfer/asset-transfer-payloads.ts";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   PRAGMA_MANAGEMENT_CAPABILITY_REF,
@@ -103,7 +100,6 @@ import {
   assertUniqueResolutionRefs,
   collectCapabilities,
   collectContexts,
-  inspectBundleReadiness,
   isPortableValue,
   mergePendingMetadata,
   pendingBinding,
@@ -508,7 +504,8 @@ export function createPragmaBundleService(options: {
             "The target knowledge base changed after an interrupted import. Inspect the Bundle again.",
           );
         }
-        await options.contextStores.appendSnapshot(
+        await appendTransferredKnowledge(
+          options.contextStores,
           {
             storeId: store.id,
             baseRevision: snapshot.revision,
@@ -749,7 +746,7 @@ export function createPragmaBundleService(options: {
     const resources = snapshot.resources.filter((resource) =>
       installation.resourceRefs.includes(canonicalPragmaResourceRef(resource)),
     );
-    const readiness = await inspectBundleReadiness(resources, {
+    const readiness = await inspectAssetReadiness(resources, {
       capabilities: options.capabilities,
       contextStores: options.contextStores,
       plugins: options.plugins,
@@ -1030,7 +1027,12 @@ export function createPragmaBundleService(options: {
                         `Skill ${entry.capability.manifest.id} revision ${sourceRevision} content hash does not match its files.`,
                       );
                     }
-                    await addDirectoryFiles(files, skillFilesPath, "files");
+                    const payload = await readTransferredSkill(
+                      skillFilesPath,
+                      sourceDefinition.executablePaths,
+                    );
+                    for (const file of payload.files)
+                      files.set(`files/${file.path}`, Buffer.from(file.content, "base64"));
                     const descriptor = SkillBundlePayloadDescriptorSchema.parse({
                       schemaVersion: "pragma.skill-bundle-payload/v1",
                       assetKey: entry.capability.manifest.id,
@@ -1064,7 +1066,9 @@ export function createPragmaBundleService(options: {
                     return undefined;
                   const [snapshot, fingerprint] = await Promise.all([
                     includeKnowledgeBases
-                      ? options.contextStores.getSnapshot(entry.store.id)
+                      ? readTransferredKnowledge(options.contextStores, entry.store.id).then(
+                          (payload) => payload.snapshot,
+                        )
                       : Promise.resolve(undefined),
                     options.contextStores.fingerprint(entry.store.id),
                   ]);
@@ -1821,10 +1825,11 @@ export function createPragmaBundleService(options: {
                       imported = targetCapability;
                     } else {
                       const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
-                      imported = await options.capabilities.publishSkillRevisionCandidate({
+                      imported = await publishTransferredSkill(options.capabilities, {
                         id: targetCapability.manifest.id,
-                        baseRevision: targetCapability.manifest.latestRevision,
-                        baseContentHash: targetCapability.definition.contentHash,
+                        name: latest.definition.name,
+                        description: latest.definition.description,
+                        current: targetCapability,
                         sourcePath: payloadPath,
                         candidateContentHash: candidateSnapshot.hash,
                       });
@@ -1863,7 +1868,7 @@ export function createPragmaBundleService(options: {
                     await rewriteSkillName(payloadPath, importedName);
                   }
                   const candidateSnapshot = await scanSkillWorkingTree(payloadPath);
-                  imported = await options.capabilities.publishNewSkillRevisionCandidate({
+                  imported = await publishTransferredSkill(options.capabilities, {
                     id: generatePragmaResourceId(),
                     name: importedName,
                     description: latest.definition.description,
@@ -2098,7 +2103,8 @@ export function createPragmaBundleService(options: {
                   }));
                 }
                 if (targetFingerprint !== importedFingerprint) {
-                  await options.contextStores.appendSnapshot(
+                  await appendTransferredKnowledge(
+                    options.contextStores,
                     {
                       storeId: store.id,
                       baseRevision: currentSnapshot.revision,
@@ -2440,7 +2446,7 @@ export function createPragmaBundleService(options: {
               });
             }
 
-            const verifiedReadiness = await inspectBundleReadiness(
+            const verifiedReadiness = await inspectAssetReadiness(
               published.resources.filter((resource) =>
                 installationRefs.has(canonicalPragmaResourceRef(resource)),
               ),
@@ -3252,33 +3258,6 @@ async function readDesktopBundle(
   }
 }
 
-async function addDirectoryFiles(
-  files: Map<string, Uint8Array>,
-  sourceRoot: string,
-  targetRoot: string,
-  excludedNames: ReadonlySet<string> = new Set(),
-): Promise<void> {
-  const canonicalRoot = await resolveRegularDirectory(sourceRoot);
-  const visit = async (directory: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      if (excludedNames.has(entry.name)) continue;
-      const source = join(directory, entry.name);
-      const info = await lstat(source);
-      if (info.isSymbolicLink())
-        throw new Error(`Bundle payload contains a symbolic link: ${source}`);
-      if (info.isDirectory()) {
-        await visit(source);
-      } else if (info.isFile()) {
-        const relativePath = relative(canonicalRoot, source).split(sep).join("/");
-        const path = targetRoot === "" ? relativePath : `${targetRoot}/${relativePath}`;
-        if (files.has(path)) throw new Error(`Duplicate bundle path: ${path}`);
-        files.set(path, new Uint8Array(await readFile(source)));
-      }
-    }
-  };
-  await visit(canonicalRoot);
-}
-
 function buildInspectionReadiness(
   archive: DesktopBundleArchive,
   requirements: PragmaBundleImportInspection["requirements"],
@@ -3536,12 +3515,6 @@ function parseBundlePayloadJson<TSchema extends z.ZodType>(
     );
   }
   return parsed.data;
-}
-
-async function resolveRegularDirectory(path: string): Promise<string> {
-  const canonical = resolve(path);
-  if (!(await stat(canonical)).isDirectory()) throw new Error(`Expected a directory: ${path}`);
-  return canonical;
 }
 
 async function materializePrefix(

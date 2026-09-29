@@ -60,6 +60,7 @@ describe("Qoder CLI Runtime adapter", () => {
       listModels: async () => [],
     });
     expect(() => assertRuntimeConformance(adapter)).not.toThrow();
+    expect(adapter.features.steering.steeringRecovery).toBe("terminal");
 
     expect(adapter.descriptor).toMatchObject({
       id: "qodercli-local",

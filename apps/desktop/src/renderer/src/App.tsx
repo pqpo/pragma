@@ -48,24 +48,9 @@ export function App() {
   const [evaluationTargetId, setEvaluationTargetId] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
   const [memoryEnabled, setMemoryEnabled] = useState<boolean>();
-  const [legacySyncStopped, setLegacySyncStopped] = useState(false);
-  const [legacySyncNoticeDismissed, setLegacySyncNoticeDismissed] = useState(false);
   const [assetGitIssues, setAssetGitIssues] = useState<readonly AssetGitStatus[]>([]);
   const assetGitNavigationSequence = useRef(0);
   const leaveGuardRef = useRef<ContextStoreLeaveGuard | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.pragmaDesktop
-      .getCoreAssetSyncOverview()
-      .then((overview) => {
-        if (!cancelled) setLegacySyncStopped(overview.legacySyncStopped === true);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [activeView]);
 
   useEffect(() => {
     const api = typeof window === "undefined" ? undefined : window.pragmaDesktop;
@@ -172,11 +157,6 @@ export function App() {
 
   const openMemorySettings = () => {
     setSettingsView("memory");
-    setActiveView("settings");
-  };
-
-  const openCoreAssetSyncSettings = () => {
-    setSettingsView("core-asset-sync");
     setActiveView("settings");
   };
 
@@ -311,11 +291,7 @@ export function App() {
       ) : activeView === "memory" ? (
         <MemoryPage onConfigureExtraction={openMemorySettings} />
       ) : (
-        <SettingsPage
-          initialView={settingsView}
-          onMemoryEnabledChange={setMemoryEnabled}
-          onLegacySyncStoppedChange={setLegacySyncStopped}
-        />
+        <SettingsPage initialView={settingsView} onMemoryEnabledChange={setMemoryEnabled} />
       )}
       <div className="application-notices">
         {assetGitIssues[0] === undefined ? null : (
@@ -328,12 +304,6 @@ export function App() {
                 removeAssetGitIssue(current, assetGitIssues[0]!.target),
               )
             }
-          />
-        )}
-        {shouldShowCoreSyncCutoverNotice(legacySyncStopped, legacySyncNoticeDismissed) && (
-          <CoreSyncCutoverNotice
-            onConfigure={openCoreAssetSyncSettings}
-            onDismiss={() => setLegacySyncNoticeDismissed(true)}
           />
         )}
       </div>
@@ -388,38 +358,6 @@ export function AssetGitIssueNotice(props: {
         type="button"
         aria-label={t("assetGitNotice.dismiss")}
         title={t("assetGitNotice.dismiss")}
-        onClick={props.onDismiss}
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
-    </aside>
-  );
-}
-
-export function shouldShowCoreSyncCutoverNotice(
-  legacySyncStopped: boolean,
-  dismissed: boolean,
-): boolean {
-  return legacySyncStopped && !dismissed;
-}
-
-export function CoreSyncCutoverNotice(props: {
-  readonly onConfigure: () => void;
-  readonly onDismiss: () => void;
-}) {
-  const { t } = useTranslation("settings");
-
-  return (
-    <aside className="core-sync-cutover-notice" role="alert">
-      <span>{t("coreAssetSync.legacyStopped")}</span>
-      <button className="primary-button" type="button" onClick={props.onConfigure}>
-        {t("coreAssetSync.configureNew")}
-      </button>
-      <button
-        className="icon-button core-sync-cutover-dismiss"
-        type="button"
-        aria-label={t("coreAssetSync.dismissLegacyNotice")}
-        title={t("coreAssetSync.dismissLegacyNotice")}
         onClick={props.onDismiss}
       >
         <X size={16} aria-hidden="true" />

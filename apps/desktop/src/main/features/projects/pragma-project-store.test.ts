@@ -13,7 +13,7 @@ import type {
   PragmaAutomationResource,
   PragmaEvaluationResource,
 } from "@pragma/interpreter/ast";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BUILT_IN_PRAGMA_REF,
   SKILL_REVISION_EXPERT_REF,
@@ -26,6 +26,8 @@ import {
   PragmaPaths,
   clearRebuildableCache,
   derivePragmaResourceId,
+  encodePragmaPathSegment,
+  withFileLock,
 } from "@pragma/core";
 
 import type {
@@ -33,6 +35,7 @@ import type {
   UpdateBuiltInExpertDefinition,
   UpdateExpertDefinition,
 } from "../../../shared/contracts/index.ts";
+import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 import { createExpertDefinitionStore } from "../experts/expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
 import { createDesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
@@ -1115,6 +1118,180 @@ describe("PragmaProjectStore", { timeout: 30_000 }, () => {
       project.remove({ baseRevision: 1, ref: "expert:1xddvess309a6gme" }),
     ).rejects.toMatchObject({ code: "resource_referenced" });
     expect((await project.get()).revision).toBe(1);
+  });
+
+  it.each(["remove", "update"] as const)(
+    "keeps bindings shared with a System Expert during %s",
+    async (entry) => {
+      const { directory, systemExperts } = await stores();
+      const context = desktopManagedContextStore(
+        "f13af121-439b-4bad-8fe4-8b7dc27554d3",
+        "0123456789abcdef",
+      );
+      const writer = exampleExpert();
+      writer.spec.contextStores = [
+        { ref: "context-store:0123456789abcdef", namespace: "docs", required: true },
+      ];
+      const system = exampleExpert("reviewer");
+      system.spec.runtime = writer.spec.runtime;
+      system.spec.contextStores = writer.spec.contextStores;
+      const project = createPragmaProjectStore({
+        projectsPath: directory,
+        externalResources: () => [system],
+      });
+      const registry = new Proxy(systemExperts, {
+        get(target, property, receiver) {
+          return property === "listResources"
+            ? () => [system]
+            : Reflect.get(target, property, receiver);
+        },
+      });
+      const experts = createExpertDefinitionStore({
+        project,
+        systemExperts: registry,
+        validateModel: async () => undefined,
+      });
+      await project.publish({
+        expectedRevision: 0,
+        resources: [exampleRuntime(), writer, context],
+      });
+      if (entry === "remove") await experts.remove("expert:1xddvess309a6gme");
+      else {
+        const current = await experts.get("expert:1xddvess309a6gme");
+        await experts.update(current.ref, {
+          ...expertUpdate(current, current.description),
+          contextStoreMounts: [],
+        });
+      }
+      const retained = (await project.get()).resources;
+      expect(
+        retained.some(
+          (resource) =>
+            resource.kind === "ContextStore" && resource.metadata.id === context.metadata.id,
+        ),
+      ).toBe(true);
+      expect(
+        retained.some(
+          (resource) =>
+            resource.kind === "RuntimeProfile" &&
+            resource.metadata.id === exampleRuntime().metadata.id,
+        ),
+      ).toBe(true);
+      expect(retained.some((resource) => resource.kind === "Expert")).toBe(entry === "update");
+    },
+  );
+
+  it.each(["remove", "apply", "publish"] as const)(
+    "cleans Flow layouts on %s and recovers interrupted cleanup without touching drafts",
+    async (entry) => {
+      const { directory, project } = await stores();
+      const flow = exampleFlow();
+      const published = await project.publish({
+        expectedRevision: 0,
+        resources: [exampleRuntime(), exampleExpert(), flow],
+      });
+      const layouts = createWorkflowLayoutStore({ projectsPath: directory });
+      const layout = {
+        schemaVersion: "pragma.desktop-flow-layout/v2" as const,
+        projectId: "studio",
+        flowId: flow.metadata.id,
+        nodes: {},
+        viewport: { x: 0, y: 0, zoom: 1 },
+        updatedAt: new Date().toISOString(),
+      };
+      await layouts.save(layout);
+      const draft = { ...layout, flowId: "0123456789abcdef" };
+      await layouts.save(draft);
+      if (entry === "remove")
+        await project.remove({ baseRevision: published.revision, ref: `flow:${flow.metadata.id}` });
+      else if (entry === "apply")
+        await project.apply({
+          baseRevision: published.revision,
+          removals: [`flow:${flow.metadata.id}`],
+        });
+      else
+        await project.publish({
+          expectedRevision: published.revision,
+          resources: [exampleRuntime(), exampleExpert()],
+        });
+      expect(await layouts.get(layout)).toBeNull();
+      expect(await layouts.get(draft)).toEqual(draft);
+      // Simulate a committed deletion whose sidecar cleanup was interrupted.
+      await layouts.save(layout);
+      await layouts.prepareRemoval(layout, published.revision);
+      await createPragmaProjectStore({ projectsPath: directory }).get();
+      expect(await layouts.get(layout)).toBeNull();
+      expect(
+        (await project.getRevision(published.revision)).resources.some(
+          (resource) => resource.kind === "Flow",
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("holds the Project publication lock while replaying pending Flow layout removal", async () => {
+    const { directory, project } = await stores();
+    const flow = exampleFlow();
+    const initial = await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert(), flow],
+    });
+    const removed = await project.remove({
+      baseRevision: initial.revision,
+      ref: `flow:${flow.metadata.id}`,
+    });
+    const layouts = createWorkflowLayoutStore({ projectsPath: directory });
+    const layout = {
+      schemaVersion: "pragma.desktop-flow-layout/v2" as const,
+      projectId: "studio",
+      flowId: flow.metadata.id,
+      nodes: {},
+      viewport: { x: 0, y: 0, zoom: 1 },
+      updatedAt: new Date().toISOString(),
+    };
+    await layouts.save(layout);
+    await layouts.prepareRemoval(layout, initial.revision);
+    const layoutPath = join(
+      directory,
+      "studio",
+      "layouts",
+      "flows",
+      `${encodePragmaPathSegment(flow.metadata.id)}.json`,
+    );
+    let markAcquired!: () => void;
+    let releaseLock!: () => void;
+    const acquired = new Promise<void>((resolve) => {
+      markAcquired = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const held = withFileLock(`${layoutPath}.lock`, async () => {
+      markAcquired();
+      await release;
+    });
+    await acquired;
+    const recovering = project.get();
+    try {
+      await vi.waitFor(async () => {
+        const owner = JSON.parse(
+          await readFile(join(directory, "studio", ".commit.lock", "owner.json"), "utf8"),
+        );
+        expect(owner.processId).toBe(process.pid);
+      });
+    } finally {
+      releaseLock();
+      await held;
+      await recovering;
+    }
+    expect(await layouts.get(layout)).toBeNull();
+    await project.publish({
+      expectedRevision: removed.revision,
+      resources: [exampleRuntime(), exampleExpert(), flow],
+    });
+    await layouts.save(layout);
+    await project.get();
+    expect(await layouts.get(layout)).toEqual(layout);
   });
 
   it("blocks deletion of Teams and Flows referenced by another Flow", async () => {

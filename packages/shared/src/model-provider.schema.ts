@@ -3,6 +3,7 @@ import { z } from "zod";
 export const KNOWN_MODEL_APIS = [
   "openai-completions",
   "openai-responses",
+  "openai-embeddings",
   "anthropic-messages",
   "google-generative-ai",
   "mistral-conversations",
@@ -70,8 +71,9 @@ export const ModelCapabilityValueSourceSchema = z.enum([
   "legacy",
 ]);
 
-export const ProviderModelDefinitionSchema = z
+export const GenerationModelDefinitionSchema = z
   .object({
+    kind: z.literal("generation"),
     id: z.string().trim().min(1).max(200),
     name: z.string().trim().min(1).max(200),
     api: ModelApiSchema.optional(),
@@ -103,3 +105,45 @@ export type ModelCompatibilityProfileId = z.infer<typeof ModelCompatibilityProfi
 export type ModelCost = z.infer<typeof ModelCostSchema>;
 export type ModelCapabilityValueSource = z.infer<typeof ModelCapabilityValueSourceSchema>;
 export type ProviderModelDefinition = z.infer<typeof ProviderModelDefinitionSchema>;
+
+export const EmbeddingModelDefinitionSchema = z
+  .object({
+    kind: z.literal("embedding"),
+    id: z.string().trim().min(1).max(200),
+    name: z.string().trim().min(1).max(200),
+    api: z.literal("openai-embeddings"),
+    baseUrl: z.string().url().optional(),
+    maxInputTokens: z.number().int().positive().optional(),
+    maxInputTokensSource: ModelCapabilityValueSourceSchema.optional(),
+    maxBatchInputs: z.number().int().positive().max(2048).default(32),
+    maxBatchTokens: z.number().int().positive().optional(),
+    cost: z.object({ input: z.number().nonnegative() }),
+  })
+  .strict();
+export const ProviderModelDefinitionSchema = z.discriminatedUnion("kind", [
+  GenerationModelDefinitionSchema,
+  EmbeddingModelDefinitionSchema,
+]);
+const ConfiguredModelFields = {
+  capabilitiesSource: z.enum(["preset", "provider", "manual"]),
+};
+export const ConfiguredProviderModelSchema = z.discriminatedUnion("kind", [
+  GenerationModelDefinitionSchema.extend({
+    ...ConfiguredModelFields,
+    inputOverride: z
+      .array(z.enum(["text", "image"]))
+      .min(1)
+      .optional(),
+  }).superRefine((model, context) => {
+    if (model.inputOverride !== undefined && !model.inputOverride.includes("text"))
+      context.addIssue({
+        code: "custom",
+        path: ["inputOverride"],
+        message: "Input overrides must retain text.",
+      });
+  }),
+  EmbeddingModelDefinitionSchema.extend(ConfiguredModelFields),
+]);
+export type GenerationModelDefinition = z.infer<typeof GenerationModelDefinitionSchema>;
+export type EmbeddingModelDefinition = z.infer<typeof EmbeddingModelDefinitionSchema>;
+export type ConfiguredProviderModel = z.infer<typeof ConfiguredProviderModelSchema>;

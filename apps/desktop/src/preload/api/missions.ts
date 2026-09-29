@@ -29,6 +29,7 @@ import {
   OpenMissionWorkConversationStreamResultSchema,
   CloseMissionWorkConversationStreamSchema,
   MissionActionSchema,
+  ResumeMissionQueueSchema,
   MissionExecutionActionSchema,
   MissionChatPageSchema,
   MissionContextWindowSnapshotSchema,
@@ -276,9 +277,12 @@ export const missionsApi = {
     MissionSchema.parse(
       await invokeMutation("missions:interrupt:force", MissionExecutionActionSchema.parse(input)),
     ),
-  resumeMissionQueue: async (id) =>
+  resumeMissionQueue: async (id, recovery) =>
     MissionSchema.parse(
-      await invokeMutation("missions:queue:resume", MissionActionSchema.parse({ id })),
+      await invokeMutation(
+        "missions:queue:resume",
+        ResumeMissionQueueSchema.parse({ id, recovery }),
+      ),
     ),
   getMissionWork: async (id) =>
     MissionWorkSnapshotSchema.parse(

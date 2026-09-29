@@ -29,7 +29,6 @@ export function SettingsPage(
   props: {
     readonly initialView?: SettingsView;
     readonly onMemoryEnabledChange?: ((enabled: boolean) => void) | undefined;
-    readonly onLegacySyncStoppedChange?: ((stopped: boolean) => void) | undefined;
   } = {},
 ) {
   const { t } = useTranslation("settings");
@@ -145,9 +144,7 @@ export function SettingsPage(
         ) : activeView === "evaluations" ? (
           <EvaluationSettingsFragment />
         ) : activeView === "core-asset-sync" ? (
-          <CoreAssetSyncSettingsFragment
-            onLegacySyncStoppedChange={props.onLegacySyncStoppedChange}
-          />
+          <CoreAssetSyncSettingsFragment />
         ) : activeView === "bundle-sources" ? (
           <BundleRegistrySourcesFragment />
         ) : activeView === "models" ? (

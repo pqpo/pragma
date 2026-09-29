@@ -91,6 +91,33 @@ function createMutationHost(
 }
 
 describe("M8 mutation and queue command surface", () => {
+  it.each([false, true])(
+    "submits explicit terminal recovery only when requested (abandon: %s)",
+    async (abandon) => {
+      const io = createIo();
+      const { host, submit } = createMutationHost({ operation: createOperation("queue.resume") });
+      const args = [
+        "mission",
+        "queue",
+        "resume",
+        MISSION_ID,
+        "--format=json",
+        ...(abandon ? ["--abandon-uncertain"] : []),
+      ];
+      expect(parseCliArgv(args).command).toMatchObject({
+        kind: "queue-resume",
+        ...(abandon ? { recovery: "abandon" } : {}),
+      });
+      await expect(runCli(args, io, { localHost: host })).resolves.toBe(0);
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "queue.resume",
+          payload: { kind: "queue.resume", ...(abandon ? { recovery: "abandon" } : {}) },
+        }),
+      );
+    },
+  );
+
   it("parses all seven durable mutation commands with strict target options", () => {
     expect(
       parseCliArgv(["mission", "send", MISSION_ID, "--prompt", "hello"]).command,

@@ -1,3 +1,5 @@
+import { parsePragmaYaml } from "@pragma/interpreter";
+import { readSyncRepository } from "./asset-sync-repository.ts";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,14 +14,19 @@ import {
 } from "../context-stores/context-store-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  createPragmaProjectStore,
+  PragmaProjectStoreError,
+} from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { unavailableCoreAssetRuntimeBindings } from "./core-asset-sync-service.ts";
 import {
+  bindExistingDesktopContextResource,
   createDesktopCapabilityResource,
   createDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import { createAssetTransferService } from "../asset-transfer/asset-transfer-service.ts";
 import {
   canonicalPragmaResourceRef,
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -108,6 +115,7 @@ function device(
     managedBy: "user",
   });
   const stores = {
+    exists: async () => value !== undefined,
     list: async () =>
       value === undefined
         ? []
@@ -138,6 +146,13 @@ function device(
     projectId: "studio",
     get: async () => ({ projectId: "studio", revision: projectRevision, resources }),
     validateChanges: async () => [],
+    remove: async (input: { ref: string }) => {
+      resources = resources.filter(
+        (resource) => canonicalPragmaResourceRef(resource) !== input.ref,
+      );
+      projectRevision += 1;
+      return { projectId: "studio", revision: projectRevision, resources };
+    },
     apply: async (input: { upserts: PragmaResource[]; removals: string[] }) => {
       const remove = new Set([...input.removals, ...input.upserts.map(canonicalPragmaResourceRef)]);
       resources = [
@@ -203,6 +218,46 @@ function device(
 }
 
 describe("core asset Git synchronization", { timeout: 30_000 }, () => {
+  it("preserves a binding rebound while another orphan cleanup changes the head", async () => {
+    const first = createDesktopContextResource({ owner: "project-expert", storeId });
+    const second = createDesktopContextResource({ owner: "system-expert-customization", storeId });
+    const restoredId = "1a8c2051-10e0-489a-bc9e-41a2ca0805ce";
+    const rebound = bindExistingDesktopContextResource(second, restoredId);
+    let resources = [first, second];
+    let revision = 1;
+    const removed: string[] = [];
+    const project = {
+      get: async () => ({ projectId: "studio", revision, resources }),
+      remove: async ({ ref }: { ref: string }) => {
+        removed.push(ref);
+        resources = [rebound];
+        revision += 1;
+        throw new PragmaProjectStoreError("revision_conflict", "Concurrent binding restore.");
+      },
+    } as unknown as PragmaProjectStore;
+    const transfer = createAssetTransferService({
+      project,
+      stores: {
+        list: async () => [],
+        exists: async (id: string) => id === restoredId,
+      } as unknown as ContextStoreStore,
+      capabilities: { list: async () => [] } as unknown as CapabilityStore,
+      layouts: {} as WorkflowLayoutStore,
+      reportNameResolutionFailure: (_key, kind, bindingId) => ({
+        code: "core_asset_sync.name_unresolved",
+        resourceKey: _key,
+        resourceKind: kind,
+        bindingId,
+      }),
+    });
+    const result = await transfer.collectAssets();
+    expect(removed).toEqual([canonicalPragmaResourceRef(first)]);
+    expect(resources).toEqual([rebound]);
+    expect(result.items.get(`knowledge:${canonicalPragmaResourceRef(second)}`)?.data).toEqual(
+      rebound,
+    );
+  });
+
   it.each(["", "   "])(
     "synchronizes empty knowledge descriptions through the DSL binding boundary (%j)",
     async (description) => {
@@ -217,17 +272,11 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
         autoPush: false,
         pushDeletions: false,
       });
-      expect((await local.service.sync()).status).toBe("ready");
-      const data = JSON.parse(
-        (
-          await exec("git", [
-            "-C",
-            join(root, "assets.git"),
-            "show",
-            "main:pragma-core-assets.json",
-          ])
-        ).stdout,
-      ) as {
+      const synchronized = await local.service.sync();
+      expect(synchronized.status, synchronized.error).toBe("ready");
+      const checkout = join(root, "assert-files");
+      await exec("git", ["clone", barePath(root), checkout]);
+      const data = { items: [...(await readSyncRepository(checkout, true)).values()] } as {
         items: {
           kind: string;
           data: { metadata?: { description: string }; description?: string };
@@ -240,8 +289,38 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       expect(
         data.items.find((item) => item.kind === "knowledge" && item.data.metadata === undefined)
           ?.data.description,
-      ).toBe(description);
+      ).toBe(description.trim());
       expect((await local.service.sync()).status).toBe("ready");
+    },
+  );
+
+  it.each(["revision_conflict", "resource_not_found"] as const)(
+    "refreshes the overview head when another reader retires an orphan with %s",
+    async (code) => {
+      const root = await fixture();
+      const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+      let resources = [binding];
+      let revision = 1;
+      const project = {
+        projectId: "studio",
+        get: async () => ({ projectId: "studio", revision, resources }),
+        remove: async () => {
+          resources = [];
+          revision += 1;
+          throw new PragmaProjectStoreError(code, "Another reader removed the binding.");
+        },
+      } as unknown as PragmaProjectStore;
+      const local = device(join(root, "local"), undefined, undefined, [], undefined, project);
+      const configured = await local.service.configure({
+        remote,
+        branch: "main",
+        autoPush: false,
+        pushDeletions: false,
+      });
+      expect(configured.status, configured.error).toBe("ready");
+      const overview = await local.service.overview();
+      expect(overview.items).toEqual([]);
+      expect((await project.get()).resources).toEqual([]);
     },
   );
 
@@ -405,7 +484,38 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       join(root, "local"),
       undefined,
       undefined,
-      [context],
+      [
+        context,
+        {
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "ExpertTeam",
+          metadata: {
+            id: "p8cbn3cg2avyksn4",
+            name: "Team",
+            description: "Knowledge team",
+            tags: [],
+            avatarId: "pragma.avatar.team.default",
+          },
+          spec: {
+            coordinator: { ref: "expert:1xddvess309a6gme" },
+            members: [{ ref: "expert:1xddvess309a6gme" }],
+            contextStores: [
+              {
+                ref: canonicalPragmaResourceRef(context),
+                namespace: "docs",
+                required: true,
+                visibility: { mode: "all" },
+              },
+            ],
+            delegation: {
+              permissions: { interact: {} },
+              maxConcurrency: 2,
+              maxDepth: 2,
+              runtimes: {},
+            },
+          },
+        },
+      ],
       undefined,
       undefined,
       undefined,
@@ -436,7 +546,12 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       },
     ]);
     await expect(
-      exec("git", ["--git-dir", barePath(root), "show", `main:pragma-core-assets.json`]),
+      exec("git", [
+        "--git-dir",
+        barePath(root),
+        "show",
+        `main:pragma-sync/context-stores/${context.metadata.id}.pragma.yaml`,
+      ]),
     ).rejects.toThrow();
   });
 
@@ -577,29 +692,6 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     });
   });
 
-  it("warns when only retired sync settings exist", async () => {
-    const root = await fixture();
-    const local = device(join(root, "legacy"));
-    const legacyPath = join(root, "legacy", "knowledge-sync-settings.json");
-    await mkdir(join(root, "legacy"), { recursive: true });
-    await writeFile(legacyPath, "{}");
-    const service = createCoreAssetSyncService({
-      configurationPath: join(root, "legacy", "settings.json"),
-      legacyConfigurationPaths: [legacyPath],
-      statePath: join(root, "legacy", "state.json"),
-      project: {
-        projectId: "studio",
-        get: async () => ({ projectId: "studio", revision: 1, resources: [] }),
-      } as unknown as PragmaProjectStore,
-      layouts: {} as WorkflowLayoutStore,
-      stores: {} as ContextStoreStore,
-      capabilities: {} as CapabilityStore,
-      getRuntimes: async () => [],
-    });
-    expect((await service.overview()).legacySyncStopped).toBe(true);
-    expect((await local.service.overview()).legacySyncStopped).toBe(false);
-  });
-
   it("shows a locally deleted asset as restorable after a pull-only refresh", async () => {
     const root = await fixture();
     const local = device(join(root, "local"), "Shared docs");
@@ -637,13 +729,14 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     });
     const checkout = join(root, "invalid");
     await exec("git", ["clone", barePath(root), checkout]);
-    const manifestPath = join(checkout, "pragma-core-assets.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-      items: { key: string }[];
-    };
-    manifest.items[0]!.key = "knowledge:../../invalid";
-    await writeFile(manifestPath, JSON.stringify(manifest));
-    await exec("git", ["-C", checkout, "add", "pragma-core-assets.json"]);
+    const manifestPath = join(checkout, "pragma-sync", "knowledge-bases", storeId, "metadata.yaml");
+    const manifest = parsePragmaYaml(await readFile(manifestPath, "utf8")) as { id: string };
+    manifest.id = "../../invalid";
+    await writeFile(
+      manifestPath,
+      `id: ${manifest.id}\nname: Invalid\ndescription: ''\ndirectories: []\nfiles: []\n`,
+    );
+    await exec("git", ["-C", checkout, "add", "pragma-sync"]);
     await exec("git", [
       "-C",
       checkout,
@@ -677,7 +770,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await local.service.configure(configuration);
     const checkout = join(root, "missing-manifest");
     await exec("git", ["clone", barePath(root), checkout]);
-    await exec("git", ["-C", checkout, "rm", "pragma-core-assets.json"]);
+    await exec("git", ["-C", checkout, "rm", "pragma-sync/sync.yaml"]);
     await exec("git", [
       "-C",
       checkout,
@@ -703,9 +796,12 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect((await local.service.overview()).status).toBe("unconfigured");
     const checkout = join(root, "after-removal");
     await exec("git", ["clone", barePath(root), checkout]);
-    expect(await readFile(join(checkout, "pragma-core-assets.json"), "utf8")).toContain(
-      "Shared docs",
-    );
+    expect(
+      await readFile(
+        join(checkout, "pragma-sync", "knowledge-bases", storeId, "metadata.yaml"),
+        "utf8",
+      ),
+    ).toContain("Shared docs");
   });
 
   it("propagates future deletions only when enabled", async () => {
@@ -799,7 +895,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await mkdir(observerRoot);
     await writeFile(
       join(observerRoot, "settings.json"),
-      JSON.stringify({ schemaVersion: "pragma.core-asset-sync-settings/v1", ...configuration }),
+      JSON.stringify({ schemaVersion: "pragma.asset-sync-settings/v1", ...configuration }),
     );
     await cp(join(root, "source", "state.json"), join(observerRoot, "state.json"));
     const observer = device(observerRoot);
@@ -871,7 +967,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await writeFile(
       join(offlineRoot, "settings.json"),
       JSON.stringify({
-        schemaVersion: "pragma.core-asset-sync-settings/v1",
+        schemaVersion: "pragma.asset-sync-settings/v1",
         ...configuration,
         remote: unavailableRemote,
       }),

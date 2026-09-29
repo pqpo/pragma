@@ -138,7 +138,6 @@ import {
   RebaseContextStoreDraftSchema,
   SubmitContextStoreDraftSchema,
   UpdateContextStoreDraftFileSchema,
-  UpdateContextStoreRevisionProfileSchema,
 } from "./context-store-revisions.ts";
 import {
   ExpertMemoryContextStoreContentSchema,
@@ -484,9 +483,6 @@ export type ContextStoreRevisionJob = z.infer<typeof ContextStoreRevisionJobSche
 export type ListContextStoreRevisionJobs = z.infer<typeof ListContextStoreRevisionJobsSchema>;
 export type ContextStoreRevisionJobRef = z.infer<typeof ContextStoreRevisionJobRefSchema>;
 export type ContextStoreRevisionProfile = z.infer<typeof ContextStoreRevisionProfileSchema>;
-export type UpdateContextStoreRevisionProfile = z.infer<
-  typeof UpdateContextStoreRevisionProfileSchema
->;
 export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
 export type DeleteContextStore = z.infer<typeof DeleteContextStoreSchema>;
 export type ContextStoreMissionMountCheck = z.infer<typeof ContextStoreMissionMountCheckSchema>;

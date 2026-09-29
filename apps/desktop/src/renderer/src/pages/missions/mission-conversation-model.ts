@@ -77,14 +77,20 @@ export function hideInterruptedExecutionFallbackEntries(
   );
 }
 
+export function isMissionCoordinatorChatEntry(
+  entry: MissionChatEntry,
+  coordinatorId: string | undefined,
+): boolean {
+  return (
+    entry.kind === "user" || entry.executorId === undefined || entry.executorId === coordinatorId
+  );
+}
+
 export function teamCoordinatorChatEntries(
   entries: readonly MissionChatEntry[],
   coordinatorId: string | undefined,
 ): MissionChatEntry[] {
-  return entries.filter(
-    (entry) =>
-      entry.kind === "user" || entry.executorId === undefined || entry.executorId === coordinatorId,
-  );
+  return entries.filter((entry) => isMissionCoordinatorChatEntry(entry, coordinatorId));
 }
 
 export function missionTurnFinalReplyIds(
@@ -627,6 +633,21 @@ export function shouldClearMissionThinkingPlaceholder(
     userEntry.executionId !== undefined &&
     userEntry.executionId === chat.execution?.id &&
     !["queued", "running", "waiting"].includes(chat.execution.status)
+  );
+}
+
+/** Submission reservations cover the gap before authoritative Execution state arrives. */
+export function shouldQueueMissionSend(input: {
+  readonly chat: MissionConversationSnapshot | null;
+  readonly executionActive: boolean;
+  readonly awaitingRequestId: string | null;
+  readonly pendingQueuedCount: number;
+}): boolean {
+  return (
+    input.executionActive ||
+    shouldShowMissionThinkingPlaceholder(input.chat, input.awaitingRequestId) ||
+    input.pendingQueuedCount > 0 ||
+    (input.chat?.queue?.state !== undefined && input.chat.queue.state !== "idle")
   );
 }
 

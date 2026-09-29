@@ -6,9 +6,7 @@ import { gitFailureKey } from "../../lib/git-feedback.ts";
 import { aggregateCoreAssetSyncItems, coreAssetOverallHealth } from "./core-asset-sync-summary.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
-export function CoreAssetSyncSettingsFragment(props: {
-  readonly onLegacySyncStoppedChange?: ((stopped: boolean) => void) | undefined;
-}) {
+export function CoreAssetSyncSettingsFragment() {
   const { t } = useTranslation("settings");
   const [overview, setOverview] = useState<CoreAssetSyncOverview>();
   const [remote, setRemote] = useState("");
@@ -22,7 +20,6 @@ export function CoreAssetSyncSettingsFragment(props: {
     overview === undefined ? "synced" : coreAssetOverallHealth(overview.status, summary);
   const apply = (next: CoreAssetSyncOverview) => {
     setOverview(next);
-    props.onLegacySyncStoppedChange?.(next.legacySyncStopped === true);
     if (next.configuration) {
       setRemote(next.configuration.remote);
       setBranch(next.configuration.branch ?? "");
@@ -58,11 +55,6 @@ export function CoreAssetSyncSettingsFragment(props: {
         </header>
       }
     >
-      {overview?.legacySyncStopped && (
-        <p role="alert" className="form-error">
-          {t("coreAssetSync.legacyStopped")}
-        </p>
-      )}
       <form
         className="knowledge-sync-form"
         onSubmit={(event) => {

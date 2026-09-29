@@ -1,0 +1,81 @@
+{
+  "mode": "offline reference encoder; Jev not run; pipeline validation only",
+  "cases": [
+    {
+      "query": "SQLite",
+      "expected": "sqlite",
+      "language": "en",
+      "lexical": "sqlite",
+      "hybrid": "sqlite",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "并发写数据库需要退避",
+      "expected": "sqlite",
+      "language": "zh",
+      "lexical": null,
+      "hybrid": "sqlite",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "The server rejected my login token",
+      "expected": "auth",
+      "language": "en",
+      "lexical": null,
+      "hybrid": "auth",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "怎样解决鉴权失败",
+      "expected": "auth",
+      "language": "zh",
+      "lexical": null,
+      "hybrid": "auth",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "界面被向量计算卡住",
+      "expected": "worker",
+      "language": "zh",
+      "lexical": null,
+      "hybrid": "worker",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "Keep the UI responsive during similarity search",
+      "expected": "worker",
+      "language": "en",
+      "lexical": null,
+      "hybrid": "worker",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "两条事实互相矛盾",
+      "expected": "conflict",
+      "language": "zh",
+      "lexical": null,
+      "hybrid": "conflict",
+      "jev": null,
+      "authorizedOnly": true
+    },
+    {
+      "query": "Which contradictory claim should I trust?",
+      "expected": "conflict",
+      "language": "en",
+      "lexical": null,
+      "hybrid": "conflict",
+      "jev": null,
+      "authorizedOnly": true
+    }
+  ],
+  "lexicalTop1": 1,
+  "hybridTop1": 8,
+  "jevTop1": null,
+  "total": 8
+}

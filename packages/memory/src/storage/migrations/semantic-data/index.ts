@@ -1,3 +1,4 @@
+import { migrateSemanticDataV5ToV6 } from "./steps/v5-to-v6.ts";
 import { migrateSemanticDataV1ToV2 } from "./steps/v1-to-v2.ts";
 import { migrateSemanticDataV2ToV3 } from "./steps/v2-to-v3.ts";
 import { migrateSemanticDataV3ToV4 } from "./steps/v3-to-v4.ts";
@@ -16,4 +17,5 @@ export const SEMANTIC_DATA_STORAGE_MIGRATIONS = Object.freeze([
   { fromVersion: 2, toVersion: 3, migrate: migrateSemanticDataV2ToV3 },
   { fromVersion: 3, toVersion: 4, migrate: migrateSemanticDataV3ToV4 },
   { fromVersion: 4, toVersion: 5, migrate: migrateSemanticDataV4ToV5 },
+  { fromVersion: 5, toVersion: 6, migrate: migrateSemanticDataV5ToV6 },
 ] as const);

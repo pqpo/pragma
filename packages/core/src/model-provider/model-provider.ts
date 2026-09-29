@@ -79,6 +79,8 @@ export interface ModelProviderDriver {
 export interface ModelProviderDiscoveryCandidate {
   readonly id: string;
   readonly name?: string | undefined;
+  readonly kind?: "generation" | "embedding" | undefined;
+  readonly maxInputTokens?: number | undefined;
   readonly contextWindow?: number | undefined;
   readonly maxTokens?: number | undefined;
 }

@@ -1,5 +1,6 @@
 import claudeIcon from "@lobehub/icons-static-svg/icons/claude-color.svg";
 import openaiIcon from "@lobehub/icons-static-svg/icons/openai.svg";
+import opencodeIcon from "@lobehub/icons-static-svg/icons/opencode.svg";
 import { TerminalWindow } from "@phosphor-icons/react";
 
 import type { DesktopRuntimeAvailability } from "../../../shared/contracts/index.ts";
@@ -44,6 +45,13 @@ function runtimeBrandLogo(runtime: RuntimeLogoIdentity): string | undefined {
     runtime.adapter?.id === "pragma.runtime.codex"
   ) {
     return openaiIcon;
+  }
+  if (
+    runtime.id === "opencode" ||
+    runtime.kind === "opencode-local" ||
+    runtime.adapter?.id === "pragma.runtime.opencode"
+  ) {
+    return opencodeIcon;
   }
   if (
     runtime.id === "claude-code" ||

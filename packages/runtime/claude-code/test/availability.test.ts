@@ -3,11 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   canUseRuntimeBinary: vi.fn(),
+  resolveClaudeCodeCommand: vi.fn(),
 }));
 
 vi.mock("@pragma/core/runtime/process-probe", () => ({
   canUseRuntimeBinary: mocks.canUseRuntimeBinary,
 }));
+
+vi.mock("../src/executable.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/executable.ts")>();
+  mocks.resolveClaudeCodeCommand.mockImplementation(actual.resolveClaudeCodeCommand);
+  return { ...actual, resolveClaudeCodeCommand: mocks.resolveClaudeCodeCommand };
+});
 
 import { canUseClaudeCodeRuntime } from "../src/availability.ts";
 
@@ -31,6 +38,31 @@ describe("Claude Code Runtime availability cache", () => {
       usable: true,
     });
     expect(mocks.canUseRuntimeBinary).not.toHaveBeenCalled();
+  });
+
+  it("isolates command shim resolution errors to Claude availability", async () => {
+    mocks.resolveClaudeCodeCommand.mockImplementationOnce(() => {
+      throw new Error("Claude Code command shim could not be resolved safely");
+    });
+    await expect(
+      canUseClaudeCodeRuntime({ executablePath: "C:\\invalid\\claude.cmd" }),
+    ).resolves.toMatchObject({
+      usable: false,
+      reason: expect.stringContaining("Install Claude Code yourself"),
+      details: { code: "claude_cli_unavailable" },
+    });
+    expect(mocks.canUseRuntimeBinary).not.toHaveBeenCalled();
+  });
+
+  it("reports failed probes with installation guidance", async () => {
+    mocks.canUseRuntimeBinary.mockResolvedValue({ usable: false, reason: "ENOENT" });
+    await expect(
+      canUseClaudeCodeRuntime({ executablePath: `/missing/${crypto.randomUUID()}` }),
+    ).resolves.toMatchObject({
+      usable: false,
+      reason: expect.stringContaining("Install Claude Code yourself"),
+      details: { code: "claude_cli_unavailable" },
+    });
   });
 
   it("shares a fresh availability result", async () => {

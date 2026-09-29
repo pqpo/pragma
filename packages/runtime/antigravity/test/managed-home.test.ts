@@ -26,6 +26,26 @@ afterEach(async () => {
 });
 
 describe("managed Antigravity HOME", () => {
+  it("keeps native server identities stable and isolated with room for Context tools", () => {
+    const first = createManagedAntigravityIdentity("expert", "/sessions/first");
+    expect(createManagedAntigravityIdentity("expert", "/sessions/first")).toEqual(first);
+    const second = createManagedAntigravityIdentity("expert", "/sessions/second");
+    expect(second.nativeMcpServerName).not.toBe(first.nativeMcpServerName);
+    expect(first.mcpServerName).toBe("p");
+    expect(first.nativeMcpServerName).toBe(`pragma-${first.namespace}_p`);
+    for (const tool of [
+      "request_tool_approval",
+      "list_expert_context",
+      "read_expert_context",
+      "search_expert_context",
+      "add_expert_context",
+      "edit_expert_context",
+      "delete_expert_context",
+    ]) {
+      expect(`mcp_${first.nativeMcpServerName}_${tool}`).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+    }
+  });
+
   it("uses a Session customization workspace while preserving host HOME for keyring OAuth", async () => {
     const root = await temporaryRoot();
     const hostHome = join(root, "host-home");
@@ -35,6 +55,17 @@ describe("managed Antigravity HOME", () => {
       agent: createExpert(root),
       sessionDir,
       systemPrompt: "host-keyring system",
+      mcpToolCatalog: [
+        {
+          name: "read_expert_context",
+          description: "Read a Context item",
+          inputSchema: {
+            type: "object",
+            properties: { namespace: { type: "string" }, id: { type: "string" } },
+            required: ["namespace", "id"],
+          },
+        },
+      ],
       mcpServerUrl: "http://127.0.0.1/host-keyring/mcp",
       hookRelay: relay(),
       permissionMode: "request-approval",
@@ -75,6 +106,12 @@ describe("managed Antigravity HOME", () => {
     await expect(readJson(join(managed.configDir, "hooks.json"))).resolves.toHaveProperty(
       managed.hookName,
     );
+
+    const rule = await readFile(join(managed.pluginDir, "rules", "pragma-system.md"), "utf8");
+    expect(rule).toContain(`ServerName=${JSON.stringify(managed.nativeMcpServerName)}`);
+    expect(rule).toContain('"name":"read_expert_context"');
+    expect(rule).toContain('"required":["namespace","id"]');
+    expect(rule).toContain("Do not search configuration files");
 
     const nativeAgent = join(managed.pluginDir, "agents", "native-created", "agent.md");
     await mkdir(join(managed.pluginDir, "agents", "native-created"), { recursive: true });
@@ -231,7 +268,7 @@ describe("managed Antigravity HOME", () => {
       allowNonWorkspaceAccess: false,
       enableTerminalSandbox: true,
       permissions: {
-        allow: [`mcp(${managed.mcpServerName}/*)`],
+        allow: [`mcp(${managed.nativeMcpServerName}/*)`],
         deny: [],
         ask: [],
       },
@@ -380,7 +417,8 @@ describe("managed Antigravity HOME", () => {
         join(first.configDir, "mcp_config.json"),
         JSON.stringify({
           mcpServers: {
-            [first.mcpServerName]: { serverUrl: "http://127.0.0.1/stale" },
+            [`pragma${createManagedAntigravityIdentity(createExpert(root).id, sessionDir).namespace}`]:
+              { serverUrl: "http://127.0.0.1/stale" },
             native: { command: "native-server" },
           },
         }),

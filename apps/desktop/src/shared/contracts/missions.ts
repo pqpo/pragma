@@ -483,6 +483,9 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
 }
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const ResumeMissionQueueSchema = MissionActionSchema.extend({
+  recovery: z.literal("abandon").optional(),
+});
 export const MissionExecutionActionSchema = z
   .object({
     id: MissionIdSchema,
@@ -783,12 +786,15 @@ export const MissionConversationStateSchema = z.object({
       state: z.enum(["idle", "running", "paused"]),
       pendingCount: z.number().int().nonnegative(),
       supportsSteer: z.boolean().default(false),
+      deliveryUncertain: z.boolean().optional(),
+      steeringRecovery: z.enum(["receipt", "terminal"]).optional(),
       items: z
         .array(
           z.object({
             requestId: z.string().uuid(),
             content: z.string().min(1).max(100_000),
             hasAttachments: z.boolean(),
+            deliveryUncertain: z.boolean().optional(),
           }),
         )
         .default([]),

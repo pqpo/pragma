@@ -739,8 +739,10 @@ function normalizeStepUpdate(
   const textDelta = readText(step["text_delta"] ?? step["textDelta"]);
   if (textDelta !== undefined) {
     if (isThoughtStep) {
+      state.thoughtSnapshots.set(key, (state.thoughtSnapshots.get(key) ?? "") + textDelta);
       events.push({ kind: "thought-delta", text: textDelta });
     } else if (isAssistantResponseStep) {
+      state.textSnapshots.set(key, (state.textSnapshots.get(key) ?? "") + textDelta);
       state.outputText += textDelta;
       events.push({ kind: "message-delta", text: textDelta });
     } else {
@@ -752,16 +754,13 @@ function normalizeStepUpdate(
     }
   }
 
-  const thought =
-    textDelta === undefined
-      ? readText(
-          step["raw_thought"] ??
-            step["rawThought"] ??
-            step["thought"] ??
-            step["reasoning"] ??
-            (isThoughtStep ? (step["content"] ?? step["text"]) : undefined),
-        )
-      : undefined;
+  const thought = readText(
+    step["raw_thought"] ??
+      step["rawThought"] ??
+      step["thought"] ??
+      step["reasoning"] ??
+      (isThoughtStep && textDelta === undefined ? (step["content"] ?? step["text"]) : undefined),
+  );
   if (thought !== undefined) {
     const delta = snapshotDelta(state.thoughtSnapshots, key, thought);
     if (delta !== "") events.push({ kind: "thought-delta", text: delta });
@@ -875,7 +874,7 @@ function normalizeToolStep(
   status: string | undefined,
   state: StreamState,
 ): readonly AntigravityNativeEvent[] {
-  const name =
+  const nativeName =
     readString(
       toolInfo["name"] ??
         toolInfo["tool_name"] ??
@@ -893,6 +892,12 @@ function normalizeToolStep(
     ) ?? `agy-tool:${key}`;
   const input =
     toolInfo["parameters"] ?? toolInfo["params"] ?? toolInfo["arguments"] ?? toolInfo["input"];
+  // Preserve the native wrapper input (including ServerName) for audit, while
+  // displaying the actual MCP operation consistently across its lifecycle.
+  const mcpName =
+    nativeName === "call_mcp_tool" ? readString(readRecord(input)?.["ToolName"]) : undefined;
+  const name =
+    mcpName !== undefined && /^[a-zA-Z0-9_-]{1,64}$/.test(mcpName) ? mcpName : nativeName;
   const output = toolInfo["output"] ?? toolInfo["result"] ?? toolInfo["error"] ?? step["output"];
   const sanitizedInput = sanitizeProgressData(input);
   const sanitizedOutput = sanitizeProgressData(output);
