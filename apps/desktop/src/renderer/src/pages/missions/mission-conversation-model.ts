@@ -77,14 +77,20 @@ export function hideInterruptedExecutionFallbackEntries(
   );
 }
 
+export function isMissionCoordinatorChatEntry(
+  entry: MissionChatEntry,
+  coordinatorId: string | undefined,
+): boolean {
+  return (
+    entry.kind === "user" || entry.executorId === undefined || entry.executorId === coordinatorId
+  );
+}
+
 export function teamCoordinatorChatEntries(
   entries: readonly MissionChatEntry[],
   coordinatorId: string | undefined,
 ): MissionChatEntry[] {
-  return entries.filter(
-    (entry) =>
-      entry.kind === "user" || entry.executorId === undefined || entry.executorId === coordinatorId,
-  );
+  return entries.filter((entry) => isMissionCoordinatorChatEntry(entry, coordinatorId));
 }
 
 export function missionTurnFinalReplyIds(

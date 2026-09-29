@@ -45,6 +45,7 @@ import {
 } from "./mission-command-delivery.ts";
 import {
   groupMissionConversationEntries,
+  isMissionCoordinatorChatEntry,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
   mergeLatestChatPage,
@@ -56,6 +57,7 @@ import {
   shouldShowMissionThinkingPlaceholder,
   teamCoordinatorChatEntries,
 } from "./mission-conversation-model.ts";
+import { canShowMissionStreamWaiting } from "./mission-stream-idle-store.ts";
 import { useMissionClientOperation } from "./mission-client-operation.ts";
 import {
   MissionChatComposer,
@@ -86,7 +88,7 @@ import {
   LocalMissionUserMessageView,
   MissionChatEntryView,
   MissionContextOperationEntry,
-  MissionThinkingPlaceholder,
+  MissionStreamWaitingIndicator,
   MissionToolCallBlock,
   MissionUserMessageContent,
 } from "./mission-chat-presentation.tsx";
@@ -307,6 +309,13 @@ export function MissionDetailFragment(props: {
       if (outcome.error !== undefined) setOptionsError(missionError(outcome.error));
     },
   });
+  const coordinatorId =
+    (teamCoordinator === undefined ? undefined : expertIdFromRef(teamCoordinator.ref)) ??
+    workRecords.find((record) => record.kind === "root")?.executorId;
+  const isChatOutputVisible = useCallback(
+    (entry: MissionChatEntry) => !isTeam || isMissionCoordinatorChatEntry(entry, coordinatorId),
+    [isTeam, coordinatorId],
+  );
   const {
     chat,
     initialLoading: chatInitialLoading,
@@ -314,12 +323,14 @@ export function MissionDetailFragment(props: {
     historyError,
     syncError: chatSyncError,
     liveEntryStore,
+    streamIdleStore,
     update: updateChat,
     loadEarlier: loadEarlierChat,
     observeFirstTokenPaint,
   } = useMissionConversation({
     missionId: props.mission.id,
     navigationId: props.navigationId,
+    isOutputVisible: isChatOutputVisible,
     api: desktopApi(),
     cache: props.chatCache,
     prefetchedConversation: props.prefetchedConversation,
@@ -996,9 +1007,6 @@ export function MissionDetailFragment(props: {
       ),
     [chat?.entries, visibleQueuedRequestIds],
   );
-  const coordinatorId =
-    (teamCoordinator === undefined ? undefined : expertIdFromRef(teamCoordinator.ref)) ??
-    workRecords.find((record) => record.kind === "root")?.executorId;
   const displayEntries = useMemo(
     () =>
       isTeam
@@ -1078,6 +1086,23 @@ export function MissionDetailFragment(props: {
       : `${lastContextOperation.id}:${lastContextOperation.status}`;
   const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
   const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
+  const streamWaitingActive = canShowMissionStreamWaiting(
+    chat,
+    showThinkingPlaceholder || executionActive,
+    interactions.length > 0,
+    props.mission.lifecycleStatus === "completed",
+  );
+  const streamWaitingExecutionId = executionActive
+    ? (chat?.execution?.id ?? props.mission.execution?.id)
+    : undefined;
+  // Mission owns the timer even when the virtual footer or chat tab is unmounted.
+  useLayoutEffect(() => {
+    streamIdleStore.configure(
+      streamWaitingActive,
+      streamWaitingExecutionId,
+      showThinkingPlaceholder,
+    );
+  }, [streamIdleStore, streamWaitingActive, streamWaitingExecutionId, showThinkingPlaceholder]);
   const backendRecoveryAvailable =
     chat?.controlHealth !== undefined &&
     ["orphaned", "interrupt_uncertain", "recovery_failed", "deletion_pending"].includes(
@@ -1513,11 +1538,13 @@ export function MissionDetailFragment(props: {
                         </div>
                       ) : index === conversationBlocks.length + 1 ? (
                         <div className="mission-chat-virtual-footer">
-                          {showThinkingPlaceholder ? (
-                            <MissionThinkingPlaceholder
-                              executorName={props.mission.executor.name}
-                            />
-                          ) : null}
+                          <MissionStreamWaitingIndicator
+                            store={streamIdleStore}
+                            active={streamWaitingActive}
+                            immediate={showThinkingPlaceholder}
+                            executorName={props.mission.executor.name}
+                            onVisibilityChange={scheduleFollowLatest}
+                          />
                           {participantWorkRecords.length === 0 ? null : (
                             <MissionTeamParticipantList
                               records={participantWorkRecords}

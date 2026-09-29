@@ -1,4 +1,12 @@
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import {
   ArrowClockwise,
@@ -29,6 +37,7 @@ import {
 } from "../../../../shared/contracts/index.ts";
 import type { LocalMissionUserMessage } from "./mission-command-delivery.ts";
 import type { LocalMissionContextOperation } from "./mission-conversation-model.ts";
+import type { MissionStreamIdleStore } from "./mission-stream-idle-store.ts";
 import { MissionLiveEntryStore, useMissionLiveEntry } from "./mission-live-entry-store.ts";
 
 export async function copyMissionReply(
@@ -135,13 +144,36 @@ export function MissionContextOperationEntry(props: {
 export function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
   const { t } = useTranslation("missions");
   return (
-    <div className="mission-assistant-message mission-thinking-placeholder" aria-live="polite">
+    <div
+      className="mission-assistant-message mission-thinking-placeholder"
+      role="status"
+      aria-live="polite"
+    >
       <p>
-        <SpinnerGap size={17} aria-hidden="true" />
-        {t("thinkingActive", { name: props.executorName })}
+        <span>{t("thinkingActive", { name: props.executorName })}</span>
       </p>
     </div>
   );
+}
+
+export function MissionStreamWaitingIndicator(props: {
+  readonly store: MissionStreamIdleStore;
+  readonly active: boolean;
+  readonly immediate: boolean;
+  readonly executorName: string;
+  readonly onVisibilityChange: () => void;
+}) {
+  const visible = useSyncExternalStore(
+    props.store.subscribe,
+    props.store.getSnapshot,
+    () => props.active && props.immediate,
+  );
+  useLayoutEffect(() => {
+    props.onVisibilityChange();
+  }, [visible, props.onVisibilityChange]);
+  return props.active && visible ? (
+    <MissionThinkingPlaceholder executorName={props.executorName} />
+  ) : null;
 }
 
 export const MissionChatEntryView = memo(function MissionChatEntryView(props: {
