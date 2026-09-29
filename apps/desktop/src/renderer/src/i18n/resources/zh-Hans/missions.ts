@@ -8,6 +8,10 @@ export const missions = {
   preparingQueuedSteer: "正在准备引导",
   removeQueuedMessage: "移出队列并编辑",
   queuePaused: "队列已在失败消息后暂停。",
+  deliveryUncertain: "投递不确定",
+  steerDeliveryUncertain:
+    "Steer 投递结果不确定，消息已保留，队列已暂停。请先核对当前轮结果，再决定是否重新执行，避免重复操作。",
+  retryUncertainQueue: "重新执行排队消息",
   resumeQueue: "跳过失败项继续",
   title: "任务",
   newMission: "新建任务",

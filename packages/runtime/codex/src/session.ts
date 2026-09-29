@@ -29,6 +29,7 @@ import {
   hasNonZeroUsage,
   readFirstTokenCount,
   RUNTIME_CONTEXT_COMPACTION_STAGES,
+  SteerNotDispatchedError,
 } from "@pragma/core";
 import type { CodexRuntimeMessage } from "./types.ts";
 import type { CodexUserInput } from "./types.ts";
@@ -247,7 +248,12 @@ export async function steerCodexTurn(
   request: { readonly requestId: string; readonly content: string },
 ): Promise<void> {
   const activeTurnId = session.activeTurnId;
-  if (activeTurnId === undefined) throw new Error("Codex has no active native turn to steer.");
+  if (activeTurnId === undefined) {
+    throw new SteerNotDispatchedError(
+      "no_active_turn",
+      "Codex has no active native turn to steer.",
+    );
+  }
   await session.client.steerTurn({
     threadId: session.state.threadId,
     expectedTurnId: activeTurnId,

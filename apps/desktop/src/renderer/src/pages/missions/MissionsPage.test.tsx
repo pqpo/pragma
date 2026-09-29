@@ -1687,6 +1687,53 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain('aria-label="Remove from queue and edit"');
   });
 
+  it.each(["en", "zh-Hans", "zh-Hant"])(
+    "keeps an uncertain queued steer visible after refresh in %s",
+    (language) => {
+      const previousLanguage = i18n.language;
+      void i18n.changeLanguage(language);
+      try {
+        const mission = missionFixture("expert");
+        const chat: MissionConversationSnapshot = {
+          missionId: mission.id,
+          revision: 1,
+          entries: [],
+          page: {},
+          pendingInteractions: [],
+          queue: {
+            state: "paused",
+            pendingCount: 1,
+            supportsSteer: true,
+            items: [
+              {
+                requestId: "00000000-0000-4000-8000-000000000012",
+                content: "Retained redirect",
+                hasAttachments: false,
+                deliveryUncertain: true,
+              },
+            ],
+          },
+          execution: {
+            id: "00000000-0000-4000-8000-000000000010",
+            status: "running",
+            interruptible: true,
+          },
+        };
+        const html = renderToStaticMarkup(
+          <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+        );
+
+        expect(html).toContain("Retained redirect");
+        expect(html).toContain(i18n.t("deliveryUncertain", { ns: "missions" }));
+        expect(html).toContain(i18n.t("retryUncertainQueue", { ns: "missions" }));
+        expect(html).not.toContain(">Steer<");
+        expect(html).not.toContain(i18n.t("queuePaused", { ns: "missions" }));
+      } finally {
+        void i18n.changeLanguage(previousLanguage);
+      }
+    },
+  );
+
   it("places dismissible errors above the composer", () => {
     const html = renderToStaticMarkup(
       <MissionDetailFragment

@@ -789,6 +789,7 @@ export const MissionConversationStateSchema = z.object({
             requestId: z.string().uuid(),
             content: z.string().min(1).max(100_000),
             hasAttachments: z.boolean(),
+            deliveryUncertain: z.boolean().optional(),
           }),
         )
         .default([]),

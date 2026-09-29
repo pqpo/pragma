@@ -1,6 +1,6 @@
 export type SteerNotDispatchedReason = "no_active_turn" | "target_changed" | "runtime_unsupported";
 
-/** A steer rejected before the Runtime adapter was invoked. It is safe to retain and retry. */
+/** A steer known not to have been injected, including explicit Runtime rejection. Safe to retry. */
 export class SteerNotDispatchedError extends Error {
   constructor(
     readonly reason: SteerNotDispatchedReason,

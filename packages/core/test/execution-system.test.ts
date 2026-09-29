@@ -1900,6 +1900,60 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await session.close();
   });
 
+  it("does not enqueue an uncertain steer even with an explicit enqueue fallback", async () => {
+    const home = await createTemporaryHome("pragma-strict-steer-uncertain-");
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({ delayMs: 250, failSteer: true, onSteer: () => undefined, stats }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "uncertain-steer",
+      name: "Uncertain Steer",
+      description: "Uncertain Steer",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+    );
+
+    await expect(
+      session.prompt("redirect", {
+        requestId: "uncertain",
+        mode: "steer",
+        steerFallback: "enqueue",
+      }),
+    ).rejects.toThrow("fake steer failed");
+    const retained = (await session.getPromptQueue()).filter(
+      (prompt) => prompt.requestId === "uncertain",
+    );
+    expect(retained).toHaveLength(1);
+    expect(retained[0]).toMatchObject({
+      mode: "steer",
+      content: "redirect",
+      status: "failed",
+      deliveryAttempt: { state: "uncertain" },
+    });
+    await expect(
+      session.prompt("redirect", { requestId: "uncertain", mode: "enqueue" }),
+    ).rejects.toThrow("Prompt idempotency conflict");
+    expect(
+      (await session.getPromptQueue()).filter((prompt) => prompt.requestId === "uncertain"),
+    ).toHaveLength(1);
+    await active.result;
+    expect(stats.executionIds).toHaveLength(1);
+    await session.close();
+  });
+
   it("wakes a coordinator waiting on children, delivers steer, and lets the child continue", async () => {
     const home = await createTemporaryHome("pragma-wait-steer-");
     const stats = createFakeRuntimeStats();
@@ -2070,6 +2124,13 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     expect((await session.getState()).activeExecutionId).toBe(active.executionId);
 
     await expect(active.result).resolves.toBe("queued-steer-failure:active");
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBeUndefined(),
+    );
+    await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
+    expect((await queued.getTree()).invocation.status).toBe("queued");
+    await session.prompt("later", { requestId: "later" });
+    expect(stats.executionIds).toHaveLength(1);
     await session.close();
   });
 
