@@ -3380,154 +3380,267 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     unsubscribe();
   });
 
-  it("materializes pre-tool and post-tool assistant messages from one Runtime run", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-mission-same-run-tool-answer-"));
-    temporaryPaths.push(root);
-    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({
-      expectedRevision: 0,
-      resources: [runtimeFixture(), expertFixture()],
-    });
-    const missions = createMissionStore({ missionsPath: join(root, "missions") });
-    const mission = await missions.create({
-      workspace: { path: root, basename: "workspace" },
-      goal: "Ask the user and report the answer",
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: missionExecutorSnapshot(
-        snapshot.resources.find((resource) => resource.kind === "Expert")!,
-      ),
-    });
-    const runtime = defineRuntimeTestDriver<never, { id: string }>({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: () => ({ id: "runtime" }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      async startTurn(_session, turn) {
-        const usage = {
-          measurement: "reported" as const,
-          input: 1,
-          output: 1,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 2,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        };
-        const message = (text: string, stopReason: "toolUse" | "stop", timestamp: number) => ({
-          role: "assistant" as const,
-          content: [{ type: "text" as const, text }],
-          api: "test",
-          provider: "test",
-          model: "test-model",
-          usage,
-          stopReason,
-          timestamp,
-        });
-        turn.stream.write({
-          runId: turn.runId,
-          source: turn.source,
-          type: "message.completed",
-          payload: {
-            role: "assistant",
-            contentType: "text",
-            message: message("I will ask the user now.", "toolUse", Date.now()),
+  it.each([false, true])(
+    "materializes pre-tool and post-tool assistant messages from one Runtime run (aggregate output: %s)",
+    async (aggregateOutput) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-same-run-tool-answer-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Ask the user and report the answer",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(
+          snapshot.resources.find((resource) => resource.kind === "Expert")!,
+        ),
+      });
+      let answerStreamed = (): void => undefined;
+      const finalAnswerStreamed = new Promise<void>((resolve) => {
+        answerStreamed = resolve;
+      });
+      let finishTurn = (): void => undefined;
+      const finalAnswerMayComplete = new Promise<void>((resolve) => {
+        finishTurn = resolve;
+      });
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "runtime" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        async startTurn(_session, turn) {
+          const usage = {
+            measurement: "reported" as const,
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          };
+          const message = (text: string, stopReason: "toolUse" | "stop", timestamp: number) => ({
+            role: "assistant" as const,
+            content: [
+              { type: "thinking" as const, thinking: `Thinking about ${text}` },
+              { type: "text" as const, text },
+              ...(stopReason === "toolUse"
+                ? [
+                    {
+                      type: "toolCall" as const,
+                      id: "ask-user",
+                      name: "askUserQuestion",
+                      arguments: {},
+                    },
+                  ]
+                : []),
+            ],
+            api: "test",
+            provider: "test",
+            model: "test-model",
+            usage,
+            stopReason,
+            timestamp,
+          });
+          const streamAnswer = (text: string) => {
+            turn.stream.write({
+              runId: turn.runId,
+              source: turn.source,
+              type: "thought.delta",
+              payload: { contentType: "text", delta: `Thinking about ${text}` },
+            });
+            for (const delta of [text.slice(0, 8), text.slice(8)]) {
+              turn.stream.write({
+                runId: turn.runId,
+                source: turn.source,
+                type: "message.delta",
+                payload: { role: "assistant", contentType: "text", delta },
+              });
+            }
+          };
+          streamAnswer("I will ask the user now.");
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "message.completed",
+            payload: {
+              role: "assistant",
+              contentType: "text",
+              message: message("I will ask the user now.", "toolUse", Date.now()),
+            },
+          });
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "tool.started",
+            payload: { toolCallId: "ask-user", toolName: "askUserQuestion", kind: "tool" },
+          });
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "tool.completed",
+            payload: {
+              toolCallId: "ask-user",
+              toolName: "askUserQuestion",
+              kind: "tool",
+              outputPreview: "Received",
+            },
+          });
+          const answer = "The user answered: Received.";
+          streamAnswer(answer);
+          answerStreamed();
+          await finalAnswerMayComplete;
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "message.completed",
+            payload: {
+              role: "assistant",
+              contentType: "text",
+              message: message(answer, "stop", Date.now() + 1),
+            },
+          });
+          return {
+            outputText: aggregateOutput ? "I will ask the user now." + answer : answer,
+            runtimeSessionId: "runtime",
+            usage,
+          };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const runnerOptions = {
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      };
+      const runner = createMissionRunner(runnerOptions);
+
+      await runner.run(mission.id);
+      await finalAnswerStreamed;
+      let streamingChat: Awaited<ReturnType<typeof runner.getChatPage>>;
+      try {
+        await vi.waitFor(
+          async () => {
+            streamingChat = await runner.getChatPage({ id: mission.id, limit: 50 });
+            expect(
+              streamingChat.entries
+                .filter((entry) => entry.kind === "assistant")
+                .map((entry) => entry.content),
+            ).toEqual(["I will ask the user now.", "The user answered: Received."]);
+            expect(streamingChat.entries.at(-1)).toMatchObject({
+              kind: "assistant",
+              streaming: true,
+            });
           },
-        });
-        turn.stream.write({
-          runId: turn.runId,
-          source: turn.source,
-          type: "tool.started",
-          payload: { toolCallId: "ask-user", toolName: "askUserQuestion", kind: "tool" },
-        });
-        turn.stream.write({
-          runId: turn.runId,
-          source: turn.source,
-          type: "tool.completed",
-          payload: {
-            toolCallId: "ask-user",
-            toolName: "askUserQuestion",
+          { timeout: settlementTimeoutMs },
+        );
+      } finally {
+        finishTurn();
+      }
+      await vi.waitFor(
+        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+        { timeout: settlementTimeoutMs },
+      );
+      const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
+      expect(
+        chat.entries.filter((entry) => entry.kind === "assistant").map((entry) => entry.content),
+      ).toEqual(["I will ask the user now.", "The user answered: Received."]);
+      expect(chat.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
             kind: "tool",
-            outputPreview: "Received",
-          },
-        });
-        const answer = "The user answered: Received.";
-        turn.stream.write({
-          runId: turn.runId,
-          source: turn.source,
-          type: "message.completed",
-          payload: {
-            role: "assistant",
-            contentType: "text",
-            message: message(answer, "stop", Date.now() + 1),
-          },
-        });
-        return { outputText: answer, runtimeSessionId: "runtime", usage };
-      },
-      mapEvent: () => ({ events: [] }),
-      closeSession: () => undefined,
-    });
-    const runner = createMissionRunner({
-      missions,
-      project,
-      capabilityStore: {} as CapabilityStore,
-      capabilityCredentials: {} as CapabilityCredentialStore,
-      capabilitiesPath: join(root, "capabilities"),
-      pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
+            toolName: "askUserQuestion",
+            status: "succeeded",
+          }),
+        ]),
+      );
 
-    await runner.run(mission.id);
-    await vi.waitFor(
-      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: settlementTimeoutMs },
-    );
-    const chat = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(
-      chat.entries.filter((entry) => entry.kind === "assistant").map((entry) => entry.content),
-    ).toEqual(["I will ask the user now.", "The user answered: Received."]);
-    expect(chat.entries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "tool",
-          toolName: "askUserQuestion",
-          status: "succeeded",
-        }),
-      ]),
-    );
+      // Recreate all Host readers with the same on-disk state, without any live chat.
+      // Both the terminal projection and reconstruction from canonical events must
+      // preserve the streamed segments, thoughts, tool ordering, and stable IDs.
+      const restart = () =>
+        createMissionRunner({
+          ...runnerOptions,
+          missions: createMissionStore({ missionsPath: join(root, "missions") }),
+          project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
+          executionStore: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+        });
+      const summarize = (entries: typeof chat.entries) =>
+        entries.map((entry) => ({
+          id: entry.id,
+          kind: entry.kind,
+          ...(entry.kind === "assistant" || entry.kind === "thinking"
+            ? { content: entry.content }
+            : {}),
+        }));
+      expect(summarize(streamingChat!.entries)).toEqual(summarize(chat.entries));
+      const restarted = await restart().getChatPage({ id: mission.id, limit: 50 });
+      expect(summarize(restarted.entries)).toEqual(summarize(chat.entries));
+      expect(
+        restarted.entries.filter((entry) => entry.kind !== "user").map((entry) => entry.kind),
+      ).toEqual(["thinking", "assistant", "tool", "thinking", "assistant"]);
 
-    // Older projections could retain the pre-tool assistant segment while losing
-    // the terminal result. A current read must recover the canonical root output
-    // without requiring a background repair job or a rerun of the Mission.
-    const completedMission = await missions.get(mission.id);
-    const executionId = completedMission.execution!.id;
-    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
-    const execution = (await executionStore.get(executionId))!;
-    let projection = await missions.readExecutionProjection(mission.id, executionId);
-    await vi.waitFor(
-      async () => {
-        projection = await missions.readExecutionProjection(mission.id, executionId);
-        expect(projection).toBeDefined();
-      },
-      { timeout: settlementTimeoutMs },
-    );
-    await missions.writeExecutionProjection(
-      mission.id,
-      executionId,
-      projection!.filter(
-        (entry) => entry.kind !== "assistant" || entry.content !== "The user answered: Received.",
-      ),
-      execution.updatedAt,
-    );
-    const recovered = await runner.getChatPage({ id: mission.id, limit: 50 });
-    expect(recovered.entries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: `result:${executionId}`,
-          kind: "assistant",
-          content: "The user answered: Received.",
-          finalAnswer: true,
-        }),
-      ]),
-    );
-  });
+      // Older projections could retain the pre-tool assistant segment while losing
+      // the terminal result. A current read must recover the canonical root output
+      // without requiring a background repair job or a rerun of the Mission.
+      const completedMission = await missions.get(mission.id);
+      const executionId = completedMission.execution!.id;
+      const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+      const execution = (await executionStore.get(executionId))!;
+      expect(execution.output).toEqual({
+        type: "inline",
+        value: aggregateOutput
+          ? "I will ask the user now.The user answered: Received."
+          : "The user answered: Received.",
+      });
+      let projection = await missions.readExecutionProjection(mission.id, executionId);
+      await vi.waitFor(
+        async () => {
+          projection = await missions.readExecutionProjection(mission.id, executionId);
+          expect(projection).toBeDefined();
+        },
+        { timeout: settlementTimeoutMs },
+      );
+      const canonicalMissions = createMissionStore({ missionsPath: join(root, "missions") });
+      vi.spyOn(canonicalMissions, "readExecutionProjectionPage").mockResolvedValue(undefined);
+      const canonicalRunner = createMissionRunner({
+        ...runnerOptions,
+        missions: canonicalMissions,
+        project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
+        executionStore: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+      });
+      const reconstructed = await canonicalRunner.getChatPage({ id: mission.id, limit: 50 });
+      expect(summarize(reconstructed.entries)).toEqual(summarize(chat.entries));
+      await missions.writeExecutionProjection(
+        mission.id,
+        executionId,
+        projection!.filter(
+          (entry) => entry.kind !== "assistant" || entry.content !== "The user answered: Received.",
+        ),
+        execution.updatedAt,
+      );
+      const recovered = await runner.getChatPage({ id: mission.id, limit: 50 });
+      expect(recovered.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: `result:${executionId}`,
+            kind: "assistant",
+            content: aggregateOutput
+              ? "I will ask the user now.The user answered: Received."
+              : "The user answered: Received.",
+            finalAnswer: true,
+          }),
+        ]),
+      );
+    },
+  );
 
   it("reads a legacy terminal Execution when its Mission projection is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-missing-projection-"));

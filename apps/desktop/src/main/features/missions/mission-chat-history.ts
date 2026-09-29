@@ -811,6 +811,20 @@ export function ensureTerminalExecutionResultEntry(
   execution: TerminalExecutionResultSource,
 ): MissionChatEntry[] {
   if (execution.status !== "succeeded") return [...entries];
+  // A completed root message is the chat authority. Execution output can
+  // aggregate several assistant segments, so comparing it with the last
+  // message and appending it would replay an otherwise complete conversation.
+  // Keep the output fallback for projections that actually lost their answer.
+  if (
+    entries.some(
+      (entry) =>
+        entry.kind === "assistant" &&
+        entry.invocationId === execution.rootInvocationId &&
+        entry.finalAnswer === true &&
+        entry.streaming !== true,
+    )
+  )
+    return [...entries];
   const content = missionWorkOutputSummary(execution.output, 200_000);
   if (content === undefined || content === "") return [...entries];
   const matchingIndex = entries.findLastIndex(
