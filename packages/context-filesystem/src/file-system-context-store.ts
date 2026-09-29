@@ -900,8 +900,9 @@ function serializeFileContext(context: ExpertAgentStoredContextItem): string {
     priority: context.metadata.priority,
   });
 
-  // stringify adds one newline for the empty body; append the literal body
-  // after removing that newline, preserving all original Markdown bytes.
+  // An empty body produces a closing delimiter followed by two newlines.
+  // Remove only the empty-body newline; keep the delimiter newline before
+  // appending the literal body so both full reads and listings agree.
   return header.slice(0, -1) + context.content;
 }
 

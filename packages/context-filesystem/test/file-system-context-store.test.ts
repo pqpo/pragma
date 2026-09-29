@@ -17,32 +17,62 @@ afterEach(async () => {
 });
 
 describe("FileSystemContextStore", () => {
-  it.each(["\uFEFF# Guide\r\nExact content\r\n", "---\ntitle: Original\n---\n# Guide"])(
-    "preserves literal context content and accounts for its UTF-8 bytes: %j",
-    async (content) => {
-      const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-bom-"));
-      temporaryRoots.push(rootDir);
-      const store = new FileSystemContextStore({ rootDir });
+  it.each([
+    "# Guide",
+    "# Guide\n",
+    "\n# Guide",
+    "",
+    "\uFEFF# Guide\r\nExact content\r\n",
+    "---\ntitle: Original\n---\n# Guide",
+  ])("preserves literal content through add, list, read, edit, and list: %j", async (content) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-bom-"));
+    temporaryRoots.push(rootDir);
+    const store = new FileSystemContextStore({ rootDir });
 
-      await expect(store.addContext({ id: "guide.md", content })).resolves.toMatchObject({
+    const added = await store.addContext({ id: "guide.md", content });
+    if (!added.ok) throw new Error(added.error.message);
+    const expectedSize = Buffer.byteLength(content);
+    await expect(store.listContext()).resolves.toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ id: "guide.md", sizeBytes: expectedSize })],
+    });
+    expect(await readFile(join(rootDir, "guide.md"), "utf8")).toBe(
+      `---\ntrigger: manual\npriority: normal\n---\n${content}`,
+    );
+    await expect(store.readContext({ id: "guide.md" })).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content,
+        sizeBytes: Buffer.byteLength(content),
+        contentRange: { startOffset: 0, endOffset: Buffer.byteLength(content), truncated: false },
+      },
+    });
+    if (content.startsWith("\uFEFF")) {
+      await expect(store.readContext({ id: "guide.md", start: 3 })).resolves.toMatchObject({
         ok: true,
+        value: { content: content.slice(1) },
       });
-      await expect(store.readContext({ id: "guide.md" })).resolves.toMatchObject({
-        ok: true,
-        value: {
-          content,
-          sizeBytes: Buffer.byteLength(content),
-          contentRange: { startOffset: 0, endOffset: Buffer.byteLength(content), truncated: false },
-        },
-      });
-      if (content.startsWith("\uFEFF")) {
-        await expect(store.readContext({ id: "guide.md", start: 3 })).resolves.toMatchObject({
-          ok: true,
-          value: { content: content.slice(1) },
-        });
-      }
-    },
-  );
+    }
+    const editedContent = `${content}\nEdited 内容`;
+    await expect(
+      store.editContext({
+        id: "guide.md",
+        mode: "replace",
+        content: editedContent,
+        expectedRevision: added.value.revision,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { content: editedContent } });
+    await expect(store.listContext()).resolves.toMatchObject({
+      ok: true,
+      value: [
+        expect.objectContaining({ id: "guide.md", sizeBytes: Buffer.byteLength(editedContent) }),
+      ],
+    });
+    await expect(store.readContext({ id: "guide.md" })).resolves.toMatchObject({
+      ok: true,
+      value: { content: editedContent, sizeBytes: Buffer.byteLength(editedContent) },
+    });
+  });
   it("keeps Git internals out of listing, search, and direct reads", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-git-"));
     temporaryRoots.push(rootDir);
