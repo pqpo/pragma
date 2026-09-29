@@ -37,6 +37,15 @@ it.skipIf(process.env["PRAGMA_CLAUDE_ACP_SMOKE"] !== "1")(
       new URL(`./fixtures/legacy-2.1.195/${nativeId}.jsonl`, import.meta.url),
       "utf8",
     );
+    const historicalMessageIds = new Set(
+      history
+        .trim()
+        .split("\n")
+        .flatMap((line) => {
+          const entry = JSON.parse(line) as { uuid?: string; message?: { id?: string } };
+          return [entry.uuid, entry.message?.id].filter((id): id is string => id !== undefined);
+        }),
+    );
     await writeFile(
       destination,
       history.replaceAll("<LEGACY_ROOT>", root).replaceAll("<HOME>", homedir()),
@@ -127,7 +136,13 @@ it.skipIf(process.env["PRAGMA_CLAUDE_ACP_SMOKE"] !== "1")(
       expect(next.usage.input).toBe(reported.mock.calls[1]?.[0].inputTokens);
       expect(next.usage.output).toBe(reported.mock.calls[1]?.[0].outputTokens);
       expect(next.usage.totalTokens).toBeGreaterThan(0);
-      expect(JSON.stringify(events)).not.toContain("LEGACY_RECORDED_5083");
+      // New reasoning may mention historical text. Replay is identified by the
+      // original message identity, not by a substring in newly generated content.
+      for (const event of events) {
+        if (event.update !== undefined && "messageId" in event.update)
+          expect(historicalMessageIds.has(event.update.messageId as string)).toBe(false);
+        expect(event.completedText).not.toBe("LEGACY_RECORDED_5083");
+      }
     } finally {
       await session.close();
       await rm(root, { recursive: true, force: true });

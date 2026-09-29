@@ -202,6 +202,9 @@ importers:
         specifier: latest
         version: 4.5.4
     devDependencies:
+      '@electron/asar':
+        specifier: 3.4.1
+        version: 3.4.1
       '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig

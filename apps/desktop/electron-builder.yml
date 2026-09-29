@@ -1,6 +1,7 @@
 appId: com.pqpo.pragma
 productName: Pragma
 asar: true
+afterPack: ./scripts/audit-packaged-app.mjs
 asarUnpack:
   - out/main/claude-acp-worker.js
 
@@ -11,6 +12,12 @@ directories:
 files:
   - out/**/*
   - package.json
+  # Claude Code is installed by the user, including on the target architecture.
+  - "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*"
+  - "!**/node_modules/@anthropic-ai/claude-code/**/*"
+  # Older SDK layouts embed the CLI directly rather than in optional packages.
+  - "!**/node_modules/@anthropic-ai/claude-agent-sdk/{claude,claude.exe,cli.js,cli.cjs,cli.mjs}"
+  - "!**/node_modules/@anthropic-ai/claude-agent-sdk/vendor/**/*"
 
 extraResources:
   - from: .plugin-bundles/plugins
