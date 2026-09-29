@@ -1,4 +1,4 @@
-import type { ModelApi, ProviderModelDefinition } from "@pragma/shared";
+import type { ModelApi, ProviderModelDefinition, GenerationModelDefinition } from "@pragma/shared";
 
 import type {
   ModelProviderDirectory,
@@ -75,7 +75,7 @@ export async function probeModelProvider(options: {
   readonly api: ModelApi;
   readonly baseUrl: string;
   readonly apiKey: string;
-  readonly model: ProviderModelDefinition;
+  readonly model: GenerationModelDefinition;
   readonly drivers: ModelProviderDriverRegistry;
 }): Promise<ModelProviderProbeResult> {
   const api = options.model.api ?? options.api;
@@ -91,6 +91,12 @@ export async function probeModelProvider(options: {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
+    if (options.model.kind !== "generation")
+      return {
+        ok: false,
+        code: "unsupported_protocol",
+        message: "Use an embedding connection probe.",
+      };
     return await driver.probe({
       baseUrl: options.model.baseUrl ?? options.baseUrl,
       apiKey: options.apiKey,
@@ -111,8 +117,9 @@ export async function probeModelProvider(options: {
   }
 }
 
-export function createUnknownProviderModel(id: string, api: ModelApi): ProviderModelDefinition {
+export function createUnknownProviderModel(id: string, api: ModelApi): GenerationModelDefinition {
   return {
+    kind: "generation",
     id,
     name: id,
     api,
@@ -131,6 +138,21 @@ function mergeDiscoveredModel(
   catalog: ProviderModelDefinition | undefined,
   api: ModelApi,
 ): ProviderModelDefinition {
+  if (candidate.kind === "embedding" || catalog?.kind === "embedding") {
+    return {
+      ...(catalog?.kind === "embedding" ? catalog : {}),
+      kind: "embedding",
+      id: candidate.id,
+      name: candidate.name ?? candidate.id,
+      api: "openai-embeddings",
+      maxInputTokens:
+        candidate.maxInputTokens ??
+        (catalog?.kind === "embedding" ? catalog.maxInputTokens : undefined),
+      maxInputTokensSource: candidate.maxInputTokens === undefined ? "catalog" : "provider",
+      maxBatchInputs: catalog?.kind === "embedding" ? catalog.maxBatchInputs : 32,
+      cost: { input: 0 },
+    };
+  }
   const base = catalog ?? createUnknownProviderModel(candidate.id, api);
   return {
     ...base,
@@ -168,7 +190,13 @@ function createDriver(api: ModelApi, fetchImpl: typeof fetch): ModelProviderDriv
     },
     async probe(options) {
       const startedAt = Date.now();
-      const request = createProbeRequest(api, options);
+      if (options.model.kind !== "generation")
+        return {
+          ok: false,
+          code: "unsupported_protocol",
+          message: "Use the Memory embedding connection check.",
+        };
+      const request = createProbeRequest(api, { ...options, model: options.model });
       const response = await fetchImpl(request.endpoint, {
         method: "POST",
         headers: requestHeaders(api, options.apiKey, true),
@@ -199,7 +227,7 @@ function createProbeRequest(
   options: {
     readonly baseUrl: string;
     readonly apiKey: string;
-    readonly model: ProviderModelDefinition;
+    readonly model: GenerationModelDefinition;
   },
 ): { readonly endpoint: URL; readonly body: Record<string, unknown> } {
   switch (api) {
@@ -273,10 +301,7 @@ function anthropicEndpointUrl(baseUrl: string, path: string): URL {
   return endpointUrl(baseUrl, basePath.endsWith("/v1") ? path : `v1/${path}`);
 }
 
-function extractModels(
-  body: unknown,
-  api: ModelApi,
-): { id: string; name?: string; contextWindow?: number; maxTokens?: number }[] {
+function extractModels(body: unknown, api: ModelApi): ModelProviderDiscoveryCandidate[] {
   if (!body || typeof body !== "object") return [];
   const candidates = Array.isArray((body as { data?: unknown }).data)
     ? (body as { data: unknown[] }).data
@@ -304,8 +329,18 @@ function extractModels(
           "max_output_tokens",
           "max_completion_tokens",
         ]) ?? readNestedPositiveInteger(candidate, "top_provider", "max_completion_tokens");
+      const kind = readString(candidate, ["kind", "type"]);
       return {
         id,
+        ...(kind === "embedding"
+          ? {
+              kind: "embedding" as const,
+              maxInputTokens: readPositiveInteger(candidate, [
+                "max_input_tokens",
+                "inputTokenLimit",
+              ]),
+            }
+          : {}),
         ...(displayName === undefined ? {} : { name: displayName }),
         ...(contextWindow === undefined ? {} : { contextWindow }),
         ...(maxTokens === undefined ? {} : { maxTokens }),

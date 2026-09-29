@@ -1,4 +1,9 @@
 export const missions = {
+  memoryAttentionSelection: "Memory attention selection",
+  memoryAttentionAssessed: "Jev assessed",
+  memoryAttentionUnassessed: "Vector similarity · unassessed",
+  memoryAttentionBrowse: "Browse source memory",
+
   deliveryMode: "Message delivery mode",
   deliveryEnqueue: "Queue",
   deliverySteer: "Steer",

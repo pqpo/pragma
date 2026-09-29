@@ -18,9 +18,7 @@ const ModelThinkingLevelV5Schema = z.enum([
 ]);
 
 const SecretOwnerV5Schema = z.discriminatedUnion("kind", [
-  z
-    .object({ kind: z.literal("model-provider"), providerId: z.string().min(1) })
-    .passthrough(),
+  z.object({ kind: z.literal("model-provider"), providerId: z.string().min(1) }).passthrough(),
   z
     .object({
       kind: z.literal("capability"),
@@ -28,9 +26,7 @@ const SecretOwnerV5Schema = z.discriminatedUnion("kind", [
       name: z.string().min(1),
     })
     .passthrough(),
-  z
-    .object({ kind: z.literal("plugin-binding"), bindingRef: z.string().min(1) })
-    .passthrough(),
+  z.object({ kind: z.literal("plugin-binding"), bindingRef: z.string().min(1) }).passthrough(),
 ]);
 
 const SecretRefV5Schema = z

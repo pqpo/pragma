@@ -46,6 +46,7 @@ describe("testProviderModel", () => {
 
 function testModel(id: string) {
   return {
+    kind: "generation" as const,
     id,
     name: id,
     api: "openai-completions" as const,

@@ -32,3 +32,8 @@ export * from "./attention/state.ts";
 export * from "./attention/decision-provider.ts";
 export * from "./attention/controller.ts";
 export * from "./attention/providers/jev.ts";
+
+export * from "./retrieval/embedding.ts";
+export * from "./retrieval/projection.ts";
+export * from "./retrieval/vector-index.ts";
+export * from "./retrieval/indexer.ts";

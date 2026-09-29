@@ -32,3 +32,4 @@ export * from "./execution/human-interaction.schema.ts";
 export * from "./expert-prompt.schema.ts";
 export * from "./integration/index.ts";
 export * from "./memory/memory-attention.schema.ts";
+export * from "./memory/memory-retrieval.schema.ts";

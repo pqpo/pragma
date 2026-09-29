@@ -1,4 +1,9 @@
 export const missions = {
+  memoryAttentionSelection: "記憶注意力選擇",
+  memoryAttentionAssessed: "已由 Jev 評估",
+  memoryAttentionUnassessed: "向量相似度 · 未評估",
+  memoryAttentionBrowse: "查看來源記憶",
+
   deliveryMode: "訊息傳送方式",
   deliveryEnqueue: "排隊",
   deliverySteer: "引導",

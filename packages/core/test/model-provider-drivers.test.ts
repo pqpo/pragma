@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelProviderDirectory } from "../src/model-provider/model-provider.ts";
-import type { ProviderModelDefinition } from "@pragma/shared";
+import type { GenerationModelDefinition, ProviderModelDefinition } from "@pragma/shared";
 
 import {
   createBuiltInModelProviderDriverRegistry,
@@ -201,6 +201,7 @@ describe("model provider drivers", () => {
       baseUrl: testCase.baseUrl,
       apiKey: "secret",
       model: {
+        kind: "generation",
         id: "test-model",
         name: "Test Model",
         reasoning: false,
@@ -229,6 +230,7 @@ describe("model provider drivers", () => {
       baseUrl: "https://api.example.com",
       apiKey: "secret",
       model: {
+        kind: "generation",
         id: "model",
         name: "Model",
         reasoning: false,
@@ -251,8 +253,9 @@ function testDirectory(
   return { listModels: (catalogId) => models[catalogId] ?? [] };
 }
 
-function testModel(id: string, reasoning: boolean): ProviderModelDefinition {
+function testModel(id: string, reasoning: boolean): GenerationModelDefinition {
   return {
+    kind: "generation",
     id,
     name: id,
     reasoning,

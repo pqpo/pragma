@@ -45,6 +45,7 @@ describe("PI Runtime contract", () => {
             baseUrl: "https://models.example.com/v1",
             models: [
               {
+                kind: "generation",
                 id: "gpt-test",
                 name: "GPT Test",
                 reasoning: true,
@@ -63,6 +64,7 @@ describe("PI Runtime contract", () => {
           displayName: "Provider",
           models: [
             {
+              kind: "generation",
               id: "gpt-test",
               name: "GPT Test",
               reasoning: true,

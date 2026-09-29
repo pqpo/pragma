@@ -1,3 +1,4 @@
+import { MemoryAttentionContextSummarySchema } from "@pragma/shared";
 import {
   EffectiveMemoryPolicySchema,
   MemoryAssetPolicyOverrideSchema,
@@ -449,6 +450,7 @@ export const ReviewDesktopMemoryItemSchema = DesktopMemoryItemRefSchema.extend({
 export const DesktopMemoryEvidenceSchema = MemoryEvidenceEnvelopeSchema;
 
 export const DesktopMissionMemoryActivitySchema = z.object({
+  attention: z.array(MemoryAttentionContextSummarySchema).max(128).optional(),
   missionId: z.string().uuid(),
   executions: z.array(
     z.object({

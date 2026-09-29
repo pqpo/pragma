@@ -24,6 +24,32 @@ afterEach(async () => {
 });
 
 describe("Memory activity", () => {
+  it("withdraws all search results when recall permission changes during vector retrieval", async () => {
+    const pragmaHome = await temporaryRoot();
+    const activity = createMemoryActivityStore({ pragmaHome });
+    let enabled = true;
+    const context = createFederatedMemoryContextStore(new MemoryModuleRegistry(), {
+      activity,
+      resolveRecallScope: () =>
+        enabled ? { rootRef: { type: "pragma.expert", id: "expert-a" } } : undefined,
+      vectorSearch: async () => {
+        enabled = false;
+        return [];
+      },
+    });
+    const runContext = {
+      attributes: {
+        "execution.executionId": "withdrawn",
+        "execution.invocationId": "invocation-withdrawn",
+      },
+    };
+    await expect(
+      context.searchContext({ query: "Memory", context: runContext }),
+    ).resolves.toMatchObject({ ok: false, error: { code: "permission_denied" } });
+    expect(await activity.listRecall("withdrawn")).toMatchObject([
+      { outcome: "denied", reason: "recall_scope_changed", resultRefs: [] },
+    ]);
+  });
   it("audits agent-driven ContextStore operations without storing the raw search query", async () => {
     const pragmaHome = await temporaryRoot();
     const activity = createMemoryActivityStore({ pragmaHome });

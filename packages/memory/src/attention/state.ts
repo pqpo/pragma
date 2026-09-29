@@ -1,19 +1,29 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { PragmaPaths, withFileLock } from "@pragma/core";
+import { randomUUID, createHash } from "node:crypto";
+import { mkdir, readFile, rename, writeFile, copyFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import {
+  PragmaPaths,
+  withFileLock,
+  applyAtomicStateMigration,
+  recoverAtomicStateMigration,
+} from "@pragma/core";
 import { z } from "zod";
 
+import { ATTENTION_STORAGE_MIGRATIONS } from "../storage/migrations/attention/index.ts";
+export const MEMORY_ATTENTION_VERSION = "pragma.memory-attention/v2";
 export const MEMORY_ATTENTION_CONTEXT_ID = "mission-attention.md";
 export const MEMORY_ATTENTION_HINT =
   "Memory attention changed. Relevant historical context is available at memory/mission-attention.md.";
 export const MEMORY_ATTENTION_POLICY = Object.freeze({
   maxItems: 8,
-  maxLensBytes: 8_192,
+  maxLensBytes: 24_576,
+  maxLensTokens: 3_000,
+  maxRounds: 3,
+  maxDetails: 12,
   maxDeltaBytes: 4_096,
   maxRequestBytes: 24_576,
   maxQueries: 3,
-  maxCandidates: 8,
+  maxCandidates: 30,
   debounceMs: 250,
   minIntervalMs: 5_000,
   recallThreshold: 0.65,
@@ -31,6 +41,22 @@ export const MemoryAttentionEntrySchema = z
     memoryId: z.string().min(1),
     revision: z.number().int().positive(),
     relevance: z.number().min(0).max(1),
+    decisionMode: z.enum(["provider", "vector_unassessed"]),
+    similarity: z.number().min(-1.00001).max(1.00001).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    pinned: z.literal(false),
+    selectedPaths: z
+      .array(
+        z
+          .object({
+            fieldPath: z.string(),
+            start: z.number().int().nonnegative(),
+            end: z.number().int().nonnegative(),
+            textHash: z.string(),
+          })
+          .strict(),
+      )
+      .max(12),
     reason: z.enum(["new_error", "new_observation", "goal_changed", "historical_precedent"]),
     firstActivatedAt: z.string().datetime(),
     lastRelevantAt: z.string().datetime(),
@@ -38,7 +64,7 @@ export const MemoryAttentionEntrySchema = z
   .strict();
 export const MemoryAttentionStateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-attention/v1"),
+    schemaVersion: z.literal(MEMORY_ATTENTION_VERSION),
     missionId: z.string().min(1),
     contextId: z.string().min(1),
     scopeDigest: z.string().min(1),
@@ -47,6 +73,7 @@ export const MemoryAttentionStateSchema = z
     revision: z.number().int().nonnegative(),
     active: z.array(MemoryAttentionEntrySchema).max(8),
     lastDeltaDigest: z.string().optional(),
+    taskVersion: z.number().int().nonnegative().optional(),
     lastHintedVersion: z.number().int().nonnegative().default(0),
     lastReadVersion: z.number().int().nonnegative().default(0),
     audit: z
@@ -96,20 +123,68 @@ export function createFileMemoryAttentionStateStore(options: {
   pragmaHome?: string;
 }): MemoryAttentionStateStore {
   const paths = new PragmaPaths(options);
-  const read = async (missionId: string, contextId: string) => {
-    const value = await readAttentionJson(paths.memoryAttentionState(missionId, contextId));
+  const readUnlocked = async (missionId: string, contextId: string) => {
+    const path = paths.memoryAttentionState(missionId, contextId),
+      aggregateRoot = dirname(path),
+      name = basename(path),
+      journalFile = `${path}.state-migration.json`;
+    const resource = { family: "pragma.memory-attention", id: name };
+    await recoverAtomicStateMigration({
+      aggregateRoot,
+      journalFile,
+      resource,
+      validateDocuments: (documents) => {
+        MemoryAttentionStateSchema.parse(documents[name]);
+      },
+    });
+    let value = await readAttentionJson(path);
     if (value === undefined) return undefined;
+    for (const step of ATTENTION_STORAGE_MIGRATIONS) {
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("schemaVersion" in value) ||
+        value.schemaVersion !== step.sourceVersion
+      )
+        continue;
+      const next = step.migrate(value);
+      const backupRoot = join(aggregateRoot, "migrations", "backups");
+      await mkdir(backupRoot, { recursive: true, mode: 0o700 });
+      await copyFile(
+        path,
+        join(
+          backupRoot,
+          `${createHash("sha256").update(JSON.stringify(value)).digest("hex")}.attention-v1.json`,
+        ),
+      );
+      await applyAtomicStateMigration({
+        aggregateRoot,
+        journalFile,
+        resource,
+        fromVersion: step.fromVersion,
+        toVersion: step.toVersion,
+        documents: { [name]: next },
+        validateDocuments: (documents) => {
+          MemoryAttentionStateSchema.parse(documents[name]);
+        },
+      });
+      value = next;
+    }
     const state = MemoryAttentionStateSchema.parse(value);
     if (state.missionId !== missionId || state.contextId !== contextId)
       throw new Error("attention_owner_mismatch");
     return state;
   };
+  const read = (missionId: string, contextId: string) =>
+    withFileLock(`${paths.memoryAttentionState(missionId, contextId)}.lock`, () =>
+      readUnlocked(missionId, contextId),
+    );
   return {
     read,
     async update(missionId, contextId, updater) {
       const path = paths.memoryAttentionState(missionId, contextId);
       return await withFileLock(`${path}.lock`, async () => {
-        const current = await read(missionId, contextId);
+        const current = await readUnlocked(missionId, contextId);
         const next = updater(current);
         if (next === undefined) return current;
         const parsed = MemoryAttentionStateSchema.parse(next);

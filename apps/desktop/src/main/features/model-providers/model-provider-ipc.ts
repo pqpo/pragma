@@ -15,6 +15,7 @@ import {
 export function installModelProviderHandlers(
   store: ModelProviderStore,
   options: {
+    readonly beforeConnectionChange?: () => void;
     readonly isProviderReferenced?: (providerId: string) => Promise<boolean>;
   } = {},
 ): void {
@@ -24,17 +25,23 @@ export function installModelProviderHandlers(
   ipcMain.handle("model-providers:create", (_event, input: unknown) =>
     store.create(CreateModelProviderSchema.parse(input)),
   );
-  ipcMain.handle("model-providers:update", (_event, input: unknown) =>
-    store.update(UpdateModelProviderSchema.parse(input)),
-  );
+  ipcMain.handle("model-providers:update", async (_event, input: unknown) => {
+    const parsed = UpdateModelProviderSchema.parse(input);
+    options.beforeConnectionChange?.();
+    return await store.update(parsed);
+  });
   ipcMain.handle("model-providers:delete", async (_event, input: unknown) => {
     const id = DeleteModelProviderSchema.parse(input).id;
     if (await options.isProviderReferenced?.(id)) {
       throw new Error("This provider is used by a Runtime Profile and cannot be deleted.");
     }
+    options.beforeConnectionChange?.();
     await store.remove(id);
   });
-  ipcMain.handle("model-providers:reset", () => store.reset());
+  ipcMain.handle("model-providers:reset", async () => {
+    options.beforeConnectionChange?.();
+    return await store.reset();
+  });
   ipcMain.handle("model-providers:discover", async (_event, input: unknown) => {
     const request = DiscoverProviderModelsSchema.parse(input);
     let apiKey = request.apiKey ?? "";

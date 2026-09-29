@@ -200,6 +200,29 @@ export const settings = {
     slotDescription: "一個並行槽涵蓋同一案例的受測執行與 Judge 執行；修改後會立即套用到佇列。",
   },
   memory: {
+    retrieval: {
+      title: "記憶向量檢索",
+      description:
+        "將去識別化記憶片段和搜尋查詢傳送至選定的向量模型供應商。索引建構中或供應商不可用時，文字搜尋仍可使用。",
+      enable: "啟用向量檢索",
+      model: "向量模型",
+      choose: "選擇向量模型",
+      configure: "請在「模型供應商」中新增向量模型並確認輸入限制。",
+      loadError: "無法載入檢索設定。",
+      operationError: "檢索操作失敗，請檢查診斷碼和供應商設定。",
+      coverage: "{{indexed}} / {{total}} 條記憶 · {{segments}} 個分段 · {{failed}} 個失敗",
+      testPassed: "連線測試通過：{{model}}，{{dimensions}} 維",
+      test: "測試連線",
+      retry: "重試索引",
+      rebuild: "重建快取",
+      state: {
+        disabled: "已停用",
+        building: "索引建構中",
+        ready: "就緒",
+        degraded: "降級執行",
+        needs_attention: "需要處理",
+      },
+    },
     attention: {
       description: "作為記憶的索引，提升記憶召回效能和準確度。",
       key: "Jev API Key",
@@ -257,6 +280,14 @@ export const settings = {
     },
   },
   models: {
+    kind: "模型類型",
+    generation: "生成模型",
+    embedding: "向量模型",
+    maxInputTokens: "最大輸入 Token",
+    maxBatchTokens: "每批 Token 上限（選填）",
+    maxBatchInputs: "每批輸入數量",
+    embeddingLimitDescription: "使用此模型進行記憶檢索前，請確認供應商的輸入限制。",
+
     navigation: "模型與供應商",
     title: "模型與供應商",
     description: "連接主流模型供應商、API 閘道與本機模型服務。",

@@ -39,6 +39,38 @@ afterEach(async () => {
 });
 
 describe("Episodic Memory", () => {
+  it("does not publish lexical content forgotten while vector retrieval was in flight", async () => {
+    const module = await createEpisodicMemoryModule({
+      pragmaHome: await temporaryRoot(),
+      extractor: fakeExtractor(undefined, 0.9, "unique-forgotten-content"),
+    });
+    try {
+      await module.consume(executionEvidence("forgotten-during-search"));
+      await module.runBackgroundOnce?.();
+      const [record] = await module.store.list();
+      const registry = new MemoryModuleRegistry();
+      registry.register(module);
+      const context = createFederatedMemoryContextStore(registry, {
+        resolveRecallScope: () => expertScope("expert-a"),
+        vectorSearch: async () => {
+          await module.store.forget({
+            id: record!.id,
+            expectedRevision: record!.revision,
+            actorRef: { type: "pragma.user", id: "local-user" },
+            reason: "regression",
+            now: new Date(),
+          });
+          return [];
+        },
+      });
+      const result = await context.searchContext({ query: "unique-forgotten-content" });
+      expect(await module.store.get(record!.id)).toBeUndefined();
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toEqual([]);
+    } finally {
+      module.close();
+    }
+  });
   it("extracts a layered, evidence-traceable episode without WorkingState", async () => {
     const root = await temporaryRoot();
     const now = new Date("2026-08-03T12:00:00.000Z");

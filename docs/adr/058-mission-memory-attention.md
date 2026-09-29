@@ -1,6 +1,7 @@
 # ADR 058: Mission Memory Attention
 
 - Status: Accepted
+- Partially superseded by: [ADR 061](./061-memory-vector-retrieval-and-task-attention.md)，候选检索、预算、Lens 和状态升级以 ADR 061 为准。
 - Date: 2026-09-28
 - Supersedes in part: [ADR 035](./035-agent-driven-memory-recall-and-governance.md)
 - Related: [Issue #319](https://github.com/pqpo/pragma/issues/319)、[ADR 042](./042-local-host-and-cli-boundary.md)
@@ -15,7 +16,7 @@ Desktop 与 CLI 必须使用相同的 Memory 数据、授权和待提取任务�
 
 `@pragma/memory` 拥有通用 `MemoryAttentionController`、`MemoryDecisionProvider`、有界状态与手动 Lens。
 Jev 是可替换 Provider，使用 TypeSafe 官方 System One API，仅输出相关性、召回和变化判断。
-Host 使用现有 Episodic/Semantic search，不引入向量索引；Knowledge、Skill 不进入 Attention。
+Host 组合 Episodic/Semantic 文字与向量检索，具体 generation 和迭代判断见 ADR 061；Knowledge、Skill 不进入 Attention。
 
 `@pragma/local-host` 统一数据管线、安装级主体、RecallScope、凭据与执行事件适配。Desktop 注入学习端口和
 后台提炼能力；CLI 只捕获 Evidence、提交待提取任务、读取已有记忆与 Attention。CLI 不运行提炼模型或 daemon，
@@ -35,7 +36,7 @@ Key 通过现有加密 SecretStore 保存，设置文件只存 SecretRef。轮�
 不保存任务文本、query、摘要、Key 或上游响应。
 
 网络/限流失败保留已有有效 Attention，短期退避后可重试；认证或响应协议错误保持 needs_attention，直到重新配置。
-故障归入 Memory degraded，不退回另一个模型，不阻断工具执行。新状态 family 从 v1 起步，不修改已有持久协议。
+故障归入 Memory degraded，不阻断工具执行。原 v1 状态通过有备份和 journal 的相邻迁移升级到 v2，版本边界见 ADR 061。
 
 ## Consequences
 
@@ -43,6 +44,6 @@ Key 通过现有加密 SecretStore 保存，设置文件只存 SecretRef。轮�
 - Desktop 关闭时，CLI 产生的提炼任务保留，后续 Desktop 可以继续消费。
 - 脱敏并有界的观察与许可内摘要会发送至 TypeSafe；界面说明这一行为，Key 配置代表启用。
 - 多 Context 的本地判断不会互相污染；团队成员按原权限读取历史。
-- 初版有固定预算与关键词检索，可能遗漏同义词；原有手动检索仍然可用。
+- 候选池和迭代判断有固定预算；原有手动检索与只读 Context 路径继续有效。
 
 实现、预算及验证见 [Memory Attention 架构](../architecture/memory-attention.md)。

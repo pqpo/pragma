@@ -76,6 +76,7 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 - [Unified Memory revision learning](./057-unified-memory-revision-learning.md)
 
 - [Mission Memory Attention](./058-mission-memory-attention.md)
+- [Memory 向量检索与任务 Attention](./061-memory-vector-retrieval-and-task-attention.md)
 - [ACP Runtime Driver and Claude Code transport](./059-acp-runtime-driver.md)
 
 - [Structured core asset synchronization](./060-structured-core-asset-sync.md)

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "id": "073786a6-75cd-44a0-81d6-0a391aaefc3b",
+      "presetId": "openai",
+      "name": "Historical provider",
+      "protocol": "openai-responses",
+      "baseUrl": "http://localhost:8080/v1",
+      "models": [
+        {
+          "id": "historical-generation",
+          "name": "Historical generation",
+          "api": "openai-responses",
+          "reasoning": false,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 128000,
+          "maxTokens": 16384,
+          "capabilitiesSource": "manual"
+        }
+      ],
+      "apiKeySecretRef": {
+        "schemaVersion": "pragma.secret-ref/v1",
+        "secretId": "f4ffcc3f-75be-4cac-afd9-a9bebbe76a42",
+        "owner": {
+          "kind": "model-provider",
+          "providerId": "073786a6-75cd-44a0-81d6-0a391aaefc3b"
+        },
+        "revision": "34553015-4b31-478d-b2d7-3c031b898f93"
+      },
+      "requiresApiKey": true,
+      "verification": {
+        "status": "unverified"
+      },
+      "revision": 1
+    }
+  ]
+}

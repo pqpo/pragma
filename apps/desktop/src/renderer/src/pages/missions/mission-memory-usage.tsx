@@ -13,6 +13,7 @@ export function MissionMemoryActivity(props: {
   readonly error?: string | undefined;
   readonly loading: boolean;
   readonly onBrowseStore: () => void;
+  readonly onBrowseSource?: ((path: string) => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
   if (props.loading)
@@ -62,6 +63,53 @@ export function MissionMemoryActivity(props: {
   return (
     <div className="mission-memory-activity">
       <MissionMemoryActivityHeader onBrowseStore={props.onBrowseStore} />
+      {props.activity.attention?.map((context) => (
+        <section
+          key={context.contextId}
+          className="mission-memory-executions"
+          aria-label={t("memoryAttentionSelection")}
+        >
+          <header>
+            <h3>{t("memoryAttentionSelection")}</h3>
+            <span>{context.version}</span>
+          </header>
+          {context.errorCode ? (
+            <p role="status">
+              <code>{context.errorCode}</code>
+            </p>
+          ) : null}
+          {context.entries.map((entry) => (
+            <article key={`${entry.module}:${entry.memoryId}`}>
+              <strong>
+                {entry.module} · {entry.memoryId} · v{entry.revision}
+              </strong>
+              <small>
+                {t(
+                  entry.decisionMode === "provider"
+                    ? "memoryAttentionAssessed"
+                    : "memoryAttentionUnassessed",
+                )}
+              </small>
+              <p>
+                {entry.selectedPaths
+                  .map((path) => `${path.fieldPath} [${path.start}, ${path.end})`)
+                  .join(" · ")}
+              </p>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  if (props.onBrowseSource)
+                    props.onBrowseSource(`${entry.module}/items/${entry.memoryId}.md`);
+                  else props.onBrowseStore();
+                }}
+              >
+                {t("memoryAttentionBrowse")}
+              </button>
+            </article>
+          ))}
+        </section>
+      ))}
       <dl className="mission-memory-summary" aria-label={t("memoryActivitySummary")}>
         <div>
           <dt>{t("memoryCapturedShort")}</dt>

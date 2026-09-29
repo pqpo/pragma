@@ -1,9 +1,16 @@
+import { defaultRuntimeTokenCounter } from "@pragma/core";
 import { z } from "zod";
 import { trimUtf8ToByteLimit } from "../../storage/utf8.ts";
 import { MEMORY_ATTENTION_POLICY } from "../state.ts";
 import { attentionCandidateKey, type MemoryDecisionProvider } from "../decision-provider.ts";
 
 const AnswerSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("choice"),
+    choice: z.string(),
+    confidence: z.number().min(0).max(1),
+    probabilities: z.record(z.string(), z.number().min(0).max(1)),
+  }),
   z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }),
   z.object({
     type: z.literal("score"),
@@ -21,7 +28,8 @@ const ResponseSchema = z.object({
 });
 type Question =
   | { type: "noul"; instructions: string }
-  | { type: "score"; instructions: string; criteria: string[] };
+  | { type: "score"; instructions: string; criteria: string[] }
+  | { type: "choice"; instructions: string; criteria: Record<string, string> };
 export class MemoryDecisionProviderError extends Error {
   constructor(
     readonly code: string,
@@ -35,6 +43,7 @@ export function createJevDecisionProvider(options: {
   readonly fetch?: typeof fetch;
   readonly beforeRequest?: (() => Promise<void>) | undefined;
 }): MemoryDecisionProvider & { validate(): Promise<void> } {
+  const budgets = new WeakMap<AbortSignal, { requests: number; tokens: number; bytes: number }>();
   const request = async (
     state: unknown,
     questions: Record<string, Question>,
@@ -47,6 +56,13 @@ export function createJevDecisionProvider(options: {
     const key = await options.getApiKey();
     for (let attempt = 0; ; attempt++) {
       signal.throwIfAborted();
+      const budget = budgets.get(signal) ?? { requests: 0, tokens: 0, bytes: 0 };
+      budget.requests++;
+      budget.tokens += defaultRuntimeTokenCounter.countText(body).tokens;
+      budget.bytes += Buffer.byteLength(body);
+      budgets.set(signal, budget);
+      if (budget.requests > 20 || budget.tokens > 40_000 || budget.bytes > 262_144)
+        throw new MemoryDecisionProviderError("attention_budget_exhausted", false);
       await options.beforeRequest?.();
       await beforeRequest?.();
       signal.throwIfAborted();
@@ -128,6 +144,50 @@ export function createJevDecisionProvider(options: {
     return answer.noul;
   };
   return {
+    async chooseExpansion(input, signal, beforeRequest) {
+      if (input.actions.length === 0) return undefined;
+      const answers = await request(
+        {
+          ...input,
+          candidates: input.candidates.map((candidate) => ({
+            ...candidate,
+            summary: trimUtf8ToByteLimit(candidate.summary, 160),
+            title: trimUtf8ToByteLimit(candidate.title, 120),
+          })),
+        },
+        {
+          continue: {
+            type: "noul",
+            instructions:
+              "Would reading another detail or an authorized relation meaningfully improve this memory selection?",
+          },
+          next: {
+            type: "choice",
+            instructions:
+              "Select one provided action. Choose stop if none has sufficient value; never invent an action.",
+            criteria: {
+              stop: "Finish with the current selection",
+              ...Object.fromEntries(
+                input.actions.map((action) => [
+                  action.id,
+                  `${action.kind} of ${action.candidateKey}`,
+                ]),
+              ),
+            },
+          },
+        },
+        signal,
+        beforeRequest,
+      );
+      const next = answers["next"];
+      if (
+        next?.type !== "choice" ||
+        !(next.choice === "stop" || input.actions.some((action) => action.id === next.choice))
+      )
+        throw new MemoryDecisionProviderError("attention_response_invalid", false);
+      if (noul(answers, "continue") < 0.65 || next.choice === "stop") return undefined;
+      return next.choice;
+    },
     async validate() {
       await request(
         "The word is hello.",
@@ -162,9 +222,12 @@ export function createJevDecisionProvider(options: {
       };
     },
     async assessCandidates(input, signal, beforeRequest) {
-      const results: { key: string; relevance: number; novelty: number }[] = [];
+      const results: { key: string; relevance: number; novelty: number; confidence: number }[] = [];
       for (let offset = 0; offset < input.candidates.length; offset += 4) {
-        const candidates = input.candidates.slice(offset, offset + 4);
+        const candidates = input.candidates.slice(offset, offset + 4).map((candidate) => ({
+          ...candidate,
+          summary: trimUtf8ToByteLimit(candidate.summary, 2000),
+        }));
         const questions: Record<string, Question> = {};
         candidates.forEach((_candidate, index) => {
           questions[`relevance_${index}`] = {
@@ -183,7 +246,20 @@ export function createJevDecisionProvider(options: {
             instructions: `Does candidates[${index}] provide useful information beyond the active memory?`,
           };
         });
-        const answers = await request({ ...input, candidates }, questions, signal, beforeRequest);
+        const answers = await request(
+          {
+            delta: input.delta,
+            active: input.active.map(({ module, memoryId, revision }) => ({
+              module,
+              memoryId,
+              revision,
+            })),
+            candidates,
+          },
+          questions,
+          signal,
+          beforeRequest,
+        );
         candidates.forEach((candidate, index) => {
           const answer = answers[`relevance_${index}`];
           if (answer?.type !== "score")
@@ -191,6 +267,7 @@ export function createJevDecisionProvider(options: {
           results.push({
             key: attentionCandidateKey(candidate),
             relevance: answer.score / 4,
+            confidence: answer.confidence,
             novelty: noul(answers, `novelty_${index}`),
           });
         });
@@ -202,7 +279,19 @@ export function createJevDecisionProvider(options: {
         noul(
           await request(
             {
-              ...input,
+              delta: input.delta,
+              previous: input.previous.map(({ module, memoryId, revision, reason }) => ({
+                module,
+                memoryId,
+                revision,
+                reason,
+              })),
+              next: input.next.map(({ module, memoryId, revision, reason }) => ({
+                module,
+                memoryId,
+                revision,
+                reason,
+              })),
               // The transition may contain 16 references. This final significance check
               // needs less detail than individual relevance assessment and has its own budget.
               candidates: input.candidates.map((candidate) => ({

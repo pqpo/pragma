@@ -1,3 +1,4 @@
+import { MemoryRetrievalSettingsSection } from "./MemoryRetrievalSettingsSection.tsx";
 import { MemoryAttentionSettingsSection } from "./MemoryAttentionSettingsSection.tsx";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -272,6 +273,7 @@ export function MemorySettingsFragment(
                 />
               </>
             )}
+            <MemoryRetrievalSettingsSection />
             <MemoryAttentionSettingsSection />
           </>
         ) : null}

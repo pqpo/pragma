@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "pragma.memory-episodic/v3",
+  "id": "episode-187ec3eda710014c85add4bd",
+  "revision": 1,
+  "conversationRef": {
+    "type": "pragma.execution",
+    "id": "historical-execution"
+  },
+  "sourceExecutionIds": [
+    "historical-execution"
+  ],
+  "sourceUpdatedAt": "2026-08-01T00:00:02.000Z",
+  "executionId": "historical-execution",
+  "terminalMessageId": "historical-execution-terminal",
+  "rootRefs": [
+    {
+      "type": "pragma.expert",
+      "id": "expert-a"
+    }
+  ],
+  "producerRefs": [
+    {
+      "type": "pragma.expert",
+      "id": "expert-a"
+    }
+  ],
+  "language": "zh-Hans",
+  "goal": {
+    "text": "完成记忆架构实现",
+    "evidenceRefs": [
+      "historical-execution-terminal"
+    ]
+  },
+  "summary": {
+    "text": "实现并验证了分层记忆 historical-execution。",
+    "evidenceRefs": [
+      "historical-execution-terminal"
+    ]
+  },
+  "attempts": [
+    {
+      "description": "实现 Episodic 模块",
+      "result": "成功",
+      "evidenceRefs": [
+        "historical-execution-terminal"
+      ]
+    }
+  ],
+  "failuresAndRecoveries": [],
+  "outcome": {
+    "status": "succeeded",
+    "summary": "实现完成",
+    "evidenceRefs": [
+      "historical-execution-terminal"
+    ]
+  },
+  "artifactRefs": [],
+  "evidenceRefs": [
+    "historical-execution-terminal"
+  ],
+  "visibility": {
+    "mode": "host-private"
+  },
+  "sensitivity": "confidential",
+  "bindings": [
+    {
+      "consumerRef": {
+        "type": "pragma.expert",
+        "id": "expert-a"
+      },
+      "recall": "allow",
+      "export": "deny",
+      "permissionRevision": 1
+    }
+  ],
+  "valueScore": 0.9,
+  "status": "active",
+  "extractor": {
+    "curatorRef": "expert:0000000000mem0ry",
+    "promptVersion": "pragma.memory-curator/v1",
+    "profileRevision": 0,
+    "runtimeId": "test-runtime",
+    "providerId": "test-provider",
+    "modelId": "test-model",
+    "extractedAt": "2026-08-01T00:00:02.000Z"
+  },
+  "createdAt": "2026-09-29T09:23:16.787Z",
+  "updatedAt": "2026-09-29T09:23:16.787Z"
+}

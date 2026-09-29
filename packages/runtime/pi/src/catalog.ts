@@ -5,14 +5,14 @@ import {
 } from "@earendil-works/pi-ai/providers/all";
 import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import type { ModelProviderDirectory } from "@pragma/core";
-import type { ProviderModelDefinition } from "@pragma/shared";
+import type { GenerationModelDefinition } from "@pragma/shared";
 
 const BUILTIN_PROVIDERS = new Set<string>(getBuiltinProviders());
 
 export function createPiModelProviderDirectory(): ModelProviderDirectory {
   return {
     listModels(catalogId) {
-      return listPiBuiltinModels(catalogId).map(toProviderModelDefinition);
+      return listPiBuiltinModels(catalogId).map(toGenerationModelDefinition);
     },
   };
 }
@@ -26,9 +26,10 @@ function listPiBuiltinModels(catalogId: string): readonly Model<Api>[] {
   return getBuiltinModels(catalogId as BuiltinProvider) as readonly Model<Api>[];
 }
 
-function toProviderModelDefinition(model: Model<Api>): ProviderModelDefinition {
+function toGenerationModelDefinition(model: Model<Api>): GenerationModelDefinition {
   const supportedLevels = getSupportedThinkingLevels(model);
   return {
+    kind: "generation",
     id: model.id,
     name: model.name,
     api: model.api,

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createModelProviderStore, ModelProviderStoreError } from "./model-provider-store.ts";
 import { createTestSecretStore } from "../credentials/test-secret-store.ts";
-import { ModelProvidersV5Schema, modelProvidersV5ToV6Step } from "./migrations/index.ts";
+import { ModelProvidersV5Schema, modelProvidersV5ToV6Step } from "@pragma/local-host";
 
 const directories: string[] = [];
 
@@ -207,7 +207,7 @@ describe("model provider store", () => {
       }),
     ]);
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       futureRoot: { retained: true },
       providers: [
         expect.objectContaining({
@@ -219,7 +219,7 @@ describe("model provider store", () => {
       ],
     });
     await expect(readdir(join(dirname(configPath), "migrations", "backups"))).resolves.toHaveLength(
-      1,
+      2,
     );
   });
 
@@ -346,7 +346,7 @@ describe("model provider store", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 6,
+        schemaVersion: 7,
         providers: [
           {
             id: "00000000-0000-4000-8000-000000000001",
@@ -490,6 +490,7 @@ function model(
   api: "openai-completions" | "openai-responses" = "openai-responses",
 ) {
   return {
+    kind: "generation" as const,
     id,
     name,
     api,

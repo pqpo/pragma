@@ -223,6 +223,7 @@ export function MissionDetailFragment(props: {
   const activeTab = !memoryEnabled && tab === "memory" ? "chat" : tab;
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
+  const [memoryInitialEntryId, setMemoryInitialEntryId] = useState<string>();
   const [memoryView, setMemoryView] = useState<MissionMemoryView>(DEFAULT_MISSION_MEMORY_VIEW);
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [memoryActivity, setMemoryActivity] = useState<DesktopMissionMemoryActivity>();
@@ -1970,6 +1971,7 @@ export function MissionDetailFragment(props: {
               <MemoryStoreBrowser
                 className="mission-memory-store"
                 source={memoryStoreSource}
+                initialEntryId={memoryInitialEntryId}
                 onBack={() => setMemoryView("activity")}
                 backLabel={t("backToMemoryActivity")}
               />
@@ -1978,7 +1980,14 @@ export function MissionDetailFragment(props: {
                 activity={memoryActivity}
                 error={memoryActivityError}
                 loading={memoryActivityLoading}
-                onBrowseStore={() => setMemoryView("store")}
+                onBrowseStore={() => {
+                  setMemoryInitialEntryId(undefined);
+                  setMemoryView("store");
+                }}
+                onBrowseSource={(path) => {
+                  setMemoryInitialEntryId(path);
+                  setMemoryView("store");
+                }}
               />
             )}
           </div>

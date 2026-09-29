@@ -64,6 +64,7 @@ export function createExamplePiRuntime(env: NodeJS.ProcessEnv = process.env) {
     displayName: providerId,
     models: [
       {
+        kind: "generation",
         id: modelId,
         name: modelId,
         api,
