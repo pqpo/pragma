@@ -127,7 +127,7 @@ export async function createAntigravityHookRelay(options: {
   readonly workspace: string;
   readonly allowedWorkspacePaths?: readonly string[] | undefined;
   readonly managedSkillReadRoots?: readonly string[] | undefined;
-  readonly mcpServerName: string;
+  readonly nativeMcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly getHumanInteractionHandler: () => ExpertAgentHumanInteractionHandler | undefined;
   readonly toolRuntimeState: ExpertToolRuntimeState;
@@ -150,7 +150,7 @@ export async function createAntigravityHookRelay(options: {
       workspace: resolve(options.workspace),
       allowedWorkspacePaths: options.allowedWorkspacePaths,
       managedSkillReadRoots: options.managedSkillReadRoots,
-      mcpServerName: options.mcpServerName,
+      nativeMcpServerName: options.nativeMcpServerName,
       permissionMode: options.permissionMode,
       getHumanInteractionHandler: options.getHumanInteractionHandler,
       toolRuntimeState: options.toolRuntimeState,
@@ -189,7 +189,7 @@ export async function decideAntigravityToolUse(options: {
   readonly workspace: string;
   readonly allowedWorkspacePaths?: readonly string[] | undefined;
   readonly managedSkillReadRoots?: readonly string[] | undefined;
-  readonly mcpServerName: string;
+  readonly nativeMcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly toolRuntimeState: ExpertToolRuntimeState;
@@ -203,11 +203,11 @@ export async function decideAntigravityToolUse(options: {
   if (workspaceError !== undefined) {
     return { decision: "deny", reason: workspaceError };
   }
-  if (isPragmaMcpTool(toolName, args, options.mcpServerName)) {
+  if (isPragmaMcpTool(toolName, args, options.nativeMcpServerName)) {
     const managedToolName = readMcpToolName(args);
     return {
       decision: "allow",
-      permissionOverrides: [`mcp(${options.mcpServerName}/${managedToolName})`],
+      permissionOverrides: [`mcp(${options.nativeMcpServerName}/${managedToolName})`],
     };
   }
   if (isAskQuestionTool(toolName)) {
@@ -217,7 +217,7 @@ export async function decideAntigravityToolUse(options: {
     return { decision: "allow" };
   }
   if (options.permissionMode === "auto-approve") {
-    if (isUnmanagedMcpTool(toolName, args, options.mcpServerName)) {
+    if (isUnmanagedMcpTool(toolName, args, options.nativeMcpServerName)) {
       return {
         decision: "deny",
         reason:
@@ -351,7 +351,7 @@ async function handleHookRequest(options: {
   readonly workspace: string;
   readonly allowedWorkspacePaths?: readonly string[] | undefined;
   readonly managedSkillReadRoots?: readonly string[] | undefined;
-  readonly mcpServerName: string;
+  readonly nativeMcpServerName: string;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly getHumanInteractionHandler: () => ExpertAgentHumanInteractionHandler | undefined;
   readonly toolRuntimeState: ExpertToolRuntimeState;
@@ -384,7 +384,7 @@ async function handleHookRequest(options: {
       workspace: options.workspace,
       allowedWorkspacePaths: options.allowedWorkspacePaths,
       managedSkillReadRoots: options.managedSkillReadRoots,
-      mcpServerName: options.mcpServerName,
+      nativeMcpServerName: options.nativeMcpServerName,
       permissionMode: options.permissionMode,
       humanInteractionHandler: options.getHumanInteractionHandler(),
       toolRuntimeState: options.toolRuntimeState,
@@ -660,7 +660,7 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
-function isPragmaMcpTool(toolName: string, args: unknown, mcpServerName: string): boolean {
+function isPragmaMcpTool(toolName: string, args: unknown, nativeMcpServerName: string): boolean {
   const record = asRecord(args);
   if (!/^(?:call_mcp_tool|McpTool|mcp)$/i.test(toolName)) return false;
   const serverName = readString(
@@ -669,7 +669,7 @@ function isPragmaMcpTool(toolName: string, args: unknown, mcpServerName: string)
       record?.["server_name"] ??
       record?.["server"],
   );
-  return serverName === mcpServerName && readMcpToolName(args) !== undefined;
+  return serverName === nativeMcpServerName && readMcpToolName(args) !== undefined;
 }
 
 function readMcpToolName(args: unknown): string | undefined {
@@ -680,8 +680,8 @@ function readMcpToolName(args: unknown): string | undefined {
   return explicit !== undefined && SAFE_MCP_TOOL_NAME.test(explicit) ? explicit : undefined;
 }
 
-function isUnmanagedMcpTool(toolName: string, args: unknown, mcpServerName: string): boolean {
-  if (isPragmaMcpTool(toolName, args, mcpServerName)) return false;
+function isUnmanagedMcpTool(toolName: string, args: unknown, nativeMcpServerName: string): boolean {
+  if (isPragmaMcpTool(toolName, args, nativeMcpServerName)) return false;
   if (toolName.startsWith("mcp__") || toolName.startsWith("mcp_")) return true;
   if (!/^(?:call_mcp_tool|McpTool|mcp)$/i.test(toolName)) return false;
   const record = asRecord(args);

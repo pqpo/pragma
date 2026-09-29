@@ -22,6 +22,7 @@ import {
   PragmaPaths,
   readRuntimeSessionRecord,
   RuntimeContextCompactionNotNeededError,
+  SteerNotDispatchedError,
   StoredExecutionView,
   withFileLock,
   type ExpertSession,
@@ -31,6 +32,7 @@ import {
   type RuntimeResolver,
 } from "@pragma/core";
 import { defineRuntimeTestDriver, openRuntimeSession } from "@pragma/core/testing";
+import { createCodexRuntime } from "@pragma/runtime-codex";
 import {
   createMissionControlApplication,
   createMissionControllerStore,
@@ -80,6 +82,7 @@ import {
 } from "../context-stores/context-store-store.ts";
 import { createContextStoreRevisionService } from "../context-stores/context-store-revision-service.ts";
 import type { DesktopUsageStore } from "../usage/usage-store.ts";
+import { createCodexQueuePeer } from "./fixtures/codex-queue-peer.ts";
 
 const temporaryPaths: string[] = [];
 const settlementTimeoutMs = 10_000;
@@ -5131,6 +5134,240 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     ).toEqual([]);
   });
 
+  it.each([
+    { blockedProjection: "terminal-event", runtimeKind: "fake" },
+    { blockedProjection: "chat-projection", runtimeKind: "fake" },
+    { blockedProjection: "chat-projection", runtimeKind: "codex" },
+  ] as const)(
+    "streams every queued turn with $runtimeKind while the previous $blockedProjection projection is blocked",
+    async ({ blockedProjection, runtimeKind }) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-live-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const profile = runtimeFixture("fake", runtimeKind === "codex" ? "openai" : "test");
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [profile, expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "First turn",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(expertFixture()),
+      });
+      let releaseProjection!: () => void;
+      let projectionEntered!: () => void;
+      const projectionGate = new Promise<void>((resolve) => {
+        releaseProjection = resolve;
+      });
+      const projectionStarted = new Promise<void>((resolve) => {
+        projectionEntered = resolve;
+      });
+      const finishes = new Map<string, () => void>();
+      const appenders = new Map<string, (delta: string) => void>();
+      const started: string[] = [];
+      const driver = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "runtime" }),
+        restoreSession: () => ({ id: "runtime" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        async startTurn(_session, turn) {
+          const gate = new Promise<void>((resolve) => {
+            finishes.set(turn.rawQuery, resolve);
+          });
+          started.push(turn.rawQuery);
+          let outputText = "";
+          const append = (delta: string): void => {
+            outputText += delta;
+            turn.stream.write({
+              runId: turn.runId,
+              source: turn.source,
+              type: "message.delta",
+              payload: { role: "assistant", contentType: "text", delta },
+            });
+          };
+          appenders.set(turn.rawQuery, append);
+          append(`answer:${turn.rawQuery}`);
+          await gate;
+          return { outputText, runtimeSessionId: "runtime" };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const codexSource = join(root, "empty-codex-source");
+      await mkdir(codexSource);
+      const native = createCodexQueuePeer(
+        ["First turn", "Second turn", "Third turn"],
+        (query, finish, append) => {
+          started.push(query);
+          finishes.set(query, finish);
+          appenders.set(query, append);
+        },
+      );
+      const runtime =
+        runtimeKind === "codex"
+          ? createCodexRuntime({
+              descriptor: { id: "fake" },
+              spawn: native.spawn,
+              env: { CODEX_HOME: codexSource },
+              canUse: () => ({ usable: true }),
+              listModels: async () => [
+                {
+                  id: "test-model",
+                  displayName: "Test Model",
+                  provider: { kind: "runtime-managed", id: "openai", displayName: "OpenAI" },
+                },
+              ],
+            })
+          : driver;
+      const blockFirstProjection = async () => {
+        projectionEntered();
+        await projectionGate;
+      };
+      if (blockedProjection === "chat-projection") {
+        const writeProjection = missions.writeExecutionProjection.bind(missions);
+        vi.spyOn(missions, "writeExecutionProjection").mockImplementation(async (...args) => {
+          if (
+            args[2].some(
+              (entry) => entry.kind === "assistant" && entry.content === "answer:First turn",
+            )
+          )
+            await blockFirstProjection();
+          return await writeProjection(...args);
+        });
+      }
+      let firstExecutionId: string | undefined;
+      let firstArchiveCompleted!: () => void;
+      const firstArchived = new Promise<void>((resolve) => {
+        firstArchiveCompleted = resolve;
+      });
+      const executions = createFileExecutionStore({ pragmaHome: join(root, "state") });
+      const archive = executions.archive.bind(executions);
+      vi.spyOn(executions, "archive").mockImplementation(async (id) => {
+        await archive(id);
+        if (id === firstExecutionId) firstArchiveCompleted();
+      });
+      const runner = createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        executionStore: executions,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+        loggerProvider: createNoopLoggerProvider(),
+        onExecutionTerminal: async ({ executionId }) => {
+          if (blockedProjection === "terminal-event" && executionId === firstExecutionId)
+            await blockFirstProjection();
+        },
+      });
+      const updates: MissionChatUpdate[] = [];
+      const statuses: { id: string; status: string }[] = [];
+      runner.subscribeChat(({ update }) => updates.push(update));
+      runner.subscribeStatus(({ execution }) => {
+        if (execution !== undefined) statuses.push(execution);
+      });
+      try {
+        await runner.run(mission.id);
+        firstExecutionId = (await missions.get(mission.id)).execution!.id;
+        await vi.waitFor(() => expect(started).toEqual(["First turn"]), {
+          timeout: settlementTimeoutMs,
+        });
+        const secondId = "00000000-0000-4000-8000-000000000091";
+        const thirdId = "00000000-0000-4000-8000-000000000092";
+        await runner.sendMessage({ id: mission.id, requestId: secondId, content: "Second turn" });
+        await runner.sendMessage({ id: mission.id, requestId: thirdId, content: "Third turn" });
+        finishes.get("First turn")!();
+        await projectionStarted;
+        for (const [content, requestId] of [
+          ["Second turn", secondId],
+          ["Third turn", thirdId],
+        ] as const) {
+          await vi.waitFor(() => expect(started).toContain(content), {
+            timeout: settlementTimeoutMs,
+          });
+          await vi.waitFor(
+            async () =>
+              expect((await missions.get(mission.id)).execution).toMatchObject({
+                inputMessageId: requestId,
+                status: "running",
+              }),
+            { timeout: 2_000 },
+          );
+          await vi.waitFor(
+            () =>
+              expect(
+                updates.some(
+                  (update) =>
+                    update.kind === "patch" &&
+                    JSON.stringify(update.patches).includes(`answer:${content}`),
+                ),
+              ).toBe(true),
+            { timeout: settlementTimeoutMs },
+          );
+          await expect(runner.getConversationState(mission.id)).resolves.toMatchObject({
+            execution: { status: "running", interruptible: true },
+          });
+          const id = (await missions.get(mission.id)).execution!.id;
+          expect(statuses).toContainEqual({ id, status: "running" });
+          if (content === "Third turn") {
+            releaseProjection();
+            await firstArchived;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            const beforeAppend = updates.length;
+            appenders.get(content)!(" still streaming");
+            await vi.waitFor(
+              () =>
+                expect(
+                  updates
+                    .slice(beforeAppend)
+                    .some(
+                      (update) =>
+                        update.kind === "patch" &&
+                        JSON.stringify(update.patches).includes(" still streaming"),
+                    ),
+                ).toBe(true),
+              { timeout: settlementTimeoutMs },
+            );
+            await expect(runner.getConversationState(mission.id)).resolves.toMatchObject({
+              execution: { id, status: "running", interruptible: true },
+            });
+            const thirdRunningIndex = statuses.findIndex(
+              (status) => status.id === id && status.status === "running",
+            );
+            expect(
+              statuses
+                .slice(thirdRunningIndex + 1)
+                .some((status) => status.id === firstExecutionId),
+            ).toBe(false);
+          }
+          finishes.get(content)!();
+        }
+        await vi.waitFor(
+          async () =>
+            expect((await missions.get(mission.id)).execution).toMatchObject({
+              inputMessageId: thirdId,
+              status: "succeeded",
+            }),
+          { timeout: settlementTimeoutMs },
+        );
+        releaseProjection();
+        await vi.waitFor(
+          async () =>
+            expect((await runner.getConversationState(mission.id)).queue?.pendingCount).toBe(0),
+          { timeout: settlementTimeoutMs },
+        );
+        expect((await missions.get(mission.id)).execution?.inputMessageId).toBe(thirdId);
+      } finally {
+        releaseProjection();
+        for (const finish of finishes.values()) finish();
+      }
+    },
+    30_000,
+  );
+
   it("projects an already-finished queued turn after the preceding Mission observer settles", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-fast-queued-turn-"));
     temporaryPaths.push(root);
@@ -5211,6 +5448,150 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       ]),
     });
   });
+
+  it.each(["not-submitted", "uncertain"] as const)(
+    "projects the queue and next execution after a racing steer is %s",
+    async (delivery) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-mission-steer-race-"));
+      temporaryPaths.push(root);
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "First turn",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(expertFixture()),
+      });
+      let finishFirst!: () => void;
+      let finishNext!: () => void;
+      let rejectSteer!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      });
+      const nextGate = new Promise<void>((resolve) => {
+        finishNext = resolve;
+      });
+      const steerGate = new Promise<void>((resolve) => {
+        rejectSteer = resolve;
+      });
+      const startTurn = vi.fn(async (_session, turn) => {
+        await (turn.rawQuery === mission.goal ? firstGate : nextGate);
+        return { outputText: `answer:${turn.rawQuery}`, runtimeSessionId: "runtime" };
+      });
+      const steerTurn = vi.fn(async () => {
+        await steerGate;
+        if (delivery === "not-submitted") {
+          throw new SteerNotDispatchedError("no_active_turn", "no active turn to steer");
+        }
+        throw new Error("Steer response lost");
+      });
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "runtime" }),
+        restoreSession: () => ({ id: "runtime" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn,
+        steerTurn,
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const runner = createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      try {
+        await runner.run(mission.id);
+        await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce(), {
+          timeout: settlementTimeoutMs,
+        });
+        const requestId = "00000000-0000-4000-8000-000000000099";
+        await runner.sendMessage({ id: mission.id, requestId, content: "Follow-up turn" });
+        const steer = runner.steerQueuedMessage({ id: mission.id, requestId });
+        const rejected = expect(steer).rejects.toThrow(
+          delivery === "not-submitted"
+            ? "no active turn to steer"
+            : "delivery outcome is uncertain",
+        );
+        await vi.waitFor(() => expect(steerTurn).toHaveBeenCalledOnce(), {
+          timeout: settlementTimeoutMs,
+        });
+        finishFirst();
+        // Native completion precedes Host persistence. Reply before the driver's genuine
+        // delivery deadline; slow projection writes must not turn a known rejection into timeout.
+        expect(startTurn).toHaveBeenCalledOnce();
+        rejectSteer();
+        await rejected;
+
+        if (delivery === "not-submitted") {
+          await vi.waitFor(
+            async () =>
+              expect((await missions.get(mission.id)).execution).toMatchObject({
+                inputMessageId: requestId,
+                status: "running",
+              }),
+            { timeout: settlementTimeoutMs },
+          );
+          await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(2), {
+            timeout: settlementTimeoutMs,
+          });
+          const chat = await readMissionConversationSnapshot(runner, mission.id);
+          expect(chat.execution?.status).toBe("running");
+          finishNext();
+          await vi.waitFor(
+            async () =>
+              expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+            { timeout: settlementTimeoutMs },
+          );
+        } else {
+          await vi.waitFor(
+            async () =>
+              expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+            { timeout: settlementTimeoutMs },
+          );
+          const chat = await readMissionConversationSnapshot(runner, mission.id);
+          expect(chat.queue).toMatchObject({
+            state: "paused",
+            items: [{ requestId, content: "Follow-up turn", deliveryUncertain: true }],
+          });
+          // A crash may leave the authoritative delivery record without its diagnostic event.
+          const sessionId = (await missions.get(mission.id)).execution!.sessionId!;
+          const paths = new PragmaPaths({ pragmaHome: join(root, "state") });
+          await withFileLock(paths.expertSessionLock(sessionId), async () => {
+            const events = JSON.parse(
+              await readFile(paths.expertSessionEvents(sessionId), "utf8"),
+            ) as { type: string }[];
+            expect(events.some((event) => event.type === "prompt.queue-paused")).toBe(true);
+            await writeFile(
+              paths.expertSessionEvents(sessionId),
+              JSON.stringify(events.filter((event) => event.type !== "prompt.queue-paused")),
+            );
+          });
+          await expect(readMissionConversationSnapshot(runner, mission.id)).resolves.toMatchObject({
+            queue: {
+              state: "paused",
+              pausedAfterRequestId: requestId,
+              items: [{ requestId, deliveryUncertain: true }],
+            },
+          });
+          expect(startTurn).toHaveBeenCalledOnce();
+        }
+      } finally {
+        finishFirst();
+        finishNext();
+        rejectSteer();
+      }
+    },
+    30_000,
+  );
 
   it("does not present a queued Execution moved to steer as an interruption", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
@@ -7947,7 +8328,7 @@ function expertFlowFixture(): PragmaFlowResource {
   };
 }
 
-function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
+function runtimeFixture(runtimeId = "fake", providerId = "test"): PragmaRuntimeProfileResource {
   return {
     apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
     kind: "RuntimeProfile",
@@ -7959,7 +8340,7 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
     },
     spec: {
       adapter: "pragma.runtime.profile@v1",
-      config: { runtimeId, providerId: "test", model: "test-model" },
+      config: { runtimeId, providerId, model: "test-model" },
     },
   };
 }

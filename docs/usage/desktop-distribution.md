@@ -29,6 +29,27 @@ git push origin v0.2.2
 2. **多平台构建 (`package`)**：在独立的 GitHub Runner 上分别打出 `mac-arm64` (DMG, ZIP)、`mac-x64` (DMG, ZIP) 和 `win-x64` (EXE)。
 3. **GitHub Release 发布 (`release`)**：计算 SHA-256 校验和，自动创建 GitHub Pre-release / Draft，上传产物资产并发布。
 
+发布前会将两个 macOS DMG 和对应校验和同步到阿里云 OSS。每个架构上传前独立获取有效期一小时的
+OIDC 临时凭据，避免两个大文件共用凭据导致后续上传时凭据过期。OSS 同步失败时 Release 保持草稿。
+
+### 恢复发布
+
+当源码验证和三个平台的打包均已成功，只有发布步骤失败时，可从 main 的最新 workflow 恢复同一个版本：
+
+```bash
+gh workflow run desktop-release.yml --ref main \
+  -f release_tag=v0.2.47 \
+  -f source_run_id=36530460942
+```
+
+替换为目标 Tag 与已完成的原始 Tag 发行 run id。恢复会验证原始 run 的源码 commit、Tag、触发方式以及
+源码验证与三平台打包的成功结果，再复用其七天内保留的安装包。不会移动 Tag、重建安装包或覆盖已公开
+Release。原始产物过期时，省略 `source_run_id`，重新验证并构建 `release_tag` 指定的源码；不指定
+`release_tag` 的手动运行只验证和构建，不发布。
+
+GitHub 的 `desktop-release` environment 部署规则必须允许 `v*` Tag，以及恢复 workflow 所在的精确
+`main` 分支。恢复仍校验发行源码包含于 `origin/main`，不使用手动运行所在分支的应用代码打包。
+
 ---
 
 ## 2. 备选方式：本地脚本打包与发布
@@ -36,7 +57,6 @@ git push origin v0.2.2
 仅在离线网络限制、需要在本地构建临时调试包或明确指定使用本地打包时使用。
 
 ## 环境
-
 
 安装锁定依赖：
 

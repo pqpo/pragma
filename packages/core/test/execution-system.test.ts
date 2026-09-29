@@ -1910,6 +1910,60 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await session.close();
   });
 
+  it("does not enqueue an uncertain steer even with an explicit enqueue fallback", async () => {
+    const home = await createTemporaryHome("pragma-strict-steer-uncertain-");
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({ delayMs: 250, failSteer: true, onSteer: () => undefined, stats }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "uncertain-steer",
+      name: "Uncertain Steer",
+      description: "Uncertain Steer",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+    );
+
+    await expect(
+      session.prompt("redirect", {
+        requestId: "uncertain",
+        mode: "steer",
+        steerFallback: "enqueue",
+      }),
+    ).rejects.toThrow("fake steer failed");
+    const retained = (await session.getPromptQueue()).filter(
+      (prompt) => prompt.requestId === "uncertain",
+    );
+    expect(retained).toHaveLength(1);
+    expect(retained[0]).toMatchObject({
+      mode: "steer",
+      content: "redirect",
+      status: "failed",
+      deliveryAttempt: { state: "uncertain" },
+    });
+    await expect(
+      session.prompt("redirect", { requestId: "uncertain", mode: "enqueue" }),
+    ).rejects.toThrow("Prompt idempotency conflict");
+    expect(
+      (await session.getPromptQueue()).filter((prompt) => prompt.requestId === "uncertain"),
+    ).toHaveLength(1);
+    await active.result;
+    expect(stats.executionIds).toHaveLength(1);
+    await session.close();
+  });
+
   it("wakes a coordinator waiting on children, delivers steer, and lets the child continue", async () => {
     const home = await createTemporaryHome("pragma-wait-steer-");
     const stats = createFakeRuntimeStats();
@@ -2080,6 +2134,13 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     expect((await session.getState()).activeExecutionId).toBe(active.executionId);
 
     await expect(active.result).resolves.toBe("queued-steer-failure:active");
+    await vi.waitFor(async () =>
+      expect((await session.getState()).activeExecutionId).toBeUndefined(),
+    );
+    await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
+    expect((await queued.getTree()).invocation.status).toBe("queued");
+    await session.prompt("later", { requestId: "later" });
+    expect(stats.executionIds).toHaveLength(1);
     await session.close();
   });
 
@@ -2462,84 +2523,108 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     },
   );
 
-  it("pauses a queued steer when its acknowledged receipt cannot be persisted", async () => {
-    const home = await createTemporaryHome("pragma-steer-receipt-write-failure-");
-    const executions = createFileExecutionStore({ pragmaHome: home });
-    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
-    const transact = sessions.transact.bind(sessions);
-    let failed = false;
-    sessions.transact = async (id, action, claimId) =>
-      await transact(
-        id,
-        async (input) => {
-          const next = await action(input);
-          if (
-            !failed &&
-            next.prompts.some(
-              (prompt) =>
-                prompt.requestId === "redirect" && prompt.deliveryAttempt?.state === "confirmed",
-            )
-          ) {
-            failed = true;
-            throw new Error("Synthetic receipt write failure");
-          }
-          return next;
-        },
-        claimId,
-      );
-    let release!: () => void;
-    const turnGate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const stats = createFakeRuntimeStats();
-    let admissions = 0;
-    const runtime = createFakeRuntime({
-      stats,
-      turnGate,
-      onSteer: () => {
-        admissions++;
-      },
-      reconcileSteer: async () => "delivered",
-    });
-    const app = createPragma({
-      pragmaHome: home,
-      executionStore: executions,
-      expertSessionStore: sessions,
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
-    const expert = await defineExpert({
-      id: "receipt-write-probe",
-      name: "Receipt Write Probe",
-      description: "Receipt write failure",
-      scope: "test",
-      tags: [],
-      workspace: home,
-    });
-    const session = await app.experts.createSession(expert);
-    try {
-      const active = await session.prompt("active", { requestId: "active" });
-      const queued = await session.prompt("redirect", { requestId: "redirect" });
-      await vi.waitFor(() => expect(stats.turnModelSelections.length).toBe(1), { timeout: 20_000 });
-      await expect(session.attemptQueuedPromptSteer("redirect")).resolves.toEqual({
-        outcome: "retained",
-        reason: "delivery_uncertain",
+  it.each(["confirmation", "rollback"] as const)(
+    "pauses a queued steer when its %s write fails",
+    async (writePhase) => {
+      const home = await createTemporaryHome("pragma-steer-receipt-write-failure-");
+      const executions = createFileExecutionStore({ pragmaHome: home });
+      const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+      const transact = sessions.transact.bind(sessions);
+      let failed = false;
+      sessions.transact = async (id, action, claimId) =>
+        await transact(
+          id,
+          async (input) => {
+            const next = await action(input);
+            if (
+              !failed &&
+              next.prompts.some(
+                (prompt) =>
+                  prompt.requestId === "redirect" &&
+                  (writePhase === "confirmation"
+                    ? prompt.deliveryAttempt?.state === "confirmed"
+                    : prompt.status === "queued" &&
+                      prompt.deliveryAttempt === undefined &&
+                      input.prompts.some(
+                        (current) =>
+                          current.requestId === "redirect" &&
+                          current.deliveryAttempt?.state === "dispatching",
+                      )),
+              )
+            ) {
+              failed = true;
+              throw new Error("Synthetic receipt write failure");
+            }
+            return next;
+          },
+          claimId,
+        );
+      let release!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        release = resolve;
       });
-      expect(admissions).toBe(1);
-      await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
-      expect(
-        (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
-      ).toMatchObject({ status: "queued", deliveryAttempt: { state: "uncertain" } });
-      release();
-      await active.result;
-      await session.resumePromptQueue();
-      expect(admissions).toBe(1);
-      expect(stats.turnModelSelections.length).toBe(1);
-      expect((await queued.getState()).status).toBe("cancelled");
-    } finally {
-      release();
-      await session.close();
-    }
-  });
+      const stats = createFakeRuntimeStats();
+      let admissions = 0;
+      const runtime = createFakeRuntime({
+        stats,
+        turnGate,
+        onSteer: () => {
+          admissions++;
+          if (writePhase === "rollback") {
+            throw new SteerNotDispatchedError("target_changed", "Target ended");
+          }
+        },
+        reconcileSteer: async () =>
+          writePhase === "confirmation" ? "delivered" : "not_dispatched",
+      });
+      const app = createPragma({
+        pragmaHome: home,
+        executionStore: executions,
+        expertSessionStore: sessions,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      const expert = await defineExpert({
+        id: "receipt-write-probe",
+        name: "Receipt Write Probe",
+        description: "Receipt write failure",
+        scope: "test",
+        tags: [],
+        workspace: home,
+      });
+      const session = await app.experts.createSession(expert);
+      try {
+        const active = await session.prompt("active", { requestId: "active" });
+        const queued = await session.prompt("redirect", { requestId: "redirect" });
+        await vi.waitFor(() => expect(stats.turnModelSelections.length).toBe(1), {
+          timeout: 20_000,
+        });
+        await expect(session.attemptQueuedPromptSteer("redirect")).resolves.toEqual({
+          outcome: "retained",
+          reason: "delivery_uncertain",
+        });
+        expect(admissions).toBe(1);
+        await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
+        expect(
+          (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+        ).toMatchObject({ status: "queued", deliveryAttempt: { state: "uncertain" } });
+        release();
+        await active.result;
+        await session.resumePromptQueue();
+        expect(admissions).toBe(1);
+        if (writePhase === "confirmation") {
+          expect(stats.turnModelSelections.length).toBe(1);
+          expect((await queued.getState()).status).toBe("cancelled");
+        } else {
+          await queued.result;
+          expect(stats.turnModelSelections.length).toBe(2);
+          expect((await queued.getState()).status).toBe("succeeded");
+        }
+      } finally {
+        release();
+        await session.close();
+      }
+    },
+  );
 
   it("retains a definitively rejected queue steer and executes its original queued turn once", async () => {
     let release!: () => void;

@@ -15,6 +15,7 @@ export const missions = {
   abandonSteerDeliveryHint:
     "Stop the old conversation and discard uncertain messages without replaying them. Prior operations may already have executed. Other queued messages continue in a new conversation.",
   queuePaused: "The queue paused after a failed message.",
+  deliveryUncertain: "Delivery uncertain",
   resumeQueue: "Skip failure and continue",
   title: "Missions",
   newMission: "New mission",

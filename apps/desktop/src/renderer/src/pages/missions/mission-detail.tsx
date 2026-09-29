@@ -1006,6 +1006,9 @@ export function MissionDetailFragment(props: {
     [chat?.queue?.items, pendingQueuedMessages],
   );
   const visibleQueuedMessages = queuedMessages;
+  const queueDeliveryUncertain =
+    chat?.queue?.deliveryUncertain === true ||
+    queuedMessages.some((message) => message.deliveryUncertain);
   const visibleQueuedRequestIds = useMemo(
     () => new Set(queuedMessages.map((message) => message.requestId)),
     [queuedMessages],
@@ -1675,13 +1678,13 @@ export function MissionDetailFragment(props: {
                 </small>
               )}
               {chat?.queue?.state === "paused" ? (
-                <small className="mission-chat-footer-tip" role="status">
+                <small className="mission-chat-footer-tip mission-queue-paused-tip" role="status">
                   <span>
-                    {t(chat.queue.deliveryUncertain ? "steerDeliveryUncertain" : "queuePaused", {
+                    {t(queueDeliveryUncertain ? "steerDeliveryUncertain" : "queuePaused", {
                       ns: "missions",
                     })}
                   </span>{" "}
-                  {!chat.queue.deliveryUncertain || chat.queue.steeringRecovery === "receipt" ? (
+                  {!queueDeliveryUncertain || chat.queue.steeringRecovery === "receipt" ? (
                     <button
                       className="text-button"
                       type="button"
@@ -1697,12 +1700,12 @@ export function MissionDetailFragment(props: {
                           );
                       }}
                     >
-                      {t(chat.queue.deliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
+                      {t(queueDeliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
                         ns: "missions",
                       })}
                     </button>
                   ) : null}
-                  {chat.queue.deliveryUncertain ? (
+                  {queueDeliveryUncertain ? (
                     <>
                       {" "}
                       <button
@@ -1821,13 +1824,18 @@ export function MissionDetailFragment(props: {
                             chat?.queue?.supportsSteer === true &&
                             interruptible &&
                             !item.hasAttachments &&
-                            chat?.queue?.deliveryUncertain !== true;
+                            !queueDeliveryUncertain &&
+                            !item.deliveryUncertain;
                           return (
                             <div className="mission-prompt-queue-item" key={item.requestId}>
                               <span className="mission-prompt-queue-marker" aria-hidden="true">
                                 <ArrowBendUpLeft size={16} />
                               </span>
-                              <strong>{t("queuedMessage", { ns: "missions" })}</strong>
+                              <strong>
+                                {t(item.deliveryUncertain ? "deliveryUncertain" : "queuedMessage", {
+                                  ns: "missions",
+                                })}
+                              </strong>
                               <MissionUserMessageContent
                                 source={item.content}
                                 mentionCandidates={mentionCandidates}
@@ -1852,7 +1860,7 @@ export function MissionDetailFragment(props: {
                                     disabled={
                                       !item.persisted ||
                                       action !== undefined ||
-                                      chat?.queue?.deliveryUncertain === true
+                                      queueDeliveryUncertain
                                     }
                                     onClick={() => void steerQueuedMessage(item.requestId)}
                                   >
@@ -1874,7 +1882,7 @@ export function MissionDetailFragment(props: {
                                   disabled={
                                     !item.persisted ||
                                     action !== undefined ||
-                                    chat?.queue?.deliveryUncertain === true
+                                    queueDeliveryUncertain
                                   }
                                   onClick={() =>
                                     void removeQueuedMessage(item.requestId, item.content)

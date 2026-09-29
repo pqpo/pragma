@@ -13,6 +13,7 @@ import { supportsAirSessionFailures } from "@agentclientprotocol/claude-agent-ac
 
 const captured = vi.hoisted(() => ({
   options: undefined as DefineAcpRuntimeDriverOptions<RuntimeFeatureSet> | undefined,
+  resolveCommand: vi.fn(),
 }));
 vi.mock("@pragma/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pragma/core")>();
@@ -24,6 +25,11 @@ vi.mock("@pragma/core", async (importOriginal) => {
     },
   };
 });
+vi.mock("../src/executable.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/executable.ts")>();
+  captured.resolveCommand.mockImplementation(actual.resolveClaudeCodeCommand);
+  return { ...actual, resolveClaudeCodeCommand: captured.resolveCommand };
+});
 import { createClaudeCodeRuntime } from "../src/index.ts";
 const roots: string[] = [];
 afterEach(async () => {
@@ -31,6 +37,18 @@ afterEach(async () => {
 });
 describeRuntimeConformance("Claude Code ACP", { createRuntime: createClaudeCodeRuntime });
 describe("Claude Code ACP contract", () => {
+  it("does not resolve a broken Windows shim during Host composition", async () => {
+    captured.resolveCommand.mockClear();
+    captured.resolveCommand.mockImplementationOnce(() => {
+      throw new Error("Invalid Claude command shim");
+    });
+    const runtime = createClaudeCodeRuntime({ executablePath: "C:\\invalid\\claude.cmd" });
+    expect(captured.resolveCommand).not.toHaveBeenCalled();
+    await expect(runtime.canUse()).resolves.toMatchObject({
+      usable: false,
+      details: { code: "claude_cli_unavailable" },
+    });
+  });
   it("does not report custom spawn as available with a missing worker", async () => {
     const runtime = createClaudeCodeRuntime({
       spawn: vi.fn(),

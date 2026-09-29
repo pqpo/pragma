@@ -755,6 +755,16 @@
   white-space: nowrap;
 }
 
+.mission-chat-footer-tip.mission-queue-paused-tip {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  overflow: visible;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
 .mission-chat-composer-meta {
   display: flex;
   min-width: 0;

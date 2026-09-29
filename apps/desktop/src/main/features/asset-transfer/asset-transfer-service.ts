@@ -23,7 +23,10 @@ import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
 import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
-import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  PragmaProjectStoreError,
+  type PragmaProjectStore,
+} from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 
 import {
@@ -107,15 +110,72 @@ export function createAssetTransferService(options: {
       });
       result.set(key, { ...parsed, fingerprint: fingerprint(parsed.data) });
     };
-    const [snapshot, stores, capabilities] = await Promise.all([
+    const [initialSnapshot, stores, capabilities] = await Promise.all([
       options.project.get(),
       options.stores.list(),
       options.capabilities.list(),
     ]);
+    let snapshot = initialSnapshot;
     const storesById = new Map(stores.map((store) => [store.id, store] as const));
     const capabilitiesById = new Map(
       capabilities.map((capability) => [capability.manifest.id, capability] as const),
     );
+    // Reconcile deleted authorities, while retaining referenced or unreadable assets.
+    const dependencies = referencedPragmaResourceRefs(snapshot.resources);
+    const orphanCandidates = snapshot.resources.flatMap<{
+      ref: string;
+      id: string;
+      kind: "capability" | "knowledge";
+    }>((resource) => {
+      const binding = classifyDesktopCapabilityResource(resource);
+      const storeId = classifyDesktopContextResource(resource);
+      const ref = canonicalPragmaResourceRef(resource);
+      if (dependencies.has(ref)) return [];
+      if (
+        binding !== undefined &&
+        binding.id !== PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID &&
+        !capabilitiesById.has(binding.id)
+      )
+        return [{ ref, id: binding.id, kind: "capability" as const }];
+      if (storeId !== undefined && !storesById.has(storeId))
+        return [{ ref, id: storeId, kind: "knowledge" as const }];
+      return [];
+    });
+    // Reconcile each binding independently: an external System Expert dependency
+    // must not prevent unrelated orphaned bindings from being cleaned up.
+    for (const candidate of orphanCandidates) {
+      const currentResource = snapshot.resources.find(
+        (resource) => canonicalPragmaResourceRef(resource) === candidate.ref,
+      );
+      if (
+        currentResource === undefined ||
+        (candidate.kind === "knowledge"
+          ? classifyDesktopContextResource(currentResource)
+          : classifyDesktopCapabilityResource(currentResource)?.id) !== candidate.id ||
+        referencedPragmaResourceRefs(snapshot.resources).has(candidate.ref)
+      )
+        continue;
+      const exists =
+        candidate.kind === "knowledge"
+          ? await options.stores.exists(candidate.id)
+          : await options.capabilities.exists(candidate.id);
+      if (exists) continue;
+      try {
+        snapshot = await options.project.remove({
+          baseRevision: snapshot.revision,
+          ref: candidate.ref,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof PragmaProjectStoreError) ||
+          !["resource_referenced", "resource_not_found", "revision_conflict"].includes(error.code)
+        )
+          throw error;
+        // Another overview or publication may already have removed or mounted this
+        // binding. Use the authoritative head and defer contested cleanup to the next read.
+        snapshot = await options.project.get();
+      }
+    }
     const resources = snapshot.resources.filter((resource) => {
       if (resource.kind === "Capability") {
         const binding = classifyDesktopCapabilityResource(resource);

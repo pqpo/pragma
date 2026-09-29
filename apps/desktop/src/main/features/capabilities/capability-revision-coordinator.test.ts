@@ -663,10 +663,60 @@ describe("CapabilityRevisionCoordinator", () => {
     expect(await journalFiles(root)).toEqual([]);
   });
 
-  it("replays an interrupted deletion from the coordinator journal root", async () => {
+  it.each(["project", "system", "system-dsl"])(
+    "blocks deletion referenced by a %s Expert",
+    async (owner) => {
+      const root = await temporaryRoot();
+      const binding = createDesktopCapabilityResource({
+        owner: "project-expert",
+        capabilityId: CAPABILITY_ID,
+      });
+      const project = fakeProject(
+        owner === "project"
+          ? [binding, expert("expert0000000001", canonicalPragmaResourceRef(binding), ["search"])]
+          : [binding],
+      );
+      const commit = vi.fn();
+      const system = fakeSystemExpert(owner === "system" ? ["search"] : []);
+      if (owner === "system-dsl") {
+        system.registry.listResources = () => [
+          expert("expert0000000002", canonicalPragmaResourceRef(binding), ["search"]) as Extract<
+            PragmaResource,
+            { kind: "Expert" }
+          >,
+        ];
+      }
+      const coordinator = createCapabilityRevisionCoordinator({
+        journalRoot: root,
+        capabilities: { get: async () => capability(1, ["search"]) } as unknown as CapabilityStore,
+        project: project.store,
+        systemExperts: system.registry,
+      });
+      await expect(
+        coordinator.mutate({
+          id: CAPABILITY_ID,
+          expectedRevision: 1,
+          mutationType: "delete",
+          commit,
+        }),
+      ).rejects.toMatchObject({ code: "capability_referenced" });
+      expect(commit).not.toHaveBeenCalled();
+      expect(project.apply).not.toHaveBeenCalled();
+      expect(await journalFiles(root)).toEqual([]);
+    },
+  );
+
+  it.each(["bindings", "capability"])("replays deletion interrupted at %s", async (stage) => {
     const root = await temporaryRoot();
     const current = capability(1, ["search"]);
     const completeRemoval = vi.fn(async () => undefined);
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: CAPABILITY_ID,
+    });
+    const project = fakeProject([binding]);
+    if (stage === "bindings")
+      project.apply.mockRejectedValueOnce(new Error("simulated deletion crash"));
     const store = {
       get: async () => current,
       completeRemoval,
@@ -680,7 +730,7 @@ describe("CapabilityRevisionCoordinator", () => {
     const coordinator = createCapabilityRevisionCoordinator({
       journalRoot: root,
       capabilities: store,
-      project: fakeProject([]).store,
+      project: project.store,
       systemExperts: fakeSystemExpert([]).registry,
       onDeleted,
     });
@@ -698,6 +748,7 @@ describe("CapabilityRevisionCoordinator", () => {
 
     await coordinator.recover();
 
+    expect(project.resources).toEqual([]);
     expect(completeRemoval).toHaveBeenCalledWith(CAPABILITY_ID, 1);
     expect(onDeleted).toHaveBeenCalledWith(CAPABILITY_ID);
     expect(await journalFiles(root)).toEqual([]);
@@ -846,7 +897,17 @@ function fakeProject(initial: PragmaResource[]) {
     revision += 1;
     return { revision, resources: state.resources };
   });
+  const apply = vi.fn(async (input: { baseRevision: number; removals: string[] }) => {
+    if (input.baseRevision !== revision)
+      throw new PragmaProjectStoreError("revision_conflict", "Concurrent update");
+    state.resources = state.resources.filter(
+      (resource) => !input.removals.includes(canonicalPragmaResourceRef(resource)),
+    );
+    revision += 1;
+    return { revision, resources: state.resources };
+  });
   return {
+    apply,
     get resources() {
       return state.resources;
     },
@@ -857,6 +918,7 @@ function fakeProject(initial: PragmaResource[]) {
     },
     store: {
       get: async () => ({ revision, resources: state.resources }),
+      apply,
       publish,
     } as unknown as PragmaProjectStore,
   };
@@ -868,6 +930,7 @@ function fakeSystemExpert(selectedTools: string[]) {
     upgrade,
     registry: {
       list: () => [{ ref: "expert:pragma", name: "Pragma" }],
+      listResources: () => [],
       get: () => ({
         capabilities:
           selectedTools.length === 0

@@ -32,6 +32,18 @@ async function createStore(isReferenced?: (storeId: string) => Promise<boolean>)
 }
 
 describe("managed context store", () => {
+  it("distinguishes absent Knowledge authority entries from unavailable symbolic links", async () => {
+    const { directory, storesPath, store } = await createStore();
+    const id = "f13af121-439b-4bad-8fe4-8b7dc27554d3";
+    expect(await store.exists(id)).toBe(false);
+    await mkdir(storesPath, { recursive: true });
+    await symlink(join(directory, "unavailable-authority"), join(storesPath, id), "dir");
+    expect(await store.list()).toEqual([]);
+    expect(await store.exists(id)).toBe(true);
+    await rm(join(storesPath, id));
+    expect(await store.exists(id)).toBe(false);
+  });
+
   it("hides historical .git entries from browsing while preserving snapshot contents", async () => {
     const { store } = await createStore();
     const created = await store.create({ mode: "blank", name: "Notes", description: "" });

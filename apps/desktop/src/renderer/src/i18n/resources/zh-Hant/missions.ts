@@ -14,6 +14,7 @@ export const missions = {
   abandonSteerDeliveryHint:
     "停止舊對話，捨棄不確定訊息且不重播。先前操作可能已經執行。其他排隊訊息將在新對話中繼續。",
   queuePaused: "佇列已在失敗訊息後暫停。",
+  deliveryUncertain: "投遞不確定",
   resumeQueue: "略過失敗項並繼續",
   title: "任務",
   newMission: "新增任務",

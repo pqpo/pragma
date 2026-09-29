@@ -41,3 +41,14 @@
 - P2：Host 和 Desktop 快照投影 `steeringRecovery`，receipt 显示核对及放弃，terminal 仅显示放弃；缺失能力信息时同样隐藏核对。Host/UI 测试覆盖三种投影。
 
 本轮验证：Core 恢复定向回归 12 项、真实 SIGKILL 崩溃恢复 1 项、Host 队列投影 4 项和 Desktop UI 4 项通过，共 21 项。Core / Host / Desktop Node 与 renderer 类型检查、相关 ESLint、Core / Host 构建、Desktop 生产构建及 main / preload / styles 校验通过。格式检查和 `git diff --check` 通过。日志保存在 `/tmp/pragma-opencode-acp-research/pr-new-review-*.log`；本轮未新增真实认证供应商验收。
+
+## 合并最新 main 的冲突复核
+
+合并 main `cbcd0bb9`（包含 #330 的队列实时投影与 Codex steer 修复），人工处理 Core、Local Host、Desktop composition 和 UI 共 5 个冲突文件，并检查自动合并结果。
+
+- 保留 receipt / terminal recovery、持久放弃与源 Execution 清理顺序，以及不确定投递禁止自动重放的 fence；不采用 main 原有清除 uncertain 后重跑的恢复语义。
+- 合入排队 Execution 观察器、旧轮 terminal 投影闸门、明确未投递的 strict fallback 崩溃重放、关闭状态与 attempt identity 校验。确认写入失败和 rollback 写入失败都显式传入当前 attemptId，避免新校验遗漏 uncertain 标记；两个注入写入失败的回归通过。
+- 同时保留队列项自身的不确定状态和全队列暂停，三种语言保持 receipt 核对／显式放弃入口；移除自动合并造成的重复翻译键和已不用的 blind retry 文案。
+- 共享崩溃 fixture 仅在 strict fallback 场景启用 steering，保持普通 dispatching 场景原有 Runtime binding。Codex 的迟到回复测试改用显式关闭 Session，并先断言投递未决时清空队列被拒绝，继续验证关闭与恢复不会复活消息。
+
+合并验证：Core steer / recovery 原定向 27 项通过，确认与 rollback 写入失败 2 项通过（其中确认项为复跑）；两种真实子进程 SIGKILL 崩溃 2 项、Runtime conformance 17 项、Host 5 项、Desktop queued-turn 集成 7 项、observer / chat / delivery 14 项、三语言及恢复 UI 6 项通过。真实 OpenCode 2.0.16 的 steer 集成与流式共 12 项通过，使用本地模拟模型；Codex Adapter 受控 peer 的 12 项在全套与定向复跑中通过。相关类型检查、ESLint、冻结依赖安装、Desktop 依赖构建与生产构建、main / preload / styles 校验、格式及 diff 检查通过。日志见本机 `/tmp/pragma-opencode-acp-research/merge-*.log`。

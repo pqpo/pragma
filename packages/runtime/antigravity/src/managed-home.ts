@@ -14,7 +14,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 
-import type { Expert } from "@pragma/core";
+import type { Expert, ExpertToolsMcpToolDefinition } from "@pragma/core";
 
 import {
   applyCommonAntigravityEnvironment,
@@ -31,8 +31,10 @@ const MAX_AGENT_ID_CHARACTERS = 32;
 
 export interface ManagedAntigravityIdentity {
   readonly namespace: string;
+  readonly pluginName: string;
   readonly agentName: string;
   readonly mcpServerName: string;
+  readonly nativeMcpServerName: string;
   readonly hookName: string;
 }
 
@@ -44,6 +46,7 @@ export interface ManagedAntigravityHome {
   readonly customizationWorkspace?: string | undefined;
   readonly agentName: string;
   readonly mcpServerName: string;
+  readonly nativeMcpServerName: string;
   readonly hookName: string;
   readonly pluginName: string;
   readonly pluginDir: string;
@@ -57,6 +60,7 @@ export async function prepareManagedAntigravityHome(options: {
   readonly sessionDir: string;
   readonly systemPrompt: string;
   readonly mcpServerUrl: string;
+  readonly mcpToolCatalog?: readonly ExpertToolsMcpToolDefinition[] | undefined;
   readonly hookRelay: AntigravityHookRelay;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly authenticationMode?: AntigravityAuthenticationMode | undefined;
@@ -88,7 +92,7 @@ export async function prepareManagedAntigravityHome(options: {
   const tmpDir = join(options.sessionDir, "tmp");
   const hookDir = join(options.sessionDir, "hooks");
   const identity = createManagedAntigravityIdentity(options.agent.id, options.sessionDir);
-  const pluginName = `pragma-${identity.namespace}`;
+  const pluginName = identity.pluginName;
   const pluginsDir = join(configDir, "plugins");
   const pluginDir = join(pluginsDir, pluginName);
   const skillsDir = join(pluginDir, "skills");
@@ -112,7 +116,10 @@ export async function prepareManagedAntigravityHome(options: {
   await rm(join(pluginDir, "mcp_config.json"), { force: true });
   // Remove layouts written by the earlier, ineffective top-level integration
   // without clearing unrelated native customization state.
-  await removeLegacyManagedMcpConfig(join(configDir, "mcp_config.json"), identity.mcpServerName);
+  await removeLegacyManagedMcpConfig(
+    join(configDir, "mcp_config.json"),
+    `pragma${identity.namespace}`,
+  );
   await rm(join(configDir, "agents", identity.agentName), { recursive: true, force: true });
   await removeLegacyManagedSkills(join(configDir, "skills"), identity.namespace);
   await mkdir(managedAgentDir, { recursive: true, mode: 0o700 });
@@ -127,7 +134,7 @@ export async function prepareManagedAntigravityHome(options: {
       ? [
           writePrivateJson(
             join(appDataDir, "settings.json"),
-            managedSettings(options.permissionMode, identity.mcpServerName),
+            managedSettings(options.permissionMode, identity.nativeMcpServerName),
           ),
         ]
       : []),
@@ -151,7 +158,12 @@ export async function prepareManagedAntigravityHome(options: {
     }),
     writePrivateFile(
       join(rulesDir, "pragma-system.md"),
-      managedSystemRuleMarkdown(options.systemPrompt, skills),
+      managedSystemRuleMarkdown(
+        options.systemPrompt,
+        skills,
+        identity.nativeMcpServerName,
+        options.mcpToolCatalog ?? [],
+      ),
     ),
     writePrivateJson(
       join(configDir, "hooks.json"),
@@ -195,6 +207,7 @@ export async function prepareManagedAntigravityHome(options: {
     customizationWorkspace,
     agentName: identity.agentName,
     mcpServerName: identity.mcpServerName,
+    nativeMcpServerName: identity.nativeMcpServerName,
     hookName: identity.hookName,
     pluginName,
     pluginDir,
@@ -395,12 +408,16 @@ export function createManagedAntigravityIdentity(
     .update(resolve(sessionDir))
     .digest("hex")
     .slice(0, MANAGED_NAMESPACE_CHARACTERS);
+  const pluginName = `pragma-${namespace}`;
   return {
     namespace,
+    pluginName,
     agentName: managedAgentName(agentId, namespace),
-    // Keep the MCP name punctuation-free because some agy stream shapes embed
-    // it in a generated native tool identifier.
-    mcpServerName: `pragma${namespace}`,
+    // agy qualifies tools as mcp_<plugin>_<server>_<tool>, limited to 64 characters.
+    // The plugin retains Session isolation; repeating the hash in the local key
+    // needlessly consumes the model tool name budget.
+    mcpServerName: "p",
+    nativeMcpServerName: `${pluginName}_p`,
     hookName: `pragma-permission-gate-${namespace}`,
   };
 }
@@ -523,7 +540,12 @@ function managedAgentMarkdown(
   return [...frontmatter, "# System Prompt", "", systemPrompt, ""].join("\n");
 }
 
-function managedSystemRuleMarkdown(systemPrompt: string, skills: readonly string[]): string {
+function managedSystemRuleMarkdown(
+  systemPrompt: string,
+  skills: readonly string[],
+  nativeMcpServerName: string,
+  toolCatalog: readonly ExpertToolsMcpToolDefinition[],
+): string {
   return [
     FRONTMATTER_DELIMITER,
     "trigger: always_on",
@@ -532,6 +554,15 @@ function managedSystemRuleMarkdown(systemPrompt: string, skills: readonly string
     "# Pragma Runtime System Instructions",
     "",
     systemPrompt,
+    "",
+    "# Managed Pragma MCP Tools",
+    "",
+    "Keep the user informed with brief progress messages before multi-step tool work and when the plan changes. These are user-facing summaries, not private reasoning.",
+    `Call these tools directly with call_mcp_tool using ServerName=${JSON.stringify(nativeMcpServerName)}, ToolName from the catalog below, and Arguments matching its inputSchema.`,
+    "This catalog is the current Session registration. Do not search configuration files, read MCP definition files, or use shell/curl to discover or invoke these tools.",
+    "Native workspace tools such as list_dir and view_file are separate; invoke them directly rather than requesting them from the MCP server.",
+    "",
+    JSON.stringify(toolCatalog),
     ...(skills.length === 0
       ? []
       : [

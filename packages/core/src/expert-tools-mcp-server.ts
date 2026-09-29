@@ -37,15 +37,24 @@ import {
 
 export type ExpertToolRuntimeState = ExecutionToolRuntimeState;
 
+export interface ExpertToolsMcpToolDefinition {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+}
+
 export interface ExpertToolsMcpSessionRegistration {
   readonly id: string;
   readonly name: string;
   readonly url: string;
+  readonly toolCatalog: readonly ExpertToolsMcpToolDefinition[];
   readonly dispose: () => Promise<void>;
 }
 
 export interface RegisterExpertToolsMcpSessionOptions {
   readonly agent: Expert;
+  /** Maximum local name length after reserving the Runtime native MCP prefix. */
+  readonly maxToolNameLength?: number | undefined;
   readonly getContext: () => ExpertAgentRunContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly logger: PragmaLogger;
@@ -79,7 +88,7 @@ class ExpertToolsMcpGateway {
   ): Promise<ExpertToolsMcpSessionRegistration> {
     const id = MCP_CONFIG_ID;
     const name = `Pragma tools for ${options.agent.name}`;
-    const server = createSessionMcpServer(name, options);
+    const { server, toolCatalog } = createSessionMcpServer(name, options);
     const transport = new WebStandardStreamableHTTPServerTransport();
 
     try {
@@ -118,6 +127,7 @@ class ExpertToolsMcpGateway {
       id,
       name,
       url,
+      toolCatalog,
       dispose: () => {
         disposePromise ??= this.unregister(token, entry);
         return disposePromise;
@@ -226,7 +236,7 @@ export async function registerExpertToolsMcpSession(
 function createSessionMcpServer(
   name: string,
   options: RegisterExpertToolsMcpSessionOptions,
-): McpServer {
+): { readonly server: McpServer; readonly toolCatalog: readonly ExpertToolsMcpToolDefinition[] } {
   const server = new McpServer(
     {
       name,
@@ -239,17 +249,18 @@ function createSessionMcpServer(
   );
   const tools = createExecutionLocalTools(options);
   const runtimeNames = new Set<string>();
+  const toolCatalog: ExpertToolsMcpToolDefinition[] = [];
 
   for (const resolvedTool of tools) {
-    const runtimeName = createRuntimeToolName(resolvedTool.name);
+    const runtimeName = createRuntimeToolName(resolvedTool.name, options.maxToolNameLength);
     if (runtimeNames.has(runtimeName)) {
       throw new Error(`Execution MCP tool name collision: ${runtimeName}.`);
     }
     runtimeNames.add(runtimeName);
-    registerLocalTool(server, runtimeName, resolvedTool.tool, options);
+    toolCatalog.push(registerLocalTool(server, runtimeName, resolvedTool.tool, options));
   }
 
-  return server;
+  return { server, toolCatalog };
 }
 
 function createExecutionLocalTools(
@@ -262,7 +273,12 @@ function createExecutionLocalTools(
   });
   const permissionTool = createPermissionPromptTool(
     options,
-    new Set(resolved.tools.flatMap((tool) => [tool.name, createRuntimeToolName(tool.name)])),
+    new Set(
+      resolved.tools.flatMap((tool) => [
+        tool.name,
+        createRuntimeToolName(tool.name, options.maxToolNameLength),
+      ]),
+    ),
   );
 
   return [
@@ -424,14 +440,15 @@ function registerLocalTool(
   runtimeName: string,
   tool: LocalTool,
   options: RegisterExpertToolsMcpSessionOptions,
-): void {
+): ExpertToolsMcpToolDefinition {
+  const inputSchema = toMcpInputSchema(tool.inputSchema);
   const outputSchema =
     tool.outputSchema === undefined ? undefined : toMcpInputSchema(tool.outputSchema);
   server.registerTool(
     runtimeName,
     {
       description: tool.description,
-      inputSchema: toMcpInputSchema(tool.inputSchema),
+      inputSchema,
       ...(outputSchema === undefined ? {} : { outputSchema }),
     },
     async (input, context) => {
@@ -473,6 +490,13 @@ function registerLocalTool(
       }
     },
   );
+  return {
+    name: runtimeName,
+    description: tool.description,
+    inputSchema:
+      inputSchema?.["~standard"].jsonSchema.input({ target: "draft-07" }) ??
+      defaultObjectJsonSchema(),
+  };
 }
 
 function toMcpInputSchema(schema: unknown): StandardSchemaWithJSON | undefined {
@@ -673,11 +697,14 @@ function listenOnLoopback(server: ReturnType<typeof createServer>): Promise<void
   });
 }
 
-function createRuntimeToolName(value: string): string {
+function createRuntimeToolName(value: string, limit = MCP_LOCAL_TOOL_NAME_LIMIT): string {
+  if (!Number.isInteger(limit) || limit < 12 || limit > MCP_LOCAL_TOOL_NAME_LIMIT) {
+    throw new Error("Execution MCP local tool name limit must be an integer between 12 and 51.");
+  }
   const sanitized = sanitizeExecutionToolName(value);
-  if (sanitized === value && sanitized.length <= MCP_LOCAL_TOOL_NAME_LIMIT) return sanitized;
+  if (sanitized === value && sanitized.length <= limit) return sanitized;
   const digest = createHash("sha256").update(value).digest("hex").slice(0, 10);
-  const prefixLength = MCP_LOCAL_TOOL_NAME_LIMIT - digest.length - 1;
+  const prefixLength = limit - digest.length - 1;
   return `${sanitized.slice(0, prefixLength)}_${digest}`;
 }
 

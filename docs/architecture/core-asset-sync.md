@@ -92,6 +92,27 @@ bindings and Knowledge content have separate identities. Concurrent edits requir
 “keep Git”. Conflicted dependencies are deferred while unrelated assets proceed. There is no
 file-level automatic merge in core asset sync.
 
+Capability and Knowledge deletion checks both Project DSL references and System Expert
+references. All bindings to the local authority are removed before its files are deleted.
+Knowledge deletion retains its Mission-unmount and revision-draft checks; interruption after
+binding removal leaves a valid unbound Knowledge store that can be deleted again. Capability
+deletion replays binding cleanup through its existing mutation journal.
+
+Collection reconciles historical bindings only when their local authority directory is absent
+and no retained resource references them. An asset omitted from a listing because its persisted
+configuration is invalid remains unavailable and diagnosable. An external dependency blocks
+only its own binding cleanup. Flow deletion through remove, change-set apply, or full publication
+prepares a `pragma.desktop-flow-layout-removal/v1` journal under the Project's
+`layouts/.removals/`, addressed by Flow identity and target Project revision. After publication,
+and on the next Project-head access, cleanup holds the Project publication lock and rechecks
+the current head under the layout lock. Concurrent orphan reconciliation refreshes the head on
+revision conflicts or already-removed resources and rechecks each remaining binding's identity
+and dependencies before cleanup, preserving bindings rebound by another publication.
+A committed deletion removes the layout; a competing publication that retained the Flow cancels
+the intent. Unpublished Flow draft layouts and immutable historical Project revisions are retained.
+Future removal-journal versions are rejected without deleting a layout. Project access recovers
+only that owner's pending layout removals; application startup does not scan other Projects.
+
 Local deletion preserves remote data by default and supports explicit restore. Enabling deletion
 upload only applies to subsequent local deletions. Git deletion uses domain deletion and reference
 checks. Only changed managed files are written; confirmed removals remove their managed paths.
@@ -142,6 +163,6 @@ one asset, such as a Flow and its layout or a Capability binding and definition,
 asset to the overview. Context bindings and Knowledge content remain separate asset categories.
 The UI groups these logical assets by kind, summarizes synchronized, attention, and failed counts,
 and keeps record-level conflict and restore actions inside collapsed attention details. Settings, private state and the restore journal use the new asset-sync namespaces. Overview reads authoritative remote payload only when a remote-only
-binding needs identity metadata; this read never reconciles assets, mutates local stores, or updates
-sync state. Offline fallback resolves canonical Desktop-managed binding IDs through the centralized
+binding needs identity metadata; this remote read never imports assets or updates sync state. Local collection may remove
+confirmed unreferenced bindings to deleted authorities as described above. Offline fallback resolves canonical Desktop-managed binding IDs through the centralized
 binding policy and never guesses identity from mutable display names.

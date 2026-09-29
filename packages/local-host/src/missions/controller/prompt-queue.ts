@@ -71,14 +71,18 @@ export function createExpertSessionPromptQueueProjection(options: {
           ),
         );
       const deliveryUncertain = hasUncertainSteerDelivery(prompts);
+      const uncertain = pending.find(
+        (prompt) => prompt.status === "queued" && prompt.deliveryAttempt?.state === "uncertain",
+      );
       const paused =
         deliveryUncertain ||
         (lastControl?.type === "prompt.queue-paused" &&
           pending.some((prompt) => prompt.status === "queued"));
       const pausedAfterRequestId =
-        paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
+        uncertain?.requestId ??
+        (paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
           ? lastControl.data.requestId
-          : undefined;
+          : undefined);
       const supportsSteer =
         options.supportsSteer === undefined ? false : await options.supportsSteer(sessionId);
       const steeringRecovery = await options.steeringRecovery?.(sessionId);

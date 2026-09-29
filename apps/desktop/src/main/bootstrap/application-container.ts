@@ -570,6 +570,8 @@ export async function createDesktopApplicationContainer(
   const storeRevisionsRef: { current?: ContextStoreRevisionService } = {};
   const contextStores = createContextStoreStore({
     storesPath: contextStoresPath,
+    project: pragmaProjectStore,
+    externalResources: () => systemExperts.listResources(),
     trashItem: options.trashItem,
     isReferenced: async (storeId) => {
       const definitions = await Promise.all(

@@ -101,3 +101,10 @@ An interrupted v1 transaction with a durable published revision first resumes it
 original content-only result, then performs full metadata synchronization in the
 same operation. V2 transaction recovery includes metadata and preserves the
 existing no-force-push, remote-head-race and local-revision checks.
+
+Association enumeration checks the local authority directory before scheduling a target. A
+missing Knowledge store or Skill is unbound through the ordinary target lock, removing its
+association and pending sync journal. Persisted but unreadable assets retain their association
+and diagnostics. This also repairs interruptions between authority deletion and Host cleanup.
+The existence check is made under the target lock. Repository uniqueness checks ignore
+associations to absent authorities, so reimporting does not depend on first opening the overview.
