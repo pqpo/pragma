@@ -2,16 +2,24 @@ name: Desktop Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing vX.Y.Z tag to release (empty for a build only)
+        type: string
+      source_run_id:
+        description: Reuse verified installers from this run (requires release_tag)
+        type: string
   push:
     tags:
       - "v*"
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   verify:
@@ -20,12 +28,15 @@ jobs:
     timeout-minutes: 20
     outputs:
       version: ${{ steps.app-version.outputs.version }}
+      tag: ${{ steps.app-version.outputs.tag }}
+      source_sha: ${{ steps.app-version.outputs.source_sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -40,56 +51,92 @@ jobs:
 
       - name: Read application version
         id: app-version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
         shell: bash
         run: |
           version="$(node -p "require('./apps/desktop/package.json').version")"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "source_sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Validate release tag
-        if: github.ref_type == 'tag'
+        if: steps.app-version.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.app-version.outputs.tag }}
         shell: bash
         run: |
           version="${{ steps.app-version.outputs.version }}"
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Release tag must match vX.Y.Z."
             exit 1
           fi
-          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match desktop version ${version}."
+          if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
+            echo "::error::Tag ${RELEASE_TAG} does not match desktop version ${version}."
             exit 1
           fi
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+          if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::Release tag must point to a commit contained in origin/main."
             exit 1
           fi
 
+      - name: Validate reusable source run
+        if: inputs.source_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          RELEASE_TAG: ${{ steps.app-version.outputs.tag }}
+          SOURCE_SHA: ${{ steps.app-version.outputs.source_sha }}
+        shell: bash
+        run: |
+          if [[ -z "${RELEASE_TAG}" || ! "${SOURCE_RUN_ID}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Reusing installers requires a release tag and numeric source run id."
+            exit 1
+          fi
+          gh run view "${SOURCE_RUN_ID}" --json headSha,headBranch,event,status,workflowName,jobs > source-run.json
+          jq -e --arg sha "${SOURCE_SHA}" --arg tag "${RELEASE_TAG}" '
+            . as $run |
+            .headSha == $sha and .headBranch == $tag and .event == "push" and .status == "completed" and
+            .workflowName == "Desktop Release" and
+            (["Verify release source", "Package mac-arm64", "Package mac-x64", "Package win-x64"] |
+              all(. as $name | [$run.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1))
+          ' source-run.json
+
       - name: Install dependencies
+        if: inputs.source_run_id == ''
         run: pnpm install --frozen-lockfile
 
       - name: Lint
+        if: inputs.source_run_id == ''
         run: pnpm lint
 
       - name: Typecheck
+        if: inputs.source_run_id == ''
         run: pnpm typecheck
 
       - name: Test
+        if: inputs.source_run_id == ''
         env:
           PRAGMA_LOG_LEVEL: error
           CI: "true"
         run: pnpm test:core
 
       - name: Knowledge revision regression tests
+        if: inputs.source_run_id == ''
         env:
           PRAGMA_LOG_LEVEL: error
           CI: "true"
         run: pnpm test:revision
 
       - name: Build
+        if: inputs.source_run_id == ''
         run: pnpm build
 
   package:
     name: Package ${{ matrix.artifact }}
     needs: verify
+    if: inputs.source_run_id == ''
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +157,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -141,7 +190,7 @@ jobs:
 
   release:
     name: Publish GitHub Pre-release
-    if: github.ref_type == 'tag'
+    if: always() && needs.verify.result == 'success' && needs.verify.outputs.tag != '' && (needs.package.result == 'success' || (needs.package.result == 'skipped' && inputs.source_run_id != ''))
     needs:
       - verify
       - package
@@ -150,11 +199,16 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      actions: read
+    env:
+      RELEASE_TAG: ${{ needs.verify.outputs.tag }}
 
     steps:
       - name: Download installers
         uses: actions/download-artifact@v8
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id || github.run_id }}
           pattern: pragma-${{ needs.verify.outputs.version }}-*
           path: release-assets
           merge-multiple: true
@@ -292,7 +346,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${RELEASE_TAG}"
           release_matches="$(
             gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" |
               jq -c --arg tag "${tag}" '[.[][] | select(.tag_name == $tag)]'
@@ -326,17 +380,17 @@ jobs:
             gh release upload "${tag}" "${asset}" --clobber
           done
 
-      - name: Authenticate to Alibaba Cloud with GitHub OIDC
+      - name: Authenticate for Apple Silicon upload
         id: aliyun-credentials
         uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1.1.0
         with:
           oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
           role-to-assume: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
           role-session-name: pragma-release-${{ github.run_id }}
-          role-session-expiration: 1800
+          role-session-expiration: 3600
           audience: github-actions
 
-      - name: Upload macOS assets to Alibaba Cloud OSS
+      - name: Upload Apple Silicon asset to Alibaba Cloud OSS
         env:
           OSS_ACCESS_KEY_ID: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-id }}
           OSS_ACCESS_KEY_SECRET: ${{ steps.aliyun-credentials.outputs.aliyun-access-key-secret }}
@@ -346,15 +400,46 @@ jobs:
         shell: bash
         run: |
           version="${{ needs.verify.outputs.version }}"
-          prefix="desktop/${GITHUB_REF_NAME}"
+          prefix="desktop/${RELEASE_TAG}"
           endpoint="https://oss-${ALIYUN_OSS_REGION}.aliyuncs.com"
           oss_assets=(
             "Pragma-${version}-mac-arm64.dmg"
-            "Pragma-${version}-mac-x64.dmg"
-            "SHA256SUMS-mac.txt"
           )
 
           for file in "${oss_assets[@]}"; do
+            ossutil cp \
+              "oss-assets/${file}" \
+              "oss://${ALIYUN_OSS_BUCKET}/${prefix}/${file}" \
+              --cache-control "public,max-age=31536000,immutable" \
+              --content-disposition attachment \
+              --endpoint "${endpoint}" \
+              --force \
+              --region "${ALIYUN_OSS_REGION}"
+          done
+
+      - name: Refresh credentials for Intel upload
+        id: aliyun-intel-credentials
+        uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1.1.0
+        with:
+          oidc-provider-arn: ${{ vars.ALIYUN_OIDC_PROVIDER_ARN }}
+          role-to-assume: ${{ vars.ALIYUN_RELEASE_ROLE_ARN }}
+          role-session-name: pragma-release-${{ github.run_id }}-intel
+          role-session-expiration: 3600
+          audience: github-actions
+
+      - name: Upload Intel asset and checksums to Alibaba Cloud OSS
+        env:
+          OSS_ACCESS_KEY_ID: ${{ steps.aliyun-intel-credentials.outputs.aliyun-access-key-id }}
+          OSS_ACCESS_KEY_SECRET: ${{ steps.aliyun-intel-credentials.outputs.aliyun-access-key-secret }}
+          OSS_SESSION_TOKEN: ${{ steps.aliyun-intel-credentials.outputs.aliyun-security-token }}
+          ALIYUN_OSS_BUCKET: ${{ vars.ALIYUN_OSS_BUCKET }}
+          ALIYUN_OSS_REGION: ${{ vars.ALIYUN_OSS_REGION }}
+        shell: bash
+        run: |
+          version="${{ needs.verify.outputs.version }}"
+          prefix="desktop/${RELEASE_TAG}"
+          endpoint="https://oss-${ALIYUN_OSS_REGION}.aliyuncs.com"
+          for file in "Pragma-${version}-mac-x64.dmg" SHA256SUMS-mac.txt; do
             ossutil cp \
               "oss-assets/${file}" \
               "oss://${ALIYUN_OSS_BUCKET}/${prefix}/${file}" \
@@ -371,4 +456,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
-          gh release edit "${GITHUB_REF_NAME}" --draft=false --prerelease --latest=false
+          gh release edit "${RELEASE_TAG}" --draft=false --prerelease --latest=false
