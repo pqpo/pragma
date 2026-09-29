@@ -47,6 +47,9 @@ gh workflow run desktop-release.yml --ref main \
 Release。原始产物过期时，省略 `source_run_id`，重新验证并构建 `release_tag` 指定的源码；不指定
 `release_tag` 的手动运行只验证和构建，不发布。
 
+GitHub 的 `desktop-release` environment 部署规则必须允许 `v*` Tag，以及恢复 workflow 所在的精确
+`main` 分支。恢复仍校验发行源码包含于 `origin/main`，不使用手动运行所在分支的应用代码打包。
+
 ---
 
 ## 2. 备选方式：本地脚本打包与发布
