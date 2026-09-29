@@ -112,8 +112,12 @@ describe("Mission chat projection", () => {
         updatedAt: base.occurredAt,
       };
       const durable = messageRecordsToChatEntries(records);
-      expect(ensureTerminalExecutionResultEntry(durable, terminal)).toEqual(durable);
-      expect(ensureTerminalExecutionResultEntry(chat.entries, terminal)).toEqual(chat.entries);
+      expect(ensureTerminalExecutionResultEntry(durable, terminal, "Stopped testing.")).toEqual(
+        durable,
+      );
+      expect(
+        ensureTerminalExecutionResultEntry(chat.entries, terminal, "Stopped testing."),
+      ).toEqual(chat.entries);
       expect(
         ensureTerminalExecutionResultEntry(durable.slice(0, -1), terminal).at(-1),
       ).toMatchObject({

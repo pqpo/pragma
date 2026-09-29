@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   createFileExecutionStore,
   StoredExecutionView,
@@ -10,7 +11,7 @@ import {
   type ExecutionWorkRecord,
 } from "@pragma/core";
 import type { ExpertAgentStreamEvent } from "@pragma/shared";
-import { ExpertAgentStreamEventSchema } from "@pragma/shared";
+import { ExpertAgentStreamEventSchema, InvocationOutputSchema } from "@pragma/shared";
 import {
   type Mission,
   type MissionChatEntry,
@@ -236,7 +237,15 @@ async function readMissionChatTurnPage(input: {
         (isMissionTerminalExecutionStatus(executionState.status) &&
           projectionPage.orderingVersion === MISSION_EXECUTION_PROJECTION_ORDERING_VERSION &&
           projectionPage.sourceUpdatedAt !== undefined &&
-          projectionPage.sourceUpdatedAt >= executionState.updatedAt))
+          projectionPage.sourceUpdatedAt >= executionState.updatedAt &&
+          (executionState.status !== "succeeded" ||
+            projectionPage.entries.some(
+              (entry) =>
+                entry.kind === "assistant" &&
+                entry.finalAnswer === true &&
+                entry.streaming === false &&
+                terminalEntryMatchesExecutionOutput(entry, executionState),
+            ))))
     ) {
       const completeProjection =
         executionState === undefined
@@ -619,18 +628,31 @@ export async function readMissionChatHistory(
       });
       continue;
     }
+    const canonicalEntries = orderMissionExecutionEntries([
+      ...messageRecordsToChatEntries(
+        histories
+          .flatMap((history) => history.messages)
+          .filter((record) => record.source?.parentSessionId === undefined),
+      ).map((entry) => ({
+        ...entry,
+        timelineSequence: turn.sequence,
+      })),
+      ...activityEntries,
+    ]);
+    // Core appends the root terminal message only after the submission succeeds;
+    // model-attempt completions in the live projection are not this authority.
+    const terminalAnswer = canonicalEntries.findLast(
+      (entry) =>
+        entry.kind === "assistant" &&
+        entry.invocationId === state.rootInvocationId &&
+        entry.finalAnswer === true,
+    );
     const richEntries = finalizeHistoricalChatEntries(
-      orderMissionExecutionEntries([
-        ...messageRecordsToChatEntries(
-          histories
-            .flatMap((history) => history.messages)
-            .filter((record) => record.source?.parentSessionId === undefined),
-        ).map((entry) => ({
-          ...entry,
-          timelineSequence: turn.sequence,
-        })),
-        ...activityEntries,
-      ]),
+      ensureTerminalExecutionResultEntry(
+        canonicalEntries,
+        state,
+        terminalAnswer?.kind === "assistant" ? terminalAnswer.content : undefined,
+      ),
       isMissionTerminalExecutionStatus(state.status),
       state.rootInvocationId,
     );
@@ -801,40 +823,42 @@ function executionFallback(status: string, output: unknown, error: unknown): str
 export function ensureTerminalExecutionResultEntry(
   entries: readonly Exclude<MissionChatEntry, { readonly kind: "user" }>[],
   execution: TerminalExecutionResultSource,
+  canonicalTerminalText?: string,
 ): Exclude<MissionChatEntry, { readonly kind: "user" }>[];
 export function ensureTerminalExecutionResultEntry(
   entries: readonly MissionChatEntry[],
   execution: TerminalExecutionResultSource,
+  canonicalTerminalText?: string,
 ): MissionChatEntry[];
 export function ensureTerminalExecutionResultEntry(
   entries: readonly MissionChatEntry[],
   execution: TerminalExecutionResultSource,
+  canonicalTerminalText?: string,
 ): MissionChatEntry[] {
   if (execution.status !== "succeeded") return [...entries];
-  // A completed root message is the chat authority. Execution output can
-  // aggregate several assistant segments, so comparing it with the last
-  // message and appending it would replay an otherwise complete conversation.
-  // Keep the output fallback for projections that actually lost their answer.
-  if (
-    entries.some(
-      (entry) =>
-        entry.kind === "assistant" &&
+  const matchingIndex = entries.findLastIndex((entry) =>
+    canonicalTerminalText === undefined
+      ? terminalEntryMatchesExecutionOutput(entry, execution)
+      : entry.kind === "assistant" &&
         entry.invocationId === execution.rootInvocationId &&
-        entry.finalAnswer === true &&
-        entry.streaming !== true,
-    )
-  )
-    return [...entries];
-  const content = missionWorkOutputSummary(execution.output, 200_000);
-  if (content === undefined || content === "") return [...entries];
-  const matchingIndex = entries.findLastIndex(
-    (entry) =>
-      entry.kind === "assistant" &&
-      entry.invocationId === execution.rootInvocationId &&
-      entry.content === content,
+        entry.content === canonicalTerminalText,
   );
+  const matching = entries[matchingIndex];
+  const content =
+    canonicalTerminalText ??
+    (matching?.kind === "assistant"
+      ? matching.content
+      : missionWorkOutputSummary(execution.output, 200_000));
+  const finalized = entries.map((entry) =>
+    entry.kind === "assistant" &&
+    entry.invocationId === execution.rootInvocationId &&
+    entry.finalAnswer === true
+      ? { ...entry, finalAnswer: false }
+      : entry,
+  );
+  if (content === undefined || content === "") return finalized;
   if (matchingIndex >= 0) {
-    return entries.map((entry, index) =>
+    return finalized.map((entry, index) =>
       index === matchingIndex && entry.kind === "assistant"
         ? { ...entry, streaming: false, finalAnswer: true }
         : entry,
@@ -848,7 +872,7 @@ export function ensureTerminalExecutionResultEntry(
         entry.executorAvatarId !== undefined),
   );
   return [
-    ...entries,
+    ...finalized,
     {
       id: `result:${execution.executionId}`,
       executionId: execution.executionId,
@@ -875,6 +899,21 @@ interface TerminalExecutionResultSource {
   readonly status: string;
   readonly output?: unknown;
   readonly updatedAt: string;
+}
+
+function terminalEntryMatchesExecutionOutput(
+  entry: MissionChatEntry,
+  execution: TerminalExecutionResultSource,
+): boolean {
+  if (entry.kind !== "assistant" || entry.invocationId !== execution.rootInvocationId) return false;
+  const output = InvocationOutputSchema.safeParse(execution.output);
+  if (!output.success || output.data.type !== "inline") return false;
+  if (typeof output.data.value === "string") return entry.content === output.data.value;
+  try {
+    return isDeepStrictEqual(JSON.parse(entry.content), output.data.value);
+  } catch {
+    return false;
+  }
 }
 
 export function readErrorMessage(error: unknown): string {

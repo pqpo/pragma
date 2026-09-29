@@ -30,7 +30,7 @@ import {
   type RuntimeModelSelection,
   type RuntimeResolver,
 } from "@pragma/core";
-import { defineRuntimeTestDriver } from "@pragma/core/testing";
+import { defineRuntimeTestDriver, openRuntimeSession } from "@pragma/core/testing";
 import {
   createMissionControlApplication,
   createMissionControllerStore,
@@ -43,6 +43,7 @@ import type {
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import {
   MissionChatPageSchema,
@@ -70,6 +71,7 @@ import {
 } from "./mission-runner-composition.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { writeMissionExecutionProjection } from "./mission-execution-projection.ts";
+import { messageRecordsToChatEntries } from "./mission-chat-history.ts";
 import { persistMissionDeletionIntent } from "./mission-deletion-intent.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
 import {
@@ -3630,15 +3632,244 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       expect(recovered.entries).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            id: `result:${executionId}`,
             kind: "assistant",
-            content: aggregateOutput
-              ? "I will ask the user now.The user answered: Received."
-              : "The user answered: Received.",
+            content: "The user answered: Received.",
             finalAnswer: true,
           }),
         ]),
       );
+    },
+  );
+
+  it.each(["legacy", "incomplete-current", "healthy-current"])(
+    "restores the successful structured-output retry after reload: %s",
+    async (projectionKind) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-retry-projection-"));
+      temporaryPaths.push(root);
+      const pragmaHome = join(root, "state");
+      const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+      const snapshot = await project.publish({
+        expectedRevision: 0,
+        resources: [runtimeFixture(), expertFixture()],
+      });
+      const missions = createMissionStore({ missionsPath: join(root, "missions") });
+      const mission = await missions.create({
+        workspace: { path: root, basename: "workspace" },
+        goal: "Return a structured answer",
+        project: { id: snapshot.projectId, revision: snapshot.revision },
+        executor: missionExecutorSnapshot(
+          snapshot.resources.find((resource) => resource.kind === "Expert")!,
+        ),
+      });
+      const attempts: number[] = [];
+      const valid = '{"answer":"done"}';
+      const runtime = defineRuntimeTestDriver<never, { id: string }>({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession: () => ({ id: "runtime" }),
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn(_session, turn) {
+          attempts.push(turn.attempt);
+          const text = turn.attempt === 1 ? "not JSON" : valid;
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "message.delta",
+            payload: { role: "assistant", contentType: "text", delta: text },
+          });
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "message.completed",
+            payload: {
+              role: "assistant",
+              contentType: "text",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text }],
+                api: "test",
+                provider: "test",
+                model: "test-model",
+                usage: {
+                  measurement: "reported",
+                  input: 1,
+                  output: 1,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 2,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                },
+                stopReason: "stop",
+                timestamp: Date.now(),
+              },
+            },
+          });
+          return { outputText: text, runtimeSessionId: "runtime" };
+        },
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+      const expert = await defineExpert({
+        id: expertFixture().metadata.id,
+        name: "Writer",
+        scope: "Test",
+        description: "Test",
+        tags: [],
+        workspace: root,
+        pragmaHome,
+        instructions: "Return JSON",
+        defaultRuntimeId: "fake",
+      });
+      const native = await openRuntimeSession(runtime, {
+        agent: expert,
+        owner: { type: "expert-session", ownerId: "retry-session", contextId: "retry-context" },
+        pragmaHome,
+        systemSessionId: "retry-native",
+      });
+      const submission = native.submit({
+        query: mission.goal,
+        output: z.object({ answer: z.literal("done") }),
+        outputRetryLimit: 1,
+        execution: {},
+      });
+      const completions = (async () => {
+        const messages = [];
+        for await (const event of submission.events) {
+          if (event.type === "message.completed" && event.payload.message?.role === "assistant")
+            messages.push(event.payload.message);
+        }
+        return messages;
+      })();
+      const result = await submission.result;
+      const messages = await completions;
+      await native.close();
+      expect(attempts).toEqual([1, 2]);
+      expect(messages.map((message) => message.stopReason)).toEqual(["stop", "stop"]);
+      expect(result.result.output).toEqual({ answer: "done" });
+
+      const executionId = "20000000-0000-4000-8000-000000000325";
+      const createdAt = "2026-09-29T00:00:00.000Z";
+      const definition = { id: expert.id, kind: "expert" as const };
+      const executions = createFileExecutionStore({ pragmaHome });
+      await executions.create(
+        {
+          schemaVersion: "pragma.execution/v12",
+          executionId,
+          version: 0,
+          kind: "expert-turn",
+          definition,
+          rootInvocationId: executionId,
+          status: "running",
+          input: { text: mission.goal, attachments: [] },
+          state: {},
+          lastAppliedSequence: 0,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        {
+          invocationId: executionId,
+          rootInvocationId: executionId,
+          definition,
+          executorId: expert.id,
+          contextId: "retry-context",
+          status: "running",
+          pendingExpertMessages: [],
+          input: { text: mission.goal, attachments: [] },
+          createdAt,
+          updatedAt: createdAt,
+        },
+      );
+      // Like Core's runner, commit only the root message from the successful submission.
+      await appendExecutionEvent(
+        executions,
+        executionId,
+        executionId,
+        "invocation.message.appended",
+        {
+          runId: submission.runId,
+          message: messages.at(-1)!,
+        },
+      );
+      await executions.commit({
+        commitId: "complete-retry",
+        executionId,
+        executionPatch: {
+          status: "succeeded",
+          output: { type: "inline", value: result.result.output },
+        },
+        invocationPatches: [{ invocationId: executionId, patch: { status: "succeeded" } }],
+      });
+      await missions.appendExecutionReference({
+        missionId: mission.id,
+        inputMessageId: mission.initialMessageId,
+        executionId,
+        createdAt,
+      });
+      const canonical = await new StoredExecutionView(executionId, executions).getMessageHistory({
+        scope: { kind: "root" },
+      });
+      const canonicalEntries = messageRecordsToChatEntries(
+        canonical.flatMap((history) => history.messages),
+      );
+      const projectionPath = join(
+        missions.storagePath!(mission.id),
+        "execution-projections",
+        `${executionId}.jsonl`,
+      );
+      if (projectionKind === "legacy") {
+        await mkdir(join(missions.storagePath!(mission.id), "execution-projections"), {
+          recursive: true,
+        });
+        // Produced by the actual v3 writer at 76b0af71, not by changing a current fixture's version.
+        await copyFile(
+          new URL(
+            "./fixtures/mission-execution-projection-v3-rejected-attempt.jsonl",
+            import.meta.url,
+          ),
+          projectionPath,
+        );
+      } else {
+        await missions.writeExecutionProjection(
+          mission.id,
+          executionId,
+          projectionKind === "healthy-current"
+            ? canonicalEntries
+            : [
+                {
+                  id: "rejected-attempt",
+                  executionId,
+                  invocationId: executionId,
+                  kind: "assistant",
+                  content: "not JSON",
+                  streaming: false,
+                  finalAnswer: true,
+                  createdAt,
+                },
+              ],
+          (await executions.get(executionId))!.updatedAt,
+        );
+      }
+      await executions.archive(executionId);
+      const before = await readFile(projectionPath, "utf8");
+      const restartedExecutions = createFileExecutionStore({ pragmaHome });
+      const reads = vi.spyOn(restartedExecutions, "readEvents");
+      const restarted = createMissionRunner({
+        missions: createMissionStore({ missionsPath: join(root, "missions") }),
+        project: createPragmaProjectStore({ projectsPath: join(root, "projects") }),
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome,
+        executionStore: restartedExecutions,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      const chat = await restarted.getChatPage({ id: mission.id, limit: 50 });
+      const answers = chat.entries.filter((entry) => entry.kind === "assistant");
+      expect(answers).toHaveLength(1);
+      expect(answers[0]).toMatchObject({ content: valid, finalAnswer: true, streaming: false });
+      expect(chat.syncIssues).toBeUndefined();
+      expect(attempts).toEqual([1, 2]);
+      expect(await readFile(projectionPath, "utf8")).toBe(before);
+      if (projectionKind === "healthy-current") expect(reads).not.toHaveBeenCalled();
     },
   );
 
