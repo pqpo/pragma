@@ -409,21 +409,109 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       readFile(join(b.root, "state", "asset-sync", "restore-journal.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
-  it("keeps user changes when a restore was interrupted", async () => {
+  it.each(["local", "remote", "restore"] as const)(
+    "resolves an interrupted restore after local edits with %s and resumes synchronization",
+    async (choice) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const b = device(join(git.root, "b"), true);
+      const candidates = [
+        await addKnowledge(a.stores, "Recover me"),
+        await addKnowledge(a.stores, "Unrelated"),
+      ];
+      await a.service.configure(configuration);
+      expect((await b.service.configure(configuration)).status).toBe("error");
+      const knowledge = (await b.stores.list())[0]!;
+      const unrelated = candidates.find((store) => store.id !== knowledge.id)!;
+      await append(b.stores, knowledge.id, "# User changed after interruption\n");
+      const restarted = b.restart();
+      const result = await restarted.sync();
+      expect(result.status, result.error).toBe("conflict");
+      expect(result.items.find((item) => item.key === `knowledge:${knowledge.id}`)?.status).toBe(
+        "conflict",
+      );
+      expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe(
+        "# User changed after interruption\n",
+      );
+      expect((await b.stores.getSnapshot(unrelated.id)).files[0]?.content).toBe("# Original\n");
+      await expect(
+        readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      // Persisted conflict remains actionable across another restart and a pull.
+      const service = b.restart();
+      expect((await service.refresh()).status).toBe("conflict");
+      const resolved =
+        choice === "restore"
+          ? await service.restore(`knowledge:${knowledge.id}`)
+          : await service.resolve(`knowledge:${knowledge.id}`, choice);
+      expect(resolved.status, resolved.error).toBe("ready");
+      const expected = choice === "local" ? "# User changed after interruption\n" : "# Original\n";
+      expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe(expected);
+      expect((await service.sync()).status).toBe("ready");
+      await a.service.refresh();
+      expect((await a.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe(expected);
+    },
+  );
+  it("cancels unfinished restoration on configuration removal and permits reconfiguration", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
     const b = device(join(git.root, "b"), true);
     const knowledge = await addKnowledge(a.stores, "Recover me");
     await a.service.configure(configuration);
-    await b.service.configure(configuration);
-    await append(b.stores, knowledge.id, "# User changed after interruption\n");
-    const result = await b.restart().sync();
-    expect(result.status).toBe("error");
-    expect(result.error).toContain("asset_sync.restore_conflict");
-    expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe(
-      "# User changed after interruption\n",
-    );
+    expect((await b.service.configure(configuration)).status).toBe("error");
+    await append(b.stores, knowledge.id, "# Keep my edit\n");
+    await b.service.removeConfiguration();
+    await expect(
+      readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const service = b.restart();
+    expect((await service.overview()).status).toBe("unconfigured");
+    expect((await service.configure(configuration)).status).toBe("conflict");
+    expect((await service.resolve(`knowledge:${knowledge.id}`, "local")).status).toBe("ready");
+    expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe("# Keep my edit\n");
   });
+  it.each(["configure", "interrupted-configuration"] as const)(
+    "cancels the previous journal on %s source change without replaying its pending assets",
+    async (mode) => {
+      const git = await fixture();
+      await exec("git", ["init", "--bare", "--initial-branch=main", join(git.root, "other.git")]);
+      const a = device(join(git.root, "a"));
+      const b = device(join(git.root, "b"), true);
+      const candidates = [
+        await addKnowledge(a.stores, "Applied stage"),
+        await addKnowledge(a.stores, "Pending stage"),
+      ];
+      await a.service.configure(configuration);
+      expect((await b.service.configure(configuration)).status).toBe("error");
+      const knowledge = (await b.stores.list())[0]!;
+      const pending = candidates.find((store) => store.id !== knowledge.id)!;
+      await append(b.stores, knowledge.id, "# Keep my edit\n");
+      const selected = { ...configuration, remote: "ssh://git@pragma.test/other.git" };
+      if (mode === "interrupted-configuration") {
+        // Model a crash after changing settings but before retiring the previous journal.
+        await writeFile(
+          join(b.root, "state/asset-sync/settings.json"),
+          JSON.stringify({
+            schemaVersion: "pragma.asset-sync-settings/v1",
+            ...selected,
+          }),
+        );
+      }
+      const switched =
+        mode === "configure" ? await b.service.configure(selected) : await b.restart().sync();
+      expect(switched.status, switched.error).toBe("ready");
+      expect((await b.stores.list()).map((store) => store.id)).toEqual([knowledge.id]);
+      expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe("# Keep my edit\n");
+      await expect(
+        readFile(join(b.root, "state/asset-sync/restore-journal.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      const service = b.restart();
+      expect((await service.sync()).status).toBe("ready");
+      expect((await service.configure(configuration)).status).toBe("conflict");
+      expect((await b.stores.getSnapshot(pending.id)).files[0]?.content).toBe("# Original\n");
+      expect((await service.resolve(`knowledge:${knowledge.id}`, "local")).status).toBe("ready");
+    },
+  );
   it("retains successful incoming restoration when an outgoing push fails", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));
@@ -767,14 +855,24 @@ describe("structured asset sync with real Git and domain stores", { timeout: 60_
       await a.layouts.save({ ...initialLayout, nodes: { finish: { x: 10, y: 20 } } });
       await a.service.sync();
       const result = await b.service.refresh();
-      expect(result.status).toBe("error");
-      expect(result.error).toContain("restore_conflict");
+      expect(result.status, result.error).toBe("conflict");
       if (kind === "knowledge-delete")
         expect((await b.stores.getSnapshot(knowledge.id)).files[0]?.content).toBe("# User change");
       else if (kind === "capability-delete") {
         expect((await b.capabilities.get(cap.manifest.id)).manifest.latestRevision).toBe(2);
         expect(await b.credentials.get(cap.manifest.id, "token")).toBe("Concurrent secret");
       } else expect((await b.layouts.get(initialLayout))?.nodes.finish).toEqual({ x: 99, y: 99 });
+      const key =
+        kind === "knowledge-delete"
+          ? `knowledge:${knowledge.id}`
+          : kind === "capability-delete"
+            ? `capability:${cap.manifest.id}`
+            : `flow-layout:${initialLayout.flowId}`;
+      const resolved = await b.restart().resolve(key, "local");
+      expect(resolved.status, resolved.error).toBe("ready");
+      expect((await b.service.refresh()).status).toBe("ready");
+      if (kind === "capability-delete")
+        expect(await b.credentials.get(cap.manifest.id, "token")).toBe("Concurrent secret");
     },
   );
   it("keeps deleted local assets ignored after remote edits and defers new dependents only", async () => {

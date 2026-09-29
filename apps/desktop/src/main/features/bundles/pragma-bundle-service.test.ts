@@ -1,3 +1,4 @@
+import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -51,7 +52,7 @@ import {
   desktopCapabilityBindingRef,
   desktopContextBindingRef,
 } from "../../platform/bindings/desktop-binding-ref.ts";
-import { inspectBundleReadiness, mergePendingMetadata } from "./pragma-bundle-dependencies.ts";
+import { mergePendingMetadata } from "./pragma-bundle-dependencies.ts";
 import { createPragmaBundleService } from "./pragma-bundle-service.ts";
 import { resolveBundleIdentities } from "./pragma-bundle-resources.ts";
 
@@ -1047,7 +1048,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
 
   it("recognizes the built-in Pragma management Capability without an installed payload", async () => {
     await expect(
-      inspectBundleReadiness([pragmaManagementCapabilityResource()], {
+      inspectAssetReadiness([pragmaManagementCapabilityResource()], {
         capabilities: {} as CapabilityStore,
         contextStores: {} as ContextStoreStore,
         plugins: {} as PluginStore,
@@ -1498,7 +1499,7 @@ describe("PragmaBundleService", { timeout: 30_000 }, () => {
     } as unknown as CapabilityStore;
 
     await expect(
-      inspectBundleReadiness([resource], {
+      inspectAssetReadiness([resource], {
         capabilities,
         contextStores: {} as ContextStoreStore,
         plugins: {} as PluginStore,

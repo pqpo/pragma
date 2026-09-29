@@ -14,7 +14,8 @@ Use an exclusive `pragma-sync/` tree with a small version marker, categorized In
 native Knowledge and Skill files, and a generated Chinese index. Stable IDs own paths. Metadata
 contains no content hash inventory; decode calculates hashes from actual files and Git modes.
 Keep logical asset reconciliation and group Flow/layout and Capability/binding/definition choices.
-Use shared Desktop internal transfer and publication primitives with Bundle, keeping Bundle copy
+Use shared Desktop internal transfer, readiness and publication primitives in `features/asset-transfer/`
+with Bundle, keeping Bundle copy
 and installation semantics distinct from sync's identity preservation. Prepare the complete
 incoming graph before mutation and persist a replayable, locked restore journal. Retain credentials
 locally and report unavailable dependencies using readiness diagnostics. Honor autoPush at the
@@ -26,7 +27,16 @@ There are no users of the previous core sync protocol. The authorized cutover in
 configuration, state, journal and repository namespaces; it neither reads nor migrates old sync
 data. Old repository paths remain intact. This exception is limited to this unused synchronization
 protocol. DSL, Bundle, Capability and Knowledge storage retain their existing upgrade policies.
-A previously initialized new repository with a missing or unsupported marker fails closed.
+The maintainer explicitly confirmed in the implementation request that the existing giant JSON sync
+has no users and authorized a direct switch without compatibility. This follows the experimental
+protocol cutover rule in AGENTS.md; no low-usage inference or general domain migration exemption
+is intended. A previously initialized new repository with a missing or unsupported marker fails closed.
+
+Interrupted restoration that detects a user edit retires its journal into persistent logical asset
+conflicts, advancing only completed stages. Keep-local, keep-Git and explicit restore use the normal
+reconciliation path; unrelated changes continue. Removing configuration or selecting another source
+cancels unfinished stages, retains all already published local assets, and removes the old operation
+under the sync lock. Reconfiguration compares the retained assets against the selected repository.
 
 ## Verification
 

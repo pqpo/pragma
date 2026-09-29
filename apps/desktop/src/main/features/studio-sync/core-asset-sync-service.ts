@@ -1,5 +1,5 @@
+import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
 import type { PluginStore } from "../plugins/plugin-store.ts";
-import { inspectBundleReadiness } from "../bundles/pragma-bundle-dependencies.ts";
 import {
   encodeSyncRepository,
   readSyncRepository,
@@ -11,7 +11,7 @@ import {
   NAME_RESOLUTION_ERROR_CODE,
   type CoreAssetSyncNameResolutionIssue,
   type CollectedItems,
-} from "../bundles/asset-transfer-service.ts";
+} from "../asset-transfer/asset-transfer-service.ts";
 
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -69,6 +69,7 @@ const StateSchema = z
       .default({}),
     ignoredRemote: z.array(z.string()),
     conflicts: z.array(z.string()),
+    restoreConflicts: z.array(z.string()).default([]),
     syncedAt: z.string().datetime().optional(),
   })
   .strict();
@@ -158,6 +159,7 @@ export function createCoreAssetSyncService(options: {
       remoteItems: {},
       ignoredRemote: [],
       conflicts: [],
+      restoreConflicts: [],
     };
   };
   const writeState = async (state: SyncState): Promise<void> =>
@@ -217,7 +219,7 @@ export function createCoreAssetSyncService(options: {
         unavailable.set(item.key, "Choose an available local harness and model in Studio.");
     }
     if (options.plugins) {
-      const diagnostics = await inspectBundleReadiness(resources, {
+      const diagnostics = await inspectAssetReadiness(resources, {
         capabilities: options.capabilities,
         contextStores: options.stores,
         plugins: options.plugins,
@@ -346,36 +348,81 @@ export function createCoreAssetSyncService(options: {
   };
 
   const journalPath = join(dirname(options.statePath), "restore-journal.json");
-  const recoverImport = async (source: string): Promise<void> => {
+  const recoverImport = async (source: string): Promise<"complete" | "conflict"> => {
     let journal: z.infer<typeof JournalSchema>;
     try {
       journal = JournalSchema.parse(JSON.parse(await readFile(journalPath, "utf8")));
     } catch (error) {
-      if (isMissing(error)) return;
+      if (isMissing(error)) return "complete";
       throw error;
     }
-    if (journal.source !== source)
-      throw new Error(
-        "asset_sync.restore_source_changed: restore the previous sync configuration before retrying.",
-      );
-    const { items: current } = await collect();
-    for (const change of journal.changes) {
-      const actual = current.get(change.key)?.fingerprint ?? null;
-      if (
-        actual !== journal.expected[change.key] &&
-        actual !== (change.remote?.fingerprint ?? null)
-      )
-        throw new Error(
-          `asset_sync.restore_conflict: local asset changed during interrupted restore: ${change.key}`,
-        );
+    if (journal.source !== source) {
+      // Configuration changes cancel unfinished imports from the previous repository.
+      // Already published assets remain local and are reconciled against the selected source.
+      await rm(journalPath, { force: true });
+      return "complete";
+    }
+    const interruptedConflicts = (current: CollectedItems): string[] =>
+      journal.changes.flatMap((change) => {
+        const actual = current.items.get(change.key)?.fingerprint ?? null;
+        if (actual === (change.remote?.fingerprint ?? null)) return [];
+        return actual !== journal.expected[change.key] ||
+          (change.expectedRevision !== undefined &&
+            change.expectedRevision !== current.revisions.get(change.key))
+          ? [change.key]
+          : [];
+      });
+    const deferConflicts = async (current: CollectedItems, conflicts: readonly string[]) => {
+      const state = await readState(source);
+      const bases = { ...state.bases };
+      // Only completed stages advance their baseline. Pending stages are replanned from Git.
+      for (const change of journal.changes) {
+        if (
+          (current.items.get(change.key)?.fingerprint ?? null) !==
+          (change.remote?.fingerprint ?? null)
+        )
+          continue;
+        const incomingBase = journal.incomingState.bases[change.key];
+        if (incomingBase === undefined) delete bases[change.key];
+        else bases[change.key] = incomingBase;
+      }
+      await writeState({
+        ...state,
+        repositoryInitialized:
+          state.repositoryInitialized || journal.incomingState.repositoryInitialized,
+        bases,
+        remoteItems: journal.incomingState.remoteItems,
+        conflicts: [...new Set([...state.conflicts, ...conflicts])],
+        restoreConflicts: [...new Set([...state.restoreConflicts, ...conflicts])],
+      });
+      // Persist the conflict before retiring the operation, so a crash repeats this transition.
+      await rm(journalPath, { force: true });
+    };
+    let current = await collect();
+    let conflicts = interruptedConflicts(current);
+    if (conflicts.length > 0) {
+      await deferConflicts(current, conflicts);
+      return "conflict";
     }
     const pending = journal.changes.filter(
       (change) =>
-        (current.get(change.key)?.fingerprint ?? null) !== (change.remote?.fingerprint ?? null),
+        (current.items.get(change.key)?.fingerprint ?? null) !==
+        (change.remote?.fingerprint ?? null),
     );
-    await transfer.applyImport(await transfer.prepareImport(pending));
+    try {
+      await transfer.applyImport(await transfer.prepareImport(pending));
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("asset_sync.restore_conflict:"))
+        throw error;
+      current = await collect();
+      conflicts = interruptedConflicts(current);
+      if (conflicts.length === 0) throw error;
+      await deferConflicts(current, conflicts);
+      return "conflict";
+    }
     await writeState(journal.incomingState);
     await rm(journalPath, { force: true });
+    return "complete";
   };
 
   const run = async (
@@ -416,7 +463,12 @@ export function createCoreAssetSyncService(options: {
                 throw error;
               });
             let pushNeeded = effectiveIntent === "full" && !repositoryInitialized;
-            const keys = new Set([...local.keys(), ...remote.keys(), ...Object.keys(bases)]);
+            const keys = new Set([
+              ...local.keys(),
+              ...remote.keys(),
+              ...Object.keys(bases),
+              ...state.restoreConflicts,
+            ]);
             const groups = new Map<string, string[]>();
             for (const key of keys) {
               const item = local.get(key) ?? remote.get(key);
@@ -429,7 +481,8 @@ export function createCoreAssetSyncService(options: {
               if (
                 (!resolution || !members.includes(resolution.key)) &&
                 members.every((key) => !local.has(key)) &&
-                members.some((key) => state.ignoredRemote.includes(key))
+                members.some((key) => state.ignoredRemote.includes(key)) &&
+                !members.some((key) => state.restoreConflicts.includes(key))
               ) {
                 for (const key of members) ignored.add(key);
                 continue;
@@ -445,7 +498,11 @@ export function createCoreAssetSyncService(options: {
               );
               if (resolution && members.includes(resolution.key))
                 for (const key of members) groupChoices.set(key, resolution.choice);
-              else if (localChanged && remoteChanged && !equal)
+              else if (
+                !equal &&
+                ((localChanged && remoteChanged) ||
+                  members.some((key) => state.restoreConflicts.includes(key)))
+              )
                 for (const key of members) groupedConflicts.add(key);
             }
             for (const item of [...remote.values(), ...local.values()]) {
@@ -605,6 +662,7 @@ export function createCoreAssetSyncService(options: {
               ),
               ignoredRemote: [...ignored],
               conflicts,
+              restoreConflicts: state.restoreConflicts.filter((key) => conflicts.includes(key)),
             });
             if (pushNeeded) encodeSyncRepository(nextRemote);
             if (changes.length > 0) {
@@ -638,7 +696,12 @@ export function createCoreAssetSyncService(options: {
                   },
                 }),
               );
-              await recoverImport(source);
+              if ((await recoverImport(source)) === "conflict") {
+                if (attempt < 2) continue;
+                lastError = undefined;
+                running = false;
+                return await makeOverview(config);
+              }
             }
             if (pushNeeded) await publishRepository(checkout, nextRemote);
             nextState.syncedAt = new Date().toISOString();
@@ -705,14 +768,18 @@ export function createCoreAssetSyncService(options: {
           }
           await writeState({ ...state, ignoredRemote: [...ignored] });
         }
+        if (previous === undefined || sourceKey(previous) !== sourceKey(config))
+          await rm(journalPath, { force: true });
         await writeAtomic(options.configurationPath, config);
       });
       return await run("full");
     },
     async removeConfiguration() {
-      await withFileLock(`${options.statePath}.lock`, async () =>
-        rm(options.configurationPath, { force: true }),
-      );
+      await withFileLock(`${options.statePath}.lock`, async () => {
+        await rm(options.configurationPath, { force: true });
+        await rm(journalPath, { force: true });
+        lastError = undefined;
+      });
     },
     sync: async () => await run("full"),
     automatic: async () => await run("automatic"),

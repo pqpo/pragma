@@ -8,7 +8,7 @@ import {
   decodeSyncRepository,
   type SyncFile,
 } from "./asset-sync-repository.ts";
-import { fingerprint } from "../bundles/asset-transfer-fingerprint.ts";
+import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
 
 const storeId = "f13af121-439b-4bad-8fe4-8b7dc27554d3";
 const skillId = "0df66ebd-69bb-4656-82e5-5634a3878139";

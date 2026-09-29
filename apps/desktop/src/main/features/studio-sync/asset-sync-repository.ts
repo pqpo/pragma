@@ -31,11 +31,11 @@ import {
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
-import { isResourceItem } from "../bundles/asset-transfer-service.ts";
-import { KnowledgeDataSchema, SkillDataSchema } from "../bundles/asset-transfer-payloads.ts";
-import { fingerprint } from "../bundles/asset-transfer-fingerprint.ts";
+import { isResourceItem } from "../asset-transfer/asset-transfer-service.ts";
+import { KnowledgeDataSchema, SkillDataSchema } from "../asset-transfer/asset-transfer-payloads.ts";
+import { fingerprint } from "../asset-transfer/asset-transfer-fingerprint.ts";
 import { runAssetGit } from "../asset-git/asset-git-command.ts";
-import { validateTransferredSkill } from "../bundles/asset-transfer-payloads.ts";
+import { validateTransferredSkill } from "../asset-transfer/asset-transfer-payloads.ts";
 
 export const SYNC_DIRECTORY = "pragma-sync";
 const MAX_BYTES = 150 * 1024 * 1024;

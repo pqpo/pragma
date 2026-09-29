@@ -46,9 +46,9 @@ repository is initialized, a missing marker is an error, including for an empty 
 
 ## Transfer and recovery
 
-Desktop's internal batch transfer service collects assets, prepares the complete incoming resource
+Desktop's internal batch transfer service in `features/asset-transfer/` collects assets, prepares the complete incoming resource
 graph and applies imports. Bundle and sync share native Knowledge/Skill reading and publication
-helpers. Bundle retains localization, copies and installation catalog semantics; sync preserves IDs,
+helpers and dependency readiness inspection. Neither shared transfer nor sync depends on the Bundle feature. Bundle retains localization, copies and installation catalog semantics; sync preserves IDs,
 does not create unreferenced DSL bindings and does not write Bundle installation records.
 Capability changes use the configured mutation coordinator, validate Expert tool selections and
 retain existing credentials. Transfer preserves the imported definition: if MCP verification
@@ -68,8 +68,13 @@ already identical publications are skipped. Knowledge metadata is canonicalized 
 schemas; implicit parent directories are included before hashing. Expert plugin configuration and
 secret binding references are retained, while secret values remain local. Import planning also applies the authoritative DSL unknown-field
 preservation policy before journaling. Bidirectional sync republishes preserved fields, so an
-interrupted compatible update has a replayable target matching the actual domain publication. A user change during interruption stops replay with
-`asset_sync.restore_conflict`. Layout updates and deletions use expected semantic versions under
+interrupted compatible update has a replayable target matching the actual domain publication. A user change during interruption stops replay and moves the operation into persisted logical
+asset conflicts. Only completed stages advance their baselines; unresolved targets are replanned
+against Git. Keep-local, keep-Git and explicit restore remain available, while unrelated assets can
+synchronize. Removing configuration or changing source cancels unfinished stages under the same
+lock without removing already published local data. Reconfiguration reconciles the retained assets
+normally. A source mismatch after an interrupted configuration change also cancels the old operation
+instead of applying targets from the wrong repository. Layout updates and deletions use expected semantic versions under
 the layout file lock; deferred Knowledge/Capability deletion rechecks the journal's expected content
 before domain revision checks. Revision checks also protect credential-only edits from concurrent deletion. Successful incoming baselines are saved before outgoing push, so a
 push failure does not republish imported revisions. Startup recovery errors are reported through

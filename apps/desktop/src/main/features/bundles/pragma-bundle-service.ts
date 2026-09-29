@@ -1,9 +1,10 @@
+import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
 import {
   readTransferredSkill,
   readTransferredKnowledge,
   publishTransferredSkill,
   appendTransferredKnowledge,
-} from "./asset-transfer-payloads.ts";
+} from "../asset-transfer/asset-transfer-payloads.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -99,7 +100,6 @@ import {
   assertUniqueResolutionRefs,
   collectCapabilities,
   collectContexts,
-  inspectBundleReadiness,
   isPortableValue,
   mergePendingMetadata,
   pendingBinding,
@@ -746,7 +746,7 @@ export function createPragmaBundleService(options: {
     const resources = snapshot.resources.filter((resource) =>
       installation.resourceRefs.includes(canonicalPragmaResourceRef(resource)),
     );
-    const readiness = await inspectBundleReadiness(resources, {
+    const readiness = await inspectAssetReadiness(resources, {
       capabilities: options.capabilities,
       contextStores: options.contextStores,
       plugins: options.plugins,
@@ -2446,7 +2446,7 @@ export function createPragmaBundleService(options: {
               });
             }
 
-            const verifiedReadiness = await inspectBundleReadiness(
+            const verifiedReadiness = await inspectAssetReadiness(
               published.resources.filter((resource) =>
                 installationRefs.has(canonicalPragmaResourceRef(resource)),
               ),
