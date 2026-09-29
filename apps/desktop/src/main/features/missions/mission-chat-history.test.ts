@@ -5,9 +5,40 @@ import {
   decodeMissionChatPageCursor,
   encodeMissionChatPageCursor,
   orderMissionExecutionEntries,
+  ensureTerminalExecutionResultEntry,
 } from "./mission-chat-history.ts";
 
 describe("Mission chat history", () => {
+  it("repairs a surviving rejected attempt instead of trusting its finalAnswer flag", () => {
+    const entries = ensureTerminalExecutionResultEntry(
+      [
+        {
+          id: "attempt-1",
+          executionId: "execution",
+          invocationId: "root",
+          kind: "assistant",
+          content: "invalid JSON",
+          finalAnswer: true,
+          streaming: false,
+          createdAt: "2026-09-29T00:00:00.000Z",
+        },
+      ],
+      {
+        executionId: "execution",
+        rootInvocationId: "root",
+        status: "succeeded",
+        output: { type: "inline", value: { answer: "done" } },
+        updatedAt: "2026-09-29T00:00:01.000Z",
+      },
+    );
+    expect(entries.at(-1)).toMatchObject({
+      id: "result:execution",
+      kind: "assistant",
+      finalAnswer: true,
+      content: "done",
+    });
+    expect(entries[0]).toMatchObject({ id: "attempt-1", finalAnswer: false });
+  });
   it("orders durable thinking and final replies by event sequence", () => {
     const entries = orderMissionExecutionEntries([
       {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,8 @@ import {
   MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
   migrateLegacyMissionExecutionProjection,
   readMissionExecutionProjection,
+  readMissionExecutionProjectionPage,
+  MISSION_EXECUTION_PROJECTION_ORDERING_VERSION,
   writeMissionExecutionProjection,
   type MissionExecutionProjectionWriteMetrics,
 } from "./mission-execution-projection.ts";
@@ -24,6 +26,29 @@ afterEach(async () => {
 });
 
 describe("mission execution projection", () => {
+  it("reads the actual v3 fixture without rewriting it and rejects future ordering versions", async () => {
+    const { path } = await temporaryProjectionPath();
+    const executionId = "20000000-0000-4000-8000-000000000325";
+    await copyFile(
+      new URL("./fixtures/mission-execution-projection-v3-rejected-attempt.jsonl", import.meta.url),
+      path,
+    );
+    const before = await readFile(path, "utf8");
+    expect(
+      await readMissionExecutionProjectionPage(path, executionId, { limit: 10 }),
+    ).toMatchObject({
+      orderingVersion: 3,
+      entries: [{ id: "rejected-attempt", finalAnswer: true }],
+    });
+    expect(await readFile(path, "utf8")).toBe(before);
+    const lines = before.trimEnd().split("\n");
+    const header = JSON.parse(lines[0]!) as Record<string, unknown>;
+    header["orderingVersion"] = MISSION_EXECUTION_PROJECTION_ORDERING_VERSION + 1;
+    await writeFile(path, [JSON.stringify(header), ...lines.slice(1)].join("\n") + "\n");
+    await expect(
+      readMissionExecutionProjectionPage(path, executionId, { limit: 10 }),
+    ).rejects.toThrow();
+  });
   it("keeps Unicode code-point truncation and exact projection counters", async () => {
     const { path } = await temporaryProjectionPath();
     const executionId = "execution-unicode";

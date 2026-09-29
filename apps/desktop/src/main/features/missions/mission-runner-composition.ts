@@ -5856,10 +5856,20 @@ async function persistMissionExecutionProjection(
     );
     for (const entry of interruptedProjection) projected.set(entry.id, entry);
     const source = await executionStore.get(executionId);
+    const canonicalAnswer = history.entries.findLast(
+      (entry) =>
+        entry.kind === "assistant" &&
+        entry.invocationId === source?.rootInvocationId &&
+        entry.finalAnswer === true,
+    );
     const completeProjection =
       source === undefined
         ? [...projected.values()]
-        : ensureTerminalExecutionResultEntry([...projected.values()], source);
+        : ensureTerminalExecutionResultEntry(
+            [...projected.values()],
+            source,
+            canonicalAnswer?.kind === "assistant" ? canonicalAnswer.content : undefined,
+          );
     await retryMissionProjectionWrite(
       missions,
       missionId,

@@ -18,11 +18,12 @@ const DEFAULT_SYNCHRONOUS_BUILD_BUDGET_MS = 4;
 const PROJECTION_WRITE_BATCH_BYTES = 256 * 1024;
 
 const ProjectionSchemaVersion = "pragma.mission-execution-projection/v2";
-export const MISSION_EXECUTION_PROJECTION_ORDERING_VERSION = 3 as const;
+export const MISSION_EXECUTION_PROJECTION_ORDERING_VERSION = 4 as const;
 
 const ProjectionOrderingVersionSchema = z.union([
   z.literal(1),
   z.literal(2),
+  z.literal(3),
   z.literal(MISSION_EXECUTION_PROJECTION_ORDERING_VERSION),
 ]);
 type ProjectionOrderingVersion = z.infer<typeof ProjectionOrderingVersionSchema>;

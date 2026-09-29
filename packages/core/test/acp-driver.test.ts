@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { client, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   AcpRuntimeSession,
   defineAcpRuntimeDriver,
@@ -22,6 +23,7 @@ import { createRuntimeTestFeatures } from "../src/testing/index.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 import { ContextSystem, StaticContextStore } from "../src/index.ts";
 import { defineExpert } from "../src/agent/expert-agent.ts";
+import { RuntimeMessageAccumulator } from "../src/execution/runtime-message-accumulator.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -121,7 +123,7 @@ describe("ACP stdio driver", () => {
   it("streams before completion, deduplicates tool terminal updates and prefers exact usage", async () => {
     const { session, events, turn } = await open();
     const result = await session.prompt(turn("hello"));
-    expect(result.outputText).toBe("working");
+    expect(result.outputText).toBe("answer");
     expect(result.usage).toMatchObject({ measurement: "reported", input: 5, output: 4 });
     expect(events.some((event) => event.update?.sessionUpdate === "agent_thought_chunk")).toBe(
       true,
@@ -132,11 +134,56 @@ describe("ACP stdio driver", () => {
       events.flatMap((event) => (event.toolDelta === undefined ? [] : [event.toolDelta])),
     ).toEqual(["half", " done"]);
     await expect(session.prompt(turn("second"))).resolves.toMatchObject({
-      outputText: "working",
+      outputText: "answer",
       usage: { measurement: "reported", input: 5, output: 4 },
     });
     await session.prompt(turn("limited"));
     expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "length" });
+  });
+  it.each(["hello", "json-final", "no-final"])(
+    "returns only the terminal answer while retaining ordered streamed history: %s",
+    async (input) => {
+      const { session, events, turn } = await open();
+      const answer =
+        input === "no-final" ? "" : input === "json-final" ? '{"answer":"done"}' : "answer";
+      const result = await session.prompt(turn(input));
+      expect(result.outputText).toBe(answer);
+      expect(events.at(-1)?.completedText).toBe(answer);
+      const texts = events.flatMap((event) =>
+        event.update?.sessionUpdate === "agent_message_chunk" &&
+        event.update.content.type === "text"
+          ? [event.update.content.text]
+          : [],
+      );
+      expect(texts).toEqual(answer === "" ? ["working"] : ["working", answer]);
+      expect(session.messages.filter((message) => message.role === "assistant")).toMatchObject([
+        {
+          stopReason: "toolUse",
+          content: [
+            { type: "thinking", thinking: "thinking" },
+            { type: "text", text: "working" },
+            { type: "toolCall", id: "tool-1", name: "Read", arguments: { path: "/file" } },
+          ],
+        },
+        { stopReason: "stop", content: [{ type: "text", text: answer }] },
+      ]);
+    },
+  );
+  it.each<[string, unknown]>([
+    ["string-input", "/file"],
+    ["array-input", ["/file", "/other"]],
+    ["null-input", null],
+  ])("preserves non-object tool arguments in completed history: %s", async (input, value) => {
+    const { session, events, turn } = await open();
+    await session.prompt(turn(input));
+    const content = events.flatMap((event) =>
+      event.completedMessage?.role === "assistant" ? event.completedMessage.content : [],
+    );
+    expect(content.find((item) => item.type === "toolCall")).toMatchObject({
+      id: "tool-1",
+      name: "Read",
+      arguments: { input: value },
+    });
   });
   it("uses the injected Core token counter when the agent omits usage", async () => {
     const { session, turn } = await open();
@@ -148,6 +195,7 @@ describe("ACP stdio driver", () => {
       usage: { measurement: "estimated", input: 17, output: 17 },
     });
     expect(counter).toHaveBeenCalledTimes(2);
+    expect(counter.mock.calls[1]?.[0]).toBe("workinganswerthinking");
     counter.mockClear();
     await session.prompt({
       ...turn("estimated again"),
@@ -202,7 +250,7 @@ describe("ACP stdio driver", () => {
     ).rejects.toThrow("cancelled before dispatch");
     expect(events).toHaveLength(0);
     expect(session.messages).toHaveLength(0);
-    await expect(session.prompt(turn("next"))).resolves.toMatchObject({ outputText: "working" });
+    await expect(session.prompt(turn("next"))).resolves.toMatchObject({ outputText: "answer" });
   });
   it.each(["configuration", "compaction"])(
     "retires a connection after a %s timeout",
@@ -246,7 +294,7 @@ describe("ACP stdio driver", () => {
     const result = session.prompt(turn("hold"));
     await vi.waitFor(() => expect(events.length).toBeGreaterThan(0));
     await session.steer({ targetRunId: "run-1", content: "STEERED" });
-    await expect(result).resolves.toMatchObject({ outputText: "workingSTEERED" });
+    await expect(result).resolves.toMatchObject({ outputText: "STEERED" });
     expect(session.messages.filter((message) => message.role === "user")).toHaveLength(2);
   });
   it("serializes multiple steers within the same prompt", async () => {
@@ -257,7 +305,66 @@ describe("ACP stdio driver", () => {
       session.steer({ targetRunId: "run-1", content: "keep running" }),
       session.steer({ targetRunId: "run-1", content: "DONE" }),
     ]);
-    await expect(result).resolves.toMatchObject({ outputText: "workingkeep runningDONE" });
+    await expect(result).resolves.toMatchObject({ outputText: "keep runningDONE" });
+  });
+  it("completes tool segments separately from the final steered answer", async () => {
+    const { session, turn, events } = await open();
+    const pending = session.prompt(turn("multi-tool hold"));
+    await vi.waitFor(() => expect(events.filter((event) => event.toolTerminal)).toHaveLength(2));
+    await session.steer({ targetRunId: "run-1", content: "Stopped testing." });
+    await expect(pending).resolves.toMatchObject({
+      outputText: "Stopped testing.",
+      usage: { measurement: "reported", input: 6, output: 4 },
+    });
+    const messages = events.flatMap((event) => event.completedMessage ?? []);
+    expect(messages).toMatchObject([
+      {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [
+          { type: "thinking", thinking: "thinking" },
+          { type: "text", text: "working" },
+          { type: "toolCall", id: "tool-1", name: "Read", arguments: { path: "/file" } },
+        ],
+      },
+      {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [
+          { type: "thinking", thinking: "searching" },
+          { type: "text", text: "checking" },
+          { type: "toolCall", id: "tool-2", name: "Search", arguments: { query: "test" } },
+        ],
+      },
+      {
+        role: "assistant",
+        stopReason: "stop",
+        content: [
+          { type: "thinking", thinking: "steered" },
+          { type: "text", text: "Stopped testing." },
+        ],
+      },
+    ]);
+    expect(messages).toHaveLength(3);
+    for (const toolCallId of ["tool-1", "tool-2"]) {
+      expect(
+        events.findIndex(
+          (event) =>
+            event.completedMessage?.role === "assistant" &&
+            event.completedMessage.content.some(
+              (item) => item.type === "toolCall" && item.id === toolCallId,
+            ),
+        ),
+      ).toBeLessThan(
+        events.findIndex(
+          (event) =>
+            event.toolStarted &&
+            event.update &&
+            "toolCallId" in event.update &&
+            event.update.toolCallId === toolCallId,
+        ),
+      );
+    }
   });
   it.each(["promptRequired", "unsupported"])(
     "retains safely rejected steering: %s",
@@ -410,12 +517,48 @@ describe("ACP stdio driver", () => {
         for await (const event of submission.events) events.push(event);
         return events;
       })();
-      await expect(submission.result).resolves.toMatchObject({ result: { output: "working" } });
+      await expect(submission.result).resolves.toMatchObject({ result: { output: "answer" } });
       const events = await streamed;
       const delta = events.findIndex((event) => event.type === "message.delta");
       const completed = events.findIndex((event) => event.type === "message.completed");
       expect(delta).toBeGreaterThanOrEqual(0);
       expect(completed).toBeGreaterThan(delta);
+      const structured = session.submit({
+        query: "json-final",
+        output: z.object({ answer: z.literal("done") }),
+        outputRetryLimit: 0,
+        execution: {},
+      });
+      await expect(structured.result).resolves.toMatchObject({
+        result: { output: { answer: "done" } },
+      });
+      for (const query of ["parallel-tools", "parallel-tools empty-prelude", "no-final"]) {
+        const submission = session.submit({ query, execution: {} });
+        const accumulator = new RuntimeMessageAccumulator({ id: "acp", kind: "acp" });
+        const messages = (async () => {
+          const records = [];
+          for await (const event of submission.events) records.push(...accumulator.consume(event));
+          return records;
+        })();
+        await expect(submission.result).resolves.toMatchObject({
+          result: { output: query === "no-final" ? "" : "answer" },
+        });
+        const records = await messages;
+        expect(
+          records.flatMap((message) =>
+            message.role === "assistant"
+              ? message.content.flatMap((content) =>
+                  content.type === "toolCall" ? [content.id] : [],
+                )
+              : [],
+          ),
+        ).toEqual(query === "no-final" ? ["tool-1"] : ["tool-1", "tool-2"]);
+        expect(records.at(-1)).toMatchObject({
+          role: "assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text: query === "no-final" ? "" : "answer" }],
+        });
+      }
       const awaitingApproval = session.submit({ query: "hold human", execution: {} });
       const cancelled = expect(awaitingApproval.result).rejects.toThrow();
       await vi.waitFor(() => expect(approvalSignal).toBeDefined());
