@@ -847,15 +847,21 @@ async function readContextUsage(
 ): Promise<RuntimeContextWindowUsage | undefined> {
   const derived = deriveQoderContextWindowUsage(result, session.contextWindowTokens);
   if (derived !== undefined) return derived;
+  if (session.contextWindowTokens === undefined) return undefined;
   const usage = await q.getContextUsage().catch(() => undefined);
-  if (usage !== undefined && usage.maxTokens > 0) {
+  const percentage = usage?.contextWindow?.usedPercentage;
+  if (
+    percentage !== undefined &&
+    Number.isFinite(percentage) &&
+    percentage >= 0 &&
+    percentage <= 100
+  ) {
     return createRuntimeContextWindowUsage({
-      usedTokens: usage.totalTokens,
-      contextWindowTokens: usage.maxTokens,
-      measurement: "reported",
+      usedTokens: (percentage / 100) * session.contextWindowTokens,
+      contextWindowTokens: session.contextWindowTokens,
+      measurement: "derived",
     });
   }
-  if (session.contextWindowTokens === undefined) return undefined;
   return estimateContextUsage(session);
 }
 

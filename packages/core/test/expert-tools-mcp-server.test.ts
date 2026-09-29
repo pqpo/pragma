@@ -12,7 +12,7 @@ import {
 const registrations = new Set<ExpertToolsMcpSessionRegistration>();
 const clients = new Set<Client>();
 
-describe.sequential("Expert tools MCP Gateway", () => {
+describe("Expert tools MCP Gateway", { concurrent: false }, () => {
   afterEach(async () => {
     await Promise.allSettled([...clients].map(async (client) => await client.close()));
     clients.clear();
