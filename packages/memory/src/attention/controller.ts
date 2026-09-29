@@ -634,10 +634,10 @@ export function createMemoryAttentionController(options: {
             id: MEMORY_ATTENTION_CONTEXT_ID,
             content: trimLens(
               `# Mission Memory Attention\n\nVersion: ${visible?.state.version ?? 0}\n`,
-              visible?.candidates.map(
-                ({ entry, candidate }) =>
-                  `- [${escapeMarkdownLinkLabel(candidate.title)}](${entry.module}/items/${entry.memoryId}.md)\n  reason: ${reasonLabel(entry.reason)}; assessment: ${entry.decisionMode}\n${candidate.summary}`,
-              ) ?? [],
+              visible?.candidates.map(({ entry, candidate }) => ({
+                source: `- [${escapeMarkdownLinkLabel(candidate.title)}](${entry.module}/items/${entry.memoryId}.md)\n  reason: ${reasonLabel(entry.reason)}; assessment: ${entry.decisionMode}\n`,
+                summary: candidate.summary,
+              })) ?? [],
               policy.maxLensBytes,
             ),
             metadata: {
@@ -739,15 +739,39 @@ function attentionContentDigest(state: MemoryAttentionState | undefined): string
   return attentionDigest(content);
 }
 
-function trimLens(header: string, items: readonly string[], maxBytes: number): string {
+function trimLens(
+  header: string,
+  items: readonly { source: string; summary: string }[],
+  maxBytes: number,
+): string {
   let value = header;
+  const fits = (text: string) =>
+    Buffer.byteLength(text) <= maxBytes &&
+    defaultRuntimeTokenCounter.countText(text).tokens <= policy.maxLensTokens;
   for (const item of items) {
-    const candidate = `${value}\n${item}`;
-    if (
-      Buffer.byteLength(candidate) <= maxBytes &&
-      defaultRuntimeTokenCounter.countText(candidate).tokens <= policy.maxLensTokens
-    )
+    const prefix = `${value}\n${item.source}`;
+    if (!fits(prefix)) break;
+    const candidate = `${prefix}${item.summary}`;
+    if (fits(candidate)) {
       value = candidate;
+      continue;
+    }
+    // Consume the remaining budget in rank order without splitting Unicode.
+    const points = Array.from(item.summary);
+    const suffix = "\n[truncated; read source for full details]";
+    if (!fits(prefix + suffix)) break;
+    let lo = 0;
+    let hi = points.length;
+    let end = 0;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (fits(prefix + points.slice(0, mid).join("") + suffix)) {
+        end = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    value = prefix + points.slice(0, end).join("") + suffix;
+    break;
   }
   return value;
 }

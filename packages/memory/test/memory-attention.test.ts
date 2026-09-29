@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PragmaPaths } from "@pragma/core";
+import { PragmaPaths, defaultRuntimeTokenCounter } from "@pragma/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createFileMemoryAttentionStateStore,
@@ -9,6 +9,7 @@ import {
   createFederatedMemoryContextStore,
   createJevDecisionProvider,
   MemoryModuleRegistry,
+  MEMORY_ATTENTION_POLICY,
   type MemoryAttentionCandidate,
   type MemoryAttentionInput,
   type MemoryRecallScope,
@@ -72,6 +73,53 @@ async function fixture() {
   return { root, store, controller, provider, mutable, search, diagnostic };
 }
 describe("Mission Memory Attention", () => {
+  it.each(["longword ".repeat(10_000), "服务故障恢复🌏".repeat(2_000)])(
+    "truncates the highest-ranked large Lens item within byte and token budgets",
+    async (summary) => {
+      const f = await fixture();
+      const records = [
+        { ...candidate, summary, similarity: 0.99 },
+        {
+          ...candidate,
+          memoryId: "weaker",
+          title: "Weaker candidate",
+          summary: "Short weaker result",
+          similarity: 0.9,
+        },
+      ];
+      const controller = createMemoryAttentionController({
+        store: f.store,
+        getBinding: async () => ({ generation: 1, provider: undefined }),
+        read: async (_scope, ref) => records.find((value) => value.memoryId === ref.memoryId),
+        search: async () => records,
+        isCurrent: async () => true,
+        onDiagnostic: f.diagnostic,
+      });
+      try {
+        controller.observe(delta, scope);
+        await controller.flush();
+        expect((await f.store.read(delta.missionId, delta.contextId))?.active).toHaveLength(2);
+        const view = await controller.createContextView({ ...delta, scope });
+        const lens = await view!.readContext({ id: "mission-attention.md" });
+        expect(lens.ok).toBe(true);
+        if (!lens.ok) throw new Error("Lens unavailable");
+        expect(lens.value.content).toContain("episodic/items/episode-a.md");
+        expect(lens.value.content).toContain(summary.slice(0, 100));
+        expect(lens.value.content).toContain("[truncated; read source for full details]");
+        expect(lens.value.content).not.toContain("Weaker candidate");
+        expect(lens.value.content).not.toContain("\uFFFD");
+        expect(Buffer.byteLength(lens.value.content)).toBeLessThanOrEqual(
+          MEMORY_ATTENTION_POLICY.maxLensBytes,
+        );
+        expect(defaultRuntimeTokenCounter.countText(lens.value.content).tokens).toBeLessThanOrEqual(
+          MEMORY_ATTENTION_POLICY.maxLensTokens,
+        );
+      } finally {
+        await controller.stop();
+        await f.controller.stop();
+      }
+    },
+  );
   it("accepts a complete decision set in a different order", async () => {
     const f = await fixture();
     const second = { ...candidate, memoryId: "episode-b" };

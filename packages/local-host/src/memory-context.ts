@@ -36,7 +36,8 @@ import { createMemoryAttentionSettingsStore } from "./memory-attention-settings.
 import { createRunRedactor } from "./redaction.ts";
 import { createMemoryAttentionRequestLimiter } from "./memory-attention-request-limiter.ts";
 import { createLocalHostMemoryRetrieval } from "./memory-retrieval.ts";
-import { selectedMemoryText, redactMemoryProjection, projectMemory } from "@pragma/memory";
+import { selectedMemoryText, redactMemoryProjection } from "@pragma/memory";
+import { memoryDetailSegments } from "./memory-detail.ts";
 import type { SecretStore } from "./secrets/secret-store.ts";
 
 type DataPlane = Awaited<ReturnType<typeof createLocalHostMemoryDataPlane>>;
@@ -312,7 +313,7 @@ export function createLocalHostMemoryContextService(options: {
                 record === undefined ? undefined : { module: "semantic" as const, record },
               );
       if (source === undefined || source.record.revision !== base.revision) return undefined;
-      const segments = projectMemory(source, 600).slice(0, 6);
+      const segments = memoryDetailSegments(source, base.selectedPaths);
       return {
         ...base,
         summary:

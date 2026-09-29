@@ -2,7 +2,7 @@
 
 日期：2026-09-29。审查对象：`feat/issue-326-memory-retrieval` 中 Issue #326 的实现和本轮修复。
 
-审查覆盖 Embedding adapter、权威数据库/outbox、向量 worker/indexer、Host 配置和查询、Attention 触发与预算、持久状态迁移、Desktop 配置和 CLI 打包边界。首轮七项和后续评论复核追加的一项均已修复；没有遗留的已确认问题。
+审查覆盖 Embedding adapter、权威数据库/outbox、向量 worker/indexer、Host 配置和查询、Attention 触发与预算、持久状态迁移、Desktop 配置和 CLI 打包边界。首轮七项、Issue 评论的一项和 PR 评论的四项均已修复；没有遗留的已确认阻塞问题。
 
 ## 已确认并修复的问题
 
@@ -60,3 +60,20 @@ CR-01 另使用隔离的旧执行顺序副本复现：权威 Forget 已成功，
 新增八个用例覆盖缺失、重复、未知 key、批次间/末批 revision 变化、快照变化、合法重排与空候选；同时扩充既有扩展测试，覆盖关联和向量命中重叠。修复前五个针对性用例中四个失败，已有批次间 guard 的用例通过；修复后均通过。
 
 追加修复的最终验证：Memory 106 项、Local Host 11 项、Desktop Memory Plane 10 项通过；Memory lint、typecheck、build 及变更格式检查通过。外部 HTTP 使用可控响应，未执行真实供应商联调。首轮的完整 workspace 构建结果记录在上方，不冒充本次重新执行的全仓库检查。
+
+## PR #333 评论复核：CR-09 至 CR-12
+
+[维护者审查](https://github.com/pqpo/pragma/pull/333#pullrequestreview-5352014235) 与自动审查中的权限、生命周期问题均经代码核对确认，四项阻塞问题属实。
+
+| 编号  | 级别 | 原行为                                                                                     | 修复与回归                                                                                                                                                                                                                                                |
+| ----- | ---- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CR-09 | P1   | 初始候选读取后 asset recall 被撤销，query embedding 请求只检查全局开关，仍可发送任务文本。 | 每次 HTTP（含重试）发送前按 rootRef/expertRef 重新 resolve 当前 recall policy；asset IPC 在提交前后取消在途检索。测试分别在候选读取后、首次 HTTP 返回 500 时撤销权限，确认没有首次请求/第二次请求；IPC 使用真实文件 Policy Store 验证权限提交与取消顺序。 |
+| CR-10 | P2   | shutdown 完成后，尚未结束的 Desktop outer tick 可以重新打开 cache worker。                 | tick、rebuild 和 getIndex 拒绝 closed 状态；跨锁等待和异步打开后的 tick 再检查 closed，阻止创建 indexer。真实 cache 已存在而新服务尚未打开时 stop，再调用 tick/status/rebuild，断言没有 worker 创建。                                                     |
+| CR-11 | P2   | detail 展开只取 record 前六个 segment，覆盖后部 failure/recovery 命中。                    | 优先保留经过 hash 校验的精确 selectedPaths，再按剩余 token/条目预算补 overview 和相邻片段；不重复选中重叠段。回归覆盖 failuresAndRecoveries[10] 和不同分段 token 限制下的 Unicode 长字段，并核对所选正文、offset 与 hash。                                |
+| CR-12 | P2   | Lens 整条跳过超预算的高排名 Memory，转而展示短的低排名 Memory。                            | 分开来源和摘要，按排序消费预算；保留来源链接和判断信息，使用统一 RuntimeTokenCounter 裁剪 Unicode 摘要，首条裁剪后停止。英文长文本与中文/emoji 回归验证高排名内容可见、低排名不越位、字节/token 均不超限。                                                |
+
+本轮不改变任何持久 Schema 或版本。新增八个回归案例：Host 检索三项、detail 两项、Lens 两项、Desktop policy IPC 一项。外部 HTTP 为可控响应，不代表真实供应商联调。
+
+最终验证：完整 `pnpm check`（lint 19、typecheck 19、test:core 11 个任务）和 `pnpm build`（19 个任务）通过；Memory 核心测试 108 项、Host 核心测试 14 项通过。专项 detail/检索测试共 13 项，Desktop Memory Plane 10 项及 policy IPC 1 项通过。生产构建包含 Desktop 样式、main/preload 自包含与 Bridge 验证，以及 CLI 打包构建；格式和 `git diff --check` 通过。
+
+非阻塞建议已确认：目前多个检索意图合并为一次 query embedding；后续可分别 embedding/Top-K 并融合排名。本轮保持已有范围，没有把该建议当作阻塞缺陷扩展实现。

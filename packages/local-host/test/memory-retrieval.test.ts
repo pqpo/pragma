@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PragmaPaths } from "@pragma/core";
+import * as memory from "@pragma/memory";
 import { createEpisodicMemoryStore, createSemanticMemoryStore } from "@pragma/memory";
 import { createLocalHostMemoryRetrieval } from "../src/memory-retrieval.ts";
 import { createSecretStore, type OsKeychain } from "../src/secrets/secret-store.ts";
@@ -29,11 +30,14 @@ async function fixture() {
   const episodic = await createEpisodicMemoryStore({ pragmaHome: root }),
     semantic = await createSemanticMemoryStore({ pragmaHome: root });
   let enabled = true;
+  let recall = true;
+  const resolveAt = vi.fn(async () => ({ recall: enabled && recall }));
   const data = {
     episodic: { store: episodic },
     semantic: { store: semantic },
     policies: {
       getGlobal: async () => ({ policy: { enabled: enabled ? "enabled" : "disabled" } }),
+      resolveAt,
     },
   } as unknown as Awaited<ReturnType<typeof createLocalHostMemoryDataPlane>>;
   const keys = new Map<string, Uint8Array>();
@@ -99,12 +103,96 @@ async function fixture() {
     provider,
     fetcher,
     options,
+    resolveAt,
+    revokeRecall: () => {
+      recall = false;
+    },
     disable: () => {
       enabled = false;
     },
   };
 }
 describe("Memory retrieval across Hosts", () => {
+  it("rechecks root and expert recall after selecting records and before sending a query", async () => {
+    const f = await fixture();
+    const cli = createLocalHostMemoryRetrieval(f.options);
+    const scope = {
+      rootRef: { type: "pragma.expert-team", id: "team-a" },
+      expertRef: { type: "pragma.expert", id: "expert-a" },
+    } as const;
+    try {
+      await f.desktop.tick();
+      const calls = f.fetcher.mock.calls.length;
+      const list = f.episodic.listRecallIdentities.bind(f.episodic);
+      const identities = vi
+        .spyOn(f.episodic, "listRecallIdentities")
+        .mockImplementationOnce(async () => {
+          const result = await list({ rootRef: scope.expertRef }, new Date());
+          expect(result).toHaveLength(1);
+          f.revokeRecall();
+          return result;
+        });
+      expect(await cli.candidates(scope, "private mission query", ["episodic"], 8)).toEqual([]);
+      expect(f.fetcher).toHaveBeenCalledTimes(calls);
+      expect(f.resolveAt).toHaveBeenLastCalledWith({
+        rootRef: scope.rootRef,
+        producerRefs: [scope.expertRef],
+        occurredAt: expect.any(String),
+      });
+      identities.mockRestore();
+    } finally {
+      await cli.stop();
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+  it("rechecks scoped recall before retrying a failed HTTP query", async () => {
+    const f = await fixture();
+    const cli = createLocalHostMemoryRetrieval(f.options);
+    try {
+      await f.desktop.tick();
+      const calls = f.fetcher.mock.calls.length;
+      f.fetcher.mockImplementationOnce(async () => {
+        f.revokeRecall();
+        return new Response("", { status: 500 });
+      });
+      expect(
+        await cli.candidates(
+          { rootRef: { type: "pragma.expert", id: "expert-a" } },
+          "retry query",
+          ["episodic"],
+          8,
+        ),
+      ).toEqual([]);
+      expect(f.fetcher).toHaveBeenCalledTimes(calls + 1);
+    } finally {
+      await cli.stop();
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+  it("does not reopen an existing vector cache after shutdown, including status reads", async () => {
+    const f = await fixture();
+    const service = createLocalHostMemoryRetrieval({ ...f.options, backgroundIndexing: true });
+    const open = vi.spyOn(memory, "createMemoryVectorIndex");
+    try {
+      await f.desktop.tick();
+      await service.stop();
+      open.mockClear();
+      await service.tick();
+      await service.status();
+      await service.rebuild();
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      open.mockRestore();
+      await service.stop();
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
   it.each(["disabled", "replacement_failed"])(
     "removes forgotten vectors when indexing is %s",
     async (mode) => {

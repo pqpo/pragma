@@ -112,6 +112,7 @@ export function createLocalHostMemoryRetrieval(options: {
     });
   };
   const getIndex = async () => {
+    if (closed) throw new Error("embedding_cancelled");
     if (index !== undefined) return index;
     pendingIndex ??= createMemoryVectorIndex({
       path: paths.memoryVectorIndex(),
@@ -168,6 +169,22 @@ export function createLocalHostMemoryRetrieval(options: {
             throw new Error("embedding_cancelled");
           return (await reader.resolveEmbedding(live.profile.providerId, live.profile.modelId))
             .provider.apiKey;
+        },
+        beforeRequest: async () => {
+          const live = await getProvider();
+          if (
+            live === undefined ||
+            live.profile.baseUrl !== binding.profile.baseUrl ||
+            live.profile.providerId !== binding.profile.providerId ||
+            !(
+              await options.data.policies.resolveAt({
+                rootRef: scope.rootRef,
+                ...(scope.expertRef === undefined ? {} : { producerRefs: [scope.expertRef] }),
+                occurredAt: new Date().toISOString(),
+              })
+            ).recall
+          )
+            throw new Error("embedding_cancelled");
         },
       }),
     );
@@ -370,7 +387,7 @@ export function createLocalHostMemoryRetrieval(options: {
       return await provider.validate(AbortSignal.timeout(10_000));
     },
     async tick(forceRetry = false) {
-      if (!options.backgroundIndexing || rebuilding) return;
+      if (closed || !options.backgroundIndexing || rebuilding) return;
       if (ticking !== undefined) return await ticking;
       ticking = (async () => {
         try {
@@ -382,7 +399,9 @@ export function createLocalHostMemoryRetrieval(options: {
             if ((await getProvider()) === undefined) return;
           }
           await withFileLock(`${paths.memoryVectorIndex()}.lock`, async () => {
+            if (closed) return;
             const cache = await getIndex();
+            if (closed) return;
             indexer ??= createMemoryIndexer({
               index: cache,
               episodic: options.data.episodic.store,
@@ -406,7 +425,7 @@ export function createLocalHostMemoryRetrieval(options: {
       void this.tick(true);
     },
     async rebuild() {
-      if (rebuilding) return;
+      if (closed || rebuilding) return;
       rebuilding = true;
       try {
         abort.abort();
@@ -483,6 +502,7 @@ export function createLocalHostMemoryRetrieval(options: {
       });
     },
     cancel() {
+      if (closed) return;
       abort.abort();
       indexer?.cancel();
       abort = new AbortController();

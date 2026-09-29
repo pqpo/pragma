@@ -137,7 +137,9 @@ export function installMemoryPolicyHandlers(
   });
   ipcMain.handle("memory-policy:asset:update", async (_event, input: unknown) => {
     const parsed = UpdateDesktopAssetMemoryPolicySchema.parse(input);
+    plane.retrieval?.cancel();
     await plane.policies.updateOverride(parsed);
+    plane.retrieval?.cancel();
     return await assetSnapshot(parsed.targetRef);
   });
   ipcMain.handle("memory-plane:status", async () =>
