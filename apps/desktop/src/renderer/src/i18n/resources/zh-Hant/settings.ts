@@ -59,7 +59,8 @@ export const settings = {
   coreAssetSync: {
     navigation: "同步",
     title: "同步",
-    description: "透過一個 Git 儲存庫恢復專家、專家團、流程、知識庫和技能。",
+    description:
+      "透過一個 Git 儲存庫，以分類 YAML 和原生檔案同步專家、專家團、流程、執行設定、上下文綁定、知識庫與全部使用者能力。",
     remote: "Git 位址",
     branch: "分支（可選）",
     autoPush: "自動上傳已發佈的修改",

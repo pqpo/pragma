@@ -80,7 +80,9 @@ describe("SettingsPage", () => {
     expect(html).toContain(">Sync</button>");
     expect(html).toContain(">Sync</h2>");
     expect(html).not.toContain("Core Asset Sync");
-    expect(html).toContain("Restore Experts, Teams, Flows, Knowledge Bases, and Skills");
+    expect(html).toContain(
+      "Sync Experts, Teams, Flows, runtime profiles, context bindings, Knowledge Bases",
+    );
     expect(html).toContain("Automatically upload published changes");
   });
 

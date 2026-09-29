@@ -63,7 +63,7 @@ export const settings = {
     navigation: "Sync",
     title: "Sync",
     description:
-      "Restore Experts, Teams, Flows, Knowledge Bases, and Skills from one Git repository.",
+      "Sync Experts, Teams, Flows, runtime profiles, context bindings, Knowledge Bases, and all user capabilities as YAML and native files in one Git repository.",
     remote: "Git remote",
     branch: "Branch (optional)",
     autoPush: "Automatically upload published changes",

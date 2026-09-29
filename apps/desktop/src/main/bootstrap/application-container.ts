@@ -651,8 +651,9 @@ export async function createDesktopApplicationContainer(
   });
   assetGitRef.current = assetGit;
   const coreAssetSync = createCoreAssetSyncService({
-    configurationPath: join(pragmaPaths.stateRoot(), "core-asset-sync-settings.json"),
-    statePath: join(pragmaPaths.stateRoot(), "core-asset-sync-state.json"),
+    configurationPath: join(pragmaPaths.stateRoot(), "asset-sync", "settings.json"),
+    statePath: join(pragmaPaths.stateRoot(), "asset-sync", "state.json"),
+    plugins: pluginStore,
     project: pragmaProjectStore,
     layouts: workflowLayouts,
     stores: contextStores,
@@ -695,6 +696,7 @@ export async function createDesktopApplicationContainer(
     removeConfiguration: async () =>
       await assetSync.run(async () => await coreAssetSync.removeConfiguration()),
     sync: async () => await assetSync.run(async () => await coreAssetSync.sync()),
+    automatic: async () => await assetSync.run(async () => await coreAssetSync.automatic()),
     refresh: async () => await assetSync.run(async () => await coreAssetSync.refresh()),
     resolve: async (key, choice) =>
       await assetSync.run(async () => await coreAssetSync.resolve(key, choice)),

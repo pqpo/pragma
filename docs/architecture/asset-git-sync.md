@@ -29,6 +29,7 @@ sides agree. Removing the asset association deletes its local binding and journa
 delete the remote repository.
 
 This is separate from [core asset sync](core-asset-sync.md), which backs up the Desktop's
-published Experts, ExpertTeams, Flows, Knowledge Bases, Skills, and referenced Capability
-definitions in one Git repository. Individual asset associations remain local to the device;
+published Experts, ExpertTeams, Flows, RuntimeProfiles, ContextStore bindings, Knowledge Bases,
+Skills and all user-managed Capability definitions as categorized YAML and native files under
+`pragma-sync/`. Automatic overall backup respects its own `autoPush` setting. Individual asset associations remain local to the device;
 the core asset repository does not clone another asset repository on restore.
