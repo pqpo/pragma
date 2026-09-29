@@ -91,8 +91,8 @@ export class RuntimeSessionPool {
     const entry = this.sessions.get(identity.contextId);
     if (entry === undefined) return;
     assertMatchingIdentity(entry.identity, identity);
-    this.sessions.delete(identity.contextId);
     await entry.session.close();
+    if (this.sessions.get(identity.contextId) === entry) this.sessions.delete(identity.contextId);
   }
 
   /**
@@ -117,10 +117,12 @@ export class RuntimeSessionPool {
     if (this.pending.size > 0) {
       throw new Error("Runtime Session pool cannot be cleared while a Session is opening.");
     }
-    const sessions = [...this.sessions.values()].map((entry) => entry.session);
-    this.sessions.clear();
+    const entries = [...this.sessions.entries()];
     const results = await Promise.allSettled(
-      sessions.map(async (session) => await session.close()),
+      entries.map(async ([contextId, entry]) => {
+        await entry.session.close();
+        if (this.sessions.get(contextId) === entry) this.sessions.delete(contextId);
+      }),
     );
     const errors = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason as unknown] : [],

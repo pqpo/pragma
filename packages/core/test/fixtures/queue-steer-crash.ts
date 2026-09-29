@@ -40,7 +40,9 @@ if (strictFallbackCrash) {
 }
 
 const runtime = defineRuntimeDriver<never, FixtureSession>({
-  features: createRuntimeTestFeatures({ enabled: ["cancellation", "close", "steering"] }),
+  features: createRuntimeTestFeatures({
+    enabled: ["cancellation", "close", ...(strictFallbackCrash ? (["steering"] as const) : [])],
+  }),
   descriptor: {
     id: "queue-steer-crash-runtime",
     kind: "fake",
@@ -62,9 +64,13 @@ const runtime = defineRuntimeDriver<never, FixtureSession>({
     return { outputText: "unreachable", runtimeSessionId: "unreachable" };
   },
   mapEvent: () => ({ events: [] }),
-  steerTurn: () => {
-    throw new SteerNotDispatchedError("target_changed", "Native turn has ended.");
-  },
+  ...(strictFallbackCrash
+    ? {
+        steerTurn: () => {
+          throw new SteerNotDispatchedError("target_changed", "Native turn has ended.");
+        },
+      }
+    : {}),
   cancelTurn: () => undefined,
   closeSession: () => undefined,
 });

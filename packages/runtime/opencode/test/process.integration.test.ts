@@ -140,7 +140,9 @@ for (const [major, variable] of [
           expect(Array.isArray(models)).toBe(true);
           expect(models.some((item) => item.providerId === "project_injected")).toBe(false);
           if (major === 2) {
-            await client.addMcp("pragma_tools", "http://127.0.0.1:9/mcp");
+            await expect(client.addMcp("pragma_tools", "http://127.0.0.1:9/mcp")).rejects.toThrow(
+              "Pragma MCP handshake failed: failed",
+            );
             const servers = await OpenCode.make({
               baseUrl: native.url,
               headers: { ...native.headers },

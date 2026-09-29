@@ -534,6 +534,7 @@ describe("integration wire v1", () => {
       ["interrupt", { kind: "interrupt", reason: "Stop" }, undefined],
       ["queue.remove", { kind: "queue.remove", requestId }, undefined],
       ["queue.resume", { kind: "queue.resume" }, undefined],
+      ["queue.resume", { kind: "queue.resume", recovery: "abandon" }, undefined],
       [
         "queue.steer",
         { kind: "queue.steer", requestId, input: { prompt: "Steer queued" } },
@@ -609,7 +610,9 @@ describe("integration wire v1", () => {
         createdAt: timestamp,
       }).success,
     ).toBe(false);
-    expect([...MissionCommandKindSchema.options]).toHaveLength(commandPayloads.length);
+    expect([...MissionCommandKindSchema.options]).toHaveLength(
+      new Set(commandPayloads.map(([kind]) => kind)).size,
+    );
 
     for (const token of ["1", "9007199254740993", "9".repeat(128)]) {
       expect(FencingTokenSchema.safeParse(token).success).toBe(true);

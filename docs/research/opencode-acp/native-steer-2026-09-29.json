@@ -1,0 +1,24 @@
+{
+  "version": "2.0.16",
+  "provider": "local synthetic OpenAI-compatible server",
+  "cases": {
+    "idleResumeFalse": {
+      "acceptedWhileIdle": true,
+      "wokeModel": false,
+      "pendingBeforeNextTurn": 1,
+      "consumedByNextTurn": true
+    },
+    "idleResumeTrue": {
+      "startsNewNativeExecution": true,
+      "inboxAfterWait": 0
+    },
+    "revokedIdleSteer": {
+      "pendingAfterCancel": 0,
+      "observedByLaterModel": false
+    },
+    "activeResumeFalse": {
+      "pendingAfterFinal": 0,
+      "observedByModel": true
+    }
+  }
+}

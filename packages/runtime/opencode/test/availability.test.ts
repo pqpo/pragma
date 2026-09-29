@@ -15,8 +15,15 @@ describe("OpenCode availability", () => {
         await writeFile(executablePath, "#!/bin/sh\nprintf '1.18.32\\n'\n");
         await chmod(executablePath, 0o755);
         const input = { executablePath, env: { ...process.env } };
-        await expect(canUseOpenCodeRuntime(input)).resolves.toMatchObject({ usable: true });
+        await expect(canUseOpenCodeRuntime(input)).resolves.toMatchObject({
+          usable: true,
+          features: { steering: { status: "unsupported" } },
+        });
 
+        await writeFile(executablePath, "#!/bin/sh\nprintf '2.0.16\\n'\n");
+        await expect(
+          canUseOpenCodeRuntime({ ...input, forceRefresh: true }),
+        ).resolves.toMatchObject({ usable: true, features: { steering: { status: "degraded" } } });
         await writeFile(executablePath, "#!/bin/sh\nprintf 'invalid\\n'\n");
         await expect(canUseOpenCodeRuntime(input)).resolves.toMatchObject({ usable: true });
         await expect(

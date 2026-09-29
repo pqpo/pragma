@@ -42,6 +42,7 @@ import type {
   RuntimeAgentSession,
   RuntimeModelSelection,
   RuntimeSubmitHandle,
+  RuntimeSteerRequest,
 } from "../runtime/runtime-adapter.ts";
 import { mergeUsage, type UsageSink } from "../runtime/usage.ts";
 import { isRuntimeFeatureEnabled } from "../runtime/features.ts";
@@ -752,10 +753,7 @@ export class ExecutionController {
     }
   }
 
-  async steer(
-    contextId: string,
-    request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
-  ): Promise<void> {
+  async steer(contextId: string, request: RuntimeSteerRequest): Promise<void> {
     if (
       (await this.orchestrators.get(contextId)?.wakeWait(contextId, {
         kind: "steer",

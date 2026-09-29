@@ -12,11 +12,14 @@ export const missions = {
   queuedMessage: "排队",
   preparingQueuedSteer: "正在准备引导",
   removeQueuedMessage: "移出队列并编辑",
+  steerRetained: "未投递 Steer，消息保留在队列中，等待下一轮执行。",
+  steerDeliveryUncertain: "Steer 投递结果不确定，队列已暂停，避免重复执行。",
+  checkSteerDelivery: "检查投递并恢复",
+  abandonSteerDelivery: "跳过不确定消息，重新开始",
+  abandonSteerDeliveryHint:
+    "停止旧对话，丢弃不确定消息且不重放。先前操作可能已经执行。其他排队消息将在新对话中继续。",
   queuePaused: "队列已在失败消息后暂停。",
   deliveryUncertain: "投递不确定",
-  steerDeliveryUncertain:
-    "Steer 投递结果不确定，消息已保留，队列已暂停。请先核对当前轮结果，再决定是否重新执行，避免重复操作。",
-  retryUncertainQueue: "重新执行排队消息",
   resumeQueue: "跳过失败项继续",
   title: "任务",
   newMission: "新建任务",

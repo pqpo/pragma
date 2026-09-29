@@ -927,11 +927,21 @@ export function MissionDetailFragment(props: {
         queueItemRequestId,
       });
       if (result.queueSteer.outcome === "steered") {
+        setDeliveryNotice(undefined);
         followLatestRef.current = true;
         setShowJumpToLatest(false);
       }
       await refreshLatestChat();
       if (result.queueSteer.outcome === "steered") scheduleFollowLatest();
+      else
+        setDeliveryNotice(
+          t(
+            result.queueSteer.reason === "delivery_uncertain"
+              ? "steerDeliveryUncertain"
+              : "steerRetained",
+            { ns: "missions" },
+          ),
+        );
     } catch (steerError) {
       setOptionsError(missionError(steerError));
     } finally {
@@ -997,7 +1007,9 @@ export function MissionDetailFragment(props: {
     [chat?.queue?.items, pendingQueuedMessages],
   );
   const visibleQueuedMessages = queuedMessages;
-  const queueDeliveryUncertain = queuedMessages.some((message) => message.deliveryUncertain);
+  const queueDeliveryUncertain =
+    chat?.queue?.deliveryUncertain === true ||
+    queuedMessages.some((message) => message.deliveryUncertain);
   const visibleQueuedRequestIds = useMemo(
     () => new Set(queuedMessages.map((message) => message.requestId)),
     [queuedMessages],
@@ -1673,25 +1685,50 @@ export function MissionDetailFragment(props: {
                       ns: "missions",
                     })}
                   </span>{" "}
-                  <button
-                    className="text-button"
-                    type="button"
-                    disabled={clientOperationBusy}
-                    onClick={() => {
-                      const api = desktopApi();
-                      if (api === undefined) return;
-                      void api
-                        .resumeMissionQueue(props.mission.id)
-                        .then(async () => await refreshLatestChat())
-                        .catch((resumeError: unknown) =>
-                          setOptionsError(missionError(resumeError)),
-                        );
-                    }}
-                  >
-                    {t(queueDeliveryUncertain ? "retryUncertainQueue" : "resumeQueue", {
-                      ns: "missions",
-                    })}
-                  </button>
+                  {!queueDeliveryUncertain || chat.queue.steeringRecovery === "receipt" ? (
+                    <button
+                      className="text-button"
+                      type="button"
+                      disabled={clientOperationBusy}
+                      onClick={() => {
+                        const api = desktopApi();
+                        if (api === undefined) return;
+                        void api
+                          .resumeMissionQueue(props.mission.id)
+                          .then(async () => await refreshLatestChat())
+                          .catch((resumeError: unknown) =>
+                            setOptionsError(missionError(resumeError)),
+                          );
+                      }}
+                    >
+                      {t(queueDeliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
+                        ns: "missions",
+                      })}
+                    </button>
+                  ) : null}
+                  {queueDeliveryUncertain ? (
+                    <>
+                      {" "}
+                      <button
+                        className="text-button"
+                        type="button"
+                        disabled={clientOperationBusy}
+                        title={t("abandonSteerDeliveryHint", { ns: "missions" })}
+                        onClick={() => {
+                          const api = desktopApi();
+                          if (api === undefined) return;
+                          void api
+                            .resumeMissionQueue(props.mission.id, "abandon")
+                            .then(async () => await refreshLatestChat())
+                            .catch((resumeError: unknown) =>
+                              setOptionsError(missionError(resumeError)),
+                            );
+                        }}
+                      >
+                        {t("abandonSteerDelivery", { ns: "missions" })}
+                      </button>
+                    </>
+                  ) : null}
                 </small>
               ) : null}
               {modelResetRequired ? (
@@ -1788,6 +1825,7 @@ export function MissionDetailFragment(props: {
                             chat?.queue?.supportsSteer === true &&
                             interruptible &&
                             !item.hasAttachments &&
+                            !queueDeliveryUncertain &&
                             !item.deliveryUncertain;
                           return (
                             <div className="mission-prompt-queue-item" key={item.requestId}>
@@ -1820,7 +1858,11 @@ export function MissionDetailFragment(props: {
                                         : undefined
                                     }
                                     aria-busy={steering || undefined}
-                                    disabled={!item.persisted || action !== undefined}
+                                    disabled={
+                                      !item.persisted ||
+                                      action !== undefined ||
+                                      queueDeliveryUncertain
+                                    }
                                     onClick={() => void steerQueuedMessage(item.requestId)}
                                   >
                                     {steering ? (
@@ -1838,7 +1880,11 @@ export function MissionDetailFragment(props: {
                                   type="button"
                                   aria-label={t("removeQueuedMessage", { ns: "missions" })}
                                   title={t("removeQueuedMessage", { ns: "missions" })}
-                                  disabled={!item.persisted || action !== undefined}
+                                  disabled={
+                                    !item.persisted ||
+                                    action !== undefined ||
+                                    queueDeliveryUncertain
+                                  }
                                   onClick={() =>
                                     void removeQueuedMessage(item.requestId, item.content)
                                   }

@@ -1,5 +1,12 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { OpenCode } from "@opencode/client";
+import { randomUUID } from "node:crypto";
+import {
+  SteerNotDispatchedError,
+  type RuntimeSteerRequest,
+  type RuntimeSteerDelivery,
+} from "@pragma/core";
+import { OpenCodeSteering } from "./steering.ts";
 import { realpath } from "node:fs/promises";
 
 import type { OpenCodeProcess } from "./process.ts";
@@ -20,6 +27,7 @@ export interface OpenCodeClient {
   addMcp(name: string, url: string): Promise<void>;
   prompt(input: {
     readonly sessionId: string;
+    readonly runId?: string | undefined;
     readonly text: string;
     readonly files: readonly {
       readonly uri: string;
@@ -30,6 +38,8 @@ export interface OpenCodeClient {
     readonly onEvent: (event: OpenCodeWireEvent) => Promise<void> | void;
     readonly signal: AbortSignal;
   }): Promise<OpenCodeTurnOutput>;
+  steer(sessionId: string, request: RuntimeSteerRequest): Promise<void>;
+  reconcileSteer(sessionId: string, request: RuntimeSteerRequest): Promise<RuntimeSteerDelivery>;
   cancel(sessionId: string): Promise<void>;
   compact(sessionId: string, model?: OpenCodeModelRef): Promise<void>;
   replyPermission(sessionId: string, requestId: string, approved: boolean): Promise<void>;
@@ -64,6 +74,7 @@ export interface OpenCodePermissionRule {
 
 export interface OpenCodeTurnOutput {
   readonly text: string;
+  readonly estimation?: { readonly steering: string; readonly output: string } | undefined;
   readonly usage?:
     | {
         readonly input: number;
@@ -153,6 +164,11 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
       if (model?.variant !== undefined) {
         throw new Error("OpenCode 1.x SDK does not support model variants.");
       }
+      const before = new Set(
+        (
+          await client.session.messages({ path: { id: sessionId }, query: { directory }, signal })
+        ).data?.map((message) => message.info.id),
+      );
       const controller = new AbortController();
       const subscription = await client.event.subscribe({
         query: { directory },
@@ -176,7 +192,8 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
             const properties = asRecord(data["properties"]) ?? {};
             const eventSession =
               string(properties["sessionID"]) ??
-              string(asRecord(properties["part"])?.["sessionID"]);
+              string(asRecord(properties["part"])?.["sessionID"]) ??
+              string(asRecord(properties["info"])?.["sessionID"]);
             if (eventSession !== sessionId) continue;
             await onEvent({ type: type ?? "unknown", data: properties });
             if (type === "session.error") {
@@ -233,12 +250,41 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join("");
-        return { text: content, usage: readUsage(last.info.tokens, content !== "") };
+        const assistants = (messages.data ?? []).filter(
+          (message) => message.info.role === "assistant" && !before.has(message.info.id),
+        );
+        return {
+          text: content,
+          usage: sumUsage(
+            assistants.map((message) =>
+              message.info.role === "assistant"
+                ? readUsage(message.info.tokens, message.parts.length > 0)
+                : undefined,
+            ),
+          ),
+          estimation: {
+            steering: "",
+            output: assistants
+              .flatMap((message) => message.parts)
+              .filter((part) => part.type === "text" || part.type === "reasoning")
+              .map((part) => part.text)
+              .join("\n"),
+          },
+        };
       } finally {
         settled = true;
         controller.abort();
         await reader.catch(() => undefined);
       }
+    },
+    async steer() {
+      throw new SteerNotDispatchedError(
+        "runtime_unsupported",
+        "OpenCode 1.x does not expose safe active-turn steering.",
+      );
+    },
+    async reconcileSteer() {
+      return "uncertain";
     },
     async cancel(sessionId) {
       await client.session.abort({ path: { id: sessionId }, query: { directory } });
@@ -271,6 +317,7 @@ function connectV1(process: OpenCodeProcess, directory: string): OpenCodeClient 
 function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient {
   const client = OpenCode.make({ baseUrl: process.url, headers: { ...process.headers } });
   const location = { directory };
+  const steering = new OpenCodeSteering(client, async () => await process.close());
   return {
     async createSession(restoredId, systemPrompt, permissions) {
       if (restoredId !== "") {
@@ -354,15 +401,36 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
         location,
         config: { type: "remote", url, oauth: false },
       });
+      // add starts the connection in the background. Build the first turn's Code
+      // Mode catalog only after the Pragma MCP handshake has completed.
+      await client.mcp.connect({ server: name, location });
+      const registered = (await client.mcp.list({ location })).data.find(
+        (server) => server.name === name,
+      );
+      if (registered?.status.status !== "connected")
+        throw new Error(`Pragma MCP handshake failed: ${registered?.status.status ?? "missing"}.`);
     },
-    async prompt({ sessionId, text, files, model, onEvent, signal }) {
+    async prompt({ sessionId, runId, text, files, model, onEvent, signal }) {
+      const turn = steering.begin(sessionId, runId ?? randomUUID(), signal);
+      let failed = true;
+      let before = new Set<string>();
       const controller = new AbortController();
+      const completedMessages = new Set<string>();
+      let expectedCompletion: string | undefined;
+      let completionObserved: (() => void) | undefined;
       const reader = (async () => {
         for await (const event of client.event.subscribe({ signal: controller.signal })) {
           if (signal.aborted) break;
           const data = asRecord(event.data) ?? {};
           if ((data["sessionID"] ?? asRecord(data["form"])?.["sessionID"]) !== sessionId) continue;
           await onEvent({ type: event.type, data });
+          if (
+            event.type === "session.step.ended" &&
+            typeof data["assistantMessageID"] === "string"
+          ) {
+            completedMessages.add(data["assistantMessageID"]);
+            if (expectedCompletion === data["assistantMessageID"]) completionObserved?.();
+          }
         }
         if (!controller.signal.aborted) {
           throw new Error("OpenCode event stream ended before the turn completed.");
@@ -373,6 +441,9 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
       });
       void streamFailure.catch(() => undefined);
       try {
+        before = new Set(
+          (await client.session.context({ sessionID: sessionId })).map((message) => message.id),
+        );
         if (model !== undefined) {
           await client.session.switchModel({
             sessionID: sessionId,
@@ -392,33 +463,78 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
           streamFailure,
           abortPromise(signal),
         ]);
-        await Promise.race([
-          client.session.wait({ sessionID: sessionId }),
-          streamFailure,
-          abortPromise(signal),
-        ]);
+        turn.ready = true;
+        await steering.settle(
+          turn,
+          async () =>
+            await Promise.race([
+              client.session.wait({ sessionID: sessionId }),
+              streamFailure,
+              abortPromise(signal),
+            ]),
+        );
         const context = await client.session.context({ sessionID: sessionId });
         const last = [...context].reverse().find((message) => message.type === "assistant");
         if (last?.type !== "assistant")
           throw new Error("OpenCode turn ended without an assistant message.");
         if (last.error !== undefined)
           throw new Error(`OpenCode turn failed: ${last.error.message}.`);
+        if (!completedMessages.has(last.id)) {
+          // HTTP settlement can beat the SSE reader. Drain through the final native
+          // step before aborting it, including earlier tool settlement and text endings.
+          expectedCompletion = last.id;
+          await Promise.race([
+            new Promise<void>((resolve) => {
+              completionObserved = resolve;
+            }),
+            streamFailure,
+            abortPromise(AbortSignal.any([signal, AbortSignal.timeout(5_000)])),
+          ]);
+        }
         const outputText = last.content
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join("");
-        return { text: outputText, usage: readUsage(last.tokens, outputText !== "") };
+        const usages = context
+          .filter((message) => message.type === "assistant" && !before.has(message.id))
+          .map((message) =>
+            message.type === "assistant" ? readUsage(message.tokens, outputText !== "") : undefined,
+          );
+        const usage = sumUsage(usages);
+        failed = false;
+        return {
+          text: outputText,
+          usage,
+          estimation: {
+            steering: context
+              .filter((message) => message.type === "synthetic" && !before.has(message.id))
+              .map((message) => (message.type === "synthetic" ? message.text : ""))
+              .join("\n"),
+            output: context
+              .filter((message) => message.type === "assistant" && !before.has(message.id))
+              .flatMap((message) => (message.type === "assistant" ? message.content : []))
+              .filter((part) => part.type === "text" || part.type === "reasoning")
+              .map((part) => part.text)
+              .join("\n"),
+          },
+        };
       } finally {
         controller.abort();
         await reader.catch(() => undefined);
+        await steering.end(turn, failed);
       }
     },
+    async steer(sessionId, request) {
+      await steering.steer(sessionId, request);
+    },
+    async reconcileSteer(sessionId, request) {
+      return await steering.reconcile(sessionId, request);
+    },
     async cancel(sessionId) {
-      await client.session.interrupt({ sessionID: sessionId, resume: false });
+      await steering.cancel(sessionId);
     },
     async compact(sessionId) {
-      await client.session.compact({ sessionID: sessionId });
-      await client.session.wait({ sessionID: sessionId });
+      await steering.compact(sessionId);
     },
     async replyPermission(sessionId, requestId, approved) {
       await client.permission.reply({
@@ -445,7 +561,7 @@ function connectV2(process: OpenCodeProcess, directory: string): OpenCodeClient 
       }
     },
     async close() {
-      await process.close();
+      await steering.stop();
     },
   };
 }
@@ -520,4 +636,17 @@ function abortPromise(signal: AbortSignal): Promise<never> {
     }
     signal.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
+}
+
+function sumUsage(usages: readonly OpenCodeTurnOutput["usage"][]): OpenCodeTurnOutput["usage"] {
+  if (usages.length === 0) return undefined;
+  const total = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  for (const usage of usages) {
+    if (usage === undefined) return undefined;
+    total.input += usage.input;
+    total.output += usage.output;
+    total.cacheRead += usage.cacheRead;
+    total.cacheWrite += usage.cacheWrite;
+  }
+  return total;
 }

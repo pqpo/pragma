@@ -9,7 +9,7 @@ import type {
   RuntimeSessionRef as SharedRuntimeSessionRef,
 } from "@pragma/shared";
 export { RuntimeSessionRefSchema } from "@pragma/shared";
-import type { z } from "zod";
+import { z } from "zod";
 import type { PragmaLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
@@ -68,6 +68,8 @@ export interface RuntimeCanUseResult {
   readonly usable: boolean;
   readonly reason?: string | undefined;
   readonly details?: Record<string, unknown> | undefined;
+  /** Probe-specific restrictions; omitted features retain the adapter readiness. */
+  readonly features?: Partial<RuntimeFeatureSnapshotSet> | undefined;
 }
 
 export interface RuntimeThinkingLevel {
@@ -211,7 +213,11 @@ export interface RuntimeSubmitHandle<TOutput = unknown> {
   readonly cancel: () => Promise<void>;
 }
 
+export const RuntimeSteerDeliverySchema = z.enum(["delivered", "not_dispatched", "uncertain"]);
+export type RuntimeSteerDelivery = z.infer<typeof RuntimeSteerDeliverySchema>;
+
 export interface RuntimeSteerRequest {
+  readonly attemptId?: string | undefined;
   readonly requestId: string;
   readonly content: string;
   readonly targetRunId: string;
@@ -233,6 +239,8 @@ export interface RuntimeAgentSession {
     submission: RuntimeSubmitRequest<TSubmitOutput>,
   ) => RuntimeSubmitHandle<TSubmitOutput>;
   readonly steer: (request: RuntimeSteerRequest) => Promise<void>;
+  readonly reconcileSteer?:
+    ((request: RuntimeSteerRequest) => Promise<RuntimeSteerDelivery>) | undefined;
   readonly close: () => Promise<void>;
 }
 

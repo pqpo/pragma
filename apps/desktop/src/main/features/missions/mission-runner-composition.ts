@@ -10,6 +10,8 @@ import {
 } from "@pragma/built-in-agents";
 import {
   createPragma,
+  runtimeSupportsSteer,
+  hasUncertainSteerDelivery,
   AgentLifecycleQuiescenceError,
   createPragmaLogger,
   createFileExecutionStore,
@@ -525,6 +527,14 @@ export function createMissionRunner(options: {
     pragmaHome: options.pragmaHome,
   });
   const sessionService = new MissionSessionService<MissionExecutionContext, ExecutorMetadata>();
+  const resolveSessionRuntimeForQueue = async (sessionId: string) => {
+    const session = await expertSessionStore.get(sessionId);
+    const rootContext = session?.contexts[session.rootContextId];
+    if (rootContext === undefined) return undefined;
+    return await options.runtimes
+      .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
+      .catch(() => undefined);
+  };
   const promptQueueProjection = createExpertSessionPromptQueueProjection({
     sessions: expertSessionStore,
     resolveSessionId: async (missionId) => {
@@ -534,15 +544,11 @@ export function createMissionRunner(options: {
       return mission.execution?.sessionId;
     },
     supportsSteer: async (sessionId) => {
-      const session = await expertSessionStore.get(sessionId);
-      if (session === undefined) return false;
-      const rootContext = session.contexts[session.rootContextId];
-      if (rootContext === undefined) return false;
-      const resolved = await options.runtimes
-        .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
-        .catch(() => undefined);
-      return resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+      const resolved = await resolveSessionRuntimeForQueue(sessionId);
+      return resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter);
     },
+    steeringRecovery: async (sessionId) =>
+      (await resolveSessionRuntimeForQueue(sessionId))?.adapter.features.steering.steeringRecovery,
     resolvePromptMetadata: async (prompt) => ({
       hasAttachments: hasPromptAttachments(
         (await executionStore.getInvocation(prompt.executionId, prompt.executionId))?.input,
@@ -3819,11 +3825,12 @@ export function createMissionRunner(options: {
           event.type,
         ),
       );
+    const deliveryUncertain = hasUncertainSteerDelivery(promptQueue);
     const uncertainQueuedPrompt = pendingPrompts.find(
       (prompt) => prompt.status === "queued" && prompt.deliveryAttempt?.state === "uncertain",
     );
     const queuePaused =
-      uncertainQueuedPrompt !== undefined ||
+      deliveryUncertain ||
       (lastQueueControl?.type === "prompt.queue-paused" &&
         pendingPrompts.some((prompt) => prompt.status === "queued"));
     const lastPausedRequestId = (lastQueueControl?.data as { requestId?: unknown } | undefined)
@@ -3833,16 +3840,20 @@ export function createMissionRunner(options: {
       (queuePaused && typeof lastPausedRequestId === "string" ? lastPausedRequestId : undefined);
     const rootRuntimeContext =
       sessionRecord === undefined ? undefined : sessionRecord.contexts[sessionRecord.rootContextId];
-    const supportsSteer =
+    const resolvedRootRuntime =
       rootRuntimeContext === undefined
-        ? false
+        ? undefined
         : await options.runtimes
             .resolve({
               binding: rootRuntimeContext.runtime,
               modelSelection: rootRuntimeContext.modelSelection,
             })
-            .then((resolved) => resolved.adapter.descriptor.capabilities?.supportsSteer === true)
-            .catch(() => false);
+            .catch(() => undefined);
+    const supportsSteer =
+      resolvedRootRuntime === undefined
+        ? false
+        : await runtimeSupportsSteer(resolvedRootRuntime.adapter).catch(() => false);
+    const steeringRecovery = resolvedRootRuntime?.adapter.features.steering.steeringRecovery;
     const queueItems = await Promise.all(
       pendingPrompts.map(async (prompt) => ({
         requestId: prompt.requestId,
@@ -4003,6 +4014,8 @@ export function createMissionRunner(options: {
             : "idle",
         pendingCount: pendingPrompts.length,
         supportsSteer,
+        deliveryUncertain,
+        steeringRecovery,
         items: queueItems
           .filter((item) => item.status === "queued")
           .map((item) => ({
@@ -4304,7 +4317,7 @@ export function createMissionRunner(options: {
     );
   };
 
-  const resumeMissionQueue = async (id: string): Promise<Mission> => {
+  const resumeMissionQueue = async (id: string, recovery?: "abandon"): Promise<Mission> => {
     const mission = await options.missions.get(id);
     let session = sessionService.session(id);
     if (session === undefined) {
@@ -4330,7 +4343,7 @@ export function createMissionRunner(options: {
       sessionService.setSession(id, session);
       rememberSessionCompilation(id, stableCompilation.identity, compiled);
     }
-    await session.resumePromptQueue();
+    await session.resumePromptQueue({ recovery });
     await attachNextSessionTurn(id, missionSurfaceAudience(mission));
     invalidateChat(id, missionSurfaceAudience(mission));
     return await options.missions.get(id);
@@ -4751,7 +4764,7 @@ export function createMissionRunner(options: {
         },
         async "queue.resume"(command) {
           const before = await promptQueueProjection.list(command.missionId);
-          const mission = await resumeMissionQueue(command.missionId);
+          const mission = await resumeMissionQueue(command.missionId, command.payload.recovery);
           return {
             missionId: mission.id,
             changed: before.state === "paused",

@@ -12,11 +12,15 @@ export const missions = {
   queuedMessage: "Queued",
   preparingQueuedSteer: "Preparing steer",
   removeQueuedMessage: "Remove from queue and edit",
+  steerRetained: "Steer was not delivered; the message remains queued for the next turn.",
+  steerDeliveryUncertain:
+    "Steer delivery is uncertain. The queue is paused to prevent duplicate execution.",
+  checkSteerDelivery: "Check delivery and resume",
+  abandonSteerDelivery: "Skip uncertain messages and start fresh",
+  abandonSteerDeliveryHint:
+    "Stop the old conversation and discard uncertain messages without replaying them. Prior operations may already have executed. Other queued messages continue in a new conversation.",
   queuePaused: "The queue paused after a failed message.",
   deliveryUncertain: "Delivery uncertain",
-  steerDeliveryUncertain:
-    "Steer delivery is uncertain. The message is retained and the queue is paused. Check the current turn's result before retrying to avoid duplicate actions.",
-  retryUncertainQueue: "Retry queued messages",
   resumeQueue: "Skip failure and continue",
   title: "Missions",
   newMission: "New mission",

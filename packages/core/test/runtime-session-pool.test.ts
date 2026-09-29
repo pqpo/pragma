@@ -102,6 +102,19 @@ describe("RuntimeSessionPool", () => {
     expect(second.close).toHaveBeenCalledTimes(1);
   });
 
+  it("retains a Session whose close failed so recovery cannot mistake it for stopped", async () => {
+    const pool = new RuntimeSessionPool();
+    const session = createRuntimeSession();
+    vi.mocked(session.close).mockRejectedValueOnce(new Error("close failed"));
+    await pool.acquire(identity, async () => session);
+    await expect(pool.clear()).rejects.toThrow("close failed");
+    expect(pool.get(identity)).toBe(session);
+    await pool.clear();
+    expect(session.close).toHaveBeenCalledTimes(2);
+    expect(pool.get(identity)).toBeUndefined();
+    await pool.close();
+  });
+
   it("invalidates an unhealthy Session without waiting and reopens fresh", async () => {
     const pool = new RuntimeSessionPool();
     const neverCloses = createRuntimeSession();
