@@ -13,6 +13,7 @@ import { createPragmaLogger, type PragmaLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
 import { AsyncPushQueue } from "./async-push-queue.ts";
+import { RuntimeSteerDeliverySchema } from "./runtime-adapter.ts";
 import { SteerNotDispatchedError } from "../execution/steer-delivery-error.ts";
 import {
   createQueuedAgentLifecycle,
@@ -77,6 +78,8 @@ import type {
   RuntimeSessionSyncCallback,
   RuntimeSubmitHandle,
   RuntimeSubmitRequest,
+  RuntimeSteerRequest,
+  RuntimeSteerDelivery,
   RuntimeTaskSubmission,
   RuntimeDriverDescriptor,
   RuntimeModelDiscoveryOptions,
@@ -355,14 +358,9 @@ export interface RuntimeDriver<
   readonly cancelTurn?:
     ((session: TNativeSession, context: RuntimeCancelContext) => Promise<void> | void) | undefined;
   readonly steerTurn?:
-    | ((
-        session: TNativeSession,
-        request: {
-          readonly requestId: string;
-          readonly content: string;
-          readonly targetRunId: string;
-        },
-      ) => Promise<void> | void)
+    ((session: TNativeSession, request: RuntimeSteerRequest) => Promise<void> | void) | undefined;
+  readonly reconcileSteer?:
+    | ((session: TNativeSession, request: RuntimeSteerRequest) => Promise<RuntimeSteerDelivery>)
     | undefined;
   readonly closeSession?:
     ((session: TNativeSession, context: RuntimeCloseContext) => Promise<void> | void) | undefined;
@@ -1480,11 +1478,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
     };
   }
 
-  async steer(request: {
-    readonly requestId: string;
-    readonly content: string;
-    readonly targetRunId: string;
-  }): Promise<void> {
+  async steer(request: RuntimeSteerRequest): Promise<void> {
     if (this.options.driver.steerTurn === undefined) {
       throw new SteerNotDispatchedError(
         "runtime_unsupported",
@@ -1502,6 +1496,15 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession> {
       RUNTIME_STEER_TIMEOUT_MS,
       `Runtime steer timed out: ${request.targetRunId}`,
     );
+  }
+
+  get reconcileSteer():
+    ((request: RuntimeSteerRequest) => Promise<RuntimeSteerDelivery>) | undefined {
+    const reconcile = this.options.driver.reconcileSteer;
+    return reconcile === undefined
+      ? undefined
+      : async (request) =>
+          RuntimeSteerDeliverySchema.parse(await reconcile(this.options.nativeSession, request));
   }
 
   async close(): Promise<void> {

@@ -926,11 +926,21 @@ export function MissionDetailFragment(props: {
         queueItemRequestId,
       });
       if (result.queueSteer.outcome === "steered") {
+        setDeliveryNotice(undefined);
         followLatestRef.current = true;
         setShowJumpToLatest(false);
       }
       await refreshLatestChat();
       if (result.queueSteer.outcome === "steered") scheduleFollowLatest();
+      else
+        setDeliveryNotice(
+          t(
+            result.queueSteer.reason === "delivery_uncertain"
+              ? "steerDeliveryUncertain"
+              : "steerRetained",
+            { ns: "missions" },
+          ),
+        );
     } catch (steerError) {
       setOptionsError(missionError(steerError));
     } finally {
@@ -1666,7 +1676,11 @@ export function MissionDetailFragment(props: {
               )}
               {chat?.queue?.state === "paused" ? (
                 <small className="mission-chat-footer-tip" role="status">
-                  <span>{t("queuePaused", { ns: "missions" })}</span>{" "}
+                  <span>
+                    {t(chat.queue.deliveryUncertain ? "steerDeliveryUncertain" : "queuePaused", {
+                      ns: "missions",
+                    })}
+                  </span>{" "}
                   <button
                     className="text-button"
                     type="button"
@@ -1682,7 +1696,9 @@ export function MissionDetailFragment(props: {
                         );
                     }}
                   >
-                    {t("resumeQueue", { ns: "missions" })}
+                    {t(chat.queue.deliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
+                      ns: "missions",
+                    })}
                   </button>
                 </small>
               ) : null}
@@ -1779,7 +1795,8 @@ export function MissionDetailFragment(props: {
                           const canSteer =
                             chat?.queue?.supportsSteer === true &&
                             interruptible &&
-                            !item.hasAttachments;
+                            !item.hasAttachments &&
+                            chat?.queue?.deliveryUncertain !== true;
                           return (
                             <div className="mission-prompt-queue-item" key={item.requestId}>
                               <span className="mission-prompt-queue-marker" aria-hidden="true">
@@ -1807,7 +1824,11 @@ export function MissionDetailFragment(props: {
                                         : undefined
                                     }
                                     aria-busy={steering || undefined}
-                                    disabled={!item.persisted || action !== undefined}
+                                    disabled={
+                                      !item.persisted ||
+                                      action !== undefined ||
+                                      chat?.queue?.deliveryUncertain === true
+                                    }
                                     onClick={() => void steerQueuedMessage(item.requestId)}
                                   >
                                     {steering ? (
@@ -1825,7 +1846,11 @@ export function MissionDetailFragment(props: {
                                   type="button"
                                   aria-label={t("removeQueuedMessage", { ns: "missions" })}
                                   title={t("removeQueuedMessage", { ns: "missions" })}
-                                  disabled={!item.persisted || action !== undefined}
+                                  disabled={
+                                    !item.persisted ||
+                                    action !== undefined ||
+                                    chat?.queue?.deliveryUncertain === true
+                                  }
                                   onClick={() =>
                                     void removeQueuedMessage(item.requestId, item.content)
                                   }

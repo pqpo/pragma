@@ -1657,6 +1657,37 @@ describe("MissionDetailFragment", () => {
     expect(html).not.toContain("Execution running");
   });
 
+  it("shows uncertain delivery and prevents steer and take-back while reconciling", () => {
+    const mission = missionFixture("expert");
+    const chat: MissionConversationSnapshot = {
+      missionId: mission.id,
+      revision: 1,
+      entries: [],
+      page: {},
+      pendingInteractions: [],
+      queue: {
+        state: "paused",
+        deliveryUncertain: true,
+        pendingCount: 1,
+        supportsSteer: true,
+        items: [
+          {
+            requestId: "00000000-0000-4000-8000-000000000012",
+            content: "Uncertain guidance",
+            hasAttachments: false,
+          },
+        ],
+      },
+    };
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment mission={mission} chatCache={new Map([[mission.id, chat]])} />,
+    );
+    expect(html).toContain("Steer delivery is uncertain");
+    expect(html).toContain("Check delivery and resume");
+    expect(html).not.toContain(">Steer<");
+    expect(html).toMatch(/class="mission-queue-remove"[^>]*disabled=""/);
+  });
+
   it("hides queued steer when the Runtime does not support it", () => {
     const mission = missionFixture("expert");
     const chat: MissionConversationSnapshot = {

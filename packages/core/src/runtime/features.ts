@@ -3,6 +3,7 @@ import type {
   RuntimeFeatureTurnPrepareContext,
 } from "./driver.ts";
 import type {
+  RuntimeAdapter,
   RuntimeAdapterCapabilities,
   RuntimeAdapterPlacementCapabilities,
 } from "./runtime-adapter.ts";
@@ -510,4 +511,14 @@ function requireReason(reason: string): string {
   const normalized = reason.trim();
   if (normalized === "") throw new Error("Runtime feature reason must not be empty.");
   return normalized;
+}
+
+/** Current executable support, restricted by the same feature readiness used by the adapter. */
+export async function runtimeSupportsSteer(adapter: RuntimeAdapter): Promise<boolean> {
+  if (!isRuntimeFeatureEnabled(adapter.features.steering)) return false;
+  const availability = await adapter.canUse();
+  return (
+    availability.usable &&
+    isRuntimeFeatureEnabled(availability.features?.steering ?? adapter.features.steering)
+  );
 }

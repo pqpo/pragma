@@ -32,6 +32,33 @@ describe("ExpertSession prompt queue projection", () => {
       ],
     });
   });
+  it("projects uncertainty from durable attempts even when no pause event survived", async () => {
+    const uncertain = {
+      ...prompt("uncertain", "source", "user"),
+      deliveryAttempt: {
+        attemptId: "attempt",
+        kind: "queue_steer" as const,
+        sourceExecutionId: "source",
+        targetExecutionId: "target",
+        state: "uncertain" as const,
+      },
+    };
+    const sessions = {
+      get: async () => ({ activeExecutionId: undefined }) as ExpertSessionRecord,
+      listPrompts: async () => [uncertain, prompt("next", "next", "user")],
+      listEvents: async () => [],
+    } as unknown as Pick<ExpertSessionStore, "get" | "listPrompts" | "listEvents">;
+    const projection = createExpertSessionPromptQueueProjection({
+      sessions,
+      resolveSessionId: async () => "session",
+      supportsSteer: async () => true,
+    });
+    await expect(projection.list("mission")).resolves.toMatchObject({
+      state: "paused",
+      deliveryUncertain: true,
+      items: [{ steerable: false }, { steerable: false }],
+    });
+  });
 });
 
 function prompt(

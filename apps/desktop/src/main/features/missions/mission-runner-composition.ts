@@ -10,6 +10,8 @@ import {
 } from "@pragma/built-in-agents";
 import {
   createPragma,
+  runtimeSupportsSteer,
+  hasUncertainSteerDelivery,
   AgentLifecycleQuiescenceError,
   createPragmaLogger,
   createFileExecutionStore,
@@ -539,7 +541,7 @@ export function createMissionRunner(options: {
       const resolved = await options.runtimes
         .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
         .catch(() => undefined);
-      return resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+      return resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter);
     },
     resolvePromptMetadata: async (prompt) => ({
       hasAttachments: hasPromptAttachments(
@@ -3670,13 +3672,15 @@ export function createMissionRunner(options: {
           event.type,
         ),
       );
+    const deliveryUncertain = hasUncertainSteerDelivery(promptQueue);
     const queuePaused =
-      lastQueueControl?.type === "prompt.queue-paused" &&
-      pendingPrompts.some((prompt) => prompt.status === "queued");
+      deliveryUncertain ||
+      (lastQueueControl?.type === "prompt.queue-paused" &&
+        pendingPrompts.some((prompt) => prompt.status === "queued"));
     const pausedAfterRequestId =
       queuePaused &&
-      typeof (lastQueueControl.data as { requestId?: unknown }).requestId === "string"
-        ? ((lastQueueControl.data as { requestId: string }).requestId ?? undefined)
+      typeof (lastQueueControl?.data as { requestId?: unknown } | undefined)?.requestId === "string"
+        ? ((lastQueueControl!.data as { requestId: string }).requestId ?? undefined)
         : undefined;
     const rootRuntimeContext =
       sessionRecord === undefined ? undefined : sessionRecord.contexts[sessionRecord.rootContextId];
@@ -3688,7 +3692,7 @@ export function createMissionRunner(options: {
               binding: rootRuntimeContext.runtime,
               modelSelection: rootRuntimeContext.modelSelection,
             })
-            .then((resolved) => resolved.adapter.descriptor.capabilities?.supportsSteer === true)
+            .then(async (resolved) => await runtimeSupportsSteer(resolved.adapter))
             .catch(() => false);
     const queueItems = await Promise.all(
       pendingPrompts.map(async (prompt) => ({
@@ -3849,6 +3853,7 @@ export function createMissionRunner(options: {
             : "idle",
         pendingCount: pendingPrompts.length,
         supportsSteer,
+        deliveryUncertain,
         items: queueItems
           .filter((item) => item.status === "queued")
           .map((item) => ({

@@ -12,7 +12,7 @@ The adapter runs the user's installed `opencode` executable. It imports provider
 
 Each Runtime Session overrides `XDG_DATA_HOME` with a private directory inside Pragma's owned Runtime Session; its native `auth.json` is linked from the host, or copied with restricted permissions when links are unavailable. This retains native CLI login, including CC Switch auth in the standard location, without placing credentials in the Pragma workspace. Provider keys in model configuration remain available to the OpenCode server.
 
-Pragma's MCP gateway is registered only for the private process. On 1.x it is injected through `OPENCODE_CONFIG_CONTENT` because the 1.x MCP add API writes a project config file. On 2.x the MCP add API was verified against a temporary project and did not write a project or user config file. Runtime session metadata and OpenCode's native conversation data live under Pragma's owned `state/runtime-sessions` directory and follow the same owner deletion lifecycle. Native OpenCode sessions are restored by ID only within that private data home and the original workspace.
+Pragma's MCP gateway is registered only for the private process. On 1.x it is injected through `OPENCODE_CONFIG_CONTENT` because the 1.x MCP add API writes a project config file. On 2.x the MCP add API was verified against a temporary project and did not write a project or user config file. Adding a server starts its connection in the background; the adapter explicitly waits for its MCP handshake before the first model turn, so Code Mode can actually call the tools advertised in its catalog. Runtime session metadata and OpenCode's native conversation data live under Pragma's owned `state/runtime-sessions` directory and follow the same owner deletion lifecycle. Native OpenCode sessions are restored by ID only within that private data home and the original workspace.
 
 ## Permission boundary
 
@@ -20,7 +20,7 @@ In `request-approval`, workspace edits and network requests ask the Host; worksp
 
 ## Current feature boundary
 
-The adapter handles model discovery and selection, system prompts, resumed sessions, text/reasoning/tool events, human permission decisions, OpenCode 1.x questions and 2.x forms, Pragma MCP tools, attachments, usage accounting, cancellation, and manual compaction. Availability probes are cached independently from model discovery. Model catalogs use the shared ten-minute memory and persistent cache contract with stale-while-refresh, in-flight deduplication, retry throttling, and Host invalidation. OpenCode 2.x variants become per-model thinking levels; 1.x exposes no non-default level because its selected SDK protocol cannot submit variants. Reported OpenCode usage takes precedence; the shared Core token counter estimates usage when OpenCode omits it or reports an all-zero snapshot for nonempty output. The estimate serializes the system prompt, prior native context, current prompt, and attachment metadata. Directory attachments are supplied as paths in prompt text. Pragma Skill materialization, active-turn steering, and context-window inspection are not wired to a stable cross-version API and are reported as unsupported.
+The adapter handles model discovery and selection, system prompts, resumed sessions, text/reasoning/tool events, human permission decisions, OpenCode 1.x questions and 2.x forms, Pragma MCP tools, attachments, usage accounting, cancellation, and manual compaction. Availability probes are cached independently from model discovery. Model catalogs use the shared ten-minute memory and persistent cache contract with stale-while-refresh, in-flight deduplication, retry throttling, and Host invalidation. OpenCode 2.x variants become per-model thinking levels; 1.x exposes no non-default level because its selected SDK protocol cannot submit variants. Reported OpenCode usage takes precedence; the shared Core token counter estimates usage when OpenCode omits it or reports an all-zero snapshot for nonempty output. The estimate serializes the system prompt, prior native context, current prompt, and attachment metadata. Directory attachments are supplied as paths in prompt text. Pragma Skill materialization and context-window inspection remain unsupported. Active-turn steering is available only on OpenCode 2.x; availability probes suppress the Host steer action on 1.x. Steering remains Degraded until authenticated provider-backed validation is available. Estimated 2.x usage includes injected instructions and every assistant step within the Pragma turn; reported counts still take precedence.
 
 Both major versions have an isolated executable smoke test for server startup, session creation/restoration, model listing, and MCP config isolation. A second test connects the real CLI to a local OpenAI-compatible mock model and verifies a completed prompt with a text delta. The tests are enabled with `PRAGMA_OPENCODE_V1_PATH` and `PRAGMA_OPENCODE_V2_PATH` while running `pnpm --filter @pragma/runtime-opencode test`. They do not use a real provider credential.
 
@@ -33,26 +33,104 @@ OpenCode acceptance tests above.
 
 ## Feature acceptance record
 
-The following statuses use the [Runtime integration checklist](../conventions/runtime-adapter-integration-checklist.md). All implementation paths are in `packages/runtime/opencode/src/`; the executable smoke is `test/process.integration.test.ts`. The smoke used OpenCode 1.18.32 and 2.0.16 on macOS on 2026-09-24 with temporary, unauthenticated homes. `Degraded` means the code path exists but the required provider-backed behavior has not been proven. The model turn used a local simulated provider; it did not execute an MCP tool.
+The following statuses use the [Runtime integration checklist](../conventions/runtime-adapter-integration-checklist.md). All implementation paths are in `packages/runtime/opencode/src/`; the executable smoke is `test/process.integration.test.ts`. The smoke used OpenCode 1.18.32 and 2.0.16 on macOS on 2026-09-24 with temporary, unauthenticated homes. `Degraded` means the code path exists but the required provider-backed behavior has not been proven. Streaming regressions were tested on 2026-09-29 with real OpenCode 1.18.33 and 2.0.16 CLIs against a local simulated provider, including a real Pragma MCP tool call (directly on 1.x and through Code Mode on 2.x).
 
-| Feature                                 | Status and evidence boundary                                                                                |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| availability                            | Degraded: version floor and server readiness exercised; no authenticated provider.                          |
-| authentication                          | Degraded: host auth reused and model settings imported into a private home; no authenticated smoke.         |
-| modelDiscovery                          | Degraded: SDK catalog requests exercised; custom models can run even when the catalog is empty.             |
-| modelSelection, thinking                | Degraded: SDK selector/variant wired; no provider-backed turn.                                              |
-| freshSession, resume                    | Degraded: both native APIs exercised; no resumed prompt.                                                    |
-| systemPrompt, startupMessages           | Degraded: SDK instructions/turn body wired; no behavioral assertion for system or startup instructions.     |
-| textStreaming                           | Degraded: real 1.x/2.x CLIs produced text deltas before the final response using a simulated provider.      |
-| reasoningStreaming, nativeToolLifecycle | Degraded: public event types mapped; no live reasoning/tool fixture.                                        |
-| mcp                                     | Degraded: Pragma-only registration and config isolation exercised; tool discovery and call unverified.      |
-| permissions, userInteraction            | Degraded: restricted policies and 1.x question/2.x form callbacks wired; no live approval/question turn.    |
-| skills                                  | Unsupported: Pragma Skill materialization is not wired.                                                     |
-| attachmentImage, attachmentFile         | Degraded: file URI attachment is wired; no model turn.                                                      |
-| attachmentDirectory                     | Degraded: directory path is added to prompt text.                                                           |
-| usage                                   | Degraded: native counts and Core fallback wired; all-zero snapshots trigger context-inclusive estimation.   |
-| contextWindow                           | Unsupported: no consistent cross-version inspection API is wired.                                           |
-| compaction                              | Degraded: native APIs wired; no live compaction smoke.                                                      |
-| cancellation                            | Degraded: native APIs wired; no active-turn smoke.                                                          |
-| steering                                | Unsupported: no common cross-version active-turn API is wired.                                              |
-| close, cleanup                          | Degraded: private server/process-group cleanup and owned data home exercised; owner deletion not exercised. |
+| Feature                                 | Status and evidence boundary                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| availability                            | Degraded: version floor and server readiness exercised; no authenticated provider.                                                   |
+| authentication                          | Degraded: host auth reused and model settings imported into a private home; no authenticated smoke.                                  |
+| modelDiscovery                          | Degraded: SDK catalog requests exercised; custom models can run even when the catalog is empty.                                      |
+| modelSelection, thinking                | Degraded: SDK selector/variant wired; no provider-backed turn.                                                                       |
+| freshSession, resume                    | Degraded: both native APIs exercised; no resumed prompt.                                                                             |
+| systemPrompt, startupMessages           | Degraded: SDK instructions/turn body wired; no behavioral assertion for system or startup instructions.                              |
+| textStreaming                           | Degraded: real 1.x/2.x CLIs produced text deltas before the final response using a simulated provider.                               |
+| reasoningStreaming, nativeToolLifecycle | Degraded: real 1.x/2.x reasoning, text and tool ordering tested with a simulated provider.                                           |
+| mcp                                     | Degraded: Pragma-only registration, handshake and one real MCP call tested with a simulated provider.                                |
+| permissions, userInteraction            | Degraded: restricted policies and 1.x question/2.x form callbacks wired; no live approval/question turn.                             |
+| skills                                  | Unsupported: Pragma Skill materialization is not wired.                                                                              |
+| attachmentImage, attachmentFile         | Degraded: file URI attachment is wired; no model turn.                                                                               |
+| attachmentDirectory                     | Degraded: directory path is added to prompt text.                                                                                    |
+| usage                                   | Degraded: native counts and Core fallback wired; all-zero snapshots trigger context-inclusive estimation.                            |
+| contextWindow                           | Unsupported: no consistent cross-version inspection API is wired.                                                                    |
+| compaction                              | Degraded: native APIs wired; no live compaction smoke.                                                                               |
+| cancellation                            | Degraded: native APIs wired; no active-turn smoke.                                                                                   |
+| steering                                | Degraded on 2.x: real CLI admission, settlement race, lost receipt and restore tested with a simulated provider. Unsupported on 1.x. |
+| close, cleanup                          | Degraded: private server/process-group cleanup and owned data home exercised; owner deletion not exercised.                          |
+
+## Streaming boundaries
+
+A turn owns a fresh stream cursor keyed by native assistant message and content part.
+OpenCode 1.x uses `field: text` for both visible text and reasoning deltas; the
+announced part type determines the channel. OpenCode 2.x uses separate text and
+reasoning events. Full-value snapshots only fill an unreceived suffix; replayed
+snapshots and late deltas after a part ends do not append content again. Identical
+text from different native messages and legitimate repeated deltas remain intact.
+
+OpenCode 2.x batches text and reasoning deltas. A tool start can therefore arrive
+before the preceding text delta and full-value ending. Tools wait behind content
+parts already started in their assistant message, then appear after those parts
+finish. Tool call IDs settle once. The SDK reader drains through the final native
+step before the private event stream is aborted.
+
+Tool starts carry the completed arguments: 1.x waits for a running or terminal
+tool snapshot, and 2.x waits for `session.tool.called` instead of the input-start
+announcement. A terminal failure before that event still settles the announced
+tool once. Usage sums every native assistant step on both versions; estimation
+includes intermediate text and reasoning when native usage is unavailable.
+
+The 2.x MCP handshake must leave the registered server in connected status;
+a failed or missing server rejects registration before the first turn.
+
+The adapter closes intermediate assistant segments before tools or another native
+message. Only the settled Pragma turn emits the final-answer boundary, with its
+actual usage and model metadata. This avoids accumulating later text in an earlier
+UI row and avoids saving both a native final snapshot and a duplicate Pragma final
+answer. Reasoning stays separate in both live output and canonical message history.
+
+`test/stream.test.ts` covers snapshot replay, repeated deltas, terminal-first tools,
+batched content ordering and thought-only tool preparation. The real-CLI
+`test/stream.integration.test.ts` checks reasoning/text separation, a single real
+MCP call, text–tool–text order and exactly one final answer in persistent Core
+history on both versions. Desktop's Mission chat projection regression verifies
+the same visible entries and identities live and after reload.
+
+## Steering and recovery
+
+The queue item exists before the user clicks Steer. OpenCode 2.x uses the SDK
+`session.synthetic` endpoint with `delivery: steer` and `resume: true`. The adapter
+binds admission to the current Pragma Execution, not a native model step. If the
+native step has just ended while the Pragma turn remains open, the injected message
+can wake another native step under that same Pragma Execution. Settlement waits
+for every admission and awakened step, then closes admission synchronously. A
+finished Pragma turn rejects steering before contacting the native server, leaving
+the existing item in its original FIFO position.
+
+The deterministic native message ID includes native Session, target Execution,
+request ID and durable attempt ID. A versioned provenance marker accompanies the
+message. A timeout, lost acknowledgement or unexpected receipt pauses the entire
+queue. It also stops the owned server and prohibits another native prompt in that
+client. Core persists the existing `deliveryAttempt`; this change does not add or
+upgrade a storage Schema. If native delivery is acknowledged but the confirmed
+receipt cannot be persisted, Core marks the attempt uncertain and pauses the
+queue for reconciliation instead of resending it.
+
+Checking delivery restores only the same owned native Session, with its original
+system Session ID and reference. A matching message in native history confirms
+delivery and removes the queued copy. A matching pending inbox item is cancelled
+and checked against history before allowing its original queued copy to run. A
+bare missing message remains uncertain: after an abrupt Host death an orphaned
+server might still be admitting it. Transport errors and unknown provenance
+versions likewise keep the queue paused. No automatic resubmission or take-back
+for editing is allowed while delivery remains uncertain.
+
+`test/steering.integration.test.ts` exercises real OpenCode 2.0.16 processes against
+a local simulated model. Together with all adapter tests, OpenCode 1.18.33 and
+2.0.16 passed 45 tests across the suite and focused reruns on 2026-09-29. This includes a real admission response dropped
+by an HTTP proxy, restored receipt lookup, pending cancellation, reported usage
+across native steps and absence of replay in the next prompt. These tests do not
+claim authenticated-provider acceptance.
+
+ACP remains deferred: stock OpenCode ACP has no advertised active-injection
+extension and does not cover the current native question/form bridge. The decision
+and research are recorded in [ADR 061](../adr/061-opencode-steering-and-acp.md) and
+[the ACP assessment](../research/opencode-acp/README.md).

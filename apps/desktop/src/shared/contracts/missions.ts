@@ -783,6 +783,7 @@ export const MissionConversationStateSchema = z.object({
       state: z.enum(["idle", "running", "paused"]),
       pendingCount: z.number().int().nonnegative(),
       supportsSteer: z.boolean().default(false),
+      deliveryUncertain: z.boolean().optional(),
       items: z
         .array(
           z.object({

@@ -1,3 +1,4 @@
+import { hasUncertainSteerDelivery } from "@pragma/core";
 import type { ExpertSessionStore } from "@pragma/core";
 import type { PromptRequest } from "@pragma/shared";
 
@@ -20,6 +21,7 @@ export interface PromptQueueProjection {
   readonly pendingCount: number;
   readonly pausedAfterRequestId?: string | undefined;
   readonly supportsSteer: boolean;
+  readonly deliveryUncertain?: boolean | undefined;
   readonly items: readonly PromptQueueProjectionItem[];
 }
 
@@ -62,9 +64,11 @@ export function createExpertSessionPromptQueueProjection(options: {
             event.type,
           ),
         );
+      const deliveryUncertain = hasUncertainSteerDelivery(prompts);
       const paused =
-        lastControl?.type === "prompt.queue-paused" &&
-        pending.some((prompt) => prompt.status === "queued");
+        deliveryUncertain ||
+        (lastControl?.type === "prompt.queue-paused" &&
+          pending.some((prompt) => prompt.status === "queued"));
       const pausedAfterRequestId =
         paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
           ? lastControl.data.requestId
@@ -87,7 +91,8 @@ export function createExpertSessionPromptQueueProjection(options: {
             // Only a queued item can be promoted to the active turn.  A
             // running item is the active turn itself and is therefore not a
             // queue.steer target.
-            steerable: prompt.status === "queued" && supportsSteer && !hasAttachments,
+            steerable:
+              prompt.status === "queued" && supportsSteer && !hasAttachments && !deliveryUncertain,
           };
         }),
       );
@@ -103,6 +108,7 @@ export function createExpertSessionPromptQueueProjection(options: {
         pendingCount: pending.length,
         ...(pausedAfterRequestId === undefined ? {} : { pausedAfterRequestId }),
         supportsSteer,
+        deliveryUncertain,
         items,
       };
     },

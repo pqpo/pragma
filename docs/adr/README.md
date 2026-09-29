@@ -80,6 +80,8 @@ ADR 的数字来自项目演进历史，早期曾出现同号记录。链接文�
 
 - [Structured core asset synchronization](./060-structured-core-asset-sync.md)
 
+- [OpenCode steering and ACP decision](./061-opencode-steering-and-acp.md)
+
 ## 维护规则
 
 - 新决策使用下一个未使用编号，不复用既有编号；
