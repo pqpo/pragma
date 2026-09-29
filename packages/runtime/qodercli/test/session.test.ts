@@ -81,6 +81,47 @@ describe("Qoder startup messages", () => {
     expect(session.messages).toEqual([]);
   });
 
+  it("derives context occupancy from the SDK percentage and the resolved model window", async () => {
+    const sdkQuery = createSdkQuery({ contextUsageRatio: Number.NaN });
+    sdkQuery.getContextUsage.mockResolvedValue({ contextWindow: { usedPercentage: 25 } });
+    queryMock.mockReturnValue(sdkQuery);
+    const session = createSession();
+    session.contextWindowTokens = 100_000;
+
+    await startQoderTurn(session, createTurn([]));
+
+    expect(sdkQuery.getContextUsage).toHaveBeenCalledOnce();
+    expect(session.contextWindowUsage).toMatchObject({
+      usedTokens: 25_000,
+      contextWindowTokens: 100_000,
+      measurement: "derived",
+    });
+  });
+
+  it.each([Number.NaN, -1, 101])(
+    "estimates occupancy when the SDK percentage is invalid (%s)",
+    async (usedPercentage) => {
+      const sdkQuery = createSdkQuery({ contextUsageRatio: Number.NaN });
+      sdkQuery.getContextUsage.mockResolvedValue({ contextWindow: { usedPercentage } });
+      queryMock.mockReturnValue(sdkQuery);
+      const countText = vi.fn<QoderNativeSession["tokenCounter"]["countText"]>(() => ({
+        tokens: 42,
+        source: "heuristic",
+      }));
+      const session = createSession(countText);
+      session.contextWindowTokens = 100_000;
+
+      await startQoderTurn(session, createTurn([]));
+
+      expect(session.contextWindowUsage).toMatchObject({
+        usedTokens: 42,
+        contextWindowTokens: 100_000,
+        measurement: "estimated",
+      });
+      expect(countText).toHaveBeenCalled();
+    },
+  );
+
   it("queues steer guidance for the next suitable Qoder boundary", async () => {
     const session = createSession();
     let injected: AsyncIterable<unknown> | undefined;
@@ -206,7 +247,12 @@ function createTurn(
   };
 }
 
-function createSdkQuery(options: { readonly reportedUsage?: boolean } = {}) {
+function createSdkQuery(
+  options: {
+    readonly reportedUsage?: boolean;
+    readonly contextUsageRatio?: number;
+  } = {},
+) {
   const reportedUsage = options.reportedUsage ?? true;
   const result = {
     type: "result",
@@ -225,7 +271,7 @@ function createSdkQuery(options: { readonly reportedUsage?: boolean } = {}) {
       },
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
-      context_usage_ratio: 0,
+      context_usage_ratio: options.contextUsageRatio ?? 0,
       inference_geo: "",
       input_tokens: reportedUsage ? 1 : 0,
       iterations: [],
@@ -246,6 +292,6 @@ function createSdkQuery(options: { readonly reportedUsage?: boolean } = {}) {
     },
     close: vi.fn(async () => undefined),
     interrupt: vi.fn(async () => undefined),
-    getContextUsage: vi.fn(async () => ({ totalTokens: 0, maxTokens: 0 })),
+    getContextUsage: vi.fn(async () => ({ contextWindow: { usedPercentage: 0 } })),
   };
 }
