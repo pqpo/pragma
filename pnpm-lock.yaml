@@ -180,6 +180,9 @@ importers:
       i18next:
         specifier: ^26.4.2
         version: 26.4.2(typescript@6.0.3)
+      jiti:
+        specifier: 2.7.0
+        version: 2.7.0
       marked:
         specifier: 18.0.14
         version: 18.0.14
