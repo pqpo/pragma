@@ -884,20 +884,15 @@ export async function createSemanticMemoryStore(
     async readProjectionNotification() {
       const row = data
         .prepare(
-          "SELECT CAST(id AS BLOB) AS idBytes, root_ref_json AS rootRefJson, learning_eligible AS learningEligible FROM projection_notifications ORDER BY created_at, id LIMIT 1",
+          "SELECT id, root_ref_json AS rootRefJson, learning_eligible AS learningEligible FROM projection_notifications ORDER BY created_at, id LIMIT 1",
         )
         .get() as
-        | {
-            readonly idBytes: Uint8Array;
-            readonly rootRefJson: string;
-            readonly learningEligible: number;
-          }
+        | { readonly id: string; readonly rootRefJson: string; readonly learningEligible: number }
         | undefined;
       return row === undefined
         ? undefined
         : {
-            // node:sqlite TEXT reads can truncate the NUL separators in subject keys.
-            id: Buffer.from(row.idBytes).toString("utf8"),
+            id: row.id,
             rootRef: MemorySubjectRefSchema.parse(JSON.parse(row.rootRefJson)),
             learningEligible: row.learningEligible === 1,
           };

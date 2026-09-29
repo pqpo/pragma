@@ -63,7 +63,7 @@
       "eslint": "10.11.0",
       "typescript-eslint": "8.65.0",
       "turbo": "2.10.12",
-      "@types/node": "26.1.0",
+      "@types/node": "26.6.3",
       "tsx": "4.23.15",
       "electron": "43.2.0"
     }
