@@ -62,13 +62,18 @@ export function createExpertSessionPromptQueueProjection(options: {
             event.type,
           ),
         );
+      const uncertain = pending.find(
+        (prompt) => prompt.status === "queued" && prompt.deliveryAttempt?.state === "uncertain",
+      );
       const paused =
-        lastControl?.type === "prompt.queue-paused" &&
-        pending.some((prompt) => prompt.status === "queued");
+        uncertain !== undefined ||
+        (lastControl?.type === "prompt.queue-paused" &&
+          pending.some((prompt) => prompt.status === "queued"));
       const pausedAfterRequestId =
-        paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
+        uncertain?.requestId ??
+        (paused && isRecord(lastControl?.data) && typeof lastControl.data.requestId === "string"
           ? lastControl.data.requestId
-          : undefined;
+          : undefined);
       const supportsSteer =
         options.supportsSteer === undefined ? false : await options.supportsSteer(sessionId);
       const items = await Promise.all(
@@ -87,7 +92,11 @@ export function createExpertSessionPromptQueueProjection(options: {
             // Only a queued item can be promoted to the active turn.  A
             // running item is the active turn itself and is therefore not a
             // queue.steer target.
-            steerable: prompt.status === "queued" && supportsSteer && !hasAttachments,
+            steerable:
+              prompt.status === "queued" &&
+              supportsSteer &&
+              !hasAttachments &&
+              prompt.deliveryAttempt?.state !== "uncertain",
           };
         }),
       );

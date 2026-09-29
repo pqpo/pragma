@@ -996,6 +996,7 @@ export function MissionDetailFragment(props: {
     [chat?.queue?.items, pendingQueuedMessages],
   );
   const visibleQueuedMessages = queuedMessages;
+  const queueDeliveryUncertain = queuedMessages.some((message) => message.deliveryUncertain);
   const visibleQueuedRequestIds = useMemo(
     () => new Set(queuedMessages.map((message) => message.requestId)),
     [queuedMessages],
@@ -1665,8 +1666,12 @@ export function MissionDetailFragment(props: {
                 </small>
               )}
               {chat?.queue?.state === "paused" ? (
-                <small className="mission-chat-footer-tip" role="status">
-                  <span>{t("queuePaused", { ns: "missions" })}</span>{" "}
+                <small className="mission-chat-footer-tip mission-queue-paused-tip" role="status">
+                  <span>
+                    {t(queueDeliveryUncertain ? "steerDeliveryUncertain" : "queuePaused", {
+                      ns: "missions",
+                    })}
+                  </span>{" "}
                   <button
                     className="text-button"
                     type="button"
@@ -1682,7 +1687,9 @@ export function MissionDetailFragment(props: {
                         );
                     }}
                   >
-                    {t("resumeQueue", { ns: "missions" })}
+                    {t(queueDeliveryUncertain ? "retryUncertainQueue" : "resumeQueue", {
+                      ns: "missions",
+                    })}
                   </button>
                 </small>
               ) : null}
@@ -1779,13 +1786,18 @@ export function MissionDetailFragment(props: {
                           const canSteer =
                             chat?.queue?.supportsSteer === true &&
                             interruptible &&
-                            !item.hasAttachments;
+                            !item.hasAttachments &&
+                            !item.deliveryUncertain;
                           return (
                             <div className="mission-prompt-queue-item" key={item.requestId}>
                               <span className="mission-prompt-queue-marker" aria-hidden="true">
                                 <ArrowBendUpLeft size={16} />
                               </span>
-                              <strong>{t("queuedMessage", { ns: "missions" })}</strong>
+                              <strong>
+                                {t(item.deliveryUncertain ? "deliveryUncertain" : "queuedMessage", {
+                                  ns: "missions",
+                                })}
+                              </strong>
                               <MissionUserMessageContent
                                 source={item.content}
                                 mentionCandidates={mentionCandidates}

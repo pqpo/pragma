@@ -8,6 +8,10 @@ export const missions = {
   preparingQueuedSteer: "Preparing steer",
   removeQueuedMessage: "Remove from queue and edit",
   queuePaused: "The queue paused after a failed message.",
+  deliveryUncertain: "Delivery uncertain",
+  steerDeliveryUncertain:
+    "Steer delivery is uncertain. The message is retained and the queue is paused. Check the current turn's result before retrying to avoid duplicate actions.",
+  retryUncertainQueue: "Retry queued messages",
   resumeQueue: "Skip failure and continue",
   title: "Missions",
   newMission: "New mission",

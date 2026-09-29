@@ -1,0 +1,191 @@
+{
+  "date": "2026-09-29",
+  "platform": "darwin",
+  "architecture": "x86_64",
+  "nodeVersion": "24.18.0",
+  "pragmaCommit": "d995fce49f2562bf4169954d6d114815d535fd8c",
+  "upstreamCommit": "2eebebc35441e03cd466003b40a75953b221b886",
+  "wrapperVersion": "2.0.0",
+  "resolvedSdkVersion": "1.5.1",
+  "nativeVersions": ["0.144.1", "0.158.0"],
+  "scope": "Real subprocess initialize and unauthenticated session/new only. No model calls, no host authentication or session copies.",
+  "isolation": [
+    "temporary HOME",
+    "temporary CODEX_HOME",
+    "private CODEX_SQLITE_HOME",
+    "NO_BROWSER=1",
+    "no provider credentials"
+  ],
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientInfo": {
+          "name": "pragma-research",
+          "version": "1"
+        },
+        "clientCapabilities": {
+          "elicitation": {
+            "form": {}
+          },
+          "session": {
+            "compaction": {}
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "session/new",
+      "params": {
+        "cwd": "<temporary-private-home>",
+        "mcpServers": []
+      }
+    }
+  ],
+  "probes": [
+    {
+      "label": "host-0.144.1",
+      "initialize": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": 1,
+          "agentInfo": {
+            "name": "@agentclientprotocol/codex-acp",
+            "title": "Codex",
+            "version": "2.0.0"
+          },
+          "agentCapabilities": {
+            "auth": {
+              "logout": {}
+            },
+            "providers": {},
+            "loadSession": true,
+            "promptCapabilities": {
+              "embeddedContext": true,
+              "image": true
+            },
+            "sessionCapabilities": {
+              "resume": {},
+              "list": {},
+              "close": {},
+              "delete": {},
+              "fork": {},
+              "additionalDirectories": {},
+              "subagents": {}
+            },
+            "mcpCapabilities": {
+              "acp": false,
+              "http": true,
+              "sse": false
+            },
+            "_meta": {
+              "authStatus": {}
+            }
+          },
+          "authMethods": [
+            {
+              "id": "api-key",
+              "name": "API Key",
+              "description": "Use an API key to authenticate",
+              "_meta": {
+                "api-key": {
+                  "provider": "openai"
+                }
+              }
+            }
+          ],
+          "_meta": {
+            "steering": {
+              "supported": true
+            }
+          }
+        }
+      },
+      "session": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": -32000,
+          "message": "Authentication required"
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "label": "bundled",
+      "initialize": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": 1,
+          "agentInfo": {
+            "name": "@agentclientprotocol/codex-acp",
+            "title": "Codex",
+            "version": "2.0.0"
+          },
+          "agentCapabilities": {
+            "auth": {
+              "logout": {}
+            },
+            "providers": {},
+            "loadSession": true,
+            "promptCapabilities": {
+              "embeddedContext": true,
+              "image": true
+            },
+            "sessionCapabilities": {
+              "resume": {},
+              "list": {},
+              "close": {},
+              "delete": {},
+              "fork": {},
+              "additionalDirectories": {},
+              "subagents": {}
+            },
+            "mcpCapabilities": {
+              "acp": false,
+              "http": true,
+              "sse": false
+            },
+            "_meta": {
+              "authStatus": {}
+            }
+          },
+          "authMethods": [
+            {
+              "id": "api-key",
+              "name": "API Key",
+              "description": "Use an API key to authenticate",
+              "_meta": {
+                "api-key": {
+                  "provider": "openai"
+                }
+              }
+            }
+          ],
+          "_meta": {
+            "steering": {
+              "supported": true
+            }
+          }
+        }
+      },
+      "session": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": -32000,
+          "message": "Authentication required"
+        }
+      },
+      "stderr": ""
+    }
+  ],
+  "processCleanup": "Both wrapper processes exited after stdin was closed."
+}
