@@ -14,7 +14,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 
-import type { Expert, ExpertToolsMcpToolDefinition } from "@pragma/core";
+import type { Expert } from "@pragma/core";
 
 import {
   applyCommonAntigravityEnvironment,
@@ -60,7 +60,6 @@ export async function prepareManagedAntigravityHome(options: {
   readonly sessionDir: string;
   readonly systemPrompt: string;
   readonly mcpServerUrl: string;
-  readonly mcpToolCatalog?: readonly ExpertToolsMcpToolDefinition[] | undefined;
   readonly hookRelay: AntigravityHookRelay;
   readonly permissionMode: AntigravityRuntimePermissionMode;
   readonly authenticationMode?: AntigravityAuthenticationMode | undefined;
@@ -80,14 +79,8 @@ export async function prepareManagedAntigravityHome(options: {
       : join(options.sessionDir, "home");
   const geminiDir = join(homeDir, ".gemini");
   const appDataDir = join(geminiDir, "antigravity-cli");
-  const customizationWorkspace =
-    authenticationMode === "host-keyring"
-      ? join(options.sessionDir, "managed-customizations")
-      : undefined;
-  const configDir =
-    customizationWorkspace === undefined
-      ? join(geminiDir, "config")
-      : join(customizationWorkspace, ".agents");
+  const customizationWorkspace = join(options.sessionDir, "managed-customizations");
+  const configDir = join(customizationWorkspace, ".agents");
   const logDir = join(options.sessionDir, "logs");
   const tmpDir = join(options.sessionDir, "tmp");
   const hookDir = join(options.sessionDir, "hooks");
@@ -98,11 +91,16 @@ export async function prepareManagedAntigravityHome(options: {
   const skillsDir = join(pluginDir, "skills");
   const rulesDir = join(pluginDir, "rules");
   const managedAgentDir = join(pluginDir, "agents", identity.agentName);
+  const agentPath = join(configDir, "agents", `${identity.agentName}.md`);
 
-  const managedDirectories =
-    customizationWorkspace === undefined
-      ? [homeDir, appDataDir, configDir, logDir, tmpDir, hookDir]
-      : [customizationWorkspace, configDir, logDir, tmpDir, hookDir];
+  const managedDirectories = [
+    customizationWorkspace,
+    configDir,
+    logDir,
+    tmpDir,
+    hookDir,
+    ...(authenticationMode === "isolated-environment" ? [homeDir, appDataDir] : []),
+  ];
   for (const directory of managedDirectories) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700).catch(() => undefined);
@@ -122,8 +120,36 @@ export async function prepareManagedAntigravityHome(options: {
   );
   await rm(join(configDir, "agents", identity.agentName), { recursive: true, force: true });
   await removeLegacyManagedSkills(join(configDir, "skills"), identity.namespace);
-  await mkdir(managedAgentDir, { recursive: true, mode: 0o700 });
+  await mkdir(dirname(agentPath), { recursive: true, mode: 0o700 });
   await mkdir(pluginDir, { recursive: true, mode: 0o700 });
+
+  if (authenticationMode === "isolated-environment") {
+    const oldConfig = join(geminiDir, "config");
+    await rm(join(oldConfig, "plugins", pluginName, "rules"), { recursive: true, force: true });
+    await rm(join(oldConfig, "plugins", pluginName, "agents", identity.agentName), {
+      recursive: true,
+      force: true,
+    });
+    await rm(join(oldConfig, "plugins", pluginName, "mcp_config.json"), { force: true });
+    await rm(join(oldConfig, "plugins", pluginName, "skills"), { recursive: true, force: true });
+    await removeLegacyManagedCustomization(join(oldConfig, "hooks.json"), (record) => {
+      delete record[identity.hookName];
+    });
+    await removeLegacyManagedCustomization(join(oldConfig, "plugins.json"), (record) => {
+      if (Array.isArray(record["entries"]))
+        record["entries"] = record["entries"].filter(
+          (entry: unknown) =>
+            entry === null ||
+            typeof entry !== "object" ||
+            !("path" in entry) ||
+            entry.path !== join(oldConfig, "plugins") ||
+            !("include_only" in entry) ||
+            !Array.isArray(entry.include_only) ||
+            entry.include_only.length !== 1 ||
+            entry.include_only[0] !== `^${pluginName}$`,
+        );
+    });
+  }
 
   const hookScriptPath = join(hookDir, "pragma-pre-tool-use.mjs");
   await writePrivateFile(hookScriptPath, createHookRunnerSource(options.hookRelay));
@@ -156,15 +182,6 @@ export async function prepareManagedAntigravityHome(options: {
         },
       },
     }),
-    writePrivateFile(
-      join(rulesDir, "pragma-system.md"),
-      managedSystemRuleMarkdown(
-        options.systemPrompt,
-        skills,
-        identity.nativeMcpServerName,
-        options.mcpToolCatalog ?? [],
-      ),
-    ),
     writePrivateJson(
       join(configDir, "hooks.json"),
       managedHooksConfig(
@@ -175,11 +192,10 @@ export async function prepareManagedAntigravityHome(options: {
       ),
     ),
     writePrivateFile(
-      join(managedAgentDir, "agent.md"),
+      agentPath,
       managedAgentMarkdown(
         options.agent,
         identity.agentName,
-        identity.mcpServerName,
         options.systemPrompt,
         options.permissionMode,
       ),
@@ -215,6 +231,24 @@ export async function prepareManagedAntigravityHome(options: {
     env,
     skills,
   };
+}
+
+async function removeLegacyManagedCustomization(
+  path: string,
+  update: (record: Record<string, unknown>) => void,
+): Promise<void> {
+  let original: string;
+  try {
+    original = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+  const parsed: unknown = JSON.parse(original);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  const record = parsed as Record<string, unknown>;
+  update(record);
+  await writePrivateJson(path, record);
 }
 
 async function removeLegacyManagedSkills(skillsDir: string, namespace: string): Promise<void> {
@@ -520,7 +554,6 @@ function assertSafeWindowsHookCommandPath(value: string): void {
 function managedAgentMarkdown(
   agent: Expert,
   agentName: string,
-  mcpServerName: string,
   systemPrompt: string,
   permissionMode: AntigravityRuntimePermissionMode,
 ): string {
@@ -531,50 +564,11 @@ function managedAgentMarkdown(
     "mainAgent: true",
     "subagent: false",
     "hidden: false",
-    "inheritMcp: true",
-    "mcpServers:",
-    `  - ${quoteYamlString(mcpServerName)}`,
+    "inheritCustomizations: true",
     `commandExecutionPolicy: ${commandExecutionPolicy(permissionMode)}`,
     FRONTMATTER_DELIMITER,
   ];
   return [...frontmatter, "# System Prompt", "", systemPrompt, ""].join("\n");
-}
-
-function managedSystemRuleMarkdown(
-  systemPrompt: string,
-  skills: readonly string[],
-  nativeMcpServerName: string,
-  toolCatalog: readonly ExpertToolsMcpToolDefinition[],
-): string {
-  return [
-    FRONTMATTER_DELIMITER,
-    "trigger: always_on",
-    FRONTMATTER_DELIMITER,
-    "",
-    "# Pragma Runtime System Instructions",
-    "",
-    systemPrompt,
-    "",
-    "# Managed Pragma MCP Tools",
-    "",
-    "Keep the user informed with brief progress messages before multi-step tool work and when the plan changes. These are user-facing summaries, not private reasoning.",
-    `Call these tools directly with call_mcp_tool using ServerName=${JSON.stringify(nativeMcpServerName)}, ToolName from the catalog below, and Arguments matching its inputSchema.`,
-    "This catalog is the current Session registration. Do not search configuration files, read MCP definition files, or use shell/curl to discover or invoke these tools.",
-    "Native workspace tools such as list_dir and view_file are separate; invoke them directly rather than requesting them from the MCP server.",
-    "",
-    JSON.stringify(toolCatalog),
-    ...(skills.length === 0
-      ? []
-      : [
-          "",
-          "# Managed Skills",
-          "",
-          "The following Session-namespaced Skills are available through explicit slash-command invocation:",
-          "",
-          ...skills.map((skill) => `- \`${skill}\``),
-        ]),
-    "",
-  ].join("\n");
 }
 
 function commandExecutionPolicy(

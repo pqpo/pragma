@@ -130,24 +130,24 @@ Core 预算重注入，不能用“首轮回答符合预期”替代这三个场
 到自己的设计或验收记录中，按本文开头的 Supported / Degraded / Unsupported / N/A 规则逐项附证据；没有
 版本、平台、日期和真实 smoke 的 `I` 只能视为待验收实现。
 
-| 能力面                        | PI                | Codex             | Claude Code       | Qoder CLI         | Antigravity CLI 1.1.11                       |
+| 能力面                        | PI                | Codex             | Claude Code       | Qoder CLI         | Antigravity CLI 1.2.13                       |
 | ----------------------------- | ----------------- | ----------------- | ----------------- | ----------------- | -------------------------------------------- |
 | availability / auth           | I                 | I                 | I                 | I                 | I，ADC 私有 HOME；OAuth host-keyring         |
 | 模型发现、选择、thinking      | I                 | I                 | I                 | I                 | I，来自 `agy models`                         |
-| system / startup prompt       | I                 | I                 | I                 | I                 | I，plugin always-on rule + 首轮边界帧        |
+| system / startup prompt       | I                 | I                 | I                 | I                 | I，native Agent + 首轮 text blocks           |
 | fresh / resume / Session 隔离 | I                 | I                 | I                 | I                 | I；host-keyring 原生 conversation 为兼容边界 |
 | 真实增量 streaming            | I                 | I                 | I                 | I                 | I，`agent_response.text_delta`               |
 | thought / reasoning           | I                 | I                 | I                 | I                 | I，按公开 step event                         |
 | native tool lifecycle         | I                 | I                 | I                 | I                 | I，`tool_info` ACTIVE/DONE/失败/拒绝         |
 | Pragma MCP tools              | I                 | I                 | I                 | I                 | I，Session 私有 plugin MCP                   |
 | 权限 / 用户审批 / 问答        | I                 | I                 | I                 | I                 | I，PreToolUse relay；三种权限模式            |
-| Skills                        | I                 | I                 | I                 | I                 | I，Session plugin + 显式 slash invocation    |
+| Skills                        | I                 | I                 | I                 | I                 | I，Session plugin + 自然发现 / slash         |
 | 图片原生输入                  | 按模型            | 按模型目录        | 按模型目录        | G，本地路径上下文 | G，本地路径上下文                            |
 | 文件、目录引用                | I                 | I                 | I                 | I                 | I，文本路径上下文                            |
 | structured output             | I，Core 校验/重试 | I，Core 校验/重试 | I，Core 校验/重试 | I，Core 校验/重试 | I，Core 校验/重试                            |
-| usage                         | I                 | I                 | I                 | I                 | I，CLI reported 单通道、Core fallback        |
+| usage                         | I                 | I                 | I                 | I                 | I，累计 usage 差值、Core fallback            |
 | context window / compaction   | I                 | I                 | I                 | I                 | G，无可靠 denominator；支持 compaction event |
-| cancel / close / error        | I                 | I                 | I                 | I                 | I，TERM/KILL、严格 NDJSON、退化恢复          |
+| cancel / close / error        | I                 | I                 | I                 | I                 | I，常驻 stream-json、TERM/KILL、定向恢复     |
 
 代码导航：`packages/runtime/<name>/src/adapter.ts`、`models.ts`、`session.ts` 及对应 `test/`；Antigravity 的
 特殊认证和 customization 边界见
@@ -171,6 +171,12 @@ PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
 resume。Desktop 正文/thought/工具卡片/审批/取消/错误提示的人工验收本次未执行，不能据此声明 Desktop
 end-to-end 已验收；compaction 后 startup reinjection 当前由 Core 自动测试证明，不冒充真实 CLI compaction
 smoke。
+
+2026-09-30 已在 Darwin x86_64、agy 1.2.13、host-keyring、gemini-3.8-flash-low 重新执行原生 CLI
+smoke：三种权限模式的实际 HTTP Context 写入/读取、Schema 必填枚举、长工具别名与新 Runtime 恢复通过；
+Agent marker、自然语言 Skill、增量输出和实际 stdin 三轮 startup 次数通过。当前不生成 system rule，
+不使用文本边界帧；真实压缩、ADC 认证及 Desktop 人工验收仍未验证。详见
+[重构验收记录](../research/antigravity-acp/README.md)。
 
 ## 逐项接入检查
 

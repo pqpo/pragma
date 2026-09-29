@@ -6,6 +6,7 @@ import {
   defineRuntimeDriver,
   registerExpertToolsMcpSession,
   runtimeFeature,
+  RuntimeTurnNotDispatchedError,
   type ExpertToolsMcpSessionRegistration,
   type ExpertToolRuntimeState,
   type McpToolRegistryLease,
@@ -20,6 +21,7 @@ import {
   createManagedAntigravityIdentity,
   prepareManagedAntigravityHome,
   resolveAntigravityAuthenticationMode,
+  resolveAntigravityHostHome,
 } from "./managed-home.ts";
 import { assertAntigravityModelSelection, createAntigravityModelDiscovery } from "./models.ts";
 import { createAntigravityHookRelay, type AntigravityHookRelay } from "./permission-hooks.ts";
@@ -100,14 +102,8 @@ export function createAntigravityRuntime(
       options.authenticationMode ?? "isolated-environment",
       ctx.processEnvironment,
     );
-    const customizationWorkspace =
-      authenticationMode === "host-keyring"
-        ? join(sessionDir, "managed-customizations")
-        : undefined;
-    const managedConfigDir =
-      customizationWorkspace === undefined
-        ? join(sessionDir, "home", ".gemini", "config")
-        : join(customizationWorkspace, ".agents");
+    const customizationWorkspace = join(sessionDir, "managed-customizations");
+    const managedConfigDir = join(customizationWorkspace, ".agents");
     const restoredSessionId =
       ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "";
     const sessionId =
@@ -159,8 +155,17 @@ export function createAntigravityRuntime(
             ctx.workspace,
             ...(mcp.customizationWorkspace === undefined ? [] : [mcp.customizationWorkspace]),
           ],
-          managedSkillReadRoots: [
+          managedReadRoots: [
             join(mcp.managedConfigDir, "plugins", mcp.managedIdentity.pluginName, "skills"),
+            join(
+              mcp.authenticationMode === "host-keyring"
+                ? resolveAntigravityHostHome(ctx.processEnvironment)
+                : join(mcp.sessionDir, "home"),
+              ".gemini",
+              "antigravity-cli",
+              "mcp",
+              mcp.managedIdentity.nativeMcpServerName,
+            ),
           ],
           nativeMcpServerName: mcp.managedIdentity.nativeMcpServerName,
           permissionMode: mcp.permissionMode,
@@ -194,7 +199,6 @@ export function createAntigravityRuntime(
         sessionDir: mcp.sessionDir,
         systemPrompt: ctx.agentContext.systemPrompt,
         mcpServerUrl: mcp.expertToolsMcpRegistration.url,
-        mcpToolCatalog: mcp.expertToolsMcpRegistration.toolCatalog,
         hookRelay: permissions.hookRelay,
         permissionMode: mcp.permissionMode,
         authenticationMode: mcp.authenticationMode,
@@ -341,11 +345,17 @@ export function createAntigravityRuntime(
       listMessages: listAntigravityMessages,
       consumeStartupMessages: consumeAntigravityStartupMessages,
       async startTurn(session, turn) {
-        assertProvider(turn.modelSelection?.model.providerId);
-        const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
-        const thinkingLevel = turn.modelSelection?.thinkingLevel ?? session.defaultThinkingLevel;
-        if (modelName !== undefined || thinkingLevel !== undefined) {
-          assertAntigravityModelSelection(await listModels(), modelName, thinkingLevel);
+        try {
+          assertProvider(turn.modelSelection?.model.providerId);
+          const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
+          const thinkingLevel = turn.modelSelection?.thinkingLevel ?? session.defaultThinkingLevel;
+          if (modelName !== undefined || thinkingLevel !== undefined) {
+            assertAntigravityModelSelection(await listModels(), modelName, thinkingLevel);
+          }
+        } catch (error) {
+          // Core may already have consumed startup (including post-compaction
+          // reinjection). Validation has not dispatched a native request.
+          throw new RuntimeTurnNotDispatchedError(error);
         }
         return await startAntigravityTurn(session, turn);
       },

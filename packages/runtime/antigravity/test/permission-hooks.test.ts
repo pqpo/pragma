@@ -251,6 +251,41 @@ describe("Antigravity PreToolUse permission bridge", () => {
     });
   });
 
+  it.each(["auto-approve", "request-approval"] as const)(
+    "limits native MCP schema reads to the owned server in %s",
+    async (permissionMode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-agy-schema-permission-"));
+      const owned = join(root, "mcp", "owned_p");
+      const other = join(root, "mcp", "other_p");
+      await Promise.all([mkdir(owned, { recursive: true }), mkdir(other, { recursive: true })]);
+      try {
+        await symlink(other, join(owned, "escape"), "dir");
+        const decide = (name: string, args: Record<string, unknown>) =>
+          decideAntigravityToolUse({
+            input: input(name, args),
+            workspace,
+            managedReadRoots: [owned],
+            permissionMode,
+            toolRuntimeState: {},
+          });
+        await expect(
+          decide("view_file", { AbsolutePath: join(owned, "tool.json") }),
+        ).resolves.toEqual({ decision: "allow" });
+        await expect(
+          decide("view_file", { AbsolutePath: join(other, "tool.json") }),
+        ).resolves.toMatchObject({ decision: "deny" });
+        await expect(
+          decide("view_file", { AbsolutePath: join(owned, "escape", "tool.json") }),
+        ).resolves.toMatchObject({ decision: "deny" });
+        await expect(
+          decide("write_file", { TargetFile: join(owned, "tool.json") }),
+        ).resolves.toMatchObject({ decision: "deny" });
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("allows only read tools inside the Session-managed Skill root", async () => {
     const managedSkillRoot =
       "/runtime/session/managed-customizations/.agents/plugins/pragma-test/skills";
@@ -260,7 +295,7 @@ describe("Antigravity PreToolUse permission bridge", () => {
           AbsolutePath: `${managedSkillRoot}/review/SKILL.md`,
         }),
         workspace,
-        managedSkillReadRoots: [managedSkillRoot],
+        managedReadRoots: [managedSkillRoot],
         permissionMode: "auto-approve",
         toolRuntimeState: {},
       }),
@@ -271,7 +306,7 @@ describe("Antigravity PreToolUse permission bridge", () => {
           AbsolutePath: "/runtime/session/managed-customizations/.agents/hooks.json",
         }),
         workspace,
-        managedSkillReadRoots: [managedSkillRoot],
+        managedReadRoots: [managedSkillRoot],
         permissionMode: "auto-approve",
         toolRuntimeState: {},
       }),
@@ -282,7 +317,7 @@ describe("Antigravity PreToolUse permission bridge", () => {
           TargetFile: `${managedSkillRoot}/review/SKILL.md`,
         }),
         workspace,
-        managedSkillReadRoots: [managedSkillRoot],
+        managedReadRoots: [managedSkillRoot],
         permissionMode: "auto-approve",
         toolRuntimeState: {},
       }),
@@ -637,7 +672,7 @@ describe("Antigravity PreToolUse permission bridge", () => {
     ],
     ["write_to_file", { TargetFile: `${workspace}/written.ts`, CodeContent: "x" }],
     ["write_file", { TargetFile: `${workspace}/written.ts`, fileContent: "x" }],
-  ] as const)("validates the explicit agy 1.1.11 %s path schema", async (toolName, args) => {
+  ] as const)("validates the explicit agy 1.2.13 %s path schema", async (toolName, args) => {
     await expect(
       decideAntigravityToolUse({
         input: input(toolName, args),

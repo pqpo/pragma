@@ -742,7 +742,7 @@ pnpm --filter @pragma/desktop dev
 已配置可用模型。先运行 `opencode --version` 验证。Runtime 复用本机 OpenCode 配置与认证，
 协议和存储边界见 [`docs/architecture/opencode-runtime.md`](docs/architecture/opencode-runtime.md)。
 
-使用内置 Antigravity CLI Runtime 前，主机必须安装可直接执行的 `agy` 1.1.11 或更高版本；可先运行
+使用内置 Antigravity CLI Runtime 前，主机必须安装可直接执行的 `agy` 1.2.13 或更高版本；可先运行
 `agy --version` 验证。认证复用操作系统安全钥匙串中的 Antigravity CLI 登录状态，首次登录应在 Pragma
 外部交互执行 `agy`；非标准安装路径使用 `AGY_PATH` 指向原生 `agy`/`agy.exe`，不要指向 Windows
 `.cmd` shim。Runtime 不读取或复制宿主 `~/.gemini` 配置。

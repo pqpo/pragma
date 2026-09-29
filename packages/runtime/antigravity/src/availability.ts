@@ -8,7 +8,7 @@ import { BoundedLruCache } from "@pragma/shared";
 import { resolveAntigravityExecutablePath } from "./executable.ts";
 import type { AntigravityRuntimeAdapterOptions } from "./types.ts";
 
-export const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.1.11";
+export const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.2.13";
 
 const CACHE_TTL_MS = 60_000;
 const cache = new BoundedLruCache<string, { expiresAt: number; result: RuntimeCanUseResult }>(64);
@@ -89,7 +89,7 @@ async function probeAntigravityVersion(
         details,
       };
     }
-    if (compareVersions(version, [1, 1, 11]) < 0) {
+    if (compareVersions(version, [1, 2, 13]) < 0) {
       return {
         usable: false,
         reason: `Antigravity CLI ${version.join(".")} is unsupported. Upgrade to ${MINIMUM_ANTIGRAVITY_CLI_VERSION} or newer.`,
