@@ -181,7 +181,9 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
               key,
               value.type === "score"
                 ? { type: "score", score: 4, confidence: 1 }
-                : { type: "noul", noul: key === "semantic" ? 0 : 1 },
+                : value.type === "choice"
+                  ? { type: "choice", choice: "stop", confidence: 1, probabilities: { stop: 1 } }
+                  : { type: "noul", noul: key === "semantic" ? 0 : 1 },
             ]),
           ),
           usage: { input_tokens: 20, output_tokens: 4 },
@@ -237,6 +239,35 @@ describe("Core-backed Local Host run composition", { timeout: 10_000 }, () => {
             context,
           }),
         ).toBeUndefined();
+        const retrieval = await contexts.retrieval.settings.update({
+          expectedRevision: 0,
+          enabled: true,
+        });
+        const unconfiguredContext = withExecutionRunScope(context, {
+          contextId: "attention-unconfigured-context",
+          invocationId: "attention-unconfigured-invocation",
+        });
+        const callsBefore = fetcher.mock.calls.length;
+        await store.afterToolResult?.({
+          toolName: "shell",
+          toolCallId: "embedding-unconfigured",
+          args: {},
+          result: { text: "askUserQuestion checkpoint failed", isError: true },
+          context: unconfiguredContext,
+        });
+        await contexts.controller.flush();
+        expect(fetcher.mock.calls.length).toBeGreaterThan(callsBefore);
+        const unconfiguredLens = await store.readContext({
+          id: "mission-attention.md",
+          context: unconfiguredContext,
+        });
+        expect(unconfiguredLens.ok && unconfiguredLens.value.content).toContain(episodes[0]!.id);
+        expect(
+          await contexts.retrieval.settings.update({
+            expectedRevision: retrieval.revision,
+            enabled: false,
+          }),
+        ).toMatchObject({ enabled: false });
         const attentionStatePath = paths.memoryAttentionState(
           mission.missionId,
           "attention-context",

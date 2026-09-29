@@ -1100,12 +1100,15 @@ export function MissionDetailFragment(props: {
       : `${lastContextOperation.id}:${lastContextOperation.status}`;
   const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
   const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
-  const streamWaitingActive = canShowMissionStreamWaiting(
-    chat,
-    showThinkingPlaceholder || executionActive,
-    interactions.length > 0,
-    props.mission.lifecycleStatus === "completed",
-  );
+  const showChatSkeleton = chatInitialLoading && !showThinkingPlaceholder;
+  const streamWaitingActive =
+    !showChatSkeleton &&
+    canShowMissionStreamWaiting(
+      chat,
+      showThinkingPlaceholder || executionActive,
+      interactions.length > 0,
+      props.mission.lifecycleStatus === "completed",
+    );
   const streamWaitingExecutionId = executionActive
     ? (chat?.execution?.id ?? props.mission.execution?.id)
     : undefined;
@@ -1509,7 +1512,7 @@ export function MissionDetailFragment(props: {
                     >
                       {index === 0 ? (
                         <div className="mission-chat-virtual-header">
-                          {chatInitialLoading && !showThinkingPlaceholder ? (
+                          {showChatSkeleton ? (
                             <MissionChatSkeleton label={t("loadingChat", { ns: "missions" })} />
                           ) : null}
                           {!chatInitialLoading && chat?.page.nextBeforeCursor !== undefined ? (

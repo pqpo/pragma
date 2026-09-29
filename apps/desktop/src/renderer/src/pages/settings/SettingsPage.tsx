@@ -56,35 +56,6 @@ export function SettingsPage(
           {t("general.title")}
         </button>
         <button
-          className={
-            activeView === "evaluations" ? "settings-nav-item is-active" : "settings-nav-item"
-          }
-          type="button"
-          aria-selected={activeView === "evaluations"}
-          aria-controls="evaluations-panel"
-          onClick={() => setActiveView("evaluations")}
-        >
-          {t("evaluations.navigation")}
-        </button>
-        <button
-          className={activeView === "memory" ? "settings-nav-item is-active" : "settings-nav-item"}
-          type="button"
-          aria-selected={activeView === "memory"}
-          aria-controls="memory-panel"
-          onClick={() => setActiveView("memory")}
-        >
-          {t("memory.navigation")}
-        </button>
-        <button
-          className={activeView === "storage" ? "settings-nav-item is-active" : "settings-nav-item"}
-          type="button"
-          aria-selected={activeView === "storage"}
-          aria-controls="storage-panel"
-          onClick={() => setActiveView("storage")}
-        >
-          {t("storage.navigation")}
-        </button>
-        <button
           className={activeView === "models" ? "settings-nav-item is-active" : "settings-nav-item"}
           type="button"
           aria-selected={activeView === "models"}
@@ -103,6 +74,26 @@ export function SettingsPage(
           onClick={() => setActiveView("runtimes")}
         >
           {t("runtimes.navigation")}
+        </button>
+        <button
+          className={activeView === "memory" ? "settings-nav-item is-active" : "settings-nav-item"}
+          type="button"
+          aria-selected={activeView === "memory"}
+          aria-controls="memory-panel"
+          onClick={() => setActiveView("memory")}
+        >
+          {t("memory.navigation")}
+        </button>
+        <button
+          className={
+            activeView === "evaluations" ? "settings-nav-item is-active" : "settings-nav-item"
+          }
+          type="button"
+          aria-selected={activeView === "evaluations"}
+          aria-controls="evaluations-panel"
+          onClick={() => setActiveView("evaluations")}
+        >
+          {t("evaluations.navigation")}
         </button>
         <button
           className={
@@ -125,6 +116,15 @@ export function SettingsPage(
           onClick={() => setActiveView("core-asset-sync")}
         >
           {t("coreAssetSync.navigation")}
+        </button>
+        <button
+          className={activeView === "storage" ? "settings-nav-item is-active" : "settings-nav-item"}
+          type="button"
+          aria-selected={activeView === "storage"}
+          aria-controls="storage-panel"
+          onClick={() => setActiveView("storage")}
+        >
+          {t("storage.navigation")}
         </button>
       </nav>
       <SidebarResizeHandle

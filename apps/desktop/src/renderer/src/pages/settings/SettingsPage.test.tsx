@@ -28,13 +28,17 @@ describe("SettingsPage", () => {
     expect(html).not.toContain("Default Runtime");
     expect(html).not.toContain("Task workspace");
     expect(html).not.toContain("<h1>Settings</h1>");
-    expect(html.indexOf("Runtime Environments")).toBeLessThan(html.indexOf("Bundle Sources"));
+    expect(html.indexOf(">Runtime</button>")).toBeLessThan(
+      html.indexOf(">Bundle Sources</button>"),
+    );
   });
 
-  it("shows Bundle sources as the final settings section without an inline add form", () => {
+  it("shows Bundle sources before sync and storage without an inline add form", () => {
     const html = renderToStaticMarkup(<SettingsPage initialView="bundle-sources" />);
 
-    expect(html.indexOf("Runtime Environments")).toBeLessThan(html.indexOf("Bundle Sources"));
+    expect(html.indexOf(">Runtime</button>")).toBeLessThan(
+      html.indexOf(">Bundle Sources</button>"),
+    );
     expect(html).toContain("Add source");
     expect(html).not.toContain('id="bundle-source-add-form"');
   });
@@ -59,7 +63,7 @@ describe("SettingsPage", () => {
     const html = renderToStaticMarkup(<SettingsPage initialView="runtimes" />);
 
     expect(html).toContain('aria-selected="true"');
-    expect(html).toContain("Runtime Environments");
+    expect(html).toContain(">Runtime</button>");
     expect(html).toContain("Built-in Runtime");
     expect(html).toContain("Antigravity CLI");
   });
@@ -69,6 +73,9 @@ describe("SettingsPage", () => {
 
     expect(html).toContain('id="evaluations-panel"');
     expect(html).toContain("Judge model");
+    expect(html).toContain("Inherit system default");
+    expect(html).toContain("Pinned Runtime and model");
+    expect(html).not.toContain('aria-label="Judge Runtime"');
     expect(html).toContain("Global concurrency");
     expect(html).toContain("How a concurrency slot is counted");
   });

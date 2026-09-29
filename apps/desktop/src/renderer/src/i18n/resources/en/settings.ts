@@ -1,7 +1,7 @@
 export const settings = {
   storage: {
-    navigation: "Storage & cleanup",
-    title: "Storage & cleanup",
+    navigation: "Storage",
+    title: "Storage",
     description: "Review local Pragma storage and remove content you no longer need.",
     refresh: "Refresh usage",
     loading: "Calculating…",
@@ -197,10 +197,17 @@ export const settings = {
     navigation: "Evaluations",
     title: "Evaluations",
     description: "Configure the model and queue capacity shared by all Agent Judge evaluations.",
-    judgeModel: "Judge model",
+    judgeModel: "Judge model settings",
     judgeModelDescription:
       "Independently determines whether each case satisfies its evaluation criteria.",
-    inheritDefault: "Use default runtime model",
+    inheritDefault: "Inherit system default",
+    pinnedModel: "Pinned Runtime and model",
+    judgeRuntime: "Judge Runtime",
+    judgeRuntimeDescription: "Runtime used to judge evaluation cases.",
+    judgePinnedModel: "Judge model",
+    judgePinnedModelDescription: "Model used to judge evaluation cases in the selected Runtime.",
+    chooseRuntime: "Choose a Runtime",
+    chooseModel: "Choose a model",
     concurrency: "Global concurrency",
     concurrencyDescription: "Limit the number of test cases running at once, from 1 to 16.",
     slotTitle: "How a concurrency slot is counted",
@@ -302,8 +309,8 @@ export const settings = {
     embeddingLimitDescription:
       "Confirm the provider input limit before using this model for Memory retrieval.",
 
-    navigation: "Models & Providers",
-    title: "Models & Providers",
+    navigation: "Models",
+    title: "Models",
     description: "Connect mainstream model providers, gateways, and local model servers.",
     addProvider: "Add provider",
     addProviderTitle: "Add model provider",
@@ -408,8 +415,8 @@ export const settings = {
     archiveAndReset: "Archive old setup and start fresh",
   },
   runtimes: {
-    navigation: "Runtime Environments",
-    title: "Runtime Environments",
+    navigation: "Runtime",
+    title: "Runtime",
     description: "Inspect registered runtimes and the model catalogs they provide.",
     refreshEnvironment: "Refresh shell environment",
     environmentReady: "Shell environment ready",

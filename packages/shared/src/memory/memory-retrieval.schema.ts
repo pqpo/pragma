@@ -8,9 +8,14 @@ export const MemoryRetrievalSettingsSchema = z
     modelId: z.string().min(1).optional(),
   })
   .strict()
+  // Disabled v1 settings may contain either half of the binding. Enabled
+  // settings awaiting model selection have neither; selected bindings have both.
   .refine(
-    (value) => !value.enabled || (value.providerId !== undefined && value.modelId !== undefined),
-    "An embedding model is required.",
+    (value) =>
+      !value.enabled ||
+      (value.providerId === undefined && value.modelId === undefined) ||
+      (value.providerId !== undefined && value.modelId !== undefined),
+    "Embedding provider and model must be configured together when enabled.",
   );
 export const UpdateMemoryRetrievalSettingsSchema = z
   .object({

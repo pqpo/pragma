@@ -6,6 +6,7 @@ import type {
   UpdateDesktopMemoryExtractorProfile,
 } from "../../../../shared/contracts/index.ts";
 import { MemoryAttentionSettingsSection } from "./MemoryAttentionSettingsSection.tsx";
+import { MemoryRetrievalSettingsSection } from "./MemoryRetrievalSettingsSection.tsx";
 import { MemorySettingsFragment } from "./MemorySettingsFragment.tsx";
 
 // These settings have no DOM dependencies. Drive their hook lifecycle and inspect the IPC boundary.
@@ -107,7 +108,7 @@ function renderer(component: () => ReactNode) {
         if (mounted && hooks.dirty()) render();
       }
     },
-    props(match: (props: Record<string, unknown>) => boolean) {
+    props(match: (props: Record<string, unknown>, type: unknown) => boolean) {
       const find = (node: ReactNode): Record<string, unknown> | undefined => {
         if (Array.isArray(node)) {
           for (const child of node) {
@@ -115,7 +116,7 @@ function renderer(component: () => ReactNode) {
             if (found) return found;
           }
         } else if (isValidElement<Record<string, unknown>>(node)) {
-          if (match(node.props)) return node.props;
+          if (match(node.props, node.type)) return node.props;
           return find(node.props.children as ReactNode);
         }
         return undefined;
@@ -175,6 +176,35 @@ function attentionFixture() {
 }
 
 describe("Memory settings persistence", () => {
+  it.each([false, true])(
+    "keeps Jev settings accessible when embedding is enabled=%s",
+    async (enabled) => {
+      vi.stubGlobal("window", {
+        pragmaDesktop: {
+          getMemoryRetrievalStatus: async () => ({
+            settings: { schemaVersion: "pragma.memory-retrieval/v1", revision: 0, enabled },
+            state: enabled ? "needs_attention" : "disabled",
+            indexedMemories: 0,
+            totalMemories: 0,
+            segments: 0,
+            failed: 0,
+          }),
+          listModelProviders: async () => [],
+        },
+      });
+      const view = renderer(MemoryRetrievalSettingsSection);
+      try {
+        await view.flush();
+        expect(view.props((props) => props.ariaLabel === "memory.retrieval.enable").checked).toBe(
+          enabled,
+        );
+        expect(view.props((_props, type) => type === MemoryAttentionSettingsSection)).toEqual({});
+      } finally {
+        view.unmount();
+      }
+    },
+  );
+
   it("saves the final key after navigation even while validation is in flight", async () => {
     const f = attentionFixture();
     await f.view.flush();

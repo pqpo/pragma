@@ -113,6 +113,73 @@ async function fixture() {
   };
 }
 describe("Memory retrieval across Hosts", () => {
+  it("reports an enabled setting awaiting model selection without requests or a vector cache", async () => {
+    const f = await fixture();
+    try {
+      await f.desktop.settings.update({ expectedRevision: 1, enabled: true });
+      expect(await f.desktop.status()).toMatchObject({
+        state: "needs_attention",
+        errorCode: "embedding_model_unavailable",
+      });
+      await f.desktop.tick();
+      expect(
+        await f.desktop.candidates(
+          { rootRef: { type: "pragma.expert", id: "expert-a" } },
+          "unconfigured query",
+          ["episodic"],
+          8,
+        ),
+      ).toEqual([]);
+      expect(f.fetcher).not.toHaveBeenCalled();
+      await expect(access(f.paths.memoryVectorIndex())).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await f.desktop.stop();
+      f.episodic.close();
+      f.semantic.close();
+    }
+  });
+
+  it.each(["removed-model", "missing-credential"])(
+    "disables retrieval when its configured binding has a %s",
+    async (failure) => {
+      const f = await fixture();
+      try {
+        if (failure === "removed-model") {
+          f.provider.models[0].id = "replacement-embedding";
+          f.provider.revision++;
+          await writeFile(f.paths.modelProviders(), JSON.stringify(f.config));
+        } else {
+          const ref = f.provider.apiKeySecretRef;
+          await f.options.secrets.delete(ref, ref.revision);
+        }
+        const getSecret = vi.spyOn(f.options.secrets, "get");
+        const next = await f.desktop.settings.update({
+          expectedRevision: 1,
+          enabled: false,
+          providerId: f.provider.id,
+          modelId: "embedding",
+        });
+        expect(next).toMatchObject({ enabled: false, revision: 2, modelId: "embedding" });
+        expect(await f.desktop.status()).toMatchObject({ state: "disabled", settings: next });
+        expect(getSecret).not.toHaveBeenCalled();
+        expect(f.fetcher).not.toHaveBeenCalled();
+        await expect(
+          f.desktop.settings.update({
+            expectedRevision: next.revision,
+            enabled: true,
+            providerId: f.provider.id,
+            modelId: "embedding",
+          }),
+        ).rejects.toThrow();
+        expect(await f.desktop.settings.get()).toEqual(next);
+      } finally {
+        await f.desktop.stop();
+        f.episodic.close();
+        f.semantic.close();
+      }
+    },
+  );
+
   it("rechecks root and expert recall after selecting records and before sending a query", async () => {
     const f = await fixture();
     const cli = createLocalHostMemoryRetrieval(f.options);

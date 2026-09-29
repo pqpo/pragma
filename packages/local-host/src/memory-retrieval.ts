@@ -62,6 +62,8 @@ export function createLocalHostMemoryRetrieval(options: {
     const selected = await settings.get();
     if (
       !selected.enabled ||
+      selected.providerId === undefined ||
+      selected.modelId === undefined ||
       closed ||
       (await options.data.policies.getGlobal()).policy.enabled !== "enabled"
     )
@@ -335,9 +337,7 @@ export function createLocalHostMemoryRetrieval(options: {
     settings: {
       ...settings,
       async update(input: Parameters<typeof settings.update>[0]) {
-        if (input.enabled) {
-          if (input.providerId === undefined || input.modelId === undefined)
-            throw new Error("embedding_model_unavailable");
+        if (input.enabled && input.providerId !== undefined && input.modelId !== undefined) {
           await reader.resolveEmbedding(input.providerId, input.modelId);
         }
         return await settings.update(input);
@@ -460,7 +460,11 @@ export function createLocalHostMemoryRetrieval(options: {
       let active: string | undefined;
       let stats = { segments: 0, memories: 0, failed: 0 };
       try {
-        if (selected.enabled) {
+        if (
+          selected.enabled &&
+          selected.providerId !== undefined &&
+          selected.modelId !== undefined
+        ) {
           const cache = await getIndex();
           active = (await cache.binding())?.profile.fingerprint;
           if (provider !== undefined)
@@ -484,21 +488,27 @@ export function createLocalHostMemoryRetrieval(options: {
         settings: selected,
         state: !selected.enabled
           ? "disabled"
-          : diagnostic !== undefined
-            ? "degraded"
-            : stats.failed > 0
-              ? "needs_attention"
-              : provider !== undefined &&
-                  (active === provider.profile.fingerprint || (total === 0 && stats.failed === 0))
-                ? "ready"
-                : "building",
+          : selected.providerId === undefined || selected.modelId === undefined
+            ? "needs_attention"
+            : diagnostic !== undefined
+              ? "degraded"
+              : stats.failed > 0
+                ? "needs_attention"
+                : provider !== undefined &&
+                    (active === provider.profile.fingerprint || (total === 0 && stats.failed === 0))
+                  ? "ready"
+                  : "building",
         generation: provider?.profile.fingerprint,
         activeGeneration: active,
         segments: stats.segments,
         indexedMemories: stats.memories,
         totalMemories: total,
         failed: stats.failed,
-        ...(diagnostic === undefined ? {} : { errorCode: diagnostic }),
+        ...(diagnostic !== undefined
+          ? { errorCode: diagnostic }
+          : selected.providerId === undefined || selected.modelId === undefined
+            ? { errorCode: "embedding_model_unavailable" }
+            : {}),
       });
     },
     cancel() {

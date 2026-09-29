@@ -96,10 +96,9 @@ export function MemoryAttentionSettingsSection() {
   }, [apiKey, composing, saving, status, update]);
 
   return (
-    <div className="setting-row general-language-setting memory-attention-settings">
-      <label className="setting-copy" htmlFor="memory-attention-key">
-        <strong id="memory-attention-label">{t("memory.attention.key")}</strong>
-        <span id="memory-attention-hint">{t("memory.attention.description")}</span>
+    <div className="memory-retrieval-field memory-attention-settings">
+      <label htmlFor="memory-attention-key">
+        <span id="memory-attention-label">{t("memory.attention.key")}</span>
       </label>
       <div className="memory-attention-input">
         <input
@@ -124,6 +123,9 @@ export function MemoryAttentionSettingsSection() {
           onCompositionEnd={() => setComposing(false)}
           onBlur={() => void update(draftRef.current, error !== undefined)}
         />
+        <p className="memory-attention-hint" id="memory-attention-hint">
+          {t("memory.attention.description")}
+        </p>
         {status?.state === "degraded" || status?.state === "needs_attention" ? (
           <p role="status">
             {t(`memory.attention.${status.state}`)}

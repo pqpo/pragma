@@ -119,6 +119,7 @@ export function createQoderCliModelDiscovery(
     async function refreshCatalog(
       staleModels?: readonly RuntimeModel[] | undefined,
     ): Promise<QoderCatalogRefreshResult> {
+      let authenticationExpired = false;
       try {
         const models = await retryRuntimeModelDiscovery(async () => {
           let q: Query | undefined;
@@ -132,6 +133,9 @@ export function createQoderCliModelDiscovery(
                 env: { ...process.env, ...(options.env ?? {}) },
                 settingSources: [],
                 tools: [],
+                onAuthExpired: () => {
+                  authenticationExpired = true;
+                },
               },
             });
             const models = (await q.getAvailableModels({ fetchStrategy: "live" }))
@@ -164,6 +168,12 @@ export function createQoderCliModelDiscovery(
             models: fallbackModels,
           };
           return { models: fallbackModels, fresh: false };
+        }
+        if (authenticationExpired) {
+          throw new Error(
+            "Qoder CLI authentication failed. Sign in to Qoder CLI, then retry model discovery.",
+            { cause: error },
+          );
         }
         throw error;
       } finally {

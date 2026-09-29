@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -13,6 +13,10 @@ export function EvaluationSettingsFragment() {
   const { t } = useTranslation("settings");
   const [settings, setSettings] = useState<EvaluationQueueSettings>();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
+  const [judgeMode, setJudgeMode] =
+    useState<EvaluationQueueSettings["judge"]["mode"]>("inherit-default");
+  const [runtimeId, setRuntimeId] = useState("");
+  const [modelKey, setModelKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const updating = useRef(false);
@@ -26,6 +30,13 @@ export function EvaluationSettingsFragment() {
       .then(([nextSettings, nextRuntimes]) => {
         if (cancelled) return;
         setSettings(nextSettings);
+        setJudgeMode(nextSettings.judge.mode);
+        if (nextSettings.judge.mode === "pinned") {
+          setRuntimeId(nextSettings.judge.model.runtimeId);
+          setModelKey(
+            `${nextSettings.judge.model.providerId}\0${nextSettings.judge.model.modelId}`,
+          );
+        }
         setRuntimes(nextRuntimes);
       })
       .catch((cause: unknown) => {
@@ -36,28 +47,14 @@ export function EvaluationSettingsFragment() {
     };
   }, []);
 
-  const models = useMemo(
-    () =>
-      runtimes.flatMap((runtime) =>
-        runtime.status !== "available"
-          ? []
-          : (runtime.models ?? []).map((model) => ({
-              value: `${runtime.id}\0${model.provider.id}\0${model.id}`,
-              label: `${runtime.displayName} · ${model.provider.displayName} · ${model.displayName}`,
-            })),
-      ),
-    [runtimes],
-  );
-  const judgeModelKey =
-    settings?.judge.mode === "pinned"
-      ? `${settings.judge.model.runtimeId}\0${settings.judge.model.providerId}\0${settings.judge.model.modelId}`
-      : "";
+  const selectedRuntime = runtimes.find((runtime) => runtime.id === runtimeId);
+  const models = selectedRuntime?.status === "available" ? (selectedRuntime.models ?? []) : [];
 
   const update = async (change: {
     readonly concurrency?: number;
     readonly judge?: EvaluationQueueSettings["judge"];
   }) => {
-    if (settings === undefined || updating.current) return;
+    if (settings === undefined || updating.current) return false;
     updating.current = true;
     setSaving(true);
     setError(undefined);
@@ -68,8 +65,10 @@ export function EvaluationSettingsFragment() {
           ...change,
         }),
       );
+      return true;
     } catch (cause) {
       setError(errorMessage(cause));
+      return false;
     } finally {
       updating.current = false;
       setSaving(false);
@@ -96,24 +95,91 @@ export function EvaluationSettingsFragment() {
           <SelectMenu
             ariaLabel={t("evaluations.judgeModel")}
             className="settings-select evaluation-settings-select"
-            value={judgeModelKey}
+            value={judgeMode}
             disabled={settings === undefined || saving}
             placement="bottom"
-            options={[{ value: "", label: t("evaluations.inheritDefault") }, ...models]}
-            onChange={(key) => {
-              if (key === "") {
-                void update({ judge: { mode: "inherit-default" } });
-                return;
-              }
-              const [runtimeId, providerId, modelId] = key.split("\0");
-              if (runtimeId !== undefined && providerId !== undefined && modelId !== undefined) {
-                void update({
-                  judge: { mode: "pinned", model: { runtimeId, providerId, modelId } },
+            options={[
+              { value: "inherit-default", label: t("evaluations.inheritDefault") },
+              { value: "pinned", label: t("evaluations.pinnedModel") },
+            ]}
+            onChange={(mode) => {
+              if (mode === judgeMode) return;
+              if (mode === "pinned") {
+                setRuntimeId("");
+                setModelKey("");
+                setJudgeMode(mode);
+              } else {
+                void update({ judge: { mode } }).then((saved) => {
+                  if (saved) setJudgeMode(mode);
                 });
               }
             }}
           />
         </div>
+        {judgeMode === "pinned" ? (
+          <>
+            <div className="setting-row evaluation-judge-setting">
+              <span className="setting-copy">
+                <strong>{t("evaluations.judgeRuntime")}</strong>
+                <span>{t("evaluations.judgeRuntimeDescription")}</span>
+              </span>
+              <SelectMenu
+                ariaLabel={t("evaluations.judgeRuntime")}
+                className="settings-select evaluation-settings-select"
+                value={runtimeId}
+                disabled={settings === undefined || saving}
+                placement="bottom"
+                options={[
+                  { value: "", label: t("evaluations.chooseRuntime") },
+                  ...runtimes
+                    .filter((runtime) => runtime.status === "available")
+                    .map((runtime) => ({ value: runtime.id, label: runtime.displayName })),
+                ]}
+                onChange={(value) => {
+                  if (value === runtimeId) return;
+                  setRuntimeId(value);
+                  setModelKey("");
+                }}
+              />
+            </div>
+            <div className="setting-row evaluation-judge-setting">
+              <span className="setting-copy">
+                <strong>{t("evaluations.judgePinnedModel")}</strong>
+                <span>{t("evaluations.judgePinnedModelDescription")}</span>
+              </span>
+              <SelectMenu
+                ariaLabel={t("evaluations.judgePinnedModel")}
+                className="settings-select evaluation-settings-select"
+                value={modelKey}
+                disabled={
+                  settings === undefined || saving || selectedRuntime?.status !== "available"
+                }
+                placement="bottom"
+                options={[
+                  { value: "", label: t("evaluations.chooseModel") },
+                  ...models.map((model) => ({
+                    value: `${model.provider.id}\0${model.id}`,
+                    label: `${model.provider.displayName} · ${model.displayName}`,
+                  })),
+                ]}
+                onChange={(value) => {
+                  const model = models.find(
+                    (candidate) => `${candidate.provider.id}\0${candidate.id}` === value,
+                  );
+                  if (model === undefined) return;
+                  void update({
+                    judge: {
+                      mode: "pinned",
+                      model: { runtimeId, providerId: model.provider.id, modelId: model.id },
+                    },
+                  }).then((saved) => {
+                    if (saved) setModelKey(value);
+                  });
+                }}
+              />
+            </div>
+          </>
+        ) : null}
         <div className="setting-row evaluation-concurrency-setting">
           <span className="setting-copy">
             <strong>{t("evaluations.concurrency")}</strong>

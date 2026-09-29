@@ -57,6 +57,12 @@ export function createLocalHostMemoryContextService(options: {
   const settings = createMemoryAttentionSettingsStore(options);
   const limit = createMemoryAttentionRequestLimiter();
   const retrieval = createLocalHostMemoryRetrieval({ ...options, requestLimiter: limit });
+  const retrievalConfigured = async () => {
+    const current = await retrieval.settings.get();
+    return current.enabled && current.providerId !== undefined && current.modelId !== undefined;
+  };
+  const attentionConfigured = async () =>
+    (await settings.get()).secretRef !== undefined || (await retrievalConfigured());
   const tasks = new Map<string, { version: number; digest: string; goal: string }>();
   const states = createFileMemoryAttentionStateStore(options);
   const missions = new Map<string, MissionBinding>();
@@ -279,8 +285,7 @@ export function createLocalHostMemoryContextService(options: {
       if (closed || (await options.data.policies.getGlobal()).policy.enabled !== "enabled")
         return undefined;
       const current = await settings.get();
-      if (current.secretRef === undefined && !(await retrieval.settings.get()).enabled)
-        return undefined;
+      if (current.secretRef === undefined && !(await retrievalConfigured())) return undefined;
       return {
         generation: createHash("sha256")
           .update(`${current.revision}:${await retrieval.bindingRevision()}`)
@@ -390,6 +395,7 @@ export function createLocalHostMemoryContextService(options: {
         return false;
       const current = await resolveScope(tracked.context);
       return (
+        (await attentionConfigured()) &&
         current !== undefined &&
         memoryAttentionScopeDigest(current) === memoryAttentionScopeDigest(scope)
       );
@@ -429,10 +435,7 @@ export function createLocalHostMemoryContextService(options: {
     const scope = await resolveScope(context, binding);
     if (scope === undefined) return;
     const current = await settings.get();
-    if (
-      (current.secretRef === undefined && !(await retrieval.settings.get()).enabled) ||
-      !alive(binding)
-    )
+    if ((current.secretRef === undefined && !(await retrievalConfigured())) || !alive(binding))
       return;
     // Register the configured credential before constructing even the first delta.
     if (current.secretRef !== undefined && redactedGeneration !== current.revision) {
@@ -596,7 +599,17 @@ export function createLocalHostMemoryContextService(options: {
     watches.set(id, { missionId: binding.missionId, subscription, done });
   };
   return {
-    retrieval,
+    retrieval: {
+      ...retrieval,
+      settings: {
+        ...retrieval.settings,
+        update: async (input: Parameters<typeof retrieval.settings.update>[0]) => {
+          const next = await retrieval.settings.update(input);
+          controller.cancelPending();
+          return next;
+        },
+      },
+    },
     states,
     async missionAttention(missionId: string) {
       const paths = new PragmaPaths(options);
@@ -684,12 +697,7 @@ export function createLocalHostMemoryContextService(options: {
             async () => {
               const scope = await resolveScope(context, binding);
               try {
-                if (
-                  scope !== undefined &&
-                  ((await settings.get()).secretRef !== undefined ||
-                    (await retrieval.settings.get()).enabled) &&
-                  alive(binding)
-                )
+                if (scope !== undefined && (await attentionConfigured()) && alive(binding))
                   watch(binding, context);
               } catch {
                 reportUnavailable();

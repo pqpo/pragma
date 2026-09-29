@@ -4,6 +4,7 @@ import type { MemoryRetrievalStatus } from "@pragma/shared";
 import type { ModelProvider } from "../../../../shared/contracts/index.ts";
 import { SelectMenu } from "../../components/SelectMenu.tsx";
 import { Switch } from "../../components/Switch.tsx";
+import { MemoryAttentionSettingsSection } from "./MemoryAttentionSettingsSection.tsx";
 export function MemoryRetrievalSettingsSection() {
   const { t } = useTranslation("settings");
   const [status, setStatus] = useState<MemoryRetrievalStatus>();
@@ -48,6 +49,10 @@ export function MemoryRetrievalSettingsSection() {
         label: `${provider.name} · ${model.name}`,
       })),
   );
+  const hasSelectedModel =
+    status !== undefined &&
+    status.settings.providerId !== undefined &&
+    status.settings.modelId !== undefined;
   const operation = async (run: () => Promise<void>) => {
     saving.current = true;
     setBusy(true);
@@ -68,13 +73,13 @@ export function MemoryRetrievalSettingsSection() {
       value ??
       (status.settings.providerId && status.settings.modelId
         ? `${status.settings.providerId}\0${status.settings.modelId}`
-        : (choices[0]?.value ?? ""))
+        : "")
     ).split("\0");
     await operation(async () => {
       setStatus(
         await window.pragmaDesktop.updateMemoryRetrievalSettings({
           expectedRevision: status.settings.revision,
-          enabled: enabled && Boolean(providerId && modelId),
+          enabled,
           ...(providerId && modelId ? { providerId, modelId } : {}),
         }),
       );
@@ -90,80 +95,84 @@ export function MemoryRetrievalSettingsSection() {
         <Switch
           ariaLabel={t("memory.retrieval.enable")}
           checked={status?.settings.enabled ?? false}
-          disabled={busy || status === undefined || choices.length === 0}
+          disabled={busy || status === undefined}
           onChange={(enabled) => void update(enabled)}
         />
       </div>
-      <div className="setting-row">
-        <span className="setting-copy">{t("memory.retrieval.model")}</span>
-        <SelectMenu
-          className="settings-select memory-model-select"
-          ariaLabel={t("memory.retrieval.model")}
-          value={
-            status?.settings.providerId && status.settings.modelId
-              ? `${status.settings.providerId}\0${status.settings.modelId}`
-              : ""
-          }
-          options={[{ value: "", label: t("memory.retrieval.choose") }, ...choices]}
-          disabled={busy || status === undefined}
-          onChange={(value) => void update(status?.settings.enabled ?? false, value)}
-        />
+      <div className="memory-retrieval-fields">
+        {status?.settings.enabled ? (
+          <div className="memory-retrieval-field">
+            <span>{t("memory.retrieval.model")}</span>
+            <SelectMenu
+              className="settings-select memory-model-select"
+              ariaLabel={t("memory.retrieval.model")}
+              value={
+                status.settings.providerId && status.settings.modelId
+                  ? `${status.settings.providerId}\0${status.settings.modelId}`
+                  : ""
+              }
+              options={[{ value: "", label: t("memory.retrieval.choose") }, ...choices]}
+              disabled={busy}
+              onChange={(value) => void update(true, value)}
+            />
+          </div>
+        ) : null}
+        <MemoryAttentionSettingsSection />
       </div>
-      {choices.length === 0 ? <p>{t("memory.retrieval.configure")}</p> : null}
-      {status ? (
-        <p role="status">
-          {t(`memory.retrieval.state.${status.state}`)} ·{" "}
-          {t("memory.retrieval.coverage", {
-            indexed: status.indexedMemories,
-            total: status.totalMemories,
-            segments: status.segments,
-            failed: status.failed,
-          })}
-          {status.errorCode ? (
-            <>
-              <br />
-              <code>{status.errorCode}</code>
-            </>
-          ) : null}
-        </p>
+      {status?.settings.enabled ? (
+        <>
+          {choices.length === 0 ? <p>{t("memory.retrieval.configure")}</p> : null}
+          <div className="memory-retrieval-footer">
+            <p className="memory-retrieval-status" role="status">
+              {t(`memory.retrieval.state.${status.state}`)} ·{" "}
+              {t("memory.retrieval.coverage", {
+                indexed: status.indexedMemories,
+                total: status.totalMemories,
+                segments: status.segments,
+                failed: status.failed,
+              })}
+              {status.errorCode ? <code>{status.errorCode}</code> : null}
+            </p>
+            <div className="memory-retrieval-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy || !hasSelectedModel}
+                onClick={() =>
+                  void operation(async () => {
+                    const result = await window.pragmaDesktop.testMemoryEmbedding();
+                    setTest(
+                      t("memory.retrieval.testPassed", {
+                        model: result.model,
+                        dimensions: result.dimensions,
+                      }),
+                    );
+                  })
+                }
+              >
+                {t("memory.retrieval.test")}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy || !hasSelectedModel}
+                onClick={() => void operation(() => window.pragmaDesktop.retryMemoryIndex())}
+              >
+                {t("memory.retrieval.retry")}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busy || !hasSelectedModel}
+                onClick={() => void operation(() => window.pragmaDesktop.rebuildMemoryIndex())}
+              >
+                {t("memory.retrieval.rebuild")}
+              </button>
+            </div>
+          </div>
+          {test ? <p role="status">{test}</p> : null}
+        </>
       ) : null}
-      <div className="memory-retrieval-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={busy || !status?.settings.enabled}
-          onClick={() =>
-            void operation(async () => {
-              const result = await window.pragmaDesktop.testMemoryEmbedding();
-              setTest(
-                t("memory.retrieval.testPassed", {
-                  model: result.model,
-                  dimensions: result.dimensions,
-                }),
-              );
-            })
-          }
-        >
-          {t("memory.retrieval.test")}
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={busy || !status?.settings.enabled}
-          onClick={() => void operation(() => window.pragmaDesktop.retryMemoryIndex())}
-        >
-          {t("memory.retrieval.retry")}
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={busy || !status?.settings.enabled}
-          onClick={() => void operation(() => window.pragmaDesktop.rebuildMemoryIndex())}
-        >
-          {t("memory.retrieval.rebuild")}
-        </button>
-      </div>
-      {test ? <p role="status">{test}</p> : null}
       {error ? (
         <p className="form-error" role="alert">
           {error}

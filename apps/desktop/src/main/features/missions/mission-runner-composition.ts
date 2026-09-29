@@ -3124,10 +3124,35 @@ export function createMissionRunner(options: {
     );
 
   const updateMissionOptions = async (input: UpdateMissionOptions): Promise<Mission> => {
-    const mission = await options.missions.get(input.id);
-    const projectedExecutionActive =
-      mission.execution !== undefined &&
-      ["queued", "running", "waiting"].includes(mission.execution.status);
+    let mission = await options.missions.get(input.id);
+    let projectedExecutionActive = activeMissionExecution(mission);
+    // The Core Execution record is authoritative. If its terminal projection
+    // was interrupted, the Mission can still look active even though the UI
+    // already observes the completed Execution from Core.
+    if (projectedExecutionActive && mission.execution !== undefined) {
+      const persisted = await executionStore.get(mission.execution.id);
+      if (persisted !== undefined && isFinalExecutionStatus(persisted.status)) {
+        mission = await options.missions.updateExecution(
+          mission.id,
+          {
+            ...mission.execution,
+            status:
+              persisted.status === "succeeded"
+                ? "succeeded"
+                : persisted.status === "failed"
+                  ? "failed"
+                  : "cancelled",
+            finishedAt: persisted.updatedAt,
+          },
+          {
+            executionId: mission.execution.id,
+            statuses: ["queued", "running", "waiting"],
+          },
+        );
+        invalidateChat(mission.id, missionSurfaceAudience(mission));
+        projectedExecutionActive = activeMissionExecution(mission);
+      }
+    }
     const activeExecution = lifecycleService.active(mission.id);
     if (!projectedExecutionActive && activeExecution !== undefined) {
       await settlementOutcomeWithin(activeExecution.settlement, 5_000);

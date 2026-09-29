@@ -28,7 +28,7 @@ Mission 删除复用 owner journal；恢复窗口内既有 Attention 可继续�
 
 Desktop Memory 设置中验证并保存/替换/移除 Jev API Key。CLI 读取同一个 Pragma home，不能写配置。CLI 恢复 owner 前通过显式生命周期 hook 将 conversation 标记为 running，阻止恢复期间的空闲提炼；普通 recall scope resolve 不承担该状态转换。
 全局 Memory 禁用或当前资产 recall 禁用时不判断、不暴露 Lens；已有配置可以移除。
-Embedding 在供应商页管理、Memory 页选择与启停；Desktop 窗口创建后建索引，CLI 只读 cache。无 Jev 时最多三条高相似度未评估记录，不做扩展。401 和不合法响应要求重新配置或显式重试；临时错误保留可见引用。Memory health 展示稳定错误码，不记录上游错误正文。Attention 配置或状态损坏仅使该可选视图不可用，普通 Memory 和 Execution 继续工作；未来版本仍保持拒绝读取、不改写原数据。
+Embedding 在供应商页管理、Memory 页选择与启停；Desktop 窗口创建后建索引，CLI 只读 cache。Jev Key 独立配置和移除；未启用或未配置 Embedding 时，Jev 仍可通过文字候选生成 Attention。无 Jev 时最多三条高相似度未评估记录，不做扩展。401 和不合法响应要求重新配置或显式重试；临时错误保留可见引用。Memory health 展示稳定错误码，不记录上游错误正文。Attention 配置或状态损坏仅使该可选视图不可用，普通 Memory 和 Execution 继续工作；未来版本仍保持拒绝读取、不改写原数据。
 
 ## 验证
 
