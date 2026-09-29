@@ -152,6 +152,8 @@ export interface CapabilityRepository {
 
 export interface CapabilityStore extends CapabilityRepository {
   list(): Promise<Capability[]>;
+  /** Includes persisted assets that cannot currently be read or verified. */
+  exists(id: string): Promise<boolean>;
   getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
   listSkillFiles(input: ListSkillFiles): Promise<SkillFileEntry[]>;
   getSkillFile(input: GetSkillFile): Promise<SkillFileContent>;
@@ -691,6 +693,15 @@ export function createCapabilityStore(options: {
           );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
+    },
+    async exists(id) {
+      try {
+        await lstat(capabilityPath(CapabilityIdSchema.parse(id)));
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
         throw error;
       }
     },

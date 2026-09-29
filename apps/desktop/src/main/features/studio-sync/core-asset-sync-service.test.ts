@@ -14,14 +14,19 @@ import {
 } from "../context-stores/context-store-store.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
-import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import {
+  createPragmaProjectStore,
+  PragmaProjectStoreError,
+} from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { createCoreAssetSyncService } from "./core-asset-sync-service.ts";
 import { unavailableCoreAssetRuntimeBindings } from "./core-asset-sync-service.ts";
 import {
+  bindExistingDesktopContextResource,
   createDesktopCapabilityResource,
   createDesktopContextResource,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import { createAssetTransferService } from "../asset-transfer/asset-transfer-service.ts";
 import {
   canonicalPragmaResourceRef,
   PRAGMA_DSL_WRITE_API_VERSION,
@@ -110,6 +115,7 @@ function device(
     managedBy: "user",
   });
   const stores = {
+    exists: async () => value !== undefined,
     list: async () =>
       value === undefined
         ? []
@@ -140,6 +146,13 @@ function device(
     projectId: "studio",
     get: async () => ({ projectId: "studio", revision: projectRevision, resources }),
     validateChanges: async () => [],
+    remove: async (input: { ref: string }) => {
+      resources = resources.filter(
+        (resource) => canonicalPragmaResourceRef(resource) !== input.ref,
+      );
+      projectRevision += 1;
+      return { projectId: "studio", revision: projectRevision, resources };
+    },
     apply: async (input: { upserts: PragmaResource[]; removals: string[] }) => {
       const remove = new Set([...input.removals, ...input.upserts.map(canonicalPragmaResourceRef)]);
       resources = [
@@ -205,6 +218,46 @@ function device(
 }
 
 describe("core asset Git synchronization", { timeout: 30_000 }, () => {
+  it("preserves a binding rebound while another orphan cleanup changes the head", async () => {
+    const first = createDesktopContextResource({ owner: "project-expert", storeId });
+    const second = createDesktopContextResource({ owner: "system-expert-customization", storeId });
+    const restoredId = "1a8c2051-10e0-489a-bc9e-41a2ca0805ce";
+    const rebound = bindExistingDesktopContextResource(second, restoredId);
+    let resources = [first, second];
+    let revision = 1;
+    const removed: string[] = [];
+    const project = {
+      get: async () => ({ projectId: "studio", revision, resources }),
+      remove: async ({ ref }: { ref: string }) => {
+        removed.push(ref);
+        resources = [rebound];
+        revision += 1;
+        throw new PragmaProjectStoreError("revision_conflict", "Concurrent binding restore.");
+      },
+    } as unknown as PragmaProjectStore;
+    const transfer = createAssetTransferService({
+      project,
+      stores: {
+        list: async () => [],
+        exists: async (id: string) => id === restoredId,
+      } as unknown as ContextStoreStore,
+      capabilities: { list: async () => [] } as unknown as CapabilityStore,
+      layouts: {} as WorkflowLayoutStore,
+      reportNameResolutionFailure: (_key, kind, bindingId) => ({
+        code: "core_asset_sync.name_unresolved",
+        resourceKey: _key,
+        resourceKind: kind,
+        bindingId,
+      }),
+    });
+    const result = await transfer.collectAssets();
+    expect(removed).toEqual([canonicalPragmaResourceRef(first)]);
+    expect(resources).toEqual([rebound]);
+    expect(result.items.get(`knowledge:${canonicalPragmaResourceRef(second)}`)?.data).toEqual(
+      rebound,
+    );
+  });
+
   it.each(["", "   "])(
     "synchronizes empty knowledge descriptions through the DSL binding boundary (%j)",
     async (description) => {
@@ -238,6 +291,36 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
           ?.data.description,
       ).toBe(description.trim());
       expect((await local.service.sync()).status).toBe("ready");
+    },
+  );
+
+  it.each(["revision_conflict", "resource_not_found"] as const)(
+    "refreshes the overview head when another reader retires an orphan with %s",
+    async (code) => {
+      const root = await fixture();
+      const binding = createDesktopContextResource({ owner: "project-expert", storeId });
+      let resources = [binding];
+      let revision = 1;
+      const project = {
+        projectId: "studio",
+        get: async () => ({ projectId: "studio", revision, resources }),
+        remove: async () => {
+          resources = [];
+          revision += 1;
+          throw new PragmaProjectStoreError(code, "Another reader removed the binding.");
+        },
+      } as unknown as PragmaProjectStore;
+      const local = device(join(root, "local"), undefined, undefined, [], undefined, project);
+      const configured = await local.service.configure({
+        remote,
+        branch: "main",
+        autoPush: false,
+        pushDeletions: false,
+      });
+      expect(configured.status, configured.error).toBe("ready");
+      const overview = await local.service.overview();
+      expect(overview.items).toEqual([]);
+      expect((await project.get()).resources).toEqual([]);
     },
   );
 
@@ -401,7 +484,38 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       join(root, "local"),
       undefined,
       undefined,
-      [context],
+      [
+        context,
+        {
+          apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+          kind: "ExpertTeam",
+          metadata: {
+            id: "p8cbn3cg2avyksn4",
+            name: "Team",
+            description: "Knowledge team",
+            tags: [],
+            avatarId: "pragma.avatar.team.default",
+          },
+          spec: {
+            coordinator: { ref: "expert:1xddvess309a6gme" },
+            members: [{ ref: "expert:1xddvess309a6gme" }],
+            contextStores: [
+              {
+                ref: canonicalPragmaResourceRef(context),
+                namespace: "docs",
+                required: true,
+                visibility: { mode: "all" },
+              },
+            ],
+            delegation: {
+              permissions: { interact: {} },
+              maxConcurrency: 2,
+              maxDepth: 2,
+              runtimes: {},
+            },
+          },
+        },
+      ],
       undefined,
       undefined,
       undefined,

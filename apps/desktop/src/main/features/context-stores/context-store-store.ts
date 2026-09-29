@@ -39,6 +39,10 @@ import {
   type ContextStoreSnapshot,
   type CreateContextStore,
 } from "../../../shared/contracts/index.ts";
+import { canonicalPragmaResourceRef, type PragmaResource } from "@pragma/interpreter/ast";
+import { classifyDesktopContextResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import { isGitMetadataPath } from "../../../shared/git-metadata-path.ts";
 
 const MIGRATION_READY_FILE = ".pragma-migration-ready.json";
@@ -160,6 +164,8 @@ type TrashItem = (path: string) => Promise<void>;
 
 export interface ContextStoreStore {
   list(): Promise<ContextStore[]>;
+  /** Includes persisted stores with invalid or unavailable configuration. */
+  exists(storeId: string): Promise<boolean>;
   create(input: CreateContextStore): Promise<ContextStore>;
   inspectImport(sourcePath: string): Promise<ContextStoreImportInspection>;
   remove(
@@ -332,6 +338,8 @@ function assertRevisionBundle(
 
 export function createContextStoreStore(options: {
   readonly storesPath: string;
+  readonly project?: PragmaProjectStore | undefined;
+  readonly externalResources?: (() => readonly PragmaResource[]) | undefined;
   readonly isReferenced?: ((storeId: string) => Promise<boolean>) | undefined;
   readonly trashItem?: TrashItem | undefined;
   readonly onRemoved?: ((storeId: string) => Promise<void>) | undefined;
@@ -340,6 +348,27 @@ export function createContextStoreStore(options: {
   readonly hasMissionReferences?: ((storeId: string) => Promise<boolean>) | undefined;
   readonly onPublished?: ((storeId: string) => void) | undefined;
 }): ContextStoreStore {
+  const deletionBindings = async (id: string) => {
+    const snapshot = await options.project?.get();
+    const resources = [...(snapshot?.resources ?? []), ...(options.externalResources?.() ?? [])];
+    const dependencies = referencedPragmaResourceRefs(resources);
+    const refs = resources
+      .filter((resource) => classifyDesktopContextResource(resource) === id)
+      .map(canonicalPragmaResourceRef);
+    if (refs.some((ref) => dependencies.has(ref))) {
+      throw new ContextStoreStoreError(
+        "expert_referenced",
+        "This knowledge base is mounted by an Expert or Expert Team. Remove those dependencies before deleting it.",
+      );
+    }
+    return {
+      snapshot,
+      refs:
+        snapshot?.resources
+          .filter((resource) => classifyDesktopContextResource(resource) === id)
+          .map(canonicalPragmaResourceRef) ?? [],
+    };
+  };
   const storePath = (id: string) => join(options.storesPath, id);
   const manifestPath = (id: string) => join(storePath(id), "store.json");
   const contentRoot = (id: string) => join(storePath(id), "files");
@@ -1182,6 +1211,16 @@ export function createContextStoreStore(options: {
       return await withRevisionLock(storeId, operation);
     },
 
+    async exists(storeId) {
+      try {
+        await lstat(storePath(z.string().uuid().parse(storeId)));
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
+    },
+
     async list(): Promise<ContextStore[]> {
       let directories;
       try {
@@ -1304,6 +1343,7 @@ export function createContextStoreStore(options: {
             );
           }
         }
+        await deletionBindings(id);
         if (await options.isReferenced?.(id)) {
           throw new ContextStoreStoreError(
             "expert_referenced",
@@ -1339,6 +1379,16 @@ export function createContextStoreStore(options: {
             "mission_referenced",
             "One or more Missions still reference this knowledge base. Refresh Missions and retry.",
           );
+        }
+        const { snapshot, refs } = await deletionBindings(id);
+        if (snapshot !== undefined && refs.length > 0) {
+          // Publish binding removal before deleting the authority. A crash leaves either
+          // a valid unbound Store that can be retried, or an entirely removed Store.
+          await options.project!.apply({
+            baseRevision: snapshot.revision,
+            upserts: [],
+            removals: refs,
+          });
         }
         if (options.trashItem !== undefined) await options.trashItem(storePath(id));
         else await rm(storePath(id), { recursive: true, force: true });

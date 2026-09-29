@@ -101,6 +101,10 @@ export function createAssetGitService(options: {
     await mkdir(options.stateRoot, { recursive: true, mode: 0o700 });
     return await withFileLock(join(options.stateRoot, "bindings.lock"), operation);
   };
+  const authorityExists = async (target: AssetGitTarget): Promise<boolean> =>
+    target.kind === "knowledge"
+      ? await options.stores.exists(target.id)
+      : await options.capabilities.exists(target.id);
   const assertExists = async (target: AssetGitTarget): Promise<void> => {
     if (target.kind === "knowledge") {
       const snapshot = await options.stores.getSnapshot(target.id);
@@ -155,6 +159,7 @@ export function createAssetGitService(options: {
         if (!other) continue;
         if (other.target.kind === target.kind && other.target.id === target.id) continue;
         if (other.source.remote === source.remote && other.source.branch === source.branch) {
+          if (!(await authorityExists(other.target))) continue;
           throw new Error("This Git repository and branch are already associated with an asset.");
         }
       }
@@ -223,14 +228,15 @@ export function createAssetGitService(options: {
     options.onStatusChanged?.(next);
     return next;
   };
+  const removeAssociationLocked = async (target: AssetGitTarget): Promise<void> => {
+    const previous = await readRecord(target);
+    await rm(recordPath(target), { force: true });
+    await rm(journalPath(target), { force: true });
+    if (previous !== undefined) options.onAssociationChanged?.(target);
+  };
   const unbind = async (target: AssetGitTarget): Promise<void> => {
     const parsed = AssetGitTargetSchema.parse(target);
-    await withTargetLock(parsed, async () => {
-      const previous = await readRecord(parsed);
-      await rm(recordPath(parsed), { force: true });
-      await rm(journalPath(parsed), { force: true });
-      if (previous !== undefined) options.onAssociationChanged?.(parsed);
-    });
+    await withTargetLock(parsed, async () => await removeAssociationLocked(parsed));
     await publishStatus(parsed);
   };
   const importAsset = async (
@@ -729,7 +735,16 @@ export function createAssetGitService(options: {
           const record = await state.identity(
             AssetGitTargetSchema.parse({ kind, id: name.slice(0, -5) }),
           );
-          if (record) targets.push(record.target);
+          if (record) {
+            const retained = await withTargetLock(record.target, async () => {
+              if (await authorityExists(record.target))
+                return (await state.identity(record.target)) !== undefined;
+              await removeAssociationLocked(record.target);
+              return false;
+            });
+            if (retained) targets.push(record.target);
+            else await publishStatus(record.target);
+          }
         } catch (error) {
           options.warn?.(`Could not read the Git association for ${kind}/${name}.`, error);
         }

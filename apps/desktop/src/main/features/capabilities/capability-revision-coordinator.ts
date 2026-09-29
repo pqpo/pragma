@@ -11,6 +11,7 @@ import {
 import { classifyDesktopCapabilityResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import type { DesktopSystemExpertRegistry } from "../experts/system-expert-registry.ts";
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import {
   CapabilityStoreError,
   type CapabilityMutationService,
@@ -106,6 +107,39 @@ export function createCapabilityRevisionCoordinator(options: {
     }
   };
 
+  const deletionBindings = async (id: string) => {
+    const snapshot = await options.project.get();
+    const refs = snapshot.resources.flatMap((resource) =>
+      classifyDesktopCapabilityResource(resource)?.id === id
+        ? [canonicalPragmaResourceRef(resource)]
+        : [],
+    );
+    const dependencies = referencedPragmaResourceRefs([
+      ...snapshot.resources,
+      ...options.systemExperts.listResources(),
+    ]);
+    const systemReferenced = options.systemExperts
+      .list()
+      .some((summary) =>
+        options.systemExperts
+          .get(summary.ref)
+          ?.capabilities.some((reference) => reference.capabilityId === id),
+      );
+    if (refs.some((ref) => dependencies.has(ref)) || systemReferenced) {
+      throw new CapabilityStoreError(
+        "capability_referenced",
+        "This capability is used by one or more Experts. Remove it from those Experts before deleting it.",
+      );
+    }
+    return { snapshot, refs };
+  };
+  const removeDeletionBindings = async (id: string): Promise<void> => {
+    const { snapshot, refs } = await deletionBindings(id);
+    if (refs.length > 0) {
+      await options.project.apply({ baseRevision: snapshot.revision, upserts: [], removals: refs });
+    }
+  };
+
   const recoverCapabilityLocked = async (id: string): Promise<void> => {
     let entries: string[];
     try {
@@ -120,6 +154,7 @@ export function createCapabilityRevisionCoordinator(options: {
       const path = join(capabilityDirectory(id), entry);
       const journal = await readJournal(path);
       if (journal.mutationType === "delete") {
+        await removeDeletionBindings(id);
         await options.capabilities.completeRemoval(id, journal.targetRevision);
         continue;
       }
@@ -250,6 +285,7 @@ export function createCapabilityRevisionCoordinator(options: {
         }
         await input.validateCurrent?.();
         if (input.mutationType === "delete") {
+          await deletionBindings(input.id);
           const timestamp = new Date().toISOString();
           const journal = JournalSchema.parse({
             schemaVersion: "pragma.capability-mutation/v3",
@@ -266,6 +302,7 @@ export function createCapabilityRevisionCoordinator(options: {
             previousHealth: latest.health,
           });
           await writeJournal(journal);
+          await removeDeletionBindings(input.id);
           await input.commit();
           return;
         }

@@ -1,6 +1,9 @@
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import type { CapabilityVerifier } from "../capabilities/capability-verification.ts";
-import { createDesktopContextResource } from "../../platform/bindings/desktop-bound-resource-policy.ts";
+import {
+  createDesktopCapabilityResource,
+  createDesktopContextResource,
+} from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import {
   canonicalPragmaResourceRef,
@@ -68,8 +71,11 @@ function device(
   beforeLayoutSave?: () => Promise<void>,
   verify?: CapabilityVerifier,
 ) {
-  const stores = createContextStoreStore({ storesPath: join(root, "data", "context-stores") });
   const project = createPragmaProjectStore({ projectsPath: join(root, "data", "projects") });
+  const stores = createContextStoreStore({
+    storesPath: join(root, "data", "context-stores"),
+    project,
+  });
   const layouts = createWorkflowLayoutStore({ projectsPath: join(root, "data", "projects") });
   const { secretStore } = createTestSecretStore(join(root, "data", "secrets"));
   const credentials = createCapabilityCredentialStore({
@@ -290,6 +296,258 @@ async function addSkill(capabilities: CapabilityStore, root: string) {
 }
 
 describe("structured asset sync with real Git and domain stores", { timeout: 60_000 }, () => {
+  it.each(["skill", "mcp_server"] as const)(
+    "removes all %s bindings on deletion and synchronizes the deletion",
+    async (kind) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const skill =
+        kind === "skill"
+          ? await addSkill(a.capabilities, a.root)
+          : await a.capabilities.create({
+              definition: {
+                kind: "mcp_server",
+                name: "audit",
+                description: "Audit code",
+                connection: {
+                  transport: "stdio",
+                  command: "search",
+                  args: [],
+                  env: {},
+                  secretEnv: {},
+                },
+                tools: [],
+                timeoutMs: 30_000,
+              },
+              credentials: {},
+            });
+      const bindings = (["project-expert", "default-agent-option"] as const).map((owner) =>
+        createDesktopCapabilityResource({
+          owner,
+          capabilityId: skill.manifest.id,
+          name: `audit ${owner}`,
+          description: "Audit code",
+        }),
+      );
+      const snapshot = await a.project.get();
+      await a.project.apply({ baseRevision: snapshot.revision, upserts: bindings });
+      const configured = await a.service.configure({ ...configuration, pushDeletions: true });
+      expect(configured.status, configured.error).toBe("ready");
+
+      await a.capabilities.remove(skill.manifest.id);
+
+      expect(await a.capabilities.exists(skill.manifest.id)).toBe(false);
+      expect((await a.project.get()).resources).toEqual([]);
+      const synced = await a.service.sync();
+      expect(synced.status, synced.error).toBe("ready");
+      expect(synced.items).toEqual([]);
+      const files = (
+        await exec("git", ["--git-dir", git.bare, "ls-tree", "-r", "--name-only", "main"])
+      ).stdout;
+      expect(files).not.toContain(`skills/${skill.manifest.id}/`);
+      expect(files).not.toContain(`capability-definitions/${skill.manifest.id}.yaml`);
+      for (const binding of bindings)
+        expect(files).not.toContain(`${binding.metadata.id}.pragma.yaml`);
+    },
+  );
+
+  it("rejects deleting a Capability used by a persisted Expert", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const skill = await addSkill(a.capabilities, a.root);
+    const binding = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: skill.manifest.id,
+      name: "audit",
+    });
+    const expert = resources().find((resource) => resource.kind === "Expert")!;
+    if (expert.kind !== "Expert") throw new Error("Expected Expert");
+    expert.spec.capabilities = [{ ref: canonicalPragmaResourceRef(binding), kind: "skill" }];
+    const snapshot = await a.project.get();
+    await a.project.apply({
+      baseRevision: snapshot.revision,
+      upserts: [
+        binding,
+        ...resources().filter((resource) => resource.kind === "RuntimeProfile"),
+        expert,
+      ],
+    });
+    await expect(a.capabilities.remove(skill.manifest.id)).rejects.toMatchObject({
+      code: "capability_referenced",
+    });
+    expect(await a.capabilities.exists(skill.manifest.id)).toBe(true);
+    expect((await a.project.get()).revision).toBe(snapshot.revision + 1);
+  });
+
+  it("removes Knowledge bindings before authority deletion and retries an interrupted removal", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const knowledge = await addKnowledge(a.stores, "Knowledge");
+    const binding = createDesktopContextResource({
+      owner: "project-expert",
+      storeId: knowledge.id,
+    });
+    const snapshot = await a.project.get();
+    await a.project.apply({ baseRevision: snapshot.revision, upserts: [binding] });
+    expect((await a.service.configure({ ...configuration, pushDeletions: true })).status).toBe(
+      "ready",
+    );
+    let interrupted = false;
+    const stores = createContextStoreStore({
+      storesPath: join(a.root, "data", "context-stores"),
+      project: a.project,
+      trashItem: async (path) => {
+        if (!interrupted) {
+          interrupted = true;
+          throw new Error("Interrupted removal");
+        }
+        await rm(path, { recursive: true });
+      },
+    });
+    await expect(stores.remove(knowledge.id)).rejects.toThrow("Interrupted removal");
+    expect(await stores.exists(knowledge.id)).toBe(true);
+    expect((await a.project.get()).resources).toEqual([]);
+    await stores.remove(knowledge.id);
+    expect(await stores.exists(knowledge.id)).toBe(false);
+    const synced = await a.service.sync();
+    expect(synced.status, synced.error).toBe("ready");
+    expect(synced.items).toEqual([]);
+  });
+
+  it.each(["expert", "team", "system"] as const)(
+    "blocks Knowledge deletion referenced by a %s",
+    async (owner) => {
+      const git = await fixture();
+      const a = device(join(git.root, "a"));
+      const knowledge = await addKnowledge(a.stores, "Knowledge");
+      const binding = createDesktopContextResource({
+        owner: "project-expert",
+        storeId: knowledge.id,
+      });
+      const dependencyResources = resources();
+      const expert = dependencyResources.find((resource) => resource.kind === "Expert")!;
+      if (expert.kind !== "Expert") throw new Error("Expected Expert");
+      const context = {
+        ref: canonicalPragmaResourceRef(binding),
+        namespace: "knowledge",
+        required: true,
+      };
+      if (owner !== "team") expert.spec.contextStores = [context];
+      const team: PragmaResource = {
+        apiVersion: PRAGMA_DSL_WRITE_API_VERSION,
+        kind: "ExpertTeam",
+        metadata: {
+          id: "p8cbn3cg2avyksn4",
+          name: "Team",
+          description: "Knowledge team",
+          tags: [],
+          avatarId: "pragma.avatar.team.default",
+        },
+        spec: {
+          coordinator: { ref: canonicalPragmaResourceRef(expert) },
+          members: [{ ref: canonicalPragmaResourceRef(expert) }],
+          contextStores: [{ ...context, visibility: { mode: "all" } }],
+          delegation: {
+            permissions: { interact: {} },
+            maxConcurrency: 2,
+            maxDepth: 2,
+            runtimes: {},
+          },
+        },
+      };
+      const snapshot = await a.project.get();
+      await a.project.apply({
+        baseRevision: snapshot.revision,
+        upserts:
+          owner === "system"
+            ? [binding]
+            : [binding, ...dependencyResources, ...(owner === "team" ? [team] : [])],
+      });
+      const stores =
+        owner === "system"
+          ? createContextStoreStore({
+              storesPath: join(a.root, "data", "context-stores"),
+              project: a.project,
+              externalResources: () => [expert],
+            })
+          : a.stores;
+      await expect(stores.remove(knowledge.id)).rejects.toMatchObject({
+        code: "expert_referenced",
+      });
+      expect(await stores.exists(knowledge.id)).toBe(true);
+      expect(
+        (await a.project.get()).resources.some(
+          (resource) =>
+            canonicalPragmaResourceRef(resource) === canonicalPragmaResourceRef(binding),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("repairs historical unreferenced bindings without deleting unavailable assets", async () => {
+    const git = await fixture();
+    const a = device(join(git.root, "a"));
+    const deletedId = "0123456789abcdef";
+    const deleted = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: deletedId,
+      name: "Deleted capability",
+    });
+    const skill = await addSkill(a.capabilities, a.root);
+    const unavailable = createDesktopCapabilityResource({
+      owner: "project-expert",
+      capabilityId: skill.manifest.id,
+      name: "audit",
+    });
+    const deletedKnowledge = createDesktopContextResource({
+      owner: "project-expert",
+      storeId: "f13af121-439b-4bad-8fe4-8b7dc27554d3",
+    });
+    const knowledge = await addKnowledge(a.stores, "Unreadable Knowledge");
+    const unavailableKnowledge = createDesktopContextResource({
+      owner: "project-expert",
+      storeId: knowledge.id,
+    });
+    const snapshot = await a.project.get();
+    await a.project.apply({
+      baseRevision: snapshot.revision,
+      upserts: [deleted, unavailable, deletedKnowledge, unavailableKnowledge],
+    });
+    // list() omits unreadable persisted assets. Their bindings must remain diagnosable.
+    await writeFile(
+      join(a.root, "data", "capabilities", skill.manifest.id, "capability.json"),
+      "{}",
+    );
+    await writeFile(join(a.root, "data", "context-stores", knowledge.id, "store.json"), "{}");
+    const overview = await a.service.configure(configuration);
+    expect(
+      overview.items.some(
+        (item) => item.key === `capability:${canonicalPragmaResourceRef(deleted)}`,
+      ),
+    ).toBe(false);
+    expect(
+      overview.items.find(
+        (item) => item.key === `capability:${canonicalPragmaResourceRef(unavailable)}`,
+      )?.status,
+    ).toBe("error");
+    expect((await a.project.get()).resources).toEqual([unavailable, unavailableKnowledge]);
+    expect(
+      overview.items.some(
+        (item) => item.key === `knowledge:${canonicalPragmaResourceRef(deletedKnowledge)}`,
+      ),
+    ).toBe(false);
+    expect(
+      overview.items.find(
+        (item) => item.key === `knowledge:${canonicalPragmaResourceRef(unavailableKnowledge)}`,
+      )?.status,
+    ).toBe("error");
+    expect(await a.stores.exists(knowledge.id)).toBe(true);
+    expect(await a.capabilities.exists(skill.manifest.id)).toBe(true);
+    expect(
+      (await a.service.overview()).items.some((item) => item.name === "Deleted capability"),
+    ).toBe(false);
+  });
+
   it("restores Knowledge, binary Skill and an unreferenced non-Skill capability with original identities", async () => {
     const git = await fixture();
     const a = device(join(git.root, "a"));

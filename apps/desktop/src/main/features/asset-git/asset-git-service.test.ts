@@ -99,6 +99,38 @@ async function fixture(
 }
 
 describe("asset Git knowledge sync", () => {
+  it("retires Git associations for deleted Knowledge while retaining unreadable persisted assets", async () => {
+    const { service, stores, source, root } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    expect(await service.listTargets()).toEqual([target]);
+    await writeFile(join(root, "stores", target.id, "store.json"), "{}");
+    expect(await service.listTargets()).toEqual([target]);
+    await rm(join(root, "stores", target.id), { recursive: true });
+    // Import must not require opening the overview first to retire the old association.
+    const replacement = await service.import({ kind: "knowledge", source });
+    expect(await service.listTargets()).toEqual([replacement]);
+    expect((await service.status(target)).status).toBe("unbound");
+    expect(await stores.exists(target.id)).toBe(false);
+    await expect(service.import({ kind: "knowledge", source })).rejects.toThrow(
+      "already associated",
+    );
+  });
+
+  it("checks authority existence under the Git target lock before retiring associations", async () => {
+    const { service, stores, source, root } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    const exists = stores.exists.bind(stores);
+    const check = vi.spyOn(stores, "exists").mockImplementation(async (id) => {
+      const owner = JSON.parse(
+        await readFile(join(root, "state", "knowledge", `${id}.json.lock`, "owner.json"), "utf8"),
+      );
+      expect(owner.processId).toBe(process.pid);
+      return await exists(id);
+    });
+    expect(await service.listTargets()).toEqual([target]);
+    expect(check).toHaveBeenCalledWith(target.id);
+  });
+
   it("notifies environment sync after import, unbind, and bind", async () => {
     let changes = 0;
     const { service, source } = await fixture(() => {

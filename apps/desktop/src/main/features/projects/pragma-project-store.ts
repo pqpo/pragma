@@ -1,3 +1,4 @@
+import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -289,9 +290,46 @@ export function createPragmaProjectStore(options: {
     await migrationReady;
   };
 
+  const layouts = createWorkflowLayoutStore({ projectsPath: options.projectsPath });
+  const recoverLayoutRemovals = async () => {
+    const pending = await readdir(
+      join(options.projectsPath, projectId, "layouts", ".removals"),
+    ).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    });
+    if (!pending.some((entry) => entry.endsWith(".json"))) return;
+    // Keep the head stable until layout cleanup completes. Publications take the
+    // same owner lock, so restoring a Flow cannot race a pending deletion replay.
+    await withFileLock(
+      join(options.projectsPath, projectId, ".commit.lock"),
+      async () =>
+        await layouts.recoverRemovals(projectId, async () => {
+          const current = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+          return {
+            revision: current.revision,
+            flowIds: current.resources
+              .filter((resource) => resource.kind === "Flow")
+              .map((resource) => resource.metadata.id),
+          };
+        }),
+    );
+  };
+  const prepareLayoutRemovals = async (
+    resources: readonly PragmaResource[],
+    retained: readonly PragmaResource[],
+    baseRevision: number,
+  ) => {
+    const refs = new Set(retained.map(canonicalPragmaResourceRef));
+    for (const resource of resources) {
+      if (resource.kind === "Flow" && !refs.has(canonicalPragmaResourceRef(resource)))
+        await layouts.prepareRemoval({ projectId, flowId: resource.metadata.id }, baseRevision);
+    }
+  };
   let bindingMigration: Promise<PragmaProjectSnapshot> | undefined;
   const get = async (): Promise<PragmaProjectSnapshot> => {
     await ensureMigrated();
+    await recoverLayoutRemovals();
     const current = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
     const migratedResources = migrateCapabilityBindings(current.resources);
     if (migratedResources === undefined) return current;
@@ -493,9 +531,16 @@ export function createPragmaProjectStore(options: {
         effectiveCandidate.resources,
         effectiveChangeSet.removals ?? [],
       );
+      const previous = PragmaProjectSnapshotSchema.parse(await service.get(projectId));
+      await prepareLayoutRemovals(
+        previous.resources,
+        effectiveCandidate.resources,
+        input.baseRevision,
+      );
       const published = PragmaProjectSnapshotSchema.parse(
         await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet, publicationId }),
       );
+      await recoverLayoutRemovals();
       options.onPublished?.();
       return published;
     } catch (error) {
@@ -529,9 +574,15 @@ export function createPragmaProjectStore(options: {
         (input.expectedRevision === 0
           ? new Map<string, string>()
           : await readRevisionArtifacts(repository, projectId, input.expectedRevision, current!));
+      await prepareLayoutRemovals(
+        current?.resources ?? [],
+        input.resources,
+        input.expectedRevision,
+      );
       const published = PragmaProjectSnapshotSchema.parse(
         await service.publish({ projectId, ...input, artifacts }),
       );
+      await recoverLayoutRemovals();
       options.onPublished?.();
       return published;
     } catch (error) {
