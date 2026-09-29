@@ -142,17 +142,31 @@ Adapter 从 Core 的 process-shared `McpToolRegistryPool` 获取连接，再为�
 MCP session。Adapter 在 `.agents/plugins/pragma-<session-hash>/` 写入 `plugin.json`、`mcp_config.json`
 和 Skills，并由 `.agents/plugins.json` 显式注册；不再写无效的 workspace 顶层 `mcp_config.json`。plugin
 只声明一个 Session-scoped
-`pragma<session-hash>` remote server：
+local key 为 `p` 的 remote server，原生身份为 `pragma-<session-hash>_p`：
 
 ```json
 {
   "mcpServers": {
-    "pragma<session-hash>": {
+    "p": {
       "serverUrl": "http://127.0.0.1:<port>/<private-session-path>"
     }
   }
 }
 ```
+
+agy 把工具名展开为 `mcp_<plugin-name>_<local-server-key>_<tool-name>`，全名必须匹配
+`^[a-zA-Z0-9_-]{1,64}$`。保留 plugin 的 16 位 Session namespace，但不要在 server key 中重复哈希；
+当前前缀长 30 字符，留给 local tool name 34 字符。Adapter 向 Core Gateway 传入这个名称预算，
+复用 Gateway 的稳定摘要别名及调用映射；普通 Context 工具保留原名，长工具名仍可执行。
+配置 key 与原生身份分开：配置和 Agent frontmatter 使用 `p`，settings 的权限声明及 Hook
+permission override 使用完整原生身份。Hook 只精确接受当前 Session 的完整原生身份；短配置 key
+`p` 不能用于权限匹配，避免与宿主全局 MCP 同名。不同 Session、任意前缀/后缀及全局 MCP 通配不放行。
+
+Gateway registration 同时提供与 `tools/list` 一致的当前工具目录（名称、description、inputSchema）。
+Antigravity 将目录写入 Session 的 always-on rule，明确完整 server 身份与 `call_mcp_tool` 参数形式；
+模型无需通过 shell、curl 或读取 MCP 定义文件探测 Pragma 工具。规则同时要求模型在多步工作前
+给出简短进度说明，正文仍来自真实 stream delta；不把进度说明当成私有 thought。该目录只含当前 Expert 的 allowlist
+投影，使用预算转换后的真实别名，不复制另一套工具注册或执行逻辑。
 
 该不透明 namespace 只暴露当前 Expert allowlist 投影后的工具。私有 HOME 不继承宿主个人 MCP 配置；
 `host-keyring` 会按 agy 原生规则同时加载宿主全局配置，因此属于显式兼容性取舍。
@@ -165,9 +179,13 @@ Hook 接管。因此 Runtime 会在 Session 创建和每次 native turn 的 spaw
 执行。Core 已加载的 `AGENTS.md`、系统提示词和显式 Expert Skill 仍会通过受管路径提供；需要 Antigravity
 workspace customization 的项目必须使用不含这些根的隔离/overlay workspace，并将必要配置显式物化到 Expert。
 同一 OS 用户在预检后并发改写 workspace 仍属于 Host 无法原子消除的 TOCTOU 风险；对抗该威胁的最终边界是
-Host 提供的隔离 workspace，而不是放宽预检。Agent、Skill、MCP server 与 Hook 名称都带同一个由 Runtime
+Host 提供的隔离 workspace，而不是放宽预检。Agent、Skill、原生 MCP server 与 Hook 名称都带同一个由 Runtime
 Session 目录派生的 16 位哈希 namespace，防止受管配置相互遮蔽。Session 关闭时按独立生命周期释放 MCP
 registration、registry lease 与权限 relay；任一释放失败会聚合上报。
+
+配置是每次 Session prepare 时定向重建的派生产物，不是版本化的权威存储协议；保留同一个
+plugin、Agent 和 native conversation identity，只替换受管 plugin 的 MCP 配置与规则。
+旧会话恢复也重新注册当前 Gateway；不清空宿主配置或 conversation/cache。
 
 ## Skills
 
@@ -311,7 +329,7 @@ PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
   pnpm --filter @pragma/runtime-antigravity test -- real-smoke.test.ts
 ```
 
-该 suite 验证首个 delta 与 result settle 之间存在可观察时间差、`list_dir` lifecycle、managed
+该 suite 验证首个 delta 与 result settle 之间存在可观察时间差、`view_file` lifecycle、managed
 `list_expert_context` MCP、always-on system marker、plugin Skill、图片路径降级和同一 conversation 的续轮恢复。
 运行前必须已完成对应认证模式的官方 agy 登录；未实际运行该命令和 Desktop 人工验收时，不得仅凭 suite
 存在声明 end-to-end Supported。
@@ -326,3 +344,70 @@ PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
 - [Antigravity custom agents / subagents](https://antigravity.google/docs/subagents)
 - [Gemini CLI migration 与 customization 路径](https://antigravity.google/docs/cli/gcli-migration)
 - [Antigravity CLI changelog](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md)
+
+## Issue #262 的诊断与回归
+
+截图里的 MCP 名称过长已通过真实 CLI 日志复现：原前缀长 54 字符，
+`list_expert_context` 等工具在发现阶段被拒绝，尚未进入 Hook/Gateway。
+同时旧 Hook 将 plugin-qualified server 误判为非受管 server，这是另一个独立缺陷。
+
+中间正文来自真实 `agent_response/text_delta`；原生 CLI 实测会在工具前输出说明文字。
+当前适配器已解析该事件，不保证模型每次调用工具前都生成说明。
+`thinking_tokens` 只表示用量，不能推导出可显示的思考正文；CLI 未发送 thought 时不伪造思考。
+`call_mcp_tool` 是 agy 原生 MCP 调度工具，名称本身正常；适配器从其 `ToolName` 参数提取实际
+操作名用于 tool lifecycle/UI 展示，同时保留含 `ServerName` 的原始输入用于审计。
+反复读配置或尝试 shell 不能作为 MCP 执行证据。
+
+扩展的 `test/real-smoke.test.ts` 并发验证三种权限模式的 mission-board 写入、读回、非 Context
+工具执行，以及释放 lease、重建 Runtime 后恢复；原有正文 streaming、Skill、native tool、
+附件降级断言继续独立保留。组合 smoke 的 native file tool 使用 `view_file` 读取显式测试文件，
+而非要求模型选择特定目录枚举工具；原有 `list_dir` 协议/lifecycle fixture 保留。
+运行：
+
+```bash
+PRAGMA_ANTIGRAVITY_REAL_SMOKE=1 \
+  PRAGMA_ANTIGRAVITY_SMOKE_AUTH_MODE=host-keyring \
+  PRAGMA_ANTIGRAVITY_SMOKE_MODEL=gemini-3.8-flash-low \
+  pnpm --filter @pragma/runtime-antigravity exec vitest run test/real-smoke.test.ts --reporter=verbose
+```
+
+真实复现/验证环境：2026-09-29，Darwin 25.6.0 x86_64，`host-keyring` OAuth。
+首次原生流探测为 `agy 1.1.22`，CLI 随后自行更新为 `1.2.13`；长名字复现与修复验证均为 `1.2.13`。
+ADC 私有 HOME、Windows/Linux 及 Desktop 人工视觉验收本次未验证；配置/权限单测覆盖私有 HOME
+与 Windows 物化，不将其等同真实认证或 UI 验收。
+
+已完成的真实 MCP 回归：三种权限模式各自完成 fresh 写入/读回、非 Context 工具、Runtime 重建后
+恢复；并发复验 3/3 通过（107.40 s）。每个会话实际发起五次预期 MCP 调用，Session 间原生
+server 身份不同，恢复前后身份一致。注入目录后的五个已完成复验 Session 仅出现这些 MCP 调用，
+未出现 `view_file`、shell 或 curl 探测；这证明消除了此探测路径，不承诺不同模型的总耗时。
+
+组合 smoke 独立复验 1/1 通过（52.66 s）：真实正文 delta 早于结果终态，`view_file` 实际读取
+`SMOKE_FILE.txt`，`list_expert_context` 实际执行，Skill 与 system marker、图片路径降级及
+conversation resume 均通过。Core Gateway 的 8 个测试、Antigravity 的定向测试、相关 lint/build
+及全仓 typecheck（19/19）通过。Desktop 人工视觉验收仍未执行。
+
+### CR 与修复结果复核
+
+2026-09-29 对完整 diff、权限边界、流事件及真实恢复证据进行了第二轮审查。
+
+| 发现                                                                             | 修复及复核依据                                                                                           | 状态   |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| P1：将短配置 key `p` 也识别为受管身份，会错误豁免同名宿主 MCP                    | Hook 仅匹配当前 Session 的完整原生身份；新增 auto/request 模式同名宿主拒绝用例，先复现失败，再修复通过   | 已修复 |
+| P2：同帧正文 delta 遮住 thought snapshot；delta 后的终态正文 snapshot 会重复输出 | 独立处理 thought；正文/思考 delta 累积到对应 snapshot。新增同帧及终态去重用例，先复现失败，再修复通过    | 已修复 |
+| P2：恢复 smoke 的旧 marker 可由历史对话复述，未强制恢复后的真实读取              | 释放 Session 后修改权威 Context 为模型未知的新 marker；同时断言恢复轮的成功 Gateway read/custom 调用日志 | 已补齐 |
+
+修复后使用 `agy 1.2.13`、`host-keyring`、`gemini-3.8-flash-medium` 再次执行完整真实 suite：
+4/4 通过（201.94 s）。三种权限模式各自验证 fresh/恢复执行及新数据读回（82.06/98.64/102.29 s），
+full-access 额外使用 84 字符的业务工具名，验证 34 字符稳定别名实际调用仍路由到原工具。
+各 Session 的 server 身份不同，重建 Runtime 后保持原身份；组合 streaming/Skill/native file tool/
+MCP/image fallback/resume 测试通过（87.35 s）。
+
+另对修复前 `origin/main`（`724cc142`）真实 CLI smoke 生成的已关闭 Session 执行
+`recoverClosedSession`，保持原 Expert definition、plugin namespace 及 conversation ID，
+重建受管配置后 `list_expert_context` 真实成功。该验证使用原始旧代码输出的 Session，
+没有修改版本号伪造历史数据；不涉及存储 Schema 变更。
+
+最终验证：Antigravity 单测 117/117、Core Gateway 8/8、Desktop Mission 思考/工具显示定向测试
+3/3 通过，Core/Antigravity 的 build、lint、typecheck 和变更文件格式检查通过。
+复核未发现本次审查范围内未处理的阻塞问题。无 thought 文本时仍不能显示私有思考；
+ADC 私有 HOME、Windows/Linux 真实运行及 Desktop 人工视觉验收仍属于未验证范围。

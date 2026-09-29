@@ -29,6 +29,107 @@ const conversation3 = "11111111-2222-4333-8444-555555555553";
 const conversation4 = "11111111-2222-4333-8444-555555555554";
 
 describe("Antigravity CLI invocation", () => {
+  it("keeps simultaneous thought snapshots and body deltas, without repeating terminal snapshots", async () => {
+    const spawn = createStreamSpawn([
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 1,
+          step_type: "agent_response",
+          state: "ACTIVE",
+          text_delta: "Hel",
+          raw_thought: "Inspect",
+        },
+      },
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 1,
+          step_type: "agent_response",
+          state: "ACTIVE",
+          text_delta: "lo",
+          raw_thought: "Inspect",
+        },
+      },
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 1,
+          step_type: "agent_response",
+          state: "DONE",
+          content: "Hello",
+          raw_thought: "Inspect",
+        },
+      },
+      {
+        event: "result",
+        result: { status: "SUCCESS", response: "Hello", conversation_id: conversation2 },
+      },
+    ]);
+    const events: AntigravityNativeEvent[] = [];
+    await startAntigravityTurn(
+      createSession(spawn),
+      createTurn({ writeNative: (event) => events.push(event) }),
+    );
+    expect(events.filter((event) => event.kind === "message-delta")).toEqual([
+      { kind: "message-delta", text: "Hel" },
+      { kind: "message-delta", text: "lo" },
+    ]);
+    expect(events.slice(0, 2)).toContainEqual({ kind: "thought-delta", text: "Inspect" });
+    expect(events.filter((event) => event.kind === "thought-delta")).toEqual([
+      { kind: "thought-delta", text: "Inspect" },
+    ]);
+  });
+
+  it("shows the actual MCP operation while retaining server identity and stable lifecycle", async () => {
+    const spawn = createStreamSpawn([
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 1,
+          step_type: "tool",
+          state: "ACTIVE",
+          tool_info: {
+            name: "call_mcp_tool",
+            parameters: {
+              ServerName: "pragma-0123456789abcdef_p",
+              ToolName: "read_expert_context",
+              Arguments: { namespace: "mission-board", id: "test/262.md" },
+            },
+          },
+        },
+      },
+      {
+        event: "step_update",
+        step_update: {
+          step_index: 1,
+          step_type: "tool",
+          state: "DONE",
+          tool_info: { name: "call_mcp_tool", output: "ROUNDTRIP_262" },
+        },
+      },
+      {
+        event: "result",
+        result: { status: "SUCCESS", response: "OK", conversation_id: conversation2 },
+      },
+    ]);
+    const events: AntigravityNativeEvent[] = [];
+    await startAntigravityTurn(
+      createSession(spawn),
+      createTurn({ writeNative: (event) => events.push(event) }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "tool-started",
+        name: "read_expert_context",
+        input: expect.objectContaining({ ServerName: "pragma-0123456789abcdef_p" }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: "tool-completed", name: "read_expert_context" }),
+    );
+  });
+
   it("uses only documented headless flags and pins the process workspace", () => {
     expect(
       createAntigravityArgs({
@@ -1199,7 +1300,8 @@ function createSession(
       appDataDir: join(homeDir, ".gemini", "antigravity-cli"),
       configDir: join(homeDir, ".gemini", "config"),
       agentName: "pragma-review",
-      mcpServerName: "pragma0123456789abcdef",
+      mcpServerName: "p",
+      nativeMcpServerName: "pragma-0123456789abcdef_p",
       hookName: "pragma-permission-gate-0123456789abcdef",
       pluginName: "pragma-0123456789abcdef",
       pluginDir: join(homeDir, ".gemini", "config", "plugins", "pragma-0123456789abcdef"),

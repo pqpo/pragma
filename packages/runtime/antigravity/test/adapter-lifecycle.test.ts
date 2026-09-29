@@ -29,6 +29,7 @@ const runtimeMocks = vi.hoisted(() => ({
       id: "registration",
       name: "pragma",
       url: "http://127.0.0.1:43127/private/mcp",
+      toolCatalog: [],
       dispose,
     };
   }),
@@ -141,6 +142,7 @@ describe("Antigravity Runtime adapter lifecycle", () => {
       id: "registration",
       name: "pragma",
       url: "http://127.0.0.1:43127/private/mcp",
+      toolCatalog: [],
       dispose,
     }));
     const release = vi.fn(async () => undefined);
