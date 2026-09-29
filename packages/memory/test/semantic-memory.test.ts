@@ -152,14 +152,13 @@ describe("Semantic Memory", () => {
     expect(dark.updatedAt).toBe(now.toISOString());
     expect(light.updatedAt).toBe(now.toISOString());
     let pendingConflictNotifications = 0;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (;;) {
       const notification = await module.store.readProjectionNotification();
       if (notification === undefined) break;
       pendingConflictNotifications += 1;
       await module.store.acknowledgeProjectionNotification(notification.id);
     }
     expect(pendingConflictNotifications).toBe(2);
-    expect(await module.store.readProjectionNotification()).toBeUndefined();
     expect(
       (await module.store.listExtractionJobs()).every(
         (job) => job.completedAt === now.toISOString(),
