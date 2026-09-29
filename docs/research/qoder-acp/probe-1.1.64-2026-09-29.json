@@ -1,0 +1,453 @@
+{
+  "date": "2026-09-29",
+  "platform": "Darwin x86_64",
+  "version": "1.1.64",
+  "latestConfirmedBy": ["official-native-channel-manifest", "npm-latest", "official-homebrew-tap"],
+  "archiveSha256": "4a597292d7ea91674fba0f17f01fd3c15edd741af54e842278667db5f6a8e409",
+  "binarySha256": "fa0d624a4a6e87fe5f285c4aeee9b91489f39d18ff0c80e38264e1c1cfbf4a84",
+  "installation": "Homebrew cask qoderai/qoder/qodercli upgraded from 1.1.6",
+  "privateConfig": true,
+  "credentialSnapshots": [".auth", ".models"],
+  "interactiveAuthenticationAttempted": false,
+  "records": [
+    {
+      "method": "initialize",
+      "elapsedMs": 3571,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "protocolVersion": 1,
+          "authMethods": [
+            {
+              "id": "qodercli-login",
+              "name": "Use qodercli login",
+              "description": "Use your existing qodercli login for this agent. If needed, sign in from qodercli first."
+            }
+          ],
+          "agentInfo": {
+            "name": "qoder-cli",
+            "title": "Qoder CLI",
+            "version": "1.1.64"
+          },
+          "agentCapabilities": {
+            "_meta": {
+              "qoder": {
+                "promptQueueing": true
+              }
+            },
+            "loadSession": true,
+            "sessionCapabilities": {
+              "additionalDirectories": {},
+              "close": {},
+              "delete": {},
+              "fork": {},
+              "list": {},
+              "resume": {}
+            },
+            "promptCapabilities": {
+              "image": true,
+              "embeddedContext": true
+            },
+            "mcpCapabilities": {
+              "http": true,
+              "sse": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "_session/steering",
+      "elapsedMs": 1,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {
+          "code": -32601,
+          "message": "\"Method not found\": _session/steering",
+          "data": {
+            "method": "_session/steering"
+          }
+        }
+      }
+    },
+    {
+      "method": "session/steer",
+      "elapsedMs": 0,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "error": {
+          "code": -32601,
+          "message": "\"Method not found\": session/steer",
+          "data": {
+            "method": "session/steer"
+          }
+        }
+      }
+    },
+    {
+      "method": "session/compact",
+      "elapsedMs": 0,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "error": {
+          "code": -32601,
+          "message": "\"Method not found\": session/compact",
+          "data": {
+            "method": "session/compact"
+          }
+        }
+      }
+    },
+    {
+      "method": "session/new",
+      "elapsedMs": 2348,
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "result": {
+          "sessionId": "08aa5989-4638-4a0c-a154-f558e96d1d83",
+          "modes": {
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default",
+                "description": "Prompts for approval"
+              },
+              {
+                "id": "acceptEdits",
+                "name": "Accept Edits",
+                "description": "Auto-approves edit tools"
+              },
+              {
+                "id": "auto",
+                "name": "Auto",
+                "description": "Auto-approves via the safety classifier"
+              },
+              {
+                "id": "dontAsk",
+                "name": "Don't Ask",
+                "description": "Refuses instead of prompting"
+              },
+              {
+                "id": "yolo",
+                "name": "Bypass Permissions",
+                "description": "Auto-approves all tools"
+              }
+            ],
+            "currentModeId": "default"
+          },
+          "models": {
+            "availableModels": [
+              {
+                "modelId": "qmodel_38max",
+                "name": "Qwen3.8-Max (default)",
+                "description": "Reasoning · Vision · New · 0.50x Credit"
+              },
+              {
+                "modelId": "qfmodel",
+                "name": "Qwen3.8-Flash",
+                "description": "Reasoning · Vision · New · 0.00x Credit"
+              },
+              {
+                "modelId": "deepseek/deepseek-v4-pro-pg",
+                "name": "DeepSeek-V4-Pro (DeepSeek)",
+                "description": "Reasoning"
+              }
+            ],
+            "currentModelId": "qmodel_38max"
+          },
+          "configOptions": [
+            {
+              "type": "select",
+              "id": "mode",
+              "name": "Mode",
+              "category": "mode",
+              "currentValue": "default",
+              "options": [
+                {
+                  "value": "default",
+                  "name": "Default",
+                  "description": "Prompts for approval"
+                },
+                {
+                  "value": "acceptEdits",
+                  "name": "Accept Edits",
+                  "description": "Auto-approves edit tools"
+                },
+                {
+                  "value": "auto",
+                  "name": "Auto",
+                  "description": "Auto-approves via the safety classifier"
+                },
+                {
+                  "value": "dontAsk",
+                  "name": "Don't Ask",
+                  "description": "Refuses instead of prompting"
+                },
+                {
+                  "value": "yolo",
+                  "name": "Bypass Permissions",
+                  "description": "Auto-approves all tools"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "model",
+              "name": "Model",
+              "category": "model",
+              "currentValue": "qmodel_38max",
+              "options": [
+                {
+                  "value": "qmodel_38max",
+                  "name": "Qwen3.8-Max (default)",
+                  "description": "Reasoning · Vision · New · 0.50x Credit"
+                },
+                {
+                  "value": "qfmodel",
+                  "name": "Qwen3.8-Flash",
+                  "description": "Reasoning · Vision · New · 0.00x Credit"
+                },
+                {
+                  "value": "deepseek/deepseek-v4-pro-pg",
+                  "name": "DeepSeek-V4-Pro (DeepSeek)",
+                  "description": "Reasoning"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "reasoning_effort",
+              "name": "Reasoning Effort",
+              "category": "model",
+              "currentValue": "xhigh",
+              "options": [
+                {
+                  "value": "xhigh",
+                  "name": "Extra High"
+                },
+                {
+                  "value": "low",
+                  "name": "Low"
+                },
+                {
+                  "value": "medium",
+                  "name": "Medium"
+                },
+                {
+                  "value": "none",
+                  "name": "None"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "session/set_config_option",
+      "response": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "result": {
+          "configOptions": [
+            {
+              "type": "select",
+              "id": "mode",
+              "name": "Mode",
+              "category": "mode",
+              "currentValue": "default",
+              "options": [
+                {
+                  "value": "default",
+                  "name": "Default",
+                  "description": "Prompts for approval"
+                },
+                {
+                  "value": "acceptEdits",
+                  "name": "Accept Edits",
+                  "description": "Auto-approves edit tools"
+                },
+                {
+                  "value": "auto",
+                  "name": "Auto",
+                  "description": "Auto-approves via the safety classifier"
+                },
+                {
+                  "value": "dontAsk",
+                  "name": "Don't Ask",
+                  "description": "Refuses instead of prompting"
+                },
+                {
+                  "value": "yolo",
+                  "name": "Bypass Permissions",
+                  "description": "Auto-approves all tools"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "model",
+              "name": "Model",
+              "category": "model",
+              "currentValue": "qfmodel",
+              "options": [
+                {
+                  "value": "qmodel_38max",
+                  "name": "Qwen3.8-Max (default)",
+                  "description": "Reasoning · Vision · New · 0.50x Credit"
+                },
+                {
+                  "value": "qfmodel",
+                  "name": "Qwen3.8-Flash",
+                  "description": "Reasoning · Vision · New · 0.00x Credit"
+                },
+                {
+                  "value": "deepseek/deepseek-v4-pro-pg",
+                  "name": "DeepSeek-V4-Pro (DeepSeek)",
+                  "description": "Reasoning"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "reasoning_effort",
+              "name": "Reasoning Effort",
+              "category": "model",
+              "currentValue": "xhigh",
+              "options": [
+                {
+                  "value": "xhigh",
+                  "name": "Extra High"
+                },
+                {
+                  "value": "low",
+                  "name": "Low"
+                },
+                {
+                  "value": "medium",
+                  "name": "Medium"
+                },
+                {
+                  "value": "none",
+                  "name": "None"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "concurrent-session/prompt",
+      "timeline": [
+        {
+          "event": "first_prompt_first_text_delta",
+          "elapsedMs": 3038
+        },
+        {
+          "event": "second_prompt_sent_while_first_active",
+          "elapsedMs": 3038
+        },
+        {
+          "event": "prompt_response",
+          "requestId": 10,
+          "elapsedMs": 25004,
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "result": {
+              "stopReason": "end_turn",
+              "userMessageId": "24c163ee-c214-457d-ae48-ce9810c3d896",
+              "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "totalTokens": 0
+              },
+              "_meta": {
+                "quota": {
+                  "token_count": {
+                    "input_tokens": 0,
+                    "output_tokens": 0
+                  },
+                  "model_usage": [
+                    {
+                      "model": "qfmodel",
+                      "token_count": {
+                        "input_tokens": 0,
+                        "output_tokens": 0
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "event": "prompt_response",
+          "requestId": 11,
+          "elapsedMs": 31064,
+          "response": {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "result": {
+              "stopReason": "end_turn",
+              "userMessageId": "be1c8200-0b6e-4c85-b7b4-8d9877d85628",
+              "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "totalTokens": 0
+              },
+              "_meta": {
+                "quota": {
+                  "token_count": {
+                    "input_tokens": 0,
+                    "output_tokens": 0
+                  },
+                  "model_usage": [
+                    {
+                      "model": "qfmodel",
+                      "token_count": {
+                        "input_tokens": 0,
+                        "output_tokens": 0
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "firstOutput": "1. FIRST_PROMPT continues and has not been redirected.\n2. FIRST_PROMPT continues and has not been redirected.\n3. FIRST_PROMPT continues and has not been redirected.\n4. FIRST_PROMPT continues and has not been redirected.\n5. FIRST_PROMPT continues and has not been redirected.\n6. FIRST_PROMPT continues and has not been redirected.\n7. FIRST_PROMPT continues and has not been redirected.\n8. FIRST_PROMPT continues and has not been redirected.\n9. FIRST_PROMPT continues and has not been redirected.\n10. FIRST_PROMPT continues and has not been redirected.\n11. FIRST_PROMPT continues and has not been redirected.\n12. FIRST_PROMPT continues and has not been redirected.\n13. FIRST_PROMPT continues and has not been redirected.\n14. FIRST_PROMPT continues and has not been redirected.\n15. FIRST_PROMPT continues and has not been redirected.\n16. FIRST_PROMPT continues and has not been redirected.\n17. FIRST_PROMPT continues and has not been redirected.\n18. FIRST_PROMPT continues and has not been redirected.\n19. FIRST_PROMPT continues and has not been redirected.\n20. FIRST_PROMPT continues and has not been redirected.\n21. FIRST_PROMPT continues and has not been redirected.\n22. FIRST_PROMPT continues and has not been redirected.\n23. FIRST_PROMPT continues and has not been redirected.\n24. FIRST_PROMPT continues and has not been redirected.\n25. FIRST_PROMPT continues and has not been redirected.\n26. FIRST_PROMPT continues and has not been redirected.\n27. FIRST_PROMPT continues and has not been redirected.\n28. FIRST_PROMPT continues and has not been redirected.\n29. FIRST_PROMPT continues and has not been redirected.\n30. FIRST_PROMPT continues and has not been redirected.\n31. FIRST_PROMPT continues and has not been redirected.\n32. FIRST_PROMPT continues and has not been redirected.\n33. FIRST_PROMPT continues and has not been redirected.\n34. FIRST_PROMPT continues and has not been redirected.\n35. FIRST_PROMPT continues and has not been redirected.\n36. FIRST_PROMPT continues and has not been redirected.\n37. FIRST_PROMPT continues and has not been redirected.\n38. FIRST_PROMPT continues and has not been redirected.\n39. FIRST_PROMPT continues and has not been redirected.\n40. FIRST_PROMPT continues and has not been redirected.\n41. FIRST_PROMPT continues and has not been redirected.\n42. FIRST_PROMPT continues and has not been redirected.\n43. FIRST_PROMPT continues and has not been redirected.\n44. FIRST_PROMPT continues and has not been redirected.\n45. FIRST_PROMPT continues and has not been redirected.\n46. FIRST_PROMPT continues and has not been redirected.\n47. FIRST_PROMPT continues and has not been redirected.\n48. FIRST_PROMPT continues and has not been redirected.\n49. FIRST_PROMPT continues and has not been redirected.\n50. FIRST_PROMPT continues and has not been redirected.\n51. FIRST_PROMPT continues and has not been redirected.\n52. FIRST_PROMPT continues and has not been redirected.\n53. FIRST_PROMPT continues and has not been redirected.\n54. FIRST_PROMPT continues and has not been redirected.\n55. FIRST_PROMPT continues and has not been redirected.\n56. FIRST_PROMPT continues and has not been redirected.\n57. FIRST_PROMPT continues and has not been redirected.\n58. FIRST_PROMPT continues and has not been redirected.\n59. FIRST_PROMPT continues and has not been redirected.\n60. FIRST_PROMPT continues and has not been redirected.\n61. FIRST_PROMPT continues and has not been redirected.\n62. FIRST_PROMPT continues and has not been redirected.\n63. FIRST_PROMPT continues and has not been redirected.\n64. FIRST_PROMPT continues and has not been redirected.\n65. FIRST_PROMPT continues and has not been redirected.\n66. FIRST_PROMPT continues and has not been redirected.\n67. FIRST_PROMPT continues and has not been redirected.\n68. FIRST_PROMPT continues and has not been redirected.\n69. FIRST_PROMPT continues and has not been redirected.\n70. FIRST_PROMPT continues and has not been redirected.\n71. FIRST_PROMPT continues and has not been redirected.\n72. FIRST_PROMPT continues and has not been redirected.\n73. FIRST_PROMPT continues and has not been redirected.\n74. FIRST_PROMPT continues and has not been redirected.\n75. FIRST_PROMPT continues and has not been redirected.\n76. FIRST_PROMPT continues and has not been redirected.\n77. FIRST_PROMPT continues and has not been redirected.\n78. FIRST_PROMPT continues and has not been redirected.\n79. FIRST_PROMPT continues and has not been redirected.\n80. FIRST_PROMPT continues and has not been redirected.\n81. FIRST_PROMPT continues and has not been redirected.\n82. FIRST_PROMPT continues and has not been redirected.\n83. FIRST_PROMPT continues and has not been redirected.\n84. FIRST_PROMPT continues and has not been redirected.\n85. FIRST_PROMPT continues and has not been redirected.\n86. FIRST_PROMPT continues and has not been redirected.\n87. FIRST_PROMPT continues and has not been redirected.\n88. FIRST_PROMPT continues and has not been redirected.\n89. FIRST_PROMPT continues and has not been redirected.\n90. FIRST_PROMPT continues and has not been redirected.\n91. FIRST_PROMPT continues and has not been redirected.\n92. FIRST_PROMPT continues and has not been redirected.\n93. FIRST_PROMPT continues and has not been redirected.\n94. FIRST_PROMPT continues and has not been redirected.\n95. FIRST_PROMPT continues and has not been redirected.\n96. FIRST_PROMPT continues and has not been redirected.\n97. FIRST_PROMPT continues and has not been redirected.\n98. FIRST_PROMPT continues and has not been redirected.\n99. FIRST_PROMPT continues and has not been redirected.\n100. FIRST_PROMPT continues and has not been redirected.\n101. FIRST_PROMPT continues and has not been redirected.\n102. FIRST_PROMPT continues and has not been redirected.\n103. FIRST_PROMPT continues and has not been redirected.\n104. FIRST_PROMPT continues and has not been redirected.\n105. FIRST_PROMPT continues and has not been redirected.\n106. FIRST_PROMPT continues and has not been redirected.\n107. FIRST_PROMPT continues and has not been redirected.\n108. FIRST_PROMPT continues and has not been redirected.\n109. FIRST_PROMPT continues and has not been redirected.\n110. FIRST_PROMPT continues and has not been redirected.\n111. FIRST_PROMPT continues and has not been redirected.\n112. FIRST_PROMPT continues and has not been redirected.\n113. FIRST_PROMPT continues and has not been redirected.\n114. FIRST_PROMPT continues and has not been redirected.\n115. FIRST_PROMPT continues and has not been redirected.\n116. FIRST_PROMPT continues and has not been redirected.\n117. FIRST_PROMPT continues and has not been redirected.\n118. FIRST_PROMPT continues and has not been redirected.\n119. FIRST_PROMPT continues and has not been redirected.\n120. FIRST_PROMPT continues and has not been redirected.",
+      "secondOutput": "FIRST_PROMPT",
+      "finishedRequestIds": [10, 11],
+      "firstPrompt": "Output exactly 120 numbered lines. Each line must say: FIRST_PROMPT continues and has not been redirected. Start immediately with line 1, no introduction. Do not use tools.",
+      "secondPrompt": "Change direction now: stop writing the numbered lines and reply only SECOND_PROMPT_REDIRECTED.",
+      "assertions": {
+        "bothPromptRequestsSettled": true,
+        "firstPromptFinishedAll120Lines": true,
+        "firstOutputContainedRedirectMarker": false,
+        "secondOutputMatchedRequestedMarker": false
+      }
+    }
+  ],
+  "staticObservations": {
+    "evidenceKind": "installed-binary-inspection-not-provider-backed-smoke",
+    "activePromptInput": "pendingMessages queue drained after executePromptQueueItem completes",
+    "priorityNowOrNextConsumedByAcpPrompt": false,
+    "steeringExtensionObserved": false,
+    "pendingMessageRevisionPurpose": "queued-prompt revision guard for conversation rewind"
+  },
+  "modelCallsCompleted": 2,
+  "limitations": [
+    "No tool-boundary steering scenario exercised",
+    "Second response was FIRST_PROMPT rather than the requested SECOND_PROMPT_REDIRECTED marker; not treated as evidence of successful redirection",
+    "Free qfmodel reported zero usage despite non-empty output; Adapter must test Core token fallback"
+  ]
+}
