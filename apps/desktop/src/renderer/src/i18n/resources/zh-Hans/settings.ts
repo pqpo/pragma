@@ -59,7 +59,8 @@ export const settings = {
   coreAssetSync: {
     navigation: "同步",
     title: "同步",
-    description: "通过一个 Git 仓库恢复专家、专家团、流程、知识库和技能。",
+    description:
+      "通过一个 Git 仓库，以分类 YAML 和原生文件同步专家、专家团、流程、运行配置、上下文绑定、知识库及全部用户能力。",
     remote: "Git 地址",
     branch: "分支（可选）",
     autoPush: "自动上传已发布的修改",

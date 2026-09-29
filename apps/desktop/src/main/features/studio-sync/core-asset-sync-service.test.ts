@@ -1,3 +1,5 @@
+import { parsePragmaYaml } from "@pragma/interpreter";
+import { readSyncRepository } from "./asset-sync-repository.ts";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -217,17 +219,11 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
         autoPush: false,
         pushDeletions: false,
       });
-      expect((await local.service.sync()).status).toBe("ready");
-      const data = JSON.parse(
-        (
-          await exec("git", [
-            "-C",
-            join(root, "assets.git"),
-            "show",
-            "main:pragma-core-assets.json",
-          ])
-        ).stdout,
-      ) as {
+      const synchronized = await local.service.sync();
+      expect(synchronized.status, synchronized.error).toBe("ready");
+      const checkout = join(root, "assert-files");
+      await exec("git", ["clone", barePath(root), checkout]);
+      const data = { items: [...(await readSyncRepository(checkout, true)).values()] } as {
         items: {
           kind: string;
           data: { metadata?: { description: string }; description?: string };
@@ -240,7 +236,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       expect(
         data.items.find((item) => item.kind === "knowledge" && item.data.metadata === undefined)
           ?.data.description,
-      ).toBe(description);
+      ).toBe(description.trim());
       expect((await local.service.sync()).status).toBe("ready");
     },
   );
@@ -436,7 +432,12 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       },
     ]);
     await expect(
-      exec("git", ["--git-dir", barePath(root), "show", `main:pragma-core-assets.json`]),
+      exec("git", [
+        "--git-dir",
+        barePath(root),
+        "show",
+        `main:pragma-sync/context-stores/${context.metadata.id}.pragma.yaml`,
+      ]),
     ).rejects.toThrow();
   });
 
@@ -614,13 +615,14 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     });
     const checkout = join(root, "invalid");
     await exec("git", ["clone", barePath(root), checkout]);
-    const manifestPath = join(checkout, "pragma-core-assets.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-      items: { key: string }[];
-    };
-    manifest.items[0]!.key = "knowledge:../../invalid";
-    await writeFile(manifestPath, JSON.stringify(manifest));
-    await exec("git", ["-C", checkout, "add", "pragma-core-assets.json"]);
+    const manifestPath = join(checkout, "pragma-sync", "knowledge-bases", storeId, "metadata.yaml");
+    const manifest = parsePragmaYaml(await readFile(manifestPath, "utf8")) as { id: string };
+    manifest.id = "../../invalid";
+    await writeFile(
+      manifestPath,
+      `id: ${manifest.id}\nname: Invalid\ndescription: ''\ndirectories: []\nfiles: []\n`,
+    );
+    await exec("git", ["-C", checkout, "add", "pragma-sync"]);
     await exec("git", [
       "-C",
       checkout,
@@ -654,7 +656,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await local.service.configure(configuration);
     const checkout = join(root, "missing-manifest");
     await exec("git", ["clone", barePath(root), checkout]);
-    await exec("git", ["-C", checkout, "rm", "pragma-core-assets.json"]);
+    await exec("git", ["-C", checkout, "rm", "pragma-sync/sync.yaml"]);
     await exec("git", [
       "-C",
       checkout,
@@ -680,9 +682,12 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     expect((await local.service.overview()).status).toBe("unconfigured");
     const checkout = join(root, "after-removal");
     await exec("git", ["clone", barePath(root), checkout]);
-    expect(await readFile(join(checkout, "pragma-core-assets.json"), "utf8")).toContain(
-      "Shared docs",
-    );
+    expect(
+      await readFile(
+        join(checkout, "pragma-sync", "knowledge-bases", storeId, "metadata.yaml"),
+        "utf8",
+      ),
+    ).toContain("Shared docs");
   });
 
   it("propagates future deletions only when enabled", async () => {
@@ -776,7 +781,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await mkdir(observerRoot);
     await writeFile(
       join(observerRoot, "settings.json"),
-      JSON.stringify({ schemaVersion: "pragma.core-asset-sync-settings/v1", ...configuration }),
+      JSON.stringify({ schemaVersion: "pragma.asset-sync-settings/v1", ...configuration }),
     );
     await cp(join(root, "source", "state.json"), join(observerRoot, "state.json"));
     const observer = device(observerRoot);
@@ -848,7 +853,7 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
     await writeFile(
       join(offlineRoot, "settings.json"),
       JSON.stringify({
-        schemaVersion: "pragma.core-asset-sync-settings/v1",
+        schemaVersion: "pragma.asset-sync-settings/v1",
         ...configuration,
         remote: unavailableRemote,
       }),

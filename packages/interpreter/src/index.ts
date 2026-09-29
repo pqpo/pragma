@@ -9,3 +9,4 @@ export * from "./migrations/index.ts";
 export * from "./run-dry/flow-run-dry.ts";
 export * from "./runtime/registries.ts";
 export * from "./runtime/resource-adapters.ts";
+export { formatPragmaYaml, parsePragmaYaml } from "./compiler/project-yaml.ts";

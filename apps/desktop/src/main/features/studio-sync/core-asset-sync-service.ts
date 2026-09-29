@@ -1,14 +1,25 @@
-import { createHash, randomUUID } from "node:crypto";
+import { inspectAssetReadiness } from "../asset-transfer/asset-transfer-readiness.ts";
+import type { PluginStore } from "../plugins/plugin-store.ts";
+import {
+  encodeSyncRepository,
+  readSyncRepository,
+  writeSyncRepository,
+  SYNC_DIRECTORY,
+} from "./asset-sync-repository.ts";
+import {
+  createAssetTransferService,
+  NAME_RESOLUTION_ERROR_CODE,
+  type CoreAssetSyncNameResolutionIssue,
+  type CollectedItems,
+} from "../asset-transfer/asset-transfer-service.ts";
+
+import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import {
-  PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID,
-  validatePortableSkillPackage,
-} from "@pragma/built-in-agents";
 import { withFileLock } from "@pragma/core";
-import { SemanticResourceIdSchema } from "@pragma/shared";
+
 import {
   canonicalPragmaResourceRef,
   PragmaForwardCompatibleResourceSchema,
@@ -17,15 +28,11 @@ import {
 import { z } from "zod";
 
 import {
-  CapabilityDefinitionSchema,
   CapabilityIdSchema,
-  ContextStoreSnapshotSchema,
   ContextStoreIdSchema,
   CoreAssetSyncConfigurationSchema,
   CoreAssetSyncItemSchema,
   CoreAssetSyncOverviewSchema,
-  CoreAssetSyncRepositorySchema,
-  WorkflowLayoutSchema,
   type CoreAssetSyncConfiguration,
   type CoreAssetSyncItem,
   type CoreAssetLogicalKind,
@@ -34,15 +41,13 @@ import {
   type UpdateCoreAssetSyncConfiguration,
 } from "../../../shared/contracts/index.ts";
 import type { CapabilityStore } from "../capabilities/capability-store.ts";
-import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store.ts";
+
 import type { ContextStoreStore } from "../context-stores/context-store-store.ts";
-import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
+
 import type { PragmaProjectStore } from "../projects/pragma-project-store.ts";
 import type { WorkflowLayoutStore } from "../projects/workflow-layout-store.ts";
 import { referencedPragmaResourceRefs } from "../projects/pragma-resource-references.ts";
 import {
-  bindExistingDesktopCapabilityResource,
-  bindExistingDesktopContextResource,
   classifyDesktopCapabilityResource,
   classifyDesktopContextResource,
   desktopCapabilityResourceId,
@@ -50,51 +55,11 @@ import {
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import { assertAssetGitIdentity, runAssetGit } from "../asset-git/asset-git-command.ts";
 
-const ROOT_FILE = "pragma-core-assets.json";
-const MAX_REPOSITORY_BYTES = 150 * 1024 * 1024;
-const SkillFileSchema = z
-  .object({
-    path: z
-      .string()
-      .min(1)
-      .max(2_000)
-      .refine(
-        (path) =>
-          !path.startsWith("/") &&
-          !path.includes("\\") &&
-          path
-            .split("/")
-            .every(
-              (segment) =>
-                segment !== "" &&
-                segment !== "." &&
-                segment !== ".." &&
-                segment.toLowerCase() !== ".git",
-            ),
-      ),
-    content: z.string().max(128_000),
-    executable: z.boolean(),
-  })
-  .strict();
-const SkillDataSchema = z
-  .object({
-    name: z.string(),
-    description: z.string(),
-    files: z.array(SkillFileSchema).min(1).max(1_000),
-  })
-  .strict();
-const KnowledgeDataSchema = z
-  .object({
-    name: z.string(),
-    description: z.string(),
-    directories: ContextStoreSnapshotSchema.shape.directories,
-    files: ContextStoreSnapshotSchema.shape.files,
-  })
-  .strict();
 const StateSchema = z
   .object({
-    schemaVersion: z.literal("pragma.core-asset-sync-state/v1"),
+    schemaVersion: z.literal("pragma.asset-sync-state/v1"),
     source: z.string(),
+    repositoryInitialized: z.boolean(),
     bases: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)),
     remoteItems: z
       .record(
@@ -104,28 +69,35 @@ const StateSchema = z
       .default({}),
     ignoredRemote: z.array(z.string()),
     conflicts: z.array(z.string()),
+    restoreConflicts: z.array(z.string()).default([]),
     syncedAt: z.string().datetime().optional(),
+  })
+  .strict();
+const ChangeSchema = z
+  .object({
+    key: z.string(),
+    expectedRevision: z.number().int().positive().optional(),
+    local: CoreAssetSyncItemSchema.optional(),
+    remote: CoreAssetSyncItemSchema.optional(),
+  })
+  .strict();
+const JournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.asset-sync-journal/v1"),
+    source: z.string(),
+    changes: z.array(ChangeSchema),
+    expected: z.record(z.string(), z.string().nullable()),
+    incomingState: StateSchema,
   })
   .strict();
 type SyncState = z.infer<typeof StateSchema>;
 type ItemMap = Map<string, CoreAssetSyncItem>;
-const NAME_RESOLUTION_ERROR_CODE = "core_asset_sync.name_unresolved";
-interface CoreAssetSyncNameResolutionIssue {
-  readonly code: typeof NAME_RESOLUTION_ERROR_CODE;
-  readonly resourceKey: string;
-  readonly resourceKind: "capability" | "context-store";
-  readonly bindingId: string;
-}
-interface CollectedItems {
-  readonly items: ItemMap;
-  readonly nameResolutionIssues: ReadonlyMap<string, CoreAssetSyncNameResolutionIssue>;
-}
-
 export interface CoreAssetSyncService {
   overview(): Promise<CoreAssetSyncOverview>;
   configure(input: UpdateCoreAssetSyncConfiguration): Promise<CoreAssetSyncOverview>;
   removeConfiguration(): Promise<void>;
   sync(): Promise<CoreAssetSyncOverview>;
+  automatic(): Promise<CoreAssetSyncOverview>;
   refresh(): Promise<CoreAssetSyncOverview>;
   resolve(key: string, choice: "local" | "remote"): Promise<CoreAssetSyncOverview>;
   restore(key: string): Promise<CoreAssetSyncOverview>;
@@ -138,6 +110,7 @@ export function createCoreAssetSyncService(options: {
   readonly layouts: WorkflowLayoutStore;
   readonly stores: ContextStoreStore;
   readonly capabilities: CapabilityStore;
+  readonly plugins?: PluginStore;
   readonly getRuntimes: () => Promise<readonly DesktopRuntimeAvailability[]>;
   readonly warn?: (message: string, error: unknown) => void;
   readonly reportNameResolutionIssue?: (issue: CoreAssetSyncNameResolutionIssue) => void;
@@ -179,177 +152,21 @@ export function createCoreAssetSyncService(options: {
       if (!isMissing(error)) throw error;
     }
     return {
-      schemaVersion: "pragma.core-asset-sync-state/v1",
+      schemaVersion: "pragma.asset-sync-state/v1",
       source,
+      repositoryInitialized: false,
       bases: {},
       remoteItems: {},
       ignoredRemote: [],
       conflicts: [],
+      restoreConflicts: [],
     };
   };
   const writeState = async (state: SyncState): Promise<void> =>
     writeAtomic(options.statePath, StateSchema.parse(state));
 
-  const collect = async (): Promise<CollectedItems> => {
-    const result: ItemMap = new Map();
-    const nameResolutionIssues = new Map<string, CoreAssetSyncNameResolutionIssue>();
-    const add = (
-      kind: CoreAssetSyncItem["kind"],
-      id: string,
-      name: string,
-      data: unknown,
-    ): void => {
-      const key = `${kind}:${id}`;
-      result.set(
-        key,
-        CoreAssetSyncItemSchema.parse({ key, kind, name, fingerprint: fingerprint(data), data }),
-      );
-    };
-    const [snapshot, stores, capabilities] = await Promise.all([
-      options.project.get(),
-      options.stores.list(),
-      options.capabilities.list(),
-    ]);
-    const storesById = new Map(stores.map((store) => [store.id, store] as const));
-    const capabilitiesById = new Map(
-      capabilities.map((capability) => [capability.manifest.id, capability] as const),
-    );
-    const resources = snapshot.resources.filter((resource) => {
-      if (resource.kind === "Capability") {
-        const binding = classifyDesktopCapabilityResource(resource);
-        return binding !== undefined && binding.id !== PRAGMA_MANAGEMENT_DESKTOP_CAPABILITY_ID;
-      }
-      if (resource.kind === "ContextStore")
-        return classifyDesktopContextResource(resource) !== undefined;
-      return ["Expert", "ExpertTeam", "Flow", "RuntimeProfile"].includes(resource.kind);
-    });
-    for (const resource of resources) {
-      const kind =
-        resource.kind === "Expert"
-          ? "expert"
-          : resource.kind === "ExpertTeam"
-            ? "team"
-            : resource.kind === "Flow"
-              ? "flow"
-              : resource.kind === "RuntimeProfile"
-                ? "runtime-profile"
-                : resource.kind === "Capability"
-                  ? "capability"
-                  : "knowledge";
-      let portable: PragmaResource =
-        resource.kind === "Expert"
-          ? {
-              ...resource,
-              spec: {
-                ...resource.spec,
-                plugins: resource.spec.plugins.map((plugin) => ({ ref: plugin.ref })),
-              },
-            }
-          : resource;
-      let name = resource.metadata.name;
-      if (resource.kind === "ContextStore") {
-        const bindingId = classifyDesktopContextResource(resource);
-        const store = bindingId === undefined ? undefined : storesById.get(bindingId);
-        if (store !== undefined) {
-          name = store.name;
-          portable = bindExistingDesktopContextResource(resource, store.id, {
-            name: store.name,
-            description: store.description,
-          });
-        } else if (bindingId !== undefined) {
-          const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
-          nameResolutionIssues.set(
-            key,
-            reportNameResolutionFailure(key, "context-store", bindingId),
-          );
-        }
-      } else if (resource.kind === "Capability") {
-        const binding = classifyDesktopCapabilityResource(resource);
-        if (binding !== undefined) {
-          const capability = capabilitiesById.get(binding.id);
-          if (capability !== undefined) {
-            name = capability.definition.name;
-            portable = bindExistingDesktopCapabilityResource(resource, binding, {
-              name: capability.definition.name,
-              description: capability.definition.description,
-            });
-          } else {
-            const key = `${kind}:${canonicalPragmaResourceRef(resource)}`;
-            nameResolutionIssues.set(
-              key,
-              reportNameResolutionFailure(key, "capability", binding.id),
-            );
-          }
-        }
-      }
-      add(kind, canonicalPragmaResourceRef(resource), name, portable);
-      if (resource.kind === "Flow") {
-        const layout = await options.layouts.get({
-          projectId: snapshot.projectId,
-          flowId: resource.metadata.id,
-        });
-        if (layout !== null)
-          add("flow-layout", resource.metadata.id, resource.metadata.name, {
-            nodes: layout.nodes,
-            viewport: layout.viewport,
-          });
-      }
-    }
-    for (const store of stores) {
-      const storeSnapshot = await options.stores.getSnapshot(store.id);
-      add("knowledge", store.id, store.name, {
-        name: store.name,
-        description: store.description,
-        directories: storeSnapshot.directories,
-        files: storeSnapshot.files,
-      });
-    }
-    const referencedCapabilities = new Set(
-      resources
-        .flatMap((resource) =>
-          resource.kind === "Capability" ? [classifyDesktopCapabilityResource(resource)?.id] : [],
-        )
-        .filter((id): id is string => id !== undefined),
-    );
-    for (const capability of capabilities) {
-      if (capability.managedBy === "system") continue;
-      const id = capability.manifest.id;
-      if (capability.definition.kind !== "skill" && !referencedCapabilities.has(id)) continue;
-      if (capability.definition.kind !== "skill") {
-        add("capability", id, capability.definition.name, capability.definition);
-        continue;
-      }
-      const root = await options.capabilities.skillFilesPath(
-        id,
-        capability.manifest.latestRevision,
-      );
-      const tree = await scanSkillWorkingTree(root, {
-        ...(capability.definition.executablePaths === undefined
-          ? {}
-          : { executablePaths: new Set(capability.definition.executablePaths) }),
-      });
-      const files = await Promise.all(
-        tree.entries.map(async (entry) => {
-          const bytes = await readFile(join(root, entry.path));
-          const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-          if (content.includes("\0"))
-            throw new Error(`Skill contains a binary file: ${entry.path}`);
-          return { path: entry.path, content, executable: entry.executable };
-        }),
-      );
-      add(
-        "skill",
-        id,
-        capability.definition.name,
-        SkillDataSchema.parse({
-          name: capability.definition.name,
-          description: capability.definition.description,
-          files,
-        }),
-      );
-    }
-    return { items: result, nameResolutionIssues };
-  };
+  const transfer = createAssetTransferService({ ...options, reportNameResolutionFailure });
+  const collect = transfer.collectAssets;
 
   const readiness = async (items: ItemMap): Promise<Map<string, string>> => {
     const unavailable = new Map<string, string>();
@@ -400,6 +217,56 @@ export function createCoreAssetSyncService(options: {
           !model.thinking?.supportedLevels.some((level) => level.value === config.thinkingLevel))
       )
         unavailable.set(item.key, "Choose an available local harness and model in Studio.");
+    }
+    if (options.plugins) {
+      const diagnostics = await inspectAssetReadiness(resources, {
+        capabilities: options.capabilities,
+        contextStores: options.stores,
+        plugins: options.plugins,
+        runtimes,
+        checkContextContent: false,
+      });
+      for (const diagnostic of diagnostics)
+        if (diagnostic.status !== "ready") {
+          for (const item of items.values())
+            if (item.key.endsWith(`:${diagnostic.resourceRef}`))
+              unavailable.set(
+                item.key,
+                `${diagnostic.code}: ${diagnostic.message} (${diagnostic.action})`,
+              );
+        }
+    }
+    for (const capability of await options.capabilities.list())
+      if (capability.health?.status === "needs_attention") {
+        const id = capability.manifest.id;
+        unavailable.set(
+          `${capability.definition.kind === "skill" ? "skill" : "capability"}:${id}`,
+          "capability_needs_attention: Configure this capability in Studio.",
+        );
+        for (const resource of resources)
+          if (classifyDesktopCapabilityResource(resource)?.id === id)
+            unavailable.set(
+              `capability:${canonicalPragmaResourceRef(resource)}`,
+              "capability_needs_attention: Configure this capability in Studio.",
+            );
+      }
+    let updated = true;
+    while (updated) {
+      updated = false;
+      for (const resource of resources) {
+        const key = `${resource.kind === "Expert" ? "expert" : resource.kind === "ExpertTeam" ? "team" : resource.kind === "Flow" ? "flow" : resource.kind === "RuntimeProfile" ? "runtime-profile" : resource.kind === "Capability" ? "capability" : "knowledge"}:${canonicalPragmaResourceRef(resource)}`;
+        if (unavailable.has(key)) continue;
+        const missing = [...referencedPragmaResourceRefs([resource])].find((ref) =>
+          [...unavailable.keys()].some((candidate) => candidate.endsWith(`:${ref}`)),
+        );
+        if (missing) {
+          unavailable.set(
+            key,
+            "dependency_needs_attention: Configure the required asset in Studio.",
+          );
+          updated = true;
+        }
+      }
     }
     return unavailable;
   };
@@ -480,249 +347,82 @@ export function createCoreAssetSyncService(options: {
     });
   };
 
-  const applyRemote = async (
-    changes: readonly { key: string; local?: CoreAssetSyncItem; remote?: CoreAssetSyncItem }[],
-  ): Promise<void> => {
-    const projectUpserts: PragmaResource[] = [];
-    const projectRemovals: string[] = [];
-    const deferredRemovals: { kind: "knowledge" | "skill" | "capability"; id: string }[] = [];
-    const capabilityUpdates: {
-      id: string;
-      definition: Exclude<z.infer<typeof CapabilityDefinitionSchema>, { kind: "skill" }>;
-    }[] = [];
-    for (const { remote } of changes) {
-      if (remote?.kind !== "capability" || remote.key.startsWith("capability:capability:"))
-        continue;
-      const definition = CapabilityDefinitionSchema.parse(remote.data);
-      if (definition.kind === "skill") throw new Error("Skill payload is missing.");
-      capabilityUpdates.push({ id: remote.key.slice("capability:".length), definition });
+  const journalPath = join(dirname(options.statePath), "restore-journal.json");
+  const recoverImport = async (source: string): Promise<"complete" | "conflict"> => {
+    let journal: z.infer<typeof JournalSchema>;
+    try {
+      journal = JournalSchema.parse(JSON.parse(await readFile(journalPath, "utf8")));
+    } catch (error) {
+      if (isMissing(error)) return "complete";
+      throw error;
     }
-    for (const { local, remote } of changes) {
-      const item = remote ?? local;
-      if (item === undefined) continue;
-      if (
-        ["expert", "team", "flow", "runtime-profile"].includes(item.kind) ||
-        (item.kind === "capability" && item.key.startsWith("capability:capability:")) ||
-        (item.kind === "knowledge" && item.key.startsWith("knowledge:context-store:"))
-      ) {
-        if (remote === undefined) projectRemovals.push(item.key.slice(item.kind.length + 1));
-        else projectUpserts.push(PragmaForwardCompatibleResourceSchema.parse(remote.data));
-        continue;
-      }
-      if (item.kind === "flow-layout") {
-        const flowId = item.key.slice("flow-layout:".length);
-        if (remote === undefined)
-          await options.layouts.remove({ projectId: options.project.projectId, flowId });
-        else {
-          const layout = z
-            .object({
-              nodes: WorkflowLayoutSchema.shape.nodes,
-              viewport: WorkflowLayoutSchema.shape.viewport,
-            })
-            .parse(remote.data);
-          await options.layouts.save({
-            ...layout,
-            schemaVersion: "pragma.desktop-flow-layout/v2",
-            projectId: options.project.projectId,
-            flowId,
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        continue;
-      }
-      if (item.kind === "knowledge") {
-        const id = item.key.slice("knowledge:".length);
-        const localStore = (await options.stores.list()).find((candidate) => candidate.id === id);
-        if (remote === undefined) {
-          if (localStore) deferredRemovals.push({ kind: "knowledge", id });
+    if (journal.source !== source) {
+      // Configuration changes cancel unfinished imports from the previous repository.
+      // Already published assets remain local and are reconciled against the selected source.
+      await rm(journalPath, { force: true });
+      return "complete";
+    }
+    const interruptedConflicts = (current: CollectedItems): string[] =>
+      journal.changes.flatMap((change) => {
+        const actual = current.items.get(change.key)?.fingerprint ?? null;
+        if (actual === (change.remote?.fingerprint ?? null)) return [];
+        return actual !== journal.expected[change.key] ||
+          (change.expectedRevision !== undefined &&
+            change.expectedRevision !== current.revisions.get(change.key))
+          ? [change.key]
+          : [];
+      });
+    const deferConflicts = async (current: CollectedItems, conflicts: readonly string[]) => {
+      const state = await readState(source);
+      const bases = { ...state.bases };
+      // Only completed stages advance their baseline. Pending stages are replanned from Git.
+      for (const change of journal.changes) {
+        if (
+          (current.items.get(change.key)?.fingerprint ?? null) !==
+          (change.remote?.fingerprint ?? null)
+        )
           continue;
-        }
-        const data = KnowledgeDataSchema.parse(remote.data);
-        if (localStore === undefined)
-          await options.stores.createFromSnapshot({
-            id,
-            ...data,
-            author: "sync",
-            summary: "Restore core assets from Git.",
-          });
-        else
-          await options.stores.appendSnapshot(
-            {
-              storeId: id,
-              baseRevision: localStore.contentRevision,
-              baseSnapshotHash: localStore.snapshotHash,
-              snapshotHash: hashKnowledge(data),
-              ...data,
-              summary: "Restore core assets from Git.",
-            },
-            "sync",
-          );
-        continue;
+        const incomingBase = journal.incomingState.bases[change.key];
+        if (incomingBase === undefined) delete bases[change.key];
+        else bases[change.key] = incomingBase;
       }
-      const id = item.key.slice(item.kind.length + 1);
-      const localCapability = (await options.capabilities.list()).find(
-        (candidate) => candidate.manifest.id === id,
-      );
-      if (remote === undefined) {
-        if (localCapability)
-          deferredRemovals.push({ kind: item.kind === "skill" ? "skill" : "capability", id });
-        continue;
-      }
-      if (item.kind === "capability") {
-        const definition = CapabilityDefinitionSchema.parse(remote.data);
-        if (definition.kind === "skill") throw new Error("Skill payload is missing.");
-        continue;
-      }
-      if (item.kind === "skill") {
-        const data = SkillDataSchema.parse(remote.data);
-        const validation = validatePortableSkillPackage(
-          {
-            name: data.name,
-            description: data.description,
-            files: data.files.map(({ path, content }) => ({ path, content })),
-          },
-          {
-            executablePaths: new Set(
-              data.files.filter((file) => file.executable).map((file) => file.path),
-            ),
-          },
-        );
-        if (!validation.passed)
-          throw new Error(
-            `Invalid incoming Skill: ${validation.diagnostics[0]?.message ?? "unknown error"}`,
-          );
-        const root = await mkdtemp(join(tmpdir(), "pragma-core-skill-"));
-        try {
-          for (const file of data.files) {
-            const path = join(root, file.path);
-            await mkdir(dirname(path), { recursive: true });
-            await writeFile(path, file.content, { mode: file.executable ? 0o700 : 0o600 });
-          }
-          const tree = await scanSkillWorkingTree(root, {
-            executablePaths: new Set(
-              data.files.filter((file) => file.executable).map((file) => file.path),
-            ),
-          });
-          const executablePaths = data.files
-            .filter((file) => file.executable)
-            .map((file) => file.path);
-          if (localCapability === undefined)
-            await options.capabilities.publishNewSkillRevisionCandidate({
-              id,
-              name: data.name,
-              description: data.description,
-              sourcePath: root,
-              candidateContentHash: tree.hash,
-              executablePaths,
-            });
-          else if (localCapability.definition.kind === "skill")
-            await options.capabilities.publishSkillRevisionCandidate({
-              id,
-              baseRevision: localCapability.manifest.latestRevision,
-              baseContentHash: localCapability.definition.contentHash,
-              sourcePath: root,
-              candidateContentHash: tree.hash,
-              executablePaths,
-            });
-          else throw new Error(`Capability ${id} is not a Skill.`);
-        } finally {
-          await rm(root, { recursive: true, force: true });
-        }
-      }
-    }
-    const current = await options.project.get();
-    const replaced = new Set([
-      ...projectRemovals,
-      ...projectUpserts.map(canonicalPragmaResourceRef),
-    ]);
-    const desiredResources = [
-      ...current.resources.filter(
-        (resource) => !replaced.has(canonicalPragmaResourceRef(resource)),
-      ),
-      ...projectUpserts,
-    ];
-    const referencedTools = (resources: readonly PragmaResource[], id: string): string[] => {
-      const refs = new Set(
-        resources.flatMap((resource) =>
-          classifyDesktopCapabilityResource(resource)?.id === id
-            ? [canonicalPragmaResourceRef(resource)]
-            : [],
-        ),
-      );
-      return resources.flatMap((resource) =>
-        resource.kind === "Expert"
-          ? resource.spec.capabilities.flatMap((reference) =>
-              reference.kind === "tools" && refs.has(reference.ref) ? (reference.tools ?? []) : [],
-            )
-          : [],
-      );
+      await writeState({
+        ...state,
+        repositoryInitialized:
+          state.repositoryInitialized || journal.incomingState.repositoryInitialized,
+        bases,
+        remoteItems: journal.incomingState.remoteItems,
+        conflicts: [...new Set([...state.conflicts, ...conflicts])],
+        restoreConflicts: [...new Set([...state.restoreConflicts, ...conflicts])],
+      });
+      // Persist the conflict before retiring the operation, so a crash repeats this transition.
+      await rm(journalPath, { force: true });
     };
-    const availableTools = (definition: z.infer<typeof CapabilityDefinitionSchema>): Set<string> =>
-      new Set(
-        definition.kind === "code_service"
-          ? [definition.tool.name]
-          : definition.kind === "skill"
-            ? []
-            : definition.tools.map((tool) => tool.name),
-      );
-    let projectFirst = false;
-    for (const { id, definition } of capabilityUpdates) {
-      const tools = availableTools(definition);
-      const missingDesired = referencedTools(desiredResources, id).filter(
-        (tool) => !tools.has(tool),
-      );
-      if (missingDesired.length > 0)
-        throw new Error(
-          `Incoming Capability ${id} lacks tools selected by incoming Experts: ${missingDesired.join(", ")}.`,
-        );
-      if (referencedTools(current.resources, id).some((tool) => !tools.has(tool)))
-        projectFirst = true;
+    let current = await collect();
+    let conflicts = interruptedConflicts(current);
+    if (conflicts.length > 0) {
+      await deferConflicts(current, conflicts);
+      return "conflict";
     }
-    const projectChanges = {
-      baseRevision: current.revision,
-      upserts: projectUpserts,
-      removals: projectRemovals,
-    };
-    const hasProjectChanges = projectUpserts.length > 0 || projectRemovals.length > 0;
-    if (hasProjectChanges) {
-      const diagnostics = await options.project.validateChanges(projectChanges);
-      const error = diagnostics.find((diagnostic) => diagnostic.severity === "error");
-      if (error) throw new Error(`Incoming project is invalid: ${error.message}`);
+    const pending = journal.changes.filter(
+      (change) =>
+        (current.items.get(change.key)?.fingerprint ?? null) !==
+        (change.remote?.fingerprint ?? null),
+    );
+    try {
+      await transfer.applyImport(await transfer.prepareImport(pending));
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith("asset_sync.restore_conflict:"))
+        throw error;
+      current = await collect();
+      conflicts = interruptedConflicts(current);
+      if (conflicts.length === 0) throw error;
+      await deferConflicts(current, conflicts);
+      return "conflict";
     }
-    if (projectFirst && hasProjectChanges) await options.project.apply(projectChanges);
-    for (const { id, definition } of capabilityUpdates) {
-      const localCapability = (await options.capabilities.list()).find(
-        (candidate) => candidate.manifest.id === id,
-      );
-      if (localCapability === undefined)
-        await options.capabilities.create({ definition, credentials: {} }, { id });
-      else
-        await options.capabilities.update({
-          id,
-          baseRevision: localCapability.manifest.latestRevision,
-          definition,
-          credentials: {},
-        });
-    }
-    if (!projectFirst && hasProjectChanges) await options.project.apply(projectChanges);
-    for (const removal of deferredRemovals) {
-      if (removal.kind === "knowledge") {
-        const store = (await options.stores.list()).find(
-          (candidate) => candidate.id === removal.id,
-        );
-        if (store)
-          await options.stores.remove(removal.id, {
-            revision: store.contentRevision,
-            snapshotHash: store.snapshotHash,
-          });
-      } else {
-        const capability = (await options.capabilities.list()).find(
-          (candidate) => candidate.manifest.id === removal.id,
-        );
-        if (capability)
-          await options.capabilities.remove(removal.id, capability.manifest.latestRevision);
-      }
-    }
+    await writeState(journal.incomingState);
+    await rm(journalPath, { force: true });
+    return "complete";
   };
 
   const run = async (
@@ -736,27 +436,137 @@ export function createCoreAssetSyncService(options: {
       const effectiveIntent = intent === "automatic" ? (config.autoPush ? "full" : "pull") : intent;
       running = true;
       try {
+        await recoverImport(sourceKey(config));
         for (let attempt = 0; attempt < 3; attempt += 1) {
           const source = sourceKey(config);
           const state = await readState(source);
           const checkout = await checkoutRepository(config);
           try {
-            const remote = await readRepository(
-              checkout.root,
-              Object.keys(state.bases).length > 0 || Object.keys(state.remoteItems).length > 0,
-            );
-            const { items: local, nameResolutionIssues } = await collect();
+            const remote = await readSyncRepository(checkout.root, state.repositoryInitialized);
+            const { items: local, revisions, nameResolutionIssues } = await collect();
             const nextRemote = new Map(remote);
             const changes: {
               key: string;
+              expectedRevision?: number;
               local?: CoreAssetSyncItem;
               remote?: CoreAssetSyncItem;
             }[] = [];
             const conflicts: string[] = [];
             const ignored = new Set(state.ignoredRemote);
             const bases = { ...state.bases };
-            let pushNeeded = false;
-            for (const key of new Set([...local.keys(), ...remote.keys(), ...Object.keys(bases)])) {
+            const repositoryInitialized = await lstat(
+              join(checkout.root, SYNC_DIRECTORY, "sync.yaml"),
+            )
+              .then(() => true)
+              .catch((error: unknown) => {
+                if (isMissing(error)) return false;
+                throw error;
+              });
+            let pushNeeded = effectiveIntent === "full" && !repositoryInitialized;
+            const keys = new Set([
+              ...local.keys(),
+              ...remote.keys(),
+              ...Object.keys(bases),
+              ...state.restoreConflicts,
+            ]);
+            const groups = new Map<string, string[]>();
+            for (const key of keys) {
+              const item = local.get(key) ?? remote.get(key);
+              const group = item ? logicalAssetIdentity(item, local, remote).assetKey : key;
+              groups.set(group, [...(groups.get(group) ?? []), key]);
+            }
+            const groupChoices = new Map<string, "local" | "remote">();
+            const groupedConflicts = new Set<string>();
+            for (const members of groups.values()) {
+              if (
+                (!resolution || !members.includes(resolution.key)) &&
+                members.every((key) => !local.has(key)) &&
+                members.some((key) => state.ignoredRemote.includes(key)) &&
+                !members.some((key) => state.restoreConflicts.includes(key))
+              ) {
+                for (const key of members) ignored.add(key);
+                continue;
+              }
+              const localChanged = members.some(
+                (key) => local.get(key)?.fingerprint !== bases[key],
+              );
+              const remoteChanged = members.some(
+                (key) => remote.get(key)?.fingerprint !== bases[key],
+              );
+              const equal = members.every(
+                (key) => local.get(key)?.fingerprint === remote.get(key)?.fingerprint,
+              );
+              if (resolution && members.includes(resolution.key))
+                for (const key of members) groupChoices.set(key, resolution.choice);
+              else if (
+                !equal &&
+                ((localChanged && remoteChanged) ||
+                  members.some((key) => state.restoreConflicts.includes(key)))
+              )
+                for (const key of members) groupedConflicts.add(key);
+            }
+            for (const item of [...remote.values(), ...local.values()]) {
+              const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+              if (!parsed.success) continue;
+              const storeId = classifyDesktopContextResource(parsed.data);
+              if (
+                storeId &&
+                (groupedConflicts.has(`knowledge:${storeId}`) ||
+                  (ignored.has(`knowledge:${storeId}`) &&
+                    !local.has(`knowledge:${storeId}`) &&
+                    groupChoices.get(`knowledge:${storeId}`) !== "remote" &&
+                    !ignored.has(item.key)))
+              )
+                groupedConflicts.add(item.key);
+            }
+            // Block incoming changes that would depend on a conflicted resource or payload.
+            const blockedRefs = new Set(
+              [
+                ...new Set([
+                  ...groupedConflicts,
+                  ...[...ignored].filter(
+                    (key) => !local.has(key) && groupChoices.get(key) !== "remote",
+                  ),
+                ]),
+              ].flatMap((key) => {
+                const item = remote.get(key) ?? local.get(key);
+                const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item?.data);
+                return parsed.success ? [canonicalPragmaResourceRef(parsed.data)] : [];
+              }),
+            );
+            let grew = true;
+            while (grew) {
+              grew = false;
+              for (const members of groups.values())
+                if (members.some((key) => groupedConflicts.has(key)))
+                  for (const key of members) {
+                    if (groupedConflicts.has(key)) continue;
+                    groupedConflicts.add(key);
+                    const parsed = PragmaForwardCompatibleResourceSchema.safeParse(
+                      (remote.get(key) ?? local.get(key))?.data,
+                    );
+                    if (parsed.success) blockedRefs.add(canonicalPragmaResourceRef(parsed.data));
+                    grew = true;
+                  }
+              for (const item of [...remote.values(), ...local.values()]) {
+                const parsed = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
+                if (!parsed.success || groupedConflicts.has(item.key)) continue;
+                if (
+                  [...referencedPragmaResourceRefs([parsed.data])].some((ref) =>
+                    blockedRefs.has(ref),
+                  )
+                ) {
+                  groupedConflicts.add(item.key);
+                  blockedRefs.add(canonicalPragmaResourceRef(parsed.data));
+                  grew = true;
+                }
+              }
+            }
+            for (const key of keys) {
+              if (groupedConflicts.has(key)) {
+                conflicts.push(key);
+                continue;
+              }
               const here = local.get(key);
               const there = remote.get(key);
               const base = bases[key];
@@ -769,15 +579,15 @@ export function createCoreAssetSyncService(options: {
               if (
                 here === undefined &&
                 there !== undefined &&
-                state.ignoredRemote.includes(key) &&
-                resolution?.key !== key
+                ignored.has(key) &&
+                !groupChoices.has(key)
               ) {
                 ignored.add(key);
                 continue;
               }
               const localChanged = here?.fingerprint !== base;
               const remoteChanged = there?.fingerprint !== base;
-              const choice = resolution?.key === key ? resolution.choice : undefined;
+              const choice = groupChoices.get(key);
               if (localChanged && remoteChanged && choice === undefined) {
                 conflicts.push(key);
                 continue;
@@ -813,6 +623,7 @@ export function createCoreAssetSyncService(options: {
               ) {
                 changes.push({
                   key,
+                  ...(revisions.has(key) ? { expectedRevision: revisions.get(key)! } : {}),
                   ...(here ? { local: here } : {}),
                   ...(there ? { remote: there } : {}),
                 });
@@ -824,8 +635,20 @@ export function createCoreAssetSyncService(options: {
               if (here && there) conflicts.push(key);
               else if (!here && there) ignored.add(key);
             }
+            const prepared = await transfer.prepareImport(changes);
+            if (effectiveIntent === "full")
+              for (const change of prepared)
+                if (
+                  change.remote &&
+                  change.remote.fingerprint !== remote.get(change.key)?.fingerprint
+                ) {
+                  nextRemote.set(change.key, change.remote);
+                  bases[change.key] = change.remote.fingerprint;
+                  pushNeeded = true;
+                }
             const nextState = StateSchema.parse({
               ...state,
+              repositoryInitialized: repositoryInitialized || pushNeeded,
               bases,
               remoteItems: Object.fromEntries(
                 [...nextRemote].map(([key, item]) => [
@@ -839,8 +662,47 @@ export function createCoreAssetSyncService(options: {
               ),
               ignoredRemote: [...ignored],
               conflicts,
+              restoreConflicts: state.restoreConflicts.filter((key) => conflicts.includes(key)),
             });
-            await applyRemote(changes);
+            if (pushNeeded) encodeSyncRepository(nextRemote);
+            if (changes.length > 0) {
+              const incomingBases = { ...state.bases };
+              for (const change of changes) {
+                if (change.remote) incomingBases[change.key] = change.remote.fingerprint;
+                else delete incomingBases[change.key];
+              }
+              await writeAtomic(
+                journalPath,
+                JournalSchema.parse({
+                  schemaVersion: "pragma.asset-sync-journal/v1",
+                  source,
+                  changes: prepared,
+                  expected: Object.fromEntries(
+                    changes.map((change) => [
+                      change.key,
+                      local.get(change.key)?.fingerprint ?? null,
+                    ]),
+                  ),
+                  incomingState: {
+                    ...state,
+                    repositoryInitialized,
+                    bases: incomingBases,
+                    remoteItems: Object.fromEntries(
+                      [...remote].map(([key, item]) => [
+                        key,
+                        { kind: item.kind, name: item.name, fingerprint: item.fingerprint },
+                      ]),
+                    ),
+                  },
+                }),
+              );
+              if ((await recoverImport(source)) === "conflict") {
+                if (attempt < 2) continue;
+                lastError = undefined;
+                running = false;
+                return await makeOverview(config);
+              }
+            }
             if (pushNeeded) await publishRepository(checkout, nextRemote);
             nextState.syncedAt = new Date().toISOString();
             await writeState(nextState);
@@ -877,7 +739,7 @@ export function createCoreAssetSyncService(options: {
       let checkout: Checkout | undefined;
       try {
         checkout = await checkoutRepository(config);
-        const remote = await readRepository(checkout.root, true);
+        const remote = await readSyncRepository(checkout.root, true);
         return await makeOverview(config, state, remote, local);
       } catch (error) {
         options.warn?.("Core asset sync overview could not read remote identity metadata.", error);
@@ -889,7 +751,7 @@ export function createCoreAssetSyncService(options: {
     async configure(input) {
       const config = CoreAssetSyncConfigurationSchema.parse({
         ...input,
-        schemaVersion: "pragma.core-asset-sync-settings/v1",
+        schemaVersion: "pragma.asset-sync-settings/v1",
       });
       await withFileLock(`${options.statePath}.lock`, async () => {
         const previous = await readConfig();
@@ -906,16 +768,21 @@ export function createCoreAssetSyncService(options: {
           }
           await writeState({ ...state, ignoredRemote: [...ignored] });
         }
+        if (previous === undefined || sourceKey(previous) !== sourceKey(config))
+          await rm(journalPath, { force: true });
         await writeAtomic(options.configurationPath, config);
       });
       return await run("full");
     },
     async removeConfiguration() {
-      await withFileLock(`${options.statePath}.lock`, async () =>
-        rm(options.configurationPath, { force: true }),
-      );
+      await withFileLock(`${options.statePath}.lock`, async () => {
+        await rm(options.configurationPath, { force: true });
+        await rm(journalPath, { force: true });
+        lastError = undefined;
+      });
     },
     sync: async () => await run("full"),
+    automatic: async () => await run("automatic"),
     refresh: async () => await run("pull"),
     resolve: async (key, choice) => await run("full", { key, choice }),
     restore: async (key) => await run("pull", { key, choice: "remote" }),
@@ -940,10 +807,12 @@ function logicalAssetIdentity(
   if (resource?.kind === "Capability") {
     const capabilityId = classifyDesktopCapabilityResource(resource)?.id;
     if (capabilityId !== undefined) {
-      const definition = itemSummaryAt(`capability:${capabilityId}`, local, remote, cached);
+      const definition =
+        itemSummaryAt(`capability:${capabilityId}`, local, remote, cached) ??
+        itemSummaryAt(`skill:${capabilityId}`, local, remote, cached);
       return {
-        assetKey: `capability:${capabilityId}`,
-        assetKind: "capability",
+        assetKey: `${definition?.kind === "skill" ? "skill" : "capability"}:${capabilityId}`,
+        assetKind: definition?.kind === "skill" ? "skill" : "capability",
         assetName: definition?.name ?? resource.metadata.name,
       };
     }
@@ -1002,10 +871,12 @@ function logicalAssetIdentity(
       cached,
     );
     if (capabilityId !== undefined) {
-      const definition = itemSummaryAt(`capability:${capabilityId}`, local, remote, cached);
+      const definition =
+        itemSummaryAt(`capability:${capabilityId}`, local, remote, cached) ??
+        itemSummaryAt(`skill:${capabilityId}`, local, remote, cached);
       return {
-        assetKey: `capability:${capabilityId}`,
-        assetKind: "capability",
+        assetKey: `${definition?.kind === "skill" ? "skill" : "capability"}:${capabilityId}`,
+        assetKind: definition?.kind === "skill" ? "skill" : "capability",
         assetName: definition?.name ?? item.name,
       };
     }
@@ -1079,19 +950,6 @@ function needsRemoteIdentity(state: SyncState, local: ItemMap): boolean {
 function sourceKey(config: CoreAssetSyncConfiguration): string {
   return JSON.stringify([config.remote.trim().replace(/\/+$/u, ""), config.branch ?? null]);
 }
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object")
-    return `{${Object.entries(value)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`)
-      .join(",")}}`;
-  return JSON.stringify(value);
-}
-function fingerprint(value: unknown): string {
-  return createHash("sha256").update(canonical(value)).digest("hex");
-}
 function generatedBindingPlaceholder(item: Pick<CoreAssetSyncItem, "key" | "kind" | "name">):
   | {
       readonly kind: CoreAssetSyncNameResolutionIssue["resourceKind"];
@@ -1118,9 +976,6 @@ function safeSyncItemName(
   if (unresolvedKind === "context-store") return "Unavailable knowledge base";
   if (unresolvedKind === "capability") return "Unavailable capability";
   return item.name;
-}
-function hashKnowledge(data: z.infer<typeof KnowledgeDataSchema>): string {
-  return hashSnapshotContent(data.files, data.directories);
 }
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -1161,119 +1016,9 @@ async function checkoutRepository(config: CoreAssetSyncConfiguration): Promise<C
     throw error;
   }
 }
-function validItemIdentity(item: CoreAssetSyncItem): boolean {
-  const prefix = `${item.kind}:`;
-  if (!item.key.startsWith(prefix)) return false;
-  const id = item.key.slice(prefix.length);
-  if (
-    item.kind === "expert" ||
-    item.kind === "team" ||
-    item.kind === "flow" ||
-    item.kind === "runtime-profile"
-  ) {
-    const resource = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
-    const expectedKind = {
-      expert: "Expert",
-      team: "ExpertTeam",
-      flow: "Flow",
-      "runtime-profile": "RuntimeProfile",
-    }[item.kind];
-    return (
-      resource.success &&
-      resource.data.kind === expectedKind &&
-      item.name === resource.data.metadata.name &&
-      id === canonicalPragmaResourceRef(resource.data)
-    );
-  }
-  if (item.kind === "flow-layout") {
-    return (
-      SemanticResourceIdSchema.safeParse(id).success &&
-      z
-        .object({
-          nodes: WorkflowLayoutSchema.shape.nodes,
-          viewport: WorkflowLayoutSchema.shape.viewport,
-        })
-        .safeParse(item.data).success
-    );
-  }
-  if (item.kind === "knowledge") {
-    if (id.startsWith("context-store:")) {
-      const resource = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
-      return (
-        resource.success &&
-        resource.data.kind === "ContextStore" &&
-        item.name === resource.data.metadata.name &&
-        id === canonicalPragmaResourceRef(resource.data) &&
-        classifyDesktopContextResource(resource.data) !== undefined
-      );
-    }
-    const data = KnowledgeDataSchema.safeParse(item.data);
-    return (
-      ContextStoreIdSchema.safeParse(id).success && data.success && item.name === data.data.name
-    );
-  }
-  if (id.startsWith("capability:")) {
-    if (item.kind !== "capability") return false;
-    const resource = PragmaForwardCompatibleResourceSchema.safeParse(item.data);
-    return (
-      resource.success &&
-      resource.data.kind === "Capability" &&
-      item.name === resource.data.metadata.name &&
-      id === canonicalPragmaResourceRef(resource.data) &&
-      classifyDesktopCapabilityResource(resource.data) !== undefined
-    );
-  }
-  if (!CapabilityIdSchema.safeParse(id).success) return false;
-  if (item.kind === "skill") {
-    const data = SkillDataSchema.safeParse(item.data);
-    return data.success && item.name === data.data.name;
-  }
-  const definition = CapabilityDefinitionSchema.safeParse(item.data);
-  return (
-    definition.success && definition.data.kind !== "skill" && item.name === definition.data.name
-  );
-}
-async function readRepository(root: string, requireManifest: boolean): Promise<ItemMap> {
-  const path = join(root, ROOT_FILE);
-  try {
-    const info = await lstat(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_REPOSITORY_BYTES)
-      throw new Error("Invalid core asset repository manifest.");
-    const parsed = CoreAssetSyncRepositorySchema.parse(JSON.parse(await readFile(path, "utf8")));
-    const items = new Map<string, CoreAssetSyncItem>();
-    for (const item of parsed.items) {
-      if (fingerprint(item.data) !== item.fingerprint || !validItemIdentity(item))
-        throw new Error(`Core asset integrity failed: ${item.key}`);
-      items.set(item.key, item);
-    }
-    return items;
-  } catch (error) {
-    if (isMissing(error)) {
-      if (requireManifest)
-        throw new Error(
-          "The configured Git repository no longer contains pragma-core-assets.json.",
-          {
-            cause: error,
-          },
-        );
-      return new Map();
-    }
-    throw error;
-  }
-}
 async function publishRepository(checkout: Checkout, items: ItemMap): Promise<void> {
-  const path = join(checkout.root, ROOT_FILE);
-  const content = JSON.stringify(
-    CoreAssetSyncRepositorySchema.parse({
-      schemaVersion: "pragma.core-asset-sync/v1",
-      items: [...items.values()].sort((a, b) => a.key.localeCompare(b.key)),
-    }),
-  );
-  if (Buffer.byteLength(content) > MAX_REPOSITORY_BYTES)
-    throw new Error("Core asset repository exceeds 150 MiB.");
-  await writeFile(path, `${content}\n`, { mode: 0o600 });
-  await git(checkout.root, ["add", "--", ROOT_FILE]);
-  if ((await git(checkout.root, ["status", "--porcelain", "--", ROOT_FILE])) === "") return;
+  await writeSyncRepository(checkout.root, items);
+  if ((await git(checkout.root, ["status", "--porcelain", "--", SYNC_DIRECTORY])) === "") return;
   await assertAssetGitIdentity(checkout.root);
   await git(checkout.root, ["commit", "-q", "-m", "Synchronize Pragma core assets"]);
   try {

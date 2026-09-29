@@ -23,7 +23,7 @@ describe("asset sync coordinator", () => {
           events.push("core:pull");
           return {} as never;
         },
-        sync: async () => {
+        automatic: async () => {
           events.push("core:backup");
           return {} as never;
         },
@@ -57,7 +57,7 @@ describe("asset sync coordinator", () => {
     const coreSync = vi.fn(async () => ({}) as never);
     const coordinator = createAssetSyncCoordinator({
       debounceMs: 10,
-      core: { refresh: async () => ({}) as never, sync: coreSync },
+      core: { refresh: async () => ({}) as never, automatic: coreSync },
       assets: { listTargets: async () => [], source: async () => ({}), sync },
     });
 
@@ -81,7 +81,7 @@ describe("asset sync coordinator", () => {
     const coreSync = vi.fn(async () => ({}) as never);
     const coordinator = createAssetSyncCoordinator({
       debounceMs: 10,
-      core: { refresh: async () => ({}) as never, sync: coreSync },
+      core: { refresh: async () => ({}) as never, automatic: coreSync },
       assets: { listTargets: async () => [], source: async () => ({}), sync },
     });
     coordinatorRef.current = coordinator;
@@ -101,7 +101,7 @@ describe("asset sync coordinator", () => {
     });
     const sync = vi.fn(async (target: AssetGitTarget): Promise<AssetGitStatus> => synced(target));
     const coordinator = createAssetSyncCoordinator({
-      core: { refresh: async () => ({}) as never, sync: backup },
+      core: { refresh: async () => ({}) as never, automatic: backup },
       assets: { listTargets: async () => [], source: async () => ({}), sync },
     });
     expect(await coordinator.syncAsset(targets[0]!)).toMatchObject({
@@ -130,7 +130,7 @@ describe("asset sync coordinator", () => {
     vi.useFakeTimers();
     const sync = vi.fn(async (target: AssetGitTarget) => synced(target));
     const coordinator = createAssetSyncCoordinator({
-      core: { refresh: async () => ({}) as never, sync: async () => ({}) as never },
+      core: { refresh: async () => ({}) as never, automatic: async () => ({}) as never },
       assets: { listTargets: async () => [], source: async () => ({}), sync },
     });
     coordinator.stop();
