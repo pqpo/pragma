@@ -205,7 +205,7 @@ export interface ExpertSession {
   attemptQueuedPromptSteer(requestId: string): Promise<QueuedPromptSteerAttempt>;
   steerQueuedPrompt(requestId: string): Promise<ExpertTurn>;
   removeQueuedPrompt(requestId: string, reason?: string): Promise<void>;
-  resumePromptQueue(): Promise<void>;
+  resumePromptQueue(options?: { readonly recovery?: "abandon" | undefined }): Promise<void>;
   cancelPromptQueue(reason?: string): Promise<void>;
 }
 
@@ -1599,12 +1599,32 @@ class ExpertSessionImpl implements ExpertSession {
     };
   }
 
-  async resumePromptQueue(): Promise<void> {
+  private queueRecoveryInFlight = false;
+
+  async resumePromptQueue(
+    options: { readonly recovery?: "abandon" | undefined } = {},
+  ): Promise<void> {
+    if (this.queueRecoveryInFlight)
+      throw new SteerDeliveryUncertainError("Queue delivery recovery is already in progress.");
+    this.queueRecoveryInFlight = true;
+    try {
+      await this.resumePromptQueueInternal(options);
+    } finally {
+      this.queueRecoveryInFlight = false;
+    }
+  }
+
+  private async resumePromptQueueInternal(options: {
+    readonly recovery?: "abandon" | undefined;
+  }): Promise<void> {
     if ((await this.getPromptQueueState()).state !== "paused") return;
     const uncertain = (await this.getPromptQueue()).filter(
       (prompt) => prompt.status !== "cancelled" && prompt.deliveryAttempt?.state === "uncertain",
     );
-    if (uncertain.length > 0) await this.reconcileQueuedSteers(uncertain);
+    if (uncertain.length > 0) {
+      if (options.recovery === "abandon") await this.abandonQueuedSteers(uncertain);
+      else await this.reconcileQueuedSteers(uncertain);
+    }
     if (hasUnresolvedSteerDelivery(await this.getPromptQueue())) {
       throw new SteerDeliveryUncertainError(
         "Steer delivery is still uncertain; the queue remains paused.",
@@ -1617,6 +1637,68 @@ class ExpertSessionImpl implements ExpertSession {
     });
     this.paused = false;
     this.startProcessing();
+  }
+
+  private async abandonQueuedSteers(prompts: readonly PromptRequest[]): Promise<void> {
+    const state = await this.getState();
+    if (state.activeExecutionId !== undefined || this.queueSteersInFlight.size > 0)
+      throw new SteerDeliveryUncertainError(
+        "Wait for the active execution and steer admission to settle before abandoning delivery.",
+      );
+    this.paused = true;
+    // A successful close is required. Never unpause while a live managed native Session remains.
+    await this.runtimeSessions.clear();
+    for (const prompt of prompts) {
+      await this.cancelPersistedExecution(
+        prompt.executionId,
+        "Steer delivery abandoned without replay; prior operations may already have executed.",
+      );
+    }
+    const requestIds = new Set(prompts.map((prompt) => prompt.requestId));
+    const updatedAt = new Date().toISOString();
+    // Cancel uncertain prompts and detach the old native identity in one durable transaction.
+    // A crash before this write leaves the fence intact; after it, no restart can restore
+    // the old conversation or dispatch an abandoned prompt.
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts: current }) => {
+      if (session.activeExecutionId !== undefined || this.queueSteersInFlight.size > 0)
+        throw new SteerDeliveryUncertainError(
+          "Steer recovery target changed; the queue remains paused.",
+        );
+      const context = session.contexts[session.rootContextId];
+      if (context === undefined) throw new Error("ExpertSession root Context is missing.");
+      return {
+        result: undefined,
+        session: {
+          ...session,
+          queuedRequestIds: session.queuedRequestIds.filter((id) => !requestIds.has(id)),
+          contexts: {
+            ...session.contexts,
+            [session.rootContextId]: { ...context, snapshot: undefined, updatedAt },
+          },
+          updatedAt,
+        },
+        prompts: current.map((prompt) =>
+          requestIds.has(prompt.requestId) && prompt.deliveryAttempt?.state === "uncertain"
+            ? {
+                ...prompt,
+                status: "cancelled" as const,
+                error:
+                  "Steer delivery abandoned without replay; prior operations may already have executed.",
+                updatedAt,
+              }
+            : prompt,
+        ),
+      };
+    });
+    await this.ownedSessions.appendEvent(this.sessionId, {
+      eventId: `prompt-steer-abandoned:${randomUUID()}`,
+      type: "prompt.steer-abandoned",
+      data: {
+        requestIds: [...requestIds],
+        runtimeSnapshot: state.contexts[state.rootContextId]?.snapshot,
+      },
+      occurredAt: updatedAt,
+    });
   }
 
   private async reconcileQueuedSteers(prompts: readonly PromptRequest[]): Promise<void> {

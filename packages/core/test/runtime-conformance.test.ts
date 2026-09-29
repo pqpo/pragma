@@ -7,6 +7,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   assertRuntimeConformance,
+  inspectRuntimeDeclarationConformance,
   inspectRuntimeObservationConformance,
   inspectRuntimeProbeEvidenceConformance,
 } from "../src/runtime/conformance.ts";
@@ -19,6 +20,31 @@ import type { RuntimeStreamEvent } from "../src/runtime/stream-events.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
 
 describe("Runtime conformance runner", () => {
+  it.each(["receipt", "terminal"] as const)(
+    "declares %s steering recovery from the actual driver methods",
+    (recovery) => {
+      const runtime = defineRuntimeTestDriver({
+        descriptor: { id: "steer-recovery", kind: "test", displayName: "Steer recovery" },
+        createSession: () => ({}),
+        startTurn: () => ({ outputText: "ok" }),
+        mapEvent: () => ({ events: [] }),
+        steerTurn: () => undefined,
+        ...(recovery === "receipt" ? { reconcileSteer: async () => "delivered" as const } : {}),
+      });
+      expect(runtime.features.steering.steeringRecovery).toBe(recovery);
+      expect(inspectRuntimeDeclarationConformance(runtime)).toEqual([]);
+      expect(
+        inspectRuntimeDeclarationConformance({
+          ...runtime,
+          features: {
+            ...runtime.features,
+            steering: { ...runtime.features.steering, steeringRecovery: undefined },
+          },
+        }),
+      ).toContainEqual(expect.objectContaining({ code: "steering.recovery_missing" }));
+    },
+  );
+
   it("preserves native readiness literals for Driver method contracts", () => {
     const cancellation = runtimeFeature.native(runtimeFeature.degraded("Probe fixture."));
 

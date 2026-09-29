@@ -7,6 +7,7 @@ describeRuntimeConformance("PI", { createRuntime: createPiRuntime });
 describe("PI Runtime contract", () => {
   it("declares split Session lifecycle capabilities with safe steer", () => {
     const runtime = createPiRuntime();
+    expect(runtime.features.steering.steeringRecovery).toBe("terminal");
     expect(runtime.descriptor.capabilities).toMatchObject({
       supportsResume: true,
       supportsCancel: true,

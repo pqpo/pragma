@@ -56,6 +56,7 @@ describe("Claude Code ACP contract", () => {
       },
     });
     expect(runtime.features.steering.status).toBe("degraded");
+    expect(runtime.features.steering.steeringRecovery).toBe("terminal");
   });
   it.each([false, true])(
     "restores model and effort defaults after turn overrides (explicit default: %s)",

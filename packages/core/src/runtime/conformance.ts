@@ -30,6 +30,17 @@ export function inspectRuntimeDeclarationConformance(
   runtime: RuntimeAdapter,
 ): readonly RuntimeConformanceFailure[] {
   const failures: RuntimeConformanceFailure[] = [];
+  if (
+    runtime.features.steering !== undefined &&
+    isRuntimeFeatureEnabled(runtime.features.steering) &&
+    runtime.features.steering.steeringRecovery === undefined
+  ) {
+    failures.push({
+      code: "steering.recovery_missing",
+      feature: "steering",
+      message: "Steer-capable Runtime must declare receipt or terminal recovery.",
+    });
+  }
   for (const { name } of RUNTIME_FEATURE_CATALOG) {
     const feature = runtime.features[name];
     if (feature === undefined) {

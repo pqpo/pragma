@@ -4154,7 +4154,7 @@ export function createMissionRunner(options: {
     );
   };
 
-  const resumeMissionQueue = async (id: string): Promise<Mission> => {
+  const resumeMissionQueue = async (id: string, recovery?: "abandon"): Promise<Mission> => {
     const mission = await options.missions.get(id);
     let session = sessionService.session(id);
     if (session === undefined) {
@@ -4180,7 +4180,7 @@ export function createMissionRunner(options: {
       sessionService.setSession(id, session);
       rememberSessionCompilation(id, stableCompilation.identity, compiled);
     }
-    await session.resumePromptQueue();
+    await session.resumePromptQueue({ recovery });
     await attachNextSessionTurn(id, missionSurfaceAudience(mission));
     invalidateChat(id, missionSurfaceAudience(mission));
     return await options.missions.get(id);
@@ -4601,7 +4601,7 @@ export function createMissionRunner(options: {
         },
         async "queue.resume"(command) {
           const before = await promptQueueProjection.list(command.missionId);
-          const mission = await resumeMissionQueue(command.missionId);
+          const mission = await resumeMissionQueue(command.missionId, command.payload.recovery);
           return {
             missionId: mission.id,
             changed: before.state === "paused",

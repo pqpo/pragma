@@ -1700,6 +1700,29 @@ export function MissionDetailFragment(props: {
                       ns: "missions",
                     })}
                   </button>
+                  {chat.queue.deliveryUncertain ? (
+                    <>
+                      {" "}
+                      <button
+                        className="text-button"
+                        type="button"
+                        disabled={clientOperationBusy}
+                        title={t("abandonSteerDeliveryHint", { ns: "missions" })}
+                        onClick={() => {
+                          const api = desktopApi();
+                          if (api === undefined) return;
+                          void api
+                            .resumeMissionQueue(props.mission.id, "abandon")
+                            .then(async () => await refreshLatestChat())
+                            .catch((resumeError: unknown) =>
+                              setOptionsError(missionError(resumeError)),
+                            );
+                        }}
+                      >
+                        {t("abandonSteerDelivery", { ns: "missions" })}
+                      </button>
+                    </>
+                  ) : null}
                 </small>
               ) : null}
               {modelResetRequired ? (

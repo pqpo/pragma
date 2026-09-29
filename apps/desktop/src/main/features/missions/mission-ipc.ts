@@ -37,6 +37,7 @@ import {
   HomeExecutorPreferenceSchema,
   HomeMissionExecutorCatalogSchema,
   MissionActionSchema,
+  ResumeMissionQueueSchema,
   MissionExecutionActionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
@@ -712,13 +713,17 @@ export function installMissionHandlers(options: {
   );
   ipcMain.handle("missions:queue:resume", (_event, input: unknown) =>
     runDesktopMutation(async () => {
-      const missionId = await assertManagedMission(MissionActionSchema.parse(input).id);
+      const parsed = ResumeMissionQueueSchema.parse(input);
+      const missionId = await assertManagedMission(parsed.id);
       const requestId = randomUUID();
       await runLocalHostCommand({
         missionId,
         requestId,
         kind: "queue.resume",
-        payload: { kind: "queue.resume" },
+        payload: {
+          kind: "queue.resume",
+          ...(parsed.recovery === undefined ? {} : { recovery: parsed.recovery }),
+        },
       });
       const mission = await getManagedMission(missionId);
       await publishMission(mission);

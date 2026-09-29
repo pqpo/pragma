@@ -201,6 +201,8 @@ export interface RuntimeFeatureEvidenceRef {
 }
 
 interface RuntimeFeatureBase {
+  /** Receipt lookup, or explicit abandonment of the old native conversation without replay. */
+  readonly steeringRecovery?: "receipt" | "terminal" | undefined;
   readonly evidence?: readonly RuntimeFeatureEvidenceRef[] | undefined;
   readonly compactionModes?: readonly RuntimeCompactionMode[] | undefined;
 }

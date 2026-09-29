@@ -611,7 +611,10 @@ async function trackedFixture(
   const runtime = createFakeRuntime({ ...options, stats });
   const app = createPragma({
     pragmaHome: home,
-    runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    runtimes: createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: runtime.descriptor.id,
+    }),
     usageSink,
   });
   const expert = await defineExpert({
@@ -2134,6 +2137,215 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       await session.close();
     },
   );
+
+  it.each(["codex-local", "pi", "qodercli-local", "claude-code-local"])(
+    "allows terminal recovery without replay for %s when receipts are unavailable",
+    async (runtimeId) => {
+      let release!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let admissions = 0;
+      const { home, app, expert, runtime, stats } = await trackedFixture({
+        runtimeId,
+        turnGate,
+        failSteer: true,
+        onSteer: () => {
+          admissions++;
+        },
+      });
+      expect(runtime.features.steering.steeringRecovery).toBe("terminal");
+      const original = await app.experts.createSession(expert);
+      const active = await original.prompt("active", { requestId: "active" });
+      const queued = await original.prompt("redirect", { requestId: "redirect" });
+      await vi.waitFor(() => expect(stats.turnModelSelections).toHaveLength(1), {
+        timeout: 20_000,
+      });
+      await expect(original.attemptQueuedPromptSteer("redirect")).resolves.toMatchObject({
+        reason: "delivery_uncertain",
+      });
+      await expect(original.resumePromptQueue({ recovery: "abandon" })).rejects.toThrow(
+        "Wait for the active execution",
+      );
+      release();
+      await active.result;
+      const before = await original.getState();
+      const previousSnapshot = before.contexts[before.rootContextId]!.snapshot;
+      expect(previousSnapshot).toBeDefined();
+      const recoveredApp = createPragma({
+        pragmaHome: home,
+        loggerProvider: createNoopLoggerProvider(),
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: runtimeId }),
+      });
+      const recovered = original;
+      let released = false;
+      try {
+        await expect(recovered.resumePromptQueue()).rejects.toThrow(
+          "cannot confirm steer delivery",
+        );
+        await expect(recovered.cancelPromptQueue()).rejects.toBeInstanceOf(
+          SteerDeliveryUncertainError,
+        );
+        await recovered.resumePromptQueue({ recovery: "abandon" });
+        const after = await recovered.getState();
+        expect(after.rootContextId).toBe(before.rootContextId);
+        expect(after.contexts[after.rootContextId]!.snapshot).toBeUndefined();
+        expect(
+          (await recovered.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+        ).toMatchObject({ status: "cancelled", deliveryAttempt: { state: "uncertain" } });
+        expect((await queued.getState()).status).toBe("cancelled");
+        const next = await recovered.prompt("new instruction", { requestId: "next" });
+        await next.result;
+        expect(admissions).toBe(1);
+        expect(stats.turnModelSelections).toHaveLength(2);
+        const fresh = (await recovered.getState()).contexts[before.rootContextId]!.snapshot;
+        expect(fresh?.systemSessionId).not.toBe(previousSnapshot?.systemSessionId);
+        expect(fresh?.runtimeSession.id).not.toBe(previousSnapshot?.runtimeSession.id);
+        // Reopen again: the discarded native identity and message cannot be resurrected.
+        await recovered.releaseAfterTerminal();
+        released = true;
+        const reopened = await recoveredApp.experts.resumeSession(expert, {
+          sessionId: original.sessionId,
+        });
+        await expect(reopened.getPromptQueueState()).resolves.toMatchObject({ state: "idle" });
+        expect(
+          (await reopened.getPromptQueue()).find((prompt) => prompt.requestId === "redirect")
+            ?.status,
+        ).toBe("cancelled");
+        await reopened.close();
+      } finally {
+        if (!released) await recovered.close();
+      }
+    },
+  );
+
+  it("rejects simultaneous receipt reconciliation and terminal recovery", async () => {
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    let releaseReceipt!: () => void;
+    const receipt = new Promise<"delivered">((resolve) => {
+      releaseReceipt = () => resolve("delivered");
+    });
+    let checking = false;
+    const { app, expert } = await trackedFixture({
+      turnGate,
+      failSteer: true,
+      onSteer: () => undefined,
+      reconcileSteer: async () => {
+        checking = true;
+        return await receipt;
+      },
+    });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("active", { requestId: "active" });
+    await session.prompt("redirect", { requestId: "redirect" });
+    await vi.waitFor(
+      async () => expect((await session.getState()).activeExecutionId).toBe(active.executionId),
+      { timeout: 20_000 },
+    );
+    await session.attemptQueuedPromptSteer("redirect");
+    releaseTurn();
+    await active.result;
+    const recovery = session.resumePromptQueue();
+    await vi.waitFor(() => expect(checking).toBe(true), { timeout: 20_000 });
+    await expect(session.resumePromptQueue({ recovery: "abandon" })).rejects.toThrow(
+      "already in progress",
+    );
+    releaseReceipt();
+    await recovery;
+    expect(
+      (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect")?.status,
+    ).toBe("succeeded");
+    await session.close();
+  });
+
+  it("keeps the old snapshot and delivery fence when terminal recovery cannot be persisted", async () => {
+    const home = await createTemporaryHome("pragma-abandon-write-failure-");
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const transact = sessions.transact.bind(sessions);
+    let failed = false;
+    sessions.transact = async (id, action, claimId) =>
+      await transact(
+        id,
+        async (input) => {
+          const next = await action(input);
+          if (
+            !failed &&
+            next.session.contexts[next.session.rootContextId]?.snapshot === undefined &&
+            next.prompts.some(
+              (prompt) =>
+                prompt.requestId === "redirect" &&
+                prompt.status === "cancelled" &&
+                prompt.deliveryAttempt?.state === "uncertain",
+            )
+          ) {
+            failed = true;
+            throw new Error("Synthetic abandonment write failure");
+          }
+          return next;
+        },
+        claimId,
+      );
+    let release!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stats = createFakeRuntimeStats();
+    const runtime = createFakeRuntime({
+      stats,
+      turnGate,
+      failSteer: true,
+      onSteer: () => undefined,
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      loggerProvider: createNoopLoggerProvider(),
+      executionStore: executions,
+      expertSessionStore: sessions,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const expert = await defineExpert({
+      id: "abandon-write-probe",
+      name: "Abandon Write Probe",
+      description: "Abandonment write failure",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    try {
+      const active = await session.prompt("active", { requestId: "active" });
+      await session.prompt("redirect", { requestId: "redirect" });
+      await vi.waitFor(() => expect(stats.turnModelSelections).toHaveLength(1), {
+        timeout: 20_000,
+      });
+      await session.attemptQueuedPromptSteer("redirect");
+      release();
+      await active.result;
+      const before = await session.getState();
+      const snapshot = before.contexts[before.rootContextId]!.snapshot;
+      await expect(session.resumePromptQueue({ recovery: "abandon" })).rejects.toThrow(
+        "Synthetic abandonment write failure",
+      );
+      await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
+      expect((await session.getState()).contexts[before.rootContextId]!.snapshot).toEqual(snapshot);
+      expect(
+        (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+      ).toMatchObject({ status: "queued", deliveryAttempt: { state: "uncertain" } });
+      expect(stats.turnModelSelections).toHaveLength(1);
+      await session.resumePromptQueue({ recovery: "abandon" });
+      await (
+        await session.prompt("new instruction", { requestId: "next" })
+      ).result;
+      expect(stats.turnModelSelections).toHaveLength(2);
+    } finally {
+      release();
+      await session.close();
+    }
+  });
 
   it("pauses a queued steer when its acknowledged receipt cannot be persisted", async () => {
     const home = await createTemporaryHome("pragma-steer-receipt-write-failure-");

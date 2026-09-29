@@ -455,9 +455,21 @@ export function defineRuntimeDriver<
     capabilities: deriveRuntimeAdapterCapabilities(driver.features, driver.descriptor.capabilities),
   });
   assertRuntimeFeatureMethodContracts(driver, descriptor);
+  const features = snapshotRuntimeFeatures(driver.features);
   const runtime: RuntimeAdapter = {
     descriptor,
-    features: snapshotRuntimeFeatures(driver.features),
+    features: Object.freeze({
+      ...features,
+      steering: Object.freeze({
+        ...features.steering,
+        ...(isRuntimeFeatureEnabled(features.steering)
+          ? {
+              steeringRecovery:
+                driver.reconcileSteer === undefined ? ("terminal" as const) : ("receipt" as const),
+            }
+          : {}),
+      }),
+    }),
     canUse: async (options?: Record<string, unknown>) =>
       (await (
         driver.canUse as

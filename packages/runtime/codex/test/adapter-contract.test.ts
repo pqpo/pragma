@@ -7,6 +7,7 @@ describeRuntimeConformance("Codex", { createRuntime: createCodexRuntime });
 describe("Codex Runtime contract", () => {
   it("declares split Session lifecycle capabilities with native steer", () => {
     const runtime = createCodexRuntime();
+    expect(runtime.features.steering.steeringRecovery).toBe("terminal");
     expect(runtime.descriptor.capabilities).toMatchObject({
       supportsResume: true,
       supportsCancel: true,

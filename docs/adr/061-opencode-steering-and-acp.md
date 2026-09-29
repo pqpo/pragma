@@ -39,10 +39,29 @@ non-delivery after Host death, since an orphaned server may still finish admissi
 Unknown marker versions and failed reads remain uncertain. Resume and take-back
 cannot bypass this check; checks never submit another native steer.
 
+Steer-capable Runtime features explicitly distinguish `steeringRecovery: receipt`
+from `terminal`, derived from the actual Driver receipt method and checked by
+conformance. Codex, Pi, Qoder CLI and Claude Code currently use terminal recovery;
+OpenCode uses receipt recovery. A user may explicitly abandon uncertain delivery
+through `queue.resume` with `recovery: abandon`. This stops live managed Sessions,
+cancels the uncertain prompts without claiming whether they were delivered, and
+atomically detaches the old native snapshot. Other queued instructions may then
+continue in a new native conversation. This does not undo prior side effects or
+automatically replay the uncertain instruction. The fixed ExpertSession root
+Context identity remains unchanged; its old native conversation is never restored.
+
+Ordinary resume still requires receipt reconciliation and never abandons messages
+implicitly. Recovery operations are serialized. Failed native close retains the
+pooled Session and keeps the queue fenced; a failed durable abandonment leaves
+the original native snapshot and uncertain prompts intact. Cancelled uncertain
+records retain their delivery provenance for audit and cannot be revived by crash
+recovery. The optional command field preserves existing command semantics and
+requires no persisted Schema version change.
+
 ## Persistence
 
 Reuse the existing durable PromptRequest deliveryAttempt and aggregate transaction
-journal. No storage version, owner identity or native Session reference changes,
+journal. No storage version or owner identity changes,
 and no historical data conversion is needed. Native metadata is a new namespaced
 marker validated with a Runtime-local Schema; future marker versions fail closed.
 
@@ -56,8 +75,8 @@ usage. Core tests cover queue rollback, scheduler fencing, uncertain-delivery
 reconciliation and crash recovery; Host/UI tests cover paused state and action
 availability. See the [Runtime record](../architecture/opencode-runtime.md).
 
-An absent receipt after a crash may keep a queue paused indefinitely; this is
-preferable to replaying a possibly executed instruction. Stronger orphan-process
+An absent receipt after a crash keeps a queue paused until reconciliation succeeds
+or the user explicitly chooses terminal recovery. Stronger orphan-process
 ownership and native cancellation tombstones would be needed to prove absence
 safe in every crash window. ACP migration can be reconsidered after equivalent
 active injection and native interaction support are verifiably available.

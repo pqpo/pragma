@@ -20,3 +20,14 @@
 - OpenCode 全套 45 个测试已在全套与定向复跑中逐项通过。首次全套运行出现 catalog 等待与 1.x CLI 探测／冒烟超时；定向复跑均通过，未修改产品超时阈值。1.x 启动／恢复冒烟最终在 7.61 秒完成。
 - Core / OpenCode 类型检查、lint 和构建通过；Desktop Node 类型检查、主进程生产构建及无外部 `@pragma/*` import 校验通过。格式检查和 `git diff --check` 通过。检查日志保存在本机 `/tmp/pragma-opencode-acp-research/cr-*.log`。
 - 测试使用本地模拟模型，不代表使用真实认证供应商的验收。保留 SDK 接入与 ACP 暂缓的既有结论。
+
+## PR #329 评论复核
+
+已读取普通评论、完整 review body 与行内评论。Bot 的行内 P1 与维护者的 P1 review 指向同一问题：Codex、Pi、Qoder CLI、Claude Code 没有 receipt reconciliation 时，不确定 steer 会永久挡住队列。该问题成立并已修复。
+
+- Driver 按实际 receipt 方法生成 `steeringRecovery: receipt | terminal` 能力，conformance 检查声明；四个 Runtime 的契约测试覆盖 terminal，OpenCode 保留 receipt。
+- 普通恢复继续核对投递。只有显式 `recovery: abandon` 才会取消不确定消息、停止 live native Session，并在同一持久事务中解除旧 native snapshot 绑定；不自动重放不确定消息。
+- Desktop 提供“跳过不确定消息，重新开始”；CLI 提供 `queue resume --abandon-uncertain`。保留原队列恢复入口，提示先前操作可能已经发生，其他排队消息会在新对话中继续。
+- 覆盖四种 Runtime 契约的 Core 恢复、丢弃后的重启、真实 SIGKILL 的 dispatching 崩溃窗口、关闭失败、持久写入失败与并发恢复。不存在因修复而绕过不确定投递 fence 的隐式 fallback。
+
+复核结果：Core 恢复定向测试 10 项通过，Session pool / conformance / 崩溃测试 21 项逐项通过；四个 Runtime 契约测试共 13 项通过。Shared 协议 21 项、Host 队列及转发 3 项、CLI mutation 14 项及补全 2 项、Desktop 队列 UI 2 项通过。相关类型检查、lint、格式检查、Core / Shared / Host / CLI 构建与 Desktop 全量生产构建通过，main / preload / styles 校验通过。这些恢复回归使用受控 Runtime fixture；未新增四种 Runtime 的真实供应商验收声明。

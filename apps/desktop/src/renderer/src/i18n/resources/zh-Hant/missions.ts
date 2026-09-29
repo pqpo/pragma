@@ -10,6 +10,9 @@ export const missions = {
   steerRetained: "未投遞 Steer，訊息保留在佇列中，等待下一輪執行。",
   steerDeliveryUncertain: "Steer 投遞結果不確定，佇列已暫停，避免重複執行。",
   checkSteerDelivery: "檢查投遞並恢復",
+  abandonSteerDelivery: "跳過不確定訊息，重新開始",
+  abandonSteerDeliveryHint:
+    "停止舊對話，捨棄不確定訊息且不重播。先前操作可能已經執行。其他排隊訊息將在新對話中繼續。",
   queuePaused: "佇列已在失敗訊息後暫停。",
   resumeQueue: "略過失敗項並繼續",
   title: "任務",

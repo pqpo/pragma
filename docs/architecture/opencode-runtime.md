@@ -123,6 +123,18 @@ server might still be admitting it. Transport errors and unknown provenance
 versions likewise keep the queue paused. No automatic resubmission or take-back
 for editing is allowed while delivery remains uncertain.
 
+Every steer-capable adapter exposes `features.steering.steeringRecovery`: receipt
+lookup when its Driver implements reconciliation, otherwise terminal recovery.
+When receipt lookup is unavailable or remains uncertain, the user can explicitly
+choose "Skip uncertain messages and start fresh" in Desktop, or run
+`pragma mission queue resume MISSION_ID --abandon-uncertain`. Core stops live
+managed native Sessions, cancels uncertain messages without replay, and atomically
+removes the root Context's old native snapshot before allowing other queued turns
+to continue. The ExpertSession root Context identity remains fixed. Previous
+side effects may already have occurred; this operation does not undo them.
+Ordinary resume never abandons messages. Close and write failures keep recovery
+fenced, and cancelled uncertain records retain their provenance after restart.
+
 `test/steering.integration.test.ts` exercises real OpenCode 2.0.16 processes against
 a local simulated model. Together with all adapter tests, OpenCode 1.18.33 and
 2.0.16 passed 45 tests across the suite and focused reruns on 2026-09-29. This includes a real admission response dropped

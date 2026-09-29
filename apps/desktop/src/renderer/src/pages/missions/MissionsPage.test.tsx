@@ -1684,6 +1684,8 @@ describe("MissionDetailFragment", () => {
     );
     expect(html).toContain("Steer delivery is uncertain");
     expect(html).toContain("Check delivery and resume");
+    expect(html).toContain("Skip uncertain messages and start fresh");
+    expect(html).toContain("Prior operations may already have executed");
     expect(html).not.toContain(">Steer<");
     expect(html).toMatch(/class="mission-queue-remove"[^>]*disabled=""/);
   });

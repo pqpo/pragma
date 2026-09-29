@@ -58,7 +58,9 @@ ack timeout 为 30 秒，可用 `--ack-timeout` 调整。
 Desktop UI 的队列引导使用独立的 best-effort `queue.try-steer`：没有活动 turn、正在等待人工
 回答、Runtime 不支持 steer 或消息带附件时，消息继续留在原队列中。CLI 的 `queue steer` 仍保持上述
 严格语义。若 Host 在 Runtime steer 调用边界崩溃且无法确认投递结果，队列会暂停并报告
-`delivery_uncertain`；`queue resume` 表示明确选择按原消息继续执行。
+`delivery_uncertain`；`queue resume` 核对投递结果，仅在确认未投递后才执行原消息，确认已投递则移除队列副本。
+无法核对时保持暂停。可显式使用 `queue resume MISSION_ID --abandon-uncertain` 跳过不确定消息，
+停止旧对话并在新对话中继续其他排队消息；这不会重放不确定消息，也不会撤销可能已经发生的操作。
 
 `queue list` 展示 Core ExpertSession prompt queue，不是 Inbox operation list。`watch` 是只读
 watcher，不 claim lease，也不 interrupt Mission；输出只支持 `text` 与 `jsonl`。jsonl 每行是

@@ -483,6 +483,9 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
 }
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const ResumeMissionQueueSchema = MissionActionSchema.extend({
+  recovery: z.literal("abandon").optional(),
+});
 export const MissionExecutionActionSchema = z
   .object({
     id: MissionIdSchema,

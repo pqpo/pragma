@@ -163,7 +163,7 @@ const MissionCommandPayloadSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("respond"), response: HumanInteractionResponseSchema }).strict(),
   z.object({ kind: z.literal("interrupt"), reason: z.string().min(1).optional() }).strict(),
   z.object({ kind: z.literal("queue.remove"), requestId: RequestIdSchema }).strict(),
-  z.object({ kind: z.literal("queue.resume") }).strict(),
+  z.object({ kind: z.literal("queue.resume"), recovery: z.literal("abandon").optional() }).strict(),
   z
     .object({
       kind: z.literal("queue.steer"),
