@@ -129,6 +129,12 @@ jobs:
           CI: "true"
         run: pnpm test:revision
 
+      - name: Claude external CLI regression tests
+        if: inputs.source_run_id == ''
+        run: |
+          pnpm --filter @pragma/desktop test:claude-worker
+          pnpm --filter @pragma/runtime-claude-code exec vitest run test/availability.test.ts test/external-cli.test.ts test/executable.test.ts
+
       - name: Build
         if: inputs.source_run_id == ''
         run: pnpm build
@@ -176,6 +182,14 @@ jobs:
 
       - name: Build installer
         run: pnpm --filter @pragma/desktop run ${{ matrix.script }}
+
+      - name: Upload packaging audit
+        uses: actions/upload-artifact@v7
+        with:
+          name: packaging-audit-${{ matrix.artifact }}
+          path: apps/desktop/dist/packaging-audit-*.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload installers
         uses: actions/upload-artifact@v7

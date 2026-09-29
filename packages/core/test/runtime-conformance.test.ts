@@ -17,6 +17,7 @@ import { createRuntimeProbeEvidence } from "../src/runtime/probe-evidence.ts";
 import { createRuntimeTestFeatures, defineRuntimeTestDriver } from "../src/testing/index.ts";
 import type { RuntimeStreamEvent } from "../src/runtime/stream-events.ts";
 import { openRuntimeSession } from "../src/runtime/session-factory.ts";
+import { createEmptyUsage } from "../src/runtime/usage.ts";
 
 describe("Runtime conformance runner", () => {
   it("preserves native readiness literals for Driver method contracts", () => {
@@ -40,53 +41,93 @@ describe("Runtime conformance runner", () => {
     }).toThrow(/does not implement cancelTurn/);
   });
 
-  it("accepts ordered streaming and one complete MCP tool lifecycle", () => {
-    const runtime = defineRuntimeTestDriver({
-      features: createRuntimeTestFeatures({
-        enabled: ["mcp", "skills", "nativeToolLifecycle"],
-      }),
-      descriptor: { id: "conformance", kind: "test", displayName: "Conformance" },
-      createSession: () => ({}),
-      startTurn: () => ({ outputText: "SKILL_OK" }),
-      mapEvent: () => ({ events: [] }),
-    });
-    const events = [
-      event(0, "run.started", { task: "probe" }),
-      event(1, "tool.started", {
-        toolCallId: "tool-1",
-        toolName: "mcp_list_expert_context",
-        kind: "tool",
-      }),
-      event(2, "tool.completed", {
-        toolCallId: "tool-1",
-        toolName: "mcp_list_expert_context",
-        kind: "tool",
-      }),
-      event(3, "message.delta", {
-        role: "assistant",
-        contentType: "text",
-        delta: "SKILL_OK",
-      }),
-      event(4, "message.completed", {
-        role: "assistant",
-        contentType: "text",
-        text: "SKILL_OK",
-      }),
-      event(5, "run.completed", {}),
-    ];
+  it.each(["none", "text", "message"])(
+    "accepts streaming after an MCP tool lifecycle (tool-only segment format: %s)",
+    (toolOnlySegment) => {
+      const runtime = defineRuntimeTestDriver({
+        features: createRuntimeTestFeatures({
+          enabled: ["mcp", "skills", "nativeToolLifecycle"],
+        }),
+        descriptor: { id: "conformance", kind: "test", displayName: "Conformance" },
+        createSession: () => ({}),
+        startTurn: () => ({ outputText: "SKILL_OK" }),
+        mapEvent: () => ({ events: [] }),
+      });
+      const events = [
+        event(0, "run.started", { task: "probe" }),
+        event(1, "tool.started", {
+          toolCallId: "tool-1",
+          toolName: "mcp_list_expert_context",
+          kind: "tool",
+        }),
+        event(2, "tool.completed", {
+          toolCallId: "tool-1",
+          toolName: "mcp_list_expert_context",
+          kind: "tool",
+        }),
+        event(3, "message.delta", {
+          role: "assistant",
+          contentType: "text",
+          delta: "SKILL_OK",
+        }),
+        event(4, "message.completed", {
+          role: "assistant",
+          contentType: "text",
+          text: "SKILL_OK",
+        }),
+        event(5, "run.completed", {}),
+      ];
+      if (toolOnlySegment !== "none") {
+        events.splice(
+          1,
+          0,
+          event(1, "message.completed", {
+            role: "assistant",
+            contentType: "text",
+            ...(toolOnlySegment === "text" ? { text: "" } : { message: assistantMessage("") }),
+          }),
+        );
+      }
 
-    expect(
-      inspectRuntimeObservationConformance(runtime, {
+      expect(
+        inspectRuntimeObservationConformance(runtime, {
+          events: events.map((entry, index) => event(index, entry.type, entry.payload)),
+          outputText: "SKILL_OK",
+          expectedToolNames: ["mcp_list_expert_context"],
+          expectedOutputMarkers: ["SKILL_OK"],
+          requiredFeatures: ["mcp", "skills"],
+          structuredOutputValidated: true,
+          ownerPersistenceValidated: true,
+        }),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(["missing-delta", "completed-before-delta"])(
+    "still rejects broken text streaming: %s",
+    (scenario) => {
+      const runtime = defineRuntimeTestDriver({
+        descriptor: { id: "invalid-stream", kind: "test", displayName: "Invalid stream" },
+        createSession: () => ({}),
+        startTurn: () => ({ outputText: "hello" }),
+        mapEvent: () => ({ events: [] }),
+      });
+      const events = [
+        event(0, "run.started", { task: "probe" }),
+        event(1, "message.completed", { role: "assistant", contentType: "text", text: "hello" }),
+      ];
+      if (scenario === "completed-before-delta")
+        events.push(
+          event(2, "message.delta", { role: "assistant", contentType: "text", delta: "hello" }),
+        );
+      events.push(event(events.length, "run.completed", {}));
+      const failures = inspectRuntimeObservationConformance(runtime, {
         events,
-        outputText: "SKILL_OK",
-        expectedToolNames: ["mcp_list_expert_context"],
-        expectedOutputMarkers: ["SKILL_OK"],
-        requiredFeatures: ["mcp", "skills"],
-        structuredOutputValidated: true,
-        ownerPersistenceValidated: true,
-      }),
-    ).toEqual([]);
-  });
+        outputText: "hello",
+      });
+      expect(failures.map(({ code }) => code)).toContain("stream.text_lifecycle");
+    },
+  );
 
   it("detects duplicate and out-of-order tool events", () => {
     const runtime = defineRuntimeTestDriver({
@@ -113,7 +154,7 @@ describe("Runtime conformance runner", () => {
     );
   });
 
-  it("detects a terminal text snapshot that duplicates streamed output", () => {
+  it.each(["text", "message"])("detects duplicated text in a %s snapshot", (format) => {
     const runtime = defineRuntimeTestDriver({
       descriptor: { id: "duplicate-text", kind: "test", displayName: "Duplicate Text" },
       createSession: () => ({}),
@@ -131,7 +172,9 @@ describe("Runtime conformance runner", () => {
         event(2, "message.completed", {
           role: "assistant",
           contentType: "text",
-          text: "hellohello",
+          ...(format === "text"
+            ? { text: "hellohello" }
+            : { message: assistantMessage("hellohello") }),
         }),
         event(3, "run.completed", {}),
       ],
@@ -323,6 +366,19 @@ describe("Runtime conformance runner", () => {
     }
   });
 });
+
+function assistantMessage(text: string) {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    timestamp: 0,
+    api: "acp",
+    provider: "runtime-managed",
+    model: "runtime-managed",
+    usage: createEmptyUsage(),
+    stopReason: "stop",
+  };
+}
 
 function event(
   sequence: number,
