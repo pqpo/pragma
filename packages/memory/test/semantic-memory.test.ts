@@ -724,12 +724,12 @@ describe("Semantic Memory", () => {
         "facts.sqlite",
       ),
     );
-    database.exec("PRAGMA user_version = 6");
+    database.exec("PRAGMA user_version = 7");
     database.close();
 
     await expect(
       createSemanticMemoryModule({ pragmaHome: root, extractor: fakeExtractor() }),
-    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v6");
+    ).rejects.toThrow("unsupported-state-version:pragma.memory-semantic-store/v7");
   });
 
   it("upgrades historical semantic jobs through the registered migration and keeps a backup", async () => {

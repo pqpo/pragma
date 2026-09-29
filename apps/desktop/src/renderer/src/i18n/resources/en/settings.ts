@@ -208,6 +208,30 @@ export const settings = {
       "One slot covers both the subject run and Judge run for a case. Changes apply to the queue immediately.",
   },
   memory: {
+    retrieval: {
+      title: "Memory vector retrieval",
+      description:
+        "Send redacted memory excerpts and search queries to the selected embedding provider. Text search remains available while indexing or if the provider is unavailable.",
+      enable: "Enable vector retrieval",
+      model: "Embedding model",
+      choose: "Choose an embedding model",
+      configure: "Add an embedding model and confirm its input limit in Model Providers.",
+      loadError: "Could not load retrieval settings.",
+      operationError:
+        "The retrieval operation failed. Check the diagnostic code and provider configuration.",
+      coverage: "{{indexed}} / {{total}} memories · {{segments}} segments · {{failed}} failed",
+      testPassed: "Connection passed: {{model}}, {{dimensions}} dimensions",
+      test: "Test connection",
+      retry: "Retry indexing",
+      rebuild: "Rebuild cache",
+      state: {
+        disabled: "Disabled",
+        building: "Indexing",
+        ready: "Ready",
+        degraded: "Degraded",
+        needs_attention: "Needs attention",
+      },
+    },
     attention: {
       description: "Indexes memories to improve recall performance and accuracy.",
       key: "Jev API Key",
@@ -269,6 +293,15 @@ export const settings = {
     },
   },
   models: {
+    kind: "Model type",
+    generation: "Generation",
+    embedding: "Embedding",
+    maxInputTokens: "Maximum input tokens",
+    maxBatchTokens: "Tokens per batch (optional)",
+    maxBatchInputs: "Inputs per batch",
+    embeddingLimitDescription:
+      "Confirm the provider input limit before using this model for Memory retrieval.",
+
     navigation: "Models & Providers",
     title: "Models & Providers",
     description: "Connect mainstream model providers, gateways, and local model servers.",

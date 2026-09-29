@@ -73,6 +73,7 @@ function testProvider(): ResolvedModelProvider {
     credentialFingerprint: "fingerprint",
     models: [
       {
+        kind: "generation",
         id: "reasoning-test",
         name: "Reasoning Test",
         reasoning: true,

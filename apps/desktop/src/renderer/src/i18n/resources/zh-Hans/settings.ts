@@ -200,6 +200,29 @@ export const settings = {
     slotDescription: "一个并发槽覆盖同一用例的被测执行与 Judge 执行；修改后会立即应用到队列。",
   },
   memory: {
+    retrieval: {
+      title: "记忆向量检索",
+      description:
+        "将脱敏记忆片段和搜索查询发送至选定的向量模型供应商。索引构建中或供应商不可用时，文本搜索仍可使用。",
+      enable: "启用向量检索",
+      model: "向量模型",
+      choose: "选择向量模型",
+      configure: "请在「模型供应商」中添加向量模型并确认输入限制。",
+      loadError: "无法加载检索设置。",
+      operationError: "检索操作失败，请检查诊断码和供应商配置。",
+      coverage: "{{indexed}} / {{total}} 条记忆 · {{segments}} 个分段 · {{failed}} 个失败",
+      testPassed: "连接测试通过：{{model}}，{{dimensions}} 维",
+      test: "测试连接",
+      retry: "重试索引",
+      rebuild: "重建缓存",
+      state: {
+        disabled: "已停用",
+        building: "索引构建中",
+        ready: "就绪",
+        degraded: "降级运行",
+        needs_attention: "需要处理",
+      },
+    },
     attention: {
       description: "作为记忆的索引，提升记忆召回性能和准确度。",
       key: "Jev API Key",
@@ -257,6 +280,14 @@ export const settings = {
     },
   },
   models: {
+    kind: "模型类型",
+    generation: "生成模型",
+    embedding: "向量模型",
+    maxInputTokens: "最大输入 Token",
+    maxBatchTokens: "每批 Token 上限（可选）",
+    maxBatchInputs: "每批输入数量",
+    embeddingLimitDescription: "使用此模型进行记忆检索前，请确认供应商的输入限制。",
+
     navigation: "模型与供应商",
     title: "模型与供应商",
     description: "连接主流模型供应商、API 网关与本地模型服务。",

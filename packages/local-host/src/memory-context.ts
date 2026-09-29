@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
+import { readdir } from "node:fs/promises";
 import {
   EXECUTION_CURRENT_EXPERT_ID_ATTR,
+  PragmaPaths,
+  decodePragmaPathSegment,
   createExpertAgentRunContext,
   withExecutionRunScope,
   readExecutionRunScope,
@@ -8,13 +12,20 @@ import {
   type ExpertAgentContextStore,
   type ExecutionEventSubscription,
 } from "@pragma/core";
-import { ExpertAgentStreamEventSchema, JsonValueSchema, type ExecutionEvent } from "@pragma/shared";
+import {
+  BoundedLruCache,
+  ExpertPromptInputSchema,
+  ExpertAgentStreamEventSchema,
+  JsonValueSchema,
+  type ExecutionEvent,
+} from "@pragma/shared";
 import {
   createFederatedMemoryContextStore,
   createMemoryAttentionController,
   createFileMemoryAttentionStateStore,
   createJevDecisionProvider,
   memoryAttentionScopeDigest,
+  renderSemanticFact,
   type MemoryRecallScope,
   type MemoryAttentionCandidate,
   type MemoryAttentionInput,
@@ -24,6 +35,8 @@ import { resolveMemoryRecallScope } from "./memory-recall-scope.ts";
 import { createMemoryAttentionSettingsStore } from "./memory-attention-settings.ts";
 import { createRunRedactor } from "./redaction.ts";
 import { createMemoryAttentionRequestLimiter } from "./memory-attention-request-limiter.ts";
+import { createLocalHostMemoryRetrieval } from "./memory-retrieval.ts";
+import { selectedMemoryText, redactMemoryProjection, projectMemory } from "@pragma/memory";
 import type { SecretStore } from "./secrets/secret-store.ts";
 
 type DataPlane = Awaited<ReturnType<typeof createLocalHostMemoryDataPlane>>;
@@ -37,9 +50,13 @@ export function createLocalHostMemoryContextService(options: {
   readonly data: DataPlane;
   readonly secrets: SecretStore;
   readonly fetch?: typeof fetch;
+  readonly backgroundIndexing?: boolean;
   readonly onDiagnostic?: ((code: string | undefined) => void) | undefined;
 }) {
   const settings = createMemoryAttentionSettingsStore(options);
+  const limit = createMemoryAttentionRequestLimiter();
+  const retrieval = createLocalHostMemoryRetrieval({ ...options, requestLimiter: limit });
+  const tasks = new Map<string, { version: number; digest: string; goal: string }>();
   const states = createFileMemoryAttentionStateStore(options);
   const missions = new Map<string, MissionBinding>();
   const contexts = new Map<string, { context: ExpertAgentRunContext; missionId: string }>();
@@ -49,7 +66,6 @@ export function createLocalHostMemoryContextService(options: {
   >();
   const observedTools = new Set<string>();
   let closed = false;
-  const limit = createMemoryAttentionRequestLimiter();
   const operations = new Map<string, Set<Promise<unknown>>>();
   const alive = (binding: MissionBinding) => !closed && missions.get(binding.missionId) === binding;
   const inMission = async <T>(
@@ -84,7 +100,7 @@ export function createLocalHostMemoryContextService(options: {
       .replace(/(?:Bearer\s+)[\w.\-/+=]+/gi, "Bearer [REDACTED]")
       .replace(/\b(?:sk-|gh[pousr]_|github_pat_)[\w-]+/g, "[REDACTED]")
       .replace(
-        /\b(?:api[_-]?key|password|secret|token)\s*[:=]\s*["']?[^\s"',;}]+/gi,
+        /\b(?:api[_-]?key|password|secret|token)["']?\s*[:=]\s*["']?[^\s"',;}]+/gi,
         "credential=[REDACTED]",
       );
     return Buffer.from(text)
@@ -123,27 +139,86 @@ export function createLocalHostMemoryContextService(options: {
   };
   const candidate = async (
     scope: MemoryRecallScope,
-    ref: { module: "episodic" | "semantic"; memoryId: string },
+    ref: {
+      module: "episodic" | "semantic";
+      memoryId: string;
+      selectedPaths?: import("@pragma/memory").MemoryAttentionEntry["selectedPaths"] | undefined;
+    },
   ): Promise<MemoryAttentionCandidate | undefined> => {
     if (ref.module === "episodic") {
-      const record = await options.data.episodic.store.getForRecall(scope, ref.memoryId);
+      const record = await options.data.episodic.store.peekForRecall(scope, ref.memoryId);
       if (record === undefined || record.sensitivity === "restricted") return undefined;
+      if (
+        (ref.selectedPaths ?? []).some((path) => {
+          const text = selectedMemoryText(
+            { module: "episodic", record },
+            path.fieldPath,
+            path.start,
+            path.end,
+          );
+          return (
+            text === undefined || createHash("sha256").update(text).digest("hex") !== path.textHash
+          );
+        })
+      )
+        return undefined;
       return {
         ...ref,
         revision: record.revision,
         title: redact(record.goal.text, 180),
-        summary: redact(record.summary.text, 800),
+        summary: redactMemoryProjection(
+          (ref.selectedPaths ?? [])
+            .map(
+              (path) =>
+                selectedMemoryText(
+                  { module: "episodic", record },
+                  path.fieldPath,
+                  path.start,
+                  path.end,
+                ) ?? "",
+            )
+            .join("\n") ||
+            `Goal: ${record.goal.text}\nSummary: ${record.summary.text}\nOutcome: ${record.outcome.summary}`,
+        ),
+        selectedPaths: ref.selectedPaths,
+        relations: (
+          await options.data.episodic.store.relatedForRecall(scope, ref.memoryId, 12)
+        ).map((value) => ({ module: "episodic" as const, memoryId: value.id })),
       };
     }
-    const record = await options.data.semantic.store.getForRecall(scope, ref.memoryId, new Date());
+    const record = await options.data.semantic.store.peekForRecall(scope, ref.memoryId, new Date());
     if (record === undefined || record.sensitivity === "restricted") return undefined;
+    if (
+      (ref.selectedPaths ?? []).some((path) => {
+        const text = selectedMemoryText(
+          { module: "semantic", record },
+          path.fieldPath,
+          path.start,
+          path.end,
+        );
+        return (
+          text === undefined || createHash("sha256").update(text).digest("hex") !== path.textHash
+        );
+      })
+    )
+      return undefined;
+    const conflictsWith: string[] = [];
+    for (const id of record.conflictsWith)
+      if (await options.data.semantic.store.peekForRecall(scope, id, new Date()))
+        conflictsWith.push(id);
     return {
       ...ref,
       revision: record.revision,
       title: redact(record.statement, 180),
-      summary: redact(record.statement, 800),
+      summary: redactMemoryProjection(renderSemanticFact({ ...record, conflictsWith })),
+      selectedPaths: ref.selectedPaths,
+      relations: conflictsWith.map((memoryId) => ({
+        module: "semantic" as const,
+        memoryId,
+      })),
     };
   };
+  const decisionCache = new BoundedLruCache<string, { expiresAt: number; value: unknown }>(64);
   const providerFor = (snapshot: Awaited<ReturnType<typeof settings.get>>) => {
     const provider = createJevDecisionProvider({
       ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
@@ -169,13 +244,32 @@ export function createLocalHostMemoryContextService(options: {
         await settings.beforeRequest();
       },
     });
+    const cached = async <T>(
+      method: string,
+      input: unknown,
+      signal: AbortSignal,
+      run: () => Promise<T>,
+    ): Promise<T> => {
+      signal.throwIfAborted();
+      const key = createHash("sha256")
+        .update(JSON.stringify([snapshot.revision, method, input]))
+        .digest("hex");
+      const prior = decisionCache.get(key);
+      if (prior !== undefined && prior.expiresAt > Date.now()) return prior.value as T;
+      const value = await limit(signal, run);
+      signal.throwIfAborted();
+      decisionCache.set(key, { expiresAt: Date.now() + 60_000, value });
+      return value;
+    };
     return {
+      chooseExpansion: async (...args: Parameters<NonNullable<typeof provider.chooseExpansion>>) =>
+        await cached("choice", args[0], args[1], () => provider.chooseExpansion!(...args)),
       assessRecall: async (...args: Parameters<typeof provider.assessRecall>) =>
-        await limit(args[1], () => provider.assessRecall(...args)),
+        await cached("recall", args[0], args[1], () => provider.assessRecall(...args)),
       assessCandidates: async (...args: Parameters<typeof provider.assessCandidates>) =>
-        await limit(args[1], () => provider.assessCandidates(...args)),
+        await cached("candidates", args[0], args[1], () => provider.assessCandidates(...args)),
       assessAttention: async (...args: Parameters<typeof provider.assessAttention>) =>
-        await limit(args[1], () => provider.assessAttention(...args)),
+        await cached("attention", args[0], args[1], () => provider.assessAttention(...args)),
     };
   };
   const controller = createMemoryAttentionController({
@@ -184,23 +278,68 @@ export function createLocalHostMemoryContextService(options: {
       if (closed || (await options.data.policies.getGlobal()).policy.enabled !== "enabled")
         return undefined;
       const current = await settings.get();
-      if (current.secretRef === undefined) return undefined;
+      if (current.secretRef === undefined && !(await retrieval.settings.get()).enabled)
+        return undefined;
       return {
-        generation: current.revision,
-        provider: providerFor(current),
-        available:
-          !current.diagnostic?.permanent && (current.diagnostic?.retryAt ?? 0) <= Date.now(),
+        generation: createHash("sha256")
+          .update(`${current.revision}:${await retrieval.bindingRevision()}`)
+          .digest()
+          .readUIntBE(0, 6),
+        providerRevision: current.revision,
+        provider:
+          current.secretRef === undefined ||
+          current.diagnostic?.permanent ||
+          (current.diagnostic?.retryAt ?? 0) > Date.now()
+            ? undefined
+            : providerFor(current),
+        available: true,
       };
     },
     read: candidate,
-    search: async (scope, queries, modules) => {
+    detail: async (scope, ref) => {
+      const base = await candidate(scope, ref);
+      if (base === undefined) return undefined;
+      const source =
+        ref.module === "episodic"
+          ? await options.data.episodic.store
+              .peekForRecall(scope, ref.memoryId)
+              .then((record) =>
+                record === undefined ? undefined : { module: "episodic" as const, record },
+              )
+          : await options.data.semantic.store
+              .peekForRecall(scope, ref.memoryId)
+              .then((record) =>
+                record === undefined ? undefined : { module: "semantic" as const, record },
+              );
+      if (source === undefined || source.record.revision !== base.revision) return undefined;
+      const segments = projectMemory(source, 600).slice(0, 6);
+      return {
+        ...base,
+        summary:
+          source.module === "semantic"
+            ? base.summary
+            : segments.map((segment) => segment.text).join("\n"),
+        selectedPaths: segments.map(({ fieldPath, start, end, textHash }) => ({
+          fieldPath,
+          start,
+          end,
+          textHash,
+        })),
+      };
+    },
+    search: async (scope, queries, modules, signal) => {
       const result: MemoryAttentionCandidate[] = [];
       for (const query of queries)
         for (const module of modules) {
           const records =
             module === "episodic"
-              ? await options.data.episodic.store.searchForRecall(scope, query, 8)
-              : await options.data.semantic.store.searchForRecall(scope, query, 8, new Date());
+              ? await options.data.episodic.store.searchCandidatesForRecall(scope, query, 8)
+              : await options.data.semantic.store.searchCandidatesForRecall(
+                  scope,
+                  query,
+                  8,
+                  new Date(),
+                );
           for (const record of records) {
             const value = await candidate(scope, { module, memoryId: record.id });
             if (
@@ -210,19 +349,43 @@ export function createLocalHostMemoryContextService(options: {
               result.push(value);
           }
         }
-      // Alternate modules so registration order cannot consume the entire budget.
-      const groups = modules.map((module) => result.filter((value) => value.module === module));
-      const ranked: MemoryAttentionCandidate[] = [];
-      for (let i = 0; i < 8; i++)
-        for (const group of groups) {
-          const value = group[i];
-          if (value !== undefined && ranked.length < 8) ranked.push(value);
-        }
-      return ranked;
+      const vectors = await retrieval.candidates(
+        scope,
+        queries.join("\n"),
+        modules,
+        30,
+        signal === undefined
+          ? AbortSignal.timeout(3_000)
+          : AbortSignal.any([signal, AbortSignal.timeout(3_000)]),
+      );
+      const textRanks = new Map(result.map((item, i) => [`${item.module}:${item.memoryId}`, i]));
+      const vectorRanks = new Map(vectors.map((item, i) => [`${item.module}:${item.memoryId}`, i]));
+      const fused = new Map(
+        [...result, ...vectors].map((item) => [`${item.module}:${item.memoryId}`, item]),
+      );
+      const score = (key: string) =>
+        (textRanks.has(key) ? 1 / (60 + textRanks.get(key)! + 1) : 0) +
+        (vectorRanks.has(key) ? 1 / (60 + vectorRanks.get(key)! + 1) : 0);
+      const ranked = [...fused]
+        .toSorted(([a], [b]) => score(b) - score(a) || a.localeCompare(b))
+        .slice(0, 30)
+        .map(([, value]) => value);
+      if (modules.length < 2) return ranked;
+      const balanced = ranked.filter(
+        (item, index) =>
+          ranked.slice(0, index).filter((other) => other.module === item.module).length < 15,
+      );
+      return balanced;
     },
     isCurrent: async (input, scope) => {
       const tracked = contexts.get(input.contextId);
-      if (closed || tracked?.missionId !== input.missionId || !missions.has(input.missionId))
+      if (
+        closed ||
+        tracked?.missionId !== input.missionId ||
+        !missions.has(input.missionId) ||
+        (input.taskVersion !== undefined &&
+          tasks.get(input.contextId)?.version !== input.taskVersion)
+      )
         return false;
       const current = await resolveScope(tracked.context);
       return (
@@ -232,7 +395,9 @@ export function createLocalHostMemoryContextService(options: {
     },
     onDiagnostic: async (code, generation) => {
       try {
-        await settings.recordDiagnostic(code, generation);
+        if (code !== "attention_provider_unconfigured")
+          await settings.recordDiagnostic(code, generation);
+        else code = undefined;
       } catch {
         reportUnavailable();
         return;
@@ -263,9 +428,13 @@ export function createLocalHostMemoryContextService(options: {
     const scope = await resolveScope(context, binding);
     if (scope === undefined) return;
     const current = await settings.get();
-    if (current.secretRef === undefined || !alive(binding)) return;
+    if (
+      (current.secretRef === undefined && !(await retrieval.settings.get()).enabled) ||
+      !alive(binding)
+    )
+      return;
     // Register the configured credential before constructing even the first delta.
-    if (redactedGeneration !== current.revision) {
+    if (current.secretRef !== undefined && redactedGeneration !== current.revision) {
       const handle = await options.secrets.get(current.secretRef);
       try {
         redactor.registerSecret(handle.utf8());
@@ -277,7 +446,17 @@ export function createLocalHostMemoryContextService(options: {
     if (!alive(binding)) return;
     contexts.set(run.contextId, { context, missionId: binding.missionId });
     const text = redact(observation, 1_200);
-    const goal = redact(binding.goal, 800);
+    const prior = tasks.get(run.contextId);
+    const goal =
+      action === "task_started"
+        ? redact(observation, 800)
+        : action === "user_clarification"
+          ? redact(`${prior?.goal ?? binding.goal}\nUser clarification: ${text}`, 800)
+          : (prior?.goal ?? redact(binding.goal, 800));
+    const digest = JSON.stringify({ goal, text, action });
+    const task =
+      prior?.digest === digest ? prior : { version: (prior?.version ?? 0) + 1, digest, goal };
+    tasks.set(run.contextId, task);
     const concepts = [
       ...new Set(`${text} ${goal} ${action}`.match(/[\p{L}\p{N}_][\p{L}\p{N}_./-]{3,127}/gu) ?? []),
     ]
@@ -292,7 +471,9 @@ export function createLocalHostMemoryContextService(options: {
       {
         missionId: binding.missionId,
         contextId: run.contextId,
-        missionGoal: goal,
+        missionGoal: redact(binding.goal, 800),
+        currentGoal: goal,
+        taskVersion: task.version,
         latestObservation: text,
         lastAction: action.slice(0, 200),
         trigger,
@@ -333,7 +514,20 @@ export function createLocalHostMemoryContextService(options: {
     );
   };
   const onEvent = async (binding: MissionBinding, event: ExecutionEvent) => {
-    if (event.type === "runtime.event") {
+    if (event.type === "invocation.started") {
+      const invocation = await options.data.executionStore.getInvocation(
+        event.executionId,
+        event.invocationId,
+      );
+      const prompt = ExpertPromptInputSchema.safeParse(invocation?.input);
+      const goal = prompt.success
+        ? prompt.data.text
+        : typeof invocation?.input === "string"
+          ? invocation.input
+          : undefined;
+      if (goal !== undefined)
+        await observe(binding, await eventContext(event), goal, "task_started", "goal_changed");
+    } else if (event.type === "runtime.event") {
       const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
       if (!parsed.success) return;
       const stream = parsed.data;
@@ -360,7 +554,26 @@ export function createLocalHostMemoryContextService(options: {
           "child_completed",
           "new_observation",
         );
-    } else if (event.type === "human.responded" || event.type === "context.compacted") {
+    } else if (event.type === "human.responded") {
+      const response =
+        typeof event.data === "object" && event.data !== null && "response" in event.data
+          ? event.data.response
+          : undefined;
+      if (
+        typeof response === "object" &&
+        response !== null &&
+        "kind" in response &&
+        response.kind === "user_question" &&
+        "answers" in response
+      )
+        await observe(
+          binding,
+          await eventContext(event),
+          response.answers,
+          "user_clarification",
+          "goal_changed",
+        );
+    } else if (event.type === "context.compacted") {
       await observe(binding, await eventContext(event), event.data, event.type, "new_observation");
     }
   };
@@ -382,6 +595,58 @@ export function createLocalHostMemoryContextService(options: {
     watches.set(id, { missionId: binding.missionId, subscription, done });
   };
   return {
+    retrieval,
+    states,
+    async missionAttention(missionId: string) {
+      const paths = new PragmaPaths(options);
+      let names: string[];
+      try {
+        names = await readdir(paths.memoryAttentionRoot(missionId));
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+        throw error;
+      }
+      const values = [];
+      for (const name of names
+        .filter((name) => name.endsWith(".json") && !name.endsWith(".state-migration.json"))
+        .slice(0, 128)) {
+        const contextId = decodePragmaPathSegment(name.slice(0, -5));
+        const state = await states.read(missionId, contextId);
+        if (state !== undefined)
+          values.push({
+            contextId,
+            version: state.version,
+            entries: (
+              await Promise.all(
+                state.active.map(async (entry) => {
+                  const source =
+                    entry.module === "episodic"
+                      ? await options.data.episodic.store.get(entry.memoryId)
+                      : await options.data.semantic.store.get(entry.memoryId);
+                  return source?.status === "active" &&
+                    source.revision === entry.revision &&
+                    source.sensitivity !== "restricted"
+                    ? entry
+                    : undefined;
+                }),
+              )
+            )
+              .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+              .map(({ module, memoryId, revision, decisionMode, selectedPaths }) => ({
+                module,
+                memoryId,
+                revision,
+                decisionMode,
+                selectedPaths,
+              })),
+            ...(state.audit.at(-1)?.code === undefined ||
+            state.audit.at(-1)?.code === "attention_provider_unconfigured"
+              ? {}
+              : { errorCode: state.audit.at(-1)!.code }),
+          });
+      }
+      return values;
+    },
     settings: {
       ...settings,
       status: async () => {
@@ -401,6 +666,17 @@ export function createLocalHostMemoryContextService(options: {
       missions.set(binding.missionId, binding);
       return createFederatedMemoryContextStore(options.data.registry, {
         activity: options.data.activity,
+        vectorSearch: async (scope, input) => {
+          if (input.scope === "path") return [];
+          const matches = await retrieval.search(scope, input.query, input.maxResults ?? 20);
+          const current = await resolveScope(input.context, binding);
+          if (
+            current === undefined ||
+            memoryAttentionScopeDigest(current) !== memoryAttentionScopeDigest(scope)
+          )
+            return [];
+          return matches;
+        },
         resolveRecallScope: async (context) =>
           inMission(
             binding,
@@ -409,7 +685,8 @@ export function createLocalHostMemoryContextService(options: {
               try {
                 if (
                   scope !== undefined &&
-                  (await settings.get()).secretRef !== undefined &&
+                  ((await settings.get()).secretRef !== undefined ||
+                    (await retrieval.settings.get()).enabled) &&
                   alive(binding)
                 )
                   watch(binding, context);
@@ -482,7 +759,10 @@ export function createLocalHostMemoryContextService(options: {
       for (const key of observedTools)
         if (key.startsWith(`${missionId}:`)) observedTools.delete(key);
       for (const [id, tracked] of contexts)
-        if (tracked.missionId === missionId) contexts.delete(id);
+        if (tracked.missionId === missionId) {
+          contexts.delete(id);
+          tasks.delete(id);
+        }
       for (const [id, value] of watches) {
         if (value.missionId === missionId) {
           await value.subscription.close();
@@ -495,7 +775,9 @@ export function createLocalHostMemoryContextService(options: {
       closed = true;
       missions.clear();
       contexts.clear();
+      tasks.clear();
       await controller.stop();
+      await retrieval.stop();
       await Promise.allSettled([...operations.values()].flatMap((tasks) => [...tasks]));
       await Promise.all(
         [...watches.values()].map(async (value) => {

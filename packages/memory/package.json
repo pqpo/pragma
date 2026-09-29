@@ -15,10 +15,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "lint": "eslint src test",
+    "benchmark:retrieval": "tsx scripts/benchmark-retrieval.ts",
+    "evaluate:retrieval": "tsx scripts/evaluate-retrieval.ts",
+    "lint": "eslint src test scripts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:core": "vitest run --passWithNoTests test/memory-subject.test.ts",
+    "test:core": "vitest run test/episodic-memory.test.ts test/semantic-memory.test.ts test/memory-plane.test.ts test/memory-activity.test.ts test/retrieval.test.ts test/memory-attention.test.ts test/jev-decision-provider.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

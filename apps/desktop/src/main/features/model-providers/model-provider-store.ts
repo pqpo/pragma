@@ -1,21 +1,24 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { access, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import type {
   ModelProviderDefinition,
   ModelProviderRegistry,
   ResolvedModelProvider,
 } from "@pragma/core";
-import { applyAtomicStateMigration, recoverAtomicStateMigration, withFileLock } from "@pragma/core";
+import { withFileLock } from "@pragma/core";
 import {
   SecretStoreError,
+  readStoredModelProviderConfig,
+  ModelProvidersV5Schema,
+  type ModelProvidersV5,
+  MODEL_PROVIDER_STORAGE_VERSION,
   type LegacyCredentialDecryptor,
   type SecretRef,
   type SecretStore,
 } from "@pragma/local-host";
 import { ProviderModelDefinitionSchema } from "@pragma/shared";
-import { SecretRefSchema } from "@pragma/shared/integration";
 import { z } from "zod";
 
 import type {
@@ -28,25 +31,15 @@ import type {
   ResetModelProvidersResult,
   UpdateModelProvider,
 } from "../../../shared/contracts/index.ts";
-import {
-  ModelProviderModelSchema,
-  ModelProviderSchema,
-  ModelProviderVerificationSchema,
-} from "../../../shared/contracts/index.ts";
+import { ModelProviderModelSchema } from "../../../shared/contracts/index.ts";
 import { findModelProviderPreset } from "../../../shared/model-provider-presets.ts";
 import {
   migrateLegacyCredentialAggregate,
   type LegacySecretRecord,
 } from "../credentials/legacy-credential-migration.ts";
-import {
-  ModelProvidersV4Schema,
-  ModelProvidersV5Schema,
-  modelProvidersV4ToV5Step,
-  modelProvidersV5ToV6Step,
-} from "./migrations/index.ts";
-import type { ModelProvidersV5 } from "./migrations/schemas/v5.ts";
+import { ModelProvidersV4Schema, modelProvidersV4ToV5Step } from "./migrations/index.ts";
 
-const CONFIG_SCHEMA_VERSION = 6;
+const CONFIG_SCHEMA_VERSION = MODEL_PROVIDER_STORAGE_VERSION;
 
 interface StoredModelProvider {
   readonly id: string;
@@ -171,79 +164,12 @@ function toPublicProvider(provider: StoredModelProvider): ModelProvider {
   };
 }
 
-function parseConfig(raw: string): StoredModelProviderConfig {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    throw new ModelProviderStoreError(
-      "config_invalid",
-      "The model provider configuration is unreadable and must be archived before continuing.",
-    );
-  }
-
-  if (
-    !value ||
-    typeof value !== "object" ||
-    (value as { schemaVersion?: unknown }).schemaVersion !== CONFIG_SCHEMA_VERSION ||
-    !Array.isArray((value as { providers?: unknown }).providers)
-  ) {
-    throw new ModelProviderStoreError(
-      "config_invalid",
-      "This model provider configuration uses an older format and must be reconfigured.",
-    );
-  }
-
-  let providers: StoredModelProvider[];
-  try {
-    providers = (value as { providers: unknown[] }).providers.map((candidate) => {
-      if (!candidate || typeof candidate !== "object") invalidStoredProvider();
-      const provider = candidate as Partial<StoredModelProvider>;
-      if (
-        typeof provider.id !== "string" ||
-        typeof provider.presetId !== "string" ||
-        typeof provider.name !== "string" ||
-        typeof provider.baseUrl !== "string" ||
-        "encryptedApiKey" in provider ||
-        (provider.apiKeySecretRef !== undefined && !isSecretRef(provider.apiKeySecretRef)) ||
-        typeof provider.requiresApiKey !== "boolean" ||
-        !Number.isSafeInteger(provider.revision) ||
-        (provider.revision ?? 0) <= 0 ||
-        !Array.isArray(provider.models) ||
-        typeof provider.protocol !== "string" ||
-        provider.protocol.trim() === ""
-      ) {
-        invalidStoredProvider();
-      }
-      const stored = {
-        ...provider,
-        models: provider.models!.map((model) => ModelProviderModelSchema.parse(model)),
-        verification: ModelProviderVerificationSchema.parse(provider.verification),
-      } as StoredModelProvider;
-      ModelProviderSchema.parse(toPublicProvider(stored));
-      return stored;
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) invalidStoredProvider();
-    throw error;
-  }
-  return { schemaVersion: CONFIG_SCHEMA_VERSION, providers };
-}
-
-function parseCurrentConfig(value: unknown): StoredModelProviderConfig {
-  return parseConfig(JSON.stringify(value));
-}
-
 function parseLegacyConfig(value: unknown): LegacyStoredModelProviderConfig {
   return ModelProvidersV4Schema.parse(value) as unknown as LegacyStoredModelProviderConfig;
 }
 
 function parseV5Config(value: unknown): ModelProvidersV5 {
   return ModelProvidersV5Schema.parse(value);
-}
-
-function isSecretRef(value: unknown): value is SecretRef {
-  return SecretRefSchema.safeParse(value).success;
 }
 
 function toMigratedProvider(
@@ -308,74 +234,21 @@ export function createModelProviderStore(options: {
     ).migrated;
   };
   const readConfig = async (): Promise<StoredModelProviderConfig> => {
+    const version = await readConfigVersion(options.configPath);
+    if (version === 4 || (await fileExists(`${options.configPath}.migration-journal.json`))) {
+      if (options.legacyDecryptor === undefined)
+        throw new ModelProviderStoreError(
+          "migration_required",
+          "Open Desktop to migrate model provider credentials.",
+        );
+      await migrateLegacy();
+    }
     try {
-      if (await fileExists(`${options.configPath}.state-migration.json`)) {
-        await migrateV5ToV6();
-      }
-      const raw = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
-      if ((raw as { schemaVersion?: unknown }).schemaVersion === 4) {
-        if (options.legacyDecryptor === undefined)
-          throw new ModelProviderStoreError(
-            "migration_required",
-            "Open the upgraded Desktop to migrate model provider credentials.",
-          );
-        await migrateLegacy();
-        return await readConfig();
-      }
-      if ((raw as { schemaVersion?: unknown }).schemaVersion === 5) {
-        await migrateV5ToV6();
-        return await readConfig();
-      }
-      return parseCurrentConfig(raw);
+      return await readStoredModelProviderConfig(options.configPath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: CONFIG_SCHEMA_VERSION, providers: [] };
-      }
       if (error instanceof z.ZodError) invalidStoredProvider();
       throw error;
     }
-  };
-
-  const migrateV5ToV6 = async (): Promise<void> => {
-    await withFileLock(
-      `${options.configPath}.lock`,
-      async () => {
-        const aggregateRoot = dirname(options.configPath);
-        const journalFile = `${options.configPath}.state-migration.json`;
-        const resource = { family: "pragma.model-providers", id: basename(options.configPath) };
-        const validateDocuments = (documents: Readonly<Record<string, unknown>>): void => {
-          parseCurrentConfig(documents[basename(options.configPath)]);
-        };
-        await recoverAtomicStateMigration({
-          aggregateRoot,
-          journalFile,
-          resource,
-          validateDocuments,
-        });
-        const current = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
-        if ((current as { schemaVersion?: unknown }).schemaVersion !== 5) return;
-        const source = parseV5Config(current);
-        const target = modelProvidersV5ToV6Step.migrate(source);
-        parseCurrentConfig(target);
-        const backupRoot = join(aggregateRoot, "migrations", "backups");
-        await mkdir(backupRoot, { recursive: true, mode: 0o700 });
-        const sourceHash = createHash("sha256").update(JSON.stringify(source)).digest("hex");
-        await copyFile(
-          options.configPath,
-          join(backupRoot, `${sourceHash}.model-providers.v5.json`),
-        );
-        await applyAtomicStateMigration({
-          aggregateRoot,
-          journalFile,
-          resource,
-          fromVersion: 5,
-          toVersion: 6,
-          documents: { [basename(options.configPath)]: target },
-          validateDocuments,
-        });
-      },
-      { operation: "pragma.model-providers.state-migration" },
-    );
   };
 
   const writeConfig = async (config: StoredModelProviderConfig): Promise<void> => {
@@ -707,7 +580,9 @@ async function readConfigVersion(path: string): Promise<number | undefined> {
 }
 
 function toProviderModelDefinition(model: ModelProviderModel) {
-  return ProviderModelDefinitionSchema.parse(model);
+  const { capabilitiesSource, ...definition } = model;
+  void capabilitiesSource;
+  return ProviderModelDefinitionSchema.parse(definition);
 }
 
 function validatePreset(input: {

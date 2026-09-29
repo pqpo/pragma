@@ -1,4 +1,8 @@
-import { MemoryAttentionStatusSchema, UpdateMemoryAttentionSettingsSchema } from "@pragma/shared";
+import {
+  UpdateMemoryRetrievalSettingsSchema,
+  MemoryAttentionStatusSchema,
+  UpdateMemoryAttentionSettingsSchema,
+} from "@pragma/shared";
 import { ipcMain, type BrowserWindow } from "electron";
 
 import {
@@ -89,6 +93,25 @@ export function installMemoryPolicyHandlers(
     });
   };
 
+  const retrieval = () => {
+    if (plane.retrieval === undefined) throw new Error("embedding_settings_unavailable");
+    return plane.retrieval;
+  };
+  ipcMain.handle("memory-retrieval:status", () => retrieval().status());
+  ipcMain.handle("memory-retrieval:settings", async (_event, input: unknown) => {
+    const service = retrieval();
+    service.cancel();
+    await service.settings.update(UpdateMemoryRetrievalSettingsSchema.parse(input));
+    plane.wakePipeline();
+    return await service.status();
+  });
+  ipcMain.handle("memory-retrieval:test", () => retrieval().validate());
+  ipcMain.handle("memory-retrieval:retry", async () => {
+    await retrieval().retry();
+  });
+  ipcMain.handle("memory-retrieval:rebuild", async () => {
+    await retrieval().rebuild();
+  });
   ipcMain.handle("memory-attention:status", async () =>
     plane.attentionSettings === undefined
       ? MemoryAttentionStatusSchema.parse({ configured: false, revision: 0, state: "disabled" })
@@ -102,6 +125,7 @@ export function installMemoryPolicyHandlers(
   ipcMain.handle("memory-policy:global:get", globalSnapshot);
   ipcMain.handle("memory-policy:global:update", async (_event, input: unknown) => {
     const parsed = UpdateDesktopGlobalMemoryPolicySchema.parse(input);
+    plane.retrieval?.cancel();
     await plane.policies.updateGlobal(parsed);
     plane.wakePipeline();
     await options.onGlobalPolicyUpdated?.();
@@ -293,6 +317,7 @@ export function installMemoryPolicyHandlers(
     const executionIds = await missionExecutionIds(options.missions, parsed.missionId);
     return DesktopMissionMemoryActivitySchema.parse({
       missionId: parsed.missionId,
+      attention: await plane.missionAttention(parsed.missionId),
       executions: await Promise.all(
         executionIds.map(async (executionId) => await plane.activity.summarize(executionId)),
       ),

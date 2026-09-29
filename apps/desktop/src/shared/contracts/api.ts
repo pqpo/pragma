@@ -1,4 +1,9 @@
-import type { MemoryAttentionStatus, UpdateMemoryAttentionSettings } from "@pragma/shared";
+import type {
+  MemoryRetrievalStatus,
+  UpdateMemoryRetrievalSettings,
+  MemoryAttentionStatus,
+  UpdateMemoryAttentionSettings,
+} from "@pragma/shared";
 import type { HomeProject, ReorderHomeProjects, SaveHomeProject } from "./home-projects.ts";
 import type {
   AssetGitConflicts,
@@ -324,6 +329,13 @@ export interface PragmaDesktopAPI {
   subscribeMemoryExtractionRunChat: (
     listener: (update: DesktopMemoryExtractionRunChatUpdate) => void,
   ) => () => void;
+  getMemoryRetrievalStatus: () => Promise<MemoryRetrievalStatus>;
+  updateMemoryRetrievalSettings: (
+    input: UpdateMemoryRetrievalSettings,
+  ) => Promise<MemoryRetrievalStatus>;
+  testMemoryEmbedding: () => Promise<{ dimensions: number; model: string }>;
+  retryMemoryIndex: () => Promise<void>;
+  rebuildMemoryIndex: () => Promise<void>;
   getMemoryAttentionStatus: () => Promise<MemoryAttentionStatus>;
   updateMemoryAttentionSettings: (
     input: UpdateMemoryAttentionSettings,

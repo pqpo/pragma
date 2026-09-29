@@ -1793,6 +1793,7 @@ export async function createDesktopApplicationContainer(
     }),
   );
   installModelProviderHandlers(modelProviderStore, {
+    beforeConnectionChange: () => memoryPlane.retrieval?.cancel(),
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(
         (resource) =>

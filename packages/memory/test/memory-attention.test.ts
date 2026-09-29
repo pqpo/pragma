@@ -7,6 +7,7 @@ import {
   createFileMemoryAttentionStateStore,
   createMemoryAttentionController,
   createFederatedMemoryContextStore,
+  createJevDecisionProvider,
   MemoryModuleRegistry,
   type MemoryAttentionCandidate,
   type MemoryAttentionInput,
@@ -71,11 +72,343 @@ async function fixture() {
   return { root, store, controller, provider, mutable, search, diagnostic };
 }
 describe("Mission Memory Attention", () => {
+  it("accepts a complete decision set in a different order", async () => {
+    const f = await fixture();
+    const second = { ...candidate, memoryId: "episode-b" };
+    const controller = createMemoryAttentionController({
+      store: f.store,
+      getBinding: async () => ({ generation: 1, provider: f.provider }),
+      read: async (_scope, ref) =>
+        [candidate, second].find((item) => item.memoryId === ref.memoryId),
+      search: async () => [candidate, second],
+      isCurrent: async () => true,
+      onDiagnostic: f.diagnostic,
+    });
+    try {
+      f.provider.assessCandidates.mockResolvedValueOnce([
+        { key: "episodic:episode-b", relevance: 0.9, novelty: 0.9 },
+        { key: "episodic:episode-a", relevance: 0.1, novelty: 0.1 },
+      ]);
+      controller.observe(delta, scope);
+      await controller.flush();
+      const state = await f.store.read(delta.missionId, delta.contextId);
+      expect(state?.active.map((entry) => entry.memoryId)).toEqual([second.memoryId]);
+      expect(state?.audit.at(-1)?.result).toBe("updated");
+    } finally {
+      await controller.stop();
+      await f.controller.stop();
+    }
+  });
+  it("accepts an empty decision set for an empty candidate set", async () => {
+    const f = await fixture();
+    try {
+      f.search.mockResolvedValueOnce([]);
+      f.provider.assessCandidates.mockResolvedValueOnce([]);
+      f.controller.observe(delta, scope);
+      await f.controller.flush();
+      const state = await f.store.read(delta.missionId, delta.contextId);
+      expect(state?.active).toEqual([]);
+      expect(state?.audit.at(-1)?.result).toBe("unchanged");
+    } finally {
+      await f.controller.stop();
+    }
+  });
+  it("rejects a provider decision after its request candidate snapshot is mutated", async () => {
+    const f = await fixture();
+    const chooseExpansion = vi.fn(async () => undefined);
+    const controller = createMemoryAttentionController({
+      store: f.store,
+      getBinding: async () => ({
+        generation: 1,
+        provider: {
+          ...f.provider,
+          chooseExpansion,
+          assessCandidates: async (input) => {
+            Object.assign(input.candidates[0]!, { summary: "Changed after request binding" });
+            return [{ key: "episodic:episode-a", relevance: 0.9, novelty: 0.9 }];
+          },
+        },
+      }),
+      read: async () => candidate,
+      search: f.search,
+      isCurrent: async () => true,
+      onDiagnostic: f.diagnostic,
+    });
+    try {
+      controller.observe(delta, scope);
+      await controller.flush();
+      expect((await f.store.read(delta.missionId, delta.contextId))?.audit.at(-1)).toMatchObject({
+        result: "failed",
+        code: "attention_response_invalid",
+      });
+      expect(chooseExpansion).not.toHaveBeenCalled();
+      expect(candidate.summary).toBe("Preserve strict steer lifecycle");
+    } finally {
+      await controller.stop();
+      await f.controller.stop();
+    }
+  });
+  it.each(["missing", "duplicate", "unknown"])(
+    "treats %s candidate keys as a failed assessment and preserves validated attention",
+    async (mode) => {
+      const f = await fixture();
+      try {
+        f.controller.observe(delta, scope);
+        await f.controller.flush();
+        const second = { ...candidate, memoryId: "episode-b" };
+        f.search.mockResolvedValueOnce([candidate, second]);
+        const low = { key: "episodic:episode-a", relevance: 0.1, novelty: 0.1 };
+        const high = { key: "episodic:episode-b", relevance: 0.9, novelty: 0.9 };
+        f.provider.assessCandidates.mockResolvedValueOnce(
+          mode === "missing"
+            ? [low]
+            : mode === "duplicate"
+              ? [low, low]
+              : [low, { ...high, key: "episodic:invented" }],
+        );
+        const read = async (_scope: MemoryRecallScope, ref: { memoryId: string }) =>
+          [candidate, second].find((item) => item.memoryId === ref.memoryId);
+        // This controller uses the same persisted state with both records readable.
+        const controller = createMemoryAttentionController({
+          store: f.store,
+          getBinding: async () => ({ generation: 1, provider: f.provider }),
+          read,
+          search: f.search,
+          isCurrent: async () => true,
+          onDiagnostic: f.diagnostic,
+          now: () => f.mutable.now,
+        });
+        try {
+          controller.observe({ ...delta, latestObservation: "Different assessment input" }, scope);
+          await controller.flush();
+          const state = await f.store.read(delta.missionId, delta.contextId);
+          expect(state?.active).toMatchObject([{ memoryId: candidate.memoryId, relevance: 0.95 }]);
+          expect(state?.audit.at(-1)).toMatchObject({
+            result: "failed",
+            code: "attention_response_invalid",
+          });
+          expect(f.provider.assessAttention).toHaveBeenCalledTimes(1);
+        } finally {
+          await controller.stop();
+        }
+      } finally {
+        await f.controller.stop();
+      }
+    },
+  );
+  it.each(["between_batches", "final_batch"])(
+    "discards candidate decisions when a source revision changes during %s",
+    async (mode) => {
+      const f = await fixture();
+      const records = Array.from({ length: 5 }, (_, i) => ({
+        ...candidate,
+        memoryId: `batch-${i}`,
+      }));
+      let revision = 1;
+      let requests = 0;
+      const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        requests++;
+        if (requests === (mode === "between_batches" ? 1 : 2)) revision++;
+        return Response.json({
+          model: "jev",
+          answers: Object.fromEntries(
+            Object.keys(body.questions).map((key) => [
+              key,
+              key.startsWith("relevance_")
+                ? { type: "score", score: 4, confidence: 1 }
+                : { type: "noul", noul: 0.9 },
+            ]),
+          ),
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      });
+      const jev = createJevDecisionProvider({ getApiKey: async () => "test", fetch: fetcher });
+      const chooseExpansion = vi.fn(async () => undefined);
+      const controller = createMemoryAttentionController({
+        store: f.store,
+        getBinding: async () => ({
+          generation: 1,
+          provider: { ...f.provider, assessCandidates: jev.assessCandidates, chooseExpansion },
+        }),
+        read: async (_scope, ref) => {
+          const found = records.find((record) => record.memoryId === ref.memoryId);
+          return found === undefined ? undefined : { ...found, revision };
+        },
+        search: async () => records,
+        isCurrent: async () => true,
+        onDiagnostic: f.diagnostic,
+      });
+      try {
+        controller.observe(delta, scope);
+        await controller.flush();
+        expect(fetcher).toHaveBeenCalledTimes(mode === "between_batches" ? 1 : 2);
+        expect(chooseExpansion).not.toHaveBeenCalled();
+        expect(f.provider.assessAttention).not.toHaveBeenCalled();
+        expect(await f.store.read(delta.missionId, delta.contextId)).toBeUndefined();
+      } finally {
+        await controller.stop();
+        await f.controller.stop();
+      }
+    },
+  );
+  it("preserves a pending failure while assessing against the latest routine task version", async () => {
+    const f = await fixture();
+    const controller = createMemoryAttentionController({
+      store: f.store,
+      getBinding: async () => ({ generation: 1, provider: f.provider }),
+      read: async () => candidate,
+      search: f.search,
+      isCurrent: async (input) => input.taskVersion === 2,
+      onDiagnostic: f.diagnostic,
+    });
+    try {
+      controller.observe({ ...delta, taskVersion: 1 }, scope);
+      controller.observe(
+        {
+          ...delta,
+          trigger: "new_observation",
+          latestObservation: "routine read completed",
+          taskVersion: 2,
+        },
+        scope,
+      );
+      await controller.flush();
+      expect(f.provider.assessRecall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          trigger: "new_error",
+          latestObservation: delta.latestObservation,
+          taskVersion: 2,
+        }),
+        expect.any(AbortSignal),
+        expect.any(Function),
+      );
+    } finally {
+      await controller.stop();
+      await f.controller.stop();
+    }
+  });
+  it("assesses the latest task when its goal changes while an older failure is pending", async () => {
+    const f = await fixture();
+    const controller = createMemoryAttentionController({
+      store: f.store,
+      getBinding: async () => ({ generation: 1, provider: f.provider }),
+      read: async () => candidate,
+      search: f.search,
+      isCurrent: async (input) => input.taskVersion === 2,
+      onDiagnostic: f.diagnostic,
+    });
+    try {
+      controller.observe({ ...delta, currentGoal: "old goal", taskVersion: 1 }, scope);
+      controller.observe(
+        { ...delta, trigger: "goal_changed", currentGoal: "new goal", taskVersion: 2 },
+        scope,
+      );
+      await controller.flush();
+      expect(f.provider.assessRecall).toHaveBeenCalledWith(
+        expect.objectContaining({ currentGoal: "new goal", taskVersion: 2 }),
+        expect.any(AbortSignal),
+        expect.any(Function),
+      );
+    } finally {
+      await controller.stop();
+      await f.controller.stop();
+    }
+  });
+  it("keeps at most three high-similarity unassessed memories without provider expansion", async () => {
+    const f = await fixture();
+    const records = Array.from({ length: 7 }, (_, i) => ({
+      ...candidate,
+      memoryId: `fallback-${i}`,
+      similarity: i === 6 ? 0.79 : 0.91,
+    }));
+    const controller = createMemoryAttentionController({
+      store: f.store,
+      getBinding: async () => ({ generation: 1, provider: undefined }),
+      read: async (_scope, ref) => records.find((record) => record.memoryId === ref.memoryId),
+      search: async () => records,
+      isCurrent: async () => true,
+      onDiagnostic: f.diagnostic,
+      now: () => f.mutable.now,
+    });
+    controller.observe(delta, scope);
+    await controller.flush();
+    expect((await f.store.read(delta.missionId, delta.contextId))?.active).toHaveLength(3);
+    expect(
+      (await f.store.read(delta.missionId, delta.contextId))?.active.every(
+        (entry) => entry.decisionMode === "vector_unassessed" && !entry.pinned,
+      ),
+    ).toBe(true);
+    const view = await controller.createContextView({ ...delta, scope });
+    const lens = await view?.readContext({ id: "mission-attention.md" });
+    expect(lens?.ok && lens.value.content).toContain(candidate.summary);
+    await controller.stop();
+    await f.controller.stop();
+  });
+  it("expands only closed actions from selected text and never evaluates a record twice", async () => {
+    const f = await fixture();
+    const second = {
+      ...candidate,
+      memoryId: "episode-b",
+      summary: "Actual checkpoint recovery procedure",
+    };
+    const first = {
+      ...candidate,
+      relations: [{ module: second.module, memoryId: second.memoryId }],
+    };
+    const search = vi.fn(async (_scope: MemoryRecallScope, queries: readonly string[]) =>
+      queries[0] === candidate.summary ? [first, second] : [first],
+    );
+    const provider = {
+      ...f.provider,
+      assessCandidates: vi.fn(async (input: { candidates: readonly MemoryAttentionCandidate[] }) =>
+        input.candidates.map((value) => ({
+          key: `${value.module}:${value.memoryId}`,
+          relevance: 0.95,
+          novelty: 0.9,
+        })),
+      ),
+      chooseExpansion: vi.fn(
+        async (input: { actions: readonly { id: string; kind: string }[] }) =>
+          input.actions.find((value) => value.kind === "expand")?.id,
+      ),
+    };
+    const controller = createMemoryAttentionController({
+      store: f.store,
+      getBinding: async () => ({ generation: 1, provider }),
+      read: async (_scope, ref) => [first, second].find((value) => value.memoryId === ref.memoryId),
+      search,
+      isCurrent: async () => true,
+      onDiagnostic: f.diagnostic,
+      now: () => f.mutable.now,
+    });
+    controller.observe(delta, scope);
+    await controller.flush();
+    expect(search).toHaveBeenCalledWith(
+      scope,
+      [candidate.summary],
+      [candidate.module],
+      expect.any(AbortSignal),
+    );
+    expect(
+      provider.assessCandidates.mock.calls.map(([input]) =>
+        input.candidates.map((value) => value.memoryId),
+      ),
+    ).toEqual([[candidate.memoryId], [second.memoryId]]);
+    expect((await f.store.read(delta.missionId, delta.contextId))?.active).toHaveLength(2);
+    await controller.stop();
+    await f.controller.stop();
+  });
   it("recalls on a new observation, exposes a manual Lens, and hints only once", async () => {
     const f = await fixture();
     f.controller.observe(delta, scope);
     await f.controller.flush();
-    expect(f.search).toHaveBeenCalledWith(scope, delta.concepts, ["episodic"]);
+    expect(f.search).toHaveBeenCalledWith(
+      scope,
+      [delta.missionGoal, delta.latestObservation, delta.concepts[0]],
+      ["episodic"],
+      expect.any(AbortSignal),
+    );
     expect(await f.controller.getState(delta.missionId, delta.contextId)).toMatchObject({
       version: 1,
       active: [{ memoryId: candidate.memoryId }],
@@ -204,6 +537,29 @@ describe("Mission Memory Attention", () => {
     await entered;
     await f.controller.cancelMission(delta.missionId);
     await flush;
+    expect(await f.store.read(delta.missionId, delta.contextId)).toBeUndefined();
+    await f.controller.stop();
+  });
+  it("propagates Mission cancellation to the vector candidate request", async () => {
+    const f = await fixture();
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    f.search.mockImplementationOnce(async (...args) => {
+      const signal = (args as unknown as [unknown, unknown, unknown, AbortSignal])[3];
+      started();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      return [candidate];
+    });
+    f.controller.observe(delta, scope);
+    const flush = f.controller.flush();
+    await entered;
+    await f.controller.cancelMission(delta.missionId);
+    await flush;
+    expect(f.provider.assessCandidates).not.toHaveBeenCalled();
     expect(await f.store.read(delta.missionId, delta.contextId)).toBeUndefined();
     await f.controller.stop();
   });

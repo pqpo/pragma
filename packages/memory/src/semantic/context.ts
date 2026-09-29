@@ -87,7 +87,7 @@ function factSeed(fact: SemanticFact): ExpertAgentContextItemSeed {
   return {
     id: `items/${fact.id}.md`,
     revision: String(fact.revision),
-    content: renderFact(fact),
+    content: renderSemanticFact(fact),
     metadata: metadata(
       `Semantic fact: ${oneLine(fact.statement, 180)}`,
       "manual",
@@ -158,7 +158,7 @@ function renderIndexLine(fact: SemanticFact): string {
   return `- [${label}](semantic/items/${fact.id}.md) — confidence ${fact.confidence.toFixed(2)}${flags.length === 0 ? "" : ` | ${flags.join(", ")}`}`;
 }
 
-function renderFact(fact: SemanticFact): string {
+export function renderSemanticFact(fact: SemanticFact): string {
   return [
     `# Fact ${fact.id}`,
     "",

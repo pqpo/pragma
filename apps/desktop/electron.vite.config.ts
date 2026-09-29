@@ -59,6 +59,9 @@ export default defineConfig({
         external: ["@napi-rs/keyring", "bufferutil", "utf-8-validate"],
         input: {
           index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
+          "vector-worker": fileURLToPath(
+            new URL("../../packages/memory/src/retrieval/vector-worker.ts", import.meta.url),
+          ),
           "code-service-worker": fileURLToPath(
             new URL("../../packages/core/src/code-service-worker.ts", import.meta.url),
           ),

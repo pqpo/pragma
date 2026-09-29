@@ -1,4 +1,9 @@
-import { MemoryAttentionStatusSchema, UpdateMemoryAttentionSettingsSchema } from "@pragma/shared";
+import {
+  MemoryRetrievalStatusSchema,
+  UpdateMemoryRetrievalSettingsSchema,
+  MemoryAttentionStatusSchema,
+  UpdateMemoryAttentionSettingsSchema,
+} from "@pragma/shared";
 import { ipcRenderer, type IpcRendererEvent } from "electron";
 
 import type { PragmaDesktopAPI } from "../../shared/contracts/api.ts";
@@ -54,7 +59,30 @@ import {
   TeamMemoryContextStoreSearchMatchSchema,
 } from "../../shared/contracts/context-store-browser.ts";
 
+import { z } from "zod";
+const EmbeddingTestResultSchema = z
+  .object({ dimensions: z.number().int().positive(), model: z.string() })
+  .strict();
 export const memoryApi = {
+  getMemoryRetrievalStatus: async () =>
+    MemoryRetrievalStatusSchema.parse(await ipcRenderer.invoke("memory-retrieval:status")),
+  updateMemoryRetrievalSettings: async (input) =>
+    MemoryRetrievalStatusSchema.parse(
+      await ipcRenderer.invoke(
+        "memory-retrieval:settings",
+        UpdateMemoryRetrievalSettingsSchema.parse(input),
+      ),
+    ),
+  testMemoryEmbedding: async () => {
+    const value: unknown = await ipcRenderer.invoke("memory-retrieval:test");
+    return EmbeddingTestResultSchema.parse(value);
+  },
+  retryMemoryIndex: async () => {
+    await ipcRenderer.invoke("memory-retrieval:retry");
+  },
+  rebuildMemoryIndex: async () => {
+    await ipcRenderer.invoke("memory-retrieval:rebuild");
+  },
   getMemoryAttentionStatus: async () =>
     MemoryAttentionStatusSchema.parse(await ipcRenderer.invoke("memory-attention:status")),
   updateMemoryAttentionSettings: async (input) =>
@@ -263,6 +291,11 @@ export const memoryApi = {
     ),
 } satisfies Pick<
   PragmaDesktopAPI,
+  | "getMemoryRetrievalStatus"
+  | "updateMemoryRetrievalSettings"
+  | "testMemoryEmbedding"
+  | "retryMemoryIndex"
+  | "rebuildMemoryIndex"
   | "getMemoryAttentionStatus"
   | "updateMemoryAttentionSettings"
   | "getGlobalMemoryPolicy"

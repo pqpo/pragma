@@ -65,6 +65,9 @@ export interface DesktopMemoryPlane {
   readonly skillLearningStore: SkillMemoryModule["store"];
   readonly activity: MemoryActivityStore;
   readonly contextStore: import("@pragma/core").ExpertAgentContextStore;
+  missionAttention: ReturnType<typeof createLocalHostMemoryContextService>["missionAttention"];
+  readonly retrieval:
+    ReturnType<typeof createLocalHostMemoryContextService>["retrieval"] | undefined;
   readonly attentionSettings:
     ReturnType<typeof createLocalHostMemoryContextService>["settings"] | undefined;
   createMissionContextStore(input: {
@@ -195,12 +198,24 @@ export async function createDesktopMemoryPlane(options: {
           pragmaHome: options.pragmaHome,
           data,
           secrets: options.secrets,
+          backgroundIndexing: true,
           onDiagnostic: (code) => {
             if (code !== undefined)
-              options.logger.warn("memory.attention_degraded", "Memory Attention is degraded.", {
-                subsystem: "memory.attention",
-                code,
-              });
+              options.logger.warn(
+                code.startsWith("embedding_")
+                  ? "memory.retrieval_degraded"
+                  : "memory.attention_degraded",
+                "Memory retrieval or attention is degraded.",
+                {
+                  subsystem: code.startsWith("embedding_")
+                    ? "memory.retrieval"
+                    : "memory.attention",
+                  moduleId: code.startsWith("embedding_")
+                    ? "pragma.memory.retrieval"
+                    : "pragma.memory.attention",
+                  code,
+                },
+              );
           },
         });
   const subjectIdentities = createLocalHostMemorySubjectIdentityStore({
@@ -355,6 +370,7 @@ export async function createDesktopMemoryPlane(options: {
       nextPollDelayMs = learningEnabled ? (options.pollIntervalMs ?? 1_000) : 30_000;
       const adapted = await flushDelivery();
       await scheduler.runBackgroundOnce();
+      void attention?.retrieval.tick();
       await options.onTick?.();
       if (Date.now() - lastMaintenanceAtMs >= DEFAULT_MEMORY_STORAGE_POLICY.maintenanceIntervalMs) {
         await maintainStorage();
@@ -452,6 +468,8 @@ export async function createDesktopMemoryPlane(options: {
     skillLearningStore: skill.store,
     activity,
     contextStore,
+    missionAttention: async (missionId) => (await attention?.missionAttention(missionId)) ?? [],
+    retrieval: attention?.retrieval,
     attentionSettings: attention?.settings,
     createMissionContextStore: (input) => attention?.createContextStore(input) ?? contextStore,
     stopMissionAttention: async (missionId) => {
@@ -694,7 +712,30 @@ export async function createDesktopMemoryPlane(options: {
         attentionStatus?.errorCode === undefined
           ? undefined
           : { code: attentionStatus.errorCode, occurredAt: new Date().toISOString() };
-      const currentError = lastError ?? attentionError;
+      const retrievalStatus = await attention?.retrieval.status();
+      const retrievalError =
+        retrievalStatus?.errorCode === undefined
+          ? undefined
+          : { code: retrievalStatus.errorCode, occurredAt: new Date().toISOString() };
+      if (retrievalStatus?.settings.enabled)
+        modules.push({
+          moduleId: "pragma.memory.retrieval",
+          moduleVersion: "1",
+          status:
+            retrievalStatus.errorCode === undefined && retrievalStatus.failed === 0
+              ? "healthy"
+              : "degraded",
+          lag: Math.max(0, retrievalStatus.totalMemories - retrievalStatus.indexedMemories),
+          processed: retrievalStatus.indexedMemories,
+          retried: 0,
+          deadLettered: 0,
+          skipped: 0,
+          updatedAt: new Date().toISOString(),
+          ...(retrievalStatus.errorCode === undefined
+            ? {}
+            : { lastErrorCode: retrievalStatus.errorCode }),
+        });
+      const currentError = lastError ?? attentionError ?? retrievalError;
       return {
         state: stopped
           ? "stopped"
