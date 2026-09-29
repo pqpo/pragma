@@ -841,9 +841,10 @@
 .mission-thinking-placeholder p span {
   background: linear-gradient(
     110deg,
-    var(--ui-text-secondary) 35%,
-    var(--ui-text) 50%,
-    var(--ui-text-secondary) 65%
+    var(--ui-text-secondary) 44%,
+    var(--ui-surface) 49%,
+    var(--ui-surface) 51%,
+    var(--ui-text-secondary) 56%
   );
   background-size: 250% 100%;
   background-clip: text;
