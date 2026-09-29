@@ -45,3 +45,7 @@
 7 项、崩溃重放 1 项、Core Steer 相关 5 项、既有 Codex Steer 集成 12 项及 Desktop 队列/清理
 相关 12 项通过。崩溃测试显式等待 Runtime 的 `rawQuery` 对应轮实际启动，并用 gate 保持它活动，
 避免只依赖短暂 running 状态造成误通过。
+
+## 与 OpenCode steer PR #329 合并后的恢复边界
+
+公共 Core 保留 receipt / terminal recovery 契约：不确定或正在投递的消息禁止清空队列及自动重放；Codex 使用显式 terminal abandon，普通 resume 不清除 uncertain 标记。迟到回复的取消回归通过显式关闭 Session 并恢复已关闭 Session 验证，同步断言普通 queue clear 无法绕过投递 fence。队列观察器、明确拒绝的 strict fallback 崩溃恢复及关闭／attempt identity 防复活保护保持有效。

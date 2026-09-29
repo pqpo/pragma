@@ -12,14 +12,14 @@ CLI 与 Desktop 使用相同的 `PRAGMA_HOME` 和 Local Host 语义，不要求 
 
 ## 协议基线
 
-| 项目 | 契约 |
-| --- | --- |
-| Node.js | 22 或更高版本 |
-| 支持 OS | macOS Apple Silicon、macOS Intel、Windows x64 |
-| 单次结果 | `pragma.cli-result/v2`，由 `--format=json` 输出一个 JSON object |
-| 事件流 | `pragma.cli-event/v2`，由 `--format=jsonl` 或 `--stream-json` 逐行输出 |
-| 错误对象 | `pragma.integration-error/v1`，位于 result 或 `stream.end.data.error` |
-| 协议版本 | `meta.protocolVersion` 为 `pragma.integration/v2` |
+| 项目     | 契约                                                                   |
+| -------- | ---------------------------------------------------------------------- |
+| Node.js  | 22 或更高版本                                                          |
+| 支持 OS  | macOS Apple Silicon、macOS Intel、Windows x64                          |
+| 单次结果 | `pragma.cli-result/v2`，由 `--format=json` 输出一个 JSON object        |
+| 事件流   | `pragma.cli-event/v2`，由 `--format=jsonl` 或 `--stream-json` 逐行输出 |
+| 错误对象 | `pragma.integration-error/v1`，位于 result 或 `stream.end.data.error`  |
+| 协议版本 | `meta.protocolVersion` 为 `pragma.integration/v2`                      |
 
 实际调用前执行 `pragma version`，并以该版本的 `pragma --help` 和子命令 `--help` 为能力契约。发布版本
 不可覆盖；升级后应重新读取命令能力和协议版本。
@@ -127,7 +127,9 @@ pragma mission interrupt "$MISSION_ID" \
 ```
 
 `queue list` 展示 ExpertSession prompt queue，不是 Mission Inbox operation list。Runtime 无法确认一次 steer
-投递是否发生时，队列进入 `delivery_uncertain`；调用 `queue resume` 表示由调用方确认按原消息继续。
+投递是否发生时，队列进入 `delivery_uncertain`；`queue resume` 只核对投递，不盲目重放。
+若 Runtime 无法核对，可在获得任务授权后使用 `queue resume MISSION_ID --abandon-uncertain`：
+放弃不确定消息并使用新对话继续其他排队消息。先前操作可能已经执行，不能把此恢复视为撤销。
 
 ## 输出处理
 
@@ -140,17 +142,17 @@ pragma mission interrupt "$MISSION_ID" \
 
 主要退出码：
 
-| 退出码 | 含义 |
-| ---: | --- |
-| 0 | accepted 或 succeeded |
-| 2 | 参数、格式、输入或 bootstrap 版本错误 |
-| 3 | input required，或资源、Mission、Workspace 不存在 |
-| 4 | cursor、幂等、lease、fencing 或 strict target 冲突 |
-| 5 | Runtime、依赖、keychain 或 SecretStore 不可用 |
-| 6 | workspace 或其他权限被拒绝 |
-| 7 | 协议、持久版本或数据完整性错误 |
-| 10 | Execution 或内部错误 |
-| 130 | interrupted |
+| 退出码 | 含义                                               |
+| -----: | -------------------------------------------------- |
+|      0 | accepted 或 succeeded                              |
+|      2 | 参数、格式、输入或 bootstrap 版本错误              |
+|      3 | input required，或资源、Mission、Workspace 不存在  |
+|      4 | cursor、幂等、lease、fencing 或 strict target 冲突 |
+|      5 | Runtime、依赖、keychain 或 SecretStore 不可用      |
+|      6 | workspace 或其他权限被拒绝                         |
+|      7 | 协议、持久版本或数据完整性错误                     |
+|     10 | Execution 或内部错误                               |
+|    130 | interrupted                                        |
 
 具体恢复动作以 `error.code` 和最新状态为准，不能只依赖退出码。`retryable=true` 表示错误具有可恢复路径，
 不代表可以原样重复副作用命令。幂等冲突、cursor 变化、Execution target 变化和权限拒绝都应先刷新状态或

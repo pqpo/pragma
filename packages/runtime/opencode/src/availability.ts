@@ -1,4 +1,5 @@
 import type { RuntimeCanUseResult } from "@pragma/core";
+import { runtimeFeature } from "@pragma/core";
 import { BoundedLruCache } from "@pragma/shared";
 
 import { probeOpenCode } from "./process.ts";
@@ -28,9 +29,19 @@ export async function canUseOpenCodeRuntime(input: {
 
   const refresh = (async (): Promise<RuntimeCanUseResult> => {
     try {
-      const { version } = await probeOpenCode(input.executablePath, input.env);
+      const { version, major } = await probeOpenCode(input.executablePath, input.env);
       const result = {
         usable: true,
+        features: {
+          steering:
+            major === 1
+              ? runtimeFeature.unsupported(
+                  "OpenCode 1.x does not expose safe active-turn steering.",
+                )
+              : runtimeFeature.degraded(
+                  "OpenCode 2.x private-server steering; provider-backed validation pending.",
+                ),
+        },
         details: { executablePath: input.executablePath, version },
       } satisfies RuntimeCanUseResult;
       availabilityCache.set(key, {

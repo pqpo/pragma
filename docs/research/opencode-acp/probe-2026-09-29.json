@@ -1,0 +1,570 @@
+{
+  "questionToolForced": false,
+  "version": "1.18.33",
+  "platform": "darwin",
+  "arch": "x64",
+  "stages": {
+    "initialize": {
+      "protocolVersion": 1,
+      "agentCapabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "close": {},
+          "fork": {},
+          "list": {},
+          "resume": {}
+        }
+      },
+      "authMethods": [
+        {
+          "description": "Run `opencode auth login` in the terminal",
+          "name": "Login with opencode",
+          "id": "opencode-login"
+        }
+      ],
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.33"
+      }
+    },
+    "newSession": {
+      "configOptions": [
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "pragma_mock/echo",
+          "options": [
+            {
+              "value": "pragma_mock/echo",
+              "name": "Mock/Echo"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Available effort levels for this model",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "default",
+              "name": "Default"
+            }
+          ]
+        },
+        {
+          "id": "mode",
+          "name": "Session Mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "pragma_probe",
+          "options": [
+            {
+              "value": "pragma_probe",
+              "name": "pragma_probe"
+            },
+            {
+              "value": "build",
+              "name": "build",
+              "description": "The default agent. Executes tools based on configured permissions."
+            },
+            {
+              "value": "plan",
+              "name": "plan",
+              "description": "Plan mode. Disallows all edit tools."
+            }
+          ]
+        }
+      ]
+    },
+    "effort": true,
+    "prompt": {
+      "response": {
+        "stopReason": "end_turn",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 4,
+          "totalTokens": 21
+        },
+        "_meta": {}
+      },
+      "updates": [
+        {
+          "sessionUpdate": "agent_message_chunk",
+          "messageId": "synthetic-message-1",
+          "content": {
+            "type": "text",
+            "text": "ACP probe answer"
+          }
+        },
+        {
+          "sessionUpdate": "usage_update",
+          "used": 17,
+          "size": 128000,
+          "cost": {
+            "amount": 0,
+            "currency": "USD"
+          }
+        }
+      ]
+    },
+    "systemPromptInProviderRequest": true,
+    "mcp": {
+      "response": {
+        "stopReason": "end_turn",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 4,
+          "totalTokens": 21
+        },
+        "_meta": {}
+      },
+      "calls": [
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+        "tools/call",
+        "notifications/cancelled"
+      ],
+      "updates": [
+        {
+          "sessionUpdate": "tool_call",
+          "toolCallId": "call_probe",
+          "title": "pragma_probe_probe",
+          "kind": "other",
+          "status": "pending",
+          "locations": [],
+          "rawInput": {}
+        },
+        {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "call_probe",
+          "status": "in_progress",
+          "kind": "other",
+          "title": "pragma_probe_probe",
+          "locations": [],
+          "rawInput": {}
+        },
+        {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "call_probe",
+          "status": "completed",
+          "content": [
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "probe-result"
+              }
+            }
+          ],
+          "rawOutput": {
+            "output": "probe-result",
+            "metadata": {
+              "truncated": false
+            }
+          }
+        },
+        {
+          "sessionUpdate": "agent_message_chunk",
+          "messageId": "synthetic-message-2",
+          "content": {
+            "type": "text",
+            "text": "ACP probe answer"
+          }
+        },
+        {
+          "sessionUpdate": "usage_update",
+          "used": 17,
+          "size": 128000,
+          "cost": {
+            "amount": 0,
+            "currency": "USD"
+          }
+        }
+      ]
+    },
+    "question": {
+      "completed": {
+        "stopReason": "end_turn",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 4,
+          "totalTokens": 21
+        },
+        "_meta": {}
+      },
+      "clientMethods": ["session/update", "session/update"],
+      "updates": [
+        {
+          "sessionUpdate": "agent_message_chunk",
+          "messageId": "synthetic-message-3",
+          "content": {
+            "type": "text",
+            "text": "ACP probe answer"
+          }
+        },
+        {
+          "sessionUpdate": "usage_update",
+          "used": 17,
+          "size": 128000,
+          "cost": {
+            "amount": 0,
+            "currency": "USD"
+          }
+        }
+      ],
+      "questionToolAdvertised": false,
+      "afterCancel": {
+        "stopReason": "end_turn",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 4,
+          "totalTokens": 21
+        },
+        "_meta": {}
+      }
+    },
+    "cancel": {
+      "activeDeltaObserved": true,
+      "response": {
+        "stopReason": "cancelled",
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0
+        },
+        "_meta": {}
+      }
+    },
+    "load": {
+      "sameNativeId": true,
+      "configOptions": [
+        {
+          "id": "model",
+          "name": "Model",
+          "category": "model",
+          "type": "select",
+          "currentValue": "pragma_mock/echo",
+          "options": [
+            {
+              "value": "pragma_mock/echo",
+              "name": "Mock/Echo"
+            }
+          ]
+        },
+        {
+          "id": "effort",
+          "name": "Effort",
+          "description": "Available effort levels for this model",
+          "category": "thought_level",
+          "type": "select",
+          "currentValue": "high",
+          "options": [
+            {
+              "value": "low",
+              "name": "Low"
+            },
+            {
+              "value": "high",
+              "name": "High"
+            },
+            {
+              "value": "default",
+              "name": "Default"
+            }
+          ]
+        },
+        {
+          "id": "mode",
+          "name": "Session Mode",
+          "category": "mode",
+          "type": "select",
+          "currentValue": "pragma_probe",
+          "options": [
+            {
+              "value": "pragma_probe",
+              "name": "pragma_probe"
+            },
+            {
+              "value": "build",
+              "name": "build",
+              "description": "The default agent. Executes tools based on configured permissions."
+            },
+            {
+              "value": "plan",
+              "name": "plan",
+              "description": "Plan mode. Disallows all edit tools."
+            }
+          ]
+        }
+      ],
+      "replay": 4
+    },
+    "resumedPrompt": {
+      "response": {
+        "stopReason": "end_turn",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 4,
+          "totalTokens": 21
+        },
+        "_meta": {}
+      },
+      "systemMarkerObserved": true
+    },
+    "compact": {
+      "response": {
+        "stopReason": "end_turn",
+        "_meta": {}
+      },
+      "updates": [
+        {
+          "sessionUpdate": "agent_message_chunk",
+          "messageId": "synthetic-message-4",
+          "content": {
+            "type": "text",
+            "text": "ACP probe answer"
+          }
+        },
+        {
+          "sessionUpdate": "usage_update",
+          "used": 17,
+          "size": 128000,
+          "cost": {
+            "amount": 0,
+            "currency": "USD"
+          }
+        }
+      ]
+    },
+    "afterCompactionPrompt": {
+      "response": {
+        "stopReason": "end_turn",
+        "usage": {
+          "inputTokens": 17,
+          "outputTokens": 4,
+          "totalTokens": 21
+        },
+        "_meta": {}
+      },
+      "systemMarkerObserved": true
+    },
+    "workspaceFiles": [],
+    "providerRequests": [
+      {
+        "hasSystemMarker": false,
+        "reasoningEffort": "low",
+        "messageRoles": ["system", "user", "user"]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": [
+          "edit",
+          "glob",
+          "grep",
+          "pragma_probe_probe",
+          "read",
+          "skill",
+          "todowrite",
+          "webfetch",
+          "write"
+        ],
+        "messageRoles": ["system", "user"]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": [
+          "edit",
+          "glob",
+          "grep",
+          "pragma_probe_probe",
+          "read",
+          "skill",
+          "todowrite",
+          "webfetch",
+          "write"
+        ],
+        "messageRoles": ["system", "user", "assistant", "user"]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": [
+          "edit",
+          "glob",
+          "grep",
+          "pragma_probe_probe",
+          "read",
+          "skill",
+          "todowrite",
+          "webfetch",
+          "write"
+        ],
+        "messageRoles": ["system", "user", "assistant", "user", "assistant", "tool"]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": [
+          "edit",
+          "glob",
+          "grep",
+          "pragma_probe_probe",
+          "read",
+          "skill",
+          "todowrite",
+          "webfetch",
+          "write"
+        ],
+        "messageRoles": [
+          "system",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "tool",
+          "assistant",
+          "user"
+        ]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": [
+          "edit",
+          "glob",
+          "grep",
+          "pragma_probe_probe",
+          "read",
+          "skill",
+          "todowrite",
+          "webfetch",
+          "write"
+        ],
+        "messageRoles": [
+          "system",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "tool",
+          "assistant",
+          "user",
+          "assistant",
+          "user"
+        ]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": ["edit", "glob", "grep", "read", "skill", "todowrite", "webfetch", "write"],
+        "messageRoles": [
+          "system",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "tool",
+          "assistant",
+          "user",
+          "assistant",
+          "user",
+          "assistant",
+          "user"
+        ]
+      },
+      {
+        "hasSystemMarker": false,
+        "messageRoles": ["system", "user"]
+      },
+      {
+        "hasSystemMarker": true,
+        "reasoningEffort": "high",
+        "toolNames": ["edit", "glob", "grep", "read", "skill", "todowrite", "webfetch", "write"],
+        "messageRoles": ["system", "user", "assistant", "user"]
+      }
+    ]
+  },
+  "date": "2026-09-29",
+  "pragmaMainCommit": "d995fce49f2562bf4169954d6d114815d535fd8c",
+  "upstreamCommit": "51ef4be1d3c122f18fefb510dca8d778571f4f18",
+  "binarySha256": "f53aae8eb68d832ab1bcd27bed88c02de910be61f4b5f90068ae8e93d5e794c9",
+  "nodeVersion": "24.18.0",
+  "authentication": "none; isolated temporary HOME and XDG roots; local synthetic provider only",
+  "command": ["opencode", "acp", "--hostname", "127.0.0.1", "--port", "0"],
+  "forcedNativeQuestion": {
+    "pendingAfterMs": 5000,
+    "clientMethods": ["session/update", "session/update"],
+    "updates": [
+      {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call_probe",
+        "title": "question",
+        "kind": "other",
+        "status": "pending",
+        "locations": [],
+        "rawInput": {}
+      },
+      {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call_probe",
+        "status": "in_progress",
+        "kind": "other",
+        "title": "question",
+        "locations": [],
+        "rawInput": {
+          "questions": [
+            {
+              "question": "Choose one",
+              "header": "Choice",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "First"
+                },
+                {
+                  "label": "B",
+                  "description": "Second"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "questionToolAdvertised": true,
+    "afterCancel": {
+      "stopReason": "cancelled",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalTokens": 0
+      },
+      "_meta": {}
+    }
+  },
+  "verificationBoundary": "Direct ACP probe, not Pragma Adapter conformance or Desktop acceptance; v2 source review only."
+}

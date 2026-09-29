@@ -250,7 +250,10 @@ async function createSubmissionInput(
         missionId: command.missionId,
         requestId,
         kind: "queue.resume",
-        payload: { kind: "queue.resume" },
+        payload: {
+          kind: "queue.resume",
+          ...(command.recovery === undefined ? {} : { recovery: command.recovery }),
+        },
       };
     case "queue-steer":
       return {

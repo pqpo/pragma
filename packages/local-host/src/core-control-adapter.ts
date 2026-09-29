@@ -18,6 +18,7 @@ import {
   createFileExpertSessionStore,
   createFileExecutionStore,
   createPragma,
+  runtimeSupportsSteer,
   SteerNotDispatchedError,
   unwrapInvocationOutput,
 } from "@pragma/core";
@@ -757,7 +758,7 @@ async function applyCoreMissionCommand(options: {
     },
     async "queue.resume"(command) {
       const before = await owner.session.getPromptQueueState();
-      await owner.session.resumePromptQueue();
+      await owner.session.resumePromptQueue({ recovery: command.payload.recovery });
       return {
         missionId: command.missionId,
         changed: before.state === "paused",
@@ -1177,7 +1178,7 @@ async function sessionRecordSupportsSteer(
   const resolved = await runtimes
     .resolve({ binding: rootContext.runtime, modelSelection: rootContext.modelSelection })
     .catch(() => undefined);
-  return resolved?.adapter.descriptor.capabilities?.supportsSteer === true;
+  return resolved === undefined ? false : await runtimeSupportsSteer(resolved.adapter);
 }
 
 function isFlowDefinition(value: LocalHostCoreDefinition): value is FlowSpec | Flow {

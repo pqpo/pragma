@@ -605,7 +605,7 @@ export interface PragmaDesktopAPI {
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (input: MissionExecutionAction) => Promise<Mission>;
   forceInterruptMission: (input: MissionExecutionAction) => Promise<Mission>;
-  resumeMissionQueue: (id: string) => Promise<Mission>;
+  resumeMissionQueue: (id: string, recovery?: "abandon") => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;
   getMissionWorkConversation: (
     input: GetMissionWorkConversation,

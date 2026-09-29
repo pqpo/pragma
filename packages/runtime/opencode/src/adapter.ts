@@ -23,6 +23,7 @@ import {
   type ExpertAgentUserQuestion,
 } from "@pragma/core";
 import type { AgentMessage } from "@pragma/shared";
+import { OpenCodeStream, type OpenCodeStreamEvent } from "./stream.ts";
 
 import {
   connectOpenCode,
@@ -57,7 +58,6 @@ interface NativeSession {
   readonly id: string;
   readonly messages: AgentMessage[];
   pendingStartupMessages: ExpertAgentStartupMessage[];
-  readonly toolNames: Map<string, string>;
   readonly mode: OpenCodePermissionMode;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly model?: OpenCodeModelRef | undefined;
@@ -128,8 +128,8 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
     ),
     cancellation: enabled(),
     steering: runtimeFeature.native(
-      runtimeFeature.unsupported(
-        "Active-turn steering is not uniformly available in OpenCode 1.x and 2.x.",
+      runtimeFeature.degraded(
+        "OpenCode 2.x private-server steering; 1.x unsupported. Provider-backed validation pending.",
       ),
     ),
     close: enabled(),
@@ -214,7 +214,6 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
             client,
             id,
             messages: [],
-            toolNames: new Map(),
             mode,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             model:
@@ -252,7 +251,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
         session.activeAbort = abort;
         const onAbort = () => abort.abort(turn.signal.reason);
         turn.signal.addEventListener("abort", onAbort, { once: true });
-        let streamed = "";
+        const stream = new OpenCodeStream();
         try {
           const model =
             turn.modelSelection === undefined
@@ -284,6 +283,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
           const previousContext = await session.client.serializedContext(session.id);
           const output = await session.client.prompt({
             sessionId: session.id,
+            runId: turn.runId,
             model,
             signal: abort.signal,
             text: promptText,
@@ -297,16 +297,11 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
                 await handleOpenCodeQuestion(session, event);
                 return;
               }
-              const normalized = normalizeEvent(event, session.toolNames);
-              if (normalized?.kind === "message-delta") streamed += normalized.text;
-              if (normalized !== undefined) turn.stream.writeNative(normalized);
+              for (const normalized of stream.consume(event)) turn.stream.writeNative(normalized);
             },
           });
           if (output.text.trim() === "")
             throw new Error("OpenCode turn completed without assistant text.");
-          if (streamed === "")
-            turn.stream.writeNative({ kind: "message-delta", text: output.text });
-          turn.stream.writeNative({ kind: "message-completed", text: output.text });
           const usage =
             output.usage === undefined
               ? createUsageFromTokenCounts({
@@ -317,15 +312,21 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
                       history: previousContext,
                       prompt: promptText,
                       attachments: files,
+                      ...(output.estimation === undefined
+                        ? {}
+                        : { steering: output.estimation.steering }),
                     }),
                     {
                       runtimeKind: "opencode",
                     },
                   ).tokens,
                   inputTokensIncludeCacheRead: false,
-                  outputTokens: session.tokenCounter.countText(output.text, {
-                    runtimeKind: "opencode",
-                  }).tokens,
+                  outputTokens: session.tokenCounter.countText(
+                    output.estimation?.output ?? output.text,
+                    {
+                      runtimeKind: "opencode",
+                    },
+                  ).tokens,
                   cacheReadTokens: 0,
                   cacheWriteTokens: 0,
                 })
@@ -337,6 +338,20 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
                   cacheReadTokens: output.usage.cacheRead,
                   cacheWriteTokens: output.usage.cacheWrite,
                 });
+          for (const event of stream.finish(output.text)) {
+            if (event.kind === "message-completed") {
+              const mapped = mapOpenCodeCompletion(event);
+              turn.stream.writeNative({
+                ...event,
+                message: {
+                  ...mapped,
+                  usage,
+                  provider: model?.providerId ?? "opencode",
+                  model: model?.modelId ?? "default",
+                },
+              });
+            } else turn.stream.writeNative(event);
+          }
           session.messages.push(
             { role: "user", content: turn.rawQuery, timestamp: Date.now() },
             {
@@ -355,6 +370,12 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
           turn.signal.removeEventListener("abort", onAbort);
           session.activeAbort = undefined;
         }
+      },
+      async steerTurn(session, request) {
+        await session.client.steer(session.id, request);
+      },
+      async reconcileSteer(session, request) {
+        return await session.client.reconcileSteer(session.id, request);
       },
       mapEvent: mapOpenCodeEvent,
       async compactContext(session) {
@@ -377,18 +398,7 @@ export function createOpenCodeRuntime(options: OpenCodeRuntimeOptions = {}): Run
   );
 }
 
-type NativeEvent =
-  | {
-      readonly kind: "message-delta" | "thought-delta" | "message-completed";
-      readonly text: string;
-    }
-  | {
-      readonly kind: "tool-started" | "tool-completed" | "tool-failed";
-      readonly id: string;
-      readonly name: string;
-      readonly value?: unknown;
-    }
-  | { readonly kind: "progress"; readonly stage: string };
+type NativeEvent = OpenCodeStreamEvent;
 
 export function mapOpenCodeEvent(
   event: NativeEvent,
@@ -400,7 +410,10 @@ export function mapOpenCodeEvent(
     case "thought-delta":
       return { events: [context.events.thoughtDelta(event.text)] };
     case "message-completed":
-      return { events: [context.events.messageCompleted(event.text)], completedText: event.text };
+      return {
+        events: [context.events.messageCompleted(event.message ?? mapOpenCodeCompletion(event))],
+        completedText: event.text,
+      };
     case "tool-started":
       return {
         events: [
@@ -434,62 +447,6 @@ export function mapOpenCodeEvent(
     case "progress":
       return { events: [context.events.progress(event.stage)] };
   }
-}
-
-function normalizeEvent(
-  event: OpenCodeWireEvent,
-  names: Map<string, string>,
-): NativeEvent | undefined {
-  const data = event.data;
-  if (event.type === "session.text.delta" && typeof data["delta"] === "string")
-    return { kind: "message-delta", text: data["delta"] };
-  if (event.type === "session.reasoning.delta" && typeof data["delta"] === "string")
-    return { kind: "thought-delta", text: data["delta"] };
-  if (
-    event.type === "session.tool.input.started" &&
-    typeof data["id"] === "string" &&
-    typeof data["name"] === "string"
-  ) {
-    names.set(data["id"], data["name"]);
-    return { kind: "tool-started", id: data["id"], name: data["name"] };
-  }
-  if (
-    (event.type === "session.tool.success" || event.type === "session.tool.failed") &&
-    typeof data["id"] === "string"
-  ) {
-    return {
-      kind: event.type === "session.tool.success" ? "tool-completed" : "tool-failed",
-      id: data["id"],
-      name: names.get(data["id"]) ?? "unknown",
-      value: data["error"] ?? data["content"],
-    };
-  }
-  if (event.type === "message.part.updated") {
-    const part = object(data["part"]);
-    if (part?.["type"] === "text" && typeof data["delta"] === "string")
-      return { kind: "message-delta", text: data["delta"] };
-    if (part?.["type"] === "reasoning" && typeof data["delta"] === "string")
-      return { kind: "thought-delta", text: data["delta"] };
-    if (part?.["type"] === "tool" && typeof part["callID"] === "string") {
-      const id = part["callID"];
-      const name = typeof part["tool"] === "string" ? part["tool"] : "unknown";
-      const state = object(part["state"]);
-      if (!names.has(id)) {
-        names.set(id, name);
-        return { kind: "tool-started", id, name, value: state?.["input"] };
-      }
-      if (state?.["status"] === "completed")
-        return { kind: "tool-completed", id, name, value: state["output"] };
-      if (state?.["status"] === "error")
-        return { kind: "tool-failed", id, name, value: state["error"] };
-    }
-  }
-  if (event.type === "message.part.delta" && typeof data["delta"] === "string") {
-    if (data["field"] === "text") return { kind: "message-delta", text: data["delta"] };
-    if (data["field"] === "reasoning") return { kind: "thought-delta", text: data["delta"] };
-  }
-  if (event.type.includes("compaction")) return { kind: "progress", stage: event.type };
-  return undefined;
 }
 
 async function handlePermission(session: NativeSession, event: OpenCodeWireEvent): Promise<void> {
@@ -634,4 +591,31 @@ function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function mapOpenCodeCompletion(
+  event: Extract<OpenCodeStreamEvent, { kind: "message-completed" }>,
+): Extract<AgentMessage, { role: "assistant" }> {
+  return {
+    role: "assistant",
+    content: [
+      ...(event.thinking === undefined
+        ? []
+        : [{ type: "thinking" as const, thinking: event.thinking }]),
+      { type: "text", text: event.text },
+    ],
+    api: "opencode",
+    provider: "opencode",
+    model: "default",
+    usage: createUsageFromTokenCounts({
+      measurement: "unknown",
+      inputTokens: 0,
+      inputTokensIncludeCacheRead: false,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    }),
+    stopReason: event.final ? "stop" : "toolUse",
+    timestamp: Date.now(),
+  };
 }

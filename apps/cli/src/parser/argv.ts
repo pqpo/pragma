@@ -133,6 +133,7 @@ export type ParsedCommand =
   | {
       readonly kind: "queue-resume";
       readonly missionId: string;
+      readonly recovery?: "abandon" | undefined;
       readonly requestId?: string | undefined;
       readonly ackTimeoutSeconds: number;
     }
@@ -372,9 +373,9 @@ Removes one queue item. --request is the queue item ID; --request-id is this com
 Example: pragma mission queue remove MISSION_ID --request QUEUE_REQUEST_ID`;
       }
       if (queueCommand === "resume") {
-        return `Usage: pragma mission queue resume MISSION_ID [--request-id REQUEST_ID] [--ack-timeout SECONDS]
+        return `Usage: pragma mission queue resume MISSION_ID [--abandon-uncertain] [--request-id REQUEST_ID] [--ack-timeout SECONDS]
 
-Resumes a paused queue. The command is durable and idempotent by request ID plus payload hash.
+Resumes a paused queue by checking steer delivery. --abandon-uncertain discards uncertain messages without replay and starts a new native conversation; prior operations may already have executed. The command is durable and idempotent by request ID plus payload hash.
 Example: pragma mission queue resume MISSION_ID`;
       }
       if (queueCommand === "steer") {
@@ -728,7 +729,11 @@ function registerMissionCommands(mission: Command, setCommand: ParsedCommandSink
   addLeaf(
     queue,
     "resume",
-    [{ flags: "--request-id <requestId>" }, { flags: "--ack-timeout <seconds>" }],
+    [
+      { flags: "--abandon-uncertain" },
+      { flags: "--request-id <requestId>" },
+      { flags: "--ack-timeout <seconds>" },
+    ],
     (positionals, values) => parseQueueCommand(["resume", ...positionals], values),
     setCommand,
   );
@@ -1409,11 +1414,16 @@ function parseQueueCommand(
     };
   }
   if (subcommand === "resume") {
-    assertOnlyOptions(values, ["request-id", "ack-timeout"], "mission queue resume");
+    assertOnlyOptions(
+      values,
+      ["abandon-uncertain", "request-id", "ack-timeout"],
+      "mission queue resume",
+    );
     if (positionals.length !== 2) throw new Error("mission queue resume requires a Mission ID.");
     return {
       kind: "queue-resume",
       missionId: positionals[1]!,
+      ...(values.get("abandon-uncertain") === true ? { recovery: "abandon" as const } : {}),
       requestId: optionalRequestId(values, "request-id"),
       ackTimeoutSeconds: parseAckTimeout(values),
     };

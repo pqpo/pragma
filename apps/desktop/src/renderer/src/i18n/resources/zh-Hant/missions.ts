@@ -12,11 +12,14 @@ export const missions = {
   queuedMessage: "排隊",
   preparingQueuedSteer: "正在準備引導",
   removeQueuedMessage: "移出佇列並編輯",
+  steerRetained: "未投遞 Steer，訊息保留在佇列中，等待下一輪執行。",
+  steerDeliveryUncertain: "Steer 投遞結果不確定，佇列已暫停，避免重複執行。",
+  checkSteerDelivery: "檢查投遞並恢復",
+  abandonSteerDelivery: "跳過不確定訊息，重新開始",
+  abandonSteerDeliveryHint:
+    "停止舊對話，捨棄不確定訊息且不重播。先前操作可能已經執行。其他排隊訊息將在新對話中繼續。",
   queuePaused: "佇列已在失敗訊息後暫停。",
   deliveryUncertain: "投遞不確定",
-  steerDeliveryUncertain:
-    "Steer 投遞結果不確定，訊息已保留，佇列已暫停。請先核對目前輪次的結果，再決定是否重新執行，避免重複操作。",
-  retryUncertainQueue: "重新執行排隊訊息",
   resumeQueue: "略過失敗項並繼續",
   title: "任務",
   newMission: "新增任務",

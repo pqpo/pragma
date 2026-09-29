@@ -56,7 +56,12 @@ import type {
   HostContextBindingsResolver,
 } from "../context-system/host-context-bindings.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
-import { SteerDeliveryUncertainError, SteerNotDispatchedError } from "./steer-delivery-error.ts";
+import {
+  hasUncertainSteerDelivery,
+  hasUnresolvedSteerDelivery,
+  SteerDeliveryUncertainError,
+  SteerNotDispatchedError,
+} from "./steer-delivery-error.ts";
 import {
   ExecutionFinalStatusConflictError,
   ExecutionVersionConflictError,
@@ -200,7 +205,7 @@ export interface ExpertSession {
   attemptQueuedPromptSteer(requestId: string): Promise<QueuedPromptSteerAttempt>;
   steerQueuedPrompt(requestId: string): Promise<ExpertTurn>;
   removeQueuedPrompt(requestId: string, reason?: string): Promise<void>;
-  resumePromptQueue(): Promise<void>;
+  resumePromptQueue(options?: { readonly recovery?: "abandon" | undefined }): Promise<void>;
   cancelPromptQueue(reason?: string): Promise<void>;
 }
 
@@ -1602,7 +1607,7 @@ class ExpertSessionImpl implements ExpertSession {
       (prompt) => prompt.status === "queued" && prompt.deliveryAttempt?.state === "uncertain",
     );
     const paused =
-      uncertain !== undefined ||
+      hasUncertainSteerDelivery(prompts) ||
       (lastControl?.type === "prompt.queue-paused" &&
         pending.some((prompt) => prompt.status === "queued"));
     const pausedRequestId =
@@ -1620,24 +1625,40 @@ class ExpertSessionImpl implements ExpertSession {
     };
   }
 
-  async resumePromptQueue(): Promise<void> {
-    if ((await this.getPromptQueueState()).state !== "paused") return;
-    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
-      result: undefined,
-      session: { ...session, updatedAt: new Date().toISOString() },
-      prompts: prompts.map((prompt) =>
-        prompt.mode === "enqueue" &&
-        prompt.status === "queued" &&
-        prompt.deliveryAttempt?.state === "uncertain"
-          ? {
-              ...prompt,
-              error: undefined,
-              deliveryAttempt: undefined,
-              updatedAt: new Date().toISOString(),
-            }
-          : prompt,
-      ),
-    }));
+  private queueRecoveryInFlight = false;
+
+  async resumePromptQueue(
+    options: { readonly recovery?: "abandon" | undefined } = {},
+  ): Promise<void> {
+    if (this.queueRecoveryInFlight)
+      throw new SteerDeliveryUncertainError("Queue delivery recovery is already in progress.");
+    this.queueRecoveryInFlight = true;
+    try {
+      await this.resumePromptQueueInternal(options);
+    } finally {
+      this.queueRecoveryInFlight = false;
+    }
+  }
+
+  private async resumePromptQueueInternal(options: {
+    readonly recovery?: "abandon" | undefined;
+  }): Promise<void> {
+    const recoveredAbandonment = await this.cancelAbandonedSteerExecutions(
+      await this.getPromptQueue(),
+    );
+    if ((await this.getPromptQueueState()).state !== "paused" && !recoveredAbandonment) return;
+    const uncertain = (await this.getPromptQueue()).filter(
+      (prompt) => prompt.status !== "cancelled" && prompt.deliveryAttempt?.state === "uncertain",
+    );
+    if (uncertain.length > 0) {
+      if (options.recovery === "abandon") await this.abandonQueuedSteers(uncertain);
+      else await this.reconcileQueuedSteers(uncertain);
+    }
+    if (hasUnresolvedSteerDelivery(await this.getPromptQueue())) {
+      throw new SteerDeliveryUncertainError(
+        "Steer delivery is still uncertain; the queue remains paused.",
+      );
+    }
     await this.ownedSessions.appendEvent(this.sessionId, {
       eventId: `prompt-queue-resumed:${randomUUID()}`,
       type: "prompt.queue-resumed",
@@ -1647,9 +1668,203 @@ class ExpertSessionImpl implements ExpertSession {
     this.startProcessing();
   }
 
+  private async abandonQueuedSteers(prompts: readonly PromptRequest[]): Promise<void> {
+    const state = await this.getState();
+    if (state.activeExecutionId !== undefined || this.queueSteersInFlight.size > 0)
+      throw new SteerDeliveryUncertainError(
+        "Wait for the active execution and steer admission to settle before abandoning delivery.",
+      );
+    this.paused = true;
+    // A successful close is required. Never unpause while a live managed native Session remains.
+    await this.runtimeSessions.clear();
+    const requestIds = new Set(prompts.map((prompt) => prompt.requestId));
+    const updatedAt = new Date().toISOString();
+    // Cancel uncertain prompts and detach the old native identity in one durable transaction.
+    // A crash before this write leaves the fence intact; after it, no restart can restore
+    // the old conversation or dispatch an abandoned prompt.
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts: current }) => {
+      if (session.activeExecutionId !== undefined || this.queueSteersInFlight.size > 0)
+        throw new SteerDeliveryUncertainError(
+          "Steer recovery target changed; the queue remains paused.",
+        );
+      const context = session.contexts[session.rootContextId];
+      if (context === undefined) throw new Error("ExpertSession root Context is missing.");
+      return {
+        result: undefined,
+        session: {
+          ...session,
+          queuedRequestIds: session.queuedRequestIds.filter((id) => !requestIds.has(id)),
+          contexts: {
+            ...session.contexts,
+            [session.rootContextId]: { ...context, snapshot: undefined, updatedAt },
+          },
+          updatedAt,
+        },
+        prompts: current.map((prompt) =>
+          requestIds.has(prompt.requestId) && prompt.deliveryAttempt?.state === "uncertain"
+            ? {
+                ...prompt,
+                status: "cancelled" as const,
+                error:
+                  "Steer delivery abandoned without replay; prior operations may already have executed.",
+                updatedAt,
+              }
+            : prompt,
+        ),
+      };
+    });
+    // Source Executions must remain runnable until the abandonment decision is durable.
+    // Cancelled attempts are the durable cleanup intent, so a retry/restart can finish
+    // cancellation if the process stops between the aggregate write and this cleanup.
+    await this.cancelAbandonedSteerExecutions(await this.getPromptQueue());
+    await this.ownedSessions.appendEvent(this.sessionId, {
+      eventId: `prompt-steer-abandoned:${randomUUID()}`,
+      type: "prompt.steer-abandoned",
+      data: {
+        requestIds: [...requestIds],
+        runtimeSnapshot: state.contexts[state.rootContextId]?.snapshot,
+      },
+      occurredAt: updatedAt,
+    });
+  }
+
+  private async cancelAbandonedSteerExecutions(
+    prompts: readonly PromptRequest[],
+  ): Promise<boolean> {
+    const abandoned = prompts.filter(
+      (prompt) =>
+        prompt.status === "cancelled" &&
+        prompt.deliveryAttempt?.kind === "queue_steer" &&
+        prompt.deliveryAttempt.state === "uncertain",
+    );
+    for (const prompt of abandoned) {
+      const sourceExecutionId = prompt.deliveryAttempt?.sourceExecutionId;
+      if (sourceExecutionId === undefined) continue;
+      await this.cancelPersistedExecution(
+        sourceExecutionId,
+        "Steer delivery abandoned without replay; prior operations may already have executed.",
+      );
+    }
+    if (abandoned.length === 0 || hasUnresolvedSteerDelivery(prompts)) return false;
+    const lastControl = [...(await this.dependencies.sessions.listEvents(this.sessionId))]
+      .reverse()
+      .find((event) =>
+        ["prompt.queue-paused", "prompt.queue-resumed", "prompt.queue-cleared"].includes(
+          event.type,
+        ),
+      );
+    const pause = lastControl?.data as { requestId?: unknown; reason?: unknown } | undefined;
+    if (
+      lastControl?.type !== "prompt.queue-paused" ||
+      pause?.reason !== "delivery_uncertain" ||
+      !abandoned.some((prompt) => prompt.requestId === pause.requestId)
+    )
+      return false;
+    // Replay the control-event cleanup too: an idle queue otherwise appears resumed,
+    // but the stale pause would fence the next instruction after retry or restart.
+    await this.ownedSessions.appendEvent(this.sessionId, {
+      eventId: `prompt-queue-resumed:${randomUUID()}`,
+      type: "prompt.queue-resumed",
+      data: {},
+    });
+    return true;
+  }
+
+  private async reconcileQueuedSteers(prompts: readonly PromptRequest[]): Promise<void> {
+    const state = await this.getState();
+    if (state.activeExecutionId !== undefined) {
+      throw new SteerDeliveryUncertainError(
+        "Wait for the active execution to settle before checking steer delivery.",
+      );
+    }
+    const context = await this.getRootContext(state);
+    if (context.snapshot === undefined)
+      throw new SteerDeliveryUncertainError(
+        "The owned Runtime Session cannot be restored for delivery reconciliation.",
+      );
+    const identity = {
+      contextId: context.contextId,
+      expertId: context.expert.id,
+      runtime: context.runtime,
+    };
+    // Stop any live pooled Session before restoring the same native Session.
+    // The Runtime must still account for orphaned processes after a host crash.
+    await this.runtimeSessions.release(identity);
+    const resolved = await this.dependencies.runtimes.resolve({
+      binding: context.runtime,
+      modelSelection: context.modelSelection,
+    });
+    const native = await openRuntimeSession(resolved.adapter, {
+      agent: isExpertTeam(this.expert) ? this.expert.coordinator : this.expert,
+      owner: { type: "expert-session", ownerId: this.sessionId, contextId: context.contextId },
+      pragmaHome: this.dependencies.pragmaHome,
+      systemSessionId: context.snapshot.systemSessionId,
+      runtimeSession: context.snapshot.runtimeSession,
+      modelSelection: context.modelSelection,
+      loggerProvider: this.dependencies.loggerProvider.withScope({
+        expertSessionId: this.sessionId,
+        contextId: context.contextId,
+      }),
+    });
+    try {
+      if (native.reconcileSteer === undefined)
+        throw new SteerDeliveryUncertainError(
+          "This Runtime cannot confirm steer delivery; the queue remains paused.",
+        );
+      for (const prompt of prompts) {
+        const attempt = prompt.deliveryAttempt!;
+        const outcome = await native.reconcileSteer({
+          requestId: prompt.requestId,
+          content: prompt.content,
+          targetRunId: attempt.targetExecutionId,
+          attemptId: attempt.attemptId,
+        });
+        if (outcome === "uncertain") continue;
+        const confirmed = outcome === "delivered";
+        await this.ownedSessions.transact(this.sessionId, ({ session, prompts: current }) => ({
+          result: undefined,
+          session: {
+            ...session,
+            queuedRequestIds: confirmed
+              ? session.queuedRequestIds.filter((id) => id !== prompt.requestId)
+              : session.queuedRequestIds,
+            updatedAt: new Date().toISOString(),
+          },
+          prompts: current.map((candidate) =>
+            candidate.requestId === prompt.requestId &&
+            candidate.deliveryAttempt?.attemptId === attempt.attemptId &&
+            candidate.deliveryAttempt.state === "uncertain"
+              ? {
+                  ...candidate,
+                  status: confirmed
+                    ? ("succeeded" as const)
+                    : candidate.mode === "enqueue"
+                      ? ("queued" as const)
+                      : ("failed" as const),
+                  error: undefined,
+                  deliveryAttempt: confirmed
+                    ? { ...candidate.deliveryAttempt, state: "confirmed" as const }
+                    : undefined,
+                  updatedAt: new Date().toISOString(),
+                }
+              : candidate,
+          ),
+        }));
+        if (confirmed && attempt.sourceExecutionId !== undefined)
+          await this.cancelPersistedExecution(
+            attempt.sourceExecutionId,
+            "Confirmed native steer delivery; the queued prompt will not be replayed.",
+          );
+      }
+    } finally {
+      await native.close();
+    }
+  }
+
   /** Recover queue-steer delivery without guessing whether Runtime observed it. */
   async recoverPendingQueueSteers(): Promise<void> {
     const allPrompts = await this.getPromptQueue();
+    await this.cancelAbandonedSteerExecutions(allPrompts);
     const uncertainStrictSteers = allPrompts.filter(
       (prompt) =>
         prompt.status !== "cancelled" &&
@@ -1679,7 +1894,9 @@ class ExpertSessionImpl implements ExpertSession {
         ),
       }));
     }
-    const marked = allPrompts.filter((prompt) => prompt.deliveryAttempt?.kind === "queue_steer");
+    const marked = allPrompts.filter(
+      (prompt) => prompt.status !== "cancelled" && prompt.deliveryAttempt?.kind === "queue_steer",
+    );
     for (const prompt of marked) {
       const replacedExecutionId = prompt.deliveryAttempt?.sourceExecutionId;
       if (replacedExecutionId === undefined) continue;
@@ -1696,16 +1913,15 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async attemptQueuedPromptSteer(requestId: string): Promise<QueuedPromptSteerAttempt> {
-    const prompt = (await this.getPromptQueue()).find(
-      (candidate) => candidate.requestId === requestId,
-    );
+    const queue = await this.getPromptQueue();
+    const prompt = queue.find((candidate) => candidate.requestId === requestId);
     if (prompt?.mode !== "enqueue" || prompt.status !== "queued") {
       throw new Error(`Queued prompt not found: ${requestId}`);
     }
     if (prompt.purpose !== "user") {
       throw new Error(`Queued prompt not found: ${requestId}`);
     }
-    if (prompt.deliveryAttempt?.state === "uncertain") {
+    if (hasUncertainSteerDelivery(queue)) {
       return { outcome: "retained", reason: "delivery_uncertain" };
     }
     const invocation = await this.dependencies.executions.getInvocation(
@@ -1779,6 +1995,10 @@ class ExpertSessionImpl implements ExpertSession {
       claim = await this.ownedSessions.transact<QueuedSteerClaim>(
         this.sessionId,
         ({ session, prompts }) => {
+          if (hasUncertainSteerDelivery(prompts))
+            throw new SteerDeliveryUncertainError(
+              "Confirm the previous steer delivery before injecting another queued message.",
+            );
           if (session.status === "closed") {
             throw new Error(`ExpertSession is closed: ${this.sessionId}`);
           }
@@ -1843,10 +2063,23 @@ class ExpertSessionImpl implements ExpertSession {
         requestId,
         content: claim.originalPrompt.content,
         targetRunId: claim.activeExecutionId,
+        attemptId: claim.attemptId,
       });
       runtimeSteerApplied = true;
 
-      await this.markQueueSteerSucceeded(claim);
+      try {
+        await this.markQueueSteerSucceeded(claim);
+      } catch (cause) {
+        await this.markQueueSteerUncertain(
+          claim.originalPrompt,
+          claim.originalPrompt.executionId,
+          claim.attemptId,
+        );
+        throw new SteerDeliveryUncertainError(
+          "Runtime acknowledged steer delivery, but its receipt could not be persisted.",
+          { cause },
+        );
+      }
       await this.cancelPersistedExecution(
         claim.originalPrompt.executionId,
         "Moved from the prompt queue to steer the active turn.",
@@ -1855,7 +2088,21 @@ class ExpertSessionImpl implements ExpertSession {
     } catch (error) {
       if (claim !== undefined && !runtimeSteerApplied) {
         if (error instanceof SteerNotDispatchedError) {
-          if (!(await this.restoreQueuedSteer(claim))) {
+          let restored: boolean;
+          try {
+            restored = await this.restoreQueuedSteer(claim);
+          } catch (restoreError) {
+            await this.markQueueSteerUncertain(
+              claim.originalPrompt,
+              claim.originalPrompt.executionId,
+              claim.attemptId,
+            );
+            throw new SteerDeliveryUncertainError(
+              "The queue could not confirm rollback of the steer attempt.",
+              { cause: restoreError },
+            );
+          }
+          if (!restored) {
             throw new Error(`Queued prompt was cancelled before steer completed: ${requestId}`, {
               cause: error,
             });
@@ -1894,6 +2141,10 @@ class ExpertSessionImpl implements ExpertSession {
         if (prompt?.purpose !== "user" || prompt.mode !== "enqueue" || prompt.status !== "queued") {
           throw new Error(`Queued prompt not found: ${requestId}`);
         }
+        if (prompt.deliveryAttempt?.state === "uncertain")
+          throw new SteerDeliveryUncertainError(
+            "Confirm steer delivery before taking this message back for resending.",
+          );
         return {
           result: prompt.executionId,
           session: {
@@ -1918,29 +2169,43 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async cancelPromptQueue(reason?: string): Promise<void> {
-    this.paused = true;
+    if (hasUnresolvedSteerDelivery(await this.getPromptQueue())) {
+      await this.controller?.cancel(
+        reason ?? "Stopped while steer delivery requires confirmation.",
+      );
+      throw new SteerDeliveryUncertainError(
+        "Confirm steer delivery before clearing the queue and accepting another turn.",
+      );
+    }
     const cancellationReason = reason ?? "Prompt queue cleared.";
     const pending = (await this.getPromptQueue()).filter(
       (prompt) => prompt.status === "queued" || prompt.status === "running",
     );
-    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => ({
-      result: undefined,
-      session: {
-        ...session,
-        queuedRequestIds: [],
-        updatedAt: new Date().toISOString(),
-      },
-      prompts: prompts.map((prompt) =>
-        prompt.status === "queued" || prompt.status === "running"
-          ? {
-              ...prompt,
-              status: "cancelled" as const,
-              error: cancellationReason,
-              updatedAt: new Date().toISOString(),
-            }
-          : prompt,
-      ),
-    }));
+    await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => {
+      if (hasUnresolvedSteerDelivery(prompts))
+        throw new SteerDeliveryUncertainError(
+          "Steer delivery must settle before queue cancellation.",
+        );
+      return {
+        result: undefined,
+        session: {
+          ...session,
+          queuedRequestIds: [],
+          updatedAt: new Date().toISOString(),
+        },
+        prompts: prompts.map((prompt) =>
+          prompt.status === "queued" || prompt.status === "running"
+            ? {
+                ...prompt,
+                status: "cancelled" as const,
+                error: cancellationReason,
+                updatedAt: new Date().toISOString(),
+              }
+            : prompt,
+        ),
+      };
+    });
+    this.paused = true;
     await this.ownedSessions.appendEvent(this.sessionId, {
       eventId: `prompt-queue-cleared:${randomUUID()}`,
       type: "prompt.queue-cleared",
@@ -2182,6 +2447,10 @@ class ExpertSessionImpl implements ExpertSession {
             prompts,
           };
         }
+        if (hasUncertainSteerDelivery(prompts))
+          throw new SteerDeliveryUncertainError(
+            "Confirm the previous steer delivery before injecting another message.",
+          );
         const contextId = session.rootContextId;
         const executionId = session.activeExecutionId;
         const attemptId = randomUUID();
@@ -2225,6 +2494,7 @@ class ExpertSessionImpl implements ExpertSession {
         requestId,
         content,
         targetRunId: claim.executionId,
+        attemptId: claim.attemptId,
       });
       await this.completeSteer(requestId, claim.attemptId, "succeeded");
       return this.createTurn(claim.executionId, requestId, "steer", "steer");
@@ -2315,7 +2585,11 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async restartProcessingIfQueued(): Promise<void> {
-    if ((await this.getPromptQueue()).some((prompt) => prompt.status === "queued")) {
+    const prompts = await this.getPromptQueue();
+    if (
+      !hasUnresolvedSteerDelivery(prompts) &&
+      prompts.some((prompt) => prompt.status === "queued")
+    ) {
       this.startProcessing();
     }
   }
@@ -2326,19 +2600,13 @@ class ExpertSessionImpl implements ExpertSession {
       if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
       const prompts = await this.getPromptQueue();
-      if (
-        prompts.some(
-          (prompt) =>
-            prompt.mode === "enqueue" &&
-            prompt.status === "queued" &&
-            prompt.deliveryAttempt?.state === "uncertain",
-        )
-      ) {
+      if (hasUnresolvedSteerDelivery(prompts)) {
         this.paused = true;
         return;
       }
       if (this.leaseError !== undefined) return;
       if (this.processingGeneration !== generation) return;
+      if (this.paused || hasUnresolvedSteerDelivery(prompts)) return;
       const next = prompts.find((prompt) => prompt.status === "queued");
       if (next === undefined) return;
       const status = await this.runPrompt(next).catch(() => "failed" as const);
@@ -2368,10 +2636,11 @@ class ExpertSessionImpl implements ExpertSession {
     const now = new Date().toISOString();
     const claimed = await this.ownedSessions.transact(this.sessionId, ({ session, prompts }) => {
       const current = prompts.find((candidate) => candidate.requestId === prompt.requestId);
-      if (current?.deliveryAttempt?.state === "uncertain") this.paused = true;
+      if (hasUnresolvedSteerDelivery(prompts)) this.paused = true;
       if (
         this.paused ||
         this.queueSteersInFlight.size > 0 ||
+        hasUnresolvedSteerDelivery(prompts) ||
         current?.mode !== "enqueue" ||
         current.status !== "queued"
       ) {

@@ -55,8 +55,15 @@ async function fixture() {
     sessions,
     turnStarts: () => peer.requests.filter((request) => request.method === "turn/start"),
     async recover() {
-      await session.releaseAfterTerminal();
-      session = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
+      if ((await session.getState()).status === "closed") {
+        session = await app.experts.recoverClosedSession(expert, {
+          sessionId: session.sessionId,
+          reason: "Verify late replies cannot revive cancelled prompts after explicit close.",
+        });
+      } else {
+        await session.releaseAfterTerminal();
+        session = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
+      }
     },
     async close() {
       await session.close();
@@ -67,7 +74,7 @@ async function fixture() {
 
 describe("Codex queued steer delivery", { timeout: 15_000 }, () => {
   it.each(["not-submitted", "uncertain"] as const)(
-    "preserves cancellation of a strict steer with enqueue fallback after a late %s reply",
+    "preserves explicit Session closure of a strict steer with enqueue fallback after a late %s reply",
     async (reply) => {
       const f = await fixture();
       try {
@@ -86,7 +93,10 @@ describe("Codex queued steer delivery", { timeout: 15_000 }, () => {
         const steerId = f.peer.requests.at(-1)!.id;
         f.peer.completeTurn("turn-1", "first result");
         await active.result;
-        await f.session.cancelPromptQueue();
+        await expect(f.session.cancelPromptQueue()).rejects.toMatchObject({
+          name: "SteerDeliveryUncertainError",
+        });
+        await f.session.close("Explicitly stop the Session without replaying pending delivery.");
         f.peer.reject(
           steerId,
           reply === "not-submitted"
@@ -162,7 +172,7 @@ describe("Codex queued steer delivery", { timeout: 15_000 }, () => {
   });
 
   it.each(["not-submitted", "uncertain"] as const)(
-    "does not resurrect a cleared prompt when the late steer reply is %s",
+    "does not resurrect a prompt after explicit Session closure when the late steer reply is %s",
     async (reply) => {
       const f = await fixture();
       try {
@@ -178,7 +188,10 @@ describe("Codex queued steer delivery", { timeout: 15_000 }, () => {
         const steerId = f.peer.requests.at(-1)!.id;
         f.peer.completeTurn("turn-1", "first result");
         await active.result;
-        await f.session.cancelPromptQueue();
+        await expect(f.session.cancelPromptQueue()).rejects.toMatchObject({
+          name: "SteerDeliveryUncertainError",
+        });
+        await f.session.close("Explicitly stop the Session without replaying pending delivery.");
         await expect(queued.result).rejects.toThrow();
         f.peer.reject(
           steerId,

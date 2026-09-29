@@ -13,6 +13,7 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
+  SteerDeliveryUncertainError,
   type RuntimeNativeSessionContext,
 } from "../src/index.ts";
 import { createRuntimeTestFeatures } from "../src/testing/index.ts";
@@ -106,6 +107,19 @@ describe("queue steer crash recovery", () => {
         reason: "delivery_uncertain",
       });
       expect((await recovered.getState()).activeExecutionId).toBeUndefined();
+      await expect(recovered.resumePromptQueue()).rejects.toBeInstanceOf(
+        SteerDeliveryUncertainError,
+      );
+      await recovered.resumePromptQueue({ recovery: "abandon" });
+      expect(
+        (await recovered.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+      ).toMatchObject({ status: "cancelled", deliveryAttempt: { state: "uncertain" } });
+      const state = await recovered.getState();
+      expect(state.contexts[state.rootContextId]?.snapshot).toBeUndefined();
+      const next = await recovered.prompt("Continue after terminal recovery", {
+        requestId: "next",
+      });
+      await expect(next.result).resolves.toBe("recovery");
       await recovered.close();
     } finally {
       if (child.exitCode === null && child.signalCode === null) killProcessTree(child, "SIGKILL");

@@ -5,14 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalHostCoreMissionControlAdapter } from "../src/index.ts";
 
 describe("Local Host Core Mission control adapter", () => {
-  it("forwards durable command attachments to the ExpertSession prompt", async () => {
+  it("forwards durable command attachments and explicit queue recovery to Core", async () => {
     const prompt = vi.fn(async (_content: string, options: unknown) => ({
       executionId: "execution-1",
       requestId: "00000000-0000-4000-8000-000000000002",
       options,
     }));
+    const resumePromptQueue = vi.fn(async () => undefined);
     const session = {
       prompt,
+      resumePromptQueue,
       getPromptQueue: async () => [],
       getPromptQueueState: async () => ({ state: "idle", pendingCount: 0 }),
     } as unknown as ExpertSession;
@@ -74,5 +76,16 @@ describe("Local Host Core Mission control adapter", () => {
       mode: "enqueue",
       attachments: [attachment],
     });
+    for (const recovery of [undefined, "abandon"] as const) {
+      await adapter.consumer.apply({
+        command: MissionCommandSchema.parse({
+          ...command,
+          kind: "queue.resume",
+          payload: { kind: "queue.resume", ...(recovery === undefined ? {} : { recovery }) },
+        }),
+        guard: { claimId: "00000000-0000-4000-8000-000000000006", fencingToken: "1" },
+      });
+      expect(resumePromptQueue).toHaveBeenLastCalledWith({ recovery });
+    }
   });
 });
