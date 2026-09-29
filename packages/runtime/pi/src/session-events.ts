@@ -26,11 +26,7 @@ export function readAssistantThinkingDelta(event: AgentSessionEvent): string | u
 }
 
 export function readAssistantMessageText(event: AgentSessionEvent): string | undefined {
-  if (
-    event.type !== "message_end" ||
-    !isRecord(event.message) ||
-    event.message["role"] !== "assistant"
-  ) {
+  if (event.type !== "message_end" || event.message.role !== "assistant") {
     return undefined;
   }
 
@@ -38,10 +34,8 @@ export function readAssistantMessageText(event: AgentSessionEvent): string | und
 }
 
 export function readAssistantMessage(event: AgentSessionEvent): AssistantMessage | undefined {
-  return event.type === "message_end" &&
-    isRecord(event.message) &&
-    event.message["role"] === "assistant"
-    ? (event.message as AssistantMessage)
+  return event.type === "message_end" && event.message.role === "assistant"
+    ? event.message
     : undefined;
 }
 
