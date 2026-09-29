@@ -557,7 +557,7 @@ function estimatePiMessageTokens(session: PiNativeSession, message: PiContextMes
 }
 
 function readReportedAssistantOutputTokens(message: PiContextMessage): number | undefined {
-  if (!isRecord(message) || message["role"] !== "assistant") return undefined;
+  if (message.role !== "assistant") return undefined;
   const usage = message["usage"];
   if (!isRecord(usage)) return undefined;
   const output = usage["output"];
