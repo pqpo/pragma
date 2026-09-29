@@ -42,24 +42,26 @@ export async function auditPackagedResources(resourcesDirectory) {
   const inventory = [];
   const failures = [];
   const archive = join(resourcesDirectory, "app.asar");
-  const worker = "out/main/claude-acp-worker.js";
+  const worker = join("out", "main", "claude-acp-worker.js");
   const workerEntry = statFile(archive, worker);
   if (!workerEntry.unpacked || !(await stat(join(`${archive}.unpacked`, worker))).isFile())
     throw new Error("Packaged Claude ACP worker must exist outside ASAR.");
 
   for (const entry of listPackage(archive)) {
-    const path = entry.replace(/^\//, "");
-    const metadata = statFile(archive, path);
+    // ASAR queries use host separators; policy matching and reports use '/'.
+    const archivePath = entry.replace(/^[\\/]+/, "");
+    const portablePath = archivePath.replaceAll("\\", "/");
+    const metadata = statFile(archive, archivePath);
     if (metadata.files) continue;
-    const label = `app.asar/${path}`;
+    const label = `app.asar/${portablePath}`;
     if (metadata.link) {
       record(label, 0, Buffer.alloc(0), "asar-link");
       continue;
     }
     // Read only SDK files for content inspection; names identify platform packages.
     const prefix =
-      sdkDirectory.test(path) && metadata.size <= 5 * 1024 * 1024
-        ? extractFile(archive, path).subarray(0, 4)
+      sdkDirectory.test(portablePath) && metadata.size <= 5 * 1024 * 1024
+        ? extractFile(archive, archivePath).subarray(0, 4)
         : Buffer.alloc(0);
     record(label, metadata.size, prefix, metadata.unpacked ? "unpacked-reference" : "asar");
   }

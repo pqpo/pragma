@@ -229,3 +229,25 @@ There are no remaining confirmed defects in the reviewed changes. Native Windows
 and Apple Silicon execution/UI acceptance, including Desktop operation on a
 machine without an external Claude installation, remain pending; isolated
 availability tests and clean-HOME startup do not constitute that complete matrix.
+
+## PR #328 Windows host path follow-up
+
+[The PR review](https://github.com/pqpo/pragma/pull/328#issuecomment-5888319102)
+identified a Windows-host audit failure missed by macOS cross-packaging.
+`@electron/asar@3.4.1` uses the host `path.dirname()` and `path.sep` for lookup,
+and emits host-native separators from `listPackage()`. A forward-slash worker
+query and an unstripped leading backslash therefore fail on a Windows host.
+This was reproduced against the installed ASAR filesystem implementation using
+Windows path semantics; it does not depend on the installer target architecture.
+
+The worker query now uses host-native `join()`. Listed entries retain native
+separators for `statFile()`/`extractFile()`, strip either leading separator, and
+use a separate forward-slash path for SDK detection and reports. The fixture
+also packs a renamed PE payload inside the SDK, so skipping Windows SDK content
+inspection fails the regression. Inventory labels are checked for portability.
+Every native release matrix job now runs `test:packaging` before creating its
+installer, providing Windows-host fixture and actual `afterPack` coverage.
+
+Local packaging fixtures, lint and formatting passed. Native Windows build
+verification is recorded after the corresponding GitHub Actions run completes;
+local macOS results alone do not close that review's Windows acceptance requirement.

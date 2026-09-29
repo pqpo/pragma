@@ -57,8 +57,15 @@ test("audits real ASAR, unpacked files and extra resources; keeps worker and SDK
     await createPackageWithOptions(source, join(resources, "app.asar"), {
       unpack: "**/claude-acp-worker.js",
     });
-    assert.deepEqual((await auditPackagedResources(resources)).failures, []);
+    const clean = await auditPackagedResources(resources);
+    assert.deepEqual(clean.failures, []);
+    assert.ok(
+      clean.inventory.some(({ path }) => path === "app.asar/out/main/claude-acp-worker.js"),
+    );
+    assert.ok(clean.inventory.every(({ path }) => !path.includes("\\")));
     await writeFile(join(sdk, "cli.js"), "// forbidden legacy CLI");
+    // This packed SDK payload must be inspected by content, not filename.
+    await writeFile(join(sdk, "opaque"), Buffer.from("4d5a0000", "hex"));
     await createPackageWithOptions(source, join(resources, "app.asar"), {
       unpack: "**/claude-acp-worker.js",
     });
@@ -71,7 +78,15 @@ test("audits real ASAR, unpacked files and extra resources; keeps worker and SDK
     await writeFile(join(unpackedSdk, "renamed"), Buffer.from("7f454c46", "hex"));
     uncacheAll();
     const report = await auditPackagedResources(resources);
-    assert.equal(report.failures.length, 3);
+    assert.equal(report.failures.length, 4);
+    assert.ok(
+      report.failures.some(
+        ({ path, reason }) =>
+          path === "app.asar/node_modules/@anthropic-ai/claude-agent-sdk/opaque" &&
+          reason === "Native executable inside SDK",
+      ),
+    );
+    assert.ok(report.inventory.every(({ path }) => !path.includes("\\")));
     assert.ok(report.failures.some(({ path }) => path.startsWith("app.asar/")));
     assert.ok(report.failures.some(({ path }) => path.startsWith("app.asar.unpacked/")));
     assert.ok(report.failures.some(({ path }) => path === "claude.exe"));

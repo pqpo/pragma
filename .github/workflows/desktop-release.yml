@@ -180,6 +180,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test packaging audit on native host
+        run: pnpm --filter @pragma/desktop test:packaging
+
       - name: Build installer
         run: pnpm --filter @pragma/desktop run ${{ matrix.script }}
 
