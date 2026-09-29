@@ -39,21 +39,28 @@ function fixture() {
     }),
     getState: vi.fn(async () => state),
   };
-  const start = (): void =>
+  const publishEvent = (type: string): void =>
     bus.publishEvent(
       "execution",
       ExecutionEventSchema.parse({
         schemaVersion: "pragma.execution-event/v5",
-        eventId: "started",
+        eventId: type,
         cursor: { executionId: "execution", sequence: 0 },
         executionId: "execution",
         invocationId: "execution",
-        type: "execution.started",
+        type,
         data: {},
         occurredAt: state.createdAt,
       }),
     );
-  return { execution, state, close, start, bus };
+  return {
+    execution,
+    state,
+    close,
+    start: () => publishEvent("execution.started"),
+    publishEvent,
+    bus,
+  };
 }
 
 it("receives a queued start that races with the initial state read", async () => {
@@ -99,3 +106,20 @@ it("does not attach a cancelled queued turn", async () => {
   expect(started).not.toHaveBeenCalled();
   expect(f.close).toHaveBeenCalled();
 });
+
+it.each(["cancelled", "interrupted", "failed", "succeeded"])(
+  "closes an already subscribed queued observer on execution.%s without completing the live bus",
+  async (status) => {
+    const f = fixture();
+    const started = vi.fn(async () => undefined);
+    const observing = observeMissionQueuedTurn(f.execution, started);
+    await vi.waitFor(() => expect(f.execution.getState).toHaveBeenCalledOnce());
+    f.publishEvent(`execution.${status}`);
+    await observing;
+    expect(started).not.toHaveBeenCalled();
+    expect(f.close).toHaveBeenCalledOnce();
+    // A later start cannot reactivate the observer after its terminal event.
+    f.start();
+    expect(started).not.toHaveBeenCalled();
+  },
+);

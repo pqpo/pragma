@@ -850,6 +850,27 @@ class ExpertSessionImpl implements ExpertSession {
     const mode = options.mode ?? "enqueue";
 
     if (mode === "steer") {
+      if (options.steerFallback === "enqueue") {
+        const previous = (await this.getPromptQueue()).find(
+          (prompt) => prompt.requestId === requestId,
+        );
+        if (
+          previous?.mode === "steer" &&
+          previous.status === "failed" &&
+          previous.deliveryAttempt?.state === "not_dispatched"
+        ) {
+          if (previous.content !== content) {
+            throw new Error(`Prompt idempotency conflict: ${requestId}`);
+          }
+          // Resume the durable fallback after a crash without attempting native delivery again.
+          return await this.fallbackToEnqueue(
+            content,
+            requestId,
+            options,
+            new Error(previous.error ?? `Steer was not dispatched: ${requestId}`),
+          );
+        }
+      }
       if (options.modelSelection !== undefined) {
         const error = new Error(
           "A steer request cannot change the active Runtime model selection.",

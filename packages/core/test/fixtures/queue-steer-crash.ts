@@ -5,6 +5,7 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
+  SteerNotDispatchedError,
   PragmaPaths,
   type RuntimeNativeSessionContext,
   withFileLock,
@@ -21,8 +22,25 @@ if (mode !== "seed" || pragmaHome === undefined || sessionId === undefined) {
   throw new Error("Usage: queue-steer-crash.ts seed <pragmaHome> <sessionId>");
 }
 
+const strictFallbackCrash = crashPhase === "strict-fallback";
+const executionStore = createFileExecutionStore({ pragmaHome });
+const sessionStore = createFileExpertSessionStore({ executions: executionStore, pragmaHome });
+if (strictFallbackCrash) {
+  const enqueue = sessionStore.enqueue.bind(sessionStore);
+  sessionStore.enqueue = async (transaction, claimId) => {
+    if (transaction.prompt.requestId === "redirect") {
+      // The failed/not_dispatched strict record is durable, but fallback has not committed.
+      process.stdout.write("fallback-ready\n");
+      await new Promise<void>((resolve) => process.stdin.once("data", () => resolve()));
+      process.kill(process.pid, "SIGKILL");
+      await new Promise<void>(() => undefined);
+    }
+    return await enqueue(transaction, claimId);
+  };
+}
+
 const runtime = defineRuntimeDriver<never, FixtureSession>({
-  features: createRuntimeTestFeatures({ enabled: ["cancellation", "close"] }),
+  features: createRuntimeTestFeatures({ enabled: ["cancellation", "close", "steering"] }),
   descriptor: {
     id: "queue-steer-crash-runtime",
     kind: "fake",
@@ -44,12 +62,17 @@ const runtime = defineRuntimeDriver<never, FixtureSession>({
     return { outputText: "unreachable", runtimeSessionId: "unreachable" };
   },
   mapEvent: () => ({ events: [] }),
+  steerTurn: () => {
+    throw new SteerNotDispatchedError("target_changed", "Native turn has ended.");
+  },
   cancelTurn: () => undefined,
   closeSession: () => undefined,
 });
 
 const app = createPragma({
   pragmaHome,
+  executionStore,
+  expertSessionStore: sessionStore,
   runtimes: createStaticRuntimeResolver({
     runtimes: [runtime],
     defaultRuntimeId: "queue-steer-crash-runtime",
@@ -72,11 +95,9 @@ for (let attempt = 0; attempt < 100; attempt += 1) {
 if ((await session.getState()).activeExecutionId !== active.executionId) {
   throw new Error("The fixture active turn did not start.");
 }
-const queued = await session.prompt("redirect", { requestId: "redirect" });
-const executionStore = createFileExecutionStore({ pragmaHome });
-const sessionStore = createFileExpertSessionStore({
-  executions: executionStore,
-  pragmaHome,
+const queued = await session.prompt("redirect", {
+  requestId: "redirect",
+  ...(strictFallbackCrash ? { mode: "steer" as const, steerFallback: "enqueue" as const } : {}),
 });
 await sessionStore.transact(sessionId, ({ session: record, prompts }) => {
   const current = prompts.find((prompt) => prompt.requestId === queued.requestId);

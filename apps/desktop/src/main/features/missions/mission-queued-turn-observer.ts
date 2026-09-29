@@ -22,6 +22,13 @@ export async function observeMissionQueuedTurn(
     }
     for await (const event of subscription) {
       if (signal?.aborted) return;
+      if (
+        event.type === "execution.cancelled" ||
+        event.type === "execution.interrupted" ||
+        event.type === "execution.failed" ||
+        event.type === "execution.succeeded"
+      )
+        return;
       if (event.type === "execution.started") {
         await onStarted();
         return;

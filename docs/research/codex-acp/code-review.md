@@ -22,3 +22,26 @@
 - Desktop Host 3 项、renderer 9 项全部通过，包含缺失暂停事件后的刷新状态。
 - 依赖构建、Core / Codex / Local Host 类型检查、Desktop Node 类型检查、改动文件 ESLint、
   样式校验及 `git diff --check` 通过。
+
+## PR #330 评论复核
+
+已读取 PR 的讨论、review body 和逐行评论。人工 review 的两项 P2 均成立；自动 review 的
+订阅泄漏评论与第一项为同一问题。
+
+- 排队 Execution 在订阅后、启动前取消或中断时，Live Bus 不保证 complete。观察器现在收到
+  `execution.cancelled` / `execution.interrupted` / `execution.failed` / `execution.succeeded`
+  即返回，finally 关闭订阅，调用方 finally 删除对应的 `queuedTurnObservers` 条目。
+  回归保持 Live Bus 未 complete，验证 Promise 结算、close 以及迟到 start 不重新接管页面。
+- strict Steer 的 `failed/not_dispatched` 记录落盘后、enqueue fallback 提交前存在崩溃窗口。
+  相同 requestId 的显式 enqueue fallback 重放现在先读取既有投递事实，校验内容，再由 Store
+  原子 replacement 恢复排队，不重新调用 native Steer。没有 fallback 的 strict 重试仍失败，
+  不确定投递、内容冲突与取消保护保持原有规则。
+  新回归在真实子进程中经 Runtime 拒绝写出记录，在 fallback 提交前 SIGKILL；恢复后保持另一轮
+  活动，验证重放成功、native Steer 调用为零、只有一个 enqueue Execution 并正常完成。
+  该进程崩溃测试单独放在 `strict-steer-fallback-crash.test.ts`，不增加默认快速测试门禁的 I/O。
+
+两项新回归都验证了旧实现失败：旧观察器在取消事件后超时；旧 Core 在崩溃重放时于
+`duplicate.status === "failed"` 分支抛出普通 Error，无法完成 fallback。恢复修复后，观察器
+7 项、崩溃重放 1 项、Core Steer 相关 5 项、既有 Codex Steer 集成 12 项及 Desktop 队列/清理
+相关 12 项通过。崩溃测试显式等待 Runtime 的 `rawQuery` 对应轮实际启动，并用 gate 保持它活动，
+避免只依赖短暂 running 状态造成误通过。
