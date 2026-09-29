@@ -15,12 +15,77 @@ const workspace = "/workspace/project";
 const mcpServerName = "pragma0123456789abcdef";
 
 function decideAntigravityToolUse(
-  options: Omit<Parameters<typeof decideAntigravityToolUseImpl>[0], "mcpServerName">,
+  options: Omit<Parameters<typeof decideAntigravityToolUseImpl>[0], "nativeMcpServerName">,
 ) {
-  return decideAntigravityToolUseImpl({ ...options, mcpServerName });
+  return decideAntigravityToolUseImpl({
+    ...options,
+    nativeMcpServerName: mcpServerName,
+  });
 }
 
 describe("Antigravity PreToolUse permission bridge", () => {
+  it("does not auto-approve a host MCP server using the same short plugin key", async () => {
+    const nativeMcpServerName = "pragma-0123456789abcdef_p";
+    for (const permissionMode of ["auto-approve", "request-approval"] as const) {
+      await expect(
+        decideAntigravityToolUseImpl({
+          input: input("call_mcp_tool", { ServerName: "p", ToolName: "read_expert_context" }),
+          workspace,
+          nativeMcpServerName,
+          permissionMode,
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({ decision: "deny" });
+    }
+  });
+
+  it("recognizes the exact original plugin-qualified identity in every permission mode", async () => {
+    const native = "pragma-d4e189b361ce187b_pragmad4e189b361ce187b";
+    for (const permissionMode of ["auto-approve", "request-approval", "full-access"] as const) {
+      await expect(
+        decideAntigravityToolUseImpl({
+          input: input("call_mcp_tool", {
+            ServerName: native,
+            ToolName: "read_expert_context",
+            Arguments: { id: "test/write-from-cr-expert.md", namespace: "mission-board" },
+          }),
+          workspace,
+          nativeMcpServerName: native,
+          permissionMode,
+          toolRuntimeState: {},
+        }),
+      ).resolves.toEqual({
+        decision: "allow",
+        permissionOverrides: [`mcp(${native}/read_expert_context)`],
+      });
+    }
+    for (const ServerName of [
+      `prefix_${native}`,
+      `${native}_suffix`,
+      "pragma-other_pragmad4e189b361ce187b",
+      "pragma-d4e189b361ce187b_other",
+    ]) {
+      await expect(
+        decideAntigravityToolUseImpl({
+          input: input("call_mcp_tool", { ServerName, ToolName: "read_expert_context" }),
+          workspace,
+          nativeMcpServerName: native,
+          permissionMode: "auto-approve",
+          toolRuntimeState: {},
+        }),
+      ).resolves.toMatchObject({ decision: "deny" });
+    }
+    await expect(
+      decideAntigravityToolUseImpl({
+        input: input("call_mcp_tool", { ServerName: native, ToolName: "bad/tool" }),
+        workspace,
+        nativeMcpServerName: native,
+        permissionMode: "auto-approve",
+        toolRuntimeState: {},
+      }),
+    ).resolves.toMatchObject({ decision: "deny" });
+  });
+
   it("accepts absolute and file URI identities for the Expert and managed customization roots", async () => {
     const managedCustomizations = "/runtime/session/managed-customizations";
     for (const workspacePaths of [
@@ -682,7 +747,7 @@ describe("Antigravity PreToolUse permission bridge", () => {
   it("serves an authenticated loopback relay and rejects malformed or unauthenticated calls", async () => {
     const relay = await createAntigravityHookRelay({
       workspace,
-      mcpServerName,
+      nativeMcpServerName: mcpServerName,
       permissionMode: "auto-approve",
       getHumanInteractionHandler: () => undefined,
       toolRuntimeState: {},
