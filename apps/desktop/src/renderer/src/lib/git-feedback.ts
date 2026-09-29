@@ -7,6 +7,9 @@ export function gitFailureKey(error: unknown): string {
     typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   if (code === "asset_git_stale_conflict" || /snapshot changed|stale.conflict/.test(message))
     return "stale";
+  if (/\.pragma\/metadata\/ is reserved/.test(message)) return "metadataReserved";
+  if (code === "asset_git_metadata_invalid" || /knowledge metadata/.test(message))
+    return "metadataValidation";
   if (/user.name|user.email/.test(message)) return "identity";
   if (
     /permission denied|authentication|could not read username|publickey|access denied/.test(message)

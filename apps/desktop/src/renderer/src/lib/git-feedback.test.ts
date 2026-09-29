@@ -17,6 +17,17 @@ describe("Git failure feedback", () => {
       ),
       "validation",
     ],
+    [{ code: "asset_git_metadata_invalid", message: "YAML parse failed." }, "metadataValidation"],
+    [
+      new Error("Invalid knowledge metadata at .pragma/metadata/guide.md.yaml"),
+      "metadataValidation",
+    ],
+    [
+      new Error(
+        "Invalid knowledge metadata: .pragma/metadata/ is reserved for Git synchronization.",
+      ),
+      "metadataReserved",
+    ],
     [new Error("Unexpected provider stderr"), "unknown"],
   ])("classifies %s as %s", (error, expected) => {
     expect(gitFailureKey(error)).toBe(expected);

@@ -884,7 +884,9 @@ function serializeFileContext(context: ExpertAgentStoredContextItem): string {
     return context.content;
   }
 
-  const serialized = matter.stringify(context.content, {
+  // Serialize only the metadata header: parsing the body with gray-matter
+  // strips its BOM and consumes any frontmatter belonging to the document.
+  const header = matter.stringify("", {
     ...(context.metadata.description === undefined
       ? {}
       : { description: context.metadata.description }),
@@ -898,11 +900,9 @@ function serializeFileContext(context: ExpertAgentStoredContextItem): string {
     priority: context.metadata.priority,
   });
 
-  if (!context.content.endsWith("\n") && serialized.endsWith("\n")) {
-    return serialized.slice(0, -1);
-  }
-
-  return serialized;
+  // stringify adds one newline for the empty body; append the literal body
+  // after removing that newline, preserving all original Markdown bytes.
+  return header.slice(0, -1) + context.content;
 }
 
 function normalizeInputMetadata(
@@ -967,7 +967,7 @@ function decodeUtf8Range(buffer: Buffer): {
   while (endIndex > startIndex) {
     try {
       return {
-        content: new TextDecoder("utf-8", { fatal: true }).decode(
+        content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
           buffer.subarray(startIndex, endIndex),
         ),
         startIndex,

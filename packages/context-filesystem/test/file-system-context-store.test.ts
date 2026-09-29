@@ -17,6 +17,32 @@ afterEach(async () => {
 });
 
 describe("FileSystemContextStore", () => {
+  it.each(["\uFEFF# Guide\r\nExact content\r\n", "---\ntitle: Original\n---\n# Guide"])(
+    "preserves literal context content and accounts for its UTF-8 bytes: %j",
+    async (content) => {
+      const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-bom-"));
+      temporaryRoots.push(rootDir);
+      const store = new FileSystemContextStore({ rootDir });
+
+      await expect(store.addContext({ id: "guide.md", content })).resolves.toMatchObject({
+        ok: true,
+      });
+      await expect(store.readContext({ id: "guide.md" })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          content,
+          sizeBytes: Buffer.byteLength(content),
+          contentRange: { startOffset: 0, endOffset: Buffer.byteLength(content), truncated: false },
+        },
+      });
+      if (content.startsWith("\uFEFF")) {
+        await expect(store.readContext({ id: "guide.md", start: 3 })).resolves.toMatchObject({
+          ok: true,
+          value: { content: content.slice(1) },
+        });
+      }
+    },
+  );
   it("keeps Git internals out of listing, search, and direct reads", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "pragma-file-context-git-"));
     temporaryRoots.push(rootDir);

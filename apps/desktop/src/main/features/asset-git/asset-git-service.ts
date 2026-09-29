@@ -8,7 +8,6 @@ import {
   readFile,
   readdir,
   rmdir,
-  rename,
   rm,
   stat,
   writeFile,
@@ -44,28 +43,22 @@ import { scanSkillWorkingTree } from "../capabilities/skill-revision-draft-store
 import { hashSnapshotContent } from "../context-stores/context-store-store.ts";
 import { assertAssetGitIdentity, runAssetGit } from "./asset-git-command.ts";
 
+import type { AssetGitRecord as Record } from "./asset-git-state-schema.ts";
+import { createAssetGitState } from "./asset-git-state.ts";
+import {
+  decodeMetadata,
+  encodeMetadata,
+  isKnowledgeMetadataPath,
+  metadataPath,
+  metadataDocumentPath,
+  markdownFiles,
+  normalizeKnowledgeFiles,
+  mergeKnowledgeFiles,
+  KNOWLEDGE_METADATA_MAX_BYTES,
+} from "./knowledge-git-metadata.ts";
+
 const execFileAsync = promisify(execFile);
 const CommitSchema = z.string().regex(/^[a-f0-9]{40,64}$/u);
-const RecordSchema = z.object({
-  schemaVersion: z.literal("pragma.asset-git/v1"),
-  target: AssetGitTargetSchema,
-  source: AssetGitSourceSchema,
-  baseRevision: z.number().int().positive().optional(),
-  remoteCommit: CommitSchema.optional(),
-  syncedAt: z.string().datetime().optional(),
-  conflictPaths: z.array(z.string()).optional(),
-  error: z.string().optional(),
-});
-const JournalSchema = z.object({
-  schemaVersion: z.literal("pragma.asset-git-journal/v1"),
-  target: AssetGitTargetSchema,
-  source: AssetGitSourceSchema,
-  baseRevision: z.number().int().positive(),
-  remoteCommit: CommitSchema.optional(),
-  phase: z.enum(["prepared", "pushed", "local_published"]),
-  publishedRevision: z.number().int().positive().optional(),
-});
-type Record = z.infer<typeof RecordSchema>;
 type Files = Map<string, Buffer>;
 
 export interface AssetGitService {
@@ -93,47 +86,10 @@ export function createAssetGitService(options: {
   const recordPath = (target: AssetGitTarget) =>
     join(options.stateRoot, target.kind, `${target.id}.json`);
   const journalPath = (target: AssetGitTarget) => `${recordPath(target)}.journal`;
-  const readJournal = async (target: AssetGitTarget) => {
-    try {
-      return JournalSchema.parse(JSON.parse(await readFile(journalPath(target), "utf8")));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-  };
-  const saveJournal = async (target: AssetGitTarget, journal: z.infer<typeof JournalSchema>) => {
-    const path = journalPath(target);
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(JournalSchema.parse(journal))}\n`, {
-      mode: 0o600,
-    });
-    try {
-      await rename(temporary, path);
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  };
-  const readRecord = async (target: AssetGitTarget): Promise<Record | undefined> => {
-    try {
-      return RecordSchema.parse(JSON.parse(await readFile(recordPath(target), "utf8")));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-  };
-  const saveRecord = async (record: Record): Promise<void> => {
-    const path = recordPath(record.target);
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, `${JSON.stringify(RecordSchema.parse(record))}\n`, {
-        mode: 0o600,
-      });
-      await rename(temporary, path);
-    } finally {
-      await rm(temporary, { force: true });
-    }
-  };
+  const state = createAssetGitState(options.stateRoot);
+  const readRecord = async (target: AssetGitTarget) => (await state.read(target)).record;
+  const readJournal = async (target: AssetGitTarget) => (await state.read(target)).journal;
+  const { saveRecord, saveJournal } = state;
   const withTargetLock = async <T>(
     target: AssetGitTarget,
     operation: () => Promise<T>,
@@ -148,6 +104,14 @@ export function createAssetGitService(options: {
   const assertExists = async (target: AssetGitTarget): Promise<void> => {
     if (target.kind === "knowledge") {
       const snapshot = await options.stores.getSnapshot(target.id);
+      if (
+        [...snapshot.directories, ...snapshot.files.map((file) => file.id)].some(
+          isKnowledgeMetadataPath,
+        )
+      )
+        throw new Error(
+          "Invalid knowledge metadata: .pragma/metadata/ is reserved for Git synchronization. Move existing documents out of this directory.",
+        );
       if (
         [
           ...snapshot.directories,
@@ -185,9 +149,10 @@ export function createAssetGitService(options: {
         throw error;
       }
       for (const name of names.filter((item) => item.endsWith(".json"))) {
-        const other = RecordSchema.parse(
-          JSON.parse(await readFile(join(options.stateRoot, kind, name), "utf8")),
+        const other = await state.identity(
+          AssetGitTargetSchema.parse({ kind, id: name.slice(0, -5) }),
         );
+        if (!other) continue;
         if (other.target.kind === target.kind && other.target.id === target.id) continue;
         if (other.source.remote === source.remote && other.source.branch === source.branch) {
           throw new Error("This Git repository and branch are already associated with an asset.");
@@ -212,6 +177,7 @@ export function createAssetGitService(options: {
             syncedAt: record.syncedAt,
             conflictPaths: record.conflictPaths,
             error: record.error,
+            errorPath: record.errorPath,
           }),
       status:
         record === undefined
@@ -220,7 +186,9 @@ export function createAssetGitService(options: {
             ? "error"
             : record.conflictPaths !== undefined
               ? "conflict"
-              : record.syncedAt !== undefined && record.baseRevision === currentRevision
+              : record.syncedAt !== undefined &&
+                  record.baseRevision === currentRevision &&
+                  (record.target.kind !== "knowledge" || record.knowledgeMetadataVersion === 1)
                 ? "synced"
                 : "pending",
     });
@@ -243,7 +211,8 @@ export function createAssetGitService(options: {
       await withBindingLock(async () => {
         await assertUnique(target, { remote: source.remote, branch });
         await saveRecord({
-          schemaVersion: "pragma.asset-git/v1",
+          schemaVersion: "pragma.asset-git/v2",
+          knowledgeMetadataVersion: 0,
           target,
           source: { remote: source.remote, branch },
         });
@@ -270,8 +239,9 @@ export function createAssetGitService(options: {
     const parsed = AssetGitImportSchema.parse(input);
     const target = await withCheckout(parsed.source, async (root, commit, branch) => {
       if (commit === undefined) throw new Error("Cannot import an empty Git repository.");
-      const files = await readManagedFiles(root, parsed.kind);
-      if (files.size === 0)
+      const rawFiles = await readManagedFiles(root, parsed.kind);
+      const files = parsed.kind === "knowledge" ? normalizeKnowledgeFiles(rawFiles) : rawFiles;
+      if (markdownFiles(files).size === 0)
         throw new Error("The Git repository contains no supported asset files.");
       const source = { remote: parsed.source.remote, branch };
       return await withBindingLock(async () => {
@@ -284,15 +254,20 @@ export function createAssetGitService(options: {
             description: "",
             author: "import",
             summary: "Import knowledge base from Git",
-            files: [...files].map(([id, bytes]) => ({
+            files: [...markdownFiles(files)].map(([id, bytes]) => ({
               id,
               content: decodeMarkdown(bytes),
-              metadata: { trigger: "manual" as const, priority: "normal" as const },
+              metadata: decodeMetadata(metadataPath(id), files.get(metadataPath(id))!),
             })),
           });
           target = { kind: "knowledge", id: created.id };
           await saveRecord({
-            schemaVersion: "pragma.asset-git/v1",
+            schemaVersion: "pragma.asset-git/v2",
+            knowledgeMetadataVersion: [...markdownFiles(files).keys()].every((id) =>
+              rawFiles.has(metadataPath(id)),
+            )
+              ? 1
+              : 0,
             target,
             source,
             baseRevision: created.contentRevision,
@@ -311,7 +286,8 @@ export function createAssetGitService(options: {
             );
             target = { kind: "skill", id: created.manifest.id };
             await saveRecord({
-              schemaVersion: "pragma.asset-git/v1",
+              schemaVersion: "pragma.asset-git/v2",
+              knowledgeMetadataVersion: 0,
               target,
               source,
               baseRevision: created.manifest.latestRevision,
@@ -336,13 +312,29 @@ export function createAssetGitService(options: {
     head: string | undefined,
   ) => {
     const current = await readLocalFiles(target, options.stores, options.capabilities);
-    const remote = await readManagedFiles(root, target.kind);
+    const rawRemote = await readManagedFiles(root, target.kind);
     const baseSnapshot =
       record.baseRevision === undefined
         ? undefined
         : await readLocalFiles(target, options.stores, options.capabilities, record.baseRevision);
     const base = baseSnapshot?.files ?? new Map<string, Buffer>();
-    const merged = await mergeFiles(base, current.files, remote);
+    const fallback =
+      record.knowledgeMetadataVersion === 1
+        ? new Map([...current.files, ...base])
+        : new Map([...base, ...current.files]);
+    const remote =
+      target.kind === "knowledge" ? normalizeKnowledgeFiles(rawRemote, fallback) : rawRemote;
+    const knowledgeMerge =
+      target.kind === "knowledge"
+        ? await mergeKnowledgeFiles(
+            base,
+            current.files,
+            remote,
+            record.knowledgeMetadataVersion === 1,
+            mergeFiles,
+          )
+        : undefined;
+    const merged = knowledgeMerge ?? (await mergeFiles(base, current.files, remote));
     const modes =
       target.kind === "skill"
         ? await mergeSkillModes({
@@ -389,8 +381,10 @@ export function createAssetGitService(options: {
             ours = current.files.get(path),
             theirs = remote.get(path);
           const text = [old, ours, theirs].every((bytes) => bytes === undefined || isText(bytes));
-          const [mergeLocal, mergeRemote] =
-            text && old !== undefined && ours !== undefined && theirs !== undefined
+          const metadataPreview = knowledgeMerge?.metadataPreviews.get(path);
+          const [mergeLocal, mergeRemote] = metadataPreview
+            ? [metadataPreview.local, metadataPreview.remote]
+            : text && old !== undefined && ours !== undefined && theirs !== undefined
               ? await Promise.all([
                   mergeText(old, ours, theirs, "ours"),
                   mergeText(old, ours, theirs, "theirs"),
@@ -398,6 +392,10 @@ export function createAssetGitService(options: {
               : [ours, theirs];
           return {
             path,
+            ...(target.kind === "knowledge" && isKnowledgeMetadataPath(path)
+              ? { metadata: true, documentPath: metadataDocumentPath(path) }
+              : {}),
+            ...(knowledgeMerge?.documentConflicts.has(path) ? { documentConflict: true } : {}),
             kind: text ? "text" : "binary",
             mergeLocal: text && mergeLocal !== undefined ? mergeLocal.toString("utf8") : null,
             mergeRemote: text && mergeRemote !== undefined ? mergeRemote.toString("utf8") : null,
@@ -415,7 +413,7 @@ export function createAssetGitService(options: {
         }),
       ),
     });
-    return { current, remote, merged, modes, remoteModes, preview };
+    return { current, remote, remoteTree: rawRemote, merged, modes, remoteModes, preview };
   };
   const conflicts = async (rawTarget: AssetGitTarget): Promise<AssetGitConflicts> => {
     const target = AssetGitTargetSchema.parse(rawTarget);
@@ -439,10 +437,12 @@ export function createAssetGitService(options: {
       options.onStatusChanged?.({ ...current, status: "syncing" });
     }
     const next = await withTargetLock(target, async () => {
-      const record = await readRecord(target);
-      if (record === undefined) throw new Error("Set a Git address before syncing this asset.");
+      const initialRecord = await readRecord(target);
+      if (initialRecord === undefined)
+        throw new Error("Set a Git address before syncing this asset.");
+      let record: Record = initialRecord;
       await assertExists(target);
-      const journal = await readJournal(target);
+      let journal = await readJournal(target);
       if (journal !== undefined) {
         if (
           journal.target.kind !== target.kind ||
@@ -462,13 +462,10 @@ export function createAssetGitService(options: {
       }
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          return await withCheckout(record.source, async (root, head, branch) => {
-            const { current, remote, merged, modes, remoteModes, preview } = await inspect(
-              target,
-              record,
-              root,
-              head,
-            );
+          let completingLegacy = false;
+          const result = await withCheckout(record.source, async (root, head, branch) => {
+            const { current, remote, remoteTree, merged, modes, remoteModes, preview } =
+              await inspect(target, record, root, head);
             let conflictPaths = preview.files.map((file) => file.path);
             // A published local revision is the durable merge result. Resume it
             // only while both sides still match the journal's exact snapshot.
@@ -478,8 +475,13 @@ export function createAssetGitService(options: {
               journal.remoteCommit === head &&
               (journal.phase === "local_published" || journal.phase === "pushed")
             ) {
+              completingLegacy =
+                target.kind === "knowledge" && journal.knowledgeMetadataVersion === 0;
               merged.files.clear();
-              for (const [path, bytes] of current.files) merged.files.set(path, bytes);
+              for (const [path, bytes] of completingLegacy
+                ? markdownFiles(current.files)
+                : current.files)
+                merged.files.set(path, bytes);
               if (modes) {
                 modes.merged.clear();
                 for (const [path, executable] of modes.local) modes.merged.set(path, executable);
@@ -508,9 +510,14 @@ export function createAssetGitService(options: {
                     ? Buffer.from(decision.content, "utf8")
                     : decision.choice === "delete"
                       ? undefined
-                      : decision.choice === "local"
-                        ? current.files.get(file.path)
-                        : remote.get(file.path);
+                      : file.metadata
+                        ? Buffer.from(
+                            (decision.choice === "local" ? file.mergeLocal : file.mergeRemote)!,
+                            "utf8",
+                          )
+                        : decision.choice === "local"
+                          ? current.files.get(file.path)
+                          : remote.get(file.path);
                 if (decision.choice === "manual" && (file.kind !== "text" || !isText(bytes!))) {
                   throw new Error(`Manual merging requires a UTF-8 text file: ${file.path}`);
                 }
@@ -519,6 +526,23 @@ export function createAssetGitService(options: {
                   /^(?:<{7}|={7}|>{7})(?: |$)/mu.test(decision.content)
                 ) {
                   throw new Error(`Remove conflict markers before applying: ${file.path}`);
+                }
+                // Validate every manual metadata decision before document deletion
+                // can remove its sidecar from the final tree.
+                if (decision.choice === "manual" && file.metadata)
+                  decodeMetadata(file.path, bytes!);
+                if (target.kind === "knowledge" && file.documentConflict) {
+                  const sidecar = metadataPath(file.path);
+                  if (bytes === undefined) merged.files.delete(sidecar);
+                  else {
+                    const selectedMetadata =
+                      decision.choice === "local"
+                        ? current.files.get(sidecar)
+                        : decision.choice === "remote"
+                          ? remote.get(sidecar)
+                          : (current.files.get(sidecar) ?? remote.get(sidecar));
+                    if (selectedMetadata) merged.files.set(sidecar, selectedMetadata);
+                  }
                 }
                 if (bytes === undefined) {
                   merged.files.delete(file.path);
@@ -555,18 +579,34 @@ export function createAssetGitService(options: {
                 source: { ...record.source, branch },
                 conflictPaths,
                 error: undefined,
+                errorPath: undefined,
               });
               return await status(target);
             }
+            if (target.kind === "knowledge" && !completingLegacy) {
+              // Drop sidecars only for deliberately deleted documents, then validate all remaining YAML.
+              for (const path of [...merged.files.keys()]) {
+                if (isKnowledgeMetadataPath(path) && !merged.files.has(metadataDocumentPath(path)!))
+                  merged.files.delete(path);
+              }
+              const normalized = normalizeKnowledgeFiles(merged.files, current.files);
+              merged.files.clear();
+              for (const [path, bytes] of normalized) merged.files.set(path, bytes);
+            }
             assertResolvedTree(merged.files, target.kind);
-            await replaceManagedFiles(root, remote, merged.files);
+            await replaceManagedFiles(
+              root,
+              completingLegacy ? markdownFiles(remoteTree) : remoteTree,
+              merged.files,
+            );
             await git(root, ["add", "-A"]);
-            for (const path of merged.files.keys()) await git(root, ["add", "-f", "--", path]);
+            await stageManagedFiles(root, merged.files);
             if (modes) await applyModes(root, modes.merged);
             const changed = (await git(root, ["status", "--porcelain"])).trim() !== "";
             if (changed) await assertAssetGitIdentity(root);
             await saveJournal(target, {
-              schemaVersion: "pragma.asset-git-journal/v1",
+              schemaVersion: "pragma.asset-git-journal/v2",
+              knowledgeMetadataVersion: completingLegacy ? 0 : 1,
               target,
               source: { ...record.source, branch },
               baseRevision: current.revision,
@@ -588,7 +628,8 @@ export function createAssetGitService(options: {
               );
             }
             await saveJournal(target, {
-              schemaVersion: "pragma.asset-git-journal/v1",
+              schemaVersion: "pragma.asset-git-journal/v2",
+              knowledgeMetadataVersion: completingLegacy ? 0 : 1,
               target,
               source: { ...record.source, branch },
               baseRevision: current.revision,
@@ -604,7 +645,8 @@ export function createAssetGitService(options: {
               ? CommitSchema.parse((await git(root, ["rev-parse", "HEAD"])).trim())
               : head;
             await saveJournal(target, {
-              schemaVersion: "pragma.asset-git-journal/v1",
+              schemaVersion: "pragma.asset-git-journal/v2",
+              knowledgeMetadataVersion: completingLegacy ? 0 : 1,
               target,
               source: { ...record.source, branch },
               baseRevision: current.revision,
@@ -615,16 +657,25 @@ export function createAssetGitService(options: {
             await options.afterPush?.();
             await saveRecord({
               ...record,
+              knowledgeMetadataVersion: completingLegacy ? 0 : 1,
               source: { ...record.source, branch },
               baseRevision: revision,
               remoteCommit: pushedCommit,
               syncedAt: new Date().toISOString(),
               conflictPaths: undefined,
               error: undefined,
+              errorPath: undefined,
             });
             await rm(journalPath(target), { force: true });
             return await status(target);
           });
+          if (completingLegacy) {
+            record = (await readRecord(target))!;
+            journal = undefined;
+            attempt -= 1;
+            continue;
+          }
+          return result;
         } catch (error) {
           if (
             resolution !== undefined &&
@@ -643,12 +694,14 @@ export function createAssetGitService(options: {
           await saveRecord({
             ...record,
             error: error instanceof Error ? error.message : String(error),
+            errorPath: (error as { path?: string }).path,
             conflictPaths: undefined,
           });
           const failure = await status(target);
           if (resolution === undefined) return failure;
           const message = error instanceof Error ? error.message : String(error);
           const errorPath =
+            (error as { path?: string }).path ??
             resolution.resolutions.find((item) => message.includes(item.path))?.path ??
             (target.kind === "skill" && (error instanceof z.ZodError || /skill/i.test(message))
               ? "SKILL.md"
@@ -673,10 +726,10 @@ export function createAssetGitService(options: {
       }
       for (const name of names.filter((item) => item.endsWith(".json"))) {
         try {
-          const record = RecordSchema.parse(
-            JSON.parse(await readFile(join(options.stateRoot, kind, name), "utf8")),
+          const record = await state.identity(
+            AssetGitTargetSchema.parse({ kind, id: name.slice(0, -5) }),
           );
-          targets.push(record.target);
+          if (record) targets.push(record.target);
         } catch (error) {
           options.warn?.(`Could not read the Git association for ${kind}/${name}.`, error);
         }
@@ -710,7 +763,12 @@ export function createAssetGitService(options: {
           throw new Error("Retry the interrupted Git sync before restoring another address.");
         await withBindingLock(async () => {
           await assertUnique(target, source);
-          await saveRecord({ schemaVersion: "pragma.asset-git/v1", target, source });
+          await saveRecord({
+            schemaVersion: "pragma.asset-git/v2",
+            knowledgeMetadataVersion: 0,
+            target,
+            source,
+          });
         });
       });
       await publishStatus(target);
@@ -759,35 +817,55 @@ async function withCheckout<T>(
 
 async function readManagedFiles(root: string, kind: AssetGitTarget["kind"]): Promise<Files> {
   const files: Files = new Map();
-  let totalBytes = 0;
+  let totalBytes = 0,
+    documents = 0,
+    sidecars = 0;
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (entry.name.toLowerCase() === ".git") continue;
       const path = join(directory, entry.name);
+      const id = relative(root, path).split(sep).join("/");
+      const metadata = kind === "knowledge" && isKnowledgeMetadataPath(id);
       const info = await lstat(path);
       if (info.isSymbolicLink()) {
-        if (kind === "knowledge" && !entry.name.toLowerCase().endsWith(".md")) continue;
-        throw new Error(`Git asset contains a symbolic link: ${entry.name}`);
+        if (
+          kind === "knowledge" &&
+          !metadata &&
+          id !== ".pragma" &&
+          !entry.name.toLowerCase().endsWith(".md")
+        )
+          continue;
+        throw Object.assign(new Error(`Git asset contains a symbolic link: ${id}`), { path: id });
       }
       if (info.isDirectory()) {
         await visit(path);
         continue;
       }
-      if (!info.isFile()) throw new Error(`Git asset contains an unsupported entry: ${entry.name}`);
-      const id = relative(root, path).split(sep).join("/");
-      if (kind === "knowledge" && !id.toLowerCase().endsWith(".md")) continue;
-      if (files.size >= (kind === "knowledge" ? 5_000 : 1_000)) {
+      if (!info.isFile()) throw new Error(`Git asset contains an unsupported entry: ${id}`);
+      if (kind === "knowledge" && !metadata && !id.toLowerCase().endsWith(".md")) continue;
+      if (metadata) {
+        metadataDocumentPath(id);
+        if (++sidecars > 5_000 || info.size > KNOWLEDGE_METADATA_MAX_BYTES)
+          throw Object.assign(
+            new Error(
+              `Invalid knowledge metadata at ${id}: YAML exceeds the supported size or count limit.`,
+            ),
+            { path: id },
+          );
+      } else if (++documents > (kind === "knowledge" ? 5_000 : 1_000)) {
         throw new Error("Git asset contains too many files.");
       }
       totalBytes += info.size;
       if (
-        (kind === "knowledge" && info.size > CONTEXT_STORE_FILE_MAX_BYTES) ||
+        (kind === "knowledge" && !metadata && info.size > CONTEXT_STORE_FILE_MAX_BYTES) ||
         (kind === "skill" && totalBytes > MAX_SKILL_PACKAGE_BYTES)
-      ) {
-        throw new Error("Git asset exceeds the supported file size limit.");
-      }
+      )
+        throw new Error(`Git asset exceeds the supported file size limit: ${id}`);
       const bytes = await readFile(path);
-      if (kind === "knowledge") decodeMarkdown(bytes);
+      if (kind === "knowledge") {
+        if (metadata) decodeMetadata(id, bytes);
+        else decodeMarkdown(bytes);
+      }
       files.set(id, bytes);
     }
   };
@@ -804,7 +882,12 @@ async function readLocalFiles(
   if (target.kind === "knowledge") {
     const snapshot = await stores.getSnapshot(target.id, revision);
     return {
-      files: new Map(snapshot.files.map((file) => [file.id, Buffer.from(file.content)])),
+      files: new Map(
+        snapshot.files.flatMap((file) => [
+          [file.id, Buffer.from(file.content)] as const,
+          [metadataPath(file.id), encodeMetadata(file.metadata)] as const,
+        ]),
+      ),
       revision: snapshot.revision,
     };
   }
@@ -957,6 +1040,23 @@ async function replaceManagedFiles(root: string, before: Files, after: Files): P
     await writeFile(target, bytes);
   }
 }
+/** Bound argv bytes while avoiding one Git process per document and sidecar. */
+async function stageManagedFiles(root: string, files: Files): Promise<void> {
+  let paths: string[] = [];
+  let bytes = 0;
+  for (const path of files.keys()) {
+    const size = Buffer.byteLength(path) + 1;
+    if (bytes + size > 8 * 1024 && paths.length) {
+      await git(root, ["add", "-f", "--", ...paths]);
+      paths = [];
+      bytes = 0;
+    }
+    paths.push(path);
+    bytes += size;
+  }
+  if (paths.length) await git(root, ["add", "-f", "--", ...paths]);
+}
+
 async function assertSafeWritePath(root: string, path: string): Promise<void> {
   const segments = path.split("/");
   for (let length = 1; length <= segments.length; length += 1) {
@@ -1065,7 +1165,7 @@ function sameFiles(a: Files, b: Files): boolean {
   );
 }
 function decodeMarkdown(bytes: Buffer): string {
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
 }
 async function publishLocal(
   target: AssetGitTarget,
@@ -1080,11 +1180,15 @@ async function publishLocal(
     if (current.revision !== baseRevision)
       throw new Error("Knowledge base changed during Git sync.");
     const metadata = new Map(current.files.map((file) => [file.id, file.metadata]));
-    const nextFiles: ContextStoreSnapshot["files"] = [...files].map(([id, bytes]) => ({
-      id,
-      content: decodeMarkdown(bytes),
-      metadata: metadata.get(id) ?? { trigger: "manual", priority: "normal" },
-    }));
+    const nextFiles: ContextStoreSnapshot["files"] = [...markdownFiles(files)].map(
+      ([id, bytes]) => ({
+        id,
+        content: decodeMarkdown(bytes),
+        metadata: files.has(metadataPath(id))
+          ? decodeMetadata(metadataPath(id), files.get(metadataPath(id))!)
+          : (metadata.get(id) ?? { trigger: "manual", priority: "normal" }),
+      }),
+    );
     const directories = new Set(
       current.directories.filter((path) => {
         const segments = path.split("/");
@@ -1146,7 +1250,7 @@ function assertResolvedTree(files: Files, kind: AssetGitTarget["kind"]): void {
   let total = 0;
   for (const [path, bytes] of files) {
     total += bytes.length;
-    if (kind === "knowledge" && assetGitManualContentSizeIssue(kind, decodeMarkdown(bytes)))
+    if (kind === "knowledge" && assetGitManualContentSizeIssue(kind, decodeMarkdown(bytes), path))
       throw new Error(`Knowledge file exceeds the supported size limit: ${path}`);
     const segments = path.split("/");
     for (let length = 1; length < segments.length; length += 1) {

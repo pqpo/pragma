@@ -1,5 +1,12 @@
 export const studio = {
   assetGit: {
+    metadataLocal: "衝突欄位用本機",
+    metadataRemote: "衝突欄位用遠端",
+    metadataVersionChoice: "中繼資料衝突選擇",
+    metadataLabel: "文件中繼資料",
+    metadataHelp: "編輯 YAML 中繼資料；不同欄位的修改已自動合併。",
+    documentConflictHelp: "文件刪除與正文或中繼資料修改衝突，選擇將同時套用於文件和中繼資料。",
+
     deletePreview: "套用後將刪除此檔案。",
     chunkLabel: "選擇要保留的內容",
     binaryLabel: "二進位檔案",
@@ -81,6 +88,11 @@ export const studio = {
       backupFailed: "此資產已同步，但整體備份失敗。請在設定頁重試整體同步。",
     },
     errors: {
+      metadataReserved:
+        ".pragma/metadata/ 是 Git 中繼資料專用目錄，請移走該目錄中的知識庫文件後重試。",
+      metadataSize: "單個文件中繼資料 YAML 檔案不能超過 64 KiB。",
+      metadataValidation: "文件中繼資料 YAML 無效，請檢查欄位和版本後重試。",
+
       knowledgeSize: "知識庫單檔不能超過 1,000,000 字元或 1 MB 的 UTF-8 文字，請縮短內容後提交。",
       skillSize:
         "合併後的技能套件不能超過 25 MiB（包含未改動檔案及二進位檔案），請調整選擇或縮短內容。",
