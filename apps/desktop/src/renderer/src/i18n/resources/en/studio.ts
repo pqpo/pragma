@@ -1,5 +1,13 @@
 export const studio = {
   assetGit: {
+    metadataLocal: "Use local conflicting fields",
+    metadataRemote: "Use remote conflicting fields",
+    metadataVersionChoice: "Metadata conflict choice",
+    metadataLabel: "Document metadata",
+    metadataHelp: "Edit YAML metadata. Changes to different fields are already merged.",
+    documentConflictHelp:
+      "This document deletion conflicts with content or metadata changes. Your choice applies to the document and its metadata together.",
+
     deletePreview: "This file will be deleted when you apply the resolution.",
     chunkLabel: "Choose content to keep",
     binaryLabel: "Binary file",
@@ -85,6 +93,12 @@ export const studio = {
         "This asset is synchronized, but the overall backup failed. Retry the backup in Settings.",
     },
     errors: {
+      metadataReserved:
+        "The .pragma/metadata/ directory is reserved for Git metadata. Move your knowledge documents out of this directory, then retry.",
+      metadataSize: "A document metadata YAML file must stay within 64 KiB.",
+      metadataValidation:
+        "The document metadata YAML is invalid. Check its fields and version, then retry.",
+
       knowledgeSize:
         "A Knowledge file must stay within 1,000,000 characters and 1 MB of UTF-8 text.",
       skillSize:

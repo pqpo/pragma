@@ -18,6 +18,19 @@ const request = (kind: "knowledge" | "skill", content: string) => ({
 });
 
 describe("asset-specific Git resolution size validation", () => {
+  it("enforces the metadata YAML budget independently of Markdown and Skill limits", () => {
+    const path = ".pragma/metadata/guide.md.yaml";
+    const valid = request("knowledge", "x".repeat(65_536));
+    valid.resolutions[0]!.path = path;
+    expect(ResolveAssetGitConflictsSchema.safeParse(valid).success).toBe(true);
+    const oversized = request("knowledge", "x".repeat(65_537));
+    oversized.resolutions[0]!.path = path;
+    expect(ResolveAssetGitConflictsSchema.safeParse(oversized).success).toBe(false);
+    expect(assetGitManualContentSizeIssue("knowledge", "知".repeat(21_846), path)).toBe(
+      "metadataSize",
+    );
+    expect(assetGitManualContentSizeIssue("skill", "x".repeat(65_537), path)).toBeUndefined();
+  });
   it("accepts the Knowledge boundary and rejects oversize content through the IPC contract", () => {
     expect(
       ResolveAssetGitConflictsSchema.safeParse(request("knowledge", "x".repeat(1_000_000))).success,

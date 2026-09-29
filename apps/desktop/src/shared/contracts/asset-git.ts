@@ -12,6 +12,8 @@ import {
   DesktopBundleRegistryRemoteSchema,
 } from "./bundle-registry.ts";
 
+export const ASSET_GIT_KNOWLEDGE_METADATA_MAX_BYTES = 64 * 1024;
+
 export const AssetGitKindSchema = z.enum(["knowledge", "skill"]);
 export const AssetGitTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("knowledge"), id: ContextStoreIdSchema }).strict(),
@@ -69,6 +71,9 @@ export const AssetGitConflictFileSchema = z
   .object({
     path: AssetGitConflictPathSchema,
     kind: z.enum(["text", "binary"]),
+    metadata: z.boolean().optional(),
+    documentPath: AssetGitConflictPathSchema.optional(),
+    documentConflict: z.boolean().optional(),
     mergeLocal: z.string().nullable(),
     mergeRemote: z.string().nullable(),
     base: z.string().nullable(),
@@ -115,7 +120,11 @@ export const ResolveAssetGitConflictsSchema = z
     let manualBytes = 0;
     for (const [index, resolution] of request.resolutions.entries()) {
       if (resolution.choice !== "manual") continue;
-      const issue = assetGitManualContentSizeIssue(request.target.kind, resolution.content);
+      const issue = assetGitManualContentSizeIssue(
+        request.target.kind,
+        resolution.content,
+        resolution.path,
+      );
       if (issue)
         context.addIssue({
           code: "custom",
@@ -139,9 +148,12 @@ export type ResolveAssetGitConflicts = z.infer<typeof ResolveAssetGitConflictsSc
 export function assetGitManualContentSizeIssue(
   kind: AssetGitTarget["kind"],
   content: string,
-): "knowledgeSize" | "skillSize" | undefined {
+  path?: string,
+): "knowledgeSize" | "skillSize" | "metadataSize" | undefined {
   const bytes = new TextEncoder().encode(content).byteLength;
   if (kind === "knowledge") {
+    if (path?.startsWith(".pragma/metadata/"))
+      return bytes > ASSET_GIT_KNOWLEDGE_METADATA_MAX_BYTES ? "metadataSize" : undefined;
     if (
       !ContextStoreSnapshotFileSchema.shape.content.safeParse(content).success ||
       bytes > CONTEXT_STORE_FILE_MAX_BYTES
@@ -155,12 +167,16 @@ export function assetGitManualContentSizeIssue(
 export function assetGitResolutionSizeIssue(
   preview: AssetGitConflicts,
   resolutions: readonly AssetGitResolution[],
-): { key: "knowledgeSize" | "skillSize"; path?: string } | undefined {
+): { key: "knowledgeSize" | "skillSize" | "metadataSize"; path?: string } | undefined {
   let total = preview.nonConflictingSizeBytes;
   const files = new Map(preview.files.map((file) => [file.path, file]));
   for (const resolution of resolutions) {
     if (resolution.choice === "manual") {
-      const key = assetGitManualContentSizeIssue(preview.target.kind, resolution.content);
+      const key = assetGitManualContentSizeIssue(
+        preview.target.kind,
+        resolution.content,
+        resolution.path,
+      );
       if (key) return { key, path: resolution.path };
       total += new TextEncoder().encode(resolution.content).byteLength;
     } else {

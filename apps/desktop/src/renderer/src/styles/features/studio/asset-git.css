@@ -102,6 +102,7 @@
 }
 
 .asset-git-merge-dialog.ui-dialog {
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(80rem, calc(100vw - 64px));
   height: min(820px, calc(100dvh - 64px));
   max-height: calc(100dvh - 64px);
@@ -256,6 +257,11 @@
   align-items: center;
   gap: 4px;
   margin-left: auto;
+}
+
+.asset-git-metadata-help {
+  margin: 0;
+  padding: 0 0 12px;
 }
 
 .asset-git-version-bar {

@@ -122,7 +122,8 @@ describe("asset Git knowledge sync", () => {
     await service.bind({ target, source });
     await service.sync(target);
 
-    expect(statuses).toEqual(["synced", "unbound", "pending", "syncing", "synced"]);
+    // A content-only import still needs to publish its metadata sidecars.
+    expect(statuses).toEqual(["pending", "unbound", "pending", "syncing", "synced"]);
   });
 
   it("publishes an existing knowledge base into an empty repository", async () => {
@@ -875,3 +876,360 @@ describe("asset Git Skill sync", () => {
     await expect(run(bare, ["show", "main:local-only.md"])).rejects.toThrow();
   });
 });
+
+// Integration tests use a real bare repository and the real knowledge revision store.
+describe("knowledge Git metadata synchronization", () => {
+  const meta = {
+    description: "Guide description",
+    trigger: "model_decision" as const,
+    priority: "high" as const,
+    trustLevel: "workspace" as const,
+    sensitivity: "confidential" as const,
+  };
+  async function commit(seed: string) {
+    await run(seed, ["add", "-A"]);
+    await run(seed, ["commit", "-m", "Metadata change"]);
+    await run(seed, ["push", "origin", "main"]);
+  }
+  it("exports every field without modifying Markdown and restores them on another device", async () => {
+    const { seed, stores, service, source, root, bare } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    const current = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(target.id, "guide.md", current.content, meta, current.revision!);
+    expect((await service.sync(target)).status).toBe("synced");
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    const yaml = await readFile(join(seed, ".pragma/metadata/guide.md.yaml"), "utf8");
+    expect(yaml).toContain("description: Guide description");
+    expect(await readFile(join(seed, "guide.md"), "utf8")).toBe(current.content);
+    expect(await readFile(join(seed, "image.txt"), "utf8")).toBe(
+      "Not managed by the knowledge base.\n",
+    );
+    const otherStores = createContextStoreStore({ storesPath: join(root, "other-stores") });
+    const other = createAssetGitService({
+      stateRoot: join(root, "other-state"),
+      stores: otherStores,
+      capabilities: {} as CapabilityStore,
+    });
+    const imported = await other.import({ kind: "knowledge", source });
+    expect((await otherStores.getSnapshot(imported.id)).files).toHaveLength(1);
+    expect((await otherStores.getContent(imported.id, "guide.md")).metadata).toEqual(meta);
+    const head = await run(bare, ["rev-parse", "main"]);
+    const revision = (await stores.getSnapshot(target.id)).revision;
+    expect((await service.sync(target)).status).toBe("synced");
+    expect(await run(bare, ["rev-parse", "main"])).toBe(head);
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+  });
+  it.each([
+    "\uFEFF# Guide\r\nExact content\r\n",
+    "---\ntitle: Original\npriority: original-document-field\n---\n# Guide\n",
+    "# Without trailing newline",
+    "",
+  ])(
+    "preserves literal Markdown bytes through import and metadata-only synchronization: %j",
+    async (content) => {
+      const { seed, bare, stores, service, source } = await fixture();
+      const bytes = Buffer.from(content);
+      await writeFile(join(seed, "guide.md"), bytes);
+      await commit(seed);
+      const target = await service.import({ kind: "knowledge", source });
+      const file = await stores.getContent(target.id, "guide.md");
+      expect(Buffer.from(file.content)).toEqual(bytes);
+      await stores.updateFile(target.id, "guide.md", file.content, meta, file.revision!);
+      expect((await service.sync(target)).status).toBe("synced");
+      const exported = await execFileAsync("git", ["-C", bare, "show", "main:guide.md"], {
+        encoding: "buffer",
+      });
+      expect(exported.stdout).toEqual(bytes);
+    },
+  );
+  it("rejects invalid manual YAML even when the associated conflicting document is deleted", async () => {
+    const { seed, bare, stores, service, source } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    await service.sync(target);
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    const file = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(
+      target.id,
+      "guide.md",
+      "# Local\n",
+      { ...file.metadata, priority: "high" },
+      file.revision!,
+    );
+    await writeFile(join(seed, "guide.md"), "# Remote\n");
+    const sidecar = join(seed, ".pragma/metadata/guide.md.yaml");
+    await writeFile(
+      sidecar,
+      (await readFile(sidecar, "utf8")).replace("priority: normal", "priority: low"),
+    );
+    await commit(seed);
+    const preview = await service.conflicts(target);
+    expect(preview.files.map((file) => file.path).toSorted()).toEqual([
+      ".pragma/metadata/guide.md.yaml",
+      "guide.md",
+    ]);
+    const revision = (await stores.getSnapshot(target.id)).revision;
+    const head = await run(bare, ["rev-parse", "main"]);
+    expect(
+      await service.resolve({
+        target,
+        snapshot: preview.snapshot,
+        resolutions: [
+          { path: "guide.md", choice: "delete" },
+          {
+            path: ".pragma/metadata/guide.md.yaml",
+            choice: "manual",
+            content: "priority: impossible\n",
+          },
+        ],
+      }),
+    ).toMatchObject({ status: "error", errorPath: ".pragma/metadata/guide.md.yaml" });
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(head);
+  });
+  it("merges concurrent fields, restores remote-only changes and clears optional fields", async () => {
+    const { seed, stores, service, source } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    let file = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(target.id, "guide.md", file.content, meta, file.revision!);
+    await service.sync(target);
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    file = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(
+      target.id,
+      "guide.md",
+      file.content,
+      { ...meta, priority: "critical" },
+      file.revision!,
+    );
+    const sidecar = join(seed, ".pragma/metadata/guide.md.yaml");
+    const yaml = (await readFile(sidecar, "utf8"))
+      .replace("description: Guide description\n", "")
+      .replace("sensitivity: confidential", "sensitivity: restricted");
+    await writeFile(sidecar, yaml);
+    await commit(seed);
+    expect((await service.sync(target)).status).toBe("synced");
+    const remaining = { ...meta, description: undefined };
+    expect((await stores.getContent(target.id, "guide.md")).metadata).toEqual({
+      ...remaining,
+      priority: "critical",
+      sensitivity: "restricted",
+    });
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    await writeFile(
+      sidecar,
+      (await readFile(sidecar, "utf8")).replace("trigger: model_decision", "trigger: always_on"),
+    );
+    await commit(seed);
+    expect((await service.sync(target)).status).toBe("synced");
+    expect((await stores.getContent(target.id, "guide.md")).metadata.trigger).toBe("always_on");
+  });
+  it("reports field conflicts as YAML and validates manual resolutions before publication", async () => {
+    const { seed, bare, stores, service, source } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    await service.sync(target);
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    const file = await stores.getContent(target.id, "guide.md");
+    await stores.updateFile(
+      target.id,
+      "guide.md",
+      file.content,
+      { ...file.metadata, priority: "high" },
+      file.revision!,
+    );
+    const sidecar = join(seed, ".pragma/metadata/guide.md.yaml");
+    await writeFile(
+      sidecar,
+      (await readFile(sidecar, "utf8")).replace("priority: normal", "priority: low"),
+    );
+    await commit(seed);
+    expect((await service.sync(target)).status).toBe("conflict");
+    const preview = await service.conflicts(target);
+    expect(preview.files).toHaveLength(1);
+    expect(preview.files[0]).toMatchObject({
+      path: ".pragma/metadata/guide.md.yaml",
+      metadata: true,
+      documentPath: "guide.md",
+    });
+    const revision = (await stores.getSnapshot(target.id)).revision,
+      head = await run(bare, ["rev-parse", "main"]);
+    const rejected = await service.resolve({
+      target,
+      snapshot: preview.snapshot,
+      resolutions: [
+        { path: preview.files[0]!.path, choice: "manual", content: "priority: impossible\n" },
+      ],
+    });
+    expect(rejected.status).toBe("error");
+    expect(rejected.errorPath).toBe(preview.files[0]!.path);
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(head);
+    expect(
+      (
+        await service.resolve({
+          target,
+          snapshot: preview.snapshot,
+          resolutions: [
+            {
+              path: preview.files[0]!.path,
+              choice: "manual",
+              content: preview.files[0]!.mergeLocal!,
+            },
+          ],
+        })
+      ).status,
+    ).toBe("synced");
+    expect((await stores.getContent(target.id, "guide.md")).metadata.priority).toBe("high");
+  });
+  it.each(["local", "remote"] as const)(
+    "preserves independent metadata field edits when resolving conflicting fields with %s",
+    async (choice) => {
+      const { seed, stores, service, source } = await fixture();
+      const target = await service.import({ kind: "knowledge", source });
+      await service.sync(target);
+      await run(seed, ["pull", "--ff-only", "origin", "main"]);
+      const file = await stores.getContent(target.id, "guide.md");
+      await stores.updateFile(
+        target.id,
+        "guide.md",
+        file.content,
+        { ...file.metadata, description: "Local description", priority: "high" },
+        file.revision!,
+      );
+      const path = ".pragma/metadata/guide.md.yaml",
+        sidecar = join(seed, path);
+      await writeFile(
+        sidecar,
+        (await readFile(sidecar, "utf8")).replace("priority: normal", "priority: low") +
+          "sensitivity: restricted\n",
+      );
+      await commit(seed);
+      const preview = await service.conflicts(target);
+      expect(
+        (
+          await service.resolve({
+            target,
+            snapshot: preview.snapshot,
+            resolutions: [{ path, choice }],
+          })
+        ).status,
+      ).toBe("synced");
+      expect((await stores.getContent(target.id, "guide.md")).metadata).toEqual({
+        trigger: "manual",
+        priority: choice === "local" ? "high" : "low",
+        description: "Local description",
+        sensitivity: "restricted",
+      });
+    },
+  );
+  it("retains metadata when YAML is removed, mirrors nested documents, and cleans deleted documents", async () => {
+    const { seed, stores, service, source } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    await stores.createFile(target.id, "guides/setup.md", "# Nested\n", meta);
+    await service.sync(target);
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    expect(await readFile(join(seed, ".pragma/metadata/guides/setup.md.yaml"), "utf8")).toContain(
+      "priority: high",
+    );
+    await run(seed, ["rm", ".pragma/metadata/guides/setup.md.yaml"]);
+    await commit(seed);
+    expect((await service.sync(target)).status).toBe("synced");
+    expect((await stores.getContent(target.id, "guides/setup.md")).metadata).toEqual(meta);
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    expect(await readFile(join(seed, ".pragma/metadata/guides/setup.md.yaml"), "utf8")).toContain(
+      "priority: high",
+    );
+    await stores.deleteEntry(target.id, "guides/setup.md", "file");
+    expect((await service.sync(target)).status).toBe("synced");
+    await run(seed, ["pull", "--ff-only", "origin", "main"]);
+    await expect(
+      readFile(join(seed, ".pragma/metadata/guides/setup.md.yaml")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it.each(["local", "remote"] as const)(
+    "resolves deletion versus metadata editing with the %s document and metadata together",
+    async (choice) => {
+      const { seed, stores, service, source } = await fixture();
+      const target = await service.import({ kind: "knowledge", source });
+      await service.sync(target);
+      await run(seed, ["pull", "--ff-only", "origin", "main"]);
+      const file = await stores.getContent(target.id, "guide.md");
+      await stores.updateFile(
+        target.id,
+        "guide.md",
+        file.content,
+        { ...file.metadata, priority: "high" },
+        file.revision!,
+      );
+      await run(seed, ["rm", "guide.md", ".pragma/metadata/guide.md.yaml"]);
+      await commit(seed);
+      expect((await service.sync(target)).status).toBe("conflict");
+      const preview = await service.conflicts(target);
+      expect(preview.files).toHaveLength(1);
+      expect(preview.files[0]).toMatchObject({ path: "guide.md", documentConflict: true });
+      expect(
+        (
+          await service.resolve({
+            target,
+            snapshot: preview.snapshot,
+            resolutions: [{ path: "guide.md", choice }],
+          })
+        ).status,
+      ).toBe("synced");
+      if (choice === "local")
+        expect((await stores.getContent(target.id, "guide.md")).metadata.priority).toBe("high");
+      else expect((await stores.getSnapshot(target.id)).files).toEqual([]);
+    },
+  );
+  it("rejects orphan YAML and reserved local paths without creating a revision or pushing", async () => {
+    const { seed, bare, stores, service, source } = await fixture();
+    const target = await service.import({ kind: "knowledge", source });
+    await mkdir(join(seed, ".pragma/metadata"), { recursive: true });
+    await writeFile(
+      join(seed, ".pragma/metadata/missing.md.yaml"),
+      "schemaVersion: pragma.knowledge-document-metadata/v1\ntrigger: manual\npriority: normal\n",
+    );
+    await commit(seed);
+    const revision = (await stores.getSnapshot(target.id)).revision,
+      head = await run(bare, ["rev-parse", "main"]);
+    expect((await service.sync(target)).status).toBe("error");
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(head);
+    await expect(service.import({ kind: "knowledge", source })).rejects.toThrow(
+      "corresponding Markdown",
+    );
+    await stores.createFile(target.id, ".pragma/metadata/occupied.md", "# Occupied\n");
+    await expect(service.sync(target)).rejects.toThrow("reserved");
+  });
+});
+
+it("rejects malformed, future and oversized remote YAML and metadata symlinks before publication", async () => {
+  const { seed, bare, stores, service, source } = await fixture();
+  const target = await service.import({ kind: "knowledge", source });
+  await service.sync(target);
+  await run(seed, ["pull", "--ff-only", "origin", "main"]);
+  const path = ".pragma/metadata/guide.md.yaml",
+    sidecar = join(seed, path);
+  const revision = (await stores.getSnapshot(target.id)).revision;
+  for (const yaml of [
+    "schemaVersion: [\n",
+    "schemaVersion: pragma.knowledge-document-metadata/v99\ntrigger: manual\npriority: normal\n",
+    "schemaVersion: pragma.knowledge-document-metadata/v1\ntrigger: manual\npriority: normal\npriority: high\n",
+    "x".repeat(65_537),
+  ]) {
+    await writeFile(sidecar, yaml);
+    await run(seed, ["add", "-A"]);
+    await run(seed, ["commit", "-m", "Invalid metadata"]);
+    await run(seed, ["push", "origin", "main"]);
+    const head = await run(bare, ["rev-parse", "main"]);
+    expect(await service.sync(target)).toMatchObject({ status: "error", errorPath: path });
+    expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+    expect(await run(bare, ["rev-parse", "main"])).toBe(head);
+  }
+  await rm(sidecar);
+  await symlink("../../../guide.md", sidecar);
+  await run(seed, ["add", "-A"]);
+  await run(seed, ["commit", "-m", "Metadata symlink"]);
+  await run(seed, ["push", "origin", "main"]);
+  expect((await service.sync(target)).status).toBe("error");
+  expect((await stores.getSnapshot(target.id)).revision).toBe(revision);
+}, 30_000);

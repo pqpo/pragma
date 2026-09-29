@@ -1,0 +1,30 @@
+blob
+mark :1
+data 31
+# Guide
+First line
+Second line
+
+reset refs/heads/main
+commit refs/heads/main
+mark :2
+author Test <test@example.test> 1790610477 +0800
+committer Test <test@example.test> 1790610477 +0800
+data 5
+seed
+M 100644 :1 guide.md
+
+blob
+mark :3
+data 20
+# Historical change
+
+commit refs/heads/main
+mark :4
+author Test <test@example.test> 1790610479 +0800
+committer Test <test@example.test> 1790610479 +0800
+data 21
+Sync knowledge asset
+from :2
+M 100644 :3 guide.md
+

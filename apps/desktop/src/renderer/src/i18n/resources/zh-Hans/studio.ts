@@ -1,5 +1,12 @@
 export const studio = {
   assetGit: {
+    metadataLocal: "冲突字段用本地",
+    metadataRemote: "冲突字段用远端",
+    metadataVersionChoice: "元数据冲突选择",
+    metadataLabel: "文档元数据",
+    metadataHelp: "编辑 YAML 元数据；不同字段的修改已自动合并。",
+    documentConflictHelp: "文档删除与正文或元数据修改冲突，选择将同时应用于文档和元数据。",
+
     deletePreview: "应用后将删除此文件。",
     chunkLabel: "选择要保留的内容",
     binaryLabel: "二进制文件",
@@ -81,6 +88,11 @@ export const studio = {
       backupFailed: "此资产已同步，但整体备份失败。请在设置页重试整体同步。",
     },
     errors: {
+      metadataReserved:
+        ".pragma/metadata/ 是 Git 元数据专用目录，请移走该目录中的知识库文档后重试。",
+      metadataSize: "单个文档元数据 YAML 文件不能超过 64 KiB。",
+      metadataValidation: "文档元数据 YAML 无效，请检查字段和版本后重试。",
+
       knowledgeSize: "知识库单文件不能超过 1,000,000 字符或 1 MB 的 UTF-8 文本，请缩短内容后提交。",
       skillSize:
         "合并后的技能包不能超过 25 MiB（包含未改动文件及二进制文件），请调整选择或缩短内容。",

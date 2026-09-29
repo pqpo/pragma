@@ -191,43 +191,50 @@ export function AssetGitConflictEditor(props: {
             <span>{preview?.files.length ?? 0}</span>
           </div>
           <div className="asset-git-file-list">
-            {preview?.files.map((item) => (
-              <button
-                className={`text-button${selected === item.path ? " is-active" : ""}`}
-                type="button"
-                key={item.path}
-                title={item.path}
-                disabled={busy}
-                aria-pressed={selected === item.path}
-                onClick={() => {
-                  setSelected(item.path);
-                  setShowBase(false);
-                }}
-              >
-                {item.kind === "binary" ? (
-                  <FileImage size={18} aria-hidden="true" />
-                ) : (
-                  <FileText size={18} aria-hidden="true" />
-                )}
-                <span className="asset-git-file-label">
-                  <span>{item.path.split("/").at(-1)}</span>
-                  {item.path.includes("/") ? (
-                    <small>{item.path.slice(0, item.path.lastIndexOf("/"))}</small>
-                  ) : null}
-                </span>
-                <span
-                  className={`asset-git-file-state${isDecided(item.path) ? " is-complete" : ""}`}
-                  aria-label={t(isDecided(item.path) ? "assetGit.decided" : "assetGit.pending")}
-                  title={t(isDecided(item.path) ? "assetGit.decided" : "assetGit.pending")}
+            {preview?.files.map((item) => {
+              const displayPath = item.documentPath ?? item.path;
+              const directory = displayPath.includes("/")
+                ? displayPath.slice(0, displayPath.lastIndexOf("/"))
+                : "";
+              const detail = [item.metadata ? t("assetGit.metadataLabel") : "", directory]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <button
+                  className={`text-button${selected === item.path ? " is-active" : ""}`}
+                  type="button"
+                  key={item.path}
+                  title={item.path}
+                  disabled={busy}
+                  aria-pressed={selected === item.path}
+                  onClick={() => {
+                    setSelected(item.path);
+                    setShowBase(false);
+                  }}
                 >
-                  {isDecided(item.path) ? (
-                    <CheckCircle size={16} weight="fill" aria-hidden="true" />
+                  {item.kind === "binary" ? (
+                    <FileImage size={18} aria-hidden="true" />
                   ) : (
-                    <Circle size={16} aria-hidden="true" />
+                    <FileText size={18} aria-hidden="true" />
                   )}
-                </span>
-              </button>
-            ))}
+                  <span className="asset-git-file-label">
+                    <span>{displayPath.split("/").at(-1)}</span>
+                    {detail ? <small>{detail}</small> : null}
+                  </span>
+                  <span
+                    className={`asset-git-file-state${isDecided(item.path) ? " is-complete" : ""}`}
+                    aria-label={t(isDecided(item.path) ? "assetGit.decided" : "assetGit.pending")}
+                    title={t(isDecided(item.path) ? "assetGit.decided" : "assetGit.pending")}
+                  >
+                    {isDecided(item.path) ? (
+                      <CheckCircle size={16} weight="fill" aria-hidden="true" />
+                    ) : (
+                      <Circle size={16} aria-hidden="true" />
+                    )}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </nav>
         {file ? (
@@ -253,24 +260,33 @@ export function AssetGitConflictEditor(props: {
                     {t(showBase ? "assetGit.backToMerge" : "assetGit.viewBase")}
                   </button>
                 ) : null}
-                <button
-                  className="text-button asset-git-icon-button asset-git-delete-button"
-                  type="button"
-                  disabled={busy}
-                  aria-label={t("assetGit.deleteFile")}
-                  title={t("assetGit.deleteFile")}
-                  aria-pressed={decision?.choice === "delete"}
-                  onClick={() => update({ path: file.path, choice: "delete" })}
-                >
-                  <Trash size={16} aria-hidden="true" />
-                </button>
+                {!file.metadata ? (
+                  <button
+                    className="text-button asset-git-icon-button asset-git-delete-button"
+                    type="button"
+                    disabled={busy}
+                    aria-label={t("assetGit.deleteFile")}
+                    title={t("assetGit.deleteFile")}
+                    aria-pressed={decision?.choice === "delete"}
+                    onClick={() => update({ path: file.path, choice: "delete" })}
+                  >
+                    <Trash size={16} aria-hidden="true" />
+                  </button>
+                ) : null}
               </div>
             </div>
+            {file.metadata || file.documentConflict ? (
+              <p className="asset-git-status asset-git-metadata-help" role="status">
+                {t(file.metadata ? "assetGit.metadataHelp" : "assetGit.documentConflictHelp")}
+              </p>
+            ) : null}
             <div className="asset-git-version-bar">
               <div
                 className="asset-git-version-options"
                 role="group"
-                aria-label={t("assetGit.versionChoice")}
+                aria-label={t(
+                  file.metadata ? "assetGit.metadataVersionChoice" : "assetGit.versionChoice",
+                )}
               >
                 {file.kind === "text" ? (
                   <button
@@ -309,13 +325,17 @@ export function AssetGitConflictEditor(props: {
                     onClick={() => update({ path: file.path, choice })}
                   >
                     {t(
-                      choice === "local"
-                        ? file.localDeleted
-                          ? "assetGit.localDelete"
-                          : "assetGit.wholeLocal"
-                        : file.remoteDeleted
-                          ? "assetGit.remoteDelete"
-                          : "assetGit.wholeRemote",
+                      file.metadata
+                        ? choice === "local"
+                          ? "assetGit.metadataLocal"
+                          : "assetGit.metadataRemote"
+                        : choice === "local"
+                          ? file.localDeleted
+                            ? "assetGit.localDelete"
+                            : "assetGit.wholeLocal"
+                          : file.remoteDeleted
+                            ? "assetGit.remoteDelete"
+                            : "assetGit.wholeRemote",
                     )}
                   </button>
                 ))}
@@ -372,9 +392,9 @@ export function AssetGitConflictEditor(props: {
                       showBase
                         ? (file.base ?? "")
                         : decision?.choice === "local"
-                          ? (file.local ?? "")
+                          ? ((file.metadata ? file.mergeLocal : file.local) ?? "")
                           : decision?.choice === "remote"
-                            ? (file.remote ?? "")
+                            ? ((file.metadata ? file.mergeRemote : file.remote) ?? "")
                             : decision?.choice === "delete"
                               ? ""
                               : (drafts.get(file.path) ?? file.mergeLocal ?? "")
