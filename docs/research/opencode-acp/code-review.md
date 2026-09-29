@@ -31,3 +31,13 @@
 - 覆盖四种 Runtime 契约的 Core 恢复、丢弃后的重启、真实 SIGKILL 的 dispatching 崩溃窗口、关闭失败、持久写入失败与并发恢复。不存在因修复而绕过不确定投递 fence 的隐式 fallback。
 
 复核结果：Core 恢复定向测试 10 项通过，Session pool / conformance / 崩溃测试 21 项逐项通过；四个 Runtime 契约测试共 13 项通过。Shared 协议 21 项、Host 队列及转发 3 项、CLI mutation 14 项及补全 2 项、Desktop 队列 UI 2 项通过。相关类型检查、lint、格式检查、Core / Shared / Host / CLI 构建与 Desktop 全量生产构建通过，main / preload / styles 校验通过。这些恢复回归使用受控 Runtime fixture；未新增四种 Runtime 的真实供应商验收声明。
+
+## PR #329 新增评论复核（review 5351912497）
+
+已读取新增 review、普通评论及行内评论。维护者新增的 P1 与 P2 均成立。
+
+- P1：原实现先取消源 Execution 再写入放弃决定，写入失败后会留下仍排队的 Prompt 和已经 cancelled 的源 Execution；后续 `not_dispatched` 核对无法执行原消息。现先以原有 aggregate journal 持久化 Prompt 取消与 native snapshot 解绑，再清理源 Execution。失败写入回归在修复前复现 `cancelled`，修复后保留 `queued`，改走 receipt 核对后原消息成功执行。
+- 已持久化的 cancelled uncertain Attempt 作为可重放清理意图，显式重试与 owner 恢复补齐源 Execution 取消。补测发现旧暂停事件还会阻挡下一条新消息，现同时清理与已放弃请求关联的投递暂停，保留其他原因的暂停。
+- P2：Host 和 Desktop 快照投影 `steeringRecovery`，receipt 显示核对及放弃，terminal 仅显示放弃；缺失能力信息时同样隐藏核对。Host/UI 测试覆盖三种投影。
+
+本轮验证：Core 恢复定向回归 12 项、真实 SIGKILL 崩溃恢复 1 项、Host 队列投影 4 项和 Desktop UI 4 项通过，共 21 项。Core / Host / Desktop Node 与 renderer 类型检查、相关 ESLint、Core / Host 构建、Desktop 生产构建及 main / preload / styles 校验通过。格式检查和 `git diff --check` 通过。日志保存在 `/tmp/pragma-opencode-acp-research/pr-new-review-*.log`；本轮未新增真实认证供应商验收。

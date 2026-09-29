@@ -2261,91 +2261,206 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await session.close();
   });
 
-  it("keeps the old snapshot and delivery fence when terminal recovery cannot be persisted", async () => {
-    const home = await createTemporaryHome("pragma-abandon-write-failure-");
-    const executions = createFileExecutionStore({ pragmaHome: home });
-    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
-    const transact = sessions.transact.bind(sessions);
-    let failed = false;
-    sessions.transact = async (id, action, claimId) =>
-      await transact(
-        id,
-        async (input) => {
-          const next = await action(input);
-          if (
-            !failed &&
-            next.session.contexts[next.session.rootContextId]?.snapshot === undefined &&
-            next.prompts.some(
-              (prompt) =>
-                prompt.requestId === "redirect" &&
-                prompt.status === "cancelled" &&
-                prompt.deliveryAttempt?.state === "uncertain",
-            )
-          ) {
-            failed = true;
-            throw new Error("Synthetic abandonment write failure");
-          }
-          return next;
-        },
-        claimId,
-      );
-    let release!: () => void;
-    const turnGate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const stats = createFakeRuntimeStats();
-    const runtime = createFakeRuntime({
-      stats,
-      turnGate,
-      failSteer: true,
-      onSteer: () => undefined,
-    });
-    const app = createPragma({
-      pragmaHome: home,
-      loggerProvider: createNoopLoggerProvider(),
-      executionStore: executions,
-      expertSessionStore: sessions,
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
-    });
-    const expert = await defineExpert({
-      id: "abandon-write-probe",
-      name: "Abandon Write Probe",
-      description: "Abandonment write failure",
-      tags: [],
-      scope: "test",
-      workspace: home,
-    });
-    const session = await app.experts.createSession(expert);
-    try {
-      const active = await session.prompt("active", { requestId: "active" });
-      await session.prompt("redirect", { requestId: "redirect" });
-      await vi.waitFor(() => expect(stats.turnModelSelections).toHaveLength(1), {
-        timeout: 20_000,
+  it.each(["abandon", "receipt"] as const)(
+    "keeps the old snapshot, source Execution and delivery fence after a failed abandonment write (%s retry)",
+    async (retry) => {
+      const home = await createTemporaryHome("pragma-abandon-write-failure-");
+      const executions = createFileExecutionStore({ pragmaHome: home });
+      const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+      const transact = sessions.transact.bind(sessions);
+      let failed = false;
+      sessions.transact = async (id, action, claimId) =>
+        await transact(
+          id,
+          async (input) => {
+            const next = await action(input);
+            if (
+              !failed &&
+              next.session.contexts[next.session.rootContextId]?.snapshot === undefined &&
+              next.prompts.some(
+                (prompt) =>
+                  prompt.requestId === "redirect" &&
+                  prompt.status === "cancelled" &&
+                  prompt.deliveryAttempt?.state === "uncertain",
+              )
+            ) {
+              failed = true;
+              throw new Error("Synthetic abandonment write failure");
+            }
+            return next;
+          },
+          claimId,
+        );
+      let release!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        release = resolve;
       });
-      await session.attemptQueuedPromptSteer("redirect");
-      release();
-      await active.result;
-      const before = await session.getState();
-      const snapshot = before.contexts[before.rootContextId]!.snapshot;
-      await expect(session.resumePromptQueue({ recovery: "abandon" })).rejects.toThrow(
-        "Synthetic abandonment write failure",
-      );
-      await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
-      expect((await session.getState()).contexts[before.rootContextId]!.snapshot).toEqual(snapshot);
-      expect(
-        (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
-      ).toMatchObject({ status: "queued", deliveryAttempt: { state: "uncertain" } });
-      expect(stats.turnModelSelections).toHaveLength(1);
-      await session.resumePromptQueue({ recovery: "abandon" });
-      await (
-        await session.prompt("new instruction", { requestId: "next" })
-      ).result;
-      expect(stats.turnModelSelections).toHaveLength(2);
-    } finally {
-      release();
-      await session.close();
-    }
-  });
+      const stats = createFakeRuntimeStats();
+      const runtime = createFakeRuntime({
+        stats,
+        turnGate,
+        failSteer: true,
+        onSteer: () => undefined,
+        ...(retry === "receipt" ? { reconcileSteer: async () => "not_dispatched" as const } : {}),
+      });
+      const app = createPragma({
+        pragmaHome: home,
+        loggerProvider: createNoopLoggerProvider(),
+        executionStore: executions,
+        expertSessionStore: sessions,
+        runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      });
+      const expert = await defineExpert({
+        id: "abandon-write-probe",
+        name: "Abandon Write Probe",
+        description: "Abandonment write failure",
+        tags: [],
+        scope: "test",
+        workspace: home,
+      });
+      const session = await app.experts.createSession(expert);
+      try {
+        const active = await session.prompt("active", { requestId: "active" });
+        const queued = await session.prompt("redirect", { requestId: "redirect" });
+        await vi.waitFor(() => expect(stats.turnModelSelections).toHaveLength(1), {
+          timeout: 20_000,
+        });
+        await session.attemptQueuedPromptSteer("redirect");
+        release();
+        await active.result;
+        const before = await session.getState();
+        const snapshot = before.contexts[before.rootContextId]!.snapshot;
+        await expect(session.resumePromptQueue({ recovery: "abandon" })).rejects.toThrow(
+          "Synthetic abandonment write failure",
+        );
+        await expect(session.getPromptQueueState()).resolves.toMatchObject({ state: "paused" });
+        expect((await session.getState()).contexts[before.rootContextId]!.snapshot).toEqual(
+          snapshot,
+        );
+        expect(
+          (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+        ).toMatchObject({ status: "queued", deliveryAttempt: { state: "uncertain" } });
+        expect(stats.turnModelSelections).toHaveLength(1);
+        expect((await queued.getState()).status).toBe("queued");
+        if (retry === "receipt") {
+          await session.resumePromptQueue();
+          await expect(queued.result).resolves.toBe(`${expert.id}:redirect`);
+          expect((await queued.getState()).status).toBe("succeeded");
+          expect(
+            (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect")
+              ?.status,
+          ).toBe("succeeded");
+          expect((await session.getState()).activeExecutionId).toBeUndefined();
+        } else {
+          await session.resumePromptQueue({ recovery: "abandon" });
+          await (
+            await session.prompt("new instruction", { requestId: "next" })
+          ).result;
+        }
+        expect(stats.turnModelSelections).toHaveLength(2);
+      } finally {
+        release();
+        await session.close();
+      }
+    },
+  );
+
+  it.each(["retry", "restart"] as const)(
+    "finishes durable abandonment cleanup after a source cancellation failure (%s)",
+    async (recovery) => {
+      const home = await createTemporaryHome("pragma-abandon-source-cleanup-");
+      const executions = createFileExecutionStore({ pragmaHome: home });
+      const commit = executions.commit.bind(executions);
+      let sourceExecutionId = "";
+      let failed = false;
+      executions.commit = async (input) => {
+        if (
+          !failed &&
+          input.executionId === sourceExecutionId &&
+          input.executionPatch?.status === "cancelled"
+        ) {
+          failed = true;
+          throw new Error("Synthetic source cleanup failure");
+        }
+        return await commit(input);
+      };
+      const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+      let release!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const stats = createFakeRuntimeStats();
+      const runtime = createFakeRuntime({
+        stats,
+        turnGate,
+        failSteer: true,
+        onSteer: () => undefined,
+      });
+      const runtimes = createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      });
+      const app = createPragma({
+        pragmaHome: home,
+        loggerProvider: createNoopLoggerProvider(),
+        runtimes,
+        executionStore: executions,
+        expertSessionStore: sessions,
+      });
+      const expert = await defineExpert({
+        id: "abandon-source-cleanup",
+        name: "Abandon Source Cleanup",
+        description: "Abandon source cleanup failure",
+        tags: [],
+        scope: "test",
+        workspace: home,
+      });
+      let session = await app.experts.createSession(expert);
+      try {
+        const active = await session.prompt("active", { requestId: "active" });
+        const queued = await session.prompt("redirect", { requestId: "redirect" });
+        sourceExecutionId = queued.executionId;
+        await vi.waitFor(() => expect(stats.turnModelSelections).toHaveLength(1), {
+          timeout: 20_000,
+        });
+        await session.attemptQueuedPromptSteer("redirect");
+        release();
+        await active.result;
+        await expect(session.resumePromptQueue({ recovery: "abandon" })).rejects.toThrow(
+          "Synthetic source cleanup failure",
+        );
+        const after = await session.getState();
+        expect(after.contexts[after.rootContextId]!.snapshot).toBeUndefined();
+        expect(
+          (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect"),
+        ).toMatchObject({ status: "cancelled", deliveryAttempt: { state: "uncertain" } });
+        expect((await queued.getState()).status).toBe("queued");
+        expect(stats.turnModelSelections).toHaveLength(1);
+        if (recovery === "restart") {
+          const sessionId = session.sessionId;
+          await session.releaseAfterTerminal();
+          const reopenedApp = createPragma({
+            pragmaHome: home,
+            loggerProvider: createNoopLoggerProvider(),
+            runtimes,
+          });
+          session = await reopenedApp.experts.resumeSession(expert, { sessionId });
+        } else await session.resumePromptQueue();
+        expect((await queued.getState()).status).toBe("cancelled");
+        expect(
+          (await session.getPromptQueue()).find((prompt) => prompt.requestId === "redirect")
+            ?.status,
+        ).toBe("cancelled");
+        await (
+          await session.prompt("new instruction", { requestId: "next" })
+        ).result;
+        expect(stats.turnModelSelections).toHaveLength(2);
+      } finally {
+        release();
+        await session.close();
+      }
+    },
+  );
 
   it("pauses a queued steer when its acknowledged receipt cannot be persisted", async () => {
     const home = await createTemporaryHome("pragma-steer-receipt-write-failure-");

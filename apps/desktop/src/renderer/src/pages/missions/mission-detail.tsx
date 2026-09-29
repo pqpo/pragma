@@ -1681,25 +1681,27 @@ export function MissionDetailFragment(props: {
                       ns: "missions",
                     })}
                   </span>{" "}
-                  <button
-                    className="text-button"
-                    type="button"
-                    disabled={clientOperationBusy}
-                    onClick={() => {
-                      const api = desktopApi();
-                      if (api === undefined) return;
-                      void api
-                        .resumeMissionQueue(props.mission.id)
-                        .then(async () => await refreshLatestChat())
-                        .catch((resumeError: unknown) =>
-                          setOptionsError(missionError(resumeError)),
-                        );
-                    }}
-                  >
-                    {t(chat.queue.deliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
-                      ns: "missions",
-                    })}
-                  </button>
+                  {!chat.queue.deliveryUncertain || chat.queue.steeringRecovery === "receipt" ? (
+                    <button
+                      className="text-button"
+                      type="button"
+                      disabled={clientOperationBusy}
+                      onClick={() => {
+                        const api = desktopApi();
+                        if (api === undefined) return;
+                        void api
+                          .resumeMissionQueue(props.mission.id)
+                          .then(async () => await refreshLatestChat())
+                          .catch((resumeError: unknown) =>
+                            setOptionsError(missionError(resumeError)),
+                          );
+                      }}
+                    >
+                      {t(chat.queue.deliveryUncertain ? "checkSteerDelivery" : "resumeQueue", {
+                        ns: "missions",
+                      })}
+                    </button>
+                  ) : null}
                   {chat.queue.deliveryUncertain ? (
                     <>
                       {" "}

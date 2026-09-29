@@ -1617,7 +1617,10 @@ class ExpertSessionImpl implements ExpertSession {
   private async resumePromptQueueInternal(options: {
     readonly recovery?: "abandon" | undefined;
   }): Promise<void> {
-    if ((await this.getPromptQueueState()).state !== "paused") return;
+    const recoveredAbandonment = await this.cancelAbandonedSteerExecutions(
+      await this.getPromptQueue(),
+    );
+    if ((await this.getPromptQueueState()).state !== "paused" && !recoveredAbandonment) return;
     const uncertain = (await this.getPromptQueue()).filter(
       (prompt) => prompt.status !== "cancelled" && prompt.deliveryAttempt?.state === "uncertain",
     );
@@ -1648,12 +1651,6 @@ class ExpertSessionImpl implements ExpertSession {
     this.paused = true;
     // A successful close is required. Never unpause while a live managed native Session remains.
     await this.runtimeSessions.clear();
-    for (const prompt of prompts) {
-      await this.cancelPersistedExecution(
-        prompt.executionId,
-        "Steer delivery abandoned without replay; prior operations may already have executed.",
-      );
-    }
     const requestIds = new Set(prompts.map((prompt) => prompt.requestId));
     const updatedAt = new Date().toISOString();
     // Cancel uncertain prompts and detach the old native identity in one durable transaction.
@@ -1690,6 +1687,10 @@ class ExpertSessionImpl implements ExpertSession {
         ),
       };
     });
+    // Source Executions must remain runnable until the abandonment decision is durable.
+    // Cancelled attempts are the durable cleanup intent, so a retry/restart can finish
+    // cancellation if the process stops between the aggregate write and this cleanup.
+    await this.cancelAbandonedSteerExecutions(await this.getPromptQueue());
     await this.ownedSessions.appendEvent(this.sessionId, {
       eventId: `prompt-steer-abandoned:${randomUUID()}`,
       type: "prompt.steer-abandoned",
@@ -1699,6 +1700,48 @@ class ExpertSessionImpl implements ExpertSession {
       },
       occurredAt: updatedAt,
     });
+  }
+
+  private async cancelAbandonedSteerExecutions(
+    prompts: readonly PromptRequest[],
+  ): Promise<boolean> {
+    const abandoned = prompts.filter(
+      (prompt) =>
+        prompt.status === "cancelled" &&
+        prompt.deliveryAttempt?.kind === "queue_steer" &&
+        prompt.deliveryAttempt.state === "uncertain",
+    );
+    for (const prompt of abandoned) {
+      const sourceExecutionId = prompt.deliveryAttempt?.sourceExecutionId;
+      if (sourceExecutionId === undefined) continue;
+      await this.cancelPersistedExecution(
+        sourceExecutionId,
+        "Steer delivery abandoned without replay; prior operations may already have executed.",
+      );
+    }
+    if (abandoned.length === 0 || hasUnresolvedSteerDelivery(prompts)) return false;
+    const lastControl = [...(await this.dependencies.sessions.listEvents(this.sessionId))]
+      .reverse()
+      .find((event) =>
+        ["prompt.queue-paused", "prompt.queue-resumed", "prompt.queue-cleared"].includes(
+          event.type,
+        ),
+      );
+    const pause = lastControl?.data as { requestId?: unknown; reason?: unknown } | undefined;
+    if (
+      lastControl?.type !== "prompt.queue-paused" ||
+      pause?.reason !== "delivery_uncertain" ||
+      !abandoned.some((prompt) => prompt.requestId === pause.requestId)
+    )
+      return false;
+    // Replay the control-event cleanup too: an idle queue otherwise appears resumed,
+    // but the stale pause would fence the next instruction after retry or restart.
+    await this.ownedSessions.appendEvent(this.sessionId, {
+      eventId: `prompt-queue-resumed:${randomUUID()}`,
+      type: "prompt.queue-resumed",
+      data: {},
+    });
+    return true;
   }
 
   private async reconcileQueuedSteers(prompts: readonly PromptRequest[]): Promise<void> {
@@ -1795,6 +1838,7 @@ class ExpertSessionImpl implements ExpertSession {
   /** Recover queue-steer delivery without guessing whether Runtime observed it. */
   async recoverPendingQueueSteers(): Promise<void> {
     const allPrompts = await this.getPromptQueue();
+    await this.cancelAbandonedSteerExecutions(allPrompts);
     const uncertainStrictSteers = allPrompts.filter(
       (prompt) =>
         prompt.deliveryAttempt?.kind === "strict_steer" &&

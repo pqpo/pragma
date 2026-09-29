@@ -55,7 +55,13 @@ implicitly. Recovery operations are serialized. Failed native close retains the
 pooled Session and keeps the queue fenced; a failed durable abandonment leaves
 the original native snapshot and uncertain prompts intact. Cancelled uncertain
 records retain their delivery provenance for audit and cannot be revived by crash
-recovery. The optional command field preserves existing command semantics and
+recovery. Persist prompt cancellation and native snapshot detachment before cancelling
+the source Executions. The cancelled uncertain attempts are the durable cleanup
+intent: explicit retry and owner restoration finish source cancellation and clear
+only the associated uncertain-delivery pause. A failed aggregate write leaves the
+source Execution queued, so a later `not_dispatched` receipt can still execute it.
+Desktop projects the recovery capability: receipt runtimes offer checking and
+abandonment; terminal runtimes offer abandonment only. The optional command field preserves existing command semantics and
 requires no persisted Schema version change.
 
 ## Persistence

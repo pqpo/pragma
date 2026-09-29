@@ -787,6 +787,7 @@ export const MissionConversationStateSchema = z.object({
       pendingCount: z.number().int().nonnegative(),
       supportsSteer: z.boolean().default(false),
       deliveryUncertain: z.boolean().optional(),
+      steeringRecovery: z.enum(["receipt", "terminal"]).optional(),
       items: z
         .array(
           z.object({

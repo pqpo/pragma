@@ -134,6 +134,11 @@ to continue. The ExpertSession root Context identity remains fixed. Previous
 side effects may already have occurred; this operation does not undo them.
 Ordinary resume never abandons messages. Close and write failures keep recovery
 fenced, and cancelled uncertain records retain their provenance after restart.
+The aggregate abandonment decision precedes source Execution cancellation. A
+failed aggregate write preserves the queued source; cleanup after a durable
+decision is replayed on retry or owner restoration, including the associated
+queue pause record. Desktop shows delivery checking only for receipt runtimes;
+terminal runtimes show the explicit abandonment action.
 
 `test/steering.integration.test.ts` exercises real OpenCode 2.0.16 processes against
 a local simulated model. Together with all adapter tests, OpenCode 1.18.33 and
