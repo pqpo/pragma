@@ -431,6 +431,8 @@ jobs:
               --content-disposition attachment \
               --endpoint "${endpoint}" \
               --force \
+              --parallel 10 \
+              --checkpoint-dir "${RUNNER_TEMP}/ossutil-checkpoint" \
               --region "${ALIYUN_OSS_REGION}"
           done
 
@@ -464,6 +466,8 @@ jobs:
               --content-disposition attachment \
               --endpoint "${endpoint}" \
               --force \
+              --parallel 10 \
+              --checkpoint-dir "${RUNNER_TEMP}/ossutil-checkpoint" \
               --region "${ALIYUN_OSS_REGION}"
           done
 
