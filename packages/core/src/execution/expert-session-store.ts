@@ -108,7 +108,10 @@ export function createFileExpertSessionStore(options: {
   const assertLeaseOwner = async (sessionId: string, claimId: string): Promise<void> => {
     const value = await readJson(paths.expertSessionLease(sessionId));
     const lease = value === undefined ? undefined : ExpertSessionLeaseSchema.parse(value);
-    if (lease?.claimId !== claimId || Date.parse(lease.expiresAt) <= Date.now()) {
+    // Expiry makes the lease eligible for takeover; only a different persisted
+    // claim (or release) fences this owner. This check and takeover share the
+    // aggregate lock, so a late heartbeat cannot authorize a superseded writer.
+    if (lease?.claimId !== claimId) {
       throw new Error(`ExpertSession lease is no longer owned: ${sessionId}`);
     }
   };

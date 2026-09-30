@@ -18,6 +18,7 @@ import {
   SteerNotDispatchedError,
   createFileExecutionStore,
   createFileExpertSessionStore,
+  FileLockTimeoutError,
   createNoopLoggerProvider,
   createRuntimeSessionRecord,
   createStaticRuntimeResolver,
@@ -324,6 +325,7 @@ interface OrchestrationRuntimeStats {
 interface OrchestrationRuntimeHooks {
   readonly onNativeSteer?: (() => void) | undefined;
   readonly onWaitPending?: (() => Promise<void>) | undefined;
+  readonly onInvalidWaitSettled?: (() => Promise<void>) | undefined;
 }
 
 interface OrchestrationNativeEvent {
@@ -417,8 +419,10 @@ function createOrchestrationRuntime(
             (error: unknown) => (error instanceof Error ? error.message : String(error)),
           );
           await hooks.onWaitPending?.();
+          const invalidWaitResult = await invalidWait;
+          await hooks.onInvalidWaitSettled?.();
           return {
-            outputText: `lead:${await invalidWait}`,
+            outputText: `lead:${invalidWaitResult}`,
             runtimeSessionId: session.id,
           };
         }
@@ -1076,6 +1080,36 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     ).rejects.toThrow("is closed");
   });
 
+  it("rejects prompts on a released failed Session and resumes its original Context", async () => {
+    const { app, expert } = await trackedFixture({ failQuery: "fail" });
+    const session = await app.experts.createSession(expert);
+    const rootContextId = (await session.getState()).rootContextId;
+    await expect((await session.prompt("fail", { requestId: "fail" })).result).rejects.toThrow();
+    await vi.waitFor(async () => {
+      expect((await session.getState()).activeExecutionId).toBeUndefined();
+    });
+    await expect((await session.prompt("retry", { requestId: "retry" })).result).resolves.toBe(
+      "tracked:retry",
+    );
+    await vi.waitFor(async () => {
+      expect((await session.getState()).activeExecutionId).toBeUndefined();
+    });
+    await session.releaseAfterTerminal();
+    await expect(session.prompt("late", { requestId: "late" })).rejects.toThrow(
+      "resources are being released",
+    );
+    expect((await session.getPromptQueue()).map((prompt) => prompt.requestId)).toEqual([
+      "fail",
+      "retry",
+    ]);
+    const resumed = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
+    expect((await resumed.getState()).rootContextId).toBe(rootContextId);
+    await expect(
+      (await resumed.prompt("continue", { requestId: "continue" })).result,
+    ).resolves.toBe("tracked:continue");
+    await resumed.close();
+  });
+
   it("keeps the Session-created root Context immutable under concurrent prompts", async () => {
     const { app, expert } = await trackedFixture({ delayMs: 25 });
     const session = await app.experts.createSession(expert);
@@ -1095,6 +1129,49 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
       sessionId: session.sessionId,
     });
     await session.close();
+  });
+
+  it("drains prompt admission before terminal release and retries a rejected release", async () => {
+    const { app, expert } = await trackedFixture({ delayMs: 25 });
+    const session = await app.experts.createSession(expert);
+    const getState = session.getState.bind(session);
+    let unblockAdmission!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      unblockAdmission = resolve;
+    });
+    const stateSpy = vi.spyOn(session, "getState").mockImplementationOnce(async () => {
+      await gate;
+      return await getState();
+    });
+    try {
+      const admitting = session.prompt("first", { requestId: "first" });
+      const release = session.releaseAfterTerminal();
+      const rejectedRelease = expect(release).rejects.toThrow("Wait for the active Expert turn");
+      await expect(session.prompt("late", { requestId: "late" })).rejects.toThrow(
+        "resources are being released",
+      );
+      unblockAdmission();
+      const first = await admitting;
+      await rejectedRelease;
+      await expect(first.result).resolves.toBe("tracked:first");
+      // A failed precondition must neither seal the Session nor poison release retries.
+      await expect((await session.prompt("retry", { requestId: "retry" })).result).resolves.toBe(
+        "tracked:retry",
+      );
+      await vi.waitFor(async () => {
+        expect((await session.getState()).activeExecutionId).toBeUndefined();
+      });
+      await session.releaseAfterTerminal();
+      expect((await session.getPromptQueue()).map((prompt) => prompt.requestId)).toEqual([
+        "first",
+        "retry",
+      ]);
+      const resumed = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
+      await resumed.close();
+    } finally {
+      unblockAdmission();
+      stateSpy.mockRestore();
+    }
   });
 
   it("reuses a Team member Context across ExpertSession restart and persists its snapshot", async () => {
@@ -1407,6 +1484,156 @@ describe("ExpertSession", { timeout: 30_000 }, () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 220));
     await expect(sessions.claimLease("leased-session", "owner-b", 200)).resolves.toBe(true);
     await sessions.releaseLease("leased-session", "owner-b");
+  });
+
+  it.each([false, true])(
+    "handles a heartbeat delayed by days with takeover=%s",
+    async (takeover) => {
+      const home = await createTemporaryHome("pragma-session-late-heartbeat-");
+      const executions = createFileExecutionStore({ pragmaHome: home });
+      const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+      const claimLease = vi.spyOn(sessions, "claimLease");
+      let heartbeat: (() => void) | undefined;
+      const scheduleInterval = globalThis.setInterval;
+      const intervals = vi
+        .spyOn(globalThis, "setInterval")
+        .mockImplementation((callback, delay, ...args) => {
+          if (delay === 10_000) heartbeat = callback as () => void;
+          return scheduleInterval(callback, delay, ...args);
+        });
+      let releaseTurn!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        releaseTurn = resolve;
+      });
+      const stats = createFakeRuntimeStats();
+      const app = createPragma({
+        pragmaHome: home,
+        executionStore: executions,
+        expertSessionStore: sessions,
+        runtimes: createStaticRuntimeResolver({
+          runtimes: [createFakeRuntime({ stats, turnGate })],
+          defaultRuntimeId: "fake",
+        }),
+        loggerProvider: createNoopLoggerProvider(),
+      });
+      const expert = await defineExpert({
+        id: "long-running",
+        name: "Long running",
+        description: "Heartbeat delay",
+        tags: [],
+        scope: "test",
+        workspace: home,
+      });
+      const session = await app.experts.createSession(expert);
+      try {
+        const active = await session.prompt("active", { requestId: "active" });
+        await vi.waitFor(() => expect(stats.executionIds).toHaveLength(1));
+        const ownerClaimId = claimLease.mock.calls[0]![1];
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60 * 1_000);
+        if (takeover) {
+          await expect(sessions.claimLease(session.sessionId, "successor", 30_000)).resolves.toBe(
+            true,
+          );
+          await expect(
+            sessions.transact(
+              session.sessionId,
+              ({ session: state, prompts }) => ({ result: undefined, session: state, prompts }),
+              ownerClaimId,
+            ),
+          ).rejects.toThrow("lease is no longer owned");
+        } else {
+          // Even before the renewal timer runs, the unchanged owner can persist a followup.
+          await session.prompt("followup", { requestId: "followup" });
+        }
+        heartbeat!();
+        if (takeover) {
+          await vi.waitFor(async () => {
+            await expect(session.prompt("late")).rejects.toThrow("lease was lost");
+          });
+          releaseTurn();
+          await expect(active.result).rejects.toThrow();
+          await sessions.releaseLease(session.sessionId, "successor");
+        } else {
+          await vi.waitFor(() => expect(claimLease).toHaveBeenCalledTimes(2));
+          expect((await active.getState()).status).toBe("running");
+          releaseTurn();
+          await expect(active.result).resolves.toBe("long-running:active");
+          await expect(
+            (await session.listTurns()).find((turn) => turn.requestId === "followup")!.result,
+          ).resolves.toBe("long-running:followup");
+          expect(stats.cancelTurnCalls).toBe(0);
+        }
+      } finally {
+        releaseTurn();
+        vi.useRealTimers();
+        intervals.mockRestore();
+        claimLease.mockRestore();
+        await session.close().catch(() => undefined);
+      }
+    },
+  );
+
+  it("retries heartbeat contention beyond expiry and lets the running turn finish", async () => {
+    const home = await createTemporaryHome("pragma-session-heartbeat-contention-");
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const claim = sessions.claimLease.bind(sessions);
+    let claims = 0;
+    const claimLease = vi.spyOn(sessions, "claimLease").mockImplementation(async (...args) => {
+      if (++claims === 2)
+        throw new FileLockTimeoutError("busy", "/tmp/session.lock", "local", 10, "renew");
+      return await claim(...args);
+    });
+    let heartbeat!: () => void;
+    const scheduleInterval = globalThis.setInterval;
+    const intervals = vi
+      .spyOn(globalThis, "setInterval")
+      .mockImplementation((callback, delay, ...args) => {
+        if (delay === 10_000) heartbeat = callback as () => void;
+        return scheduleInterval(callback, delay, ...args);
+      });
+    let releaseTurn!: () => void;
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      executionStore: executions,
+      expertSessionStore: sessions,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ stats, turnGate })],
+        defaultRuntimeId: "fake",
+      }),
+      loggerProvider: createNoopLoggerProvider(),
+    });
+    const expert = await defineExpert({
+      id: "contention",
+      name: "Contention",
+      description: "Delayed renewal",
+      tags: [],
+      scope: "test",
+      workspace: home,
+    });
+    const session = await app.experts.createSession(expert);
+    try {
+      const turn = await session.prompt("active");
+      await vi.waitFor(() => expect(stats.executionIds).toHaveLength(1));
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 60_000);
+      heartbeat();
+      await vi.waitFor(() => expect(claims).toBe(3), { timeout: 2_000 });
+      releaseTurn();
+      await expect(turn.result).resolves.toBe("contention:active");
+      expect(stats.cancelTurnCalls).toBe(0);
+    } finally {
+      releaseTurn();
+      vi.useRealTimers();
+      intervals.mockRestore();
+      claimLease.mockRestore();
+      await session.close();
+    }
   });
 
   it("rejects resume when its Team execution descriptor changes", async () => {
@@ -4689,10 +4916,18 @@ describe("Expert lifecycle orchestration", { timeout: 30_000 }, () => {
       releaseWaitHook = resolve;
     });
     let nativeSteers = 0;
+    let releaseRuntime!: () => void;
+    const runtimeSteered = new Promise<void>((resolve) => {
+      releaseRuntime = resolve;
+    });
     const runtime = createOrchestrationRuntime("invalid-wait-steer-race", undefined, {
       onNativeSteer: () => {
         nativeSteers += 1;
+        releaseRuntime();
       },
+      // Keep the Runtime submission active while the wait registration fails.
+      // Otherwise completion can win the file-I/O race before steer reaches it.
+      onInvalidWaitSettled: async () => await runtimeSteered,
       onWaitPending: async () => {
         markWaitPending();
         await waitHookReleased;

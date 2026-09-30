@@ -63,6 +63,39 @@ describe("MissionControllerStore", () => {
     });
   });
 
+  it("renews the unchanged owner after days of timer delay and fences it after takeover", async () => {
+    const time = mutableClock("2026-08-24T00:00:00.000Z");
+    const store = await createStore(time);
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000013",
+      leaseMs: 30_000,
+    });
+    time.advance(3 * 24 * 60 * 60 * 1_000);
+    // A resumed task can write before the overdue heartbeat gets its timer slot.
+    await expect(store.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+    const renewed = await store.renew({ missionId, guard, leaseMs: 30_000 });
+    expect(renewed.fencingToken).toBe(guard.fencingToken);
+    expect(Date.parse(renewed.expiresAt)).toBe(time.now().getTime() + 30_000);
+    time.advance(30_001);
+    const sameOwner = await store.claim({ missionId, claimId: guard.claimId, leaseMs: 30_000 });
+    expect(sameOwner.fencingToken).toBe(guard.fencingToken);
+    time.advance(30_001);
+    const takeover = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000014",
+      leaseMs: 30_000,
+    });
+    expect(takeover.fencingToken).toBe("2");
+    await expect(store.renew({ missionId, guard, leaseMs: 30_000 })).rejects.toMatchObject({
+      code: "MISSION_FENCING_REJECTED",
+    });
+    await expect(store.assertWriteGuard({ missionId, guard })).rejects.toMatchObject({
+      code: "MISSION_FENCING_REJECTED",
+    });
+    await expect(store.assertWriteGuard({ missionId, guard: takeover })).resolves.toBeUndefined();
+  });
+
   it("reserves run requests atomically and rejects a payload conflict", async () => {
     const store = await createStore();
     const requestId = "00000000-0000-4000-8000-000000000020";
@@ -328,16 +361,26 @@ describe("MissionControllerStore", () => {
     ).resolves.toMatchObject({ state: "queued" });
   });
 
-  it("reports repeated polling failures and relinquishes the unhealthy owner", async () => {
+  it("reports repeated polling failures and keeps a healthy owner polling until recovery", async () => {
     const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000034",
+      leaseMs: 10_000,
+    });
     const onPollingError = vi.fn();
     const onLeaseLost = vi.fn();
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000035");
+    await store.appendCommand(command);
+    let failures = 0;
+    const apply = vi.fn(async () => ({ result: { delivered: true } }));
     const poller = store.startPolling({
       missionId,
       guard: () => {
-        throw new Error("aggregate unavailable");
+        if (failures++ < 6) throw new Error("aggregate unavailable");
+        return guard;
       },
-      consumer: { apply: async () => ({ result: {} }) },
+      consumer: { apply },
       initialDelayMs: 1,
       maxDelayMs: 4,
       jitter: () => 0,
@@ -345,12 +388,16 @@ describe("MissionControllerStore", () => {
       onLeaseLost,
     });
 
-    await vi.waitFor(() => expect(onLeaseLost).toHaveBeenCalledOnce(), {
-      timeout: 200,
-      interval: 5,
-    });
-    expect(onPollingError.mock.calls.map((call) => call[0].consecutiveFailures)).toEqual([1, 2, 3]);
-    await poller.stop();
+    try {
+      await vi.waitFor(() => expect(apply).toHaveBeenCalledOnce(), { timeout: 2_000, interval: 5 });
+      expect(onLeaseLost).not.toHaveBeenCalled();
+      expect(onPollingError.mock.calls.map((call) => call[0].consecutiveFailures)).toEqual([
+        1, 2, 3, 4, 5, 6,
+      ]);
+      await expect(store.assertWriteGuard({ missionId, guard })).resolves.toBeUndefined();
+    } finally {
+      await poller.stop();
+    }
   });
 
   it("commits a semantic-write event after concurrently advanced Inbox poller events", async () => {
@@ -421,6 +468,42 @@ describe("MissionControllerStore", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as { readonly sequence: number });
     expect(lines.map((event) => event.sequence)).toEqual([1, 2, 3]);
+  });
+
+  it("lets a command stop its own poller without waiting on itself", async () => {
+    const store = await createStore();
+    const guard = await store.claim({
+      missionId,
+      claimId: "00000000-0000-4000-8000-000000000039",
+      leaseMs: 10_000,
+    });
+    const command = commandInput("send", "00000000-0000-4000-8000-000000000040");
+    await store.appendCommand(command);
+    const poller = store.startPolling({
+      missionId,
+      guard,
+      initialDelayMs: 1,
+      maxDelayMs: 4,
+      consumer: {
+        apply: async () => {
+          await poller.stop();
+          return { result: { stopped: true } };
+        },
+      },
+      onLeaseLost: () => undefined,
+    });
+    try {
+      await vi.waitFor(
+        async () => {
+          await expect(
+            store.getOperation({ missionId, requestId: command.request.requestId }),
+          ).resolves.toMatchObject({ state: "applied", result: { stopped: true } });
+        },
+        { timeout: 2_000 },
+      );
+    } finally {
+      await poller.stop();
+    }
   });
 
   it("keeps an accepted Inbox command recoverable while a semantic write journal is pending", async () => {
@@ -892,6 +975,11 @@ describe("MissionControllerStore", () => {
       );
       expect(scheduled.slice(beforeCommand)).toContain(6);
       time.advance(10_001);
+      await store.claim({
+        missionId,
+        claimId: "00000000-0000-4000-8000-000000000078",
+        leaseMs: 10_000,
+      });
       await vi.waitFor(() => expect(lost).toHaveBeenCalledOnce(), { timeout: 2_000 });
     } finally {
       await poller.stop();

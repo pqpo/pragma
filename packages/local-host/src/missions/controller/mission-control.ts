@@ -194,7 +194,10 @@ export function createMissionControlApplication(options: {
       const replayingTerminalCommand =
         existingCommand !== undefined && isTerminalCommandState(existingCommand.state);
 
-      if (strict && !liveLease && !replayingTerminalCommand) {
+      // A delayed heartbeat does not invalidate the current owner. Append
+      // binds strict commands to the persisted fencing token under the lock;
+      // takeover before delivery will reject that token in processNext.
+      if (strict && snapshot.snapshot.lease === undefined && !replayingTerminalCommand) {
         throw createIntegrationError({
           code: "STEER_TARGET_NOT_ACTIVE",
           category: "conflict",
@@ -202,7 +205,11 @@ export function createMissionControlApplication(options: {
           details: { missionId: input.missionId },
         });
       }
-      if (!liveLease && !replayingTerminalCommand)
+      if (
+        !liveLease &&
+        !replayingTerminalCommand &&
+        options.ownerScope.currentGuard(input.missionId) === undefined
+      )
         await options.assertAcquisitionAllowed?.(input.missionId);
 
       const appended = await options.controller.appendCommand({

@@ -17,6 +17,7 @@ import {
   createFileExecutionStore,
   createFileExpertSessionStore,
   ExecutionController,
+  ExpertSessionReleaseBlockedError,
   ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   fingerprintExpertExecutionDefinition,
@@ -5687,7 +5688,27 @@ export function createMissionRunner(options: {
           session.cancelPromptQueue("Mission controller lease was lost."),
           5_000,
         );
-        const release = await settlementOutcomeWithin(session.releaseAfterTerminal(), 10_000);
+        // Keep the owner and its PragmaApp until release settles. A timeout is
+        // not a released lease: opening a new app here would compete with this
+        // process's own ExpertSession and strand subsequent messages.
+        const forgetReleasedOwner = (): void => {
+          if (sessionService.deleteSessionIfCurrent(id, session)) {
+            sessionService.clearCompilation(id);
+            if (executionContext !== undefined) {
+              sessionService.deleteExecutionContextIfCurrent(id, executionContext);
+            }
+          }
+        };
+        const releasing = session.releaseAfterTerminal().then(
+          () => forgetReleasedOwner(),
+          (error: unknown) => {
+            // Validation can reject while a turn is still settling. Teardown
+            // has not started in that case, so this Session still owns its lease.
+            if (!(error instanceof ExpertSessionReleaseBlockedError)) forgetReleasedOwner();
+            throw error;
+          },
+        );
+        const release = await settlementOutcomeWithin(releasing, 10_000);
         if (release.status === "rejected") {
           logger.warn(
             "mission.controller_session_release_failed",
@@ -5695,9 +5716,7 @@ export function createMissionRunner(options: {
             { error: release.error, missionId: id, sessionId: session.sessionId },
           );
         }
-        if (sessionService.deleteSessionIfCurrent(id, session)) {
-          sessionService.clearCompilation(id);
-        }
+        return;
       }
       if (executionContext !== undefined) {
         sessionService.deleteExecutionContextIfCurrent(id, executionContext);

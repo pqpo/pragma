@@ -66,6 +66,13 @@ export class FileLockTimeoutError extends Error {
   }
 }
 
+/** Temporary storage contention does not establish that an owner was replaced. */
+export function isRetryableStorageContentionError(error: unknown): boolean {
+  if (error instanceof FileLockTimeoutError) return true;
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  return ["EAGAIN", "EBUSY", "EMFILE", "ENFILE", "ETIMEDOUT"].includes(String(error.code));
+}
+
 type LockContention =
   | { readonly kind: "active"; readonly owner: FileLockOwner }
   | {
