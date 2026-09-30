@@ -1,3 +1,7 @@
+import {
+  missionChatEntryDisplayTime,
+  orderMissionChatEntries,
+} from "../../../../shared/mission-conversation-order.ts";
 import type {
   MissionChatEntry,
   MissionChatPatch,
@@ -161,37 +165,9 @@ export function groupMissionConversationEntries(
 export function orderMissionConversationEntries(
   entries: readonly MissionConversationEntry[],
 ): MissionConversationEntry[] {
-  const durable = entries.filter((entry) => entry.type === "durable");
-  // Steers share the active Execution with its original prompt. A refreshed
-  // history page can therefore place them before or after that Execution's
-  // output; insert them at delivery time instead of treating them as turn starts.
-  const activated = durable
-    .filter(
-      (
-        item,
-      ): item is Extract<MissionConversationEntry, { readonly type: "durable" }> & {
-        readonly entry: Extract<MissionChatEntry, { readonly kind: "user" }>;
-      } =>
-        item.entry.kind === "user" &&
-        (item.entry.delivery?.activatedAt !== undefined ||
-          item.entry.delivery?.effectiveMode === "steer"),
-    )
-    .toSorted((left, right) =>
-      missionConversationEntryDisplayTime(left).localeCompare(
-        missionConversationEntryDisplayTime(right),
-      ),
-    );
-  const activatedIds = new Set(activated.map((item) => item.entry.id));
-  const ordered: MissionConversationEntry[] = durable.filter(
-    (item) => !activatedIds.has(item.entry.id),
-  );
-  for (const item of activated) {
-    const activatedAt = missionConversationEntryDisplayTime(item);
-    const index = ordered.findIndex(
-      (candidate) => missionConversationEntryDisplayTime(candidate) > activatedAt,
-    );
-    ordered.splice(index < 0 ? ordered.length : index, 0, item);
-  }
+  const ordered: MissionConversationEntry[] = orderMissionChatEntries(
+    entries.flatMap((item) => (item.type === "durable" ? [item.entry] : [])),
+  ).map((entry) => ({ type: "durable", entry }));
   const local = entries
     .filter((entry) => entry.type !== "durable")
     .toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt));
@@ -205,8 +181,8 @@ export function orderMissionConversationEntries(
 }
 
 function missionConversationEntryDisplayTime(entry: MissionConversationEntry): string {
-  return entry.type === "durable" && entry.entry.kind === "user"
-    ? (entry.entry.delivery?.activatedAt ?? entry.entry.createdAt)
+  return entry.type === "durable"
+    ? missionChatEntryDisplayTime(entry.entry)
     : entry.entry.createdAt;
 }
 

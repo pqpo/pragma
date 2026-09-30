@@ -1,3 +1,4 @@
+import { orderMissionChatEntries } from "../../../shared/mission-conversation-order.ts";
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
 import {
   STORE_REVISION_EXPERT_REF,
@@ -5593,7 +5594,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
     30_000,
   );
 
-  it.each(["direct", "queued"] as const)(
+  it.each(["direct", "queued", "inbox"] as const)(
     "preserves steer submission time and avoids interrupted fallback (%s)",
     async (mode) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-mission-queued-steer-"));
@@ -5620,6 +5621,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       const firstTurnCanFinish = new Promise<void>((resolve) => {
         finishFirstTurn = resolve;
       });
+      let emitWaitingReply!: () => void;
       const steers: string[] = [];
       let deliveryStartedAt: string | undefined;
       const runtime = defineRuntimeTestDriver<never, { id: string }>({
@@ -5629,6 +5631,17 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         readSession: (session) => ({ runtimeSessionId: session.id }),
         async startTurn(_session, turn) {
           if (turn.rawQuery === mission.goal) {
+            emitWaitingReply = () =>
+              turn.stream.write({
+                runId: turn.runId,
+                source: turn.source,
+                type: "message.delta",
+                payload: {
+                  role: "assistant",
+                  contentType: "text",
+                  delta: "Reply during admission",
+                },
+              });
             markFirstTurnStarted();
             await firstTurnCanFinish;
           }
@@ -5639,16 +5652,23 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           deliveryStartedAt = new Date().toISOString();
           // Make delivery finish in a later clock tick so recording the message
           // after runtime acceptance would fail the submission-time assertion.
-          await vi.waitFor(() => expect(new Date().toISOString() > deliveryStartedAt!).toBe(true), {
-            interval: 1,
-          });
+          if (mode !== "queued") {
+            await vi.waitFor(
+              () => expect(new Date().toISOString() > deliveryStartedAt!).toBe(true),
+              {
+                interval: 1,
+              },
+            );
+          }
         },
         mapEvent: () => ({ events: [] }),
         closeSession: () => undefined,
       });
+      const capacityCheck = vi.fn(async () => undefined);
       const runner = createMissionRunner({
         missions,
         project,
+        assertStorageWriteAllowed: capacityCheck,
         capabilityStore: {} as CapabilityStore,
         capabilityCredentials: {} as CapabilityCredentialStore,
         capabilitiesPath: join(root, "capabilities"),
@@ -5660,47 +5680,130 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       await firstTurnStarted;
       const activeExecutionId = (await missions.get(mission.id)).execution!.id;
       const requestId = "00000000-0000-4000-8000-000000000109";
-      await expect(
-        runner.sendMessage({
+      const control =
+        mode === "inbox"
+          ? createTestMissionControl({
+              missionsPath: join(root, "missions"),
+              missions,
+              runner,
+            })
+          : undefined;
+      if (control !== undefined) await control.startOwner(mission.id);
+      let releaseAdmission = () => {};
+      let blocker: Promise<unknown> | undefined;
+      let submittedAt: string | undefined;
+      let waitingReplyCreatedAt: string | undefined;
+      if (mode !== "queued") {
+        let admissionEntered!: () => void;
+        const entered = new Promise<void>((resolve) => {
+          admissionEntered = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+          releaseAdmission = resolve;
+        });
+        capacityCheck.mockImplementationOnce(async () => {
+          admissionEntered();
+          await gate;
+        });
+        blocker = runner.sendMessage({
           id: mission.id,
-          content: "Change direction now",
-          requestId,
-          ...(mode === "direct" ? { mode: "steer" as const } : {}),
-        }),
-      ).resolves.toMatchObject({ effectiveMode: mode === "direct" ? "steer" : "enqueue" });
+          requestId: "00000000-0000-4000-8000-000000000110",
+          content: "Queued blocker",
+        });
+        await entered;
+      }
+      try {
+        let send: Promise<unknown>;
+        if (mode === "inbox") {
+          submittedAt = new Date().toISOString();
+          const submission = await control!.submit({
+            missionId: mission.id,
+            requestId,
+            kind: "steer",
+            createdAt: submittedAt,
+            expectedExecutionId: activeExecutionId,
+            payload: { kind: "steer", input: { prompt: "Change direction now", attachments: [] } },
+          });
+          expect(submission.command.request.requestedAt).toBe(submittedAt);
+          send = control!.waitForTerminal({ missionId: mission.id, requestId });
+        } else {
+          send = runner.sendMessage({
+            id: mission.id,
+            content: "Change direction now",
+            requestId,
+            ...(mode === "direct" ? { mode: "steer" as const } : {}),
+          });
+        }
+        if (mode !== "queued") {
+          // The steer is queued behind another admission while the active
+          // Runtime continues emitting messages.
+          const afterSubmissionAt = new Date().toISOString();
+          await vi.waitFor(() => expect(new Date().toISOString() > afterSubmissionAt).toBe(true), {
+            interval: 1,
+          });
+          emitWaitingReply();
+          await vi.waitFor(async () => {
+            const page = await readMissionConversationSnapshot(runner, mission.id);
+            const reply = page.entries.find(
+              (entry) => entry.kind === "assistant" && entry.content === "Reply during admission",
+            );
+            expect(reply).toBeDefined();
+            waitingReplyCreatedAt = reply!.createdAt;
+          });
+        }
+        releaseAdmission();
+        await blocker;
+        if (mode === "inbox") await expect(send).resolves.toMatchObject({ state: "applied" });
+        else
+          await expect(send).resolves.toMatchObject({
+            effectiveMode: mode === "direct" ? "steer" : "enqueue",
+          });
+        if (mode === "queued") await runner.steerQueuedMessage({ id: mission.id, requestId });
 
-      if (mode === "queued") await runner.steerQueuedMessage({ id: mission.id, requestId });
-
-      const chat = await readMissionConversationSnapshot(runner, mission.id);
-      expect(chat.execution).toMatchObject({ id: activeExecutionId, status: "running" });
-      expect(steers).toEqual(["Change direction now"]);
-      expect(chat.entries).toContainEqual(
-        expect.objectContaining({
-          id: requestId,
-          kind: "user",
-          delivery: expect.objectContaining({
-            requestedMode: "steer",
-            effectiveMode: "steer",
-            status: "succeeded",
-            ...(mode === "queued" ? { activatedAt: expect.any(String) } : {}),
+        const chat = await readMissionConversationSnapshot(runner, mission.id);
+        expect(chat.execution).toMatchObject({ id: activeExecutionId, status: "running" });
+        expect(steers).toEqual(["Change direction now"]);
+        expect(chat.entries).toContainEqual(
+          expect.objectContaining({
+            id: requestId,
+            kind: "user",
+            delivery: expect.objectContaining({
+              requestedMode: "steer",
+              effectiveMode: "steer",
+              status: "succeeded",
+              ...(mode === "queued" ? { activatedAt: expect.any(String) } : {}),
+            }),
           }),
-        }),
-      );
-      expect(chat.entries).not.toContainEqual(
-        expect.objectContaining({ kind: "assistant", content: "Execution interrupted." }),
-      );
-      const steerEntry = chat.entries.find((entry) => entry.id === requestId)!;
-      if (mode === "direct") expect(steerEntry.createdAt <= deliveryStartedAt!).toBe(true);
+        );
+        expect(chat.entries).not.toContainEqual(
+          expect.objectContaining({ kind: "assistant", content: "Execution interrupted." }),
+        );
+        const steerEntry = chat.entries.find((entry) => entry.id === requestId)!;
+        if (mode !== "queued") {
+          expect(steerEntry.createdAt <= deliveryStartedAt!).toBe(true);
+          expect(steerEntry.createdAt < waitingReplyCreatedAt!).toBe(true);
+          if (mode === "inbox") expect(steerEntry.createdAt).toBe(submittedAt);
+          const ordered = orderMissionChatEntries(chat.entries);
+          expect(ordered.findIndex((entry) => entry.id === requestId)).toBeLessThan(
+            ordered.findIndex(
+              (entry) => entry.kind === "assistant" && entry.content === "Reply during admission",
+            ),
+          );
+        }
 
-      finishFirstTurn();
-      await vi.waitFor(
-        async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-        { timeout: settlementTimeoutMs },
-      );
-      const settled = await readMissionConversationSnapshot(runner, mission.id);
-      expect(settled.entries.find((entry) => entry.id === requestId)?.createdAt).toBe(
-        steerEntry.createdAt,
-      );
+        finishFirstTurn();
+        await vi.waitFor(
+          async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+          { timeout: settlementTimeoutMs },
+        );
+        const settled = await readMissionConversationSnapshot(runner, mission.id);
+        expect(settled.entries.find((entry) => entry.id === requestId)?.createdAt).toBe(
+          steerEntry.createdAt,
+        );
+      } finally {
+        releaseAdmission();
+        finishFirstTurn();
+      }
     },
   );
 

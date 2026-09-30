@@ -1,4 +1,5 @@
 import type { HomeProjectStore } from "./home-project-store.ts";
+import { prepareMissionBranchHistory } from "./mission-branch-context.ts";
 import {
   HomeProjectIdSchema,
   ReorderHomeProjectsSchema,
@@ -486,13 +487,10 @@ export function installMissionHandlers(options: {
         pages.unshift(page);
         beforeCursor = page.page.nextBeforeCursor;
       }
-      const history = pages
-        .flatMap((page) => page.entries)
-        .filter(
-          (entry) =>
-            entry.kind !== "user" ||
-            (entry.delivery?.removed !== true && entry.delivery?.status !== "queued"),
-        );
+      const history = prepareMissionBranchHistory(
+        pages.flatMap((page) => page.entries),
+        state,
+      );
       const latestReply = latestMissionBranchableReply(history);
       if (latestReply?.id !== parsed.expectedMessageId) {
         throw new Error("The selected reply is no longer the latest completed Mission reply.");

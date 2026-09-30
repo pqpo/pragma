@@ -2837,6 +2837,7 @@ export function createMissionRunner(options: {
     readonly requestId: string;
     readonly attachments?: readonly ExpertPromptAttachment[] | undefined;
     readonly mode?: "enqueue" | "steer" | undefined;
+    readonly requestedAt: string;
   }): Promise<MissionMessageApplicationResult> => {
     const acceptedAt = performance.now();
     logger.info("mission.message_accepted", "Mission request accepted", {
@@ -3026,9 +3027,6 @@ export function createMissionRunner(options: {
     const promptAttachments = input.attachments ?? [];
     phaseStartedAt = performance.now();
     const requestedMode = input.mode ?? "enqueue";
-    // Runtime delivery can wait while the active turn emits more output. Keep
-    // the submission time so a steer is displayed before those later replies.
-    const promptCreatedAt = new Date().toISOString();
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
       mode: requestedMode,
@@ -3044,7 +3042,7 @@ export function createMissionRunner(options: {
       id: input.requestId,
       content: input.content,
       ...(promptAttachments.length === 0 ? {} : { attachments: [...promptAttachments] }),
-      createdAt: promptCreatedAt,
+      createdAt: input.requestedAt,
     });
     if (userMessage.kind !== "user") {
       throw new Error("Mission user message persistence returned an invalid timeline record.");
@@ -3107,8 +3105,13 @@ export function createMissionRunner(options: {
     };
   };
 
-  const sendMissionMessage: typeof applyMissionMessage = async (input) =>
-    await withMissionPromptAdmission(input.id, () =>
+  const sendMissionMessage = async (
+    input: Omit<Parameters<typeof applyMissionMessage>[0], "requestedAt"> & {
+      readonly requestedAt?: string | undefined;
+    },
+  ): Promise<MissionMessageApplicationResult> => {
+    const requestedAt = input.requestedAt ?? new Date().toISOString();
+    return await withMissionPromptAdmission(input.id, () =>
       withMissionController(input.id, async () => {
         const mission = await options.missions.get(input.id);
         // Inbox sends can precede Desktop's attached-run preparation. Establish
@@ -3124,9 +3127,10 @@ export function createMissionRunner(options: {
         ) {
           await runMission(mission.id, lifecycleService.runGeneration(mission.id));
         }
-        return await applyMissionMessage(input);
+        return await applyMissionMessage({ ...input, requestedAt });
       }),
     );
+  };
 
   const updateMissionOptions = async (input: UpdateMissionOptions): Promise<Mission> => {
     let mission = await options.missions.get(input.id);
@@ -4698,6 +4702,7 @@ export function createMissionRunner(options: {
             id: command.missionId,
             content: command.payload.input.prompt,
             requestId: command.request.requestId,
+            requestedAt: command.request.requestedAt,
             mode: "enqueue",
             ...(command.payload.input.attachments.length === 0
               ? {}
@@ -4723,6 +4728,7 @@ export function createMissionRunner(options: {
             id: command.missionId,
             content: command.payload.input.prompt,
             requestId: command.request.requestId,
+            requestedAt: command.request.requestedAt,
             mode: "steer",
             ...(command.payload.input.attachments.length === 0
               ? {}
