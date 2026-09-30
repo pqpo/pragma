@@ -79,6 +79,14 @@ describe("Antigravity CLI invocation", () => {
     expect(events.filter((event) => event.kind === "thought-delta")).toEqual([
       { kind: "thought-delta", text: "Inspect" },
     ]);
+    expect(
+      events
+        .filter((event) => event.kind === "thought-delta" || event.kind === "message-delta")
+        .slice(0, 2),
+    ).toEqual([
+      { kind: "thought-delta", text: "Inspect" },
+      { kind: "message-delta", text: "Hel" },
+    ]);
   });
 
   it("shows the actual MCP operation while retaining server identity and stable lifecycle", async () => {
@@ -859,6 +867,244 @@ describe("Antigravity stream-json process", () => {
     });
   });
 
+  it("completes each agy assistant segment before tools and removes the aggregate terminal prefix", async () => {
+    const fixture = await readAgyFixture("agy-1.2.13-assistant-segments.ndjson");
+    const countText = vi.fn(() => ({ tokens: 1, source: "heuristic" as const }));
+    const session = createSession(createStreamSpawn(fixture), countText);
+    const events: AntigravityNativeEvent[] = [];
+    await expect(
+      startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+    ).resolves.toMatchObject({ outputText: "AFTER_TOOL_MARKER\n" });
+    expect(countText).toHaveBeenLastCalledWith(
+      "BEFORE_TOOL_MARKER\nBETWEEN_TOOLS_MARKER\nAFTER_TOOL_MARKER\n",
+      expect.any(Object),
+    );
+    expect(session.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: [
+        { type: "text", text: "BEFORE_TOOL_MARKER\nBETWEEN_TOOLS_MARKER\nAFTER_TOOL_MARKER\n" },
+      ],
+    });
+    expect(
+      events
+        .filter((event) =>
+          ["message-delta", "message-completed", "tool-started", "tool-completed"].includes(
+            event.kind,
+          ),
+        )
+        .map((event) => ({
+          kind: event.kind,
+          ...("text" in event ? { text: event.text } : {}),
+          ...("final" in event ? { final: event.final } : {}),
+        })),
+    ).toEqual([
+      { kind: "message-delta", text: "BEFORE_TOOL_MARKER" },
+      { kind: "message-delta", text: "\n" },
+      { kind: "message-completed", text: "BEFORE_TOOL_MARKER\n", final: false },
+      { kind: "tool-started" },
+      { kind: "tool-completed" },
+      { kind: "message-delta", text: "BETWEEN_TOOLS_MARKER" },
+      { kind: "message-delta", text: "\n" },
+      { kind: "message-completed", text: "BETWEEN_TOOLS_MARKER\n", final: false },
+      { kind: "tool-started" },
+      { kind: "tool-completed" },
+      { kind: "message-delta", text: "AFTER_TOOL_MARKER" },
+      { kind: "message-delta", text: "\n" },
+      { kind: "message-completed", text: "AFTER_TOOL_MARKER\n" },
+    ]);
+  });
+
+  it.each([false, true])(
+    "removes already completed segments from owned transcript recovery (normalized whitespace: %s)",
+    async (normalizedWhitespace) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-agy-segment-recovery-"));
+      try {
+        const transcript = join(
+          root,
+          ".gemini",
+          "antigravity",
+          "brain",
+          conversation2,
+          ".system_generated",
+          "logs",
+          "transcript.jsonl",
+        );
+        await mkdir(dirname(transcript), { recursive: true });
+        await writeFile(
+          transcript,
+          [
+            { type: "USER_INPUT", content: "current turn" },
+            ...["BEFORE_TOOL_MARKER\n", "BETWEEN_TOOLS_MARKER\n", "AFTER_TOOL_MARKER\n"].map(
+              (content) => ({
+                type: "PLANNER_RESPONSE",
+                source: "MODEL",
+                status: "DONE",
+                content: normalizedWhitespace ? content.trim() : content,
+              }),
+            ),
+          ]
+            .map((record) => JSON.stringify(record))
+            .join("\n"),
+        );
+        const fixture = await readAgyFixture("agy-1.2.13-assistant-segments.ndjson");
+        const session = createSession(createStreamSpawn(fixture.slice(0, -1)), undefined, {
+          homeDir: root,
+        });
+        const events: AntigravityNativeEvent[] = [];
+        await expect(
+          startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+        ).resolves.toMatchObject({
+          outputText: normalizedWhitespace ? "AFTER_TOOL_MARKER" : "AFTER_TOOL_MARKER\n",
+        });
+        expect(
+          events.filter((event) => event.kind === "message-completed").map((event) => event.text),
+        ).toEqual([
+          "BEFORE_TOOL_MARKER\n",
+          "BETWEEN_TOOLS_MARKER\n",
+          normalizedWhitespace ? "AFTER_TOOL_MARKER" : "AFTER_TOOL_MARKER\n",
+        ]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["BEFORE\n", "BEFORE\n final answer"])(
+    "preserves a final-only result that repeats narration: %s",
+    async (finalText) => {
+      const countText = vi.fn(() => ({ tokens: 1, source: "heuristic" as const }));
+      const session = createSession(
+        createStreamSpawn([
+          { event: "init", conversation_id: conversation2 },
+          {
+            event: "step_update",
+            step_update: {
+              step_index: 1,
+              step_type: "agent_response",
+              state: "DONE",
+              content: "BEFORE\n",
+            },
+          },
+          {
+            event: "step_update",
+            step_update: {
+              step_index: 2,
+              step_type: "tool",
+              state: "DONE",
+              tool_info: { name: "list_dir", parameters: {}, output: "ok" },
+            },
+          },
+          {
+            event: "step_update",
+            step_update: {
+              step_index: 3,
+              step_type: "agent_response",
+              state: "DONE",
+              content: finalText,
+            },
+          },
+          {
+            event: "result",
+            result: { conversation_id: conversation2, status: "SUCCESS", response: finalText },
+          },
+        ]),
+        countText,
+      );
+      const events: AntigravityNativeEvent[] = [];
+      await expect(
+        startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+      ).resolves.toMatchObject({ outputText: finalText });
+      expect(
+        events.filter((event) => event.kind === "message-completed").map((event) => event.text),
+      ).toEqual(["BEFORE\n", finalText]);
+      expect(countText).toHaveBeenLastCalledWith("BEFORE\n" + finalText, expect.any(Object));
+    },
+  );
+
+  it.each(["unavailable", "owned", "normalized"] as const)(
+    "closes a tool-last turn without replaying completed segments when transcript is %s",
+    async (transcriptMode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-agy-tool-last-recovery-"));
+      try {
+        const fixture = await readAgyFixture("agy-1.2.13-assistant-segments.ndjson");
+        const records = fixture.slice(0, -3);
+        if (transcriptMode !== "unavailable") {
+          const transcript = join(
+            root,
+            ".gemini",
+            "antigravity",
+            "brain",
+            conversation2,
+            ".system_generated",
+            "logs",
+            "transcript.jsonl",
+          );
+          await mkdir(dirname(transcript), { recursive: true });
+          await writeFile(
+            transcript,
+            [
+              { type: "USER_INPUT", content: "current turn" },
+              ...["BEFORE_TOOL_MARKER\n", "BETWEEN_TOOLS_MARKER\n"].map((content) => ({
+                type: "PLANNER_RESPONSE",
+                source: "MODEL",
+                status: "DONE",
+                content: transcriptMode === "normalized" ? content.trim() : content,
+              })),
+            ]
+              .map((record) => JSON.stringify(record))
+              .join("\n"),
+          );
+        }
+        const countText = vi.fn(() => ({ tokens: 1, source: "heuristic" as const }));
+        const session = createSession(createStreamSpawn(records), countText, { homeDir: root });
+        const events: AntigravityNativeEvent[] = [];
+        await expect(
+          startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+        ).resolves.toMatchObject({ outputText: "BETWEEN_TOOLS_MARKER\n" });
+        expect(
+          events
+            .filter((event) => event.kind === "message-completed")
+            .map((event) => ({ text: event.text, final: event.final })),
+        ).toEqual([
+          { text: "BEFORE_TOOL_MARKER\n", final: false },
+          { text: "BETWEEN_TOOLS_MARKER\n", final: false },
+          { text: "", final: undefined },
+        ]);
+        expect(countText).toHaveBeenLastCalledWith(
+          "BEFORE_TOOL_MARKER\nBETWEEN_TOOLS_MARKER\n",
+          expect.any(Object),
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["final-only", "missing"])(
+    "keeps only the final segment with a %s terminal result",
+    async (terminal) => {
+      const fixture = await readAgyFixture("agy-1.2.13-assistant-segments.ndjson");
+      const records = fixture.slice(0, -1);
+      if (terminal === "final-only")
+        records.push({
+          event: "result",
+          result: {
+            conversation_id: conversation2,
+            status: "SUCCESS",
+            response: "AFTER_TOOL_MARKER\n",
+          },
+        });
+      const session = createSession(createStreamSpawn(records));
+      const events: AntigravityNativeEvent[] = [];
+      await expect(
+        startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+      ).resolves.toMatchObject({ outputText: "AFTER_TOOL_MARKER\n" });
+      expect(
+        events.filter((event) => event.kind === "message-completed").map((event) => event.text),
+      ).toEqual(["BEFORE_TOOL_MARKER\n", "BETWEEN_TOOLS_MARKER\n", "AFTER_TOOL_MARKER\n"]);
+    },
+  );
+
   it("streams agy 1.1.11 agent_response deltas before the terminal result without duplication", async () => {
     const fixture = await readAgyFixture("agy-1.1.11-agent-response.ndjson");
     const session = createSession(createStreamSpawn(fixture));
@@ -876,7 +1122,8 @@ describe("Antigravity stream-json process", () => {
       { kind: "message-delta", text: "streamed response" },
     ]);
     expect(nativeEvents.filter((event) => event.kind === "message-completed")).toEqual([
-      { kind: "message-completed", text: "你好，streamed response" },
+      { kind: "message-completed", text: "你好，streamed response", final: false },
+      { kind: "message-completed", text: "" },
     ]);
     expect(nativeEvents).toEqual(
       expect.arrayContaining([
@@ -1110,7 +1357,7 @@ describe("Antigravity stream-json process", () => {
           stage: RUNTIME_CONTEXT_COMPACTION_STAGES.completed,
         }),
         expect.objectContaining({ kind: "usage" }),
-        { kind: "message-completed", text: "Hello" },
+        { kind: "message-completed", text: "Hello", final: false, thinking: "Inspect" },
       ]),
     );
     expect(session.messages).toMatchObject([
@@ -1369,6 +1616,31 @@ describe("Antigravity stream-json process", () => {
       });
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves structured tool configuration errors despite transient startup auth warnings", async () => {
+    const message =
+      'failed to construct executor: unknown component: tool "call_mcp_tool" not found in registry';
+    const session = createSession(
+      createPersistentSpawn((_input, child) => {
+        child.stderr.write("error getting token source: You are not logged into Antigravity.\n");
+        child.stderr.write("OAuth: authenticated successfully\n");
+        child.stdout.write(
+          JSON.stringify({
+            event: "result",
+            result: { conversation_id: conversation1, status: "ERROR", error: message },
+          }) + "\n",
+        );
+      }),
+    );
+    try {
+      await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
+        code: "ANTIGRAVITY_PROCESS_FAILED",
+        message,
+      });
+    } finally {
+      await closeAntigravitySession(session);
     }
   });
 

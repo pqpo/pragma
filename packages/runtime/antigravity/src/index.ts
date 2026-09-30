@@ -3,3 +3,4 @@ export * from "./availability.ts";
 export * from "./executable.ts";
 export * from "./models.ts";
 export * from "./types.ts";
+export { mapAntigravityEvent } from "./session.ts";

@@ -23,6 +23,28 @@ import {
 import type { AntigravityHookRelay } from "./permission-hooks.ts";
 import type { AntigravityAuthenticationMode, AntigravityRuntimePermissionMode } from "./types.ts";
 
+// These are custom Agent component names, not every name in init.tools.
+// run_command adds its status/input tools; inheritCustomizations supplies MCP.
+// Explicit file/shell components and acceptEdits avoid the read-only defaults.
+// Availability is separate from authorization: PreToolUse gates calls.
+const MANAGED_AGENT_TOOLS = [
+  "view_file",
+  "list_dir",
+  "grep_search",
+  "find_by_name",
+  "ask_question",
+  "write_to_file",
+  "replace_file_content",
+  "multi_replace_file_content",
+  "run_command",
+  "read_url_content",
+  "search_web",
+  "generate_image",
+  "schedule",
+  "manage_task",
+  "send_message",
+] as const;
+
 const FRONTMATTER_DELIMITER = "---";
 const NON_ALPHANUMERIC = /[^a-z0-9]+/g;
 const MAX_SKILL_NAME_CHARACTERS = 64;
@@ -565,18 +587,20 @@ function managedAgentMarkdown(
     "subagent: false",
     "hidden: false",
     "inheritCustomizations: true",
+    "permissionMode: acceptEdits",
+    "tools:",
+    ...MANAGED_AGENT_TOOLS.map((tool) => `  - ${tool}`),
     `commandExecutionPolicy: ${commandExecutionPolicy(permissionMode)}`,
     FRONTMATTER_DELIMITER,
   ];
   return [...frontmatter, "# System Prompt", "", systemPrompt, ""].join("\n");
 }
 
-function commandExecutionPolicy(
-  mode: AntigravityRuntimePermissionMode,
-): "off" | "sandbox" | "eager" {
+function commandExecutionPolicy(mode: AntigravityRuntimePermissionMode): "sandbox" | "eager" {
   if (mode === "full-access") return "eager";
-  if (mode === "auto-approve") return "sandbox";
-  return "off";
+  // Native command policy must expose execution; Host approval is handled by
+  // the fail-closed relay rather than disabling the shell before it can ask.
+  return "sandbox";
 }
 
 async function materializeAntigravitySkills(

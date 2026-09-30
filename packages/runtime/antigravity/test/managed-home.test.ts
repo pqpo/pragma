@@ -286,8 +286,31 @@ describe("managed Antigravity HOME", () => {
     );
     expect(agentFile).toContain(`name: "${managed.agentName}"`);
     expect(agentFile).toContain(
-      `mainAgent: true\nsubagent: false\nhidden: false\ninheritCustomizations: true\ncommandExecutionPolicy: off`,
+      `mainAgent: true\nsubagent: false\nhidden: false\ninheritCustomizations: true\npermissionMode: acceptEdits\ntools:`,
     );
+    for (const tool of [
+      "write_to_file",
+      "replace_file_content",
+      "multi_replace_file_content",
+      "run_command",
+      "generate_image",
+      "schedule",
+      "manage_task",
+      "send_message",
+    ]) {
+      expect(agentFile).toContain(`  - ${tool}\n`);
+    }
+    for (const internalTool of [
+      "command_status",
+      "send_command_input",
+      "call_mcp_tool",
+      "list_resources",
+      "read_resource",
+      "list_permissions",
+    ]) {
+      expect(agentFile).not.toContain(`  - ${internalTool}\n`);
+    }
+    expect(agentFile).toContain("commandExecutionPolicy: sandbox");
     expect(agentFile).not.toContain("skills:");
     expect(agentFile.slice(agentFile.indexOf("---\n", 4) + 4)).toBe(
       `# System Prompt\n\n${systemPrompt}\n`,
@@ -353,13 +376,7 @@ describe("managed Antigravity HOME", () => {
         "utf8",
       );
       expect(agentFile).toContain(
-        `commandExecutionPolicy: ${
-          permissionMode === "full-access"
-            ? "eager"
-            : permissionMode === "auto-approve"
-              ? "sandbox"
-              : "off"
-        }`,
+        `commandExecutionPolicy: ${permissionMode === "full-access" ? "eager" : "sandbox"}`,
       );
     },
   );

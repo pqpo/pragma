@@ -349,6 +349,9 @@ export function consumeLiveChatOutput(
     const startsNewSegment =
       current === undefined &&
       existingForRun !== undefined &&
+      // A textless terminal message closes the turn without introducing a new
+      // assistant row, including when the last visible step was a tool call.
+      (!finalAnswer || content !== "") &&
       assistantMessageStartsNewSegment(chat.entries, existingForRun, item, content);
     // Codex can deliver an item/completed notification before a queued delta is
     // drained. The completed item already owns the final text; treating that late
@@ -414,6 +417,14 @@ export function consumeLiveChatOutput(
           runKey: missionAnswerRunKey(item),
           occurredAt: item.occurredAt,
         };
+        if (content === "") {
+          // A turn ending after tools reuses its last text as the final answer.
+          // Match terminal history ordering and emit moves for the renderer.
+          const finalIndex = chat.entries.findIndex((entry) => entry.id === finalEntry.id);
+          for (const trailing of chat.entries.slice(finalIndex + 1)) {
+            patches.push(upsertLiveMissionChatEntry(chat, trailing));
+          }
+        }
       }
     }
     return patches;

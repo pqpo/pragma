@@ -1,0 +1,12 @@
+{"event":"init","init":{"conversation_id":"11111111-2222-4333-8444-555555555552","model":"gemini-3.8-flash-low"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":1,"step_type":"agent_response","state":"ACTIVE","text_delta":"BEFORE_TOOL_MARKER"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":1,"step_type":"agent_response","state":"DONE","text_delta":"\n"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":2,"step_type":"tool","state":"ACTIVE","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/workspace/project/probe.txt"}}}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":2,"step_type":"tool","state":"DONE","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"/workspace/project/probe.txt"},"output":"NATIVE_READ_MARKER"}}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":3,"step_type":"agent_response","state":"ACTIVE","text_delta":"BETWEEN_TOOLS_MARKER"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":3,"step_type":"agent_response","state":"DONE","text_delta":"\n"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":4,"step_type":"tool","state":"ACTIVE","tool_info":{"name":"list_dir","parameters":{"DirectoryPath":"/workspace/project"}}}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":4,"step_type":"tool","state":"DONE","tool_info":{"name":"list_dir","parameters":{"DirectoryPath":"/workspace/project"},"output":"NATIVE_READ_MARKER"}}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":5,"step_type":"agent_response","state":"ACTIVE","text_delta":"AFTER_TOOL_MARKER"}}
+{"event":"step_update","step_update":{"conversation_id":"11111111-2222-4333-8444-555555555552","step_index":5,"step_type":"agent_response","state":"DONE","text_delta":"\n"}}
+{"event":"result","result":{"conversation_id":"11111111-2222-4333-8444-555555555552","status":"SUCCESS","response":"BEFORE_TOOL_MARKER\nBETWEEN_TOOLS_MARKER\nAFTER_TOOL_MARKER\n","duration_seconds":12.291368,"num_turns":1}}

@@ -1,9 +1,10 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  AgentMessageSchema,
   ContextSystem,
   InMemoryContextStore,
   StaticContextStore,
@@ -33,6 +34,180 @@ afterAll(async () => {
 });
 
 describe.runIf(runSmoke)("Antigravity real CLI smoke", () => {
+  it("keeps assistant segments around native tools separate through Core streaming", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-agy-message-segments-"));
+    roots.push(root);
+    const workspace = join(root, "workspace");
+    const pragmaHome = join(root, "pragma-home");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "probe.txt"), "SEGMENT_READ_OK\n");
+    const loggerProvider = createLoggerProvider({ handler: { write() {} } });
+    const runtime = createAntigravityRuntime({
+      authenticationMode: readAuthenticationMode(),
+      permissionMode: "auto-approve",
+      defaultModelName: process.env["PRAGMA_ANTIGRAVITY_SMOKE_MODEL"] ?? "gemini-3.8-flash-low",
+    });
+    const expert = await defineExpert({
+      id: "01h8z8e7m6p5t4r3",
+      name: "Message segment smoke",
+      description: "Verify text before and after native tools.",
+      scope: "test",
+      tags: [],
+      workspace,
+      pragmaHome,
+      loggerProvider,
+    });
+    const app = createPragma({
+      pragmaHome,
+      loggerProvider,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: runtime.descriptor.id,
+      }),
+    });
+    const session = await app.experts.createSession(expert);
+    try {
+      const turn = await session.prompt(
+        "Follow these steps strictly in order: first send an assistant message containing only BEFORE_TOOL_MARKER. Then call native view_file to read probe.txt. Next send a separate assistant message containing only BETWEEN_TOOLS_MARKER. Then call native list_dir on the workspace. Finally reply with only AFTER_TOOL_MARKER. Do not combine the assistant messages or include the earlier markers in the final answer.",
+      );
+      const outputTask = collectOutput(await turn.subscribeOutput({ scope: { kind: "root" } }));
+      const result = await turn.result;
+      const output = await outputTask;
+      const messages = output.flatMap((item) => {
+        if (item.channel !== "message" || item.value === undefined) return [];
+        const message = AgentMessageSchema.parse(item.value);
+        return message.role === "assistant" ? [message] : [];
+      });
+      const text = messages.map((message) =>
+        message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+      );
+      expect(text.map((part) => part.trim())).toEqual([
+        "BEFORE_TOOL_MARKER",
+        "BETWEEN_TOOLS_MARKER",
+        "AFTER_TOOL_MARKER",
+      ]);
+      expect(messages.map((message) => message.stopReason)).toEqual(["toolUse", "toolUse", "stop"]);
+      expect(String(result).trim()).toBe("AFTER_TOOL_MARKER");
+      for (const marker of ["BEFORE_TOOL_MARKER", "BETWEEN_TOOLS_MARKER"]) {
+        const completed = output.findIndex(
+          (item) =>
+            item.channel === "message" &&
+            item.value !== undefined &&
+            JSON.stringify(item.value).includes(marker),
+        );
+        const nextDelta = output.findIndex(
+          (item, index) =>
+            index > completed && item.channel === "message" && item.delta !== undefined,
+        );
+        expect(output.slice(completed + 1, nextDelta).some((item) => item.channel === "tool")).toBe(
+          true,
+        );
+      }
+    } finally {
+      await session.close("Message segment smoke complete");
+    }
+  }, 180_000);
+
+  it.each(["auto-approve", "request-approval", "full-access"] as const)(
+    "creates and edits workspace files with native tools in %s",
+    async (permissionMode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-agy-native-write-"));
+      roots.push(root);
+      const workspace = join(root, "workspace");
+      const pragmaHome = join(root, "pragma-home");
+      await mkdir(workspace, { recursive: true });
+      const loggerProvider = createLoggerProvider({ handler: { write() {} } });
+      const runtime = createAntigravityRuntime({
+        authenticationMode: readAuthenticationMode(),
+        permissionMode,
+        defaultModelName: process.env["PRAGMA_ANTIGRAVITY_SMOKE_MODEL"] ?? "gemini-3.8-flash-low",
+      });
+      const expert = await defineExpert({
+        id: "01h8z8e7m6p5t4r3",
+        loggerProvider,
+        name: "Native write smoke",
+        description: "Verify native filesystem and shell operations.",
+        scope: "test",
+        tags: [],
+        workspace,
+        pragmaHome,
+      });
+      const app = createPragma({
+        loggerProvider,
+        pragmaHome,
+        runtimes: createStaticRuntimeResolver({
+          runtimes: [runtime],
+          defaultRuntimeId: runtime.descriptor.id,
+        }),
+      });
+      let session = await app.experts.createSession(expert);
+      const run = async (prompt: string) => {
+        const turn = await session.prompt(prompt);
+        const events = await turn.subscribeEvents({ scope: { kind: "all" } });
+        const approvals: string[] = [];
+        const approvalTask = (async () => {
+          for await (const event of events) {
+            if (event.type !== "human.requested") continue;
+            const interaction = event.data as {
+              interactionId: string;
+              request: { kind: string; toolName: string };
+            };
+            expect(interaction.request.kind).toBe("tool_approval");
+            approvals.push(interaction.request.toolName);
+            await turn.respondToHumanInteraction(
+              interaction.interactionId,
+              { kind: "tool_approval", approved: true },
+              { requestId: `native-smoke-${interaction.interactionId}` },
+            );
+          }
+        })();
+        try {
+          const result = await turn.result;
+          await approvalTask;
+          return { result, approvals, events: readRuntimeEvents((await turn.listEvents()).items) };
+        } finally {
+          await events.close();
+        }
+      };
+      try {
+        const first = await run(
+          'Use native write_to_file to create native.txt containing exactly "NATIVE_CREATED". Then use native replace_file_content to change it to exactly "NATIVE_EDITED". Do not use shell or MCP for these steps. Read the file back before answering.',
+        );
+        expect(
+          (await readFile(join(workspace, "native.txt"), "utf8")).trim(),
+          String(first.result),
+        ).toBe("NATIVE_EDITED");
+        expect(hasCompletedTool(first.events, "write_to_file")).toBe(true);
+        expect(hasCompletedTool(first.events, "replace_file_content")).toBe(true);
+        if (permissionMode === "request-approval") {
+          expect(first.approvals).toContain("write_to_file");
+          expect(first.approvals).toContain("replace_file_content");
+        } else expect(first.approvals).toEqual([]);
+        await session.releaseAfterTerminal();
+        session = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
+        const restored = await run(
+          'Use native replace_file_content to change native.txt to exactly "NATIVE_RESTORED". Read it back. ' +
+            (permissionMode === "auto-approve"
+              ? "Do not run shell commands."
+              : "Also use native run_command to execute: printf SHELL_CREATED > shell.txt. Read shell.txt back."),
+        );
+        expect((await readFile(join(workspace, "native.txt"), "utf8")).trim()).toBe(
+          "NATIVE_RESTORED",
+        );
+        expect(hasCompletedTool(restored.events, "replace_file_content")).toBe(true);
+        if (permissionMode !== "auto-approve") {
+          expect(await readFile(join(workspace, "shell.txt"), "utf8")).toBe("SHELL_CREATED");
+          expect(hasCompletedTool(restored.events, "run_command")).toBe(true);
+          if (permissionMode === "request-approval")
+            expect(restored.approvals).toContain("run_command");
+        }
+      } finally {
+        await session.close("Native write smoke complete");
+      }
+    },
+    180_000,
+  );
+
   it.concurrent.each(["auto-approve", "request-approval", "full-access"] as const)(
     "executes Context MCP and an independent tool in %s, then restores with a new Runtime",
     async (permissionMode) => {
