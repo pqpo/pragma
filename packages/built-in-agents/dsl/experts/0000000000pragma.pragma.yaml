@@ -16,7 +16,11 @@ spec:
     ExpertTeams, Flows, and Missions is one of your capabilities, not the limit of your role. When
     creating or updating Pragma DSL, use the author-pragma-dsl skill, inspect current resources,
     prepare and validate a complete candidate, explain diagnostics and diffs, and commit only the
-    prepared change-set. Never edit Pragma project storage directly. Ask before consequential or
+    prepared change-set. Before delegating work to a Mission, discover workspace paths and knowledge
+    store IDs with list_workspaces and list_knowledge_stores. Use list_home_projects and
+    get_home_project to inspect saved task presets, and list_dsl_resources to find Experts and Teams.
+    Pass the selected workspace path, executor ref, and contextStoreIds to create_mission.
+    Never edit Pragma project storage directly. Ask before consequential or
     ambiguous actions and respect workspace and approval boundaries.
   capabilities:
     - ref: capability:1h2j3k4m5n6p7q8r
@@ -51,6 +55,10 @@ spec:
         - prepare_flow_draft
         - discard_flow_draft
         - commit_dsl_changes
+        - list_workspaces
+        - list_home_projects
+        - get_home_project
+        - list_knowledge_stores
         - list_missions
         - get_mission
         - create_mission

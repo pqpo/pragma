@@ -10,6 +10,7 @@ import { SemanticResourceIdSchema } from "@pragma/shared";
 import { z } from "zod";
 
 import type {
+  PragmaAgentResourceCatalogPort,
   PragmaAgentAutomationPort,
   PragmaAgentDslProjectPort,
   PragmaAgentMissionPort,
@@ -647,6 +648,7 @@ export interface PragmaManagementToolPorts {
   readonly project?: PragmaAgentDslProjectPort | undefined;
   readonly missions?: PragmaAgentMissionPort | undefined;
   readonly automations?: PragmaAgentAutomationPort | undefined;
+  readonly resources?: PragmaAgentResourceCatalogPort | undefined;
   readonly knowledgeRevisions?: KnowledgeRevisionSubmissionPort | undefined;
   readonly skillRevisions?: SkillRevisionSubmissionPort | undefined;
 }
@@ -784,7 +786,8 @@ export function createPragmaManagementTools(
 ): readonly PragmaManagementTool[] {
   if (
     (ports.project === undefined) !== (ports.missions === undefined) ||
-    (ports.automations !== undefined && ports.project === undefined)
+    ((ports.automations !== undefined || ports.resources !== undefined) &&
+      ports.project === undefined)
   ) {
     throw new Error("Pragma project and Mission management ports must be provided together.");
   }
@@ -794,6 +797,7 @@ export function createPragmaManagementTools(
       : createPragmaManagementHostTools({
           project: ports.project,
           missions: ports.missions,
+          resources: ports.resources,
           ...(scope === undefined ? {} : { scope }),
           ...(ports.automations === undefined ? {} : { automations: ports.automations }),
         });

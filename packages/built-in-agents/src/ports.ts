@@ -1,4 +1,8 @@
 import type {
+  PragmaAgentWorkspace,
+  PragmaAgentKnowledgeStore,
+  PragmaAgentHomeProject,
+  PragmaAgentResourceQuery,
   PragmaAgentChangeSet,
   PragmaAgentEvaluationDraft,
   PragmaAgentEvaluationDraftOperation,
@@ -154,6 +158,24 @@ export interface PragmaAgentDslProjectPort {
   }): Promise<PragmaAgentProjectCommit>;
 }
 
+export interface PragmaAgentResourcePage<T> {
+  readonly items: readonly T[];
+  readonly nextCursor?: string | undefined;
+}
+
+export interface PragmaAgentResourceCatalogPort {
+  listWorkspaces(
+    input: PragmaAgentResourceQuery & { readonly currentWorkspacePath?: string | undefined },
+  ): Promise<PragmaAgentResourcePage<PragmaAgentWorkspace>>;
+  listHomeProjects(
+    input: PragmaAgentResourceQuery,
+  ): Promise<PragmaAgentResourcePage<PragmaAgentHomeProject>>;
+  getHomeProject(projectId: string): Promise<PragmaAgentHomeProject>;
+  listKnowledgeStores(
+    input: PragmaAgentResourceQuery,
+  ): Promise<PragmaAgentResourcePage<PragmaAgentKnowledgeStore>>;
+}
+
 export interface PragmaAgentMissionPort {
   list(input: {
     readonly cursor?: string | undefined;
@@ -171,6 +193,7 @@ export interface PragmaAgentMissionPort {
     readonly goal: string;
     readonly executorRef: string;
     readonly workspaceId: string;
+    readonly contextStoreIds?: readonly string[] | undefined;
     readonly operationId: string;
   }): Promise<PragmaAgentMission>;
   sendMessage(input: {

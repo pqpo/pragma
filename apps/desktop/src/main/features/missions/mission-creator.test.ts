@@ -1,9 +1,13 @@
 import { PRAGMA_DSL_WRITE_API_VERSION } from "@pragma/interpreter/ast";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createPragmaManagementTools,
+  type PragmaAgentDslProjectPort,
+} from "@pragma/built-in-agents";
 
 import type { MissionExecutor, PragmaProjectSnapshot } from "../../../shared/contracts/index.ts";
 import { createDesktopPragmaAgentMissionPort } from "../built-in-agents/pragma-agent-task-adapter.ts";
@@ -12,6 +16,10 @@ import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "../projects/pragma-project-store.ts";
+import { createContextStoreStore } from "../context-stores/context-store-store.ts";
+
+// Workspace validation uses real filesystem access; Electron IPC is unused here.
+vi.mock("electron", () => ({ BrowserWindow: class {}, dialog: {}, ipcMain: {} }));
 
 const temporaryPaths: string[] = [];
 const executor: MissionExecutor = {
@@ -95,14 +103,22 @@ describe("MissionCreator", () => {
     await mkdir(workspace);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const contextStores = createContextStoreStore({ storesPath: join(root, "knowledge") });
+    const knowledge = await contextStores.create({
+      mode: "blank",
+      name: "Product notes",
+      description: "Requirements",
+    });
     const creator = createMissionCreator({
       missions,
       project,
+      contextStores,
       executors: catalog(),
       getDefaultToolPermissionMode: () => "request-approval",
     });
+    const run = vi.fn(async (id: string) => await missions.get(id));
     const runner = {
-      run: async (id: string) => await missions.get(id),
+      run,
     } as unknown as MissionRunner;
     const missionPort = createDesktopPragmaAgentMissionPort({
       missions,
@@ -111,19 +127,92 @@ describe("MissionCreator", () => {
       stateRoot: join(root, "state"),
     });
 
-    const mission = await missionPort.submit({
+    const tool = createPragmaManagementTools({
+      project: {} as PragmaAgentDslProjectPort,
+      missions: missionPort,
+    }).find((candidate) => candidate.name === "create_mission")!;
+    const input = {
       goal: "Restore the team",
       executorRef: executor.ref,
       workspaceId: workspace,
-      operationId: "tool-call-1",
-    });
+      contextStoreIds: [knowledge.id],
+    };
+    expect(JSON.stringify(tool.inputSchema)).toContain("Absolute path");
+    for (const workspaceId of ["default", "workspace", join(root, "missing")]) {
+      await expect(
+        tool.call({ ...input, workspaceId }, undefined, { toolCallId: "tool-call-1" }),
+      ).resolves.toMatchObject({
+        isError: true,
+        details: { code: "invalid_input", message: expect.stringMatching(/workspace/iu) },
+      });
+    }
+    expect(await missions.list()).toHaveLength(0);
+    expect(run).not.toHaveBeenCalled();
+
+    // The selected store changes after admission but before creation. Recheck
+    // readiness inside the same revision lock that persists the Mission.
+    const withRevisionLock = contextStores.withRevisionLock.bind(contextStores);
+    vi.spyOn(contextStores, "withRevisionLock").mockImplementationOnce(
+      async (id, operation) =>
+        await withRevisionLock(id, async () => {
+          await writeFile(
+            join(root, "knowledge", knowledge.id, "store.json"),
+            JSON.stringify({ ...knowledge, status: "needs_attention" }),
+          );
+          return await operation();
+        }),
+    );
+    await expect(tool.call(input, undefined, { toolCallId: "tool-call-1" })).resolves.toMatchObject(
+      { isError: true, details: { code: "unavailable" } },
+    );
+    expect(await missions.list()).toHaveLength(0);
+    expect(run).not.toHaveBeenCalled();
+    await writeFile(join(root, "knowledge", knowledge.id, "store.json"), JSON.stringify(knowledge));
+
+    await expect(
+      tool.call({ ...input, contextStoreIds: [knowledge.id, knowledge.id] }, undefined, {
+        toolCallId: "tool-call-1",
+      }),
+    ).resolves.toMatchObject({ isError: true, details: { code: "invalid_input" } });
+    const missingKnowledge = await tool.call(
+      { ...input, contextStoreIds: ["20000000-0000-4000-8000-000000000099"] },
+      undefined,
+      { toolCallId: "tool-call-1" },
+    );
+    expect(missingKnowledge).toMatchObject({ isError: true, details: { code: "not_found" } });
+    expect(await missions.list()).toHaveLength(0);
+    expect(run).not.toHaveBeenCalled();
+
+    // A problem reading an unrelated catalog must not block a selected store.
+    const list = vi
+      .spyOn(contextStores, "list")
+      .mockRejectedValue(new Error("Unrelated store catalog failed."));
+    const result = await tool.call(input, undefined, { toolCallId: "tool-call-1" });
+    expect(result.isError).not.toBe(true);
+    expect(list).not.toHaveBeenCalled();
+    const mission = result.details;
 
     expect(mission).toMatchObject({
       goal: "Restore the team",
       executorRef: executor.ref,
       workspaceId: workspace,
+      contextStoreIds: [knowledge.id],
     });
+    const stored = (await missions.list())[0]!;
+    expect((await missions.get(stored.id)).contextMounts).toEqual([
+      { kind: "context-store", storeId: knowledge.id },
+    ]);
     expect((await project.get()).revision).toBe(1);
+    // Retrying the same approved tool call reuses the persisted Mission.
+    const retried = await tool.call(input, undefined, { toolCallId: "tool-call-1" });
+    expect(retried.details).toEqual(mission);
+    expect(await missions.list()).toHaveLength(1);
+    expect(run).toHaveBeenCalled();
+    const withoutKnowledge = await tool.call({ ...input, contextStoreIds: undefined }, undefined, {
+      toolCallId: "tool-call-2",
+    });
+    expect(withoutKnowledge.isError).not.toBe(true);
+    expect(withoutKnowledge.details).toMatchObject({ contextStoreIds: [] });
   });
 
   it("validates and persists exact structured Flow input", async () => {

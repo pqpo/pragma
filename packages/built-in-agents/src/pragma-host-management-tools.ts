@@ -16,6 +16,7 @@ import { PragmaSemanticResourceRefSchema } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 import type {
+  PragmaAgentResourceCatalogPort,
   PragmaAgentAutomationPort,
   PragmaAgentDslProjectPort,
   PragmaAgentMissionPort,
@@ -40,6 +41,11 @@ import {
   PragmaAgentExpertOptionPageSchema,
   PragmaAgentCompactPrepareResultSchema,
   PragmaAgentProjectCommitSchema,
+  PragmaAgentWorkspacePageSchema,
+  PragmaAgentHomeProjectPageSchema,
+  PragmaAgentHomeProjectSchema,
+  PragmaAgentKnowledgeStorePageSchema,
+  PragmaAgentResourceQuerySchema,
   PragmaAgentMissionPageSchema,
   PragmaAgentMissionSchema,
   PragmaAgentMissionWorkItemPageSchema,
@@ -238,9 +244,22 @@ const RunEvaluationDraftInput = z.object({
 });
 const MissionIdInput = z.object({ missionId: z.string().uuid() }).strict();
 const CreateMissionInput = z.object({
+  contextStoreIds: z
+    .array(z.string().uuid())
+    .max(100)
+    .refine((ids) => new Set(ids).size === ids.length, "Knowledge store IDs must be unique.")
+    .optional()
+    .describe(
+      "Knowledge store IDs returned by list_knowledge_stores or a home project. Omit to create a Mission without additional knowledge stores.",
+    ),
   goal: z.string().trim().min(1).max(100_000),
   executorRef: z.string().min(1),
-  workspaceId: z.string().min(1),
+  workspaceId: z
+    .string()
+    .min(1)
+    .describe(
+      "Absolute path of an accessible, writable workspace directory on the host. Use the current Mission's workspace path when appropriate; do not pass a label such as default or workspace.",
+    ),
 });
 const SendMissionMessageInput = z.object({
   missionId: z.string().uuid(),
@@ -306,6 +325,7 @@ interface PragmaManagementHostToolPorts {
   readonly project: PragmaAgentDslProjectPort;
   readonly missions: PragmaAgentMissionPort;
   readonly automations?: PragmaAgentAutomationPort | undefined;
+  readonly resources?: PragmaAgentResourceCatalogPort | undefined;
 }
 
 export interface PragmaManagementHostScope {
@@ -337,6 +357,11 @@ function buildPragmaManagementHostTools(options: {
   const missions = (): PragmaAgentMissionPort => {
     if (options.ports === undefined) throw new Error("Pragma Mission management is unavailable.");
     return options.ports.missions;
+  };
+  const resources = (): PragmaAgentResourceCatalogPort => {
+    if (options.ports?.resources === undefined)
+      throw new Error("Pragma resource catalog is unavailable.");
+    return options.ports.resources;
   };
   const automations = (): PragmaAgentAutomationPort => {
     const port = options.ports?.automations;
@@ -748,6 +773,43 @@ function buildPragmaManagementHostTools(options: {
       },
     },
     tool(
+      "list_workspaces",
+      "List recorded workspace directories from defaults, recent history, home projects, and the current Mission. Use the returned workspaceId absolute path when creating a Mission.",
+      z.toJSONSchema(PragmaAgentResourceQuerySchema),
+      async (args) =>
+        ok(
+          await resources().listWorkspaces({
+            ...PragmaAgentResourceQuerySchema.parse(args),
+            currentWorkspacePath: options.scope?.workspacePath,
+          }),
+        ),
+    ),
+    tool(
+      "list_home_projects",
+      "List home-page task presets with workspace, executor, and knowledge store bindings. These are distinct from the DSL Project.",
+      z.toJSONSchema(PragmaAgentResourceQuerySchema),
+      async (args) =>
+        ok(await resources().listHomeProjects(PragmaAgentResourceQuerySchema.parse(args))),
+    ),
+    tool(
+      "get_home_project",
+      "Read one home-page task preset by projectId, including its bindings and availability.",
+      z.toJSONSchema(z.object({ projectId: z.string().uuid() }).strict()),
+      async (args) =>
+        ok(
+          await resources().getHomeProject(
+            z.object({ projectId: z.string().uuid() }).strict().parse(args).projectId,
+          ),
+        ),
+    ),
+    tool(
+      "list_knowledge_stores",
+      "List host knowledge stores by name and availability. Pass ready storeIds as contextStoreIds to create_mission; these IDs are not DSL resource refs.",
+      z.toJSONSchema(PragmaAgentResourceQuerySchema),
+      async (args) =>
+        ok(await resources().listKnowledgeStores(PragmaAgentResourceQuerySchema.parse(args))),
+    ),
+    tool(
       "list_missions",
       "List a filtered page of Pragma Missions and their current status.",
       z.toJSONSchema(ListMissionsInput),
@@ -762,7 +824,7 @@ function buildPragmaManagementHostTools(options: {
     {
       ...tool(
         "create_mission",
-        "Create and start a Mission with an exact Expert, Team, or Flow ref and explicit workspace.",
+        "Create and start a Mission with an exact Expert, Team, or Flow ref and an explicit absolute workspace directory path.",
         z.toJSONSchema(CreateMissionInput),
         async (args, context) =>
           ok(
@@ -866,23 +928,27 @@ function managementErrorResult(error: unknown, toolName: string): ExpertAgentToo
   const code =
     error instanceof z.ZodError
       ? "invalid_input"
-      : /operations must|received a string|parsed string/iu.test(rawMessage)
-        ? "invalid_input"
-        : rawMessage === "cursor_invalid" || rawMessage === "cursor_expired"
-          ? rawMessage
-          : rawMessage === "response_too_large"
-            ? "response_too_large"
-            : /revision|stale|conflict/iu.test(rawMessage)
-              ? "revision_conflict"
-              : /not found|missing/iu.test(rawMessage)
-                ? "not_found"
-                : /permission|denied|not mounted/iu.test(rawMessage)
-                  ? "permission_denied"
-                  : /already.*attach/iu.test(rawMessage)
-                    ? "already_attached"
-                    : /unavailable/iu.test(rawMessage)
-                      ? "unavailable"
-                      : "internal_error";
+      : /^Knowledge store is unavailable:/iu.test(rawMessage)
+        ? "unavailable"
+        : /operations must|received a string|parsed string|^Invalid workspaceId:|^The selected workspace must be an accessible, writable directory\./iu.test(
+              rawMessage,
+            )
+          ? "invalid_input"
+          : rawMessage === "cursor_invalid" || rawMessage === "cursor_expired"
+            ? rawMessage
+            : rawMessage === "response_too_large"
+              ? "response_too_large"
+              : /revision|stale|conflict/iu.test(rawMessage)
+                ? "revision_conflict"
+                : /not found|missing/iu.test(rawMessage)
+                  ? "not_found"
+                  : /permission|denied|not mounted/iu.test(rawMessage)
+                    ? "permission_denied"
+                    : /already.*attach/iu.test(rawMessage)
+                      ? "already_attached"
+                      : /unavailable/iu.test(rawMessage)
+                        ? "unavailable"
+                        : "internal_error";
   const payload = PragmaManagementErrorSchema.parse({
     schemaVersion: "pragma.management-error/v1",
     code,
@@ -1225,6 +1291,14 @@ function hostOutputSchema(name: string): z.ZodType {
       return DiscardResultSchema;
     case "commit_dsl_changes":
       return PragmaAgentProjectCommitSchema;
+    case "list_workspaces":
+      return PragmaAgentWorkspacePageSchema;
+    case "list_home_projects":
+      return PragmaAgentHomeProjectPageSchema;
+    case "get_home_project":
+      return PragmaAgentHomeProjectSchema;
+    case "list_knowledge_stores":
+      return PragmaAgentKnowledgeStorePageSchema;
     case "list_missions":
       return PragmaAgentMissionPageSchema;
     case "get_mission":
