@@ -92,7 +92,14 @@ export const studio = {
       backupFailed:
         "This asset is synchronized, but the overall backup failed. Retry the backup in Settings.",
     },
+    errorDetails: "Error details",
     errors: {
+      missingGit:
+        "Git is not installed or cannot be found. Install Git and restart the application.",
+      hostKey:
+        "SSH host verification failed. Connect to this repository from a terminal, verify the host fingerprint, and retry.",
+      repository: "The Git repository was not found. Check the address and repository access.",
+      pushRejected: "The remote rejected the push. Check branch protection and write permissions.",
       metadataReserved:
         "The .pragma/metadata/ directory is reserved for Git metadata. Move your knowledge documents out of this directory, then retry.",
       metadataSize: "A document metadata YAML file must stay within 64 KiB.",

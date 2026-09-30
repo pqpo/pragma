@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runAssetGit } from "./asset-git-command.ts";
 
@@ -51,6 +51,40 @@ async function expectConfiguredTransport(root: string, marker: string): Promise<
 }
 
 describe("asset Git command", () => {
+  it("reports a timeout even when Git has already written stderr", async () => {
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFile: (...args: unknown[]) => {
+        const callback = args.at(-1) as (error: Error) => void;
+        callback(
+          Object.assign(new Error("Command failed."), {
+            killed: true,
+            stderr: "Connecting to origin...",
+            code: null,
+          }),
+        );
+      },
+    }));
+    try {
+      const { runAssetGit: timedOutGit } = await import("./asset-git-command.ts");
+      await expect(timedOutGit("/tmp", ["fetch", "origin"])).rejects.toMatchObject({
+        message: "Git fetch failed: Git operation timed out.\nConnecting to origin...",
+        killed: true,
+        stderr: "Connecting to origin...",
+      });
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  });
+  it("preserves the Git cause and exit code without the exec command wrapper", async () => {
+    const { root } = await fixture();
+    await expect(runAssetGit(root, ["rev-parse", "--verify", "missing"])).rejects.toMatchObject({
+      code: 128,
+      message: expect.stringContaining("Git rev-parse failed: fatal:"),
+      stderr: expect.stringContaining("fatal:"),
+    });
+  });
   it("preserves GIT_SSH_COMMAND", async () => {
     const { root, ssh, marker } = await fixture();
     process.env.GIT_SSH_COMMAND = ssh;

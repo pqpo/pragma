@@ -1,7 +1,34 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { CoreAssetSyncActions } from "./CoreAssetSyncSettingsFragment.tsx";
+import { CoreAssetSyncActions, CoreAssetSyncError } from "./CoreAssetSyncSettingsFragment.tsx";
+
+it("shows an actionable reason and expandable redacted diagnostics", () => {
+  const html = renderToStaticMarkup(
+    <CoreAssetSyncError
+      error={
+        "Git push failed: remote: You are not allowed to push code to protected branches. https://user:private@example.test/repo"
+      }
+    />,
+  );
+  expect(html).toContain("Check branch protection and write permissions");
+  expect(html).toContain("<summary>Error details</summary>");
+  expect(html).toContain("Git push failed:");
+  expect(html).not.toContain("private");
+});
+
+it("retains structured error codes when rendering an IPC failure", () => {
+  const html = renderToStaticMarkup(
+    <CoreAssetSyncError
+      error={{
+        code: "asset_git_metadata_invalid",
+        message: "YAML parse failed.",
+      }}
+    />,
+  );
+  expect(html).toContain("The document metadata YAML is invalid");
+  expect(html).toContain("YAML parse failed.");
+});
 
 describe("CoreAssetSyncActions", () => {
   it("uses the shared action styles for every configured sync action", () => {

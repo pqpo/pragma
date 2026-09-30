@@ -9,12 +9,33 @@ export async function runAssetGit(
   options: { readonly maxBuffer?: number } = {},
 ): Promise<string> {
   const env = await assetGitEnvironment(root);
-  const { stdout } = await execFileAsync("git", ["-C", root, ...args], {
-    timeout: 60_000,
-    maxBuffer: options.maxBuffer ?? 32 * 1024 * 1024,
-    env,
-  });
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", root, ...args], {
+      timeout: 60_000,
+      maxBuffer: options.maxBuffer ?? 32 * 1024 * 1024,
+      env,
+      windowsHide: true,
+    });
+    return stdout;
+  } catch (error) {
+    // Keep stderr first: command wrappers and long remote URLs can otherwise
+    // consume the overview's bounded error message before the actual cause.
+    if (error instanceof Error) {
+      const failure = error as Error & {
+        stderr?: string;
+        code?: string | number;
+        killed?: boolean;
+      };
+      const reason =
+        failure.code === "ENOENT"
+          ? "Git executable not found (ENOENT)."
+          : failure.killed
+            ? `Git operation timed out.${failure.stderr?.trim() ? `\n${failure.stderr.trim()}` : ""}`
+            : failure.stderr?.trim() || failure.message;
+      failure.message = `Git ${args[0] ?? "operation"} failed: ${reason}`;
+    }
+    throw error;
+  }
 }
 
 async function assetGitEnvironment(root: string): Promise<NodeJS.ProcessEnv> {

@@ -54,6 +54,7 @@ import {
   desktopContextResourceId,
 } from "../../platform/bindings/desktop-bound-resource-policy.ts";
 import { assertAssetGitIdentity, runAssetGit } from "../asset-git/asset-git-command.ts";
+import { redactGitDiagnostic } from "../../../shared/git-diagnostics.ts";
 
 const StateSchema = z
   .object({
@@ -719,7 +720,7 @@ export function createCoreAssetSyncService(options: {
         throw new RemoteHeadChangedError();
       } catch (error) {
         lastError =
-          error instanceof Error ? error.message.slice(0, 2_000) : "Synchronization failed.";
+          error instanceof Error ? redactGitDiagnostic(error.message) : "Synchronization failed.";
         options.warn?.("Core asset sync failed.", error);
         running = false;
         return await makeOverview(config);
