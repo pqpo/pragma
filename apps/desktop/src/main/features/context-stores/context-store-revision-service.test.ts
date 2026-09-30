@@ -1030,11 +1030,18 @@ describe("context store sparse draft revisions", () => {
       resumePublication = resolve;
     });
     const getSnapshot = contextStores.getSnapshot.bind(contextStores);
-    let storeLocked = false;
+    let publicationLocked = false;
     vi.spyOn(contextStores, "getSnapshot").mockImplementationOnce(async (id) => {
       const snapshot = await getSnapshot(id);
-      storeLocked = await stat(
-        join(directory, "data", "context-stores", ".locks", `${id}.lock`, "owner.json"),
+      publicationLocked = await stat(
+        join(
+          directory,
+          "data",
+          "context-stores",
+          ".locks",
+          `${id}.draft-publication.lock`,
+          "owner.json",
+        ),
       ).then(
         () => true,
         () => false,
@@ -1054,7 +1061,7 @@ describe("context store sparse draft revisions", () => {
     resumePublication();
     const draft = await creation;
 
-    expect(storeLocked).toBe(true);
+    expect(publicationLocked).toBe(true);
     await expect(deletion).resolves.toMatchObject({ error: { code: "revision_drafts_present" } });
     await expect(contextStores.list()).resolves.toEqual([store]);
     await expect(service.getDraft(draft.id)).resolves.toMatchObject({ storeId: store.id });
@@ -1067,6 +1074,82 @@ describe("context store sparse draft revisions", () => {
       service.createDraft({ storeId: store.id, name: "Deleted target" }),
     ).rejects.toMatchObject({ code: "store_not_found" });
     await expect(service.listDrafts()).resolves.toEqual([]);
+  });
+
+  it("completes start, rebase and submission without a job-store-draft lock cycle", async () => {
+    const { contextStores, directory, service, store } = await fixture();
+    const job = await service.start({
+      schemaVersion: "pragma.context-store-revision-request/v2",
+      operation: "revise",
+      storeId: store.id,
+      prompt: "Concurrent edits",
+      source: "user",
+    });
+    const resolved = await service.resolveDraft(job.draftId);
+    await resolved.store.addContext({ id: "items/concurrent.md", content: "Review me" });
+    const draft = await service.getDraft(job.draftId);
+    let markSubmission!: () => void;
+    let releaseSubmission!: () => void;
+    let markStoreLocked!: () => void;
+    let markPublisher!: () => void;
+    const submissionEntered = new Promise<void>((resolve) => {
+      markSubmission = resolve;
+    });
+    const submissionResume = new Promise<void>((resolve) => {
+      releaseSubmission = resolve;
+    });
+    const storeLocked = new Promise<void>((resolve) => {
+      markStoreLocked = resolve;
+    });
+    const publisherEntered = new Promise<void>((resolve) => {
+      markPublisher = resolve;
+    });
+    const getSnapshot = contextStores.getSnapshot.bind(contextStores);
+    let firstSnapshot = true;
+    vi.spyOn(contextStores, "getSnapshot").mockImplementation(async (id, revision) => {
+      const snapshot = await getSnapshot(id, revision);
+      if (firstSnapshot) {
+        firstSnapshot = false;
+        markSubmission();
+        await submissionResume;
+      } else {
+        const lockRoot = join(directory, "data", "context-stores", ".locks");
+        if (
+          await stat(join(lockRoot, `${id}.lock`, "owner.json")).then(
+            () => true,
+            () => false,
+          )
+        ) {
+          markStoreLocked();
+        }
+        if (
+          await stat(join(lockRoot, `${id}.draft-publication.lock`, "owner.json")).then(
+            () => true,
+            () => false,
+          )
+        ) {
+          markPublisher();
+        }
+      }
+      return snapshot;
+    });
+    const submission = service.submitDraft(draft.id, draft.revision, "Concurrent submission");
+    await submissionEntered;
+    const rebasing = service
+      .rebase({ draftId: draft.id, expectedRevision: draft.revision, resolutions: [] })
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+    await storeLocked;
+    const starting = service.start({ ...job.request, prompt: "Start while rebase waits" });
+    await publisherEntered;
+    releaseSubmission();
+
+    const [submitted, started, rebased] = await Promise.all([submission, starting, rebasing]);
+    expect(submitted.state).toBe("pending_review");
+    expect(started.state).toBe("editing");
+    expect(rebased).toMatchObject({ error: { code: "revision_conflict" } });
   });
 
   it("allows Store deletion after discarding its draft despite auxiliary entries", async () => {
