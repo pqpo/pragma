@@ -235,6 +235,7 @@ export interface ContextStoreStore {
     expectedSnapshotHash: string,
   ): Promise<void>;
   withRevisionLock<T>(storeId: string, operation: () => Promise<T>): Promise<T>;
+  withDraftPublicationLock<T>(storeId: string, operation: () => Promise<T>): Promise<T>;
   resolve(storeId: string): Promise<{
     readonly revision: string;
     readonly name: string;
@@ -271,6 +272,7 @@ export class ContextStoreStoreError extends Error {
       | "revision_conflict"
       | "expert_referenced"
       | "revision_drafts_present"
+      | "draft_unreadable"
       | "active_mission_referenced"
       | "mission_message_queue_referenced"
       | "mission_referenced"
@@ -394,6 +396,18 @@ export function createContextStoreStore(options: {
   const withRevisionLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> => {
     const canonicalId = z.string().uuid().parse(id);
     return await withFileLock(revisionLockPath(canonicalId), operation);
+  };
+  // Publishers never acquire revision, draft or job locks inside this lock.
+  // Deletion acquires it after the revision lock and holds it through removal.
+  const withDraftPublicationLock = async <T>(
+    id: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const canonicalId = z.string().uuid().parse(id);
+    return await withFileLock(
+      join(options.storesPath, ".locks", `${canonicalId}.draft-publication.lock`),
+      operation,
+    );
   };
 
   const readRevisionListState = async (id: string) => {
@@ -1210,6 +1224,9 @@ export function createContextStoreStore(options: {
     async withRevisionLock(storeId, operation) {
       return await withRevisionLock(storeId, operation);
     },
+    async withDraftPublicationLock(storeId, operation) {
+      return await withDraftPublicationLock(storeId, operation);
+    },
 
     async exists(storeId) {
       try {
@@ -1372,27 +1389,31 @@ export function createContextStoreStore(options: {
         );
       }
 
-      await withRevisionLock(id, async () => {
-        await assertDeleteAllowed();
-        if (await options.hasMissionReferences?.(id)) {
-          throw new ContextStoreStoreError(
-            "mission_referenced",
-            "One or more Missions still reference this knowledge base. Refresh Missions and retry.",
-          );
-        }
-        const { snapshot, refs } = await deletionBindings(id);
-        if (snapshot !== undefined && refs.length > 0) {
-          // Publish binding removal before deleting the authority. A crash leaves either
-          // a valid unbound Store that can be retried, or an entirely removed Store.
-          await options.project!.apply({
-            baseRevision: snapshot.revision,
-            upserts: [],
-            removals: refs,
-          });
-        }
-        if (options.trashItem !== undefined) await options.trashItem(storePath(id));
-        else await rm(storePath(id), { recursive: true, force: true });
-      });
+      await withRevisionLock(
+        id,
+        async () =>
+          await withDraftPublicationLock(id, async () => {
+            await assertDeleteAllowed();
+            if (await options.hasMissionReferences?.(id)) {
+              throw new ContextStoreStoreError(
+                "mission_referenced",
+                "One or more Missions still reference this knowledge base. Refresh Missions and retry.",
+              );
+            }
+            const { snapshot, refs } = await deletionBindings(id);
+            if (snapshot !== undefined && refs.length > 0) {
+              // Publish binding removal before deleting the authority. A crash leaves either
+              // a valid unbound Store that can be retried, or an entirely removed Store.
+              await options.project!.apply({
+                baseRevision: snapshot.revision,
+                upserts: [],
+                removals: refs,
+              });
+            }
+            if (options.trashItem !== undefined) await options.trashItem(storePath(id));
+            else await rm(storePath(id), { recursive: true, force: true });
+          }),
+      );
       await options.onRemoved?.(id);
     },
 

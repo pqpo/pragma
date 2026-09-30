@@ -789,6 +789,8 @@ export const studio = {
     "未能解除所有 Mission 掛載，因此知識庫未刪除。可能已有部分掛載解除，請重新整理後重試。",
   knowledgeBaseRevisionTasksBlocked:
     "此知識庫仍有尚未合併的修訂草稿，因此暫時無法刪除。草稿仍可能繼續修改知識庫。請先在修訂任務中完成並合併草稿，或丟棄草稿。已合併的歷史任務不需要刪除。",
+  knowledgeBaseRevisionDraftUnreadable:
+    "修訂草稿記錄讀取失敗，暫時無法確認能否安全刪除。知識庫未刪除。請重試；若問題持續，請聯絡支援人員修復草稿記錄。",
   knowledgeBaseStillReferenced: "此知識庫仍掛載於一個或多個專家，請先解除專家掛載再刪除。",
   knowledgeBaseFiles: "知識庫檔案",
   resizeKnowledgeFileList: "調整檔案列表寬度",

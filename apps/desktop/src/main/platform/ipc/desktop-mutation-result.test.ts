@@ -11,6 +11,7 @@ import {
 } from "../../features/projects/pragma-project-store.ts";
 
 const knowledgeBaseDeleteErrorCases = [
+  { code: "draft_unreadable", message: "A knowledge revision draft could not be read." },
   { code: "active_mission_referenced", message: "A Mission using this knowledge base is active." },
   {
     code: "mission_message_queue_referenced",

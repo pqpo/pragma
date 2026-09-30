@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
@@ -342,30 +342,32 @@ export function createContextStoreRevisionService(options: {
     id: string = randomUUID(),
     creation?: { readonly name: string; readonly description: string },
   ): Promise<ContextStoreDraft> => {
-    const timestamp = new Date().toISOString();
-    const base =
-      creation === undefined
-        ? await options.contextStores.getSnapshot(storeId)
-        : emptyCreationSnapshot(storeId, timestamp);
-    const draft = ContextStoreDraftSchema.parse({
-      schemaVersion: "pragma.context-store-draft/v2",
-      operation: creation === undefined ? "revise" : "create",
-      id,
-      revision: 1,
-      name,
-      storeId,
-      ...(creation === undefined
-        ? {}
-        : { resourceName: creation.name, resourceDescription: creation.description }),
-      baseRevision: base.revision,
-      baseSnapshotHash: base.snapshotHash,
-      state: "editing",
-      overlay,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+    return await options.contextStores.withDraftPublicationLock(storeId, async () => {
+      const timestamp = new Date().toISOString();
+      const base =
+        creation === undefined
+          ? await options.contextStores.getSnapshot(storeId)
+          : emptyCreationSnapshot(storeId, timestamp);
+      const draft = ContextStoreDraftSchema.parse({
+        schemaVersion: "pragma.context-store-draft/v2",
+        operation: creation === undefined ? "revise" : "create",
+        id,
+        revision: 1,
+        name,
+        storeId,
+        ...(creation === undefined
+          ? {}
+          : { resourceName: creation.name, resourceDescription: creation.description }),
+        baseRevision: base.revision,
+        baseSnapshotHash: base.snapshotHash,
+        state: "editing",
+        overlay,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await writeDraft(draft);
+      return draft;
     });
-    await writeDraft(draft);
-    return draft;
   };
 
   const migrateJob = async (raw: unknown): Promise<ContextStoreRevisionJob> => {
@@ -395,37 +397,45 @@ export function createContextStoreRevisionService(options: {
       ) {
         throw error;
       }
-      const base = await options.contextStores.getSnapshot(
+      draft = await options.contextStores.withDraftPublicationLock(
         legacy.request.storeId,
-        legacy.changeSet?.baseRevision,
+        async () => {
+          const base = await options.contextStores.getSnapshot(
+            legacy.request.storeId,
+            legacy.changeSet?.baseRevision,
+          );
+          const migratedDraft = ContextStoreDraftSchema.parse({
+            schemaVersion: "pragma.context-store-draft/v2",
+            operation: "revise",
+            id: migration.draftId,
+            revision: 1,
+            name: `Migrated revision ${legacy.id.slice(0, 8)}`,
+            storeId: legacy.request.storeId,
+            baseRevision: base.revision,
+            baseSnapshotHash: base.snapshotHash,
+            state:
+              legacy.state === "pending_review"
+                ? "pending_review"
+                : legacy.state === "applying"
+                  ? "merging"
+                  : legacy.state === "completed"
+                    ? "merged"
+                    : "editing",
+            overlay: overlayFromV1Job(legacy, base),
+            ...(["pending_review", "applying"].includes(legacy.state)
+              ? { submittedRevision: 1 }
+              : {}),
+            createdAt: legacy.createdAt,
+            updatedAt: legacy.updatedAt,
+          });
+          await writeJsonAtomic(
+            join(options.statePath, "migration-backups", `${legacy.id}.v1.json`),
+            legacy,
+          );
+          await writeDraft(migratedDraft);
+          return migratedDraft;
+        },
       );
-      draft = ContextStoreDraftSchema.parse({
-        schemaVersion: "pragma.context-store-draft/v2",
-        operation: "revise",
-        id: migration.draftId,
-        revision: 1,
-        name: `Migrated revision ${legacy.id.slice(0, 8)}`,
-        storeId: legacy.request.storeId,
-        baseRevision: base.revision,
-        baseSnapshotHash: base.snapshotHash,
-        state:
-          legacy.state === "pending_review"
-            ? "pending_review"
-            : legacy.state === "applying"
-              ? "merging"
-              : legacy.state === "completed"
-                ? "merged"
-                : "editing",
-        overlay: overlayFromV1Job(legacy, base),
-        ...(["pending_review", "applying"].includes(legacy.state) ? { submittedRevision: 1 } : {}),
-        createdAt: legacy.createdAt,
-        updatedAt: legacy.updatedAt,
-      });
-      await writeJsonAtomic(
-        join(options.statePath, "migration-backups", `${legacy.id}.v1.json`),
-        legacy,
-      );
-      await writeDraft(draft);
     }
     const v2 = migrateContextStoreRevisionJobV1ToV2(legacy, draft.id);
     const migrated = migrateContextStoreRevisionJobV2ToV3(v2);
@@ -503,7 +513,7 @@ export function createContextStoreRevisionService(options: {
 
   const readAllDrafts = async (): Promise<readonly ContextStoreDraft[]> => {
     const drafts = await Promise.all(
-      (await readNames(draftsPath)).map(async (name) => {
+      (await readNames(draftsPath, true)).map(async (name) => {
         try {
           return await readDraft(name);
         } catch (error) {
@@ -1666,16 +1676,27 @@ export function createContextStoreRevisionService(options: {
     },
 
     async hasUnmergedDrafts(storeId) {
-      for (const name of await readNames(draftsPath)) {
+      for (const name of await readNames(draftsPath, true)) {
         try {
           const draft = await readDraft(name);
           if (draft.storeId === storeId && draft.state !== "merged") return true;
         } catch (error) {
+          // Lock directories and interrupted/discarded drafts have no draft record.
+          // Match the list boundary rather than treating them as unmerged drafts.
+          if (
+            error instanceof ContextStoreRevisionServiceError &&
+            error.code === "draft_not_found"
+          ) {
+            continue;
+          }
           options.warn?.(
             "A knowledge revision draft could not be read while checking whether a Context Store can be deleted.",
             error,
           );
-          return true;
+          throw new ContextStoreStoreError(
+            "draft_unreadable",
+            "A knowledge revision draft could not be read. Repair the draft record before deleting the knowledge base.",
+          );
         }
       }
       return false;
@@ -1920,9 +1941,22 @@ function rebaseOverlay(
   };
 }
 
-async function readNames(path: string): Promise<string[]> {
+async function readNames(path: string, directoriesOnly = false): Promise<string[]> {
   try {
-    return await readdir(path);
+    const entries = await readdir(path, { withFileTypes: true });
+    const names = await Promise.all(
+      entries.map(async (entry) => {
+        if (!directoriesOnly || entry.isDirectory()) return entry.name;
+        if (!entry.isSymbolicLink()) return undefined;
+        try {
+          return (await stat(join(path, entry.name))).isDirectory() ? entry.name : undefined;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        }
+      }),
+    );
+    return names.filter((name): name is string => name !== undefined);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
