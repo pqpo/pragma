@@ -2774,6 +2774,7 @@ body > .ui-select-menu[data-ui-overlay-owner="expert-capability-picker"] {
 
 .expert-detail .expert-context-empty {
   padding: 16px 0 0;
+  border: 0;
 }
 
 .expert-detail .expert-context-list,

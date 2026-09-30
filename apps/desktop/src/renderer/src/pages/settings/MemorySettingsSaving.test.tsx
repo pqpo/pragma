@@ -177,7 +177,7 @@ function attentionFixture() {
 
 describe("Memory settings persistence", () => {
   it.each([false, true])(
-    "keeps Jev settings accessible when embedding is enabled=%s",
+    "shows model and Jev settings only when embedding is enabled=%s",
     async (enabled) => {
       vi.stubGlobal("window", {
         pragmaDesktop: {
@@ -198,7 +198,17 @@ describe("Memory settings persistence", () => {
         expect(view.props((props) => props.ariaLabel === "memory.retrieval.enable").checked).toBe(
           enabled,
         );
-        expect(view.props((_props, type) => type === MemoryAttentionSettingsSection)).toEqual({});
+        if (enabled) {
+          expect(view.props((props) => props.ariaLabel === "memory.retrieval.model")).toBeDefined();
+          expect(view.props((_props, type) => type === MemoryAttentionSettingsSection)).toEqual({});
+        } else {
+          expect(() => view.props((props) => props.ariaLabel === "memory.retrieval.model")).toThrow(
+            "Setting control not found",
+          );
+          expect(() =>
+            view.props((_props, type) => type === MemoryAttentionSettingsSection),
+          ).toThrow("Setting control not found");
+        }
       } finally {
         view.unmount();
       }

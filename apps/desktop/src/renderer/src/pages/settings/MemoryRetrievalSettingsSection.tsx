@@ -99,8 +99,8 @@ export function MemoryRetrievalSettingsSection() {
           onChange={(enabled) => void update(enabled)}
         />
       </div>
-      <div className="memory-retrieval-fields">
-        {status?.settings.enabled ? (
+      {status?.settings.enabled ? (
+        <div className="memory-retrieval-fields">
           <div className="memory-retrieval-field">
             <span>{t("memory.retrieval.model")}</span>
             <SelectMenu
@@ -116,9 +116,9 @@ export function MemoryRetrievalSettingsSection() {
               onChange={(value) => void update(true, value)}
             />
           </div>
-        ) : null}
-        <MemoryAttentionSettingsSection />
-      </div>
+          <MemoryAttentionSettingsSection />
+        </div>
+      ) : null}
       {status?.settings.enabled ? (
         <>
           {choices.length === 0 ? <p>{t("memory.retrieval.configure")}</p> : null}
