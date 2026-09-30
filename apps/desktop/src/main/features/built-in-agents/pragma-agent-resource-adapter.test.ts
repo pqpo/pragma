@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -22,6 +22,79 @@ afterEach(async () => {
 });
 
 describe("Pragma resource discovery", () => {
+  it("checks only selected projects' stores under revision locks and isolates unavailable owners", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-resource-isolation-"));
+    roots.push(root);
+    const storesPath = join(root, "knowledge");
+    const contextStores = createContextStoreStore({ storesPath });
+    const ready = await contextStores.create({ mode: "blank", name: "Ready", description: "" });
+    const broken = await contextStores.create({ mode: "blank", name: "Broken", description: "" });
+    await writeFile(join(storesPath, broken.id, "store.json"), "invalid JSON");
+    const homeProjects = createHomeProjectStore(join(root, "projects.json"));
+    const executor = {
+      kind: "team" as const,
+      avatarId: "pragma.avatar.team.default",
+      ref: "team:1h2j3k4m5n6p7q8r",
+      name: "Development team",
+      description: "Build features",
+      members: [],
+      origin: "project" as const,
+      readOnly: false,
+      customized: false,
+    };
+    const save = async (name: string, storeId: string) =>
+      await homeProjects.save({
+        name,
+        workspace: { path: root, basename: basename(root) },
+        executorRef: executor.ref,
+        contextStoreIds: [storeId],
+      });
+    const target = await save("Selected one", ready.id);
+    await save("Selected two", ready.id);
+    const unrelated = await save("Unrelated", broken.id);
+    const list = vi.spyOn(contextStores, "list");
+    const locked = new Set<string>();
+    const withRevisionLock = contextStores.withRevisionLock.bind(contextStores);
+    vi.spyOn(contextStores, "withRevisionLock").mockImplementation(
+      async (id, operation) =>
+        await withRevisionLock(id, async () => {
+          locked.add(id);
+          try {
+            return await operation();
+          } finally {
+            locked.delete(id);
+          }
+        }),
+    );
+    const read = contextStores.get.bind(contextStores);
+    const get = vi.spyOn(contextStores, "get").mockImplementation(async (id) => {
+      expect(locked.has(id)).toBe(true);
+      return await read(id);
+    });
+    const resources = createDesktopPragmaAgentResourceCatalogPort({
+      homeProjects,
+      contextStores,
+      executors: { list: async () => [executor] },
+      workspaceHistory: { list: async () => [] },
+      getDefaultWorkspace: async () => root,
+    });
+    expect(await resources.getHomeProject(target.id)).toMatchObject({ available: true });
+    expect(get.mock.calls).toEqual([[ready.id]]);
+    get.mockClear();
+    const selected = await resources.listHomeProjects({ query: "Selected", limit: 100 });
+    expect(selected.items).toHaveLength(2);
+    expect(selected.items.every((project) => project.available)).toBe(true);
+    expect(get.mock.calls).toEqual([[ready.id]]);
+    get.mockClear();
+    expect((await resources.listHomeProjects({ query: "no match", limit: 100 })).items).toEqual([]);
+    await expect(resources.getHomeProject("missing")).rejects.toThrow("Home project not found");
+    expect(get).not.toHaveBeenCalled();
+    expect(await resources.getHomeProject(unrelated.id)).toMatchObject({ available: false });
+    const all = await resources.listHomeProjects({ query: executor.name, limit: 100 });
+    expect(all.items.map((project) => project.available)).toEqual([true, true, false]);
+    expect(list).not.toHaveBeenCalled();
+  });
+
   it("preserves symlink path semantics and merges aliases by their real directory", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-resource-paths-"));
     roots.push(root);
@@ -32,7 +105,7 @@ describe("Pragma resource discovery", () => {
     const linkedParent = `${alias}/..`;
     const resources = createDesktopPragmaAgentResourceCatalogPort({
       homeProjects: { list: async () => [] },
-      contextStores: { list: async () => [] },
+      contextStores: createContextStoreStore({ storesPath: join(root, "knowledge") }),
       executors: { list: async () => [] },
       workspaceHistory: { list: async () => [actual] },
       getDefaultWorkspace: async () => linkedParent,
@@ -57,7 +130,7 @@ describe("Pragma resource discovery", () => {
     await preferences.recordUsage({ ref, workspace: last });
     const resources = createDesktopPragmaAgentResourceCatalogPort({
       homeProjects: { list: async () => [] },
-      contextStores: { list: async () => [] },
+      contextStores: createContextStoreStore({ storesPath: join(root, "knowledge") }),
       executors: { list: async () => [] },
       workspaceHistory: { list: async () => [] },
       getDefaultWorkspace: async () => root,

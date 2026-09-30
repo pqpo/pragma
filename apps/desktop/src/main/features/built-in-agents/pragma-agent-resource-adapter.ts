@@ -18,7 +18,7 @@ import { paginateManagementItems } from "./management-pagination.ts";
 
 export function createDesktopPragmaAgentResourceCatalogPort(options: {
   readonly homeProjects: Pick<HomeProjectStore, "list">;
-  readonly contextStores: Pick<ContextStoreStore, "list">;
+  readonly contextStores: Pick<ContextStoreStore, "list" | "get" | "withRevisionLock">;
   readonly executors: Pick<MissionExecutorCatalog, "list">;
   readonly workspaceHistory: Pick<WorkspaceHistoryStore, "list">;
   readonly workspacePreferences?: Pick<HomeExecutorPreferenceStore, "list"> | undefined;
@@ -38,12 +38,24 @@ export function createDesktopPragmaAgentResourceCatalogPort(options: {
     return query === undefined || values.some((value) => value.toLocaleLowerCase().includes(query));
   };
 
-  const homeProjects = async (): Promise<PragmaAgentHomeProject[]> => {
-    const [projects, stores, executors] = await Promise.all([
-      options.homeProjects.list(),
-      options.contextStores.list(),
-      options.executors.list(),
-    ]);
+  const homeProjects = async (
+    projects: Awaited<ReturnType<HomeProjectStore["list"]>>,
+    executors: Awaited<ReturnType<MissionExecutorCatalog["list"]>>,
+  ): Promise<PragmaAgentHomeProject[]> => {
+    const storeIds = [...new Set(projects.flatMap((project) => project.contextStoreIds))];
+    const stores = new Map(
+      await Promise.all(
+        storeIds.map(async (id) => {
+          const ready = await options.contextStores
+            .withRevisionLock(
+              id,
+              async () => (await options.contextStores.get(id)).status === "ready",
+            )
+            .catch(() => false);
+          return [id, ready] as const;
+        }),
+      ),
+    );
     return await Promise.all(
       projects.map(async (project) => {
         const executor = executors.find((item) => item.ref === project.executorRef);
@@ -58,9 +70,7 @@ export function createDesktopPragmaAgentResourceCatalogPort(options: {
           available:
             workspace.ok &&
             executor !== undefined &&
-            project.contextStoreIds.every((id) =>
-              stores.some((store) => store.id === id && store.status === "ready"),
-            ),
+            project.contextStoreIds.every((id) => stores.get(id) === true),
         };
       }),
     );
@@ -121,18 +131,23 @@ export function createDesktopPragmaAgentResourceCatalogPort(options: {
       );
     },
     async listHomeProjects(input) {
-      return page(
-        (await homeProjects()).filter((item) =>
-          matches(input, [item.name, item.workspaceId, item.executorName ?? ""]),
-        ),
-        "list_home_projects",
-        input,
+      const [projects, executors] = await Promise.all([
+        options.homeProjects.list(),
+        options.executors.list(),
+      ]);
+      const selected = projects.filter((project) =>
+        matches(input, [
+          project.name,
+          project.workspace.path,
+          executors.find((item) => item.ref === project.executorRef)?.name ?? "",
+        ]),
       );
+      return page(await homeProjects(selected, executors), "list_home_projects", input);
     },
     async getHomeProject(projectId) {
-      const project = (await homeProjects()).find((item) => item.projectId === projectId);
+      const project = (await options.homeProjects.list()).find((item) => item.id === projectId);
       if (project === undefined) throw new Error(`Home project not found: ${projectId}`);
-      return project;
+      return (await homeProjects([project], await options.executors.list()))[0]!;
     },
     async listKnowledgeStores(input) {
       const items = (await options.contextStores.list()).map((store) => ({
