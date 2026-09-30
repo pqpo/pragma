@@ -677,12 +677,12 @@ function openAntigravityConnection(
     const outputText =
       state.resultText ??
       (state.pendingAssistantKey === undefined
-        ? state.outputText
+        ? (state.completedAssistantTexts.at(-1) ?? "")
         : (state.textSnapshots.get(state.pendingAssistantKey) ?? state.outputText));
     if (state.resultText === undefined && outputText !== "")
       pending.writeNative({
         kind: "message-completed",
-        text: outputText,
+        text: state.pendingAssistantKey === undefined ? "" : outputText,
         ...(state.pendingThinkingText === "" ? {} : { thinking: state.pendingThinkingText }),
       });
     connection.pending = undefined;
@@ -765,14 +765,22 @@ function openAntigravityConnection(
           priorSessionId: pending.priorSessionId,
           transcriptCheckpoints: pending.transcriptCheckpoints,
         });
-        const text =
-          recoveredText === undefined
-            ? pending.state.assistantResponseCompleted
-              ? pending.state.pendingAssistantKey === undefined
-                ? pending.state.outputText
-                : pending.state.textSnapshots.get(pending.state.pendingAssistantKey)
-              : undefined
-            : recoveredText;
+        const state = pending.state;
+        const lastCompletedText = state.completedAssistantTexts.at(-1);
+        const settledText = state.assistantResponseCompleted
+          ? state.pendingAssistantKey === undefined
+            ? lastCompletedText
+            : state.textSnapshots.get(state.pendingAssistantKey)
+          : undefined;
+        const candidate = recoveredText ?? settledText;
+        // A tool-last response is already durable. Transcript serialization may
+        // normalize its whitespace; reuse the original segment for the result,
+        // and only send an empty completion to close the turn.
+        const reusesCompletedSegment =
+          state.pendingAssistantKey === undefined &&
+          lastCompletedText !== undefined &&
+          candidate?.trim() === lastCompletedText.trim();
+        const text = reusesCompletedSegment ? lastCompletedText : candidate;
         if (text === undefined || text === "") {
           const failure = readDegradedAntigravityError(pending.state.outputText, logTail);
           if (failure !== undefined)
@@ -796,7 +804,7 @@ function openAntigravityConnection(
           );
         pending.writeNative({
           kind: "message-completed",
-          text,
+          text: reusesCompletedSegment ? "" : text,
           ...(pending.state.pendingThinkingText === ""
             ? {}
             : { thinking: pending.state.pendingThinkingText }),

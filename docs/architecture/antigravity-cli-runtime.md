@@ -205,6 +205,14 @@ agy 自动测试 148 项、Desktop 消息回归 68 项、队列刷新门禁 56 �
 其他五个 Runtime 的相关定向测试 44 项通过。Desktop build 与 main/preload/styles 检查通过。
 上述结果覆盖代码与自动执行链路，未执行 Electron UI 人工验收。
 
+PR #345 评论复核补充：多段 assistant 之后以工具结束、进程正常退出但缺少 terminal result 时，
+turn result 复用最后一条已完成文本，completion 只发送空正文关闭 turn；不得重发最后一段或
+聚合文本。transcript 可用且返回已保存的最后一段时也采用该语义，换行归一化只用于识别相同段，
+结果保留原段文本以匹配持久化记录。另覆盖 terminal result 本身不携带文本的相同边界。
+新增回归经 Core、Mission 和 renderer patch reducer 核对 result、持久化内容、顺序与消息 ID。
+评论修复后 agy 自动测试 151 项、Desktop 消息回归 72 项、真实分段 smoke 1 项（38.57 s）、
+受影响范围 lint/typecheck、Runtime build 与 Desktop 构建及三项产物检查通过。
+
 运行这些场景：
 
 ```bash

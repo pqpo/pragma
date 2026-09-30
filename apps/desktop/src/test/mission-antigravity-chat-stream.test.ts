@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -26,7 +26,15 @@ import {
 } from "../main/features/missions/mission-chat-history.ts";
 
 describe("Antigravity native stream through Core and Mission", () => {
-  it.each(["aggregate", "repeated-final", "tool-last"] as const)(
+  it.each([
+    "aggregate",
+    "repeated-final",
+    "tool-last",
+    "missing-result-tool-last",
+    "recovered-tool-last",
+    "normalized-recovery-tool-last",
+    "textless-result-tool-last",
+  ] as const)(
     "keeps live and durable messages identical (%s)",
     async (scenario) => {
       const root = await mkdtemp(join(tmpdir(), "pragma-agy-projection-review-"));
@@ -34,9 +42,19 @@ describe("Antigravity native stream through Core and Mission", () => {
       const pragmaHome = join(root, "pragma-home");
       await mkdir(workspace, { recursive: true });
       const before = "Before tool.\n";
-      const final = scenario === "repeated-final" ? before + "Final answer." : "Final answer.";
+      const multipleToolLast = scenario.endsWith("tool-last") && scenario !== "tool-last";
+      const final =
+        scenario === "repeated-final"
+          ? before + "Final answer."
+          : multipleToolLast
+            ? "Between tools.\n"
+            : "Final answer.";
+      const missingResult = multipleToolLast && scenario !== "textless-result-tool-last";
+      const recoverTranscript =
+        scenario === "recovered-tool-last" || scenario === "normalized-recovery-tool-last";
+      const conversationId = "11111111-2222-4333-8444-555555555551";
       const records = [
-        { event: "init", conversation_id: "11111111-2222-4333-8444-555555555551" },
+        { event: "init", conversation_id: conversationId },
         {
           event: "step_update",
           step_update: {
@@ -74,25 +92,50 @@ describe("Antigravity native stream through Core and Mission", () => {
                 },
               },
             ]),
-        {
-          event: "result",
-          result: {
-            status: "SUCCESS",
-            response:
-              scenario === "repeated-final"
-                ? final
-                : scenario === "tool-last"
-                  ? before
-                  : before + final,
-          },
-        },
+        ...(multipleToolLast
+          ? [
+              {
+                event: "step_update",
+                step_update: {
+                  step_index: 4,
+                  step_type: "tool",
+                  state: "DONE",
+                  tool_info: {
+                    name: "list_dir",
+                    parameters: { DirectoryPath: workspace },
+                    output: "empty",
+                  },
+                },
+              },
+            ]
+          : []),
+        ...(missingResult
+          ? []
+          : [
+              {
+                event: "result",
+                result: {
+                  status: "SUCCESS",
+                  ...(scenario === "textless-result-tool-last"
+                    ? {}
+                    : {
+                        response:
+                          scenario === "repeated-final"
+                            ? final
+                            : scenario === "tool-last"
+                              ? before
+                              : before + final,
+                      }),
+                },
+              },
+            ]),
       ];
       const runtime = createAntigravityRuntime({
         authenticationMode: "isolated-environment",
         env: { AGY_ADC_AUTH: "1" },
         canUse: () => ({ usable: true }),
         listModels: async () => [],
-        spawn: () => {
+        spawn: (_command, _args, options) => {
           const child = Object.assign(new EventEmitter(), {
             stdin: new PassThrough(),
             stdout: new PassThrough(),
@@ -106,10 +149,46 @@ describe("Antigravity native stream through Core and Mission", () => {
               return true;
             },
           });
-          child.stdin.once("data", () =>
-            queueMicrotask(() =>
-              child.stdout.write(records.map((record) => JSON.stringify(record)).join("\n") + "\n"),
-            ),
+          child.stdin.once(
+            "data",
+            () =>
+              void (async () => {
+                if (recoverTranscript) {
+                  const directory = join(
+                    options.env["HOME"]!,
+                    ".gemini",
+                    "antigravity",
+                    "brain",
+                    conversationId,
+                    ".system_generated",
+                    "logs",
+                  );
+                  await mkdir(directory, { recursive: true });
+                  await writeFile(
+                    join(directory, "transcript.jsonl"),
+                    [
+                      { type: "USER_INPUT", content: "Run projection regression" },
+                      ...[before, final].map((content) => ({
+                        type: "PLANNER_RESPONSE",
+                        source: "MODEL",
+                        status: "DONE",
+                        content:
+                          scenario === "normalized-recovery-tool-last" ? content.trim() : content,
+                      })),
+                    ]
+                      .map((record) => JSON.stringify(record))
+                      .join("\n"),
+                  );
+                }
+                child.stdout.write(
+                  records.map((record) => JSON.stringify(record)).join("\n") + "\n",
+                );
+                if (missingResult) {
+                  child.stdout.end();
+                  child.stderr.end();
+                  child.emit("exit", 0, null);
+                }
+              })(),
           );
           return child as unknown as ChildProcessWithoutNullStreams;
         },
@@ -162,6 +241,7 @@ describe("Antigravity native stream through Core and Mission", () => {
           }
         })();
         const result = await turn.result;
+        expect(result).toBe(scenario === "tool-last" ? before : final);
         await consume;
         await subscription.close();
         const state = await turn.getState();

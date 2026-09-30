@@ -1021,6 +1021,65 @@ describe("Antigravity stream-json process", () => {
     },
   );
 
+  it.each(["unavailable", "owned", "normalized"] as const)(
+    "closes a tool-last turn without replaying completed segments when transcript is %s",
+    async (transcriptMode) => {
+      const root = await mkdtemp(join(tmpdir(), "pragma-agy-tool-last-recovery-"));
+      try {
+        const fixture = await readAgyFixture("agy-1.2.13-assistant-segments.ndjson");
+        const records = fixture.slice(0, -3);
+        if (transcriptMode !== "unavailable") {
+          const transcript = join(
+            root,
+            ".gemini",
+            "antigravity",
+            "brain",
+            conversation2,
+            ".system_generated",
+            "logs",
+            "transcript.jsonl",
+          );
+          await mkdir(dirname(transcript), { recursive: true });
+          await writeFile(
+            transcript,
+            [
+              { type: "USER_INPUT", content: "current turn" },
+              ...["BEFORE_TOOL_MARKER\n", "BETWEEN_TOOLS_MARKER\n"].map((content) => ({
+                type: "PLANNER_RESPONSE",
+                source: "MODEL",
+                status: "DONE",
+                content: transcriptMode === "normalized" ? content.trim() : content,
+              })),
+            ]
+              .map((record) => JSON.stringify(record))
+              .join("\n"),
+          );
+        }
+        const countText = vi.fn(() => ({ tokens: 1, source: "heuristic" as const }));
+        const session = createSession(createStreamSpawn(records), countText, { homeDir: root });
+        const events: AntigravityNativeEvent[] = [];
+        await expect(
+          startAntigravityTurn(session, createTurn({ writeNative: (event) => events.push(event) })),
+        ).resolves.toMatchObject({ outputText: "BETWEEN_TOOLS_MARKER\n" });
+        expect(
+          events
+            .filter((event) => event.kind === "message-completed")
+            .map((event) => ({ text: event.text, final: event.final })),
+        ).toEqual([
+          { text: "BEFORE_TOOL_MARKER\n", final: false },
+          { text: "BETWEEN_TOOLS_MARKER\n", final: false },
+          { text: "", final: undefined },
+        ]);
+        expect(countText).toHaveBeenLastCalledWith(
+          "BEFORE_TOOL_MARKER\nBETWEEN_TOOLS_MARKER\n",
+          expect.any(Object),
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each(["final-only", "missing"])(
     "keeps only the final segment with a %s terminal result",
     async (terminal) => {
