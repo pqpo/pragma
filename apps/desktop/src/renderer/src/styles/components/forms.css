@@ -506,6 +506,12 @@
   box-shadow: var(--shadow-hover);
 }
 
+.mission-model-menu-options {
+  max-height: min(320px, var(--mission-model-menu-available-height, calc(100vh - 24px)));
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
 .mission-model-menu-section,
 .mission-model-menu-option {
   display: grid;
