@@ -3677,6 +3677,7 @@ export function createMissionRunner(options: {
     }
     const executorMetadataPromise = getExecutorMetadataOrFallback(mission, "historical");
     const capturedLive = chatService.live(mission.id);
+    const capturedInvalidationRevision = chatService.invalidationRevision(mission.id);
     let inheritedHistoryPromise: ReturnType<MissionStore["readBranchHistory"]> | undefined;
     const history = await readMissionChatHistoryPage({
       missionId: mission.id,
@@ -3698,9 +3699,16 @@ export function createMissionRunner(options: {
     const historyReadAt = performance.now();
     const syncIssues = [...history.syncIssues];
     const executorMetadata = await executorMetadataPromise;
-    // Capture the revision and live entries in one synchronous turn. Keep using the live object
-    // retained at the beginning of the read: settlement may already have removed it from the map,
-    // but its final output still belongs in this snapshot.
+    // An entire queued execution can start and finish while history is read, leaving
+    // both live pointers undefined. Invalidation revisions also capture that lifecycle
+    // and timeline changes; text-only patches are covered by the live entries below.
+    if (
+      chatService.live(mission.id) !== capturedLive ||
+      chatService.invalidationRevision(mission.id) !== capturedInvalidationRevision
+    )
+      return await getChatPage(input);
+    // Capture the revision and live entries in one synchronous turn so every live
+    // delta covered by the watermark is also represented in the returned page.
     const revision = chatService.revision(mission.id);
     const revisionLiveEntries =
       input.beforeCursor === undefined

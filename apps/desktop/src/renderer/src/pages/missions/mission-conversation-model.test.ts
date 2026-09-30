@@ -826,11 +826,30 @@ describe("mission conversation model", () => {
       entries: [{ ...current.entries[0]!, content: "hello", streaming: false }],
     } as MissionConversationSnapshot;
 
-    expect(reconcileMissionChatRefresh(current, staleProjection, pending)).toMatchObject({
+    const refreshed = reconcileMissionChatRefresh(current, staleProjection, pending);
+    expect(refreshed).toMatchObject({
       snapshot: {
         revision: 7,
         entries: [{ id: "answer", content: "hello world!", streaming: false }],
       },
+      remaining: [],
+      needsRefresh: false,
+    });
+    // A send/queue action can finish its own page read at the same watermark
+    // after the subscription already applied the deltas. Preserve that text too.
+    const operationRefresh = reconcileMissionChatRefresh(refreshed.snapshot, staleProjection, []);
+    expect(operationRefresh.snapshot.entries[0]).toMatchObject({ content: "hello world!" });
+    const continued = applyMissionChatUpdateBatch(operationRefresh.snapshot, [
+      {
+        missionId: current.missionId,
+        streamId: chatStreamId,
+        revision: 8,
+        kind: "patch",
+        patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: " More" }],
+      },
+    ]);
+    expect(continued).toMatchObject({
+      snapshot: { revision: 8, entries: [{ content: "hello world! More" }] },
       remaining: [],
       needsRefresh: false,
     });

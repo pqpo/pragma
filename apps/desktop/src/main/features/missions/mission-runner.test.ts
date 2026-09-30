@@ -5270,6 +5270,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
       runner.subscribeStatus(({ execution }) => {
         if (execution !== undefined) statuses.push(execution);
       });
+      let releasePage = (): void => undefined;
       try {
         await runner.run(mission.id);
         firstExecutionId = (await missions.get(mission.id)).execution!.id;
@@ -5280,6 +5281,22 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         const thirdId = "00000000-0000-4000-8000-000000000092";
         await runner.sendMessage({ id: mission.id, requestId: secondId, content: "Second turn" });
         await runner.sendMessage({ id: mission.id, requestId: thirdId, content: "Third turn" });
+        let pageEntered!: () => void;
+        const pageGate = new Promise<void>((resolve) => {
+          releasePage = resolve;
+        });
+        const pageStarted = new Promise<void>((resolve) => {
+          pageEntered = resolve;
+        });
+        const readTimelinePage = missions.readTimelinePage.bind(missions);
+        vi.spyOn(missions, "readTimelinePage").mockImplementationOnce(async (...args) => {
+          const page = await readTimelinePage(...args);
+          pageEntered();
+          await pageGate;
+          return page;
+        });
+        const inFlightPage = runner.getChatPage({ id: mission.id, limit: 100 });
+        await pageStarted;
         finishes.get("First turn")!();
         await projectionStarted;
         for (const [content, requestId] of [
@@ -5313,6 +5330,15 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
           });
           const id = (await missions.get(mission.id)).execution!.id;
           expect(statuses).toContainEqual({ id, status: "running" });
+          if (content === "Second turn") {
+            releasePage();
+            const page = await inFlightPage;
+            expect(
+              page.entries.some(
+                (entry) => entry.kind === "assistant" && entry.content === "answer:Second turn",
+              ),
+            ).toBe(true);
+          }
           if (content === "Third turn") {
             releaseProjection();
             await firstArchived;
@@ -5362,6 +5388,7 @@ describe("MissionRunner", { timeout: 30_000 }, () => {
         );
         expect((await missions.get(mission.id)).execution?.inputMessageId).toBe(thirdId);
       } finally {
+        releasePage();
         releaseProjection();
         for (const finish of finishes.values()) finish();
       }

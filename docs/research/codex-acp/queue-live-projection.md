@@ -37,3 +37,28 @@ executionId 闸门；取消、已转为 Steer 的队列项和被替换 Session �
 ESLint、主进程与 preload 产物检查、样式及格式校验通过。
 
 没有修改 Runtime 执行协议或持久状态 Schema，没有切换到 ACP。
+
+## 2026-09-30：刷新请求跨越排队轮切换
+
+后续回归发现 `#330` 仍遗漏了聊天页读取的竞态。`getChatPage()` 在异步读取历史前捕获
+上一轮的 live projection，却在读取完成后返回当前最新 revision。排队轮在读取期间启动时，
+新轮的 `message.delta` 只存在于新的 live projection，旧投影和持久事件都无法补齐这些文本。
+返回的快照因此可能遗漏新轮输出，却宣称已经包含它的消息版本。
+
+聊天页现在在返回前检查 live projection 与最近一次 invalidate revision；任一变化时重新读取，使返回的
+实时内容与 revision 一致。发送或操作队列后的主动刷新也复用订阅刷新使用的
+`reconcileMissionChatRefresh()`，避免相同版本的迟到页面覆盖已经应用的流式文本。
+
+只比较 live projection 对象仍有遗漏：读取开始时没有活动投影，两轮在读取期间完成后，
+活动投影又恢复为空。单调递增的 invalidate revision 能识别这个窗口，也覆盖队列记录变化；
+普通文本 patch 不触发重读，由同一同步时段捕获的 live entries 和 revision 覆盖。
+
+原有三个排队流式回归现在同时覆盖“刷新开始于第一轮、返回于第二轮”的窗口。修复前，
+真实 Codex Adapter 配合受控 stdio peer 的用例稳定缺少第二轮答案；修复后，三个用例
+均包含第二轮输出，并继续验证第三轮的流式更新。页面合并回归还验证同版本主动刷新后
+能继续追加文本。
+
+补充回归使用真实 Codex / Qoder Runtime Adapter 与 Core 文件存储，仅控制 Codex stdio peer
+和 Qoder SDK 消息源。两套 Runtime 均覆盖“读取期间两轮全部结束”以及“跨轮刷新后继续流式追加”，
+经过 Desktop 消息转发、协议解析、renderer 合并，再断言实际聊天条目的静态渲染内容。
+这些用例不等于启动 Electron 窗口或真实 Codex / Qoder 模型验收。

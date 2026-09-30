@@ -48,7 +48,7 @@ import {
   isMissionCoordinatorChatEntry,
   hideInterruptedExecutionFallbackEntries,
   hideQueuedChatEntries,
-  mergeLatestChatPage,
+  reconcileMissionChatRefresh,
   missionTurnFinalReplyIds,
   orderMissionConversationEntries,
   readyPendingQueuedRequestIds,
@@ -909,8 +909,10 @@ export function MissionDetailFragment(props: {
     const { page, state } = await loadMissionConversationProjection(api, props.mission.id);
     let result: MissionConversationSnapshot | undefined;
     updateChat((current) => {
-      const pageSnapshot = mergeLatestChatPage(current, conversationFromPage(page, current));
-      const next = state === undefined ? pageSnapshot : mergeConversationState(pageSnapshot, state);
+      const pageSnapshot = conversationFromPage(page, current);
+      const snapshot =
+        state === undefined ? pageSnapshot : mergeConversationState(pageSnapshot, state);
+      const next = reconcileMissionChatRefresh(current, snapshot ?? pageSnapshot, []).snapshot;
       result = next ?? undefined;
       return next;
     });
