@@ -287,6 +287,99 @@ describe("Antigravity startup messages", () => {
 });
 
 describe("Antigravity persistent stream-json", () => {
+  it("accounts for a failed terminal result and differences the next cumulative snapshot", async () => {
+    let turnIndex = 0;
+    const spawn = createPersistentSpawn((_input, child) => {
+      const result =
+        turnIndex++ === 0
+          ? {
+              status: "ERROR",
+              error: "request failed",
+              conversation_id: conversation1,
+              usage: { input_tokens: 10, output_tokens: 3 },
+            }
+          : {
+              response: "next answer",
+              conversation_id: conversation1,
+              usage: { input_tokens: 15, output_tokens: 5 },
+            };
+      child.stdout.write(`${JSON.stringify({ event: "result", result })}\n`);
+    });
+    const session = createSession(spawn);
+    const firstEvents: AntigravityNativeEvent[] = [];
+    await expect(
+      startAntigravityTurn(
+        session,
+        createTurn({ writeNative: (event) => firstEvents.push(event) }),
+      ),
+    ).rejects.toMatchObject({ code: "ANTIGRAVITY_PROCESS_FAILED" });
+    expect(firstEvents.filter((event) => event.kind === "usage")).toEqual([
+      { kind: "usage", usage: expect.objectContaining({ input: 10, output: 3 }) },
+    ]);
+    const nextEvents: AntigravityNativeEvent[] = [];
+    await expect(
+      startAntigravityTurn(session, createTurn({ writeNative: (event) => nextEvents.push(event) })),
+    ).resolves.toMatchObject({ outputText: "next answer" });
+    expect(nextEvents.filter((event) => event.kind === "usage")).toEqual([
+      { kind: "usage", usage: expect.objectContaining({ input: 5, output: 2 }) },
+    ]);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await closeAntigravitySession(session);
+  });
+
+  it("classifies a generic failed result using only this turn's log tail", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agy-failed-result-log-"));
+    let logPath = "";
+    let turnIndex = 0;
+    const baseSpawn = createPersistentSpawn((_input, child) => {
+      void (async () => {
+        if (turnIndex++ === 0) {
+          await writeFile(
+            logPath,
+            "agent executor error: authentication failed in an earlier turn\n",
+          );
+          child.stdout.write(
+            `${JSON.stringify({
+              event: "result",
+              result: {
+                response: "first",
+                conversation_id: conversation1,
+              },
+            })}\n`,
+          );
+        } else {
+          await writeFile(logPath, "agent executor error: quota exhausted (429)\n", { flag: "a" });
+          child.stdout.write(
+            `${JSON.stringify({
+              event: "result",
+              result: {
+                status: "ERROR",
+                error: "provider request failed",
+                conversation_id: conversation1,
+              },
+            })}\n`,
+          );
+        }
+      })();
+    });
+    const spawn: NonNullable<AntigravityNativeSession["spawn"]> = (...args) => {
+      logPath = args[1][args[1].indexOf("--log-file") + 1]!;
+      return baseSpawn(...args);
+    };
+    const session = createSession(spawn, undefined, { logDir: root });
+    try {
+      await startAntigravityTurn(session, createTurn());
+      await expect(startAntigravityTurn(session, createTurn())).rejects.toMatchObject({
+        code: "ANTIGRAVITY_RATE_LIMITED",
+        retryable: true,
+      });
+      expect(baseSpawn).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeAntigravitySession(session);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not classify earlier or transient log errors as a settled-response failure", async () => {
     const root = await mkdtemp(join(tmpdir(), "agy-review-log-"));
     let logPath = "";

@@ -115,11 +115,14 @@ interface AntigravityConnection {
     | undefined;
 }
 
-interface ProcessRunResult {
-  readonly outputText: string;
-  readonly usage?: AgentMessageUsage | undefined;
-  readonly sessionId?: string | undefined;
-}
+type ProcessRunResult =
+  | {
+      readonly kind: "success";
+      readonly outputText: string;
+      readonly usage?: AgentMessageUsage | undefined;
+      readonly sessionId: string;
+    }
+  | { readonly kind: "failure"; readonly error: AntigravityRuntimeError };
 
 type TranscriptCheckpoint =
   | { readonly kind: "missing" | "unavailable" }
@@ -227,7 +230,12 @@ export async function startAntigravityTurn(
 
   try {
     const run = await runAntigravityProcess(session, turn, input, modelName, thinkingLevel);
-    if (run.sessionId !== undefined) session.sessionId = run.sessionId;
+    if (run.kind === "failure") {
+      // Without an owned ID, a failed native turn cannot safely reuse its process.
+      if (session.sessionId === "") await closeAntigravitySession(session);
+      throw run.error;
+    }
+    session.sessionId = run.sessionId;
     const reportedUsage = run.usage !== undefined && hasNonZeroUsage(run.usage);
     const usage = reportedUsage
       ? run.usage
@@ -603,11 +611,29 @@ function openAntigravityConnection(
       if (event.kind !== "usage") pending?.writeNative(event);
     }
     if (pending === undefined) return;
-    if (state.resultError !== undefined) {
-      pending.reject(classifyAntigravityError(state.resultError, connection.stderr.text(), ""));
+    if (!state.terminalSeen) {
+      if (state.resultError !== undefined) {
+        const stepUsage = sumStepUsage(state.stepUsage);
+        if (stepUsage !== undefined) pending.writeNative({ kind: "usage", usage: stepUsage });
+        pending.reject(classifyAntigravityError(state.resultError, connection.stderr.text(), ""));
+      }
       return;
     }
-    if (!state.terminalSeen) return;
+    // A failed result is still a completed model turn. Settle cumulative usage
+    // before classifying its error so the next turn starts from this baseline.
+    const usage = readTurnUsage(connection, state.usage) ?? sumStepUsage(state.stepUsage);
+    if (usage !== undefined) pending.writeNative({ kind: "usage", usage });
+    const resultError = state.resultError;
+    if (resultError !== undefined) {
+      connection.pending = undefined;
+      void readCurrentTurnLog(logPath, pending.logCheckpoint).then((logTail) => {
+        pending.resolve({
+          kind: "failure",
+          error: classifyAntigravityError(resultError, connection.stderr.text(), logTail),
+        });
+      });
+      return;
+    }
     if (session.sessionId === "")
       throw new AntigravityRuntimeError(
         "Antigravity returned output without an owned conversation identifier.",
@@ -615,8 +641,6 @@ function openAntigravityConnection(
         false,
       );
     const outputText = state.resultText ?? state.outputText;
-    const usage = readTurnUsage(connection, state.usage) ?? sumStepUsage(state.stepUsage);
-    if (usage !== undefined) pending.writeNative({ kind: "usage", usage });
     if (state.resultText === undefined && outputText !== "")
       pending.writeNative({ kind: "message-completed", text: outputText });
     connection.pending = undefined;
@@ -629,7 +653,7 @@ function openAntigravityConnection(
         ),
       );
     } else {
-      pending.resolve({ outputText, usage, sessionId: session.sessionId });
+      pending.resolve({ kind: "success", outputText, usage, sessionId: session.sessionId });
     }
   });
   void output.then(
@@ -678,10 +702,7 @@ function openAntigravityConnection(
       if (session.connection === connection) clearAntigravityConnection(session);
       if (pending === undefined || pending.state.terminalSeen) return;
       try {
-        const logTail =
-          pending.logCheckpoint.kind === "unavailable"
-            ? ""
-            : await readTail(logPath, LOG_TAIL_LIMIT, pending.logCheckpoint);
+        const logTail = await readCurrentTurnLog(logPath, pending.logCheckpoint);
         if (exit.code !== 0 || pending.state.resultError !== undefined) {
           throw classifyAntigravityError(
             pending.state.resultError ?? `Antigravity CLI exited with code ${exit.code}.`,
@@ -719,7 +740,7 @@ function openAntigravityConnection(
             false,
           );
         pending.writeNative({ kind: "message-completed", text });
-        pending.resolve({ outputText: text, sessionId: session.sessionId });
+        pending.resolve({ kind: "success", outputText: text, sessionId: session.sessionId });
       } catch (error) {
         pending.reject(error);
       }
@@ -1789,6 +1810,10 @@ async function readTail(
     (tail) => tail.content,
     () => "",
   );
+}
+
+async function readCurrentTurnLog(path: string, checkpoint: TranscriptCheckpoint): Promise<string> {
+  return checkpoint.kind === "unavailable" ? "" : await readTail(path, LOG_TAIL_LIMIT, checkpoint);
 }
 
 interface FileTail {
