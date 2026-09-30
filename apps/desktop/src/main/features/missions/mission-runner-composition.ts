@@ -3669,112 +3669,144 @@ export function createMissionRunner(options: {
   };
 
   const getChatPage = async (input: MissionChatPageQuery): Promise<MissionChatPage> => {
-    const startedAt = performance.now();
-    const mission = await options.missions.get(input.id);
-    const missionReadAt = performance.now();
-    if (!isUserFacingMissionOrigin(mission.origin)) {
-      throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
-    }
-    const executorMetadataPromise = getExecutorMetadataOrFallback(mission, "historical");
-    const capturedLive = chatService.live(mission.id);
-    let inheritedHistoryPromise: ReturnType<MissionStore["readBranchHistory"]> | undefined;
-    const history = await readMissionChatHistoryPage({
-      missionId: mission.id,
-      query: input,
-      executionStore,
-      missions: options.missions,
-      rootOnly: mission.executor.kind === "team",
-      ...(capturedLive === undefined ? {} : { activeChat: capturedLive }),
-      ...(mission.branch === undefined
-        ? {}
-        : {
-            loadInheritedEntries: async () => {
-              inheritedHistoryPromise ??= options.missions.readBranchHistory(mission.id);
-              return (await inheritedHistoryPromise)?.entries ?? [];
-            },
-          }),
-    });
-    const entries = [...history.entries];
-    const historyReadAt = performance.now();
-    const syncIssues = [...history.syncIssues];
-    const executorMetadata = await executorMetadataPromise;
-    // Capture the revision and live entries in one synchronous turn. Keep using the live object
-    // retained at the beginning of the read: settlement may already have removed it from the map,
-    // but its final output still belongs in this snapshot.
-    const revision = chatService.revision(mission.id);
-    const revisionLiveEntries =
-      input.beforeCursor === undefined
-        ? (capturedLive?.entries.map((entry) => ({
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const startedAt = performance.now();
+      const mission = await options.missions.get(input.id);
+      const missionReadAt = performance.now();
+      if (!isUserFacingMissionOrigin(mission.origin)) {
+        throw new Error(`Mission ${mission.id} is not available on the Mission surface.`);
+      }
+      const executorMetadataPromise = getExecutorMetadataOrFallback(mission, "historical");
+      const capturedLive = chatService.live(mission.id);
+      const capturedRevision = chatService.revision(mission.id);
+      const capturedLiveEntries = capturedLive?.entries.map((entry) => ({ ...entry })) ?? [];
+      const capturedInvalidationRevision = chatService.invalidationRevision(mission.id);
+      let inheritedHistoryPromise: ReturnType<MissionStore["readBranchHistory"]> | undefined;
+      const history = await readMissionChatHistoryPage({
+        missionId: mission.id,
+        query: input,
+        executionStore,
+        missions: options.missions,
+        rootOnly: mission.executor.kind === "team",
+        ...(capturedLive === undefined ? {} : { activeChat: capturedLive }),
+        ...(mission.branch === undefined
+          ? {}
+          : {
+              loadInheritedEntries: async () => {
+                inheritedHistoryPromise ??= options.missions.readBranchHistory(mission.id);
+                return (await inheritedHistoryPromise)?.entries ?? [];
+              },
+            }),
+      });
+      const entries = [...history.entries];
+      const historyReadAt = performance.now();
+      const syncIssues = [...history.syncIssues];
+      const executorMetadata = await executorMetadataPromise;
+      // An entire queued execution can start and finish while history is read, leaving
+      // both live pointers undefined. Invalidation revisions also capture that lifecycle
+      // and timeline changes; text-only patches are covered by the live entries below.
+      const changedDuringRead =
+        input.beforeCursor === undefined &&
+        (chatService.live(mission.id) !== capturedLive ||
+          chatService.invalidationRevision(mission.id) !== capturedInvalidationRevision);
+      if (changedDuringRead && attempt < 2) continue;
+      // Capture the revision and live entries in one synchronous turn so every live
+      // delta covered by the watermark is also represented in the returned page.
+      // At the retry limit, retain the read-start watermark and live snapshot.
+      // Updates emitted during the read remain pending, including the invalidation
+      // that asks the renderer for another refresh. Historical pages never acknowledge
+      // new live updates either and do not retry when the current turn changes.
+      const revision =
+        changedDuringRead || input.beforeCursor !== undefined
+          ? capturedRevision
+          : chatService.revision(mission.id);
+      const revisionLiveEntries =
+        input.beforeCursor === undefined
+          ? ((changedDuringRead ? capturedLiveEntries : capturedLive?.entries)?.map((entry) => ({
+              ...entry,
+              ...(entry.timelineSequence === undefined && history.newestSequence !== undefined
+                ? { timelineSequence: history.newestSequence }
+                : {}),
+            })) ?? [])
+          : [];
+      const resolveExecutorName = createMissionExecutorNameResolver(
+        mission,
+        executorMetadata.names,
+      );
+      const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
+        executorMetadata.avatarIds,
+      );
+      const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries).map(
+        (entry) => {
+          if (entry.executorId === undefined) return entry;
+          const executorName = entry.executorName ?? resolveExecutorName(entry.executorId);
+          const executorAvatarId =
+            entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
+          if (entry.executorName !== undefined && entry.executorAvatarId !== undefined)
+            return entry;
+          return {
             ...entry,
-            ...(entry.timelineSequence === undefined && history.newestSequence !== undefined
-              ? { timelineSequence: history.newestSequence }
-              : {}),
-          })) ?? [])
-        : [];
-    const resolveExecutorName = createMissionExecutorNameResolver(mission, executorMetadata.names);
-    const resolveExecutorAvatarId = createMissionExecutorAvatarIdResolver(
-      executorMetadata.avatarIds,
-    );
-    const presentedEntries = mergeMissionChatEntriesWithLive(entries, revisionLiveEntries).map(
-      (entry) => {
-        if (entry.executorId === undefined) return entry;
-        const executorName = entry.executorName ?? resolveExecutorName(entry.executorId);
-        const executorAvatarId =
-          entry.executorAvatarId ?? resolveExecutorAvatarId(entry.executorId);
-        if (entry.executorName !== undefined && entry.executorAvatarId !== undefined) return entry;
-        return {
-          ...entry,
-          ...(executorName === undefined ? {} : { executorName }),
-          ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
-        };
-      },
-    );
-    const uniqueSyncIssues = [
-      ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
-    ];
-    if (uniqueSyncIssues.length > 0) {
-      if (chatService.markSyncDegraded(mission.id)) {
-        logger.warn(
-          "mission.chat_sync_degraded",
-          "Mission chat is using partial state while Execution data is unavailable.",
+            ...(executorName === undefined ? {} : { executorName }),
+            ...(executorAvatarId === undefined ? {} : { executorAvatarId }),
+          };
+        },
+      );
+      const uniqueSyncIssues = [
+        ...new Map(syncIssues.map((issue) => [issue.section, issue])).values(),
+      ];
+      if (uniqueSyncIssues.length > 0) {
+        if (chatService.markSyncDegraded(mission.id)) {
+          logger.warn(
+            "mission.chat_sync_degraded",
+            "Mission chat is using partial state while Execution data is unavailable.",
+            {
+              missionId: mission.id,
+              executionId: mission.execution?.id,
+              code: "execution_state_unavailable",
+              retryable: true,
+              sections: uniqueSyncIssues.map((issue) => issue.section),
+            },
+          );
+        }
+      } else if (chatService.markSyncRecovered(mission.id)) {
+        logger.info(
+          "mission.chat_sync_recovered",
+          "Mission chat state synchronization recovered.",
           {
             missionId: mission.id,
             executionId: mission.execution?.id,
-            code: "execution_state_unavailable",
-            retryable: true,
-            sections: uniqueSyncIssues.map((issue) => issue.section),
           },
         );
       }
-    } else if (chatService.markSyncRecovered(mission.id)) {
-      logger.info("mission.chat_sync_recovered", "Mission chat state synchronization recovered.", {
+      const result: MissionChatPage = {
         missionId: mission.id,
-        executionId: mission.execution?.id,
+        revision,
+        entries: presentedEntries,
+        page: {
+          ...(history.oldestSequence === undefined
+            ? {}
+            : { oldestSequence: history.oldestSequence }),
+          ...(history.newestSequence === undefined
+            ? {}
+            : { newestSequence: history.newestSequence }),
+          ...(history.nextBeforeCursor === undefined
+            ? {}
+            : { nextBeforeCursor: history.nextBeforeCursor }),
+          ...(history.truncation === undefined ? {} : { truncation: history.truncation }),
+        },
+        ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
+      };
+      logger.info("mission.chat_page_read", "Mission chat page read completed.", {
+        missionId: mission.id,
+        entryCount: result.entries.length,
+        branchHistoryLoaded: inheritedHistoryPromise !== undefined,
+        missionReadMs: Math.round((missionReadAt - startedAt) * 100) / 100,
+        historyReadMs: Math.round((historyReadAt - missionReadAt) * 100) / 100,
+        elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
       });
+      return result;
     }
-    const result: MissionChatPage = {
-      missionId: mission.id,
-      revision,
-      entries: presentedEntries,
-      page: {
-        ...(history.oldestSequence === undefined ? {} : { oldestSequence: history.oldestSequence }),
-        ...(history.newestSequence === undefined ? {} : { newestSequence: history.newestSequence }),
-        ...(history.nextBeforeCursor === undefined
-          ? {}
-          : { nextBeforeCursor: history.nextBeforeCursor }),
-        ...(history.truncation === undefined ? {} : { truncation: history.truncation }),
-      },
-      ...(uniqueSyncIssues.length === 0 ? {} : { syncIssues: uniqueSyncIssues }),
-    };
-    logger.info("mission.chat_page_read", "Mission chat page read completed.", {
-      missionId: mission.id,
-      entryCount: result.entries.length,
-      branchHistoryLoaded: inheritedHistoryPromise !== undefined,
-      missionReadMs: Math.round((missionReadAt - startedAt) * 100) / 100,
-      historyReadMs: Math.round((historyReadAt - missionReadAt) * 100) / 100,
-      elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
-    });
-    return result;
+    throw new Error("Mission chat page read exhausted its attempts.");
   };
 
   const getConversationState = async (id: string): Promise<MissionConversationState> => {

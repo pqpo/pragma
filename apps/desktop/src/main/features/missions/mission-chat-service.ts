@@ -16,6 +16,7 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
   readonly #streamId = randomUUID();
   readonly #listeners = new Set<(notification: MissionChatNotification) => void>();
   readonly #revisions = new Map<string, number>();
+  readonly #invalidationRevisions = new Map<string, number>();
   readonly #degradedSync = new Set<string>();
   readonly #liveChats = new Map<string, TLiveChat>();
   readonly #contextWindows = new Map<string, RuntimeContextWindowUsage>();
@@ -29,6 +30,11 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
 
   revision(missionId: string): number {
     return this.#revisions.get(missionId) ?? 0;
+  }
+
+  /** Changes that require a history read; live text patches do not advance this watermark. */
+  invalidationRevision(missionId: string): number {
+    return this.#invalidationRevisions.get(missionId) ?? 0;
   }
 
   live(missionId: string): TLiveChat | undefined {
@@ -99,6 +105,7 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
     if (live !== undefined) await live.close();
     this.#liveChats.delete(missionId);
     this.#revisions.delete(missionId);
+    this.#invalidationRevisions.delete(missionId);
     this.#degradedSync.delete(missionId);
     this.#contextWindows.delete(missionId);
   }
@@ -112,6 +119,7 @@ export class MissionChatService<TLiveChat extends MissionLiveChatProjection> {
   ): void {
     const revision = this.revision(missionId) + 1;
     this.#revisions.set(missionId, revision);
+    if (update.kind === "invalidate") this.#invalidationRevisions.set(missionId, revision);
     const value: MissionChatUpdate =
       update.kind === "patch"
         ? {
