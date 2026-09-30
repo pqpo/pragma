@@ -1,6 +1,7 @@
 import { errorMessage } from "./errors.ts";
+import { redactGitDiagnostic } from "../../../shared/git-diagnostics.ts";
 
-/** Never expose provider stderr, IPC wrappers or validation objects in product UI. */
+/** Translate common failures; diagnostic details are separately redacted. */
 export function gitFailureKey(error: unknown): string {
   const message = (typeof error === "string" ? error : errorMessage(error)).toLowerCase();
   const code =
@@ -11,6 +12,13 @@ export function gitFailureKey(error: unknown): string {
   if (code === "asset_git_metadata_invalid" || /knowledge metadata/.test(message))
     return "metadataValidation";
   if (/user.name|user.email/.test(message)) return "identity";
+  if (/git executable not found|spawn git enoent/.test(message)) return "missingGit";
+  if (/host key verification failed|remote host identification has changed/.test(message))
+    return "hostKey";
+  if (/repository.*not found|does not appear to be a git repository/.test(message))
+    return "repository";
+  if (/protected branch|pre-receive hook declined|not allowed to push|hook declined/.test(message))
+    return "pushRejected";
   if (
     /permission denied|authentication|could not read username|publickey|access denied/.test(message)
   )
@@ -31,4 +39,9 @@ export function gitFailureKey(error: unknown): string {
   if (/conflict|resolve every/.test(message)) return "conflict";
   if (/git address|already.*(?:bound|associated)|association/.test(message)) return "configuration";
   return "unknown";
+}
+
+export function gitFailureDetails(error: unknown): string {
+  const message = typeof error === "string" ? error : errorMessage(error);
+  return redactGitDiagnostic(message);
 }

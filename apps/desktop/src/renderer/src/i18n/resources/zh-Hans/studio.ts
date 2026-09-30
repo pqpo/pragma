@@ -87,7 +87,12 @@ export const studio = {
       unbound: "已解除 Git 关联。",
       backupFailed: "此资产已同步，但整体备份失败。请在设置页重试整体同步。",
     },
+    errorDetails: "错误详情",
     errors: {
+      missingGit: "未安装 Git 或应用找不到 Git。请安装 Git 并重启应用。",
+      hostKey: "SSH 主机验证失败。请在终端连接此仓库，核对主机指纹后重试。",
+      repository: "找不到 Git 仓库，请检查仓库地址和访问权限。",
+      pushRejected: "远端拒绝了此次上传，请检查远端仓库策略、分支保护或写入权限，并查看错误详情。",
       metadataReserved:
         ".pragma/metadata/ 是 Git 元数据专用目录，请移走该目录中的知识库文档后重试。",
       metadataSize: "单个文档元数据 YAML 文件不能超过 64 KiB。",

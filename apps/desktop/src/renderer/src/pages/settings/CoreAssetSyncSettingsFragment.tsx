@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { CoreAssetSyncOverview } from "../../../../shared/contracts/index.ts";
-import { gitFailureKey } from "../../lib/git-feedback.ts";
+import { gitFailureDetails, gitFailureKey } from "../../lib/git-feedback.ts";
 import { aggregateCoreAssetSyncItems, coreAssetOverallHealth } from "./core-asset-sync-summary.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -14,7 +14,8 @@ export function CoreAssetSyncSettingsFragment() {
   const [autoPush, setAutoPush] = useState(true);
   const [pushDeletions, setPushDeletions] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<unknown>();
+  const failure = error ?? overview?.error;
   const summary = useMemo(() => aggregateCoreAssetSyncItems(overview?.items ?? []), [overview]);
   const overallHealth =
     overview === undefined ? "synced" : coreAssetOverallHealth(overview.status, summary);
@@ -31,7 +32,7 @@ export function CoreAssetSyncSettingsFragment() {
     void window.pragmaDesktop
       .getCoreAssetSyncOverview()
       .then(apply)
-      .catch((cause: unknown) => setError(gitFailureKey(cause)));
+      .catch((cause: unknown) => setError(cause));
   }, []);
   const run = async (action: () => Promise<CoreAssetSyncOverview | void>) => {
     setBusy(true);
@@ -39,7 +40,7 @@ export function CoreAssetSyncSettingsFragment() {
     try {
       apply((await action()) ?? (await window.pragmaDesktop.getCoreAssetSyncOverview()));
     } catch (cause) {
-      setError(gitFailureKey(cause));
+      setError(cause);
     } finally {
       setBusy(false);
     }
@@ -100,11 +101,7 @@ export function CoreAssetSyncSettingsFragment() {
           onRemove={() => void run(() => window.pragmaDesktop.removeCoreAssetSyncConfiguration())}
         />
       </form>
-      {(error ?? overview?.error) && (
-        <p role="alert" className="form-error">
-          {t(`assetGit.errors.${error ?? gitFailureKey(overview?.error)}`, { ns: "studio" })}
-        </p>
-      )}
+      {failure !== undefined && failure !== null && <CoreAssetSyncError error={failure} />}
       {overview?.syncedAt && (
         <p>{t("coreAssetSync.lastSync", { date: new Date(overview.syncedAt).toLocaleString() })}</p>
       )}
@@ -251,6 +248,19 @@ export function CoreAssetSyncSettingsFragment() {
         </section>
       )}
     </SettingsScreenFrame>
+  );
+}
+
+export function CoreAssetSyncError({ error }: { readonly error: unknown }) {
+  const { t } = useTranslation("studio");
+  return (
+    <div role="alert" className="core-asset-sync-error">
+      <p className="form-error">{t(`assetGit.errors.${gitFailureKey(error)}`)}</p>
+      <details>
+        <summary>{t("assetGit.errorDetails")}</summary>
+        <pre>{gitFailureDetails(error)}</pre>
+      </details>
+    </div>
   );
 }
 

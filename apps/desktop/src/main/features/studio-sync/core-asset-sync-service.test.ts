@@ -1,7 +1,7 @@
 import { parsePragmaYaml } from "@pragma/interpreter";
 import { readSyncRepository } from "./asset-sync-repository.ts";
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -323,6 +323,40 @@ describe("core asset Git synchronization", { timeout: 30_000 }, () => {
       expect((await project.get()).resources).toEqual([]);
     },
   );
+
+  it("reports a rejected push, keeps assets pending and recovers on retry", async () => {
+    const root = await fixture();
+    const local = device(join(root, "local"), "Team docs");
+    const hook = join(barePath(root), "hooks", "pre-receive");
+    const escapedDiagnostic = String.raw`{\"password\":\"example-secret\"}`;
+    await writeFile(
+      hook,
+      `#!/bin/sh\necho 'https://user:${"s".repeat(2_100)}@example.test/repo' >&2\nprintf '%s\\n' '${escapedDiagnostic}' >&2\necho 'Branch policy rejected this upload' >&2\nexit 1\n`,
+    );
+    await chmod(hook, 0o700);
+    const failed = await local.service.configure({
+      remote,
+      branch: "main",
+      autoPush: true,
+      pushDeletions: false,
+    });
+    expect(failed.status).toBe("error");
+    expect(failed.error).toContain("Git push failed:");
+    expect(failed.error).toContain("Branch policy rejected this upload");
+    expect(failed.error).toContain("https://[redacted]@example.test/repo");
+    expect(failed.error).not.toContain("s".repeat(100));
+    expect(failed.error).not.toContain("example-secret");
+    expect(failed.items.some((item) => item.status === "pending")).toBe(true);
+    expect(failed.syncedAt).toBeUndefined();
+    expect((await local.service.overview()).error).toBe(failed.error);
+
+    await rm(hook);
+    const retried = await local.service.sync();
+    expect(retried.status, retried.error).toBe("ready");
+    expect(retried.error).toBeUndefined();
+    expect(retried.syncedAt).toBeDefined();
+    expect(retried.items.every((item) => item.status === "synced")).toBe(true);
+  });
 
   it("uses the configured Git identity for core asset commits", async () => {
     const root = await fixture();

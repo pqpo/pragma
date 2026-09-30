@@ -271,6 +271,18 @@
   line-height: 1.5;
 }
 
+.core-asset-sync-error details {
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.core-asset-sync-error pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: inherit;
+}
+
 .core-asset-sync-status {
   display: grid;
   gap: 24px;

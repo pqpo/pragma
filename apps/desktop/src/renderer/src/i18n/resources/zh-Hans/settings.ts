@@ -76,7 +76,7 @@ export const settings = {
       title: "资产状态",
       synced: "所有核心资产均已同步。",
       syncing: "正在同步核心资产…",
-      syncError: "核心资产同步失败。请查看上方错误并重试。",
+      syncError: "核心资产同步失败。待处理资产尚未确认上传成功，请查看上方错误并重试。",
       pending: "{{count}} 个核心资产需要处理。",
       failed: "{{count}} 个核心资产存在同步问题。",
     },

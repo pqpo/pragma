@@ -79,7 +79,8 @@ export const settings = {
       title: "Asset status",
       synced: "All core assets are synchronized.",
       syncing: "Synchronizing core assets…",
-      syncError: "Core asset synchronization failed. Review the error above and try again.",
+      syncError:
+        "Core asset synchronization failed. Pending assets have not been confirmed as uploaded. Review the error above and retry.",
       pending: "{{count}} core asset needs attention.",
       failed: "{{count}} core asset has a synchronization problem.",
     },
